@@ -148,15 +148,11 @@ def test_heatmap_handles_length_mismatch(qtbot):
 
 
 class _ThreadRecordingPane(PreviewPane):
-    """Test-only subclass that records, on every _on_decode_done call,
-    which thread it actually ran on - the point of the generation-in-
-    signal-payload fix is that connecting worker.done to a bound
-    method (this override remains one) gives Qt the receiver affinity
-    it needs to auto-promote the connection to Queued, so the slot
-    runs on the GUI thread even though the signal is emitted from the
-    decode thread. A bare lambda receiver, which the fix replaced,
-    would run this on the decode thread instead - the previous
-    Critical regression this test guards against."""
+    """Test-only subclass recording which thread _on_decode_done runs
+    on. worker.done must connect to a bound method (not a lambda) so
+    Qt auto-promotes the connection to Queued and the slot runs on the
+    GUI thread even though the signal is emitted from the decode
+    thread."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -356,12 +352,9 @@ def test_select_clip_clears_and_tags_metrics(fixture_kit, qtbot):
 
 def test_bad_vidaspect_shows_banner_instead_of_crashing(tmp_path, qtbot):
     # A .vid + fresh-looking sidecar + generation stamp is needed so
-    # clip_state actually reaches build_arg_vector (it short-circuits
-    # to "stale" without calling it when no .vid exists yet) - this is
-    # what makes _populate_clip_list, during MainWindow.__init__, the
-    # one that hits the ValueError, exactly as the finding describes:
-    # "clip_state -> build_arg_vector -> _shape_args raises ValueError
-    # for e.g. VIDASPECT=wide, killing MainWindow.__init__".
+    # clip_state reaches build_arg_vector (it short-circuits to "stale"
+    # without calling it when no .vid exists), which is what makes
+    # _populate_clip_list hit the ValueError during MainWindow.__init__.
     (tmp_path / "VIDEO").mkdir()
     (tmp_path / "lib").mkdir()
     (tmp_path / "VIDEO" / "1.mp4").write_bytes(b"x")
@@ -517,13 +510,11 @@ def test_encode_all_stale_cancel_after_current_stops_queue(fixture_kit, qtbot, m
     assert not clip2.vid.is_file()
 
 
-# -- 2026-08-01 UX defects 1-5 ----------------------------------------------
+# -- Preview pane mode/focus/segment behaviour ------------------------------
 
 def test_flicker_and_heatmap_disabled_without_source(qtbot):
-    # Defect 1: Flicker used to silently fall back to the encoded frame
-    # when self.source was None, making Encoded and Flicker look
-    # identical with no explanation. Both buttons must start disabled
-    # (a fresh pane has no source yet) and carry an explanatory tooltip.
+    # Flicker and Heatmap must start disabled with an explanatory
+    # tooltip until a source is available (never fall back silently).
     pane = PreviewPane()
     qtbot.addWidget(pane)
     assert pane._mode_buttons["Flicker"].isEnabled() is False
@@ -543,12 +534,8 @@ def test_flicker_and_heatmap_disabled_without_source(qtbot):
 
 
 def test_flicker_disabled_source_only_heatmap_needs_both(qtbot):
-    # Superseded 2026-08-01 (source-preview feature): Flicker used to be
-    # enabled on source-only frames (it only needs something to flick
-    # to), but an un-encoded clip's source-only preview now disables ALL
-    # THREE mode buttons (nothing has been encoded yet - Flicker has
-    # nothing to compare against, "Encoded" mode has nothing encoded to
-    # show). Heatmap still needs both sides regardless.
+    # Source-only frames (nothing encoded yet) must disable all three
+    # mode buttons, with the not-encoded tooltip on each.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=None, source=_frames(3), fps=25, column_major=False)
@@ -560,10 +547,8 @@ def test_flicker_disabled_source_only_heatmap_needs_both(qtbot):
 
 
 def test_all_pane_buttons_have_no_focus_policy(qtbot):
-    # Defect 2: the pane is StrongFocus and keyPressEvent handles Space,
-    # but a QPushButton keeps focus after being clicked and Qt routes
-    # Space to whichever widget has focus - so every clickable control
-    # in the mode/transport rows must give focus back to the pane.
+    # Every clickable control must have NoFocus so a click never steals
+    # keyboard focus from the pane's own Space handling.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     buttons = list(pane._mode_buttons.values()) + [
@@ -577,9 +562,8 @@ def test_all_pane_buttons_have_no_focus_policy(qtbot):
 
 
 def test_space_reaches_pane_flicker_toggle_after_button_click(qtbot):
-    # Verifies the actual behaviour the NoFocus fix protects: clicking a
-    # transport button must not steal keyboard focus from the pane, so
-    # Space still reaches keyPressEvent and toggles Flicker.
+    # Clicking a transport button must not steal keyboard focus from the
+    # pane, so Space still reaches keyPressEvent and toggles Flicker.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=_frames(5), source=_frames(5), fps=25, column_major=False)
@@ -594,7 +578,7 @@ def test_space_reaches_pane_flicker_toggle_after_button_click(qtbot):
 
 def test_click_image_still_toggles_flicker(qtbot):
     # The click-image-to-flicker path (_ClickableLabel) is independent of
-    # keyboard focus and must keep working after the NoFocus change.
+    # keyboard focus.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=_frames(5), source=_frames(5), fps=25, column_major=False)
@@ -605,7 +589,7 @@ def test_click_image_still_toggles_flicker(qtbot):
 
 
 def test_segment_readout_lifecycle(qtbot):
-    # Defect 3: a segment readout label must track set_in/set_out/clear.
+    # The segment readout label must track set_in/set_out/clear.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=_frames(50), source=None, fps=25, column_major=False)
@@ -633,9 +617,8 @@ def test_segment_readout_reset_by_set_frames(qtbot):
 
 
 def test_clear_button_pops_stored_segment(fixture_kit, qtbot):
-    # Defect 4 (parked residual A): a user-initiated Clear must forget a
-    # segment previously captured into MainWindow.segments by a Preview
-    # Segment run, or the cleared segment silently re-applies next time.
+    # A user-initiated Clear must forget the clip's stored segment in
+    # MainWindow.segments, or it silently re-applies next time.
     win = MainWindow(fixture_kit)
     qtbot.addWidget(win)
     win.select_clip("001")
@@ -662,10 +645,8 @@ def test_select_clip_programmatic_clear_does_not_pop_segment(fixture_kit, qtbot)
 
 
 def test_clear_to_empty_bumps_load_generation(qtbot, tmp_path):
-    # Defect 5 (parked residual B): clear_to_empty()/set_frames() must
-    # invalidate any in-flight decode by bumping _load_gen, or a stale
-    # decode for an abandoned clip can paint over the empty-pane hint of
-    # whatever clip is now selected.
+    # clear_to_empty()/set_frames() must bump _load_gen so a stale
+    # in-flight decode cannot paint over the empty-pane hint.
     from vidbuild import build_solid_vid   # helper, task 7
 
     vid = tmp_path / "t.vid"
@@ -801,12 +782,9 @@ def test_transport_controls_split_into_two_compact_rows(qtbot):
 
 
 def test_preview_pane_minimum_width_shrinks_after_two_row_split(qtbot):
-    # The single wide transport row used to be the dominant term in the
-    # pane's minimumSizeHint (~894px on this machine's style, per the
-    # earlier launch-geometry report) - splitting it into two compact
-    # rows should shrink that floor substantially, so MainWindow's
-    # geometry computation stops being driven by the transport row and
-    # falls back to the (smaller) 320-wide-at-2x image floor instead.
+    # The two-row transport layout must keep minimumSizeHint below the
+    # single-row floor, so MainWindow's geometry falls back to the
+    # smaller 320-wide-at-2x image floor instead.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     assert pane.minimumSizeHint().width() < 680   # below PREVIEW_WIDTH's own floor
@@ -926,9 +904,8 @@ def test_select_clip_source_preview_caps_long_duration_and_notes_it(fixture_kit,
 
 
 def test_load_source_generation_guard_ignores_stale_extract(qtbot):
-    # Same guard shape as test_load_generation_guard_ignores_stale_decode,
-    # for the new extraction worker: a clip switch mid-extract must not
-    # let the abandoned extraction's result land afterwards.
+    # Same guard as test_load_generation_guard_ignores_stale_decode, for
+    # the extraction worker.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=None, source=_frames(2), fps=25, column_major=False)

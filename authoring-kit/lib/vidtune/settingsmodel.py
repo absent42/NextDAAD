@@ -2,9 +2,7 @@
 
 The arg vector built here must be IDENTICAL to lib/video.ps1's - it is
 both the encode argv and the sidecar hash input. video.ps1 is the
-authority; tests/vidtune/test_settingsmodel.py carries its rule table.
-
-Maintenance contract: repo docs/vidtune-maintenance.md"""
+authority; tests/vidtune/test_settingsmodel.py carries its rule table."""
 import re
 from dataclasses import dataclass
 
@@ -39,12 +37,9 @@ class Knob:
 KNOBS = [
     Knob("shape",         "--shape",         "choice", "full",   "basic"),
     Knob("fps",           "--fps",           "float",  "25",     "basic"),
-    # --mono was REMOVED here 2026-08-02 alongside the encoder/player:
-    # videnc dropped it from argparse entirely and now hard-asserts
-    # stereo-only audio (videnc.py:370). No Knob row for it; an existing
-    # --mono in a user's VIDOPTS_NNN falls back to the extra passthrough
-    # (preserved verbatim on Accept) - same graceful path as the
-    # earlier --approx-cuts/--ocopy removal, no migration/strip added.
+    # --mono is not exposed here: videnc hard-asserts stereo-only audio
+    # (videnc.py:370). An existing --mono in a user's VIDOPTS_NNN falls
+    # back to the extra passthrough, preserved verbatim on Accept.
     Knob("dither",        "--dither",        "float",  "0.5",    "basic"),
     Knob("tile_slack",    "--tile-slack",    "float",  "0.0",    "basic"),
     # prefilter is basic, not advanced: the kit's own docs\video.html
@@ -225,13 +220,10 @@ def deviations(settings, cfg):
                     out.append(cur)
         elif cur is not None:
             out += [k.flag, str(cur)]
-    # Per-token filtering here used to orphan a changed value: a global
-    # "--foo A" + a per-clip "--foo B" left "--foo" filtered out (it's
-    # in base) but "B" kept (it isn't), emitting a bare "B" with no
-    # flag - silently corrupting the arg vector. Theoretical until
-    # --prefilter (an extra-passthrough option that carries a value)
-    # made it real. Diff whole (flag[, value]) units instead - a unit is
-    # emitted (in full) only when it has no exact match in base's units.
+    # Diff whole (flag[, value]) units, not individual tokens - a
+    # per-token diff can filter a flag while keeping its value, emitting
+    # a bare value with no flag. A unit is emitted only when it has no
+    # exact match in base's units.
     base_units = _extra_units(base.get("extra", []))
     for unit in _extra_units(settings.get("extra", [])):
         if unit not in base_units:

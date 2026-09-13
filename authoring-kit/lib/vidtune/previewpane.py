@@ -87,14 +87,8 @@ class _DecodeWorker(QObject):
 
 
 class _ExtractWorker(QObject):
-    """Runs an arbitrary zero-arg extraction callable off the GUI thread
-    - used by PreviewPane.load_source() for ffmpeg-based extraction of
-    an un-encoded clip's source preview frames. Same QueuedConnection/
-    generation-in-payload reasoning as _DecodeWorker (see its docstring
-    for why a bare lambda receiver would be wrong). The callable itself
-    is built by the caller (MainWindow._load_source_preview) from plain
-    values only - no Qt widget access - so it is safe to actually run
-    here, on the extraction thread."""
+    """Runs extract_fn() off the GUI thread - same receiver-affinity
+    reasoning as _DecodeWorker above."""
 
     done = Signal(object, int)     # frames, generation
     failed = Signal(str, int)      # message, generation
@@ -118,12 +112,8 @@ class PreviewPane(QWidget):
     in/out segment markers (frame indices, converted to seconds for
     the encoder's --start/--duration via segment_times())."""
 
-    # Emitted only from a user-initiated Clear button click - NOT from
-    # the plain clear() method itself, which MainWindow.select_clip also
-    # calls (programmatically) to reset the pane's live markers when
-    # switching clips. If that programmatic clear also emitted this
-    # signal, switching to a clip would pop its own just-loaded stored
-    # segment out from under it (see MainWindow._on_pane_cleared).
+    # Emitted only by the Clear button, never by clear() itself (called
+    # programmatically by MainWindow.select_clip) - see _on_pane_cleared.
     cleared = Signal()
 
     def __init__(self, parent=None):
@@ -137,10 +127,9 @@ class PreviewPane(QWidget):
         self.showing_source = False
         self.seg_in = None
         self.seg_out = None
-        self.scale = 2          # owner-requested default (2026-08-01);
-                                 # _scale_btn.setChecked(True) below keeps
-                                 # the toggle control and the initial
-                                 # render in sync with this
+        self.scale = 2          # default; _scale_btn.setChecked(True)
+                                 # below keeps the toggle control and the
+                                 # initial render in sync with this
         self._playing = False
         self._heatmap_cache = {}
         self._last_buffer = None
@@ -222,10 +211,8 @@ class PreviewPane(QWidget):
             btn.setFocusPolicy(Qt.NoFocus)
             # Maximum (not the QPushButton default Preferred-with-hstretch)
             # keeps these three buttons sized to their own caption + style
-            # padding instead of expanding to fill the row - owner
-            # feedback (2026-08-01): the mode row was eating far more
-            # width than three short captions need, starving the video
-            # preview itself.
+            # padding instead of expanding to fill the row and starving
+            # the video preview of width.
             btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
             btn.clicked.connect(lambda checked=False, n=name: self.set_mode(n))
             mode_group.addButton(btn)
@@ -296,14 +283,11 @@ class PreviewPane(QWidget):
                     self._scale_btn):
             btn.setFocusPolicy(Qt.NoFocus)
 
-        # Two compact rows instead of one wide one (owner feedback,
-        # 2026-08-01): the single transport row's minimum width - driven
-        # by ~11 buttons/labels laid out side by side - was the dominant
-        # term in the pane's overall minimumSizeHint, starving the
-        # settings/preview split. Splitting playback controls from
-        # marker/scale controls roughly halves that floor. Object names
-        # and behaviour are unchanged - only which layout each widget
-        # sits in.
+        # Two compact rows instead of one wide one: a single row of
+        # ~11 buttons/labels would dominate the pane's minimumSizeHint
+        # and starve the settings/preview split. Splitting playback
+        # controls from marker/scale controls roughly halves that floor;
+        # object names and behaviour are unchanged, only the layout.
         playback_row = QHBoxLayout()
         playback_row.setSpacing(theme.GAP_ROW)
         for w in (self._play_btn, self._stop_btn, self._step_back_btn,
@@ -405,19 +389,11 @@ class PreviewPane(QWidget):
         failed). Decode errors show in a red label; the tool stays
         up.
 
-        A fresh call bumps self._load_gen; the decode-done/failed
-        callbacks capture their own generation number at connect time
-        and drop the result if a newer load() has started in the
-        meantime (self._load_gen has moved on) - this is what makes a
-        second load() while the first is still decoding safe: the
-        stale worker's result is ignored rather than clobbering
-        set_frames with the wrong pairing of encoded/source frames.
-        The stale thread/worker are not killed (decode_vid isn't
-        interruptible mid-read) - they are left to finish naturally,
-        kept referenced in self._threads/self._workers so they are
-        never garbage-collected out from under a still-running QThread,
-        and cleaned up (deleteLater) once their own finished signal
-        fires."""
+        Each call bumps self._load_gen; a stale worker's result (from
+        an abandoned earlier load()) is dropped rather than clobbering
+        set_frames, since decode_vid cannot be interrupted mid-read.
+        Stale threads/workers stay referenced in self._threads/
+        self._workers until their own finished signal fires."""
         self._error_label.setVisible(False)
         self._error_label.setText("")
         self._pending_source = source_frames
@@ -554,8 +530,7 @@ class PreviewPane(QWidget):
         """Shows an error message without touching the current frames -
         used when e.g. source extraction for the Flicker/Heatmap
         comparison fails but the encoded preview itself already loaded
-        fine (an HH:MM:SS --start used to fail this silently with no
-        message at all)."""
+        fine."""
         self._error_label.setText(message)
         self._error_label.setVisible(True)
 

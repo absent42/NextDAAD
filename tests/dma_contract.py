@@ -5,21 +5,8 @@ WHY THIS EXISTS. dma_copy (src/overlay2.asm) is the block mover behind
 every 256-wide picture row (gfx_row_copy256) and behind GFX 0/1
 (l2_copy_back_front). Nothing host-side renders a picture, so the only
 way this routine was ever exercised was on silicon, by eye - and it has
-now been broken THREE times in a way no build check could see:
-
-  1. the original hard-wired `ld a, high DMA_CHUNK_MAX`, which is 0 for
-     any cap below 256 (a zero-length block, a dead transfer);
-  2. 4cda75e's byte-wise rewrite, which pinned alen's high byte to a
-     constant 0 and so BARRED a cap of exactly 256;
-  3. 4cda75e again, and this is the one that crashed the machine: the
-     per-call descriptor prefix was inserted at the top of dma_copy
-     using HL and BC for its own OUTINB stream, WITHOUT SAVING THE
-     CALLER'S. .loop then read HL = dma_prog and BC = DMA_PORT ($006B)
-     as its source and length, so every call moved 107 bytes of the
-     overlay's own code and returned DE only 107 bytes on.
-     gfx_row_copy256 advances its destination by that returned DE, so
-     the 256-wide blit walked out of the slot 6 window and wrote over
-     $E000 - overlay2's own live code - on row 76 of every draw.
+broken invisibly to build checks before, so it is now executed and
+asserted host-side instead of trusted by inspection.
 
 So this check does not read the source. It EXECUTES THE EMITTED BYTES
 out of build\\nextdaad.nex, with the DMA port trapped, and asserts the
@@ -133,7 +120,8 @@ class CPU:
     def use_flags(self):
         if self.flags_undef:
             raise Fail("a flag is read after OUTINB, whose flags the Z80N "
-                       "leaves UNDEFINED (docs/Z80/10-next-extended-opcodes.md)")
+                       "leaves UNDEFINED (chip-documented, not something "
+                       "this repo can cite from a clean checkout)")
 
     def step(self):
         op = self.m[self.pc]

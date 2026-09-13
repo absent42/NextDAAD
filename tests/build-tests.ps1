@@ -1,165 +1,121 @@
 ﻿# ===================================================================
-# LEG FOLDERS - nothing is staged into the sd\ ROOT any more
+# LEG FOLDERS
 # ===================================================================
-# 2026-08-03 (owner: "putting everything in the same sd folder is too
-# messy, it needs subfolders"). Every staging switch used to write into
-# the sd\ root, so each leg's files landed on top of the last one's and
-# each switch's stale-clean only removed the file types IT owned. Three
-# vacuous passes came out of that in one evening:
-#   - a stale 001.NX2 from a video stage HIJACKED PICTURE 1 away from a
-#     freshly staged 001.NXI (the picture loader probes .NX2 first), so
-#     a Layer 2 DMA test silently drew corpus art down the CPU scatter
-#     path instead;
-#   - a leftover boot title starved the graphics cache and turned burst
-#     picture draws into no-ops;
-#   - a leftover .AKY set the audio-enabled flag and destroyed a
-#     fixture's silent control leg.
-# EVERY run now stages into exactly ONE self-contained subfolder of sd\,
-# chosen by the switches given. A NextDAAD game opens GAME.DDB and all
-# its assets by RELATIVE name (src\file.asm ddb_load, src\errors.asm
-# ddbName), so the cwd it was launched from IS its asset directory: copy
-# the one folder to the card, launch the .nex inside it, and no other
-# leg's leftovers are reachable even in principle.
+# Every staging switch writes into exactly ONE self-contained subfolder
+# of sd\ (never the sd\ root), chosen by the switches given: the folder
+# is emptied once at the start of a run then filled, so one leg's files
+# can never land on another leg's leftovers. A NextDAAD game opens
+# GAME.DDB and all its assets by RELATIVE name, so the leg folder IS its
+# asset directory - copy that one folder to the card and launch the
+# .nex inside it.
 #
 #   switch(es)          folder        active GAME.DDB
 #   ------------------  ------------  --------------------------------
 #   (none) / -Aud       sd\TEMPLATE\  tests\test.dsf (the template)
-#   -Vid / -VidLong     sd\VID\       template (the VID*/PICK verbs)
-#   -NxBench            sd\NXBENCH\   template (the NXB* verbs)
-#   -Suite              sd\SUITE\     tests\condacts.dsf
-#   -Err4               sd\ERR4\      tests\doallnest.dsf
-#   -GMode              sd\GMODE\     tests\gmodegate.dsf
-#   -V3                 sd\V3\        tests\v3probe.dsf
-#   -Rab                sd\RAB\       Rabenstein
-#   -UU                 sd\UU\        Urban Upstart
-#   -Part               sd\PART\      NDPARTA + PART2\ shadow
-#   -AudLad             sd\AUDLAD\    tests\audlad.dsf
-#   -SfxDi              sd\SFXDI\     tests\sfxdi.dsf
-#   -SfxLong            sd\SFXLONG\   tests\sfxlong.dsf
-#   -Sfx2               sd\SFX2\      tests\sfx2.dsf
-#   -L2Holes            sd\L2HOLES\   tests\l2holes.dsf
-#   -TmOver             sd\TMOVER\    tests\tmover.dsf
-#   -TileSlack          sd\TILESLK\   tests\tileslack.dsf
-#   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
-#   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
-#   -FontSw             sd\FONTSW\    tests\fontsw.dsf
-#   -Txt40              sd\TXT40\     tests\txt40.dsf
-#   -Accent             sd\ACCENT\    tests\accents.dsf  (-Accent boots the -auto-tokens compile)
-#   -Palette            sd\PALETTE\   tests\palette.dsf
-#   -Sprites            sd\SPRITES\   tests\sprites.dsf
-#   -SprAud             sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
-#   -Cycle              sd\CYCLE\     tests\cycle.dsf    (GFX 9-12; palette card as 001.NX2)
-#   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
-#   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
-#   -Xbn                sd\XBN\       tests\extern.dsf
-#   -Intro              sd\INTRO\     tests\condacts.dsf + a scripted show (SHOW.NEX launches it)
+#   -Vid / -VidLong      sd\VID\       template (the VID*/PICK verbs)
+#   -NxBench             sd\NXBENCH\   template (the NXB* verbs)
+#   -Suite               sd\SUITE\     tests\condacts.dsf
+#   -Err4                sd\ERR4\      tests\doallnest.dsf
+#   -GMode               sd\GMODE\     tests\gmodegate.dsf
+#   -V3                  sd\V3\        tests\v3probe.dsf
+#   -Rab                 sd\RAB\       Rabenstein
+#   -UU                  sd\UU\        Urban Upstart
+#   -Part                sd\PART\      NDPARTA + PART2\ shadow
+#   -AudLad              sd\AUDLAD\    tests\audlad.dsf
+#   -SfxDi               sd\SFXDI\     tests\sfxdi.dsf
+#   -SfxLong             sd\SFXLONG\   tests\sfxlong.dsf
+#   -Sfx2                sd\SFX2\      tests\sfx2.dsf
+#   -L2Holes             sd\L2HOLES\   tests\l2holes.dsf
+#   -TmOver              sd\TMOVER\    tests\tmover.dsf
+#   -TileSlack           sd\TILESLK\   tests\tileslack.dsf
+#   -Uto                 sd\UTO\       tools\TEST.DSF     (V2)
+#   -UtoV3               sd\UTOV3\     tools\TEST.DSF     (V3)
+#   -FontSw              sd\FONTSW\    tests\fontsw.dsf
+#   -Txt40               sd\TXT40\     tests\txt40.dsf
+#   -Accent              sd\ACCENT\    tests\accents.dsf  (-Accent boots the -auto-tokens compile)
+#   -Palette             sd\PALETTE\   tests\palette.dsf
+#   -Sprites             sd\SPRITES\   tests\sprites.dsf
+#   -SprAud              sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
+#   -Cycle               sd\CYCLE\     tests\cycle.dsf    (GFX 9-12; palette card as 001.NX2)
+#   -BigDdb              sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
+#   -BigDdbTok           sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
+#   -Xbn                 sd\XBN\       tests\extern.dsf
+#   -Intro               sd\INTRO\     tests\condacts.dsf + a scripted show (SHOW.NEX launches it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
-# ONE FOLDER PER INVOCATION. If more than one leg switch is given the
-# LAST one in the table above wins - the same last-copy-wins order the
-# DDB switches always had, so the folder and the active DDB can never
-# disagree. Modifier switches (-Aud, -Title, -Font, -Gfx256, -GfxZx0)
-# have no folder of their own; they stage into whichever leg folder the
-# run resolved to, exactly as they used to stage alongside whatever was
-# in the root.
+# If more than one leg switch is given the LAST one in the table above
+# wins (matches the DDB copy order below), so the folder and the active
+# DDB can never disagree. Modifier switches (-Aud, -Title, -Font,
+# -Gfx256, -GfxZx0) have no folder of their own; they stage into
+# whichever leg folder the run resolved to.
+# -Vid and -VidLong share sd\VID\ - GIVE THEM TOGETHER
+# (`-Vid -VidLong`) for the full 001-011+099 card; encodes are cached in
+# tests\out\ so the second switch costs file copies, not encodes.
+# build\nextdaad.nex is copied into the leg folder as NEXTDAAD.NEX
+# (skipped with a warning if not yet built) so the folder is genuinely
+# self-contained; the run prints both folder and .nex at the end.
+# The sd\ ROOT is not read or cleaned by this script - files left there
+# by earlier runs are inert; clear them by hand.
 #
-# STALE-CLEAN IS PER FOLDER. The resolved folder is emptied ONCE at the
-# start of staging and then filled, so a re-stage is always a known
-# state and no per-file-type cleaning is needed (or kept - the old
-# sd\*.AKY / sd\*.WAV / six-art-extension sweeps are gone; they existed
-# only because the root was shared). Consequence worth knowing:
-# -Vid and -VidLong share sd\VID\, so GIVE THEM TOGETHER
-# (`-Vid -VidLong`) when you want 001-011+099 on the card. That is what
-# the leg cards already ask for and the encodes are cached in
-# tests\out\, so the second switch costs file copies, not encodes.
-#
-# THE .nex IS STAGED TOO. build\nextdaad.nex is copied into the leg
-# folder as NEXTDAAD.NEX (skipped with a warning if you have not built
-# yet), so the folder is genuinely self-contained: one folder to copy,
-# one file to launch. The run prints both at the end.
-#
-# The sd\ ROOT is no longer read by anything this script stages. Files
-# left there by earlier runs are inert - they are not deleted here
-# (they are not this script's to delete any more), so clear them by
-# hand once you are happy.
+# CSPECT-LOCK HAZARD (stated once here - staging blocks below mark it
+# "CSpect-lock: see header."): every switch that copies files into a
+# leg folder throws "CSpect is running - close it before staging"
+# rather than warn, because a locked sd\ file under CSpect produces a
+# silently partial fixture instead of a clean failure.
 # ===================================================================
 #
 # Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
 # tests\doallnest.dsf (DOALL depth/error demo), tests\gmodegate.dsf
-# (SP16 GMODE graphics-gate fixture) and tests\debugflag.dsf (ndrc's
-# -D debug marker - the one fixture compiled twice, with and without
-# ndrc's -d, and asserted in bytes rather than staged) with ndrc,
-# generates corrupt/oversize variants from the template, prints
-# a header report. -Suite makes the suite DDB the active GAME.DDB;
-# -Err4 makes the doallnest DDB active instead (deliberate error 4:
-# nested DOALL on the same process); -GMode makes the gmodegate DDB
-# active and stages the single Layer 2 picture it needs (see its own
-# block below); -V3 makes the v3probe DDB active - v3probe is the
-# fixture whose value is the V3 condacts it exercises, most fixtures
-# compile -v3 now - together with the 0.XMB its XMES probe reads
-# (see its own block below);
+# (GMODE graphics-gate fixture) and tests\debugflag.dsf (ndrc's -D
+# debug marker, compiled twice with/without -d and asserted in bytes)
+# with ndrc, and generates corrupt/oversize variants from the template.
+# -Suite makes the suite DDB active GAME.DDB; -Err4 makes doallnest
+# active (deliberate error 4: nested DOALL on the same process); -GMode
+# makes gmodegate active and stages the single Layer 2 picture it needs
+# (see its own block below); -V3 makes v3probe active (V3 condacts;
+# most fixtures compile -v3 now) together with the 0.XMB its XMES probe
+# reads (see its own block below).
 # -Rab compiles the modernised next-only
-# tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
-# commercial-quality DAAD game), makes that DDB active, and stages the
-# Layer 2 art (default N.NX2 -> NNN.NX2); -UU compiles the owner-
-# authored tools\urban-upstart\URBAN-UPSTART.DSF (untracked vendor dir -
-# never edit it here), makes that DDB active, and stages whatever
-# N.NXI/N.NX2 art exists there as-is to NNN.NXI. In practice that is
-# NOTHING: the vendor dir holds 10 PNGs and no converted art at all, so
-# -UU stages 0 files and the leg runs TEXT-ONLY. (This went unnoticed
-# because the leg could never run - see the DSF filename note below.)
-# This script has no image-conversion step by design - Rabenstein's art
-# ships pre-converted - so giving -UU pictures means running gfx2next
-# on the PNGs to somewhere OUTSIDE the read-only vendor dir and
-# pointing $uuSrc's art scan at it. Owner's call, not done.
+# tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real commercial-
+# quality DAAD game), makes that DDB active, and stages the Layer 2 art
+# (default N.NX2 -> NNN.NX2); -UU compiles the owner-authored
+# tools\urban-upstart\URBAN-UPSTART.DSF (untracked vendor dir - never
+# edit it here), makes that DDB active, and stages whatever N.NXI/N.NX2
+# art exists there as-is to NNN.NXI. In practice that is NOTHING: the
+# vendor dir holds 10 PNGs and no converted art, so -UU stages 0 files
+# and the leg runs TEXT-ONLY. This script has no image-conversion step
+# by design - Rabenstein's art ships pre-converted - so giving -UU
+# pictures means running gfx2next on the PNGs somewhere outside the
+# read-only vendor dir and pointing $uuSrc's art scan at it (owner's
+# call, not done).
 # All destinations are inside the run's leg folder - see the LEG
 # FOLDERS block at the top.
 # The DDB switches are mutually exclusive - if more than one is given,
-# whichever copy runs last in this script wins: -Suite copies first,
-# -Err4 copies over it, -GMode copies over that, -V3 over that,
-# -Xbn copies over that, -Rab copies over that,
-# -UU copies over that, then -Part, then -AudLad, then -SfxDi, then
-# -SfxLong, then -Sfx2, then
-# -L2Holes, then -TileSlack last of
-# all, in the order their blocks appear below. $legName is resolved in a
-# DIFFERENT order (see below), and for -Xbn that order does NOT match
-# this physical one: $legName puts XBN last of every switch, but -Xbn's
-# staging block physically sits right after -V3's, BEFORE -Rab/-UU/
-# -Part/-AudLad/-SfxDi/-SfxLong/-Sfx2/-L2Holes/-TileSlack. Combine -Xbn
-# with any of those and $legName will say XBN while that other switch's
-# GAME.DDB copy is the one that actually wins. Every leg switch here is
-# documented as an alternative to the others, not a companion - this
-# risk is latent, not exercised by any switch combination this script
-# recommends.
-# The template is active if no switch is given.
-# Two-part fixture (SP11 Task 6), independent of the single-DDB switches
-# above except that it also writes GAME.DDB (see the mutually-
-# exclusive note above):
-#   -Part    compile and stage both halves of the NDPARTA.DSF/
-#            NDPARTB.DSF fixture pair, into sd\PART\. NDPARTA ->
-#            GAME.DDB (part 1, byte-identical to a single-part game)
-#            + 0.XMB; NDPARTB -> GAME2.DDB (part 2) + PART2\0.XMB
-#            (directory created if absent). The two 0.XMB files hold DIFFERENT
-#            content at overlapping offsets by design - NDPARTB.DSF's
-#            own XMES line only reads back clean if the interpreter's
-#            PARTn\ probe (SP11 Task 5) actually wins over the root
-#            file; a wrong probe reads part A's bytes at part B's
-#            offsets instead (garbled/wrong text, not a crash). Same
-#            CSpect-running guard as -Rab/-UU; sd\PART\ is emptied
-#            before restaging like every leg folder. The fixture pair's
-#            own PRO 0 logic (owner leg only - run ./build.ps1 -Run
-#            after staging, see each DSF's own header comment for the
-#            full transcript) exercises all four part-switch primitives
-#            in one pass: EXTERN forward (part 1 -> 2), EXTERN back
-#            (2 -> 1), then a cross-part LOAD auto-switch forward
-#            (1 -> 2, h_load's own part-mismatch -> xpart_load_entry ->
-#            switch_to_part wiring) and a cross-part RAMLOAD auto-switch
-#            back (2 -> 1, the same wiring via h_ramload) - both
-#            directions of both switch mechanisms. One typed SAVE and
-#            two typed LOADs share a single on-disk file, so the owner
-#            answers all three filename prompts with the same name
-#            (the fixture suggests "pt").
+# whichever copy runs LAST wins, in the physical block order below:
+# -Suite, -Err4, -GMode, -V3, -Xbn, -Rab, -UU, -Part, -AudLad, -SfxDi,
+# -SfxLong, -Sfx2, -L2Holes, -TileSlack. $legName is resolved in a
+# DIFFERENT order that puts -Xbn last of every switch even though its
+# staging block runs right after -V3's: combine -Xbn with any switch
+# after it in the list above and $legName can name XBN while the other
+# switch's DDB copy actually wins (latent, not exercised by any
+# recommended combination). The template is active if no switch given.
+# Two-part fixture, independent of the single-DDB switches above except
+# that it also writes GAME.DDB (same last-copy-wins rule):
+#   -Part    compile and stage both halves of NDPARTA.DSF/NDPARTB.DSF
+#            into sd\PART\. NDPARTA -> GAME.DDB (part 1) + 0.XMB;
+#            NDPARTB -> GAME2.DDB (part 2) + PART2\0.XMB. The two 0.XMB
+#            files hold DIFFERENT content at overlapping offsets by
+#            design - NDPARTB's own XMES line only reads back clean if
+#            the interpreter's PARTn\ probe wins over the root file; a
+#            wrong probe reads part A's bytes at part B's offsets
+#            (garbled text, not a crash). Exercises both directions of
+#            both part-switch primitives (EXTERN forward/back, LOAD/
+#            RAMLOAD cross-part auto-switch) in one PRO 0 pass (owner
+#            leg only - run ./build.ps1 -Run after staging; see each
+#            DSF's own header for the transcript). One typed SAVE and
+#            two typed LOADs share a filename - answer all three prompts
+#            the same (e.g. "pt"). CSpect-lock: see header.
 # Art-staging modifiers (effective only with -Rab, combinable):
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
 #   -GfxZx0  ZX0-compress each staged file (NNN.NX2.ZX0 / with
@@ -174,178 +130,102 @@
 #            produced by the export script / aysconv.ps1) into the leg
 #            folder (sd\TEMPLATE\ on its own); warns and skips if the
 #            source folder is empty
-#   -AudLad  SP16 Task 7: make the tests\audlad.dsf DDB active AND stage
-#            the AY characterization ladder into sd\AUDLAD\ -
-#            L1/L3/L6/L9/L9Q.AKY from
-#            tests\audio\ -> 001..005.AKY, the kit's own 9-channel
-#            tune (converted here from the tracked
-#            authoring-kit\AUDIO\1.aks) -> 006.AKY, and GAME.AKY
-#            as a byte-identical copy of 006.AKY - the STOPM control:
-#            boot autoplay and the LADR verb then replay the SAME
-#            bytes, on the real material. sd\AUDLAD\ holds nothing
-#            else, so it and -Aud are alternatives, not companions -
-#            run one or the other.
-#   -SfxDi   sampled-SFX DI-exposure EAR fixture, staged into sd\SFXDI\:
-#            make the
-#            tests\sfxdi.dsf DDB active AND stage the two steady-tone
-#            stimuli tests\audio\mktone.py generates (440 Hz, 48000
-#            bytes = the reserved 48K audio floor) as 001.WAV
-#            (16000 Hz, the only rate this project ships) and
-#            002.WAV (20000 Hz = AUD_RATE_MAX, README's published
-#            ceiling). ALSO stages the Layer 2 corruption-detector card
-#            tests\art\mkl2card.py generates as 001.NXI (256x128,
-#            256-WIDE so DISPLAY 0 reaches gfx_row_copy256 -> dma_copy).
-#            A leftover 001.NX2 winning the probe chain and routing the
-#            blit down the CPU scatter path is now impossible by
-#            construction: sd\SFXDI\ is emptied first and holds nothing
-#            but this fixture's own four files (plus the .nex).
-#            Stages NO .AKY at all - a playing song would put the
-#            AKY player's own ~5500 T per-frame DI hold under both
-#            phases of the readout. The fixture stops and waits for a
-#            KEYPRESS at every phase boundary (rev 2a) so a symptom can
-#            be attributed to the phase that produced it - the owner
-#            drives it a phase at a time, and each burst still runs
-#            uninterrupted inside its phase. Run sheet (mode caveat,
-#            predicted frequencies, boundary-by-boundary checklist, pass
-#            criteria): .superpowers\sdd\sfx-di-audible-test.md. An
-#            alternative to -Aud/-AudLad, not a companion.
-#   -SfxLong SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7),
-#            staged into sd\SFXLONG\: make the tests\sfxlong.dsf DDB
-#            active AND stage three generated WAVs (16000 Hz mono 8-bit,
-#            same deterministic whole-cycle sine construction as
-#            tests\audio\mktone.py, generated inline here rather than by
-#            a script) as 001.WAV (effect 1, ~200000 bytes of payload -
-#            over SFX_WIN_BYTES/24576, forces the STREAMING arm of
-#            sfx_stream_open), 002.WAV (effect 2, ~16000 bytes of
-#            payload - under the threshold, takes the COMPLETE/free-
-#            hybrid arm) and 003.WAV (effect 3, ~100000 bytes of payload -
-#            a SECOND, distinct STREAMING number, added Task 14b so a
-#            fresh full open can be contrasted against a cached rewind of
-#            effect 1). Verbs PLAY1/LOOP1 (effect 1), PLAY2/LOOP2 (effect
-#            2) and PLAY3/LOOP3 (effect 3) map to SFX 1/2/3 1/2, STOP maps
-#            to SFX 0 5; boot autoplay starts LOOP1 with no typing needed.
-#            Also stages 001.NXI (Task 14b: tests\art\mkl2card.py's
-#            generated Layer 2 card, the same file -SfxDi stages, for the
-#            PIC verb's PICTURE 1 / DISPLAY 0) and, opportunistically,
-#            001.VID (Task 14b: the smallest cached -Vid leg encode
-#            already sitting in tests\out\, for the VID verb's SFX 1 9 -
-#            no video encoder is run by this switch; if no cache exists
-#            yet, 001.VID is left unstaged and staging warns rather than
-#            fails). SAVE/LOAD are the standard DAAD condacts (SAVE 0 /
-#            LOAD 0). The compiled condact bytes (SFX opcode 18, PICTURE
-#            84, DISPLAY 28, SAVE 25, LOAD 26) are asserted below on every
-#            run, whether or not this switch is given - the fixture-
-#            stimulus rule, DRC can silently rewrite condacts. This leg
-#            proves the STREAMING arm is reachable and byte-correct;
-#            CSpect cannot exercise the refiller's raw SD SPI at all, so
-#            the refiller's own counters (refilled blocks, underruns,
-#            fails) can only be read on ZEsarUX or real hardware - the
-#            manual wire-smoke procedure is documented in
-#            tests\sfxlong.dsf's own header, not automated here.
-#   -Sfx2    TWO-CHANNEL sampled-effect API fixture (SP18 item 7 Task
-#            12), staged into sd\SFX2\: make the tests\sfx2.dsf DDB
-#            active AND stage three generated WAVs (16000 Hz mono
-#            8-bit, the same deterministic whole-cycle sine writer the
-#            -SfxLong leg uses) as 001.WAV (effect 1, 16000 bytes of
-#            payload, 440 Hz - under SFX_WIN_BYTES so it plays COMPLETE),
-#            002.WAV (effect 2, 12000 bytes, 880 Hz - also COMPLETE) and
-#            003.WAV (effect 3, 40000 bytes, 220 Hz - over the threshold,
-#            the STREAMING arm). Verbs cover auto-allocation (SFX n 1/2),
-#            the pinned channels (SFX n 11/12/13/14), the per-channel
-#            stops (SFX 0 15/16), the stop-all superset (SFX 0 5), the
-#            STEAL case (a loop and a one-shot on auto, then a third
-#            effect - the one-shot must lose) and the pin-reject case
-#            (both channels pinned, third trigger dropped). Boot
-#            autoplay starts BOTH effects looping, so the headline
-#            claim needs no typing. The compiled SFX condact bytes are
-#            asserted below (opcode 18) on every run whether or not this
-#            switch is given, INCLUDING the six new sub-commands 11-16 -
-#            the fixture-stimulus rule, DRC can silently rewrite
-#            condacts.
-#            CSPECT: effects 1 and 2 are both COMPLETE, so BOTH CHANNELS
-#            PLAY CONCURRENTLY there and every steal/pin/stop verb is
-#            observable by ear plus the DEBUG markers ("SFX BUSY?" at
-#            row 30 column 50 for a dropped trigger). Effect 3 streams
-#            and so dies cleanly on CSpect's SD emulation after
-#            SFX_FAIL_LIMIT ticks, which is expected and does not affect
-#            what the steal verb proves. An alternative to -Aud/-AudLad/
-#            -SfxDi/-SfxLong, not a companion.
-#   -L2Holes Layer 2 TRANSPARENCY / punch-out fixture, staged into
-#            sd\L2HOLES\: make the tests\l2holes.dsf DDB active AND
-#            stage the punch-out card tests\art\mkl2holes.py generates
-#            as 001.NXI (256x192). The inverse of -SfxDi's card - that
-#            one must contain NO transparent pixel, this one is made of
-#            them. The DSF fills all 80x32 tilemap cells with a position
-#            ruler ("12-16DG." = row 12, column 16, tag DG), the card
-#            covers it with opaque Layer 2 and punches index-255 holes
-#            at known places, so what you read THROUGH a hole names the
-#            hole without counting cells on the glass. .NXI and not
-#            .NX2 deliberately: gfxExtTab routes NXI to mode 0 / width
-#            256 and NX2 to mode 1 / width 320, the NX2 variants probe
-#            FIRST, and a 320-wide surface would cover the control
-#            margin the fixture reads its verdict from. Run sheet (hole
-#            table, what a failure of each hole means):
-#            docs\superpowers\l2-holes-run-sheet.md. An alternative to
-#            every other DDB switch, not a companion.
-#   -TmOver  TRANSPARENT TILEMAP PAPER / LAYER ORDER fixture, staged
-#            into sd\TMOVER\: make the tests\tmover.dsf DDB active AND
-#            stage the full-frame card tests\art\mktmover.py generates
-#            as 001.NXI (256x192). The inverse premise of -L2Holes:
-#            that card is made of transparent pixels, this one has NONE
-#            (asserted here from the staging side), because the feature
-#            under test puts the TEXT LAYER on top instead of cutting a
-#            hole in the artwork. The DSF prints four 2x32 bands over
-#            the card - PAPER 227 (transparent), an ordinary opaque
-#            paper, INK 227 (transparent glyphs) and PAPER 11 (which
-#            must be bright magenta and NOT a hole) - and runs a timed
-#            six-state choreography by itself: picture on top, text on
-#            top, a redraw while flipped, a RESTART while flipped, then
-#            a RAMLOAD while flipped, each held long enough for a timed
-#            screen capture to land in it. Verbs FLIP / FLOP / DRAW /
-#            STORE / RECAL / RESET / LHIDE / LSHOW drive the same states
-#            by hand. .NXI and not .NX2 deliberately,
-#            same reason as -L2Holes: NX2 probes first and a 320-wide
-#            surface would cover the margin rows the status line and
-#            the prompt live in. The fixture's own header block names
-#            every band and says what a failure of each one means. An
-#            alternative to every other DDB switch, not a companion.
+#   -AudLad  make the tests\audlad.dsf DDB active AND stage the AY
+#            characterization ladder into sd\AUDLAD\ - L1/L3/L6/L9/L9Q.AKY
+#            from tests\audio\ -> 001..005.AKY, the kit's own 9-channel
+#            tune (converted here from the tracked authoring-kit\AUDIO\
+#            1.aks) -> 006.AKY, and GAME.AKY as a byte-identical copy of
+#            006.AKY - the STOPM control: boot autoplay and the LADR
+#            verb then replay the SAME bytes, on the real material.
+#            sd\AUDLAD\ holds nothing else, so it and -Aud are
+#            alternatives, not companions - run one or the other.
+#   -SfxDi   sampled-SFX DI-exposure EAR fixture, sd\SFXDI\: make
+#            tests\sfxdi.dsf active AND stage two steady-tone WAVs
+#            (tests\audio\mktone.py, 440 Hz) as 001.WAV (16000 Hz, the
+#            only rate this project ships) and 002.WAV (20000 Hz =
+#            AUD_RATE_MAX), plus the Layer 2 corruption-detector card
+#            (tests\art\mkl2card.py) as 001.NXI (256x128, 256-wide so
+#            DISPLAY 0 reaches gfx_row_copy256/dma_copy rather than the
+#            CPU scatter path). No .AKY staged - a playing song would put
+#            the AKY player's own per-frame DI hold under the readout.
+#            Stops and waits for a keypress at each phase boundary so a
+#            symptom can be attributed to its phase. Alternative to
+#            -Aud/-AudLad, not a companion.
+#   -SfxLong SD-streamed sampled-effect wire fixture, sd\SFXLONG\: make
+#            tests\sfxlong.dsf active AND stage three generated 16000 Hz
+#            mono 8-bit WAVs as 001.WAV (~200000 B, over SFX_WIN_BYTES -
+#            forces the STREAMING arm of sfx_stream_open), 002.WAV
+#            (~16000 B, under threshold - COMPLETE/free-hybrid arm) and
+#            003.WAV (~100000 B, a second streaming number, contrasted
+#            against a cached rewind of effect 1). PLAY1/LOOP1,
+#            PLAY2/LOOP2, PLAY3/LOOP3 map to SFX 1/2/3 1/2, STOP to SFX
+#            0 5; boot autoplay starts LOOP1. Also stages 001.NXI (the
+#            same card -SfxDi stages) and, if cached, 001.VID (the
+#            smallest -Vid leg encode). SAVE 0 / LOAD 0 are the standard
+#            condacts. Compiled condact bytes (SFX 18, PICTURE 84,
+#            DISPLAY 28, SAVE 25, LOAD 26) are asserted below every run
+#            - DRC can silently rewrite condacts. Proves the STREAMING
+#            arm is reachable and byte-correct; the refiller's raw SD
+#            SPI cannot be exercised on CSpect, so its own counters
+#            (refilled blocks, underruns, fails) are read only on
+#            ZEsarUX/hardware - manual wire procedure is in
+#            tests\sfxlong.dsf's own header.
+#   -Sfx2    two-channel sampled-effect API fixture, sd\SFX2\: make
+#            tests\sfx2.dsf active AND stage three generated 16000 Hz
+#            mono 8-bit WAVs (same sine writer as -SfxLong) as 001.WAV
+#            (16000 B, 440 Hz, COMPLETE), 002.WAV (12000 B, 880 Hz,
+#            COMPLETE) and 003.WAV (40000 B, 220 Hz, over threshold -
+#            STREAMING). Verbs cover auto-allocation (SFX n 1/2), pinned
+#            channels (SFX n 11/12/13/14), per-channel stops (SFX 0
+#            15/16), stop-all (SFX 0 5), the STEAL case (loop + one-shot
+#            on auto, then a third effect - the one-shot must lose) and
+#            the pin-reject case (both channels pinned, third trigger
+#            dropped). Boot autoplay starts both effects looping.
+#            Compiled SFX bytes (opcode 18, incl. sub-commands 11-16)
+#            asserted below every run - DRC can rewrite condacts.
+#            CSpect: effects 1/2 are both COMPLETE so both channels play
+#            concurrently and every steal/pin/stop verb is audible plus
+#            DEBUG markers ("SFX BUSY?" row 30 col 50 for a dropped
+#            trigger); effect 3 streams and dies cleanly on CSpect's SD
+#            emulation after SFX_FAIL_LIMIT ticks (expected, does not
+#            affect the steal verb's proof). Alternative to
+#            -Aud/-AudLad/-SfxDi/-SfxLong.
+#   -L2Holes Layer 2 transparency/punch-out fixture, sd\L2HOLES\: make
+#            tests\l2holes.dsf active AND stage the punch-out card
+#            (tests\art\mkl2holes.py) as 001.NXI (256x192, opaque with
+#            index-255 holes punched at known places over an 80x32
+#            tilemap position ruler, so what you read THROUGH a hole
+#            names the hole). .NXI not .NX2 deliberately: NX2 probes
+#            first and its 320-wide surface would cover the control
+#            margin. Alternative to every other DDB switch.
+#   -TmOver  transparent-tilemap-paper/layer-order fixture, sd\TMOVER\:
+#            make tests\tmover.dsf active AND stage the full-frame card
+#            (tests\art\mktmover.py) as 001.NXI (256x192, NO transparent
+#            pixels - the inverse of -L2Holes - because this feature
+#            puts the text layer on top instead of cutting a hole). The
+#            DSF prints four 2x32 bands (PAPER 227 transparent, ordinary
+#            opaque, INK 227 transparent glyphs, PAPER 11 must be bright
+#            magenta not a hole) and runs a timed six-state choreography
+#            (picture/text on top, redraw, RESTART, RAMLOAD while
+#            flipped). Verbs FLIP/FLOP/DRAW/STORE/RECAL/RESET/LHIDE/
+#            LSHOW drive the same states by hand. .NXI not .NX2, same
+#            reason as -L2Holes. Alternative to every other DDB switch.
 #   -TileSlack
-#            --tile-slack A/B fixture, staged into sd\TILESLK\: make the
-#            tests\tileslack.dsf DDB active AND stage FOUR encodes of the
-#            authoring kit's own two DEMO clips as two A/B PAIRS -
-#            001/002.VID = the BUNNY clip (authoring-kit\VIDEO\001.mp4) at
-#            --tile-slack 0.0 and 0.5, 003/004.VID = the JELLYFISH clip
-#            (002.mp4) at the same two values. Both pairs are full
-#            320x256 @25 mode-1, whole clip, and within a pair NOTHING
-#            differs but the knob: the stream budget is DERIVED on arm A
-#            and PINNED on arm B, so the finer tile rung cannot move its
-#            own supply ceiling and flatter itself.
-#            NOT A REPRODUCTION OF THE MANUAL'S --tile-slack BENCHMARK
-#            TABLE. That table was measured on two clips ("boat pan",
-#            "church zoom") which are NOT in this repository - they are
-#            large silent sources that live outside it. This leg asks
-#            whether the knob helps on the footage that ships in the box,
-#            and nothing here is compared against that table.
-#            THE ENCODES COME FROM tests\video\tileslack_ab.py, not from
-#            a videnc call here. That script owns the experiment - it
-#            derives the pin, runs the four encodes, caches them under
-#            tests\out\tileslack\ and prints what it measured.
-#            Staging runs it (cached: a re-stage
-#            after a completed measurement costs file copies, not
-#            encodes) and copies its OWN output files, so the numbers on
-#            the page and the picture on the glass are the same bytes.
-#            The fixture is the half no metric answers: --tile-slack is a
-#            MOTION knob and the owner's own footage banded and juddered
-#            on kit defaults after the whole fixture deck passed. NOTE the
-#            AT-CAPACITY FINDING: BOTH slack-0.5 arms measure over
-#            STREAM_WARN_UTIL (0.912 against 0.90) and print the encoder's
-#            own at-capacity warning, so applying the manual's "try 0.5
-#            first" advice to the kit's own demo clips trips it - watch
-#            those arms for JUDDER and audio breakup specifically. Run
-#            sheet (what to look for on each pair, what an outcome means,
-#            and why the numbers and the picture can disagree):
-#            docs\superpowers\tileslack-ab-run-sheet.md. An alternative
-#            to every other DDB switch, not a companion.
+#            --tile-slack A/B fixture, sd\TILESLK\: make
+#            tests\tileslack.dsf active AND stage four encodes of the
+#            kit's two demo clips as two A/B pairs - 001/002.VID = BUNNY
+#            at --tile-slack 0.0 and 0.5, 003/004.VID = JELLYFISH at the
+#            same two values (320x256@25 mode-1, whole clip; only the
+#            knob differs within a pair). NOT a reproduction of the
+#            manual's --tile-slack benchmark table (that table's source
+#            clips are not in this repository) - this leg asks whether
+#            the knob helps the footage that ships in the kit. Encodes
+#            come from tests\video\tileslack_ab.py (not a videnc call
+#            here), cached under tests\out\tileslack\; staging re-runs
+#            it only if the cache is incomplete. Both slack-0.5 arms
+#            measure over STREAM_WARN_UTIL (0.912 vs 0.90) and print the
+#            encoder's at-capacity warning - watch those arms for judder
+#            and audio breakup. Alternative to every other DDB switch.
 #   -Xbn     XBN extern support fixture, staged into sd\XBN\: make the
 #            tests\extern.dsf DDB active AND assemble/stage
 #            tests\xbn\xbntest.asm's fixture extern as GAME.XBN (the
@@ -357,79 +237,52 @@
 #            given -XbnNoBin wins over -XbnBad over -XbnTicker over
 #            -XbnFade over -XbnAll over -XbnHints over -XbnClock over
 #            -XbnTool:
-#              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
-#                              XABS no-XBN control - EXTERN must stay inert).
-#              -XbnBad <kind> stage a corrupt/truncated variant AS
-#                              GAME.XBN instead of the good one - magic |
-#                              ver | rsv | shorthdr | size | trunc; a kind
-#                              is required, a bare -XbnBad errors. Omit
-#                              -XbnBad entirely to stage the good GAME.XBN
-#                              (the default). For Task 2's validation-reject
-#                              checks; the six variants (tests\out\xbn\
-#                              BADMAGIC.XBN / BADVER.XBN / BADRSV.XBN /
-#                              SHORTHDR.XBN / BADSIZE.XBN / TRUNC.XBN) are
-#                              generated unconditionally alongside the good
-#                              GAME.XBN so a break in the generator is
-#                              caught on a plain run.
-#              -XbnTicker     stage the Task 9 shipped worked example
+#              -XbnNoBin      stage GAME.DDB with NO GAME.XBN (XABS
+#                              no-XBN control - EXTERN must stay inert).
+#              -XbnBad <kind> stage a corrupt/truncated GAME.XBN instead
+#                              of the good one: magic|ver|rsv|shorthdr|
+#                              size|trunc (a kind is required). All six
+#                              variants are generated unconditionally
+#                              alongside the good GAME.XBN so a break in
+#                              the generator is caught on a plain run.
+#              -XbnTicker     stage the shipped ticker worked example
 #                              (authoring-kit\externs\ticker\ticker.asm)
-#                              as GAME.XBN INSTEAD of the xbntest.asm
-#                              fixture, so extern.dsf's XTCK verb has
-#                              something to drive. Assembled fresh here
-#                              into tests\out\xbn\TICKER.XBN (same source
-#                              the example's own build.ps1 uses, not
-#                              forked - just built into a scratch cwd so
-#                              its SAVEBIN "GAME.XBN" cannot collide with
-#                              the fixture's own tests\out\xbn\GAME.XBN,
-#                              and the kit example directory stays
-#                              build-artifact-free). Every OTHER XBN probe
-#                              verb (XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG)
+#                              as GAME.XBN instead of the fixture, built
+#                              fresh into tests\out\xbn\TICKER.XBN (scratch
+#                              cwd so it cannot collide with the fixture's
+#                              own GAME.XBN). Every other XBN probe verb
 #                              is meaningless in this combination - the
-#                              ticker's ext_main only recognises fn 30/31
-#                              and no-ops on everything else, same as
-#                              xbntest.asm's own unrecognised-fn path.
+#                              ticker only recognises fn 30/31.
 #              -XbnFade       stage the Layer 2 fade worked example
 #                              (authoring-kit\externs\fade\fade.asm) as
-#                              GAME.XBN INSTEAD of the fixture, plus the
-#                              single Layer 2 picture (001.NX2, the same
-#                              Rabenstein source -GMode reuses) that
-#                              extern.dsf's XFAD verb draws and fades.
-#                              Same scratch-cwd assembly pattern as
+#                              GAME.XBN instead of the fixture, plus the
+#                              single Layer 2 picture (001.NX2, same
+#                              source -GMode reuses) that XFAD draws and
+#                              fades. Same scratch-cwd pattern as
 #                              -XbnTicker (-> tests\out\xbn\FADE.XBN).
-#              -XbnAll        stage Task 4's combined-collection binary
+#              -XbnAll        stage the combined-collection binary
 #                              (authoring-kit\externs\all\all.asm) as
-#                              GAME.XBN INSTEAD of the fixture, so
-#                              extern.dsf's XTCK/XFAD/XFDI/XFSC verbs
-#                              chain-dispatch through both modules. Same
-#                              scratch-cwd pattern and picture staging as
-#                              -XbnFade (-> tests\out\xbn\ALL.XBN), plus a
-#                              packed GAME.HNT: ALL.XBN's hints module
-#                              needs one.
-#                              Selection priority when combined:
-#                              -XbnNoBin wins over -XbnBad over
-#                              -XbnTicker over -XbnFade over -XbnAll.
-#              -XbnHints      Task 7: same combined binary as -XbnAll
-#                              (hints is one of its modules) PLUS a
-#                              packed GAME.HNT (authoring-kit\lib\
-#                              hintpack.ps1 over the kit's sample
-#                              authoring-kit\HINTS.TXT), so extern.dsf's
-#                              XHNP/XHNQ/XHNA/XHNR/XHNT verbs have a hint
-#                              file to read. Same drift guard and picture
-#                              staging as -XbnAll.
-#              -XbnClock      clock/timer Task 4: same combined binary as
-#                              -XbnAll (clock and timer are two of its
-#                              modules), no hint packing - this leg needs
-#                              only the binary - so extern.dsf's XCLK/XCLA/
-#                              XCLS/XTMR/XTMI verbs have both modules to
-#                              drive. Same drift guard and picture staging
-#                              as -XbnAll.
-#              -XbnTool       toolkit Task 6: same combined binary as
-#                              -XbnAll (toolkit is one of its modules), no
-#                              hint packing - this leg needs only the
-#                              binary - so extern.dsf's XTKP/XTKA/XTKO/
-#                              XTKT/XSLT verbs have the toolkit fns and CALL
-#                              slots to drive. Same drift guard and picture
-#                              staging as -XbnAll.
+#                              GAME.XBN instead of the fixture, so
+#                              XTCK/XFAD/XFDI/XFSC chain-dispatch through
+#                              both modules (-> tests\out\xbn\ALL.XBN),
+#                              plus a packed GAME.HNT (its hints module
+#                              needs one). Same scratch-cwd/picture
+#                              staging as -XbnFade; see this switch's own
+#                              code block below for the shared behaviour
+#                              -XbnHints/-XbnClock/-XbnTool all reuse.
+#              -XbnHints      same combined binary as -XbnAll (hints is
+#                              one of its modules) plus a packed
+#                              GAME.HNT (authoring-kit\lib\hintpack.ps1
+#                              over authoring-kit\HINTS.TXT), so
+#                              XHNP/XHNQ/XHNA/XHNR/XHNT have a hint file.
+#              -XbnClock      same combined binary as -XbnAll (clock and
+#                              timer are two of its modules), no hint
+#                              packing, so XCLK/XCLA/XCLS/XTMR/XTMI have
+#                              both modules to drive.
+#              -XbnTool       same combined binary as -XbnAll (toolkit is
+#                              one of its modules), no hint packing, so
+#                              XTKP/XTKA/XTKO/XTKT/XSLT have the toolkit
+#                              fns and CALL slots to drive.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -447,234 +300,79 @@
 #   lands in tests\out\ or sd\, both gitignored. Do not "tidy" a copy
 #   into tests\ - a modified GPL file is still GPL.
 #
-#   -Uto     make the V2 build of Uto's own DAAD compliance test the
-#            active GAME.DDB, in sd\UTO\. Written by the author of the
-#            DRC compiler this project targets, "to test compatibility
-#            of the new interpreters". It is the one fixture whose value
-#            depends on NOT being edited: it encodes what the DAAD
-#            ecosystem considers correct rather than what this project
-#            assumed, so a failure is a finding about the interpreter
-#            and must never be "fixed" in the DSF.
-#            SELF-SCORING. Each condact gets a positive test and usually
-#            a negative one; a pass prints "<CONDACT> ... OK", a failure
-#            prints "* <CONDACT> ERROR!" and DONEs out of PROCESS 1, so
-#            the run STOPS at the first failure and the last line on
-#            screen names it. 64 OK lines = a full V2 pass. The visual
-#            half that follows is operator-scored (it prints what it
-#            expects to look like). Needs NOTHING but the DDB - no art,
-#            no audio, no 0.XMB, no save file, and no typed input at all
-#            (its /PRO 0 runs the whole test at boot). An alternative to
-#            every other DDB switch, not a companion.
-#            If tools\TEST.DSF is absent a plain run just warns and
-#            skips the two compiles; asking for -Uto/-UtoV3 without it
-#            throws, with the download URL in the message.
-#            Run sheet: .superpowers\sdd\uto-compliance-runsheet.md
-#   -UtoV3   the same source compiled WITH -v3, into sd\UTOV3\. The DSF
-#            carries two #ifdef "V3" blocks that ndrc only compiles in
-#            when -v3 is given (-v3 defines the symbol V3): SETAT x3
-#            (set/clear/toggle on flag 57 via attribute 16) and second-
-#            parameter indirection (LET 200 @100), plus a GETKEY leg in
-#            the visual half. 68 OK lines = a full V3 pass. This is the
-#            only INDEPENDENT test of the SP16 V3 work - v3probe.dsf is
-#            ours. Worth noting for whoever next touches v3probe: this
-#            ndrc build has real SETAT and GETKEY keywords (SETAT emits
-#            opcode 124 directly, GETKEY compiles to PAUSE 0); the
-#            stand-in was retired 2026-09-02; v3probe authors SETAT
-#            directly.
-# Boot title screen (SP11 Task 1), independent of the DDB switches:
-#   -Title   stage the owner 320x256 title into the run's leg folder -
-#            copies tools\demo-files\DAAD.NX2, a gfx2next-converted
-#            Layer 2 picture (ADAPTIVE 256, -bitmap -pal-embed).
-#            tools\demo-files is the home for NEWLY CREATED test
-#            graphics/sound/video assets (owner convention 2026-07-19;
-#            existing asset dirs stay where they are). Not committed
-#            (sd\ is gitignored). Default (no -Title) stages no title -
-#            and since the leg folder is emptied every run, a title can
-#            no longer survive into a leg that did not ask for one (it
-#            used to, and starved the graphics cache when it did).
-# Custom font (SP12 Task 2), independent of the DDB switches:
-#   -Font    stage a visually distinctive custom font into the run's leg
-#            folder - runs authoring-kit\lib\fontconv.ps1
-#            on tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 (a 768-
-#            byte classic ZX charset, chars 32-127 - the "Crews" ZX-
-#            Origins font: a bold, tilted, graffiti-style face, chosen
-#            for being obviously different from the interpreter's plain
-#            embedded font at a glance, and shipped as a single file with
-#            no bold/script weight variants to disambiguate). No test
-#            binary is committed - fontconv.ps1 builds FONT.CHR fresh
-#            each run from the source .ch8 plus authoring-kit\lib\
-#            default.chr. Same CSpect-running guard as -Title (locked
-#            sd\ files cause a partial fixture). Default (no -Font)
-#            stages no font. The Crews source ships as a .zip under
-#            tools\demo-files\fonts and is not always extracted (SP18) -
-#            -Font degrades to staging no font (a warning, not a throw)
-#            rather than fail the whole run over a missing demo archive.
-#            SP12 Task 3 rides the same switch: -Font ALSO generates a
-#            fresh 256-byte POINTER.SPR fixture
-#            in-script (a 16x16 solid green square, 2px $E3 transparent
-#            border, 1px black outline - obviously different from the
-#            interpreter's default black/white arrow at a glance). No
-#            test binary is committed for this either. The generator
-#            (New-PointerFixture, SP18) takes a fill colour, so the same
-#            code also produces the three colour-coded shapes the
-#            -FontSw leg below stages.
-# Video benchmark fixtures (SP13 Task 1, NXV v2 rewrite SP15 T1; LEG SET
-# switched to the SP15 3a calibration-wave fixtures 2026-07-25),
-# independent of the DDB switches:
-#   -Vid     stage the CURRENT LEG SET into sd\VID\001.VID..006.VID -
-#            the SAME six fixtures the owner leg card stages
-#            (.superpowers\sdd\sp14a-task-4-report.md section 37 + its
-#            CALIBRATION WAVE addendum), short real-footage/test-card
-#            CUTS sized to the ~950 KB resident ring - NOT full-clip
-#            encodes (see the obsolete-cache note below).
-#            docs\superpowers\plans\2026-07-23-sp15-nxv2.md is the
-#            format authority; authoring-kit\lib\nxv2enc.py/nxv2dec.py
-#            are the encoder pipeline/reference decoder, videnc.py the
-#            CLI shell (the ONE canonical encoder, shipped in the kit
-#            like fontconv.ps1 - no drift-prone test copy). v1's five
-#            fixed profiles (n0-n4) are GONE (SP15 T1, owner decision) -
-#            v2 has SHAPE presets instead (full/16:9/scope/classic/
-#            classic-wide, nxv2enc.PRESETS), each encoded here at 25fps
-#            stereo. VIDBENCH (DEBUG builds only, tests\test.dsf)
-#            always benches 001.VID (full, the highest data-rate
-#            shape - the conservative gate). Stale-cleaning is now the
-#            leg folder's, not this switch's: sd\VID\ is emptied once at
-#            the start of the run and -Vid/-VidLong then fill it, so
-#            GIVE THEM TOGETHER (`-Vid -VidLong`) for the full
-#            001-011+099 card - the SP15 T5 per-file scoping this switch
-#            used to carry existed only to survive the shared root.
-#            Source -> dest mapping (shape, source clip, exact
-#            --start/--duration - these values reproduce the leg-staged
-#            bytes byte-for-byte, the encoder being deterministic):
-#              001.VID <- full          (320x256 mode-1, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.35)
-#              002.VID <- classic       (256x192 mode-0, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.8)
-#              003.VID <- 16:9          (320x192 mode-1 letterbox, Big_Buck_Bunny_1080_10s_30MB.mp4 @00:00:03 dur 1.0)
-#              004.VID <- scope         (320x144 mode-1 letterbox, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.7)
-#              005.VID <- classic-wide  (256x144 mode-0 letterbox, Jellyfish_1080_10s_30MB.mp4 @00:00:04 dur 1.6)
-#              006.VID <- 16:9          (320x192 mode-1 letterbox, 1920x1080-25p.mp4 test card @00:00:00 dur 5.0 - the PACING CARD, vpace/vpacl)
-#            Sources are owner-provisioned research clips plus the
-#            existing test-card footage, all under tools\demo-files\
-#            (read-only, like everything under tools\). Each encode is
-#            SLOW (content-triggered-keyframe, dual-budget delta
-#            coding) so results are CACHED at
-#            tests\out\00X_<shape>_<settlementTag>_leg_cache.vid and
-#            only regenerated when that cache file is missing -
-#            tests\out\ is gitignored (persists across runs, unlike
-#            sd\VID\, which is emptied at the start of every staging
-#            run). $vidLegSettlementTag below is an EXPLICIT TAG BUMP
-#            discipline, not a hash: unlike -VidLong's per-entry 'tag'
-#            (sb51/sb54/direct/directpace), which fingerprints a CLI
-#            operating-point argument, 001-006 take no such argument -
-#            their bytes instead depend on nxv2enc.py's SOURCE-level
-#            silicon-settled constants (TMODEL_COEFFS,
-#            TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R), which a CLI-
-#            arg hash cannot see. SP17 T1 note: --stream-budget now
-#            DEFAULTS to an automatic search, so "no such argument" also
-#            means these six ride the auto-budget defaults. All six are
-#            under the resident pool (largest is 006 at 1,039,360 B vs
-#            1,277,952), so the search returns the ceiling on its first
-#            probe and their bytes are unchanged - verified on 003 and
-#            006 at the pal9d tag. A future fixture that crosses the
-#            pool would NOT be, and would want an explicit budget or a
-#            tag bump. The 4814921 gapped resettlement
-#            (composition factor 1.55 -> 1.15) changed encoded output
-#            with no CLI-arg change at all, and silently restaged the
-#            stale pre-resettlement cache once already (SP15 T5 review
-#            finding). Rule: bump $vidLegSettlementTag any time a
-#            silicon-settled constant in nxv2enc.py changes; the cache
-#            name change forces a re-encode. Regenerate by deleting the
-#            relevant cache file and re-running -Vid, or directly with
-#            e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_pal9d_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_pal9d_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
-#            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
-#            sd\*.VID is gitignored (owner edit).
-#            PRE-3a LONG-CLIP CACHES ARE OBSOLETE: the five 10-14MB
-#            full-60s-clip caches this switch used to stage (encoded
-#            from the two 1440x1080-25p.mp4/1920x1080-25p.mp4 sources at
-#            the pre-calibration T budget) do NOT match the leg-staged
-#            fixtures above and were deleted from tests\out\ (one-time
-#            stale-clean, 2026-07-25) rather than left to silently
-#            drift. Long-clip staging returned as -VidLong (below)
-#            when SP15 3b (streaming) landed; -Vid always means this
-#            short leg set.
-#   -VidLong stage the SP15 3b STREAMING leg fixtures into sd\VID\ - the
-#            three research clips at FULL 10s duration (they exceed
-#            the ~1.25MB pool ring and exercise the 3b prefetch
-#            producer across multiple ring wraps), plus the
-#            deliberate-underrun copy:
-#              007.VID <- classic 256x192 (Sintel_1080_10s_30MB.mp4, full clip, ~6.4MB)
-#              008.VID <- full 320x256    (Big_Buck_Bunny_1080_10s_30MB.mp4, --stream-budget 0.51)
-#              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, --stream-budget 0.54 - re-derived at the Card #5 gapped prices)
-#              010.VID <- 256x133 --direct (Sintel full clip - VDIR/VDIRL, the direct-serve leg)
-#              011.VID <- 256x133 --direct (1920x1080-25p test card @00:00:00 dur 5.0 - DPACE/DPACL, the DIRECT PACING CARD)
-#              099.VID <- byte-copy of 007.VID (VSTRU: DEBUG builds
-#                         throttle the producer for video number 99 -
-#                         the deliberate-underrun leg)
-#            010/011 TIGHTEN RULING (Card #5, 2026-07-26, owner-decided):
-#            the direct-serve gate is UNCONDITIONAL - no accept-slow
-#            override. Card #5's first silicon rows put the direct
-#            transport at 917 B/ms (not the 1100 the 3c gate assumed), so
-#            classic-wide 256x144@25 stereo scored 1.075 (~6% slow) and is
-#            now refused outright by its own gate; 010/011 are encoded at
-#            256x133@25 stereo instead (util 0.99, at-rate) - the
-#            recalibrated gate's largest at-rate classic surface.
-#            STREAM OPERATING POINTS (Card #3 VSTR1 follow-up): the
-#            first 008/009 encodes rode the full decode-T budget -
-#            mean supply utilization 1.74/1.30, mathematically
-#            unstreamable (VSTR1 collapsed at ~65.5ms/frame on
-#            silicon). videnc's streaming supply gate now refuses
-#            such encodes; 007/008/009 carry the --stream-budget
-#            values the gate derived (007 sb 0.85 since the pal9
-#            palette-collapse fix pushed its old default point to
-#            util 1.06; sb 0.85 alone landed at util 1.00 - AT the
-#            ceiling, which starved the deltas on the wire, so 007
-#            also carries --dither 0.25 and lands at util 0.981;
-#            008/009 target ~0.90).
-#            007 IS A DELIBERATE AT-CAPACITY STRESS FIXTURE (owner
-#            ruling 2026-07-28): its acceptance criterion is TRANSPORT
-#            (zero underruns, zero depth clips, ERR=00), proven twice
-#            on silicon. Visible horizontal banding is the DOCUMENTED
-#            EXPECTED PICTURE for this fixture - the content out-
-#            demands the wire at 256x192@25 and no operating point is
-#            both at-ceiling and clean. It is 36.4% budget-bound at
-#            the shipped point - videnc prints that as a measurement
-#            on every re-encode and NEVER warns about it (the
-#            starvation trigger was retired 2026-07-28 as
-#            uncalibrated: 008 reads 99.2% budget-bound and is clean
-#            on silicon, 007 reads 36.4% and bands, so the figure
-#            does not grade picture quality). Do not re-derive 007's
-#            operating point off these numbers.
-#            Cached at tests\out\00X_<shape>[_<tag>]_<settlementTag>_
-#            long_cache.vid like -Vid (encode once, copy after;
-#            delete a cache to re-encode; the operating point AND the
-#            settlement tag are part of the cache name, so changing
-#            either re-encodes). Shares sd\VID\ with -Vid - give the two
-#            switches TOGETHER for the full 001-011+099 card.
-#            Verbs: VSTR0/VSTR1/VSTR2/VSTRU (tests\test.dsf). Same
-#            CSpect-lock guard.
-#   -NxBench   stage the SP15 T2 decode-kernel bench payloads into
-#              sd\NXBENCH\NXB0.BIN..NXB9.BIN (nxv2enc.py
-#              --bench-fixtures -
-#              raw opcode-stream payloads, no header/audio/padding; see
-#              that mode's own comment block for the file-by-file
-#              shapes, and .superpowers\sdd\sp14a-task-4-report.md
-#              section 36 for the owner bench card). NXB8 (the real
-#              classic 256x192@25 segment) is cut from the -Vid cache
-#              tests\out\002_classic_cache.vid, which is encoded first
-#              if missing (slow - same cache rule as -Vid). Fixture
-#              set + manifest land in tests\out\nxbench\ then copy to
-#              the leg folder. Same CSpect-lock guard as the
-#              other staging switches. sd\ is gitignored.
+#   -Uto     make the V2 build the active GAME.DDB, sd\UTO\. Its value
+#            depends on NOT being edited - it encodes what the DAAD
+#            ecosystem considers correct, so a failure is a finding
+#            about the interpreter, never "fixed" in the DSF.
+#            Self-scoring: each condact prints "<CONDACT> ... OK" or "*
+#            <CONDACT> ERROR!" and DONEs out on the first failure - 64
+#            OK lines = a full V2 pass; the visual half after that is
+#            operator-scored. Needs nothing but the DDB. If
+#            tools\TEST.DSF is absent a plain run warns and skips;
+#            -Uto/-UtoV3 without it throws with the download URL.
+#   -UtoV3   same source compiled WITH -v3, sd\UTOV3\: two #ifdef "V3"
+#            blocks exercise SETAT x3 (flag 57 via attribute 16) and
+#            second-parameter indirection (LET 200 @100), plus a GETKEY
+#            leg in the visual half. 68 OK lines = a full V3 pass - the
+#            only independent test of the V3 work (v3probe.dsf is ours).
+#            This ndrc build has real SETAT/GETKEY keywords (SETAT emits
+#            opcode 124, GETKEY compiles to PAUSE 0); v3probe authors
+#            SETAT directly, no stand-in.
+# Boot title screen, independent of the DDB switches:
+#   -Title   stage the owner 320x256 title (tools\demo-files\DAAD.NX2,
+#            gfx2next ADAPTIVE 256 -bitmap -pal-embed) into the leg
+#            folder. Default (no -Title) stages none - the leg folder is
+#            emptied every run so a title cannot survive into a leg that
+#            did not ask for one.
+# Custom font, independent of the DDB switches:
+#   -Font    stage a visually distinctive custom font: runs
+#            authoring-kit\lib\fontconv.ps1 on tools\demo-files\fonts\
+#            Crews\Spectrum\Crews.ch8 (768-byte classic ZX charset,
+#            chars 32-127) against authoring-kit\lib\default.chr into a
+#            fresh FONT.CHR (no binary committed). Degrades to staging
+#            no font (warning, not a throw) if the Crews .zip is not
+#            extracted. ALSO generates a fresh 256-byte POINTER.SPR (a
+#            16x16 solid green square, 2px transparent border, 1px black
+#            outline) via New-PointerFixture, which also produces the
+#            three colour-coded shapes -FontSw stages.
+# Video benchmark fixtures, independent of the DDB switches:
+#   -Vid       stage the current NXV v2 leg set into sd\VID\001-006.VID:
+#              short real-footage/test-card cuts sized to the resident
+#              ring (NOT full-clip encodes - see -VidLong). Shape/
+#              source/start/duration mapping and the encoder invocation
+#              live at this switch's own code block below. Cached at
+#              tests\out\00X_<shape>_<settlementTag>_leg_cache.vid;
+#              $vidLegSettlementTag (below) must be bumped whenever a
+#              silicon-settled encoder constant changes, or a stale
+#              cache is silently restaged - Assert-VidEraInSync enforces
+#              it stays in sync with authoring-kit\lib\video.ps1's own
+#              stamp. CSpect-lock: see header.
+#   -VidLong   stage the streaming + direct leg fixtures into sd\VID\
+#              007-011.VID + 099.VID: full-duration research clips that
+#              exceed the pool ring (007-009, exercising the prefetch
+#              producer across ring wraps) plus two --direct legs
+#              (010/011) and a deliberate-underrun copy (099 = a byte
+#              copy of 007). Operating points are auto-derived by
+#              videnc's streaming supply gate - see this switch's own
+#              code block for the per-file table and the 007 at-capacity
+#              ruling (007 is a deliberate stress fixture: visible
+#              banding there is the documented expected picture, not a
+#              bug). Shares sd\VID\ with -Vid - give both together for
+#              the full 001-011+099 card. Cached like -Vid. CSpect-lock:
+#              see header.
+#   -NxBench   stage the decode-kernel bench payloads into sd\NXBENCH\
+#              NXB0.BIN..NXB9.BIN (nxv2enc.py --bench-fixtures). NXB8
+#              (real classic 256x192@25 segment) is cut from a dedicated
+#              --no-merge encode (a merged cache would collapse the
+#              dense small-op stream the dispatch bench measures), built
+#              first if its cache is missing. CSpect-lock: see header.
 #   -Nxv2Test  run tests\nxv2_selftest.py (plain python, no pytest -
 #              header/opcode/keyframe-span roundtrips, scene-cut
-#              lookahead, dual-budget rate control, BuildReport/
-#              validate() sanity vs both research demo clips, CLI
-#              rewire) and throw if it exits non-zero. Independent of
-#              every other switch; does not touch sd\ or the DAAD
-#              toolchain. Slow (steps 4-7 run real ffmpeg encodes
-#              against tools\demo-files\) - not part of the default
-#              (no-switch) run.
+#              lookahead, dual-budget rate control, validate() sanity vs
+#              both research clips, CLI rewire) and throw if it exits
+#              non-zero. Independent of every other switch, touches
+#              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
+#              encodes) - not part of the default no-switch run.
 param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
@@ -1339,24 +1037,16 @@ try {
 }
 finally { Pop-Location }
 
-# Oversize fixture: a database PAST THE OLD 31744-BYTE CEILING. Compiled
-# unconditionally like the fixtures around it so a break is caught on a
-# plain run; only -BigDdb makes it the active GAME.DDB (sd\BIGDDB\).
+# Every fixture DDB from here through -Palette's block compiles
+# unconditionally on every run - no switch needed - so a DSF break is
+# caught on a plain run; the named switch only stages the result as the
+# active GAME.DDB. Not restated at each block below.
 #
-# WHAT IT IS FOR. A classic ZX database bases its pointers at $8400, so
-# nothing past 31744 bytes is expressible. The NEXTDAAD target bases them
-# at 0, and this fixture is the proof that the whole 64K is reachable: it
-# is ~49 KB, and the structures DRC writes LAST - the process list, the
-# location and connection tables, and the text of the high-numbered
-# messages - all sit past 31744 where the classic scheme could not name
-# them at all.
-#
-# THE COMPILED BYTES ARE ASSERTED, not assumed - the same rule the -SfxDi
-# block states. "It compiled" would pass on a database that never crossed
-# the boundary, which is the one thing this fixture exists to guarantee,
-# and the fixture's size is an emergent property of DRC's text
-# compression rather than something the .dsf states directly. So the
-# boundary crossings are re-read out of the DDB here, every run.
+# Oversize fixture: proves DRC's ~49KB output (past the classic 31744-
+# byte pointer ceiling) is reachable at NEXTDAAD's base-0 addressing.
+# Only -BigDdb makes it the active GAME.DDB (sd\BIGDDB\). Boundary
+# crossings are re-read out of the compiled DDB, not assumed from "it
+# compiled".
 $bigddbWork = Join-Path $root 'tests\out\bigddb-work'
 Remove-Item $bigddbWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $bigddbWork | Out-Null
@@ -1457,9 +1147,7 @@ $bigTok = Assert-BigDdb "$root\tests\out\bigddb-autotok.ddb" 'bigddb-autotok'
 $bigTok.Summary
 $bigTokLen = $bigTok.Len
 
-# SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,
-# like the suite and doallnest above, so a break in the DSF is caught
-# on a plain run; only -GMode makes it the active GAME.DDB (sd\GMODE\).
+# GMODE graphics-gate fixture; only -GMode makes it active (sd\GMODE\).
 $gmodegateWork = Join-Path $root 'tests\out\gmodegate-work'
 Remove-Item $gmodegateWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $gmodegateWork | Out-Null
@@ -1472,9 +1160,7 @@ try {
 }
 finally { Pop-Location }
 
-# SP16 Task 7 AY ladder fixture. Compiled unconditionally, like the
-# suite, doallnest and gmodegate above, so a break in the DSF is caught
-# on a plain run; only -AudLad makes it the active GAME.DDB (sd\AUDLAD\).
+# AY characterization ladder fixture; only -AudLad makes it active (sd\AUDLAD\).
 $audladWork = Join-Path $root 'tests\out\audlad-work'
 Remove-Item $audladWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $audladWork | Out-Null
@@ -1487,9 +1173,8 @@ try {
 }
 finally { Pop-Location }
 
-# Sampled-SFX DMA pre-emption fixture, rev 2 (2026-08-03). Compiled
-# unconditionally like the four above so a break in the DSF is caught on
-# a plain run; only -SfxDi makes it the active GAME.DDB (sd\SFXDI\).
+# Sampled-SFX DMA pre-emption fixture; only -SfxDi makes it active
+# (sd\SFXDI\).
 #
 # THE COMPILED BYTES ARE ASSERTED, not assumed. This is a STIMULUS
 # fixture - what the interpreter receives is the whole experiment - and
@@ -1508,15 +1193,14 @@ finally { Pop-Location }
 #     GFX 0 1 + GFX 0 0 pairs (120 bytes) - runs that cannot occur by
 #     coincidence;
 #   PICTURE 1 must be there at all, since a fixture that never loads
-#     the card is exactly the vacuous shape rev 2 exists to replace.
+#     the card would prove nothing about the DMA pre-emption path.
 # If any check fails the fixture no longer says what its comments say.
 #
-# REV 2a ADDS THE EIGHT KEYPRESS BOUNDARIES (owner request: the phases
-# ran too fast to attribute a symptom to one). The wait is ANYKEY
-# (opcode 24 = $18, ZERO parameters) - NOT "PAUSE 0": this fixture is
-# compiled by the plain ndrc call above with no -v3, its
-# header version byte is 2 (asserted below), and PAUSE 0 only means
-# GETKEY under V3. Having no operand, ANYKEY is also immune to the
+# EIGHT KEYPRESS BOUNDARIES stop the run so a symptom can be attributed
+# to the phase that produced it. The wait is ANYKEY (opcode 24 = $18,
+# ZERO parameters) - NOT "PAUSE 0": this fixture is compiled with no
+# -v3, its header version byte is 2 (asserted below), and PAUSE 0 only
+# means GETKEY under V3. Having no operand, ANYKEY is also immune to the
 # duration rescaling that the PAUSE checks exist to catch.
 # Each site is pinned by the condacts AROUND it (MES = 77 = $4D one
 # param, PROCESS = 75 = $4B, PAUSE = $23, SFX = $12), never by a message
@@ -1547,13 +1231,9 @@ try {
 }
 finally { Pop-Location }
 
-# SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7). Compiled
-# unconditionally like every fixture above so a break in the DSF is
-# caught on a plain run; only -SfxLong makes it the active GAME.DDB
-# (sd\SFXLONG\).
-#
-# -v3 like most fixtures here. This fixture measures sampled-SFX
-# behaviour, which the header version does not affect.
+# SD-streamed sampled-effect wire fixture; only -SfxLong makes it active
+# (sd\SFXLONG\). -v3 like most fixtures here - sampled-SFX behaviour is
+# unaffected by the header version.
 #
 # OUT OF TREE, for the same reason as l2holes/tileslack/fontsw above and
 # by the same means: ndrc.exe is run by absolute path with the cwd set
@@ -1573,14 +1253,10 @@ finally {
     Pop-Location
 }
 
-# Two-channel sampled-effect API fixture (SP18 item 7 Task 12). Compiled
-# unconditionally like every fixture above so a break in the DSF is
-# caught on a plain run; only -Sfx2 makes it the active GAME.DDB
-# (sd\SFX2\). Built out of tree for the same reason and by the same
-# means as sfxlong above.
-#
-# -v3 like most fixtures here. This fixture measures sampled-SFX
-# behaviour, which the header version does not affect.
+# Two-channel sampled-effect API fixture; only -Sfx2 makes it active
+# (sd\SFX2\). Built out of tree for the same reason as sfxlong above.
+# -v3 like most fixtures here - sampled-SFX behaviour is unaffected by
+# the header version.
 $sfx2Work = Join-Path $root 'tests\out\sfx2-work'
 Remove-Item $sfx2Work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $sfx2Work | Out-Null
@@ -1595,16 +1271,12 @@ finally {
     Pop-Location
 }
 
-# DRC debug-marker fixture. Compiled unconditionally like the five above,
-# and the ONLY fixture here compiled from one ndrc --to-json pass, then
-# two --from-json passes: plain, and again with -d ("forced debug mode"),
-# which is what keeps the fake DEBUG condact instead of dropping it
-# (drb.php:1114 is the historical source of that behaviour).
-# There is no leg switch and no staging - the whole experiment is the
-# emitted bytes, asserted below. tests\debugflag.dsf's own header
-# explains what each of its three shapes is for, including the optional
-# owner leg (copy tests\out\debugflag-debug.ddb into a leg folder as
-# GAME.DDB and boot it).
+# DRC debug-marker fixture: the ONLY fixture compiled via one
+# --to-json pass then two --from-json passes (plain, and again with -d)
+# so the second keeps the fake DEBUG condact instead of dropping it
+# (drb.php:1114). No leg switch or staging - the experiment is the
+# emitted bytes, asserted below; tests\debugflag.dsf's own header
+# explains each of its three shapes, including the optional owner leg.
 $debugflagWork = Join-Path $root 'tests\out\debugflag-work'
 Remove-Item $debugflagWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $debugflagWork | Out-Null
@@ -1622,9 +1294,8 @@ try {
 }
 finally { Pop-Location }
 
-# Layer 2 TRANSPARENCY / punch-out fixture (2026-08-07). Compiled
-# unconditionally like the six above so a break in the DSF is caught on a
-# plain run; only -L2Holes makes it the active GAME.DDB (sd\L2HOLES\).
+# Layer 2 transparency/punch-out fixture; only -L2Holes makes it active
+# (sd\L2HOLES\).
 #
 # Out of tree like every block here. The .json is kept, not deleted,
 # because the ruler verification below reads the compiled messages
@@ -1648,11 +1319,8 @@ finally {
     Pop-Location
 }
 
-# Transparent tilemap paper / layer order fixture (2026-08-18). Compiled
-# unconditionally like every block above so a break in the DSF is caught
-# on a plain run, whether or not -TmOver is given - the byte assertions
-# below run every time; only -TmOver makes it the active GAME.DDB
-# (sd\TMOVER\).
+# Transparent tilemap paper/layer order fixture; only -TmOver makes it
+# active (sd\TMOVER\).
 #
 # OUT OF TREE, for the same reason as l2holes above and by the same
 # means: ndrc.exe is run by absolute path with the cwd set to
@@ -1676,9 +1344,7 @@ finally {
     Pop-Location
 }
 
-# --tile-slack A/B fixture (2026-08-07). Compiled unconditionally like
-# every block above so a break in the DSF is caught on a plain run; only
-# -TileSlack makes it the active GAME.DDB (sd\TILESLK\).
+# --tile-slack A/B fixture; only -TileSlack makes it active (sd\TILESLK\).
 #
 # OUT OF TREE, for the same reason as l2holes above and by the same means:
 # ndrc.exe is run by absolute path with the cwd set to
@@ -1703,14 +1369,9 @@ finally {
     Pop-Location
 }
 
-# Font/pointer switching stimulus fixture (SP18 Task 1, 2026-08-07).
-# Compiled unconditionally like every block above so a break in the DSF
-# is caught on a plain run, whether or not -FontSw is given - the byte
-# assertions below run every time. -FontSw (SP18 Task 5) is the leg
-# switch that stages this DDB plus its numbered font/pointer assets into
-# sd\FONTSW\ (see that switch's own block in the STAGING section below);
-# a plain run with no switches still compiles and asserts fontsw.ddb, it
-# just does not stage it anywhere.
+# Font/pointer switching stimulus fixture. -FontSw is the leg switch
+# that stages this DDB plus its numbered font/pointer assets into
+# sd\FONTSW\ (see that switch's own block in the STAGING section below).
 #
 # OUT OF TREE, for the same reason as l2holes/tileslack above and by the
 # same means: ndrc.exe is run by absolute path with the cwd set to
@@ -1730,12 +1391,9 @@ finally {
     Pop-Location
 }
 
-# Sprite animation stimulus fixture (SP20 Task 7). Compiled unconditionally
-# like every block above so a break in the DSF is caught on a plain run,
-# whether or not -Sprites is given - the byte assertions below run every
-# time. -Sprites is the leg switch that stages this DDB plus the .ANI sets
-# and a picture into sd\SPRITES\ (see that switch's own block in the
-# STAGING section below).
+# Sprite animation stimulus fixture. -Sprites is the leg switch that
+# stages this DDB plus the .ANI sets and a picture into sd\SPRITES\ (see
+# that switch's own block in the STAGING section below).
 #
 # OUT OF TREE, same reason and means as the blocks above: ndrc.exe is run
 # by absolute path with the cwd set to tests\out\sprites-work.
@@ -1771,9 +1429,9 @@ finally {
     Pop-Location
 }
 
-# Sprites-under-audio fixture (2026-09-03). Compiled unconditionally like
-# every block above; -SprAud stages this DDB, four .ANI sets, a song and two
-# WAVs into sd\SPRAUD\ (see that switch's block in the STAGING section).
+# Sprites-under-audio fixture; -SprAud stages this DDB, four .ANI sets,
+# a song and two WAVs into sd\SPRAUD\ (see that switch's block in the
+# STAGING section).
 $spraudWork = Join-Path $root 'tests\out\spraud-work'
 Remove-Item $spraudWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $spraudWork | Out-Null
@@ -1788,10 +1446,9 @@ finally {
     Pop-Location
 }
 
-# 40-column tilemap mode fixture (2026-08-30). Compiled unconditionally
-# like every block above so a break in the DSF is caught on a plain
-# run; -Txt40 is the leg switch that stages this DDB into sd\TXT40\
-# (see that switch's own block in the STAGING section below).
+# 40-column tilemap mode fixture; -Txt40 is the leg switch that stages
+# this DDB into sd\TXT40\ (see that switch's own block in the STAGING
+# section below).
 $txt40Work = Join-Path $root 'tests\out\txt40-work'
 Remove-Item $txt40Work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $txt40Work | Out-Null
@@ -1806,9 +1463,8 @@ finally {
     Pop-Location
 }
 
-# Accented-glyph fixture (2026-08-30). Compiled unconditionally like
-# every block above so a break in the DSF is caught on a plain run;
-# -Accent stages the auto-tokens compile made below, not this one.
+# Accented-glyph fixture; -Accent stages the auto-tokens compile made
+# below, not this one.
 # tests\accents.dsf is Latin-1 ON PURPOSE - ndrc reads DSF text as
 # Latin-1 and does the accent conversion itself (a UTF-8 source
 # double-converts and the byte asserts below catch it).
@@ -1861,10 +1517,8 @@ for ($i = 3; $i -le 7; $i++) {
 }
 "accents-autotok: $($accentTokBytes.Length) bytes, V3, per-game token table (builtin compile is $accentBytesLength bytes)"
 
-# 256-colour text stimulus fixture. Compiled unconditionally like every
-# block above so a break in the DSF is caught on a plain run, whether or
-# not -Palette is given - the byte assertions below run every time.
-# OUT OF TREE: ndrc.exe is run by absolute path with the cwd set to
+# 256-colour text stimulus fixture; -Palette makes it active. OUT OF
+# TREE: ndrc.exe is run by absolute path with the cwd set to
 # tests\out\palette-work, so nothing is written under tools\.
 $paletteWork = Join-Path $root 'tests\out\palette-work'
 Remove-Item $paletteWork -Recurse -Force -ErrorAction SilentlyContinue
@@ -2069,15 +1723,10 @@ foreach ($chk in @(
 "sfxdi.ddb: v$($sfxdiBytes[0]), 24x DISPLAY 0 at $($dispHits[0]), 4x held render contiguous at $($heldHits[0]), 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 32 x$($pauseHits.Count), 8 ANYKEY boundaries at $($akAll -join ','), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
 
 # ---- l2holes: the ruler, cell by cell, then the compiled bytes ------
-# THE RULER IS THE INSTRUMENT, and its column accounting is fragile in a
-# way nothing downstream would notice: NextDAAD buffers non-space
-# characters and flushes on a space (src\print.asm prn_char/prn_flush),
-# so each MES must be exactly 15 non-space characters plus ONE trailing
-# space. A trailing space eaten by an editor would silently merge two
-# segments, shift every column left and re-colour the row - and the card
-# would then be judged against a ruler that lies. This restates the hole
-# table from tests\art\mkl2holes.py INDEPENDENTLY, so a hole that moves
-# without its tag moving fails the build instead of the run.
+# Each ruler MES must be exactly 15 non-space chars + one trailing space
+# (src\print.asm flushes non-space runs on a space) or columns shift and
+# mis-colour the row. Re-verified here independently of the hole table
+# in tests\art\mkl2holes.py, so a moved hole without its tag fails here.
 $l2holesJson = Get-Content "$l2holesWork\NDL2HOLE.json" -Raw | ConvertFrom-Json
 $l2hMsgs = @{}
 foreach ($m in $l2holesJson.messages) { $l2hMsgs[[int]$m.Value] = [string]$m.Text }
@@ -2171,16 +1820,11 @@ foreach ($s in @(
 "l2holes.ddb: $($l2holesBytes.Length) bytes, v$($l2holesBytes[0]), ruler 32 rows x 80 columns verified from the compiled messages ($($l2hTags.Count) hole tags), MODE 2 / WINSIZE 32 80 / WINAT 31 79 / PAPER 1 / PICTURE 1 / DISPLAY 0 / DISPLAY 1 / ANYKEY all present"
 
 # ---- tileslack: the LABEL must name the file that actually plays -----
-# THE ONE FAULT THIS FIXTURE CANNOT SURVIVE is a label that disagrees with
-# the video it introduces: the owner would then judge arm B and write it
-# down as arm A, and the run would be worse than worthless because nothing
-# on screen would say so. The DSF prints the label from one message number
-# and plays the clip from a separate GFX parameter, so the two CAN drift.
-# This restates the arm table INDEPENDENTLY of the DSF and checks it in the
-# COMPILED output: for each verb, the entry must carry the expected
-# GFX <video> <13|14>, must print the expected message BOTH times (before
-# and after playback), and that message's TEXT must itself name the same
-# video file and the same --tile-slack value.
+# The printed label (a message number) and the clip that plays (a
+# separate GFX parameter) are independent and can drift. Re-verified
+# here from the COMPILED output: each verb's GFX <video> <13|14>, its
+# message text both before/after playback, and the message naming the
+# same video file and --tile-slack value.
 $tsJson = Get-Content "$tileSlackWork\NDTILESL.json" -Raw | ConvertFrom-Json
 $tsMsgs = @{}
 foreach ($m in $tsJson.messages) { $tsMsgs[[int]$m.Value] = [string]$m.Text }
@@ -2847,15 +2491,12 @@ else {
     "debugflag: -d adds exactly 3 bytes (DC x3, no operands); NEWTEXT stays 5C"
 }
 
-# SP16 Task 6 DAAD V3 fixture. Compiled with -v3 like most fixtures
-# here; its value is the V3 condacts it exercises, not the header byte.
-# It exercises the three V3 opcodes (XMES 120, INDIR 122, SETAT 124),
-# both attribute banks, PAUSE 0 as GETKEY, flag 53's bits 0/4/5 and
-# SYNONYM's V3 done-semantics; the DSF's own header lists which flag
-# carries which answer. Compiled unconditionally like the suite and
-# gmodegate above - a break in the DSF (or in DRF's -v3 handling) is
-# then caught on a plain run - but only -V3 makes it the active
-# GAME.DDB (sd\V3\).
+# DAAD V3 fixture. Compiled with -v3 like most fixtures here; its value
+# is the V3 condacts it exercises, not the header byte. Exercises the
+# three V3 opcodes (XMES 120, INDIR 122, SETAT 124), both attribute
+# banks, PAUSE 0 as GETKEY, flag 53's bits 0/4/5 and SYNONYM's V3 done-
+# semantics; the DSF's own header lists which flag carries which answer.
+# Only -V3 makes it the active GAME.DDB (sd\V3\).
 #
 # tests\v3probe.dsf will NOT compile without -v3: DRF rejects '@' on a
 # second parameter and rejects GETKEY outside V3. Do not "simplify"
@@ -3250,12 +2891,10 @@ $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (
 # ===================================================================
 # STAGING - from here down, everything writes into $leg and nowhere else
 # ===================================================================
-# The CSpect guard was per-switch; it is hoisted here because the folder
-# reset below is now the first thing any run does to sd\, and a running
-# emulator holding a file open would leave the folder half-emptied - the
-# same partial-fixture hazard each switch used to guard against, just
-# earlier. The per-switch guards are left in place (harmless, and they
-# document the hazard at each site).
+# CSpect-lock (see header) is hoisted here too: the folder reset below
+# is the first thing any run does to sd\, so the hazard applies before
+# any per-switch guard would run. Per-switch guards below are kept as a
+# marker at each site, not because they run first.
 if (Get-Process CSpect -ErrorAction SilentlyContinue) {
     throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
 }
@@ -3326,10 +2965,8 @@ if ($GMode) {
     # 001.NX2. Source is the Rabenstein art set (already converted,
     # 320-wide NX2), reused rather than converted here: this script has
     # no image-conversion step (see the -Rab block's own note).
-    # Same CSpect lock hazard as -Rab/-UU/-Title/-Font: a running
-    # emulator holds sd\ files open and the copies fail
-    # piecemeal, leaving a mixed extension set the loader's probe chain
-    # resolves unpredictably. Refuse to stage rather than warn.
+    # CSpect-lock (see header): a partial copy here leaves a mixed
+    # extension set the loader's probe chain resolves unpredictably.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial gmodegate fixture)"
     }
@@ -3354,11 +2991,9 @@ if ($GMode) {
 
 $v3Active = $false
 if ($V3) {
-    # SP16 Task 6: make the V3 database the active game. Same CSpect
-    # lock hazard as every other staging switch - a running emulator
-    # holds sd\ files open and the DDB/XMB pair would stage
-    # piecemeal, which for this fixture means XMES reading a stale
-    # 0.XMB from another fixture at the same offsets.
+    # Make the V3 database the active game. CSpect-lock (see header): a
+    # partial stage here means XMES reading a stale 0.XMB from another
+    # fixture at the same offsets.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial v3probe fixture)"
     }
@@ -3375,7 +3010,7 @@ $xbnActive = $false
 if ($Xbn) {
     # XBN extern support Task 1 owner leg fixture: tests\extern.dsf's
     # XREG/XCAL/XCNR/XTIK/XSVC/XABS verbs against tests\xbn\xbntest.asm.
-    # Same CSpect lock hazard as every other staging switch.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
     }
@@ -3429,8 +3064,8 @@ if ($Xbn) {
         # fixture, so extern.dsf's XFAD/XFDI verbs have something to
         # drive. Same scratch-cwd pattern as -XbnTicker above; also
         # stages the one Layer 2 picture XFAD draws, from the same
-        # Rabenstein source the -GMode block reuses (and with the same
-        # CSpect-lock refusal - a running emulator holds sd\ files open).
+        # Rabenstein source the -GMode block reuses. CSpect-lock: see
+        # header.
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial fade fixture)"
         }
@@ -3474,10 +3109,14 @@ if ($Xbn) {
         }
     }
     elseif ($XbnAll) {
-        # Task 4's combined-collection binary, staged as GAME.XBN INSTEAD
-        # of the fixture, so extern.dsf's XTCK/XFAD/XFDI/XFSC verbs chain-
+        # Combined-collection binary, staged as GAME.XBN INSTEAD of the
+        # fixture, so extern.dsf's XTCK/XFAD/XFDI/XFSC verbs chain-
         # dispatch through both modules. Same scratch-cwd pattern and
-        # picture staging as -XbnFade above (same CSpect-lock refusal).
+        # picture staging as -XbnFade above. CSpect-lock: see header.
+        # -XbnHints/-XbnClock/-XbnTool below all stage this same binary
+        # (same scratch-cwd build, drift guard and picture staging),
+        # targeting different verb sets - reduced to a one-line note
+        # each rather than repeating this block.
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
@@ -3494,7 +3133,7 @@ if ($Xbn) {
             Pop-Location
             Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade above.
+        # Drift guard: the fresh build must match the shipped GAME.XBN.
         $allShipped = Join-Path $allSrcDir 'GAME.XBN'
         $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
         $shipA = [IO.File]::ReadAllBytes($allShipped)
@@ -3524,12 +3163,8 @@ if ($Xbn) {
         "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
     }
     elseif ($XbnHints) {
-        # Task 7: same combined-collection binary as -XbnAll (hints is
-        # one of its modules), so extern.dsf's XHNP/XHNQ/XHNA/XHNR/XHNT
-        # verbs have something to drive, PLUS a packed GAME.HNT so the
-        # module's file-service calls find a hint file. Same scratch-cwd
-        # pattern, drift guard and picture staging as -XbnAll above (same
-        # CSpect-lock refusal).
+        # Same as -XbnAll, targets XHNP/XHNQ/XHNA/XHNR/XHNT (hints module)
+        # plus a packed GAME.HNT.
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
@@ -3546,7 +3181,7 @@ if ($Xbn) {
             Pop-Location
             Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade/-XbnAll above.
+        # Drift guard: see -XbnAll.
         $allShipped = Join-Path $allSrcDir 'GAME.XBN'
         $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
         $shipA = [IO.File]::ReadAllBytes($allShipped)
@@ -3575,12 +3210,8 @@ if ($Xbn) {
         "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
     }
     elseif ($XbnClock) {
-        # Task 4: same combined-collection binary as -XbnAll (clock and
-        # timer are two of its modules), so extern.dsf's XCLK/XCLA/XCLS/
-        # XTMR/XTMI verbs have both modules to drive. No hint packing -
-        # this leg needs only the binary. Same scratch-cwd pattern, drift
-        # guard and picture staging as -XbnAll above (same CSpect-lock
-        # refusal).
+        # Same as -XbnAll, targets XCLK/XCLA/XCLS/XTMR/XTMI (clock/timer
+        # modules), no hint packing.
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
@@ -3597,7 +3228,7 @@ if ($Xbn) {
             Pop-Location
             Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade/-XbnAll/-XbnHints above.
+        # Drift guard: see -XbnAll.
         $allShipped = Join-Path $allSrcDir 'GAME.XBN'
         $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
         $shipA = [IO.File]::ReadAllBytes($allShipped)
@@ -3624,12 +3255,8 @@ if ($Xbn) {
         }
     }
     elseif ($XbnTool) {
-        # Task 6: same combined-collection binary as -XbnAll (toolkit is
-        # one of its modules), so extern.dsf's XTKP/XTKA/XTKO/XTKT/XSLT
-        # verbs have the toolkit fns and CALL slots to drive. No hint
-        # packing - this leg needs only the binary. Same scratch-cwd
-        # pattern, drift guard and picture staging as -XbnAll above (same
-        # CSpect-lock refusal).
+        # Same as -XbnAll, targets XTKP/XTKA/XTKO/XTKT/XSLT (toolkit
+        # module), no hint packing.
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
@@ -3646,7 +3273,7 @@ if ($Xbn) {
             Pop-Location
             Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade/-XbnAll/-XbnHints/-XbnClock above.
+        # Drift guard: see -XbnAll.
         $allShipped = Join-Path $allSrcDir 'GAME.XBN'
         $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
         $shipA = [IO.File]::ReadAllBytes($allShipped)
@@ -3675,8 +3302,8 @@ if ($Xbn) {
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\GAME.XBN -> sd\$legName\GAME.XBN"
-        # Task 8: XPAL needs a picture on screen to read back. Same art
-        # and same CSpect-lock hazard as the -XbnFade leg's staging.
+        # XPAL needs a picture on screen to read back. CSpect-lock: see
+        # header.
         $palArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
         if (Test-Path $palArt) {
             Copy-Item $palArt "$leg\001.NX2" -Force
@@ -3691,10 +3318,9 @@ if ($Xbn) {
 
 $rabActive = $false
 if ($Rab) {
-    # A running CSpect holds sd\ files open: the per-file stale-variant
-    # cleanup and copies below then fail piecemeal, leaving a MIXED set
+    # CSpect-lock (see header): a partial copy here leaves a MIXED set
     # of shapes that the loader's probe chain resolves unpredictably
-    # (NX2 variants win over NXI). Refuse to stage rather than warn.
+    # (NX2 variants win over NXI).
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
     }
@@ -3766,7 +3392,7 @@ if ($Rab) {
 
 $uuActive = $false
 if ($UU) {
-    # Same CSpect lock hazard as -Rab: refuse to stage rather than warn.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
     }
@@ -3833,9 +3459,8 @@ if ($UU) {
 
 $partActive = $false
 if ($Part) {
-    # SP11 Task 6: two-part fixture pair. Same CSpect-lock hazard as
-    # -Rab/-UU (four files across two DDBs this time) - refuse to stage
-    # rather than warn.
+    # Two-part fixture pair (four files across two DDBs). CSpect-lock:
+    # see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial part staging)"
     }
@@ -3914,8 +3539,7 @@ if ($Title) {
     # matters more - a leg that does NOT pass -Title now gets no title
     # at all, where a survivor in the shared root used to starve the
     # graphics cache and silently turn burst picture draws into no-ops.
-    # Same CSpect lock hazard as -Rab/-UU: refuse to stage rather than
-    # warn.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial title fixture)"
     }
@@ -3933,8 +3557,7 @@ if ($Font) {
     # (authoring-kit hard rule for this task): fontconv.ps1 builds the
     # full 2048-byte FONT.CHR fresh each run from the .ch8 source
     # plus authoring-kit\lib\default.chr.
-    # Same CSpect lock hazard as -Rab/-UU/-Title: refuse to stage rather
-    # than warn.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial font fixture)"
     }
@@ -4034,11 +3657,12 @@ if ($Font) {
 # BUMP pal9i -> pal9j (SP17 adaptive tile ladder, 2026-07-30): the
 # budget-bound delta schedule walks {32,64,128,256,band} per bound frame
 # and keeps the finest rung that still spends >= 99% of the best rung's
-# bytes, with raw err2 band importance in place of sqrt(err2). Every
-# fixture with a budget-bound frame re-encodes; 002/005/006 come out
-# byte-identical (no bound frame, or no rung beats the band) but
-# re-encode anyway because the tag is in their cache name. See
-# $encoderGeneration 'pal9j' in authoring-kit/lib/video.ps1.
+# bytes; band importance stays sqrt(err2) - a same-sitting raw-err2
+# experiment was reverted (net loss on fixture 008). Every fixture with
+# a budget-bound frame re-encodes; 002/005/006 come out byte-identical
+# (no bound frame, or no rung beats the band) but re-encode anyway
+# because the tag is in their cache name. See $encoderGeneration
+# 'pal9j' in authoring-kit/lib/video.ps1.
 # BUMP pal9j -> pal9k (tile ladder RE-CUT, 2026-07-30): owner silicon read
 # the pal9j ladder as displacement and tearing on 007 (mode-0). Sub-line
 # rungs are struck - the ladder walks whole paint-order LINES now - and a
@@ -4176,11 +3800,9 @@ function Assert-VidEraInSync {
 
 if ($Vid) {
     Assert-VidEraInSync
-    # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,
-    # 2026-07-25) - see the -Vid switch's own header comment above for
-    # the full shape/source/start/duration mapping and the pre-3a
-    # long-clip cache retirement note. Same CSpect-lock hazard as
-    # -Rab/-UU/-Title/-Font: refuse to stage rather than warn.
+    # NXV v2 leg set fixtures - see the -Vid switch's own header comment
+    # above for the shape/source/start/duration mapping. CSpect-lock:
+    # see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
@@ -4192,8 +3814,7 @@ if ($Vid) {
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
     # dest file -> (NXV v2 shape preset, source clip, --start, --duration)
-    # - exact leg-card values (sp14a-task-4-report.md section 37 + the
-    # CALIBRATION WAVE addendum) that reproduce the leg-staged bytes
+    # - the leg-card values that reproduce the leg-staged bytes
     # byte-for-byte (the encoder is deterministic).
     $vidLegMap = [ordered]@{
         '001.VID' = @{ shape = 'full';         src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4');         start = '00:00:00'; duration = '1.35' }
@@ -4228,7 +3849,7 @@ if ($Vid) {
             $vidStaged++
         }
     }
-    "staged $vidStaged video fixture(s) -> sd\$legName\001.VID..006.VID (NXV v2 leg set: full/classic/16:9/scope/classic-wide/16:9-card, sp14a-task-4-report.md section 37)"
+    "staged $vidStaged video fixture(s) -> sd\$legName\001.VID..006.VID (NXV v2 leg set: full/classic/16:9/scope/classic-wide/16:9-card)"
 }
 
 if ($VidLong) {
@@ -4339,13 +3960,12 @@ if ($VidLong) {
         Copy-Item -LiteralPath "$leg\007.VID" -Destination "$leg\099.VID" -Force
         $vidLongStaged++
     }
-    "staged $vidLongStaged long fixture(s) -> sd\$legName\007-011.VID + 099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE, sp14a-task-4-report.md sections 38/39)"
+    "staged $vidLongStaged long fixture(s) -> sd\$legName\007-011.VID + 099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE)"
 }
 
 if ($NxBench) {
-    # SP15 T2 decode-kernel bench payloads - see the -NxBench header
-    # comment above. Same CSpect-lock hazard as the other staging
-    # switches: refuse to stage rather than warn.
+    # Decode-kernel bench payloads - see the -NxBench header comment
+    # above. CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial bench fixture set)"
     }
@@ -4388,8 +4008,7 @@ if ($Nxv2Test) {
 }
 
 if ($Aud) {
-    # Same CSpect lock hazard as the art staging: a running emulator
-    # holds sd\ files open and the copies fail piecemeal.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial audio sets)"
     }
@@ -4457,9 +4076,8 @@ if ($AudLad) {
     # them cannot be a difference in the material. Do not "tidy" this
     # into a distinct GAME.AKY.
     #
-    # Same CSpect lock hazard as -Aud/-Rab/-GMode: a running emulator
-    # holds sd\ files open and the copies fail piecemeal, leaving a
-    # partial ladder whose missing rungs read as silent no-ops.
+    # CSpect-lock (see header): a partial stage here leaves a partial
+    # ladder whose missing rungs read as silent no-ops.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ladder)"
     }
@@ -4561,9 +4179,8 @@ if ($SfxDi) {
     # as the burst and blunt the very comparison this leg exists to
     # make. Do not "helpfully" add a GAME.AKY here.
     #
-    # Same CSpect lock hazard as -Aud/-AudLad: a running emulator holds
-    # sd\ files open and the copies fail piecemeal, leaving a fixture
-    # whose missing WAV reads as a silent no-op rather than as an error.
+    # CSpect-lock (see header): a partial stage here leaves a missing
+    # WAV reading as a silent no-op rather than an error.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ear fixture)"
     }
@@ -4629,9 +4246,7 @@ if ($SfxLong) {
     # picture and (opportunistically) the VID verb's clip - the last
     # three assets added by Task 14b.
     #
-    # Same CSpect lock hazard as every other staging switch: refuse to
-    # stage rather than leave a partial leg folder whose missing WAV
-    # reads as a silent no-op.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -4744,9 +4359,7 @@ if ($Sfx2) {
     # jobs, both owned entirely by this switch: make tests\sfx2.dsf the
     # active DDB, and generate + stage the three stimulus WAVs.
     #
-    # Same CSpect lock hazard as every other staging switch: refuse to
-    # stage rather than leave a partial leg folder whose missing WAV
-    # reads as a silent no-op.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -4822,10 +4435,8 @@ if ($L2Holes) {
     # this fixture's three files and nothing else, so no other art of
     # number 001 exists for the probe chain to find.
     #
-    # Same CSpect lock hazard as -Aud/-AudLad/-SfxDi, and the same
-    # refusal: a running emulator holds sd\ files open, the copies fail
-    # one at a time, and a missing 001.NXI makes PICTURE fail - the
-    # fixture would then be reporting on staging rather than on Layer 2.
+    # CSpect-lock (see header): a missing 001.NXI here makes PICTURE
+    # fail, so the fixture would report on staging rather than Layer 2.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
     }
@@ -4896,11 +4507,8 @@ if ($TmOver) {
     # in BOTH layer orders. A leftover 001.NX2 winning the chain would
     # take the readout away, not merely change the blit path.
     #
-    # Same CSpect lock hazard as -Aud/-AudLad/-SfxDi/-L2Holes, and the
-    # same refusal: a running emulator holds sd\ files open, the copies
-    # fail one at a time, and a missing 001.NXI makes PICTURE fail - the
-    # fixture would then be reporting on staging rather than on the layer
-    # order.
+    # CSpect-lock (see header): a missing 001.NXI here makes PICTURE
+    # fail, so the fixture would report on staging rather than layer order.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
     }
@@ -4968,11 +4576,8 @@ if ($TileSlack) {
     # the source hash, so a re-stage after a completed measurement costs
     # file copies rather than four encodes.
     #
-    # Same CSpect lock hazard as -Vid/-VidLong/-L2Holes, and the same
-    # refusal rather than a warning: a running emulator holds sd\ files
-    # open, the copies fail one at a time, and a leg missing one arm of a
-    # pair is an A/B with nothing to compare against - which is exactly
-    # the failure that cannot be noticed on the glass.
+    # CSpect-lock (see header): a leg missing one arm of the A/B pair
+    # cannot be noticed on the glass.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial A/B - one arm of a pair missing is not detectable on screen)"
     }
@@ -5074,8 +4679,7 @@ if ($FontSw) {
     # active GAME.DDB), this stimulus has to BE the game, so it gets its
     # own leg and its own folder, exactly as -GMode's does for
     # gmodegate.dsf.
-    # Same CSpect lock hazard as every other staging switch: refuse to
-    # stage rather than warn.
+    # CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -5142,10 +4746,9 @@ if ($FontSw) {
 
 $txt40Active = $false
 if ($Txt40) {
-    # 40-column tilemap mode fixture leg (2026-08-30): tests\txt40.dsf
-    # drives GFX 0/1 18, WINAT/WINSIZE and CENTRE at both widths, and a
-    # synchronous video play from 40-col. Same CSpect lock hazard as
-    # every other staging switch: refuse to stage rather than warn.
+    # 40-column tilemap mode fixture leg: tests\txt40.dsf drives GFX 0/1
+    # 18, WINAT/WINSIZE and CENTRE at both widths, and a synchronous
+    # video play from 40-col. CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -5169,12 +4772,10 @@ if ($Txt40) {
 
 $accentActive = $false
 if ($Accent) {
-    # Accented-glyph fixture leg (2026-08-30): tests\accents.dsf drives
-    # both DRC accent encodings, the uppercase triple sets, direct
-    # sharp-s, MODE 1 force-upper and More... paging across shifted
-    # words. Expected glyph indices per check are in
-    # docs\accent-glyphs-run-sheet.md. Same CSpect lock hazard as every
-    # other staging switch: refuse to stage rather than warn.
+    # Accented-glyph fixture leg: tests\accents.dsf drives both DRC
+    # accent encodings, the uppercase triple sets, direct sharp-s, MODE 1
+    # force-upper and More... paging across shifted words. Expected
+    # glyph indices per check are asserted below. CSpect-lock: see header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -5258,9 +4859,9 @@ if ($Cycle) {
 }
 
 if ($SprAud) {
-    # Sprites under audio (2026-09-03): four sets, the kit's 9-channel tune
-    # and two sampled effects, one COMPLETE and one STREAMING. Same CSpect
-    # lock hazard as every staging switch.
+    # Sprites under audio: four sets, the kit's 9-channel tune and two
+    # sampled effects, one COMPLETE and one STREAMING. CSpect-lock: see
+    # header.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -5499,14 +5100,14 @@ elseif ($Rab) { "active: rabenstein (GAME.DDB copy failed, see warning above - s
 elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)" }
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
-elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - see .superpowers\sdd\sfx-di-audible-test.md)" }
+elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture)" }
 elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixture - SP18 item 7 Task 7)" }
 elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
-elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture - see docs\superpowers\l2-holes-run-sheet.md)" }
+elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture)" }
 elseif ($tmoverActive) { "active: tmover (transparent tilemap paper / layer order fixture - four PAPER/INK bands over a full-frame card, four timed layer-order states)" }
-elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs - see docs\superpowers\tileslack-ab-run-sheet.md)" }
-elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
-elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
+elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs)" }
+elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass)" }
+elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($BigDdb) { "active: bigddb ($bigLen bytes, past the 31744 classic ceiling)" }
 elseif ($BigDdbTok) { "active: bigddb-autotok ($bigTokLen bytes, past the 31744 classic ceiling, per-game token table)" }

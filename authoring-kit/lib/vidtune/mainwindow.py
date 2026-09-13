@@ -57,15 +57,11 @@ from .settingsmodel import KNOBS, SHAPE_PRESETS, VidprofileUnsupported, effectiv
 
 __all__ = ["MainWindow", "MetricsBar", "PreviewPane", "SettingsPanel"]
 
-# Owner-requested (2026-08-01): an un-encoded clip's source frames are
-# loaded into the pane so the user can scrub/mark a segment before any
-# encode has run (MainWindow._load_source_preview). Raw RGB24 frames are
-# (width * height * 3) bytes EACH - a 320x256 60s 25fps clip alone is
-# already ~350MB held live by the pane - so extraction is capped at this
-# many seconds of the clip rather than pulling the whole thing. Frame
-# indices still land on the SAME timeline the eventual encode will use
-# (target fps, clip-level trim - see _resolve_extraction_params), so a
-# marker set within the cap is still valid once a real encode runs.
+# Un-encoded source frames are capped at this many seconds before
+# extraction (raw RGB24 is width*height*3 bytes/frame - uncapped, a
+# 320x256 60s clip alone runs ~350MB live). Frame indices still land on
+# the encode's own timeline (see _resolve_extraction_params), so a marker
+# set within the cap stays valid once a real encode runs.
 SOURCE_PREVIEW_CAP_SECONDS = 60.0
 
 
@@ -106,10 +102,8 @@ def _strip_argv_flags(argv, flags):
 def _parse_start_duration(argv):
     """--start/--duration values pulled from an argv list, in seconds.
     videnc documents --start as HH:MM:SS (a plain-seconds value is also
-    legal input); to_seconds handles both. This used to call float()
-    directly, which raised on any HH:MM:SS value and - via the broad
-    except in _extract_matching_source - silently dropped the Flicker/
-    Heatmap source comparison with no message at all."""
+    legal input); to_seconds handles both - never float() directly,
+    which raises on HH:MM:SS."""
     start = duration = None
     for i, tok in enumerate(argv):
         if tok == "--start" and i + 1 < len(argv):
@@ -754,9 +748,9 @@ class SettingsPanel(QWidget):
 
 
 class MainWindow(QMainWindow):
-    # Initial-geometry constants (owner-requested 2026-08-01: the window
-    # used to open needing a manual resize before the settings panel's
-    # scroll area stopped showing scrollbars). See _compute_initial_width.
+    # Initial-geometry constants: sized so the window opens without
+    # needing a manual resize to clear the settings panel's scroll area
+    # of scrollbars. See _compute_initial_width.
     _CLIP_LIST_WIDTH = 220
     _PREVIEW_WIDTH = 320 * 2 + 40   # 320-wide clip at PreviewPane's 2x default + margins
     _SPLITTER_SLACK = 24            # splitter handles + central layout margins
@@ -776,9 +770,7 @@ class MainWindow(QMainWindow):
             # Bad VIDASPECT/VIDPROFILE in CONFIG.BAT - _populate_clip_list
             # (called later in __init__) hits this same exception per
             # clip and raises the red banner; this fallback only keeps
-            # construction from crashing before that point is reached
-            # (a bad VIDASPECT used to kill MainWindow.__init__ with no
-            # UI at all under --windowed).
+            # construction from crashing before that point is reached.
             self.kit_base = {k.name: k.default for k in KNOBS}
             self.kit_base["extra"] = []
         self.session_edits: dict = {}
@@ -936,14 +928,13 @@ class MainWindow(QMainWindow):
     def _initial_pane_widths(self):
         """(clip_list, preview, settings) floor widths for the default
         layout. Preview and settings are each the LARGER of a nominal
-        target and the pane's own minimumSizeHint - PreviewPane's
-        transport row (Play/Stop/</>/Loop/Set In/Set Out/Clear/segment
-        readout/2x) has a real minimum width of its own (driven by the
-        host style's button metrics, not just the 320-wide-at-2x image),
-        and QSplitter.setSizes() silently overrides an under-sized
-        request to respect a child's minimumSizeHint - which is exactly
-        how a fixed 640px guess for the preview pane used to starve the
-        settings pane back down to its scrollbar-showing width."""
+        target and the pane's own minimumSizeHint: PreviewPane's
+        transport row has a real minimum width of its own (driven by
+        the host style's button metrics, not just the 320-wide-at-2x
+        image), and QSplitter.setSizes() overrides an under-sized
+        request to respect a child's minimumSizeHint - so an unfloored
+        preview target would squeeze the settings pane back down to
+        its scrollbar-showing width."""
         panel_width = max(
             self.settings_panel.sizeHint().width()
             + self.settings_scroll.frameWidth() * 2 + self._SCROLLBAR_ALLOWANCE,
@@ -981,18 +972,12 @@ class MainWindow(QMainWindow):
             total_height = min(total_height, avail.height())
 
         self.resize(total_width, total_height)
-        # QSplitter.setSizes() distributes against the splitter's OWN
-        # current width - before the window has ever been shown, a top-
-        # level widget's internal QMainWindowLayout (which sizes the
-        # central widget) and the central widget's own layout (which
-        # sizes the splitter) have not run yet, so both still reflect
-        # their pre-resize state despite the resize() just issued above.
-        # Explicitly activating each layout in turn (invalidating the
-        # central layout first, since a plain activate() is a no-op
-        # unless the layout is already marked dirty) is what makes the
-        # splitter's actual width - and therefore setSizes() below -
-        # correct instead of being computed against a stale, much
-        # smaller size.
+        # Before the window is shown, the QMainWindowLayout and the
+        # central widget's own layout have not run against the new size
+        # yet, so each is activated explicitly (central layout
+        # invalidated first, since activate() alone is a no-op unless
+        # already dirty) - otherwise setSizes() below sees a stale,
+        # pre-resize splitter width.
         self.layout().activate()
         central_layout = self.centralWidget().layout()
         central_layout.invalidate()
@@ -1040,8 +1025,8 @@ class MainWindow(QMainWindow):
                 self.clip_list.addItem(item)
         except (VidprofileUnsupported, ValueError) as exc:
             # ValueError is _shape_args rejecting a malformed VIDASPECT
-            # (e.g. "wide") - previously uncaught here, so a config typo
-            # took MainWindow.__init__ down with no UI under --windowed.
+            # (e.g. "wide"); caught here so a config typo shows the red
+            # banner instead of taking the window down.
             self.clip_list.clear()
             self._banner.setText(str(exc))
             self._banner.setVisible(True)
@@ -1104,26 +1089,20 @@ class MainWindow(QMainWindow):
             width = dims[0] if dims is not None else 320
             self.preview.load(clip.vid, None, column_major=(width == 320))
         else:
-            # Owner-requested (2026-08-01): a clip with no fresh .vid
-            # used to leave the pane on the empty hint with nothing to
-            # scrub - step/Set In/Set Out had no frames to act on. Load
-            # the clip's SOURCE frames instead (capped, off the GUI
-            # thread) so segment selection is possible before any encode
-            # has run; _load_source_preview falls back to the same empty
-            # hint itself if extraction isn't currently possible (no
-            # source .mp4, no ffmpeg).
+            # A clip with no fresh .vid loads its SOURCE frames instead
+            # (capped, off the GUI thread), so segment selection is
+            # possible before any encode has run; _load_source_preview
+            # falls back to the empty hint itself if extraction isn't
+            # currently possible (no source .mp4, no ffmpeg).
             self._load_source_preview(num3, clip, settings)
 
     def _load_source_preview(self, num3, clip, settings):
         """Loads a not-yet-encoded clip's SOURCE frames into the pane
-        (encoded=None) so the user can scrub the timeline and mark
-        Set In/Set Out before ever running an encode. Extraction uses
-        the clip's EFFECTIVE settings - shape width/height, target fps,
-        retime, clip-level trim - resolved by _resolve_extraction_params
-        the SAME way _extract_matching_source resolves them post-encode,
-        so a marker set here already lines up with the eventual encode's
-        timeline (target-fps extraction is what makes that true - a
-        raw-source-fps preview would not). Runs off the GUI thread via
+        (encoded=None) so the user can scrub the timeline and mark Set
+        In/Set Out before ever running an encode. Extraction uses the
+        clip's EFFECTIVE settings, resolved by _resolve_extraction_params
+        (see its docstring for why that keeps a marker set here aligned
+        with the eventual encode). Runs off the GUI thread via
         PreviewPane.load_source, since ffmpeg extraction is not fast;
         duration capped at SOURCE_PREVIEW_CAP_SECONDS (see its module
         docstring)."""
@@ -1522,15 +1501,12 @@ class MainWindow(QMainWindow):
         return str(self.ffmpeg), clip.mp4, width, height, fps, retime
 
     def _extract_matching_source(self, num3, argv):
-        """Best-effort: source frames shaped/retimed/trimmed to match
-        the encode that just ran, for Flicker/Heatmap comparison. Runs
-        ffmpeg synchronously on the GUI thread (busy cursor) - a known
-        polish gap, not a correctness one: any failure here drops back
-        to an encoded-only preview, which PreviewPane already supports,
-        but the failure is recorded in self._last_source_error and
-        surfaced by the caller (_load_preview) into the pane's error
-        label - an HH:MM:SS --start used to fail here silently with no
-        message at all, back when this parsed with float()."""
+        """Best-effort: source frames shaped/retimed/trimmed to match the
+        encode that just ran, for Flicker/Heatmap comparison. Runs ffmpeg
+        synchronously on the GUI thread (busy cursor, known polish gap).
+        A failure here is recorded in self._last_source_error and
+        surfaced by the caller into the pane's error label rather than
+        raised - it must never crash the comparison view."""
         self._last_source_error = None
         try:
             params = self._resolve_extraction_params(num3)

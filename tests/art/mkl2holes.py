@@ -1,217 +1,43 @@
-# Layer 2 TRANSPARENCY instrument - punch-out card generator for the
-# hole/hardware fixture (tests\l2holes.dsf, run sheet
-# docs\superpowers\l2-holes-run-sheet.md).
+# Layer 2 TRANSPARENCY instrument - punch-out card for the hole/hardware
+# fixture (tests\l2holes.dsf), staged as sd\L2HOLES\001.NXI over a
+# tilemap of position-naming text. Inverse of mkl2card.py: that card has
+# no index-255 pixel (any transparency is damage); this one punches 13
+# holes at index 255 (a hole not showing text through it is damage).
 #
-# Produces tests\out\l2holes.nxi, which tests\stage-l2holes.ps1 stages as
-# sd\L2HOLES\001.NXI - the ONE picture the fixture loads with PICTURE 1
-# and shows with DISPLAY 0, over a tilemap filled edge to edge with
-# position-identifying text.
+# THE DODGE RULE (canonical here - other headers cite it by name). 255
+# (L2_TRANSP_INDEX, src\nextdaad.inc) is the only pixel value
+# l2_pal9_stamp (src\overlay2.asm) forces to $E3 (L2_TRANSP_COLOUR, a
+# colour compare on the palette output, not an index compare) after
+# every load. Any OTHER entry packing to $E3 would punch an unwanted
+# hole - real, since saturated magenta already appears in corpus art -
+# so l2_pal9_run/l2_palette_load rewrite such entries to $E7 (one green
+# step) before the stamp re-forces 255 back to $E3. PASS: an entry
+# authored at $E3 (other than 255) renders identically to one at $E7 -
+# proven by the "E3"/"E7" blocks below.
 #
-# THIS CARD IS THE EXACT INVERSE OF tests\art\mkl2card.py. That one is a
-# corruption detector and deliberately contains NO pixel of index 255, so
-# ANY transparency inside it is damage. This one is a transparency
-# detector and deliberately punches thirteen holes at index 255, so every
-# hole that does NOT show text is damage. Read that card's header first;
-# everything below assumes its geometry derivation.
+# GEOMETRY. 256x192, full screen; Layer 2 is inset 32px from the tilemap
+# (column = x//4+8, row = y//8+4), covering columns 8-71, rows 4-27.
 #
-# ------------------------------------------------------------------
-# THE THREE CONSTANTS THIS CARD IS BUILT ON - all verified in source
-# ------------------------------------------------------------------
-#   L2_TRANSP_INDEX = 255   (src\nextdaad.inc:266) - the PIXEL value that
-#     punches a hole. l2_pal9_stamp (src\overlay2.asm:278) writes entry
-#     255 = L2_TRANSP_COLOUR after EVERY palette load, on every path, so
-#     255 is the ONLY transparent entry after any picture load.
-#   L2_TRANSP_COLOUR = $E3  (src\nextdaad.inc:254) - a COLOUR in NR $14,
-#     compared against the TOP 8 BITS of each Layer 2 pixel's 9-bit
-#     palette output. Not an index compare.
-#   THE DODGE. l2_pal9_run (src\overlay2.asm:293) rewrites the RRRGGGBB
-#     byte of ANY palette entry that equals $E3 to $E7 before programming
-#     it, so art that happens to contain saturated magenta does not punch
-#     unintended holes. l2_palette_load's B=0 loop (:259) does the same
-#     with the same +4. Both loops run over all 256 entries; the stamp
-#     then re-forces entry 255 back to $E3 AFTERWARDS, so the dodge can
-#     never disarm the reserved index.
+# HOLES (tag: what it targets):
+#   TL/TR/BL/BR  32x16 corners     - first/last byte of first/last row
+#   DG   48x48 diagonal, 1px apex  - finest edge case
+#   CT   disc r24 @ centre         - curved edge, no stepped blitter
+#   RN   ring r23/r6               - opaque island: per-pixel, not flood
+#   32/16/08  size-ladder squares  - progressively smaller
+#   4C   4x8 (one tilemap cell)    - smallest hole showing a character
+#   2P/1P  2x2 / 1x1               - odd-shift phase / single-byte
+#   E3/E7  (not holes, rows 9-11)  - the dodge test blocks
+# Sand+crosshair patches mark the 4C/2P/1P holes for by-eye spotting.
 #
-# Layer 2 sits ABOVE the tilemap - l2_enable writes NR $15 = %000 "S L U"
-# (src\overlay2.asm:123) - so a hole in Layer 2 reveals tilemap text
-# beneath it. That is the whole instrument: holes are windows onto text.
+# Opaque field (checkerboard ruler, grey ramp, 2x2 checker, caption,
+# white frame) is never flat, so each piece's absence or displacement is
+# visible on its own. Two more sentinels: no flat area is dark blue
+# (tilemap PAPER 1), so blue in the footprint is a hole; entry 255 here
+# is bright green, used nowhere else, so green instead of text means
+# l2_pal9_stamp did not run.
 #
-# ------------------------------------------------------------------
-# GEOMETRY, AND WHY 256x192 IS THE WHOLE SCREEN
-# ------------------------------------------------------------------
-# 256 WIDE IS MANDATORY. gfxExtTab routes .NXI to mode 0 / width 256 and
-# gfx_blit sends 256-wide art to gfx_row_copy256 -> dma_copy; .NX2 (320
-# wide) goes to gfx_row_scatter320, a CPU column scatter. The file's own
-# bytes carry no width - the EXTENSION decides. A card staged as .NX2
-# would exercise a different blitter.
-#
-# 192 ROWS IS THE MAXIMUM, not a choice. gfx_derive_height
-# (src\overlay2.asm:1459) derives the row count from the file length as
-# (size - 512) / width and, for mode 0, fails any count outside 1..192
-# ("cp 193 / jr nc, .bad"). 192 rows is therefore the full-screen card the
-# task asks for, and 512 + 256*192 = 49664 bytes must divide exactly.
-#
-# THE TILEMAP MAPPING. The tilemap is 80x32 cells of 8x8 pixels = 640x256
-# tilemap pixels, and it "overlaps ULA by 32 pixels on each side"
-# (docs\zx-next-dev-guide-2022-07-15\chapter-next-tilemap.tex:18); Layer 2
-# 320x256 is "the regular 256x192 mode with additional 32 pixel border
-# around (32 + 256 + 32 = 320 and 32 + 192 + 32 = 256)"
-# (chapter-next-layer2.tex:308). So both layers cover the same physical
-# screen, the tilemap at twice the horizontal pixel density, and a
-# 256x192 Layer 2 surface is inset 32 pixels on both axes:
-#
-#     tilemap column = L2 x // 4 + 8        (a cell is 4 L2 px wide)
-#     tilemap row    = L2 y // 8 + 4        (a cell is 8 L2 px tall)
-#
-# A full-screen 256x192 card therefore covers tilemap COLUMNS 8..71 and
-# ROWS 4..27 exactly. Columns 0..7 and 72..79, rows 0..3 and 28..31 are
-# OUTSIDE it - that margin is the fixture's control area, and text there
-# must stay visible whatever Layer 2 does.
-#
-# ------------------------------------------------------------------
-# WHY EACH PIECE OF THE OPAQUE FIELD IS THERE
-# ------------------------------------------------------------------
-# THE FIELD IS NOT FLAT AND NOT BLACK. A flat black field cannot be told
-# apart from "Layer 2 is not being displayed at all" by eye, and that
-# exact ambiguity is what wasted the 2026-08-03 sfxdi run ("LAYER 2 NOT
-# ACTIVE DURING TEST"). Every opaque pixel here belongs to a structure
-# whose absence or displacement is visible on its own:
-#
-#   32x32 CHECKERBOARD, brown and dark red, with a 1px orange line on
-#     every 32-pixel boundary. 32 L2 px is exactly 8 tilemap columns and
-#     4 tilemap rows, so the block grid IS a tilemap-cell ruler: the grid
-#     lines land on cell boundaries and nowhere else. A blit displaced by
-#     any amount that is not a multiple of 32 puts the grid lines off the
-#     cell boundaries, which reads against the text showing through the
-#     holes.
-#   A 2px WHITE FRAME on all four edges. The card's extent is then
-#     unambiguous, and a vertical displacement shows as a frame edge that
-#     is not at the top or bottom of the picture area.
-#   AN 8-STEP GREY RAMP, rows 160..175, 32 px per step, aligned to the
-#     same 32-px grid and crossed by the same orange grid lines. A
-#     horizontal displacement breaks a monotonic sequence AND separates
-#     the step boundaries from the grid lines - two independent readouts
-#     of the same fault, one of which survives even if the reader cannot
-#     remember which grey came first.
-#   A 2x2 CHECKERBOARD, rows 176..191 between the bottom corner holes.
-#     A displacement by an ODD number of bytes inverts its phase, which
-#     reads as a hard seam. This is the only element that detects a
-#     one-byte shift.
-#   A CAPTION, "L2 HOLES". Confirms at a glance that Layer 2 is live and
-#     that THIS card is the one staged, before any hole is judged.
-#
-# ------------------------------------------------------------------
-# THE HOLES, AND WHY EACH ONE IS SHAPED AND PLACED AS IT IS
-# ------------------------------------------------------------------
-# Every hole is positioned so that the text it exposes NAMES it. The
-# fixture fills the tilemap with 8-column units of the form
-#
-#     rr - cc t t .          e.g. "12-16DG."  = row 12, column 16, tag DG
-#
-# where columns 8u..8u+7 carry unit u, characters 5 and 6 carry the tag,
-# and character 7 is a spacer. A hole that exposes a whole unit therefore
-# reads out its own row, its own column and its own name. The tag column
-# pair (8u+5, 8u+6) is what a hole must cover for its NAME to appear; the
-# table at the foot of this comment is emitted, recomputed, by every run
-# of this script, and tests\l2holes.dsf's text is written to match it.
-#
-#   FOUR CORNER HOLES, 32x16 (TL TR BL BR). 32 px wide is not cosmetic:
-#     it is exactly one 8-column text unit, the smallest hole that can
-#     expose a whole unit and so name itself. They sit on the extreme
-#     corner pixels, which are the first and last bytes of the first and
-#     last rows - the bytes an off-by-one row loop or a clipped blit
-#     loses first. They also cut the white frame, so a corner that shows
-#     frame instead of text is unmistakable.
-#   THE CENTRE DISC, radius 24 at (128,96). The centre of the screen, and
-#     CURVED: every row of it starts and ends at a different byte offset,
-#     so a blitter that handles only whole rows or whole bytes shows a
-#     stepped or squared-off edge instead of a circle.
-#   THE DIAGONAL TRIANGLE, 48x48 at (32,64), hole where (x-32) <= (y-64).
-#     A straight diagonal edge advancing exactly one pixel per row. It
-#     tapers to a SINGLE PIXEL at its apex, so the finest possible edge
-#     case sits at a known place instead of being hunted for.
-#   THE RING, outer radius 23 / inner radius 6 at (200,88). The opaque
-#     island in the middle is the point: transparency must be per-pixel,
-#     not a flood or a bounding box. An island that vanishes means holes
-#     are being filled by area rather than by index.
-#   THE SIZE LADDER, squares of 32, 16 and 8 pixels, then a 4x8 hole (one
-#     whole tilemap CELL - the smallest hole that can still show a
-#     readable character), then 2x2, then 1x1. The 1x1 hole is one byte:
-#     it is the single most sensitive element on the card and it either
-#     shows a coloured dot or it does not.
-#   THREE TARGET PATCHES, sand with a red crosshair, around the 4x8, 2x2
-#     and 1x1 holes. A one-byte hole in a 49,152-byte picture cannot be
-#     found by scanning; the crosshair says where to look, and the sand
-#     patch guarantees the surrounding colour is nothing like the dark
-#     blue tilemap paper the hole exposes.
-#
-# ------------------------------------------------------------------
-# THE DODGE TEST - the most valuable single element on this card
-# ------------------------------------------------------------------
-# Two adjacent solid blocks, tilemap rows 9..11:
-#
-#   BLOCK "E3", index 14 = RGB333 (7,0,7). Its RRRGGGBB byte packs to
-#     $E3 - EQUAL to L2_TRANSP_COLOUR. This is the entry the interpreter
-#     must dodge. Correct behaviour: l2_pal9_run rewrites the byte to
-#     $E7 (one green step up), the second byte's blue LSB (1) is left
-#     alone, so the entry renders as RGB333 (7,1,7) - IDENTICAL to the
-#     E7 control block below.
-#   BLOCK "E7", index 15 = RGB333 (7,1,7). One step of green off pure
-#     magenta packs to $E7, is left alone by both copy loops, and renders
-#     exactly as authored. It is the same escape nxv2enc.py's
-#     TRANSP_REMAP picks for the same colour - and exactly where the
-#     dodge parks index 14.
-#
-# PASS: both blocks are magenta, E3 and E7 INDISTINGUISHABLE - the
-# dodged entry must exactly match the control; identical blocks are the
-# pass, not a suspicion - and NEITHER shows text. FAIL: the E3 block
-# shows text - the dodge did not happen and any artist whose palette
-# lands on saturated magenta gets holes punched through their own
-# picture. That is a real, shipped-art failure mode, not a theoretical
-# one: Task 7 of the 2026-08-06 Layer 2 plan found this collision
-# already present in corpus art. A visible difference between the two
-# blocks is ALSO a fail - it means the dodge went somewhere other than
-# the control colour.
-#
-# The blocks are labelled "E3" and "E7" in black, 15x21 glyphs, so the
-# verdict does not depend on remembering which block is which. The
-# assertion below pins this down from the other end: EXACTLY ONE non-255
-# palette entry may pack to $E3, and it must be index 14.
-#
-# ------------------------------------------------------------------
-# TWO COLOURS THAT EXIST ONLY TO BE ABSENT
-# ------------------------------------------------------------------
-# DARK BLUE. The fixture's text window uses PAPER 1 = dadPalette[1] =
-# RGB333 (0,0,6) (src\tilemap.asm:247). NO colour on this card has any
-# blue in it except white and the two magentas, and no large flat area is
-# blue at all. So blue inside the card's footprint means a hole, and that
-# is a judgement anyone can make - including on the 1x1 hole, where no
-# glyph is readable and the colour is the entire readout.
-#
-# BRIGHT GREEN. Palette entry 255 in THIS FILE is RGB333 (0,7,0), a
-# colour used nowhere else on the card and deliberately excluded from the
-# fixture's text inks. It should never be seen: l2_pal9_stamp overwrites
-# entry 255 with $E3 after the copy loop, on every path. If the holes
-# come up BRIGHT GREEN instead of showing text, the stamp did not run -
-# the file's own entry 255 reached the hardware. That failure has a
-# self-naming signature instead of looking like "the holes are the wrong
-# colour". (Writing $E3 into entry 255 here would have hidden it: the
-# dodge would rewrite it to $E7 and a missing stamp would show opaque
-# magenta, indistinguishable from the E3 block failing.)
-#
-# ------------------------------------------------------------------
-# FILE FORMAT (Gfx2Next .nxi, as the interpreter consumes it)
-# ------------------------------------------------------------------
-# 512-byte palette FIRST - 256 entries x 2 bytes, byte 0 = RRRGGGBB,
-# byte 1 bit 0 = the blue LSB and bit 7 = L2 priority - then width*height
-# 8-bit palette indices, row-major. gfx_blit skips the leading 512 for
-# the pixel stream and rewinds to offset 0 for l2_palette_load format 1.
-#
-# Written by hand rather than converted from a PNG through gfx2next for
-# the same reason mkl2card.py is: that route's ADAPTIVE palette picks its
-# own colours, so which index carries which colour - and whether any
-# entry lands on $E3 - would not be under this card's control. Here it
-# is the entire point.
+# FILE FORMAT: 512-byte palette then row-major indices, same as
+# mkl2card.py; hand-authored so $E3 stays under this card's control.
 
 import os
 import sys

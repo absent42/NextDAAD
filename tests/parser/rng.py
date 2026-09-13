@@ -1,8 +1,7 @@
 """Python reference of NextDAAD's rng_next (src/overlay0.asm).
 
 Transcribed from the Z80 (SP16 Task 5 - the xorshift replacement; the
-old rotate-based routine and its mod-200/mod-100 reduction are gone,
-see docs/parser-bugs.md entry 3):
+old rotate-based routine and its mod-200/mod-100 reduction are gone):
 
     ld hl,(rngState)
     ; x ^= x << 7

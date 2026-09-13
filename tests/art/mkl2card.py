@@ -1,20 +1,12 @@
-# Layer 2 corruption-detector card generator for the sampled-SFX
-# DI-exposure fixture (tests\sfxdi.dsf, run sheet
-# .superpowers\sdd\sfx-di-audible-test.md).
+# Layer 2 corruption-detector card for the sampled-SFX DI-exposure
+# fixture (tests\sfxdi.dsf). Produces tests\out\l2card.nxi, staged by
+# tests\build-tests.ps1 -SfxDi as sd\SFXDI\001.NXI.
 #
-# Produces tests\out\l2card.nxi, which tests\build-tests.ps1 -SfxDi
-# stages as sd\SFXDI\001.NXI - the ONE picture the fixture loads with
-# PICTURE 1 and then blits, over and over, with DISPLAY 0.
-#
-# WHY A GENERATED CARD AND NOT CORPUS ART. The fixture's visual job is
-# to answer "did dma_copy move every byte to the right place", and the
-# image IS the instrument. Real location art is the worst possible
-# instrument for that: it is high-detail, so a few wrong bytes hide in
-# the texture, and its adaptive palette can legitimately land an entry
-# on the transparent COLOUR $E3 - which l2_palette_load then rewrites
-# under it - so a correct blit can show holes and a hole means nothing.
-# Every property below exists to make a specific class of damage
-# impossible to miss and impossible to fake.
+# Generated, not corpus art: high-detail real art hides a few wrong
+# bytes in its texture and can legitimately use the transparent colour
+# $E3, so a correct blit could show holes that mean nothing. Every
+# property below exists to make a specific class of DMA damage visible
+# and unfakeable.
 #
 #   NO PIXEL IS EVER INDEX 255. Only indices 0..15 are used, and every
 #     palette entry from 16 up is black. l2_palette_load reserves 255
@@ -65,12 +57,8 @@
 # is DERIVED by gfx_derive_height as (filesize - 512) / 256, so the row
 # count is carried by the file length alone and 128 must divide exactly.
 #
-# Written by hand rather than converted from a PNG through gfx2next
-# -pal-embed (the canonical route for real art) because that route's
-# ADAPTIVE palette is exactly the property this card must not have: it
-# picks its own colours, so which index carries which colour - and
-# whether any entry lands on $E3 and gets rewritten - is not under the
-# card's control.
+# Hand-authored, not gfx2next-converted: gfx2next's adaptive palette
+# picks its own colours, which would put $E3 outside this card's control.
 
 import os
 import struct
@@ -80,17 +68,11 @@ WIDTH = 256
 HEIGHT = 128
 
 # --- palette ------------------------------------------------------
-# 16 used entries, 3 bits per channel. None of these encode to $E3
-# (L2_TRANSP_COLOUR - which is r=7 g=0 b=6or7, i.e. pure magenta):
-# l2_palette_load rewrites any entry whose first byte is $E3 to $E7 (one
-# green step up) to stop it punching an unintended hole, and an entry
-# silently rewritten under us would be one more thing the card could not
-# vouch for. That is why entry 6 is (7,1,7) and not the obvious (7,0,7):
-# one step of green off pure magenta packs to $E7 instead of $E3, is left
-# alone by the loader, and is still magenta to the eye. It is the same
-# escape the video encoder picks for the same colour (nxv2enc.py
-# TRANSP_REMAP maps (255,0,255) -> (255,36,255), which is exactly this
-# entry). The loader's own dodge now lands on this same escape colour.
+# 16 entries, none packing to $E3 (L2_TRANSP_COLOUR, pure magenta
+# r=7 g=0 b=6or7): l2_palette_load rewrites any $E3 entry to $E7, so
+# entry 6 is (7,1,7) rather than the obvious (7,0,7) - one green step
+# off magenta, the same escape nxv2enc.py's TRANSP_REMAP uses for
+# (255,0,255).
 COLOURS = [
     (0, 0, 0),      # 0  black      - borders and rules
     (7, 7, 7),      # 1  white
@@ -98,7 +80,7 @@ COLOURS = [
     (0, 7, 0),      # 3  green
     (0, 0, 7),      # 4  blue
     (7, 7, 0),      # 5  yellow
-    (7, 1, 7),      # 6  magenta (NOT (7,0,7) - that packs to $E3, see above)
+    (7, 1, 7),      # 6  magenta
     (0, 7, 7),      # 7  cyan
     (7, 3, 0),      # 8  orange
     (3, 3, 3),      # 9  grey

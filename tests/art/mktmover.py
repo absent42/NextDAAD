@@ -1,105 +1,38 @@
-# Transparent-paper / layer-order instrument - the FULL-FRAME card for
-# tests\tmover.dsf. That fixture's own header block names every band on
-# screen and says what a failure of each one means.
+# Transparent-paper / layer-order instrument - the full-frame card for
+# tests\tmover.dsf. Produces tests\out\tmover.nxi, staged by
+# tests\build-tests.ps1 -TmOver as sd\TMOVER\001.NXI.
 #
-# Produces tests\out\tmover.nxi, which tests\build-tests.ps1 -TmOver
-# stages as sd\TMOVER\001.NXI - the ONE picture that fixture loads with
-# PICTURE 1 and shows with DISPLAY 0.
+# Like mkl2card.py, this card has NO pixel at index 255 and punches no
+# hole anywhere - that is the point: the feature under test puts the
+# TEXT LAYER on top of the picture and lets tilemap paper decide what
+# shows, so any transparency inside the card's footprint is damage, and
+# any fixture text that shows while the picture is on top is a
+# layer-order fault rather than an artwork feature. No palette entry
+# packs to $E3 (asserted below), so the loader's $E7 dodge never fires
+# and every colour in the file is the colour displayed.
 #
-# THIS CARD IS THE OPPOSITE OF tests\art\mkl2holes.py IN ONE RESPECT AND
-# THE SAME IN ANOTHER. Like mkl2card.py it contains NO pixel at index 255,
-# so it punches NO hole anywhere: that is the entire point of the fixture.
-# Text over a picture used to require a hole cut in the artwork; the
-# feature under test puts the TEXT LAYER on top instead and lets tilemap
-# paper decide what shows, so the card it is read against must be a plain
-# full-frame illustration with nothing cut out of it. Any transparency
-# seen inside this card's footprint is therefore damage, exactly as it is
-# on mkl2card.py's card, and any part of the fixture's text that shows
-# while the picture is on top is a layer-order fault rather than an
-# artwork feature.
+# GEOMETRY. 256x192, full screen (.NXI = mode 0/width 256;
+# gfx_derive_height's ceiling is 192 rows). Layer 2 is inset 32px from
+# the tilemap on both axes: L2 (x,y) -> tilemap column x//4+8, row
+# y//8+4; the card covers columns 8-71, rows 4-27, leaving the margin
+# (rows 0-3/28-31, columns 0-7/72-79) for the fixture's status line and
+# prompt in both layer orders.
 #
-# ------------------------------------------------------------------
-# THE CONSTANTS THIS CARD IS BUILT ON - all verified in source
-# ------------------------------------------------------------------
-#   L2_TRANSP_INDEX = 255   (src\nextdaad.inc) - the pixel value the
-#     loader reserves. l2_pal9_stamp rewrites entry 255 to the transparent
-#     colour after EVERY palette load, so index 255 is transparent no
-#     matter what this file says its colour is. NO PIXEL HERE USES IT and
-#     the build asserts that from the staging side as well.
-#   L2_TRANSP_COLOUR = $E3  (src\nextdaad.inc) - a COLOUR compare in
-#     NR $14 against the top 8 bits of the 9-bit palette output, for
-#     Layer 2 AND for tilemap text mode alike. No palette entry in this
-#     card packs to $E3, asserted below, so the loader's $E7 dodge never
-#     fires here and every colour in the file is the colour displayed.
+# FOUR TEXT BANDS, 2 tilemap rows tall at column 20 (tilemap rows 9-10,
+# 13-14, 17-18, 21-22; L2 x 48-175, y 40-55/72-87/104-119/136-151), each
+# placed over something worth seeing through:
+#   A  PAPER 227 (transparent) - over the quadrant seam (blue/orange);
+#      shows the seam and stripes, or a flat rectangle if opaque.
+#   B  ordinary opaque paper - over a black HIDDEN plate; the word must
+#      stay covered, so an accidental hole reads out its own failure.
+#   C  INK 227 (transparent glyphs) - over vertical rainbow stripes, so
+#      the letters show as multi-coloured, not printed in one colour.
+#   D  PAPER 11 - over plain field; must render magenta, not a hole.
 #
-# ------------------------------------------------------------------
-# GEOMETRY - 256x192 IS THE WHOLE SCREEN, AND WHERE THE TEXT LANDS
-# ------------------------------------------------------------------
-# 256 wide as .NXI (gfxExtTab routes NXI to mode 0 / width 256; the
-# file's own bytes carry no width, the EXTENSION decides), 192 rows
-# because gfx_derive_height derives the count from the file length as
-# (size - 512) / 256 and rejects anything outside 1..192 in mode 0.
-#
-# A 256x192 Layer 2 surface is inset 32 pixels on both axes from the
-# tilemap origin (dev guide chapter-next-tilemap.tex:18, chapter-next-
-# layer2.tex:308), so
-#
-#     tilemap column = L2 x // 4 + 8        (a cell is 4 L2 px wide)
-#     tilemap row    = L2 y // 8 + 4        (a cell is 8 L2 px tall)
-#
-# and this card covers tilemap COLUMNS 8..71 and ROWS 4..27 exactly.
-# Rows 0..3 and 28..31, columns 0..7 and 72..79, are outside it: the
-# fixture puts its status line and its prompt there so both stay
-# readable in BOTH layer orders.
-#
-# THE FOUR TEXT BANDS the fixture prints are 2 tilemap rows tall, 32
-# columns wide, at column 20 - tilemap rows 9-10, 13-14, 17-18 and
-# 21-22. In L2 pixels that is x 48..175 and y 40..55, 72..87, 104..119,
-# 136..151. Everything below is placed around those four rectangles, so
-# each band has something under it that is worth seeing through:
-#
-#   BAND A (PAPER 227, transparent) lands on the quadrant seam at
-#     x = 128, where the picture changes colour from blue to orange. A
-#     transparent band shows that seam and the diagonal stripes running
-#     under it; an opaque one shows a flat rectangle. Nothing subtle.
-#   BAND B (ordinary opaque paper) lands over a black plate carrying the
-#     word HIDDEN in white, drawn entirely inside the band's own
-#     footprint. With the text on top that word must be COVERED. It is
-#     the positive control for "opaque paper really is opaque": a band
-#     that has gone transparent by accident reads out its own failure.
-#   BAND C (INK 227, transparent glyphs) lands over a vertical rainbow
-#     of 8-pixel stripes. The glyph shapes then show a MULTI-COLOURED
-#     picture through them rather than one flat colour, so "the letters
-#     are cut out of the paper" cannot be confused with "the letters are
-#     printed in some colour".
-#   BAND D (PAPER 11) lands on plain quadrant field. Nothing is needed
-#     under it: the test is that the band renders bright magenta and not
-#     a hole, and a hole would show the field it is sitting on.
-#
-# ------------------------------------------------------------------
-# WHY THE FIELD LOOKS THE WAY IT DOES
-# ------------------------------------------------------------------
-# FOUR COLOURED QUADRANTS, each with its own hue and its own two-letter
-# label (NW NE SW SE) in the margin columns the bands do not reach, so a
-# single screenshot answers "is the picture up, and is it the right way
-# round" before any transparency question is asked. The labels sit at
-# x 6..39 and x 214..247, outside the bands' x 48..175, so they stay
-# visible in both layer orders.
-#
-# DIAGONAL STRIPES in a lighter shade of each quadrant's own hue. A flat
-# field cannot be told from "Layer 2 is not being displayed at all" by
-# eye - the ambiguity that wasted the 2026-08-03 sfxdi run - and a
-# stripe pattern showing through a transparent band is unmistakably a
-# picture rather than a colour.
-#
-# A 2px WHITE FRAME and a 2px WHITE CROSS on the quadrant seams. The
-# card's extent and its centre are then unambiguous, so a displaced or
-# clipped blit reads out as a frame edge that is not at the edge.
-#
-# THE CAPTION PLATE, black with TMOVER in white, rows 4..7 of the
-# tilemap - above every band and above the seam. Confirms at a glance
-# that Layer 2 is live and that THIS card is the one staged, before any
-# band is judged.
+# The field: four coloured quadrants (each with a diagonal-stripe
+# texture and an NW/NE/SW/SE label, so a flat field is never mistaken
+# for Layer 2 not displaying at all), a 2px white frame and cross on the
+# quadrant seams, and a black TMOVER caption plate above everything.
 #
 # Generated, not committed - a byte-exact function of the constants
 # below, the same rule tests\art\mkl2holes.py and mkpalcard.py follow.

@@ -1,8 +1,8 @@
 """Read text off an ORIGINAL DAAD ZX screen by decoding the ULA bitmap.
 
-Promoted verbatim (algorithm unchanged) from the SP16 adjudication rig,
-.superpowers/sdd/sp16-adjudications/zxadj_run.py, which used it to settle
-five register entries against the original interpreter. Kept as a pure,
+Promoted verbatim (algorithm unchanged) from the SP16 adjudication rig -
+the SP16 zxadj tie-breaker run settled five register entries against
+the original interpreter. Kept as a pure,
 emulator-free module so it can be unit-tested against a saved screen dump
 - see parser_selftest.py's z-cases.
 
@@ -10,7 +10,7 @@ WHY THIS EXISTS AT ALL. ZEsarUX's own `get-ocr` returns the EMPTY STRING
 on every frame of a running DAAD ZX game. That is measured, not assumed:
 SP16 Task 5 polled it twelve consecutive times against a game that was
 demonstrably alive and got nothing back every time (task-5-report.md
-section 5; also recorded in docs/hardware-test-checklist.md). ZEsarUX's
+section 5). ZEsarUX's
 OCR is built around the ZX ROM's 8-pixel-wide charset, and DAAD installs
 AD8x6.CHR - 6 pixels wide, 42 columns per line - whose glyph columns do
 not line up with the ULA's 8-pixel character cells at all. So there is no

@@ -1,20 +1,13 @@
-"""WireTrace: per-frame wire cost against the per-frame cap.
+"""WireTrace: per-frame wire cost against the per-frame cap, drawn on the
+clip's own timeline - cost per frame, the cap as a hard line, breaching
+frames lit up where they occur.
 
-The thing a kit author is actually fighting when tuning a clip is the
-wire budget - how many bytes each frame costs the player to fetch - and
-until now that whole struggle was four dashes in a status strip plus a
-button labelled "go" that jumped to the worst burst. This is that data
-drawn on the clip's own timeline: cost per frame, the cap as a hard line
-across it, and the frames that breach it lit up where they happen.
+Shares its x-axis with the scrub slider directly beneath it, so a spike is
+also a place to click to.
 
-It doubles as navigation. The strip shares its x-axis with the scrub
-slider directly beneath it (both inset by half a slider handle), so a
-spike is not just a reading - it is a place, and clicking it goes there.
-
-Costs come from the decoder, not the encoder's report: nxv2dec already
-yields each frame's block-rounded payload length while walking the file
-(see preview.decode_vid), which is exactly what the player fetches. The
-BuildReport only carries whole-clip aggregates.
+Costs come from the decoder (nxv2dec via preview.decode_vid), which
+yields each frame's actual block-rounded payload length - not the
+encoder's whole-clip BuildReport aggregates.
 """
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
@@ -101,10 +94,7 @@ class WireTrace(QWidget):
         return bool(self._costs)
 
     def peak_frame(self):
-        """Index of the most expensive frame, or None. This is what the
-        old "go to worst burst" button pointed at - kept as a method so
-        the burst jump still has a target when the encoder's report does
-        not name one."""
+        """Index of the most expensive frame, or None."""
         if not self._costs:
             return None
         return max(range(len(self._costs)), key=self._costs.__getitem__)
@@ -285,16 +275,14 @@ class WireTrace(QWidget):
         painter.setPen(pen)
         painter.drawLine(0, int(y), w, int(y))
 
-        # Three characters that stop the line being a mystery. Dropped
-        # rather than crowded when the strip is too narrow to hold it.
+        # Labels the cap line; dropped when the strip is too narrow to
+        # hold it, flipped below the line when the cap sits too high to
+        # fit above it.
         label = "cap"
         painter.setFont(theme.ui_font(8))
         metrics = painter.fontMetrics()
         label_w = metrics.horizontalAdvance(label)
         if w > label_w + 8 * INSET:
-            # Above the line normally; below it when the cap sits too
-            # high to fit - a headroom-rich clip pushes the line near
-            # the top, which is exactly when the label used to vanish.
             above = y > metrics.height()
             baseline = y - 3 if above else y + metrics.ascent() + 2
             left = w - label_w - INSET - 2
@@ -311,9 +299,8 @@ class WireTrace(QWidget):
             painter.drawText(int(left), int(baseline), label)
 
     def _paint_keyframes(self, painter, plot_h):
-        """Keyframe spans are legitimately expensive - a full repaint,
-        not a delta that overran - so they are marked structurally (a
-        tick in the lane below) rather than coloured like a fault."""
+        """Tick marks for keyframe spans - see _colour_for for why they
+        are exempt from the fault ramp."""
         if not self._terms:
             return
         painter.setPen(QPen(QColor(theme.INK_GHOST), 1))

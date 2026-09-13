@@ -1,5 +1,5 @@
 # Steady-tone WAV generator for the sampled-SFX DI-exposure ear test
-# (tests\sfxdi.dsf, run sheet .superpowers\sdd\sfx-di-audible-test.md).
+# (tests\sfxdi.dsf).
 #
 # Produces the two stimulus files tests\build-tests.ps1 -SfxDi stages
 # into sd\SFXDI\ as
@@ -7,43 +7,24 @@
 # 002.WAV (20 kHz, AUD_RATE_MAX - what manualudio.md publishes as the
 # supported ceiling and what a DAAD-DOS SOUNDS set drops in at).
 #
-# WHY A TONE AND NOT REAL MATERIAL. The defect under test suppresses CTC
-# ticks while dma_copy holds interrupts off, which does not drop, click
-# or truncate anything - the DAC simply holds each byte one extra period
-# and the effect plays LONG AND FLAT. The only observable is PITCH, so
-# the stimulus has to be a steady tone with a pitch to lose. Noise,
-# speech and transients carry the same error and show nothing.
+# WHY A TONE AND NOT REAL MATERIAL: the defect holds each DAC byte one
+# extra period (LONG AND FLAT); PITCH is the only observable, so noise,
+# speech and transients would show nothing.
 #
-# THE FORMAT IS THE PLAYED FORMAT. Nothing in the pipeline resamples -
-# authoring-kit\lib\audio.bat copies AUDIO\NNN.wav to RELEASE\NNN.WAV
-# verbatim, and aud_load_wav (src\overlay1.asm) takes the rate straight
-# from the fmt chunk - so the header rate here IS the rate the CTC is
-# programmed for. 8-bit unsigned mono is the only shape aud_load_wav
-# accepts (PCM tag 1, 1 channel, 8 bits, rate 3500..20000).
+# THE FORMAT IS THE PLAYED FORMAT: nothing in the pipeline resamples, so
+# the header rate here is the rate the CTC is programmed for (8-bit
+# unsigned mono, 3500..20000 Hz, the only shape aud_load_wav accepts).
 #
-# THE THREE DELIBERATE CHOICES
-#   48000 bytes. SMP_FLOOR_FIRST..SMP_FLOOR_LAST (nextdaad.inc) reserve
-#     banks 25-27 so a 48K load ALWAYS succeeds regardless of pool
-#     pressure. Sizing the stimulus exactly to that floor means the ear
-#     test cannot fail as a staging/allocation problem and be mistaken
-#     for an audio result.
-#   Whole cycles. 48000 samples at 440 Hz is 1320 whole cycles at
-#     16000 Hz and 1056 whole cycles at 20000 Hz - both exact integers,
-#     so the payload's last sample runs into its first with no phase
-#     step. SFX n 2 (looped) rewinds the source mid-copy and the ring
-#     never sees a seam (aud_smp_copy), so the tone is continuous for as
-#     long as the leg needs, with no click to be mistaken for an
-#     artifact.
-#   Centred on 128. DAC_SILENCE is the unsigned midpoint $80 = 128, so
-#     the waveform starts, ends and loops at exactly the level the DAC
-#     is parked at - no step into or out of the effect. Amplitude 127
-#     puts the peaks at 1 and 255: full scale to within 0.07 dB, with no
-#     way for a rounding edge to wrap past 0 or 255.
+# THE THREE DELIBERATE CHOICES:
+#   - 48000 bytes: sized to the SMP_FLOOR bank reservation, so the load
+#     always succeeds and can't be mistaken for a staging failure.
+#   - Whole cycles: 1320 at 16000 Hz, 1056 at 20000 Hz, so the loop seam
+#     is phase-exact with no click to mistake for an artifact.
+#   - Centred on 128 (DAC_SILENCE), amplitude 127: starts/ends/loops at
+#     the DAC's parked level, full scale with no wraparound risk.
 #
-# No dither, no fade, no window - deterministic, byte-for-byte
-# reproducible from stdlib alone, which is why the WAVs are generated
-# here rather than committed (tests\out\ is gitignored, exactly like
-# build-tests.ps1's own badwav/truncwav fixtures).
+# Deterministic and reproducible from stdlib alone (no dither/fade/
+# window), which is why the WAVs are generated here, not committed.
 #
 # Usage:  python tests\audio\mktone.py <outdir>
 #         (default outdir: tests\out)

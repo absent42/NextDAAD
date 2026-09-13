@@ -167,12 +167,8 @@ def test_no_merge_and_direct_transport_factor_stay_unmapped():
 
 
 def test_approx_cuts_and_ocopy_removed_fall_back_to_extra():
-    # --approx-cuts and --ocopy were mapped as Knob rows briefly
-    # (2026-08-02) and REMOVED the same day when the owner pulled both
-    # options from the encoder. No special-casing: an existing
-    # --approx-cuts/--ocopy in a user's VIDOPTS_NNN simply falls back to
-    # the extra passthrough, preserved verbatim - the same graceful path
-    # every other unmapped flag takes.
+    # --approx-cuts and --ocopy are not Knob rows: they fall back to the
+    # extra passthrough, preserved verbatim, like any unmapped flag.
     known, extra = parse_opts(split_opts("--ocopy --approx-cuts"))
     assert "ocopy" not in known and "approx_cuts" not in known
     assert extra == ["--ocopy", "--approx-cuts"]
@@ -183,13 +179,8 @@ def test_approx_cuts_and_ocopy_removed_fall_back_to_extra():
 
 
 def test_mono_removed_falls_back_to_extra():
-    # --mono was REMOVED from the encoder AND player (2026-08-02) -
-    # videnc dropped it from argparse entirely and now hard-asserts
-    # stereo-only audio. No special-casing: an existing --mono in a
-    # user's VIDOPTS_NNN simply falls back to the extra passthrough,
-    # preserved verbatim - the same graceful path --approx-cuts/--ocopy
-    # take. Once the encoder rejects it, the user sees videnc's own
-    # error in the verbatim failure box.
+    # --mono is not a Knob row: videnc is stereo-only now, so --mono
+    # falls back to the extra passthrough like any unmapped flag.
     known, extra = parse_opts(split_opts("--mono"))
     assert "mono" not in known
     assert extra == ["--mono"]

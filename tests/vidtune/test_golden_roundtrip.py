@@ -73,14 +73,10 @@ def test_accept_then_video_ps1_finds_nothing_stale(tmp_path):
     assert "encoding" not in r2.stdout        # nothing was stale
     assert clip.vid.read_bytes() == vid_bytes # cache untouched
 
-    # 4. Negative control: exit 0 + no "encoding" + untouched bytes is
-    #    also what a video.ps1 that saw ZERO sources (e.g. a cwd
-    #    regression in the subprocess.run above) would produce, so phase
-    #    3 alone cannot tell "cache judged fresh" from "harness never
-    #    looked". Delete the sidecar to force staleness and re-run the
-    #    identical invocation: only a video.ps1 that actually found and
-    #    re-priced VIDEO\001.mp4 can print "encoding" and rewrite the
-    #    sidecar, so this proves phase 3's silence meant fresh, not blind.
+    # 4. Negative control: phase 3's silence could mean "cache fresh" or
+    #    "video.ps1 saw no sources at all". Force staleness by deleting
+    #    the sidecar and re-run; it must re-encode, proving phase 3 saw
+    #    a real, priced source rather than nothing.
     clip.sidecar.unlink()
     r3 = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy",
                          "Bypass", "-Command", env_ps],

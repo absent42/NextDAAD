@@ -68,20 +68,12 @@ def t1_cprops_typing_bits():
     """Pin engine.asm's cprops ACTION/CONDITION bit for the rows where a
     silent flip would change behaviour without failing anything else.
 
-    Nothing else checks this bit. tests/check-cprops.ps1 validates argc
-    (bits 0-1) against DRF.exe's parameter table and stops there, and
-    t1_condact_dispatch_is_complete pins cdisp's handler targets, which
-    a typing flip leaves untouched. So the only thing standing between a
-    reverted typing bit and a shipped interpreter today is a full replay
-    noticing the downstream behaviour change - late, expensive, and only
-    if the fixture happens to exercise that condact.
-
-    SP16 Task 6 is the concrete precedent: row 36 SYNONYM was flipped
-    from ACTION to CONDITION so h_synonym could decide for itself whether
-    to mark the level done (PRP019 V3-12: under V3 it must NOT). An
-    action-typed row has the dispatcher stamp `done` BEFORE the handler
-    runs, so reverting the bit silently reinstates the V2-only behaviour
-    with no build, argc or dispatch failure anywhere.
+    Nothing else checks this bit: tests/check-cprops.ps1 only validates
+    argc (bits 0-1), and t1_condact_dispatch_is_complete pins cdisp's
+    handler targets, which a typing flip leaves untouched. An action-typed
+    row has the dispatcher stamp `done` BEFORE the handler runs, so a
+    reverted bit changes behaviour with no build, argc or dispatch failure
+    anywhere - only a full replay would notice, late and expensively.
 
     Rows pinned, and why each:
       36  SYNONYM - the Task 6 change itself (action -> condition).
@@ -424,9 +416,8 @@ def t4_rng_pins_the_z80_xorshift_sequence():
     xorshift - x ^= x<<7; x ^= x>>9; x ^= x<<8 - scaled to 1..100 by
     (x*100)>>16 + 1. This case is the successor to
     t4_rng_reproduces_z80_period_defect, which pinned the old
-    rotate-based routine's period-16 degeneracy (docs/parser-bugs.md
-    entry 3). The defect is gone; what needs pinning now is that the
-    mirror still tracks the Z80 exactly.
+    rotate-based routine's period-16 degeneracy. The defect is gone; what
+    needs pinning now is that the mirror still tracks the Z80 exactly.
 
     If this case fails:
     - src/overlay0.asm rng_next has been changed, OR
@@ -574,9 +565,9 @@ def t5_unequal_run_lengths_are_reported():
 def t5_ambiguous_text_is_no_longer_suppressed():
     """The old behaviour discarded a genuine text difference whenever the
     Next leg's screen transition that turn was ambiguous - exactly the
-    mechanism that hid the real Dracula GET/DROP SM36/SM39 bug (see
-    docs/parser-bugs.md). text_ambiguous must now be irrelevant to
-    compare.py's own classification - it is surfaced later as a caveat
+    mechanism that hid the real Dracula GET/DROP SM36/SM39 bug.
+    text_ambiguous must now be irrelevant to compare.py's own
+    classification - it is surfaced later as a caveat
     (report.build_findings, from the Next leg's own per-turn markers),
     never as grounds to drop the finding here.
     """
@@ -607,9 +598,9 @@ def t5_ambiguous_marker_does_not_change_classification_when_both_differ():
 @case
 def t5_state_and_text_channels_ranked_independently():
     """A flag that diverges on every turn (flag 29/fGFlags does exactly
-    this against every real game - see docs/parser-bugs.md) must not make
-    a LATER, unrelated text divergence look like a downstream cascade of
-    it. state_rank and text_rank are tracked on separate timelines.
+    this against every real game) must not make a LATER, unrelated text
+    divergence look like a downstream cascade of it. state_rank and
+    text_rank are tracked on separate timelines.
     """
     import compare
     ref = [_turn(i) for i in range(4)]
@@ -1179,19 +1170,11 @@ def t9_two_pages_between_polls_raise_rather_than_truncate():
 
 @case
 def t9_both_locks_are_confirmed_before_a_turn_is_called_ready():
-    """(moreLock, wrapLock) == (1, 1) is NOT only the input editor.
+    """See nleg._ready_confirmed's docstring for why both locks must agree.
 
-    prn_more_check sets BOTH locks together (src/print.asm:250-251) and
-    only releases wrapLock again once the SM32 prompt has been printed
-    (:257), so the pager passes through the editor's own signature on its
-    way to parking. A poll landing in that window ends the turn on a page
-    that has not finished drawing - seen live about one run in five once
-    tests/condacts.dsf's checks 103/104 took the last turn from one page
-    to four, with the transcript stopping dead at an unfiltered "More..."
-    row and the fixture still inside check 103.
-
-    Both ways out of that window are checked: wrapLock dropping, and the
-    page counter moving because the pager reached its park point.
+    Both ways out of the confirmation window are checked here: wrapLock
+    dropping, and the page counter moving because the pager reached its
+    park point.
     """
     # wrapLock drops on the confirmation read -> it was the pager
     z = _FakeSettleZ([(True, True), (True, True)], fires=[0, 0],
@@ -1504,7 +1487,8 @@ def t9_settle_disarms_the_timeout_on_every_poll():
         "the MORE page must still be captured and dismissed exactly once")
     # Flag writes are the caller's job and must not creep in here: flag 48
     # is COMPARED, and both legs must write it at the same logical point
-    # (docs/parser-bugs.md entry 5's flag-48 retraction).
+    # (flag 48's retraction, ruled not a NextDAAD fault - see this
+    # module's KNOWN_DIVERGENT_FLAGS note above).
     assert not [w for w in z.writes if w[0] != _FAKE_SYMS["INPTOFRAMES"]], (
         "settle() must write nothing but inpTOFrames: %s" % z.writes)
 
@@ -1931,47 +1915,13 @@ def t10_transcript_absent_when_no_findings():
 # The clean run's actual job is narrower than "zero findings": prove the
 # harness produces no FALSE positives and catches NEW divergences - not
 # that tests/condacts.dsf is bug-free, which it demonstrably is not.
-# tests/condacts.dsf's own automated self-test suite hits a small,
-# reproducible set of NextDAAD-vs-jDAAD divergences before the smoke
-# script's own scripted commands even finish - see docs/parser-bugs.md
-# entry 5. These are UNCONFIRMED CANDIDATE NextDAAD faults, not proven
-# root-caused bugs - jDAAD is this harness's reference leg by convention,
-# not automatically "the correct" interpreter. That said, when entry 4's
-# QUIT-confirmation question was finally put to the ORIGINAL ZX
-# interpreter (SP16 Task 5, .superpowers/sdd/sp16-adjudications/), jDAAD
-# turned out to be right and NextDAAD's single-key read was the
-# deviation - so "the reference is probably wrong" is a hypothesis to
-# test, not a default.
-# This baseline records CURRENT REALITY, not desired behaviour -
-# shrinking it (because a candidate fault gets fixed or disproven) is
-# the goal; it should only grow if a genuinely new, confirmed divergence
-# is deliberately added.
 #
-# Shrunk from {29, 50, 53} to {50} over SP16: flag 29 (fGFlags) was fixed
-# in Task 1 and flag 53 (the DOALL "nothing found" bit) in Task 4, and a
-# fresh clean run now sees neither. Flag 50 REMAINS, and it is not a
-# NextDAAD fault so far as anyone has shown: jDAAD saves and restores
-# flag 50 (FDOALL) per PROCESS-STACK LEVEL - stackPush stores
-# flags.getFlag(FDOALL) into the stack element (jdaad.js:853) and
-# stackPop writes it straight back (jdaad.js:841) - so a nested PROCESS
-# cannot see or keep the caller's DOALL flag. NextDAAD keeps flag 50
-# GLOBAL, and so does msx2daad, which is why the harness reports it on
-# every turn that crosses a process boundary.
-#
-# RULED 2026-08-01: accept and document. NextDAAD keeps the msx2daad
-# model and jDAAD's per-level save/restore is recorded as THE deviation,
-# because msx2daad shares NextDAAD's operating environment (a memory-
-# constrained 8-bit interpreter) where jDAAD is a browser interpreter
-# that can afford a saved copy on every process-stack push. No code
-# change was made and none will be: this is a PERMANENT documented
-# reference-deviation of class NOT-A-BUG (docs/parser-bugs.md entry 5,
-# manual/known-differences.md).
-#
-# The pin therefore STAYS at exactly {50}, permanently. Note what it is
-# and is not: it is NOT a mask. The flag 50 rows keep appearing in every
-# findings.json, which is deliberate - visibility beats masking. What
-# the pin asserts is that flag 50 is the ONLY flag that ever diverges,
-# so if a second one ever joins it the assertion fails and someone looks.
+# tests/condacts.dsf's own self-test suite has one confirmed, permanent
+# reference-deviation: flag 50 (FDOALL). jDAAD saves/restores it per
+# process-stack level; NextDAAD and msx2daad keep it global (ruled
+# 2026-08-01: accept, NextDAAD follows msx2daad's model). The pin below
+# asserts flag 50 is the ONLY flag that ever diverges on a clean run - if
+# a second one joins it, this assertion must fail so someone looks.
 KNOWN_DIVERGENT_FLAGS = {50}
 # Re-baselined (objtable-stride-fix): nleg.py's objloc() previously read
 # obj_count CONSECUTIVE BYTES starting at OBJTABLE, but objTable
@@ -2012,8 +1962,8 @@ def t11_clean_run_matches_known_divergence_baseline():
     # is read, and the directory wiped before the run, so a crashed
     # subprocess (also exit 1) cannot pass on a stale findings.json.
     assert res.returncode == 1, (
-        "expected the known-divergence set to still be reported (see "
-        "docs/parser-bugs.md entry 5):\n%s\n%s" % (res.stdout, res.stderr))
+        "expected the known-divergence set (KNOWN_DIVERGENT_FLAGS above) "
+        "to still be reported:\n%s\n%s" % (res.stdout, res.stderr))
 
     findings = json.loads(
         (out / "findings.json").read_text(encoding="utf-8"))["findings"]
@@ -2067,41 +2017,11 @@ def t11_clean_run_matches_known_divergence_baseline():
 
 @case
 def t11_text_channel_known_limitation_pin():
-    """CAPTURE-SYMMETRY PIN. Was a known-LIMITATION pin; SP16 Task 0
-    repaired what it used to record, and per its own instruction the
-    numbers were TIGHTENED rather than the test deleted. Every number
-    below is re-derived from tests/parser/work/e2e-clean's own
-    jsonl/findings.json, not carried over.
-
-    What it used to pin, and what each became:
-
-      - jDAAD's capture ended EVERY turn with a trailing '_' cursor
-        glyph (jdaad.js readText: writeText(readTextStr + '_')) while
-        NextDAAD's never did, because NextDAAD's cursor is an ATTRIBUTE
-        inversion (src/overlay1.asm inp_cursor_put) that a glyph-only
-        tilemap capture cannot see. 13/13 -> 0/13: jleg.js now suppresses
-        the cursor glyph for the duration of readText only.
-      - NextDAAD's capture included the typed command echo ("What now?
-        >LOOK") while jleg.js suppressed its own (key(ch, false)).
-        >= 1 -> 0: nleg.py now anchors each turn's `pre` grid AFTER the
-        echo lands and BEFORE Enter.
-      - tilemap.scroll_delta misclassified most turns, so new_text
-        re-emitted large stale regions and 12/13 turns carried
-        text_ambiguous=True. 12/13 -> 0/13, and NOT by touching
-        scroll_delta: the echo was itself an in-place row edit competing
-        with the turn's scroll, which is exactly the transition no single
-        shift explains. Removing the echo from the compared window made
-        every turn in this fixture a clean scroll.
-
-    The consequence worth stating plainly, because it is what the whole
-    repair was for: this fixture's text channel now AGREES on all 13
-    turns, so the findings are state-only apart from the one "?" turn
-    described below. The only flag left in them is 50 - see
-    KNOWN_DIVERGENT_FLAGS above; flags 29 and 53 were in this set when
-    the pin was written and were fixed in SP16 Tasks 1 and 4. Any text
-    finding that appears here from now on is pointed evidence about a
-    specific turn, not the capture models disagreeing with each other on
-    every turn alike.
+    """CAPTURE-SYMMETRY PIN: this fixture's text channel must agree on all
+    13 turns, apart from the one "?" turn checked below - the only flag
+    left in the findings is 50 (see KNOWN_DIVERGENT_FLAGS above). Any text
+    finding that appears here is pointed evidence about a specific turn,
+    not the two capture models disagreeing on every turn alike.
 
     Depends on t11_clean_run_matches_known_divergence_baseline
     (immediately above) having just produced e2e-clean's jsonl and
@@ -2200,14 +2120,9 @@ def t11_text_channel_known_limitation_pin():
 @case
 def t11_negative_control_is_detected():
     """Mutate the fixture on the STATE channel so the two legs MUST
-    disagree, and confirm the harness says so - not merely that SOME
-    findings exist (condacts.dsf's own boot self-test already produces
-    13 of those with nothing mutated at all, byte-identical in count and
-    (turn, class, flags, objects) shape to a clean run - a fully-blind
-    harness would pass a bare non-empty check unchanged), but that a
-    finding blames something OUTSIDE the known baseline - proof the
-    mutation itself, not the fixture's pre-existing divergences, was
-    what got detected.
+    disagree, and confirm a finding blames something OUTSIDE the known
+    baseline - not merely that some finding exists, since condacts.dsf's
+    own boot self-test already produces 13 of those unmutated.
     """
     import json
     import shutil

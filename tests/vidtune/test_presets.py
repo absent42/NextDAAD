@@ -1,8 +1,7 @@
 """Route presets, the prefilter modifier, and the banding ladder.
 
-Structured around the "Behavioural requirements" section of
-docs/superpowers/specs/2026-08-02-vidtune-preset-row-spec.md - each
-requirement there has at least one test here, since most of them are
+Structured around the "Behavioural requirements" - each
+requirement has at least one test here, since most of them are
 rules about what a preset must NOT disturb, which is exactly the kind of
 thing that rots silently.
 """

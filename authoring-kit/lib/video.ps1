@@ -75,280 +75,66 @@ $sources = @(Get-ChildItem 'VIDEO\*.mp4' -ErrorAction SilentlyContinue |
 if (-not $sources) { exit 0 }
 
 # Encoder GENERATION stamp, salted into the sidecar hash below. The
-# arg-vector hash alone cannot see encoder-INTERNAL output changes (the
-# gap115 lesson: a re-tuned constant re-shapes the bytes with an
-# identical CLI), so bump this string whenever nxv2enc.py changes what
-# it emits for unchanged args - same discipline as build-tests.ps1's
-# $vidLegSettlementTag. 'pal9' = the 2026-07-27 palette-collapse fix
-# (display-lattice palettes + true 9th blue bit + ordered dither);
-# 'pal9b' = the palette-lattice review fix-wave (2026-07-27): nearest-
-# level lattice snap (was truncating) + corrected DITHER_AMP (was ~12%
-# narrow); 'pal9c' = the 2026-07-28 blue-noise dither wave: 32x32
-# void-and-cluster threshold tile replaces 8x8 Bayer AND the default
-# dither amplitude drops to 0.5 of a quantization step (videnc
-# --dither sets it per encode; a --dither in VIDOPTS/VIDOPTS_NNN is
-# part of the hashed arg list below, so per-title overrides re-encode
-# on change - this stamp covers the DEFAULT-args output change);
-# 'pal9d' = the 2026-07-28 transparency-collision exclusion: palette
-# entries whose RRRGGGBB byte packs to $FE (the player's NR $14 global
-# transparency colour) punched transparent holes on real hardware -
-# the two colliding lattice points are now unrepresentable.
-# the two colliding lattice points are now unrepresentable;
-# 'pal9e' = SP17 T1 auto-budget (2026-07-28): --stream-budget now
-# DEFAULTS to a derived value instead of 1.0, so an encode with an
-# unchanged argument vector and no explicit budget can emit different
-# bytes than it did before (any streaming clip whose utilization at the
-# full budget sat between the 0.90 target and the 1.00 refusal line now
-# re-derives down to the target). Resident-sized clips are unaffected -
-# the search returns the ceiling on its first probe.
-# 'pal9f' = the SP17 copy-DMA T-model restoration: _cost_copy_chunk now
-# prices a copy body as min(LDI, mem-to-mem DMA) using the task-2
-# settlement's 1091.8 T/chunk + 5.31 T/B, gated on the player's own
-# NXV2_COPY_DMA_MIN (90 B) kernel-select rule. Copy was previously
-# priced entirely as LDI (~2.1x over-price at 256 B) on the dominant op
-# class, so the per-frame decode-T cap admits more work per frame and
-# streamed encodes emit different bytes.
-# 'pal9g' = the 2026-07-28 DMA threshold derivation: both PLAYER kernel
-# thresholds were re-derived from the task-2 coefficients and moved
-# (NXV2_RUN_DMA_MIN 64 -> 71, NXV2_COPY_DMA_MIN 90 -> 74), and the
-# encoder mirrors moved with them (copy_dma_min 90 -> 74, new
-# run_dma_min, _fill_t now chunk-and-gates like _copy_t instead of
-# taking a whole-length min). Copies in the 74-89 B band and every
-# multi-chunk fill re-price, so the per-frame T budget admits a
-# different amount of work and encodes emit different bytes.
-# NO BUMP for the SP17 Yliluoma wave (2026-07-28), deliberately: that
-# wave ADDED an opt-in dither (videnc --dither-mode mixture, plus the
-# gamma-correct mixing and luminance-weighted colour metric it needs)
-# and changed NOTHING on the default path. Verified, not assumed: the
-# leg fixtures re-encode SHA256-identical to the pre-wave encoder for
-# the same arguments. --dither-mode is part of the hashed argument list
-# below, so a title that opts in re-encodes on that alone. Bumping here
-# would have forced every cached title to re-encode for no byte change.
-# BUMP pal9g -> pal9h (Card #8 silicon re-fit, 2026-07-28): the
-# composition factors moved on measured silicon (flat 1.00 -> 1.14,
-# gapped 1.15 -> 1.41) and the streaming supply gate's busy term was
-# corrected to true decode wall time with the omitted AUDIO phase
-# added. Both change the per-frame T cap and the operating point a
-# streamed encode is admitted at, so every cached encode re-prices.
-# BUMP pal9h -> pal9i (SP17 T0 source retiming, 2026-07-30): a source
-# whose own frame rate differs from the target is now BLENDED to the
-# target rate instead of having frames dropped/duplicated by nearest-
-# frame selection. Default-path change with no CLI argument in sight, so
-# every cached encode of a 23.976/24/29.97/30 source re-encodes. Titles
-# whose sources are already 25p are NOT affected - the retiming filter
-# is skipped entirely at the target rate and those encodes are
-# byte-identical (verified: tools\demo-files\1920x1080-25p.mp4 at
-# --shape classic re-encodes to the same SHA256 as the pre-wave
-# encoder). --retime drop restores the old behaviour per title.
-# BUMP pal9i -> pal9j (SP17 adaptive tile ladder, 2026-07-30): the
-# budget-bound delta schedule no longer spends on a FIXED tile. It walks
-# {32,64,128,256,band} per bound frame and keeps the finest rung that
-# still spends >= 99% of the best rung's bytes (nxv2enc TILE_LADDER /
-# TILE_SPEND_FRAC), and band importance is raw err2 instead of
-# sqrt(err2). Owner-approved on a hardware A/B (both arms clean
-# transport, zero underruns; boat pan and church zoom both better than
-# the fixed schedule). Default-path change with no CLI argument, so
-# every cached encode with a budget-bound frame re-encodes.
-# BUMP pal9j -> pal9k (adaptive tile ladder RE-CUT, 2026-07-30): owner
-# silicon on the next sitting called fixture 007 (classic 256x192, mode-0)
-# "lots of displacement and tearing" on a completely clean transport - the
-# pal9j ladder took rungs FINER THAN ONE PAINT-ORDER LINE, which fragments
-# a row into independently-aged pieces, and the decode-T that fragmentation
-# costs was charged by the supply gate, so the auto-budget search cut 007
-# from 0.64 to 0.47 and 19% of its wire with it. Two rules replace the one:
-# the ladder now walks WHOLE LINES only (1/2/4 of them = quarter/half/whole
-# band, so (256,512,1024) on the 256-line shapes, (192,384,768) on 16:9,
-# (144,288,576) on scope), and a finer rung must preserve the frame's
-# modelled SUPPLY COST - the gate's own busy+wire prices - not just its
-# bytes. Default-path change with no CLI argument, so every cached encode
-# with a budget-bound frame re-encodes.
-# NO BUMP for the SP17 supply-slack knob (2026-07-30), deliberately -
-# same discipline as the Yliluoma wave above. It ADDED an opt-in option
-# (videnc --tile-slack, default 0.0 = off) and changed NOTHING on the
-# default path: the default resolves to a supply allowance of exactly
-# 0.0, so the ladder's ceiling arithmetic is bit-for-bit what it was.
-# Verified, not assumed - all 11 leg/long fixtures re-encode
-# SHA256-identical to the pre-knob encoder for the same arguments.
-# --tile-slack is part of the hashed argument list below, so a title
-# that opts in re-encodes on that alone; bumping here would have forced
-# every cached title to re-encode for no byte change.
-# BUMP pal9k -> pal9l (SP17 T8 wave copy-DMA threshold correction,
-# 2026-08-01): the PLAYER's NXV2_COPY_DMA_MIN moved 74 -> 81 (NXBC
-# C073/C074 silicon: the kernel-only derivation missed the +128 T/op
-# fast-handler -> slow-body path difference; measured break-even 81.4)
-# and the encoder mirror moved with it (copy_dma_min 74 -> 81 plus the
-# new copy_dma_path_t term in _copy_t), so copies in the 74-80 B band
-# re-price as LDI and every DMA-path copy op carries the path term -
-# the per-frame decode-T budget admits a different amount of work and
-# streamed encodes emit different bytes for unchanged args.
-# NO BUMP for the SP17 T5a offset-copy wave (2026-08-01) - it was an
-# opt-in flag that changed NOTHING on the default path - and NO BUMP for
-# its REMOVAL (2026-08-02, owner ruling): the flag, the pan detector and
-# the pan-span emitter are gone, the default path is unmoved, and the
-# retired capability bit is now refused at open by the player.
-# BUMP pal9l -> pal9m (SP17 W4 encoder wave, 2026-08-02), ONE bump
-# covering every default-path change of the wave:
-# - keyframe-span peak pacing (charter E5): span chunks re-priced at
-#   the chunked-DMA copy rate and bounded per frame to 0.95 of the
-#   frame period at the supply gate's own prices; the delta byte cap
-#   is wire-capped the same way - keyframe peaks no longer exceed the
-#   wire period at any budget, spans get more/smaller chunks
-# - keyframe cadence: a forced keyframe when no natural one occurred
-#   within 5 s (videnc --kf-cadence, measured free at the default)
-# - drift/staleness triggers re-based on 4x4 local-mean PSNR
-#   (corpus-derived STALE_LM_DB 15.0, DRIFT_LM_T 1.5/3.0)
-# - the NXBO/NXBC two-key dispatch split (t_op_run 487.2 / t_op_copy
-#   336.3, t_skip 141.6/210.7, fill_cpu 16.70, fetch_short 19.80,
-#   copy_dma_per_b 5.08), the silicon_r density re-key and the
-#   re-derived composition factors (flat 1.19, gapped 1.46)
-# Every streamed fixture re-derives its budget (~2-4% tighter);
-# resident fixtures re-encode for the trigger/cadence/pacing changes.
-# NO bump component for --prefilter (opt-in, default off, byte-
-# identical absent - selftest-asserted); it is part of the hashed
-# argument list, so a title that opts in re-encodes on that alone (it
-# lives in VIDOPTS/VIDOPTS_NNN like --tile-slack). --approx-cuts was
-# the wave's other opt-in and was REMOVED on 2026-08-02 (owner ruling,
-# A/B verdicts inside the noise floor) - its removal moves no default
-# bytes either.
-# BUMP pal9m -> pal9n (direct-gate silicon re-fit, 2026-08-02): the
-# direct-serve wire gate was re-fitted from the NXBD re-run + the
-# 056/057 whole-frame playback pair on the rebuilt T8 transport -
-# DIRECT_TRANSPORT_FACTOR 1.20 -> 1.00 (per-byte) plus the new fixed
-# DIRECT_FRAME_OVERHEAD_MS 2.2. Delta/streamed encodes and the shipped
-# direct fixtures (010/011-class shapes) re-encode byte-identical -
-# the gate shapes ADMISSION, not emitted bytes - but the admission
-# envelope moved (25 fps stereo 256x133 -> 256x153; 320x256@12.5 now
-# admitted), so the era marks which gate an encode was admitted under.
-# BUMP pal9n -> pal9o (SP17 W5 cadence rolling refresh, 2026-08-02):
-# the cadence path no longer emits a forced keyframe SPAN - owner
-# silicon read the span's paced repaint as "a paused frame in the
-# middle" of every ~10 s clip (the visible surface HOLDS for the whole
-# span until KFLIP; the transport was clean: exact rate, zero
-# underruns). It now schedules a ROLLING REFRESH: forced-clean
-# coverage of the surface spread across ordinary delta frames inside
-# the normal per-frame caps, with carry-over under contention (nxv2enc
-# ROLLING REFRESH block). Trigger-forced keyframes (cut/dissolve/
-# staleness/drift) are unchanged. Default-path change: any streamed
-# clip whose cadence fired (a quiet stretch >= 5 s) emits different
-# bytes; clips shorter than the window or cut-dense re-encode
-# byte-identical but re-encode anyway because the tag is in their
-# cache name.
-# BUMP pal9o -> pal9p (SP17 low-fps supply + roll guards, 2026-08-02),
-# ONE bump covering both default-path changes of this sitting:
-# - LOW-FPS PACE CONTENTION priced in the streamed supply gate. The gate
-#   was exactly fps-invariant by construction and its whole silicon
-#   calibration is at 25 fps; three 12.5 fps silicon rows ran over rate
-#   with ring underruns while it read them 0.89-0.90. Below ~24.6 fps
-#   the player's T10 audio feed is room-limited and
-#   trickles from the .pace spin, so every produced 512 B block also
-#   pays a full vid_aud_pump - unpriced until now (nxv2enc LOW-FPS PACE
-#   CONTENTION block). EXACTLY zero at 25 fps, so no 25 fps encode moves
-#   by a rounding tick; low-fps STREAMED clips re-derive a lower budget
-#   and emit different bytes. Direct-serve is untouched (its own gate,
-#   no ring producer - row 057 is silicon-clean at 320x256@12.5).
-# - ROLLING REFRESH GUARDS from the corpus sweep (ROLL-SWEEP.md, GO
-#   WITH CAVEAT): the roll is now STRICTLY OPPORTUNISTIC - each armed
-#   frame is scheduled without it first, and the roll gets only the byte
-#   budget motion did not want, so a saturated clip emits the
-#   motion-only frame byte for byte (the sweep's three regressions all
-#   sit at byte-util p95 0.998-0.999) while the big winners, which
-#   refresh out of genuine slack, are unchanged. And a forced position
-#   now discharges on "was PAINTED this frame" instead of on exact value
-#   equality - the old test stranded any position repainted to a
-#   different value and, because roll_pending gates re-arming, one
-#   stranded position disabled every later refresh (6 of 47 sweep rows;
-#   fixture 009 stranded 12 positions for 124 frames).
-#   Default-path change: any clip whose cadence fires emits different
-#   bytes; 008/009 are the only shipping fixtures affected.
-# BUMP pal9p -> pal9q (SP17 audio ring = the whole audio bank,
-# 2026-08-02). The player's circular audio feed ring goes 2560 -> 8192
-# bytes - the session audio bank was ALWAYS an exclusive 8 KB page and
-# 5632 bytes of it were allocated and idle. That removes the low-fps
-# pace contention pal9p had just priced: the next frame's feed now
-# completes in the single post-present pump at every legal fps, so
-# pace_trickle_frac is identically zero and the gate term it feeds is
-# a guard rather than a charge. The declarable per-frame audio bound
-# moves 2544 -> 3072 (pinned by the player's 8-bit block arithmetic,
-# not by the ring - see nxv2enc's derivation), lowering the fps floors
-# to stereo 10.17 / mono 7.60.
-# Default-path change: 25 fps encodes are BYTE-IDENTICAL (the term was
-# already exactly zero there); STREAMED clips below ~24.6 fps stereo /
-# ~18.3 mono re-derive a HIGHER budget - the 7.4-8.9% of the frame the
-# contention was charging is handed back to the picture - and emit
-# different bytes. AUDIO IS UNCHANGED in every case: same rates, same
-# samples/frame, same real and padded sizes, bit-identical payload.
-# BUMP pal9q -> pal9r (SP17 provenance re-derivation on the fresh
-# silicon, 2026-08-03). Two encoder-visible corrections, both of
-# quantity rather than of measurement:
-# - merge_kstar's denominator was fetch_long (20.2 T/B), the cost of
-#   EXECUTING a bridged byte. The encoder is spending a WIRE byte to
-#   buy decode time, so the right price is its OPPORTUNITY COST at the
-#   supply gate - the exchange rate lambda, measured at 19.9 T/B. The
-#   two are unrelated quantities that happened to agree to 1.5%, so
-#   the threshold barely moves (23.66 -> 24.02) but the coupling to an
-#   LDI kernel rate is gone. Interior skips of EXACTLY 24 bytes now
-#   bridge where they did not: that is the whole behavioural change,
-#   and 24 is the top of both measured clips' skip histograms, so
-#   gapped/detailed content moves and flat content may not.
-# - a 16-bit-operand COPY no longer pays copy_dma_path_t. It has no
-#   fast handler to bail out of; it pays the measured slow-parser
-#   entry (t_skip16 - t_skip = 69.1 T) instead. Model error on the
-#   K256 silicon row falls from +2.91% to +0.80%, i.e. the model got
-#   LESS conservative on the op class that carries every keyframe
-#   bulk repaint, so budget-bound frames may admit slightly more.
-# Mono removal (same sitting) changes NO output - verified
-# byte-identical on fixture 001 - so it is not what this bump is for.
-# BUMP pal9r -> pal9s (SP17 DMA DI-bracket fix, 2026-08-03). The
-# player's audio-safety burst cap NXV2_DMA_CHUNK moves 256 -> 240, so
-# copy_dma_chunk and fill_dma_min move with it - the T model exists to
-# predict what the player DOES, and the player now chunks at 240.
-# Why: at 256 the DI bracket around a DMA chunk measured 1801 T against
-# stereo HDMI's 1728 T audio period, so any chunk spanning a tick
-# boundary SUPPRESSED that interrupt - the DAC held, the sample pointer
-# stalled, and since the frame loop paces off that pointer the clip ran
-# long and flat with no click. Five silicon PLAY= rows read +2.1% to
-# +5.2% over nominal with TOT exactly nominal on every one; an exact
-# op-walk of those five files attributes 0.5-0.8 pp of that to this
-# mechanism, so the change closes a real contributor, not the whole
-# overrun (see src/nextdaad.inc NXV2_DMA_CHUNK for the per-row table
-# and the unexplained residual). The player's per-chunk arm was also
-# shortened 98 T in the same change (descriptor split + unrolled
-# OUTINB upload); the two together land the bracket at 1621.7 T,
-# 6.2% inside the tightest period.
-# Default-path change: every clip re-prices its DMA bodies ~0.6% dearer
-# in decode-T (exact op-walk of the shipped corpus: +0.02-0.11% on
-# decode-bound clips, up to +2.0% on byte-bound ones where decode-T is
-# not the binding constraint), so budget-bound frames admit marginally
-# less and those clips emit different bytes. Clips that are byte-bound
-# or well inside the decode cap are unchanged. AUDIO IS UNCHANGED in
-# every case.
-# BUMP pal9s -> pal9t (Layer 2 transparency colour move to $E3, encoder
-# side, 2026-08-07). Covers two default-path changes neither of which
-# bumped the tag when it landed:
-# - build_palette_block now nudges any palette entry packing to $E3
-#   down one byte0 value ($E2) so the video player, which has no dodge
-#   of its own, never gets sent a wire-transparent entry;
-# - the older TRANSP_COLLISION/TRANSP_REMAP lattice exclusion (in
-#   snap_to_lattice) has been retargeted from the old cream $FE pair
-#   ((255,255,146)/(255,255,182), harmless since the colour moved) to
-#   the live $E3 pair ((255,0,219)/(255,0,255)), so the encoder's own
-#   quality metrics are wire-true for the colour actually reserved now.
-# Both change which bytes clips containing near-$E3 content encode to;
-# ordinary clips without that content are unaffected.
+# arg-vector hash alone cannot see encoder-INTERNAL output changes (a
+# re-tuned constant re-shapes the bytes with an identical CLI), so bump
+# this string whenever nxv2enc.py changes what it emits for unchanged
+# args - same discipline as build-tests.ps1's $vidLegSettlementTag.
+# pal9: display-lattice palettes with a true 9th blue bit.
+# pal9b: lattice snap rounds to the nearest level (not truncation).
+# pal9c: dither = blue-noise 32x32 void-and-cluster threshold tile,
+# default amplitude 0.5 of a quantization step (--dither overrides).
+# pal9e: --stream-budget defaults to an auto-derived value, not 1.0.
+# pal9f: a copy body prices as min(LDI T, DMA T) instead of always
+# LDI, gated on NXV2_COPY_DMA_MIN.
+# pal9g: NXV2_RUN_DMA_MIN=71; fill_t chunks-and-gates like copy_t
+# (previously took a whole-length min).
+# pal9h: the supply gate's busy term is true decode wall time
+# including the audio phase (previously omitted).
+# pal9i: a source at a different fps is BLENDED to the target rate
+# (not dropped/duplicated); --retime drop restores the old behaviour.
+# pal9k: the adaptive tile ladder walks WHOLE LINES only (quarter/
+# half/whole band), and a finer rung must preserve the frame's
+# modelled supply cost (busy+wire), not just its byte count. Band
+# importance stays sqrt(err2) (pal9i's weight) - pal9j's raw-err2
+# experiment was reverted the same sitting (net loss on fixture 008).
+# pal9l: NXV2_COPY_DMA_MIN=81; copy_dma cost includes the new
+# copy_dma_path_t term.
+# pal9m: keyframe-span chunks price at the chunked-DMA copy rate,
+# bounded to 0.95 of the frame period; drift/staleness triggers use
+# 4x4 local-mean PSNR (STALE_LM_DB 15.0, DRIFT_LM_T 1.5/3.0); NXBO/NXBC
+# dispatch costs t_op_run 487.2, t_op_copy 336.3, t_skip 141.6/210.7,
+# fill_cpu 16.70, fetch_short 19.80, copy_dma_per_b 5.08; composition
+# factors flat 1.19, gapped 1.46 (supersedes pal9h's factors).
+# pal9n: direct-serve wire gate: DIRECT_TRANSPORT_FACTOR=1.00
+# (per-byte), DIRECT_FRAME_OVERHEAD_MS=2.2 (fixed).
+# pal9o: cadence no longer forces a full keyframe span; it schedules a
+# ROLLING REFRESH spread across ordinary delta frames inside the
+# normal per-frame caps, with carry-over under contention.
+# Trigger-forced keyframes (cut/dissolve/staleness/drift) are unchanged.
+# pal9p: the roll is strictly opportunistic - each armed frame is
+# scheduled without it first, and the roll gets only the byte budget
+# motion did not want; a forced position discharges on "was painted
+# this frame", not on exact value equality.
+# pal9q: the audio ring is the whole 8192-byte audio bank (was 2560);
+# the per-frame audio bound is 3072 (was 2544); fps floors are stereo
+# 10.17 / mono 7.60. Removes the low-fps pace contention pal9p priced.
+# pal9r: merge_kstar prices a bridged byte at the supply gate's own
+# exchange rate lambda (19.9 T/B), not fetch_long; a 16-bit COPY pays
+# t_skip16 instead of copy_dma_path_t.
+# pal9s: NXV2_DMA_CHUNK=240 (was 256); copy_dma_chunk and fill_dma_min
+# follow it.
+# pal9t: build_palette_block nudges any palette entry packing to $E3
+# so the video player, which has no dodge of its own, never gets sent
+# a wire-transparent entry; the TRANSP_COLLISION/TRANSP_REMAP lattice
+# exclusion targets the live $E3 pair ((255,0,219)/(255,0,255)).
 # PAIRED STAMP: tests\build-tests.ps1's $vidLegSettlementTag keys the
-# repo's own fixture encode caches off this same encoder state and MUST
-# carry the identical value - bump the two together, with a BUMP note in
-# each. That harness asserts the pair agrees before it stages any video
-# fixture (Assert-VidEraInSync); they drifted for a day on 2026-08-03,
-# which is what the assertion exists to prevent.
-# BUMP pal9t -> pal9u (Layer 2 dodge target move $E2 -> $E7,
-# 2026-08-18): build_palette_block's collision nudge moved from
-# byte0-1 (blue two steps down) to byte0+4 (green one step up), in
-# lockstep with the interpreter's l2_palette_load dodge, so a
-# net-caught colour renders identically in video and stills.
-# Default-path: clips whose palette lands on $E3 emit different
-# palette bytes; ordinary clips are unaffected. Supersedes the pal9t
-# note's description of the dodge output.
+# repo's fixture encode caches off this same encoder state and must
+# carry the identical value - bump both together, noting the change in
+# each (Assert-VidEraInSync checks they agree before staging any video
+# fixture).
+# pal9u: the dodge target is byte0+4 (green one step up), matching the
+# interpreter's l2_palette_load dodge, so a net-caught colour renders
+# identically in video and stills. Supersedes pal9t's dodge-output byte.
 $encoderGeneration = 'pal9u'
 
 function Get-ArgHash([string[]]$argList) {
@@ -495,10 +281,9 @@ if (-not (Test-Path $ffmpeg)) {
 # and the kit's own tools\ (a TOOLSDIR override - e.g. the maintainer's
 # CONFIG.local.BAT pointing at the repo toolchain - must not hide the
 # kit-slot exe). Python candidates are probed for BOTH Pillow and numpy
-# (both are hard dependencies of nxv2enc.py - see
-# docs\reference\video-format.html), not mere presence: py -3 and python
-# can be different installs, and picking one missing either package
-# fails mid-encode.
+# (both are hard dependencies of nxv2enc.py), not mere presence: py -3
+# and python can be different installs, and picking one missing either
+# package fails mid-encode.
 $kitRoot = Split-Path -Parent $PSScriptRoot
 $enc = $null
 $exeCandidates = @(

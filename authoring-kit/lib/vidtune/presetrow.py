@@ -10,15 +10,14 @@ thing (see presets.py):
                    user is free to edit any knob afterwards, and a
                    control showing a persistent current preset would be
                    lying the moment they did. Pressing it stamps values
-                   and the menu is gone.
+                   and the menu is gone. Each route states what it will
+                   change BEFORE it is chosen: a route that would
+                   overwrite an explicitly-set shape shows that as one
+                   of its own delta lines.
 
   LadderPanel      a workflow, collapsed by default, whose step states
                    are DERIVED from the current knobs on every refresh
                    rather than stored.
-
-Each route states what it will change BEFORE it is chosen, which is what
-keeps "shape is the user's call" honest: a route that would overwrite an
-explicitly-set shape shows that as one of its own delta lines.
 """
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
@@ -38,14 +37,10 @@ CHOOSE_TEXT = "choose a route..."
 
 
 class _WrapLabel(QLabel):
-    """A word-wrapped QLabel that actually reserves the height it needs.
+    """Word-wrapped QLabel that reserves the height it needs.
 
-    Qt only consults heightForWidth when every widget in the chain opts
-    into it, and QScrollArea - which is what the settings rail is - does
-    not. A wrapped label inside it therefore reports a single line's
-    height, and its second and third lines clip into whatever sits
-    below. Syncing minimumHeight to the wrapped height on every resize
-    is the fix that does not depend on that chain cooperating.
+    QScrollArea (the settings rail) does not opt into heightForWidth, so
+    minimumHeight is synced to the wrapped height on every resize.
     """
 
     def __init__(self, text="", parent=None):
@@ -64,13 +59,9 @@ class _WrapLabel(QLabel):
         self._sync_height()
 
     def minimumSizeHint(self):
-        """Answer with the WRAPPED height straight away.
-
-        _sync_height alone is not enough: resizeEvent is posted, not
-        delivered synchronously, so a layout pass that runs before the
-        event loop gets a turn would still be told one line. Reporting
-        it here means the layout is right on the first pass and the
-        resize sync is only there to follow later width changes."""
+        """Answer with the wrapped height straight away, so the first
+        layout pass is already correct (resizeEvent is posted, not
+        synchronous, so _sync_height alone would lag by one pass)."""
         hint = super().minimumSizeHint()
         if self.width() > 0:
             wrapped = self.heightForWidth(self.width())
@@ -236,9 +227,7 @@ class _StepRow(QWidget):
             row.addWidget(button, 0, Qt.AlignTop)
 
     def _actions(self, step, blocked):
-        # Step 6 is advice with no setting behind it, and a step already
-        # satisfied by the current knobs says so instead of offering to
-        # set it again.
+        # Step 6: advice only, no setting behind it.
         if step.done:
             chip = QLabel("done")
             chip.setFont(theme.caption_font())
@@ -252,9 +241,7 @@ class _StepRow(QWidget):
 
         out = []
         if step.routes:
-            # Step 5 is "switch to preset 2 OR 3" - a real choice between
-            # picture size and motion rate, so both are offered rather
-            # than one being picked on the user's behalf.
+            # Step 5: a real choice between routes, so both are offered.
             for key in step.routes:
                 route = presets.route_by_key(key)
                 button = QPushButton(route.label)

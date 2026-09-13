@@ -75,12 +75,8 @@ def _patch_videnc_probes(monkeypatch, captured):
                            fps, crop=None, stages=None):
         captured["start"] = start
         captured["duration"] = duration
-        # The actual failure mode this regression guards: subprocess.run
-        # raises "TypeError: expected str, bytes or os.PathLike object,
-        # not float" for any argv element that isn't one of those three
-        # types - assert every element extract_source hands downstream
-        # here satisfies that BEFORE it would ever reach a real
-        # subprocess.run inside videnc.run_ffmpeg.
+        # subprocess.run requires str/bytes/PathLike argv elements;
+        # check before this would reach a real subprocess.run.
         for value in (start, duration):
             if value is not None:
                 assert isinstance(value, (str, bytes, os.PathLike)), (
@@ -91,14 +87,9 @@ def _patch_videnc_probes(monkeypatch, captured):
 
 
 def test_extract_source_stringifies_truthy_start_duration(monkeypatch, tmp_path):
-    """Regression (owner-reported, 2026-08-01): Set In past frame 0, Set
-    Out, Preview Segment crashed the post-encode Flicker/Heatmap source
-    re-extraction with "TypeError: expected str, bytes or os.PathLike
-    object, not float" - a truthy float `start` seconds value (every
-    vidtune caller computes these from frame indices via to_seconds())
-    reached videnc.extract_video's -ss arg unconverted (unlike -t, which
-    already did str(duration)). extract_source must stringify both
-    before calling videnc.extract_video."""
+    """extract_source must stringify truthy start/duration before calling
+    videnc.extract_video, whose -ss arg otherwise gets an unconverted
+    float and raises a TypeError."""
     captured = {}
     _patch_videnc_probes(monkeypatch, captured)
 
@@ -112,10 +103,8 @@ def test_extract_source_stringifies_truthy_start_duration(monkeypatch, tmp_path)
 
 def test_extract_source_omits_flag_for_falsy_start_duration(monkeypatch, tmp_path):
     """Falsy (None or 0.0) start/duration must stay None, not become the
-    string "0.0" (itself truthy) - videnc.extract_video's own
-    `if start:`/`if duration:` checks decide whether to add -ss/-t at
-    all, and must keep seeing the same "omit the flag" case they did
-    before this fix, not gain a redundant -ss 0.0/-t 0.0."""
+    truthy string "0.0", so extract_video's `if start:`/`if duration:`
+    checks still omit -ss/-t rather than adding a redundant 0.0."""
     captured = {}
     _patch_videnc_probes(monkeypatch, captured)
 

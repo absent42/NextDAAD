@@ -47,72 +47,32 @@ def scroll_delta(pre, post):
     shift explains the transition (a full redraw or a window clear).
 
     A row of `pre` that is blank AND part of `pre`'s trailing all-blank
-    run (every row from there to the bottom of the grid is also blank -
-    the screen simply had not filled that far yet) is a wildcard: it
-    holds no real content to preserve, so new text landing there must
-    not block detecting the shift that genuinely happened to the rows
-    that DID carry content.
-
-    Diagnosed live (tests/parser/work/e2e-clean, turn 0, condacts.dsf's
-    QUIT confirmation): `pre` had exactly one trailing blank row (the
-    screen was one line short of full); the interpreter then printed
-    three new lines - the first fills that formerly-blank row, and only
-    the other two actually push content off the top, a genuine 2-row
-    scroll. A strict whole-window compare rejected k=2 anyway, because
-    it required `pre`'s blank last row to equal `post`'s new last row
-    verbatim - the ONE position where "nothing was there before"
-    legitimately does not match "something is there now". That single
-    rejected position was enough to make every k fail, so the caller
-    (new_text/transition) fell back to treating a clean scroll as a
-    full screen redraw and returned nearly the whole screen as "new".
+    run is a wildcard: a trailing blank row holds no real content to
+    preserve, so it must not block detecting a genuine scroll of the
+    rows that DID carry content (a strict whole-window compare rejects
+    any k where `pre`'s blank last row wouldn't equal `post`'s new one).
     """
     trailing_blank_from = _trailing_blank_from(pre)
 
     for k in range(ROWS):
         ok = True
-        genuine_match = False   # at least one position actually verified
-                                 # against REAL content, not merely excused
-                                 # by the wildcard, and not a blank-vs-blank
-                                 # coincidence - see below for why both
-                                 # exclusions are required.
+        genuine_match = False   # True once a real (non-blank, non-wildcard)
+                                 # row confirms this k - see docstring.
         for i in range(ROWS - k):
             if pre[k + i] == post[i]:
                 if pre[k + i].strip():
                     genuine_match = True
-                # Two rows that are EQUAL because both are blank prove
-                # nothing about k: a blank row carries no content, so it
-                # matches any other blank row regardless of whether a
-                # shift by k is what actually happened. Diagnosed live
-                # (tests/parser/work/rabenstein-probe, turns 1-4): `pre`
-                # had a long trailing blank run (rows past its own last
-                # printed line) and `post` independently had its OWN
-                # leading blank run (unrelated screen real estate never
-                # used by this game's layout) - large k values land the
-                # entire compared window on blank-vs-blank pairs, which
-                # satisfied the old bare-equality check at EVERY position,
-                # wrongly "confirming" a scroll by k = trailing_blank_from
-                # (or higher) even when zero real content moved. That
-                # bogus k then made new_text() re-emit almost the whole
-                # screen as "new" on every turn, accumulating turn over
-                # turn - the reported "text offset by one turn" symptom.
-                # Requiring the matched content to be non-blank closes
-                # this without weakening the genuine wildcard case above
-                # (t11_scroll_delta_wildcards_pres_trailing_blank_run's
-                # k=2 match is confirmed by real, non-blank row content,
-                # not by this coincidence).
+                # Blank-vs-blank equality proves nothing about k (a blank
+                # row matches any other blank row regardless of shift) -
+                # excluded from genuine_match; see docstring.
                 continue
             if k + i >= trailing_blank_from:
                 continue          # pre's row here was never filled - wildcard
             ok = False
             break
-        # Large k shrinks the compared window down to almost nothing, and
-        # for k close to ROWS that shrunken window can fall ENTIRELY
-        # inside pre's wildcarded tail - every position "matches" only
-        # because nothing real was being compared at all, not because a
-        # shift by k genuinely explains anything. Confirmed live: without
-        # requiring at least one real (non-wildcarded), non-blank match, a
-        # completely unrelated post could still spuriously "succeed" at
-        # k = trailing_blank_from or higher.
+        # Reject k with no genuine (non-wildcard, non-blank) match - a
+        # large k can shrink the window entirely inside the wildcarded
+        # tail, where every position "matches" without comparing anything.
         if ok and genuine_match:
             return k
     return None
@@ -171,23 +131,11 @@ def transition(pre, post):
     if k is not None:
         return {"shift": k, "ambiguous": False}
 
-    # Rule 2: Check if any non-blank row has moved - i.e. its content
-    # survives somewhere in `pre`, just not at the SAME index.
-    #
-    # This must run unconditionally, not only when some OTHER row
-    # happens to survive at its own index. Diagnosed live
-    # (tests/parser/work/e2e-clean, turn 11): a transition can be a
-    # near-perfect scroll (25+ rows individually confirmed to have moved
-    # by an identical shift) that nonetheless has ZERO rows surviving at
-    # their own index - every row shifted, so none happened to land back
-    # where it started. A prior "no row survived at its own index -> not
-    # ambiguous, full redraw" early-exit ran BEFORE this check and
-    # therefore never saw that overwhelming moved-row evidence, wrongly
-    # reporting an ordinary (if scroll_delta-defeating) scroll as an
-    # unambiguous full redraw. Whether some row happens to also survive
-    # at its own index is neither necessary for a screen to have moved
-    # rows, nor sufficient to rule it out - it says nothing one way or
-    # the other, so it must not gate this loop from running at all.
+    # Rule 2: a non-blank row whose content survives elsewhere in `pre`
+    # counts as moved, even if no row survives at its own index - a
+    # scroll can shift every row, so that is neither required nor
+    # sufficient evidence either way. Must run unconditionally (same
+    # wildcard/guard reasoning as scroll_delta, above).
     for i in range(ROWS):
         if not post[i].strip() or pre[i] == post[i]:
             continue

@@ -9,142 +9,33 @@ Two things this does that the Dracula zxplay.py did not:
   2. It READS the tilemap rather than photographing the screen. ZEsarUX's
      get-ocr is ULA-based and cannot see the Next tilemap at all.
 
-FIX ROUND 1 (moreLock+wrapLock discriminator): the first version of this
-module polled moreLock alone and inferred "done" from its absence. That
-was wrong - moreLock is the SAME byte for two different waits. It is set
-across the interpreter's ENTIRE "More..." page (src/print.asm
-prn_more_check) AND across the interpreter's ENTIRE input-line edit
-(src/overlay1.asm inp_edit, "locks BEFORE any echo"), and turn processing
-is fast enough against a ~100ms poll that settle() would typically observe
-moreLock=1 because inp_edit had ALREADY re-entered for the next command,
-misread that as an undismissed MORE page, and fire a spurious Enter into
-it. See task-9-report.md's original writeup for the live evidence.
-
-wrapLock (src/nextdaad.map symbol WRAPLOCK) is the discriminator:
+Two locks distinguish the interpreter's wait states (see src/nextdaad.map
+symbols MORELOCK/WRAPLOCK):
 
     state                  moreLock   wrapLock
     running (mid-turn)        0          0
     MORE page waiting         1          0
     input editor ready        1          1
 
-inp_edit (overlay1.asm:626-628) sets BOTH moreLock and wrapLock at entry
-and holds both across its whole wait, clearing both together only when
-editing ends (the timeout path at line 695, or the normal-submit path at
-line 757). prn_more_check (print.asm:250-258) also sets both at first, but
-explicitly clears wrapLock ("restore buffering for the outer word") BEFORE
-calling wait_key_timeout - so by the time it is actually parked waiting
-for the dismiss keypress, wrapLock reads 0. moreLock==1 AND wrapLock==1
-together, then, is a positive "the interpreter is genuinely ready, do not
-press anything" signal - not an absence-of-signal inference.
+inp_edit (overlay1.asm:626-628) sets and holds both together; only ENTER or
+timeout clears them together. prn_more_check (print.asm:250-258) sets both
+but clears wrapLock before waiting on the dismiss key, so moreLock==1 AND
+wrapLock==1 together means "input editor ready" - not merely "moreLock is
+set", which both states share.
 
-A third wait state is invisible to both locks: ANYKEY-style prompts
-(src/overlay0.asm h_anykey calls wait_key_timeout directly, setting
-neither lock - wait_key_timeout itself only polls the keyboard port and
-stores no marker of its own). Its SCREEN is now captured deterministically
-along with every MORE page (see the next section), but WHICH of the two
-kinds of wait fired cannot be read from a free-running breakpoint, so
-DISMISSING it is still decided by a heuristic: if the tilemap is unchanged
-for ANYKEY_STATIC_POLLS consecutive polls while the interpreter is still
-not READY, that is treated as a blocked ANYKEY-style wait and a key is
-sent. Turns where that happens are marked anykey_heuristic=True in the
-jsonl output so a later divergence on that turn can be judged in that
-light (see nleg.play). Two waits reach neither the locks NOR the pager's
-park point at all - wait_key_reset's $0C escape and overlay2's direct
-wait_key call - and the same heuristic is the only thing that finds them.
+ANYKEY-style prompts (overlay0.asm h_anykey) set neither lock, so they are
+inferred: if the tilemap is unchanged for ANYKEY_STATIC_POLLS consecutive
+polls while not READY, treat it as a blocked ANYKEY wait and send a key.
+Turns handled this way are marked anykey_heuristic=True in the jsonl output.
 
-PAGE CAPTURE IS BREAKPOINT-DRIVEN, NOT POLLED (Wave C item 4). Pages used
-to be captured the same way everything else is - by polling moreLock at
-SETTLE_POLL_S - and that lost whole pages. wait_key (src/print.asm) is
-press-then-release: if a key is ALREADY down when it runs, it falls
-straight through to its release wait and returns. The Enter that
-submitted the command is held for KEY_DELAY_MS (150ms, zrcp.py) and a
-turn's output can reach the pager well inside that window, so the page
-was dismissed by the harness's own still-held keystroke and moreLock went
-1 -> 0 between two polls with nothing observed. The page was then never
-appended to `pages` and everything on it scrolled away uncaptured. Seen
-live on tests/condacts.dsf turn 11 (two runs captured the page, a third
-did not, with identical interpreter state) and on Rabenstein turn 0,
-whose findings[0]["actual"] was the one field that varied run to run.
+Page capture is breakpoint-driven, not polled (see PAGE_BP_INDEX and
+arm_page_capture): the pager's park point, WAIT_KEY_TIMEOUT, is captured
+by the emulator itself before anything can dismiss it, so the poll
+interval never decides what the transcript contains.
 
-What replaces it: the EMULATOR captures the page, at the instruction
-where the pager parks, before anything can dismiss it.
-
-  * The park point is WAIT_KEY_TIMEOUT (src/print.asm, exported in
-    build/nextdaad.map - no src/ change was needed). It is reached from
-    exactly two places in the whole interpreter, confirmed by grepping
-    every call site: prn_more_check with E=$02, immediately after the
-    SM32 prompt has been printed and wrapLock released, and h_anykey
-    with E=$04. At that instruction the page is COMPLETE on screen -
-    prompt row included - and the interpreter is about to block. There
-    is no earlier deterministic point: moreLock goes up at the TOP of
-    prn_more_check, before SM32 is even printed.
-  * Two ZRCP breakpoints share that one PC condition (both are accepted
-    and both are taken by ZEsarUX's PC=XXXX optimizer - confirmed live
-    via get-breakpoints-optimized):
-        PAGE_BP_INDEX       action save-binary <workdir>/nleg-page.bin
-        PAGE_COUNT_BP_INDEX action let var0=var0+1
-    The lower index runs first, so by the time the counter moves the
-    dump on disk is already the page that moved it.
-  * settle() reads the counter (`evaluate var0`) once per poll. A counter
-    that moved means a page fired since the last poll, WHETHER OR NOT the
-    interpreter is still parked on it, and the dump file holds that
-    page's screen exactly as it stood at the park. Nothing is captured
-    from the live screen any more, so the poll interval no longer decides
-    what the transcript contains.
-
-Why an emulator-side capture rather than "break, capture, send the key,
-resume": in THIS configuration the emulator cannot be stopped by a
-breakpoint at all. Confirmed live against ZEsarUX 13.0 with `--vo null`:
-a breakpoint whose action is the default menu/break answers "Can not open
-menu: this video driver does not support menu." on every hit and
-execution CONTINUES - the CPU never pauses and the ZRCP prompt never
-changes. The only thing that stops on a breakpoint is `run` inside
-cpu-step mode, which would mean driving every turn as a chain of bounded
-`run <opcodes>` chunks: a different execution model (emulated time
-decoupled from wall clock) for the whole harness, re-timing every
-existing replay. The action-based capture gets the same guarantee - the
-page's content is recorded before any dismissal can happen - while
-leaving the free-running turn loop, and therefore the existing replay
-baselines, exactly as they were.
-
-Lifecycle: armed ONCE, right after _seed_rng_via_breakpoint, with the
-machine briefly back in cpu-step so no page can fire in the arming
-window; never re-armed per turn; never disarmed. The seed trap's own
-index is retired with disable-breakpoint (not disable-breakpoints, which
-is the global switch) so re-enabling for the pager cannot re-arm it.
-The fire counter is cumulative across the whole session and lives on
-NextLeg, so a page that fires during turn N is never re-counted in turn
-N+1. Nested pages need nothing special: each fire moves the counter by
-one and settle() loops until the counter stops moving and the locks say
-READY. A counter that moves by MORE than one between two polls means one
-page's dump was overwritten by the next before it could be read, and that
-raises rather than silently truncating - it cannot happen while the
-harness sends at most one keystroke per poll (a page can only be
-auto-dismissed by a still-held harness key, and wait_key needs a FRESH
-press for the page after it), but the assertion is what says so.
-
-Timeouts: the disarm-every-poll (see disarm_input_timeout) is unchanged
-and still covers the parked state, because the harness keeps polling
-while parked. The breakpoint fires BEFORE wait_key_timeout recomputes
-inpTOFrames from flag 48, so disarming at the fire would be pointless;
-what actually keeps a page from timing out is the same per-poll zeroing
-as before, which underflows the pager's countdown to 65535 frames.
-
-The jDAAD leg has no analogous race and needs no equivalent. jleg.js does
-not photograph a screen at all: jDAAD is a synchronous JS interpreter and
-every character it prints goes through sandbox.__out into a STRING that
-accumulates for the whole turn, so nothing can scroll away between
-observations. Its `waiting()` reads jDAAD's own inMORE/inANYKEY flags
-directly in the same thread that would clear them, and no emulated key
-can arrive except from the `key('Enter')` that settle() itself calls. Its
-model is already deterministic.
-
-Still true, and still the reason the SM32 filter exists: NextDAAD prints
-SM32 when it pages and jDAAD prints nothing at all, so the prompt row
-exists on one leg and can never exist on the other. load_more_prompt and
-blank_prompt_rows remove it from both the emitted text and the ambiguity
-verdict. That is a LEG DIFFERENCE, not a race, and it is unaffected by
-any of the above.
+jleg.js needs no equivalent capture: jDAAD is a synchronous interpreter
+and every character it prints accumulates in a string for the whole turn,
+so nothing can scroll away between observations.
 
 Script entry forms - each is a LOGICAL instruction; each leg (this file
 and jleg.js) realises it the way its own input model requires:
@@ -155,22 +46,11 @@ and jleg.js) realises it the way its own input model requires:
              with X. Sends X and then Enter - i.e. exactly what a plain
              command does - and is kept as a separate spelling only so a
              script says out loud that the turn is answering a
-             confirmation rather than issuing an order.
-
-             HISTORY, because this directive used to do something
-             different and the difference is now settled. It existed
-             because the two legs collected the confirmation
-             differently: NextDAAD's `confirm` (src/overlay0.asm, from
-             h_quit) took ONE raw keypress, so this leg sent the key
-             alone, while jDAAD's _QUIT calls getPlayerOrders() - the
-             same full-line reader its main loop uses - so jleg.js sent
-             key + Enter. docs/parser-bugs.md entry 4 recorded that and
-             flagged it as unsettled. SP16 Task 5 ran the tie-breaker
-             against the ORIGINAL ZX interpreter under ZEsarUX
-             (.superpowers/sdd/sp16-adjudications/): a bare Y at the
-             SM12 prompt is ECHOED into a line and nothing happens until
-             ENTER. NextDAAD was the outlier and now reads a line too,
-             so the per-leg split is gone and both legs send key+Enter.
+             confirmation rather than issuing an order. Both legs read a
+             full line here: confirmed against the original ZX
+             interpreter under ZEsarUX, where a bare Y at the SM12
+             prompt is echoed into a line and nothing happens until
+             ENTER.
 """
 import json
 import os
@@ -239,35 +119,12 @@ BOOT_ANYKEY_STATIC_POLLS = 30
 # there, which is exactly what set-breakpoint is for - but it must run
 # AFTER enable_breakpoints under 13.0, see _seed_rng_via_breakpoint.
 SEED_BP_INDEX = 1
-# How long the RNG-seed breakpoint's run() may take to fire. Generous:
-# confirmed live this normally fires in well under 2s (smartload plus the
-# handful of instructions from NextDAAD's entry point to eng_init_game's
-# seed write), but this is real wall-clock work, not instant.
-#
-# Root-cause note (Rabenstein 60s-timeout investigation): the breakpoint
-# mechanism itself - arming order, PC=<addr> condition syntax, and the
-# SEEDOK address from build/nextdaad.map - was never the fault, and this
-# deadline was never the fault either. Confirmed live: when `workdir` (and
-# therefore `sd`, below) is a RELATIVE path - exactly what argparse's
-# --out gives when a caller passes a relative directory, e.g.
-# `--out tests/parser/work/rabenstein-probe` - launch() passes that same
-# relative string as both `--esxdos-root-dir`/`--smartloadpath` AND as
-# the subprocess's own `cwd`. ZEsarUX's process cwd ends up correctly at
-# .../sd (Popen resolves its own `cwd=` argument correctly), but ZEsarUX
-# then resolves ITS OWN `--esxdos-root-dir`/`--smartloadpath` arguments,
-# and later the ZRCP `smartload <path>` command's argument (also built
-# from the same relative `sd`), AGAINST that same cwd - doubling the path
-# (".../sd/tests/parser/work/rabenstein-probe/sd/...", which does not
-# exist) and silently failing to load anything. get-registers confirmed
-# this live: PC after "smartload" stayed inside NextZXOS's own boot ROM
-# (0x1baf -> 0x1bac) instead of jumping to the loaded program's entry
-# (0x8000, the always-correct behaviour confirmed separately whenever
-# `workdir` was absolute) - the interpreter never started running at all,
-# so the breakpoint could never fire no matter how long this deadline is.
-# Not a size/timing issue, not flakiness: a real, 100%-reproducible
-# relative-vs-absolute path bug. Fixed by resolving `workdir` to absolute
-# in stage_sd() below, once, at the source, rather than raising this
-# number (which was tried first and correctly did not help).
+# Generous ceiling for run() to reach the RNG-seed breakpoint: real
+# wall-clock work (smartload plus boot to eng_init_game), not instant.
+# Only reachable at all if `workdir` resolves to an absolute path (see
+# stage_sd) - a relative one makes ZEsarUX double the smartload path and
+# silently load nothing, so the breakpoint never fires regardless of
+# this deadline.
 SEED_RUN_DEADLINE_S = 60.0
 
 # Breakpoint-driven page capture (see the module docstring). Two indices
@@ -394,45 +251,13 @@ def wait_for_port(proc, port, attempts=60, delay=0.5):
 def _seed_rng_via_breakpoint(z, syms, nex_path):
     """Force NextDAAD's RNG seed to RNG_SEED, matching the jDAAD mirror.
 
-    eng_init_game (src/engine.asm) seeds rngState from the Z80 refresh
-    register R plus frameCounter, falling back to $A5C3 only if both are
-    zero - real entropy, correct behaviour for a shipped game (owner
-    ruling: this stays as-is in src/, the harness works around it). The
-    problem is timing, not logic: a plain write-memory to RNGSTATE issued
-    after the game is already running loses the race every time -
-    confirmed live, RNGSTATE already held its post-seed entropy value on
-    the very FIRST read after wait_for_port() returned a connection, well
-    before this function or anything else in Python got a chance to run.
-    Boot, under ZEsarUX's smartload, is simply faster than one socket
-    connect.
-
-    The only reliable fix is to control the load ourselves. launch() no
-    longer passes the .nex on ZEsarUX's command line, so nothing runs
-    until this function explicitly smartloads it - with a breakpoint on
-    ENG_INIT_GAME@SEEDOK (confirmed live: the exact `ld (rngState),hl`
-    instruction) already armed:
-
-      1. enter-cpu-step (pause wherever the CPU currently sits - reliably
-         very early, since nothing has been loaded yet).
-      2. set the PC breakpoint at SEEDOK and enable breakpoints.
-      3. smartload the game via ZRCP itself - confirmed live: since the
-         CPU is already in cpu-step mode, smartload leaves it there
-         afterwards (its own help text: "if it was already on cpu-step
-         mode, it will be on cpu-step mode after loading"), so nothing
-         auto-runs before we tell it to.
-      4. run() - executes until the breakpoint fires, PC = SEEDOK, the
-         `ld` has NOT executed yet.
-      5. override the HL register to RNG_SEED, then cpu-step once so the
-         CPU's OWN `ld (rngState),hl` performs the write. A plain
-         write-memory to RNGSTATE at this exact point does not reliably
-         stick (confirmed live: reads back as zero, or some later
-         unrelated value) - routing the write through the CPU's normal
-         execution path instead does.
-      6. disable the breakpoint and exit cpu-step, handing control back
-         to the emulator's own free-running loop.
-
-    Symbol addresses are always loaded from the map (see symbols.py),
-    never hardcoded.
+    eng_init_game seeds rngState from R/frameCounter entropy so fast that
+    a post-boot write always loses the race, even on the first read after
+    connecting. A breakpoint at ENG_INIT_GAME@SEEDOK, HL overridden to
+    RNG_SEED, then a single cpu-step so the interpreter's own
+    `ld (rngState),hl` performs the write, is the only way to land it
+    before that entropy takes hold - a plain write-memory at that point
+    does not reliably stick.
     """
     seed_ok = syms["ENG_INIT_GAME@SEEDOK"]
     rngstate = syms["RNGSTATE"]
@@ -648,32 +473,18 @@ class NextLeg:
     def _ready_confirmed(self, fires):
         """Second opinion on a (moreLock, wrapLock) == (1, 1) reading.
 
-        That pair is documented as "the input editor is ready", and for
-        inp_edit and confirm_read it is. It is ALSO true, briefly, inside
-        prn_more_check: it sets moreLock and wrapLock together
-        (src/print.asm:250-251) and only releases wrapLock again after the
-        SM32 prompt has been printed (:257), so the pager passes through
-        the editor's own signature on its way to parking. The window is
-        short in Z80 terms but it is not short against a ZRCP round trip,
-        and it is entered once per page - so the more pages a turn fires,
-        the likelier a poll lands in it. Measured at roughly one run in
-        five once checks 103/104 took the last condacts turn from one page
-        to four.
-
-        Re-reading after a full poll interval separates the two: the pager
-        leaves that state within microseconds of emulated time, either
-        by dropping wrapLock or by reaching its park point and moving the
-        page counter, while the editor sits in it until a key arrives.
-        Both exits are checked; only "still both locks, counter unmoved"
-        is the editor.
-
-        COST: one extra SETTLE_POLL_S of wall clock at EVERY turn end,
-        because a turn always ends on a (1, 1) reading and every one of
-        them is now confirmed. It never costs an extra loop ITERATION
-        when the editor really is ready - the confirmation happens inside
-        the poll that found it, and settle() returns from that same poll
-        (pinned by t9_both_locks_are_confirmed_before_a_turn_is_called_ready,
-        which asserts polls == 1 on a genuine editor).
+        That pair also holds briefly inside prn_more_check on its way to
+        parking a MORE page (src/print.asm:250-257), before it releases
+        wrapLock - so a single observation cannot tell that transient
+        state from the input editor genuinely being ready. Re-reading
+        after a full poll interval separates them: the pager leaves
+        within microseconds (wrapLock drops, or the page counter moves),
+        the editor sits until a key arrives; only "still both locks,
+        counter unmoved" confirms the editor. Costs one extra
+        SETTLE_POLL_S at every turn end, never an extra loop iteration
+        when the editor really is ready (pinned by
+        t9_both_locks_are_confirmed_before_a_turn_is_called_ready, which
+        asserts polls == 1 on a genuine editor).
         """
         time.sleep(SETTLE_POLL_S)
         if self.page_fires() != fires:
@@ -714,16 +525,15 @@ class NextLeg:
 
         Deliberately does NOT touch flag 48 or flag 49. Both are DAAD
         flags the comparison reads, and both legs must write them at the
-        SAME logical point or the difference is the harness's own
-        (docs/parser-bugs.md entry 5's flag-48 retraction) - so flag 48's
-        write stays where jleg.js makes its matching one, at the top of
-        each turn, and flag 49 is never written at all. inpTOFrames is an
-        internal interpreter variable that appears in no capture and is
-        compared against nothing, so it can be cleared as early and as
-        often as needed. jDAAD has no counterpart to any of these
-        timeouts: jleg.js's sandbox stubs setTimeout to a no-op, so the
-        reference leg simply cannot time out, and forcing the Next leg to
-        match is what keeps the pair honest.
+        SAME logical point or the difference is the harness's own - so
+        flag 48's write stays where jleg.js makes its matching one, at
+        the top of each turn, and flag 49 is never written at all.
+        inpTOFrames is an internal interpreter variable that appears in
+        no capture and is compared against nothing, so it can be cleared
+        as early and as often as needed. jDAAD has no counterpart to any
+        of these timeouts: jleg.js's sandbox stubs setTimeout to a no-op,
+        so the reference leg simply cannot time out, and forcing the Next
+        leg to match is what keeps the pair honest.
         """
         self.z.write_memory(self.syms["INPTOFRAMES"], bytes([0, 0]))
 
@@ -854,32 +664,6 @@ class NextLeg:
         look static for the ordinary threshold's worth of time during a
         boot-time self-test.
 
-        HISTORY, because the boot settle used to STOP on a lockless wait
-        instead of dismissing it, and that is no longer right. The reason
-        it stopped was NextDAAD's QUIT confirmation: it used to take a
-        single raw keypress, setting neither lock, so it looked exactly
-        like a "Press any key" pause, while jDAAD's `_QUIT` read a full
-        line - so dismissing it here consumed a prompt on one leg that
-        the other left open. SP16 Task 5 settled that (docs/parser-bugs.md
-        entry 4): NextDAAD's confirm_read reads a LINE too, and takes BOTH
-        locks while it does, so the QUIT prompt is now a POSITIVE READY
-        stop and cannot reach the static backstop at all.
-
-        Stopping short then became the harmful option, and Rabenstein is
-        the case that proves it: its intro ends on a genuine ANYKEY, so
-        the boot settle parked there while jleg.js's own boot settle -
-        which presses Enter for inANYKEY and inMORE alike - had already
-        run jDAAD's intro out to the command prompt. The first scripted
-        command was then TYPED INTO THE ANYKEY: its first character
-        dismissed the pause, the intro resumed printing while the
-        remaining characters were still going in, and how much of it
-        landed before `pre` was captured decided the turn's transcript.
-        That was the last run-to-run wobble in the Rabenstein replay,
-        left over after the page capture itself was made deterministic.
-        Boot now advances to the same positive READY state jleg.js
-        advances to, so the first turn is typed into an input editor on
-        both legs.
-
         Raises TimeoutError naming the last observed (moreLock, wrapLock)
         pair and whether the screen was static, rather than returning
         quietly - a silent give-up here would hand the comparison stage a
@@ -991,27 +775,15 @@ class NextLeg:
             more, wrap = self.more_state()
             last_more, last_wrap = more, wrap
             if more and wrap and not self._ready_confirmed(fires):
-                # Both locks set is NOT only the input editor. Between
-                # print.asm:250 and print.asm:257 prn_more_check holds
-                # BOTH of them too, while the SM32 prompt is going onto
-                # the screen, and a poll landing in that window reads the
-                # pager as READY and ends the turn on a page that has not
-                # even finished drawing. Seen live, about one run in five
-                # once tests/condacts.dsf grew checks 103/104 and the last
-                # turn started firing four pages instead of one: the
-                # transcript stopped dead at an unfiltered "More..." row
-                # with the fixture still inside check 103.
+                # Both locks set is not only the input editor - see
+                # _ready_confirmed's docstring for the transient
+                # prn_more_check window this rules out.
                 #
-                # This sleep is the SECOND on this path - _ready_confirmed
-                # has already slept one interval to take its reading - and
-                # one would do. Kept deliberately: the branch is reached
-                # only when a poll landed inside that window, roughly once
-                # per five runs of the extended replay rather than once
-                # per turn, so it costs 100ms on a rare event, while
-                # removing it changes the settle loop's live timing and
-                # would put the replay's reliability evidence back up for
-                # re-validation. Drop it if the loop is ever restructured
-                # for other reasons.
+                # Second sleep on this path (_ready_confirmed already
+                # slept one interval): kept because removing it changes
+                # the settle loop's live timing and reopens the replay's
+                # reliability evidence for re-validation. Drop only if
+                # the loop is restructured for other reasons.
                 time.sleep(SETTLE_POLL_S)
                 continue
             if more and wrap:
@@ -1201,7 +973,7 @@ def load_script(script_path):
     timeout (tests/condacts.dsf check 58 arms `TIME 2 0` and asserts flag
     49 = 128); everywhere else the harness must keep stopping the clock,
     because jDAAD cannot time out at all and a one-sided expiry is a
-    harness-manufactured divergence (docs/parser-bugs.md entry 5).
+    harness-manufactured divergence.
     """
     raw = json.loads(Path(script_path).read_text(encoding="utf-8"))
     if not isinstance(raw, list):
@@ -1330,9 +1102,8 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                     # setTimeout to a no-op, so jDAAD's readText timeout
                     # never fires at all - both legs are meant to run with
                     # NO input timeout, and now both actually do. Same
-                    # discipline as flag 48's own retraction in
-                    # docs/parser-bugs.md entry 5: force it on both legs
-                    # or mask it, never on one leg only.
+                    # discipline as flag 48's own retraction: force it on
+                    # both legs or mask it, never on one leg only.
                     #
                     # settle() already cleared this the moment the editor
                     # became ready; repeated here so a turn reached by any

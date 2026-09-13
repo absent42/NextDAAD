@@ -244,9 +244,9 @@ def _transcript_lines(findings):
 
     The structured findings above this section can bury a real text
     difference under caveats, cascade ranking and pages of candidate
-    handlers - the ORIGINAL discovery of a NextDAAD bug like this (see
-    docs/parser-bugs.md) worked because an agent just read both legs'
-    transcripts side by side and noticed a missing line. This section
+    handlers - the ORIGINAL discovery of a NextDAAD bug like this worked
+    because an agent just read both legs' transcripts side by side and
+    noticed a missing line. This section
     exists so that reading is possible again without reconstructing it
     from findings.json by hand.
     """

@@ -7,6 +7,11 @@ wraps at 80 columns and jDAAD does not. Together they classify the fault:
     state differs, text matches  -> condact computed the wrong thing silently
     state matches, text differs  -> print/message/window/wrap fault
     both differ                  -> condact fault with a visible consequence
+
+A finding is never suppressed by a caveat: an ambiguous capture (tilemap
+could not tell a scroll from an in-place edit) is reported alongside the
+divergence, not instead of it, so a reader can judge trustworthiness
+without the difference itself being hidden.
 """
 import json
 
@@ -59,18 +64,9 @@ def _objloc_diffs(ref, nd, turn=None):
 def compare_turns(ref, nd):
     """Return a divergence dict, or None when the turn agrees.
 
-    Both channels are reported unconditionally: a text difference is
-    NEVER discarded because the Next leg's screen transition this turn
-    was ambiguous (tilemap could not tell a scroll from an in-place
-    edit). That ambiguity is real evidence of a different kind - it says
-    the CAPTURE may be untrustworthy, not that the DIFFERENCE isn't
-    there - so it is surfaced as a caveat instead (report.build_findings
-    reads the Next leg's own text_ambiguous/anykey_heuristic/
-    timing_sensitive markers and attaches them to the finding). A reader
-    must be able to tell "the text differs and the capture is
-    trustworthy" from "the text differs but this turn's capture may
-    include stale rows" - suppressing the difference outright made that
-    distinction impossible to see at all.
+    Both channels always reported (see module header); report.build_findings
+    attaches the Next leg's own text_ambiguous/anykey_heuristic/
+    timing_sensitive markers as a caveat rather than discarding the diff.
     """
     turn_num = ref["turn"]
     fd = _flag_diffs(ref["flags"], nd["flags"], turn=turn_num)
@@ -103,19 +99,11 @@ def compare_turns(ref, nd):
 def compare_runs(ref_lines, nd_lines):
     """Compare two lists of turn dicts.
 
-    Primary/downstream is tracked PER CHANNEL, not globally. A single
-    global cascade rule meant one flag that diverges on every turn (flag
-    29/fGFlags does exactly this - see docs/parser-bugs.md) made every
-    later TEXT divergence look like a downstream cascade of that flag,
-    even though the two are unrelated - and the triage rule ("only the
-    primary finding is trustworthy") then told a reader to ignore it.
-    Each finding here instead carries state_rank and text_rank
-    independently: "primary" only on the first turn THAT channel
-    diverges, "downstream" on every later turn it diverges, and None on
-    a turn where that channel did not diverge at all (a state-only
-    finding has no text_rank; a text-only finding has no state_rank).
-    The cascade concept itself is sound and kept - just scoped to one
-    channel at a time instead of applied globally.
+    Primary/downstream is ranked per channel, not globally: a flag that
+    diverges every turn (flag 29/fGFlags does) must not mask a later,
+    unrelated TEXT divergence as its downstream cascade. Each finding
+    carries state_rank/text_rank independently, None where that channel
+    did not diverge (a state-only finding has no text_rank and vice versa).
     """
     divergences = []
     n = min(len(ref_lines), len(nd_lines))
@@ -168,16 +156,10 @@ def compare_runs(ref_lines, nd_lines):
 
 
 def compare_turns_text(ref, cmp_):
-    """TEXT-only turn comparison, for a leg that captures no state.
-
-    Added for the ZX leg (tests/parser/zleg.py), which plays the original
-    DAAD ZX interpreter and can read only the screen: there are no
-    symbols for that binary, so there is no flag or object channel to
-    compare at all. compare_turns() above deliberately raises on such a
-    capture (its turn dicts carry no "flags"/"objloc" keys), which is the
-    right behaviour for the two-leg differential - a missing state
-    channel there means a broken capture. This is the separate,
-    explicitly text-only path, NOT a relaxation of that one.
+    """TEXT-only comparison for a leg with no state channel (e.g. the ZX
+    leg, tests/parser/zleg.py, has no symbols to read flags/objects from).
+    compare_turns() raises on a missing state channel elsewhere - that
+    means a broken capture there, not this deliberate text-only path.
     """
     if normalise.tokens(ref["text"]) == normalise.tokens(cmp_["text"]):
         return None
@@ -195,20 +177,12 @@ def compare_turns_text(ref, cmp_):
 
 
 def compare_runs_text(ref_lines, cmp_lines):
-    """compare_runs() for the TEXT channel alone - see compare_turns_text.
+    """compare_runs() restricted to the TEXT channel (see compare_turns_text).
 
-    Same primary/downstream ranking as the full comparison, restricted to
-    the one channel that exists here: the first diverging turn is
-    "primary", every later one "downstream". A length mismatch is
-    reported the same way too, as a "truncated" entry.
-
-    Turn alignment is POSITIONAL - turn N against turn N, exactly as
-    compare_runs does it - and with one text channel there is no second
-    signal to catch a misalignment. A leg that swallowed or gained a turn
-    part-way through reports as a long run of downstream text
-    divergences, not as "these runs are out of step". If a differential
-    goes wrong from one turn onwards and stays wrong, suspect alignment
-    before reading the texts as evidence.
+    Alignment is positional (turn N vs turn N) with no second channel to
+    catch a misalignment: a swallowed/gained turn reports as a long run
+    of downstream divergences, not as "out of step" - suspect alignment
+    first if a differential goes wrong from one turn on and stays wrong.
     """
     divergences = []
     n = min(len(ref_lines), len(cmp_lines))

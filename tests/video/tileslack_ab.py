@@ -1,113 +1,24 @@
 #!/usr/bin/env python3
-"""tile-slack A/B - a repeatable measurement of --tile-slack 0.0 vs 0.5
-on THE AUTHORING KIT'S OWN TWO DEMO CLIPS.
+"""tile-slack A/B - a repeatable measurement of --tile-slack 0.0 vs 0.5 on
+the authoring kit's own two demo clips (VIDEO/001.mp4, VIDEO/002.mp4).
 
-WHY THIS EXISTS
----------------
---tile-slack is the encoder's one opt-in picture knob and the manual tells
-authors to "try 0.5 first" on a title with sustained motion. The question
-this script answers is the one an author actually has: DOES IT HELP ON THE
-FOOTAGE THEY GET IN THE BOX - authoring-kit/VIDEO/001.mp4 (the bunny clip)
-and 002.mp4 (the jellyfish clip). It is a fresh baseline for those two
-clips and nothing else.
+Not a reproduction of the manual's "boat pan"/"church zoom" benchmark
+table - those clips are not in this repository. This is a fresh baseline
+for 001/002 only.
 
-IT IS NOT A REPRODUCTION OF THE MANUAL'S BENCHMARK TABLE, AND MUST NOT BE
-READ AS ONE. That table (manual/reference/video-format.md, "Tile slack" ->
-"What it buys") was measured on two clips called "boat pan" and "church
-zoom" which are NOT in this repository - they are silent 2560x1440 and
-3840x2160 sources that live outside it. An earlier draft of this script
-mapped those names onto VIDEO/001.mp4 and 002.mp4 on the strength of a
-stale table in .superpowers/sdd/sp14a-task-4-report.md section 43.2, and
-printed a cell-by-cell comparison against the manual. That comparison was
-between two different pieces of footage and it is GONE. The manual's table
-remains unreproduced, and is recorded there as unconfirmable; nothing here
-changes it or compares against it.
-
-THE LESSON, since this project keeps hitting it: a document's file mapping
-is a claim, not a fact. Two minutes of ffprobe and one extracted frame
-would have caught it. Verify the mapping before you measure through it.
-
-It MEASURES. It does not rule. Nothing here edits the manual, the encoder or
-the authoring kit - authoring-kit/lib is imported read-only.
-
-WHAT IT DOES
-------------
 Four encodes, two per clip:
-
   ARM A   --tile-slack 0.0   budget DERIVED by the encoder's own search
   ARM B   --tile-slack 0.5   budget PINNED to the value arm A derived
 
-Pinning arm B is the whole point of the design and it is the predecessor
-card's method (.superpowers/sdd/sp14a-task-4-report.md section 43.3): a
-finer tile rung costs modelled SUPPLY, the auto-budget search pays for
-supply with wire bytes, so an unpinned arm B would be free to move its own
-supply ceiling and flatter itself. One variable, two settings.
+Pinning arm B is required: an unpinned arm B could move its own supply
+ceiling and flatter itself, since the auto-budget search pays for a finer
+tile rung with wire bytes. One variable, two settings.
 
-Arm A is not re-encoded at its own pin. auto_stream_budget() returns the
-WINNING PASS rather than re-running it (nxv2enc.py, "the accepted budget is
-never re-encoded"), so the file arm A writes IS the file a pinned encode at
-that budget would write. The predecessor verified that byte-identically.
+Arm A is not re-encoded at its own pin - auto_stream_budget() returns the
+winning pass rather than re-running it, so the file arm A writes IS the
+file a pinned encode at that budget would write.
 
-WHERE THE NUMBERS COME FROM - read this before quoting any of them
-------------------------------------------------------------------
-The --report BuildReport JSON carries exactly ONE of the four quantities
-worth having. The others do not exist in it and are computed here:
-
-  rungs taken       NOT IN THE REPORT. Recovered from encode_clip's own
-                    per-frame "mode" strings, which carry an "@<rung>"
-                    suffix in PIXELS (nxv2enc.encode_delta). Converted to
-                    LINES by dividing by one paint-order line, because the
-                    artifact is in display terms. Exact - this is the
-                    encoder's own record of what it picked, not an
-                    inference.
-  stream util       report["stream_utilization"]. Straight from the report,
-                    the one column that needs no reconstruction.
-  local 4x4 PSNR    NOT IN THE REPORT (report["mean_psnr"] is PER-PIXEL).
-                    Computed with nxv2enc.psnr_lm - the encoder's OWN
-                    function, on the encoder's OWN source and decoded frame
-                    stacks. Exact.
-  banding index     NOT IN THE REPORT, and NOT AN ENCODER QUANTITY AT ALL.
-                    Reimplemented here from decoded frames, to the
-                    definition the predecessor card recorded: the per-line
-                    residual coefficient of variation. Spelled out in
-                    banding_index() below. IT IS AN ARM-TO-ARM DIRECTION
-                    ONLY - the absolute value is on this script's own
-                    scale and means nothing on its own. See that docstring.
-
-HOW THE PER-FRAME DATA IS OBTAINED
-----------------------------------
-nxv2enc.encode() returns a BuildReport and throws the per-frame record away.
-This script therefore runs the encode IN-PROCESS through videnc.main() -
-the real CLI, so every default is the shipped one - with a read-only spy
-wrapped around nxv2enc.encode_clip that keeps each pass's return value.
-The spy calls the real function and returns its real result unchanged; it
-cannot alter a single output byte.
-
-The auto-budget search runs several passes, so the spy keys them by the
-budget_scale each was called with and the winning pass is selected by the
-budget the report says was accepted. With an explicit --stream-budget (arm
-B) there is only ever one pass.
-
-DETERMINISM
------------
-Each encode runs in a FRESH subprocess (this file re-invoked with --worker),
-so no memo or LRU carries between them. Same inputs, same numbers. The
-encoder and source identities are hashed into every result file and printed
-with the table.
-
-USAGE
------
-    python tests/video/tileslack_ab.py              # measure and print
-    python tests/video/tileslack_ab.py --force      # ignore cached results
-    python tests/video/tileslack_ab.py --clip bunny # one clip only
-
-Work directory: tests/out/tileslack/ (gitignored). Results are cached on a
-key made of the encoder hashes, the source hash and the encode arguments, so
-a re-run after nothing changed costs nothing and prints the same table.
-
-The picture is judged separately, on hardware:
-    .\\tests\\build-tests.ps1 -TileSlack
-    docs/superpowers/tileslack-ab-run-sheet.md
+Measures only; does not rule. Imports authoring-kit/lib read-only.
 """
 
 import argparse
@@ -255,12 +166,12 @@ def banding_index(orig, dec, modes, column_major):
       piling into whole lines.
 
     WHAT THIS IS NOT. It is not an encoder quantity and it is not
-    comparable with any published figure. It follows the definition the
-    predecessor card recorded (sp14a-task-4-report.md section 43.5) and
-    computes it post-hoc from decoded frames, which is the only route open
-    to a script that may not modify the encoder. The encoder's own internal
-    residual is an err2 quantity in palette space, and it does NOT include
-    the quantization/dither floor that a source-vs-decoded difference does.
+    comparable with any published figure. It implements the definition
+    above, computed post-hoc from decoded frames, which is the only route
+    open to a script that may not modify the encoder. The encoder's own
+    internal residual is an err2 quantity in palette space, and it does NOT
+    include the quantization/dither floor that a source-vs-decoded
+    difference does.
     A uniform floor damps a coefficient of variation, so this number sits
     LOWER than an encoder-internal one would on the same clip. READ THE
     ARM-TO-ARM DIRECTION AND SIZE, NOTHING ELSE - the absolute value is on
@@ -499,15 +410,7 @@ def cache_key(clip, slack, pin, ident):
 
 def refresh_derived(got, clip=None):
     """Recompute the columns that are pure functions of the stored raw
-    data, and re-stamp the clip's NAME.
-
-    The worker stores encode_clip's per-frame mode strings verbatim, so a
-    correction to the rung reader applies to CACHED results without
-    re-encoding anything - which matters, because a full arm-A pass is
-    minutes and a miscounted rung column looks exactly like a real result.
-    The name is re-stamped for the same reason: a cached result carries
-    whatever the clip was called when it was encoded, and the numbers do
-    not change when that turns out to have been wrong."""
+    mode strings, and re-stamp the clip name, without re-encoding."""
     if clip:
         got["clip"] = clip
         got["label"] = CLIPS[clip]["label"]
@@ -538,6 +441,8 @@ def encode_arm(clip, slack, pin, ident, force):
     print(f"  {tag}: encoding"
           + (f" (budget pinned {pin:.2f})" if pin is not None
              else " (budget derived)") + " ...")
+    # Fresh subprocess per arm: keeps memo/LRU state from leaking between
+    # arms, so each encode is measured independent of the others.
     subprocess.run(argv, cwd=str(ROOT))
     if not met.exists():
         return {"clip": clip, "slack": slack, "status": "missing",
@@ -612,8 +517,8 @@ def print_tables(results):
                   f"| {fmt(r['psnr_4x4'], '{:.2f}')} "
                   f"| {fmt(r['banding_index'])} |")
 
-    # ---- THE ONLY COMPARISON THIS SCRIPT MAKES: arm B minus arm A, within
-    # a clip, at the same pinned budget. One variable, two settings.
+    # ---- The only comparison this script makes: arm B minus arm A, within
+    # a clip, at the same pinned budget.
     print()
     print("=" * 78)
     print("WHAT THE KNOB DID - ARM B (0.5) MINUS ARM A (0.0), PER CLIP")
@@ -719,49 +624,39 @@ def print_tables(results):
                   + (f" against STREAM_WARN_UTIL {wu:.2f}" if wu else "")
                   + " - OVER THE LINE")
         print()
-        print("This is normal for the knob, not a fault of these clips - "
-              "most clips")
-        print("cross the line at slack 0.5, because spending headroom on "
-              "finer rungs is")
-        print("what the flag does (owner, 2026-08-07). It is context for "
-              "reading the")
-        print("result, not something to judge.")
+        print("Expected at slack 0.5, not a fault of these clips: spending "
+              "headroom on")
+        print("finer rungs is what the flag does (owner ruling, "
+              "2026-08-07).")
         print()
-        print("It does matter for interpretation: arm B is spending margin "
-              "the supply")
-        print("gate would rather keep, so judder or audio break-up on arm B "
-              "is a SUPPLY")
-        print("cost, which is a different finding from 'the picture looks "
-              "worse'.")
+        print("Arm B is spending margin the supply gate would rather keep, "
+              "so judder or")
+        print("audio break-up on arm B is a supply cost, a different "
+              "finding from")
+        print("picture quality.")
         print()
-        print("Open question this run does not settle: if most clips trip "
-              "the line at")
-        print("0.5, the warning carries little signal at that setting. "
-              "Whether 0.90 is")
-        print("the right line for slack encodes is an owner ruling.")
+        print("Whether 0.90 is the right warning line for slack encodes is "
+              "an open owner")
+        print("ruling; this run does not settle it.")
         print()
-        print("It is REPORTED, not fixed. Nothing here changes the encoder, "
-              "the default")
-        print("(still 0.0, off) or the manual. Two things follow for whoever "
-              "acts on it:")
-        print("  - watch those arms for JUDDER and audio breakup "
-              "specifically (run sheet,")
-        print("    leg 3) - a picture verdict and a supply verdict are "
-              "different findings;")
-        print("  - the predecessor card DISCARDED a pair in this state and "
-              "re-encoded both")
-        print("    arms at a lower pinned budget rather than compare across "
-              "it")
-        print("    (sp14a-task-4-report.md section 43.6). Whether to do that "
-              "here is a")
-        print("    ruling, not a measurement.")
+        print("Not fixed here: the encoder default (0.0, off) and the "
+              "manual are")
+        print("unchanged. Two follow-ups for whoever acts on this:")
+        print("  - watch these arms for judder and audio break-up "
+              "specifically - a")
+        print("    picture verdict and a supply verdict are different "
+              "findings;")
+        print("  - a prior run discarded a pair in this state and "
+              "re-encoded both arms")
+        print("    at a lower pinned budget instead of comparing across it; "
+              "whether to")
+        print("    do that here is an owner ruling.")
 
     print()
-    print("THE NUMBERS AND THE PICTURE CAN DISAGREE. Nothing above judges "
-          "what the")
-    print("clip LOOKS like on a Next. Stage the fixture and watch it:")
+    print("Numbers and picture can disagree - stage the fixture and watch "
+          "it on a Next:")
     print("    .\\tests\\build-tests.ps1 -TileSlack")
-    print("    docs\\superpowers\\tileslack-ab-run-sheet.md")
+    print("    then watch for banding, judder and audio break-up.")
 
 
 def main():

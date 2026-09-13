@@ -1,15 +1,10 @@
 # authoring-kit/lib/aysconv.ps1
 #
 # Converts an Arkos Tracker 3 song (.aks) into a NextDAAD AYS stream: a
-# flat per-frame AY-register-diff stream, played back by DMA-streaming
-# frames from SD card rather than holding the whole song resident in a
-# fixed RAM bank the way lib/audio.bat's AKY songs are. AYS exists for
+# flat per-frame AY-register-diff stream, DMA-streamed from SD card, for
 # songs too big for the AKY song slot (10208 bytes at $D800 - see
-# SongToAky's own cap in lib/audio.bat): most real multi-PSG tunes don't
-# fit that slot at all. Trades cheap/unbounded SD-card space for the
-# fixed RAM ceiling - AYS files are routinely LARGER than an AKY encoding
-# of the same song would have been; that is the point, not a regression
-# (a tune AKY cannot encode at all has no AKY size to be smaller than).
+# lib/audio.bat). AYS files are routinely larger than an AKY encoding of
+# the same song; that trade is intentional, not a regression.
 #
 # ---------------------------------------------------------------------
 # AYS format v1 - this comment is the format's authoritative spec (Task 3's
@@ -37,13 +32,8 @@
 #   Frame terminator: none needed (masks are self-sizing); frame boundary
 #   is implicit after psgCount PSG blocks.
 #
-#   Reconciliation note: the originating plan text specified the pad as
-#   "db 0,0,0" (3 bytes) under a "Header (16 bytes)" label. Every other
-#   field width is stated twice (mnemonic + explicit byte count) and those
-#   agree with each other; summed with a 3-byte pad the header is 17
-#   bytes, not 16. The 2-byte-pad reading is the only one under which
-#   every other stated number holds AND the header is the declared 16
-#   bytes, so that is what this converter emits (pad = offsets 14-15).
+#   Pad is 2 bytes (offsets 14-15): the only reading under which every
+#   other stated field width sums to the declared 16-byte header.
 # ---------------------------------------------------------------------
 #
 # Feedstock: SongToYm.exe (Arkos Tracker 3), run once per PSG:
@@ -95,21 +85,12 @@
 #   last 4 bytes                "End!" trailer
 #
 # Interleaving (-n): the flag name is backwards from what it implies.
-# Confirmed by scanning every candidate byte-plane/byte-slot of both a
-# -n and a non--n export of the same song for the R13 signature (a real
-# R13 plane is $FF on every frame with no envelope write - $FF is not a
-# valid 4-bit envelope shape, so that signature cannot arise by chance).
-# Exactly one candidate per file hit it, and cross-checking against
-# SongToVgm output on the same song confirmed which register it was:
-#   default (no -n, attrib bit0 = 1): PLANE-MAJOR ("de-interleaved") -
-#     register r's whole nbFrames-byte run is contiguous:
-#       byte at streamStart + r*nbFrames + frame
-#   -n (attrib bit0 = 0): FRAME-MAJOR (chronological) - all 16 registers
-#     for one frame are contiguous:
-#       byte at streamStart + frame*16 + r
-# -n's FRAME-MAJOR layout is also what the merge loop wants directly (it
-# needs every register of "this frame" together to diff against "last
-# frame"), so -n was kept rather than switched to the default.
+#   default (no -n, attrib bit0 = 1): PLANE-MAJOR - register r's whole
+#     nbFrames-byte run is contiguous: byte at streamStart + r*nbFrames + frame
+#   -n (attrib bit0 = 0): FRAME-MAJOR - all 16 registers for one frame are
+#     contiguous: byte at streamStart + frame*16 + r
+# -n (FRAME-MAJOR) is what the merge loop needs directly, so it is kept
+# rather than switched to the default.
 #
 # Merge: per frame, per PSG, each of registers 0-12 is written (mask bit
 # set + value emitted) iff its absolute YM byte differs from that

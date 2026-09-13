@@ -1,7 +1,5 @@
 """Encoder resolution (video.ps1's order), stdout status parsing and
-BuildReport reading. The QProcess job is added in a later task.
-
-Maintenance contract: repo docs/vidtune-maintenance.md"""
+BuildReport reading. The QProcess job is added in a later task."""
 import json
 import re
 import subprocess

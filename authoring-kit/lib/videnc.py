@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
 """
-authoring-kit/lib/videnc.py - CLI for NextDAAD's native NXV video
-format. NXV v2 (SP15 T1) is the only output now - the v1 fixed-profile
-container (five shipped profiles n0-n4) was replaced wholesale (owner
-decision, 2026-07-24): v1 files are no longer produced or read by this
-tool. docs/superpowers/plans/2026-07-23-sp15-nxv2.md's "Format
-reference" section is the format authority; authoring-kit/lib/
+authoring-kit/lib/videnc.py - CLI for NextDAAD's native NXV v2 video
+format (the only format this tool produces or reads). The format
+constraint is authoring-kit/docs/reference/video-format.html;
 nxv2enc.py and nxv2dec.py are the encoder pipeline and reference
 decoder - this file is a thin CLI shell around nxv2enc.encode().
 
-This is the ONE canonical copy (owner consolidation, 2026-07-23). It
-ships in the authoring kit and the repo's own test harness consumes it
-from here (build-tests.ps1 -Vid), the same pattern as lib/fontconv.ps1.
-The default ffmpeg path resolves relative to this file (authoring-kit/
-tools/ffmpeg/); repo callers pass --ffmpeg tools/ffmpeg/bin/ffmpeg.exe
-explicitly.
+The one canonical copy: it ships in the authoring kit, and the repo's
+own test harness (build-tests.ps1 -Vid) consumes it from here. The
+default ffmpeg path resolves relative to this file (authoring-kit/
+tools/ffmpeg/); repo callers pass --ffmpeg explicitly.
 
-Shape (replaces v1's five fixed profiles): --shape picks one of five
-presets (full/16:9/scope/classic/classic-wide, see nxv2enc.PRESETS) or
-an explicit WIDTHxHEIGHT (width must be 256 or 320 - the only two
-Layer 2 shapes); --aspect derives a FREE height for a given width from
-a target displayed aspect ratio (e.g. --width 320 --aspect 2.35 for
-true cinema scope), correcting for Layer 2 mode-1's non-square pixels
-(nxv2enc.derive_free_height's own docstring has the exact math). --fps
-is independent of shape (the v1 profiles baked one fixed fps per
-profile; v2 does not) - default 25.
+Shape: --shape picks one of five presets (full/16:9/scope/classic/
+classic-wide, see nxv2enc.PRESETS) or an explicit WIDTHxHEIGHT (width
+must be 256 or 320 - the only two Layer 2 shapes); --aspect derives a
+FREE height for a given width from a target displayed aspect ratio
+(e.g. --width 320 --aspect 2.35 for true cinema scope), correcting for
+Layer 2 mode-1's non-square pixels (nxv2enc.derive_free_height's own
+docstring has the exact math). --fps is independent of shape - default
+25.
 
-Audio: full rate always, stereo 15625 Hz - the same rate v1 used,
-chosen so the CTC time constant divides cleanly on every video mode
-(nxv2enc.RATE_STEREO). A mono SOURCE is handled automatically: ffmpeg
-duplicates its single channel into both. Samples/frame = round(rate/
-fps) - the achieved rate drifts a few Hz from nominal on some fps
-values, disclosed here as it was for v1.
+Audio: full rate always, stereo 15625 Hz, chosen so the CTC time
+constant divides cleanly on every video mode (nxv2enc.RATE_STEREO). A
+mono SOURCE is handled automatically: ffmpeg duplicates its single
+channel into both. Samples/frame = round(rate/fps) - the achieved rate
+drifts a few Hz from nominal on some fps values.
 
 Cropping: the source's own pixel dimensions are always probed (ffmpeg
 -i stderr) and compared against the target shape's aspect ratio
@@ -40,52 +33,41 @@ CENTER-CROPPED to the shape's exact aspect before scaling - never
 stretched/squashed. See compute_center_crop's own docstring for the
 exact arithmetic.
 
-Retiming (SP17 T0): the Next composites at 50 Hz, so 25 fps is the only
-cadence-clean playback rate and --fps 25 is what nearly every title
-uses - but almost no source material is 25p. A 30/29.97 source reaching
-25 fps by nearest-frame selection drops every 6th frame, and the
-measured result is a 73 percent motion spike on every 5th OUTPUT frame
-(judder); a 24 fps source instead DUPLICATES one frame per second,
-which reads worse still. So whenever the probed source rate differs
-from --fps, the frames are now BLENDED to the target rate by default
-(retime_plan below has the filter strings and the measurements behind
-them). A source already at the target is left completely alone - the
-filter chain, and so the encoded bytes, are bit-identical to what they
-were before retiming existed. --retime drop restores the old
-nearest-frame behaviour; --retime mci opts into motion-compensated
-interpolation for slow global motion (pans/zooms).
+Retiming: the Next composites at 50 Hz, so 25 fps is the only
+cadence-clean playback rate, and almost no source material is 25p.
+Whenever the probed source rate differs from --fps, the frames are
+BLENDED to the target rate by default (retime_plan below has the
+filter strings). A source already at the target is left completely
+alone. --retime drop uses nearest-frame selection instead; --retime
+mci opts into motion-compensated interpolation for slow global motion
+(pans/zooms).
 
 Quality: NXV v2 is a content-triggered-keyframe, dual-budget (bytes +
 modeled decode-T) delta codec - encode time is the main quality lever
-(nxv2enc.TMODEL_COEFFS is model-not-silicon; Task 2's bench replaces
-it before the format freezes). --report writes the BuildReport
-(mean/worst PSNR, keyframe count, bytes, binding-budget histogram) as
-JSON next to the output file.
+(nxv2enc.TMODEL_COEFFS is model-not-silicon). --report writes the
+BuildReport (mean/worst PSNR, keyframe count, bytes, binding-budget
+histogram) as JSON next to the output file.
 
-Stream budget (SP17 T1): --stream-budget is a SUPPLY ceiling, not a
-quality dial - every metric worsens monotonically as it falls - so no
-author should be guessing one. It is DERIVED by default:
-nxv2enc.auto_stream_budget searches for the highest budget whose
-measured utilization still sits at or under --budget-target (0.90,
-margin under the 1.00 refusal line because a whole-clip mean at the
-ceiling still bands and judders on hardware), and the encoder prints
-what it chose. An explicit --stream-budget skips the search and
-applies verbatim.
+Stream budget: --stream-budget is a SUPPLY ceiling, not a quality dial
+- every metric worsens monotonically as it falls - so no author should
+be guessing one. It is DERIVED by default: nxv2enc.auto_stream_budget
+searches for the highest budget whose measured utilization still sits
+at or under --budget-target, and the encoder prints what it chose. An
+explicit --stream-budget skips the search and applies verbatim.
 
-Tile slack (SP17, owner-approved 2026-07-30): --tile-slack is the ONE
-opt-in picture knob, and it is off by default. The budget-bound delta
-schedule spends on whole paint-order LINES, walking a ladder of 1/2/4
-of them per bound frame and keeping the finest rung that is free in
-bytes AND in modelled supply; --tile-slack relaxes the supply half of
-that, letting the ladder take the one-row/one-column rung when it costs
-a little more supply than the four-line band. What that buys is
-content-dependent - measurably better on 320-wide pans and zooms, worth
-nothing on quiet material - which is why it is per-title and not a
-default. It is quoted in fractions of the utilisation headroom between
---budget-target and the 1.00 refusal line (1.0 = all of it, and the
-cap), the cost is printed as a 'tile-slack:' line, and the supply gate
-still refuses anything it pushes past the ceiling. The whole-line rung
-floor is not reachable from it at any value.
+Tile slack: --tile-slack is the ONE opt-in picture knob, off by
+default. The budget-bound delta schedule spends on whole paint-order
+LINES, walking a ladder of 1/2/4 of them per bound frame and keeping
+the finest rung that is free in bytes AND in modelled supply;
+--tile-slack relaxes the supply half of that, letting the ladder take
+the one-row/one-column rung when it costs a little more supply than
+the four-line band. What that buys is content-dependent, which is why
+it is per-title and not a default. It is quoted in fractions of the
+utilisation headroom between --budget-target and the 1.00 refusal line
+(1.0 = all of it, and the cap), the cost is printed as a 'tile-slack:'
+line, and the supply gate still refuses anything it pushes past the
+ceiling. The whole-line rung floor is not reachable from it at any
+value.
 
 Requires: Python 3, Pillow, numpy. An ffmpeg binary is required at run
 time (default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe,
@@ -108,8 +90,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 
-# Source-rate retiming (SP17 T0). See retime_plan for the filter strings
-# and the measurements each one comes from.
+# Source-rate retiming. See retime_plan for the filter strings.
 RETIME_MODES = ("blend", "drop", "mci")
 RETIME_MODE_DEFAULT = "blend"
 # Source/target rates closer together than this (in fps) count as the
@@ -120,12 +101,9 @@ RETIME_MODE_DEFAULT = "blend"
 # rates (the closest are 23.976 and 24, 0.024 apart).
 RETIME_FPS_TOLERANCE = 0.02
 # Blended retiming runs at an INTERMEDIATE resolution, this multiple of
-# the target shape on each axis, and the result is then scaled down to
-# the target. Free (the retime wave measured 1.4-1.7 s either way) and
-# clearly better on Big Buck Bunny - cadence-folded judder 0.024 at 4x
-# vs 0.142 blending straight at 320x256 - because blending after the
-# downscale averages frames that have already lost the detail whose
-# displacement carries the motion.
+# the target shape on each axis, then scales down to the target -
+# blending before the downscale keeps detail whose displacement carries
+# the motion, which blending straight at the target resolution loses.
 RETIME_INTERMEDIATE_SCALE = 4
 
 
@@ -212,53 +190,21 @@ def retime_plan(src_fps, target_fps, width, height, mode=RETIME_MODE_DEFAULT):
     and the one-line report of what was decided.
 
     The target rate is FIXED by the hardware, not chosen here: the Next
-    composites at 50 Hz, so 25 fps is the only cadence-clean rate and
-    every source that is not already at it has to be resampled in TIME
-    on the way in. How that resampling is done was measured across five
-    clips (SP17 T0 wave, 2026-07-28) on a cadence-folded judder metric -
-    peak-to-trough of the locally-normalised inter-frame motion, folded
-    on the beat cadence; 0 is perfectly even output motion:
+    composites at 50 Hz, so 25 fps is the only cadence-clean rate, and
+    every source not already at it is resampled in TIME on the way in.
+    blend is the default because it gives the lowest judder for the
+    least byte cost across ordinary content; mci is opt-in - best on
+    slow global motion, but optical flow tears on non-rigid motion and
+    costs far more encode time.
 
-      mode   what ffmpeg does                     owner 001  BBB   JF
-      drop   nearest source frame (today)           0.458   0.736 0.473
-      blend  linear blend of the two neighbours     0.042   0.024 0.027
-      mci    motion-compensated interpolation       0.034   0.142 0.023
-
-    blend is the DEFAULT because it is the only one that is uniformly
-    good: it cuts the metric by 91-97 percent on every genuinely-30fps
-    source and never fails badly. mci is opt-in only - it is the best
-    method on slow global motion (the owner's boat pan reaches 0.012 at
-    its heaviest preset) but optical flow tears on non-rigid motion, and
-    the same heavy preset scores 0.087 on Jellyfish where blend scores
-    0.025. Nothing that can be WORSE than the default on ordinary
-    content is allowed to be the default.
-
-    Byte cost of blending: NIL on byte-starved content, which is what
-    any clip near the streaming supply ceiling is (the wave's clips ran
-    92.8-99.2 percent budget-bound, and blend landed within +/-0.6
-    percent of drop on bytes at an identical auto-budget and utilization
-    - the budget, not the content, is what sets the size). On content
-    with headroom the blended frames genuinely carry more detail and it
-    costs about 2.3 percent. Quality moves the right way either way:
-    +0.12 to +0.6 dB mean PSNR, +0.3 to +1.2 dB on the delta-frame p10.
-    Spatial blur is not a real cost at these sizes - 97.7-100.2 percent
-    of the source's spatial gradient survives.
-
-    mode "mci" uses the TARGET-resolution preset (minterpolate after the
-    downscale, not before it). The wave's three mci presets differ
-    mainly in cost: at 4x intermediate resolution obmc/bilat took 38-62 s
-    per clip and aobmc/bidir/vsbmc 82-144 s, against 5.5-7.3 s at the
-    target resolution - and the cheap one is not the worst one. It is
-    the BEST method measured on Jellyfish (0.023) and on Sintel (0.648
-    vs 0.734 for blend), and on the owner's own boat pan it scores 0.034
-    against 0.012 for the 20x-slower preset. A 20x encode-time
-    multiplier for the remaining margin is not a defensible default for
-    an opt-in flag, so the target-resolution preset is what --retime mci
-    means.
+    mode "mci" uses the TARGET-resolution preset (minterpolate after
+    the downscale, not before it): the intermediate-resolution presets
+    score somewhat better but cost an order of magnitude more encode
+    time, not a defensible default for an opt-in flag.
 
     Passing src_fps=None (rate not detectable from the banner) falls
-    back to nearest-frame selection - the pre-SP17 behaviour - rather
-    than blending against a guessed rate."""
+    back to nearest-frame selection rather than blending against a
+    guessed rate."""
     if mode is None:
         mode = RETIME_MODE_DEFAULT
     if mode not in RETIME_MODES:
@@ -406,24 +352,13 @@ def main(argv):
                      default=RETIME_MODE_DEFAULT,
                      help="how to resample the source in TIME when its "
                           "own frame rate differs from --fps (default: "
-                          "blend). The Next composites at 50 Hz, so 25 "
-                          "fps is the only cadence-clean rate and "
-                          "23.976/24/29.97/30 material has to be "
-                          "retimed to reach it. 'blend' = linear blend "
-                          "of the two neighbouring source frames, done "
-                          "at 4x the target resolution - cuts the "
-                          "measured judder by 91-97 percent, costs "
-                          "nothing in bytes on byte-starved content and "
-                          "about 2.3 percent on content with headroom. "
-                          "'drop' = nearest source frame, the pre-SP17 "
-                          "behaviour (drops every 6th frame of a 30 fps "
-                          "source, freezes one frame per second of a 24 "
-                          "fps one). 'mci' = motion-compensated "
-                          "interpolation - OPT-IN, best on slow global "
-                          "motion (pans, zooms), but optical flow tears "
-                          "on non-rigid motion where it loses to blend. "
-                          "A source already at --fps is never retimed "
-                          "in any mode")
+                          "blend). 'blend' = linear-blend the two "
+                          "neighbouring source frames (lowest judder, "
+                          "near-zero byte cost). 'drop' = nearest source "
+                          "frame (freezes/drops to match --fps). 'mci' = "
+                          "motion-compensated interpolation, opt-in, "
+                          "best on slow global motion. A source already "
+                          "at --fps is never retimed")
     ap.add_argument("--dither", type=float, default=None, metavar="AMP",
                      help="dither strength, 0.0-1.0 (default: 0.5). In "
                           "the default offset mode it is the blue-noise "
@@ -442,14 +377,11 @@ def main(argv):
                           "pixel, then nearest-colour. 'mixture' = "
                           "Yliluoma positional mixture dithering "
                           "(32-slot luminance-sorted candidate list "
-                          "indexed by the same blue-noise tile) - "
-                          "OPT-IN: it recovers gradients better on some "
-                          "content but loses per-pixel PSNR, carries a "
-                          "per-channel mean bias, weakens the drift and "
-                          "staleness keyframe triggers and can cost up "
-                          "to 26 percent more wire bytes. The default "
-                          "encode is byte-identical to what it was "
-                          "before this option existed")
+                          "indexed by the same blue-noise tile), opt-in: "
+                          "recovers gradients better on some content but "
+                          "loses per-pixel PSNR, carries a per-channel "
+                          "mean bias, weakens the drift/staleness "
+                          "keyframe triggers, and costs more wire bytes")
     ap.add_argument("--no-merge", dest="no_merge", action="store_true",
                      help="disable the encoder-only gap-merge optimization "
                           "(SP15). Production encodes keep it ON; this is for "
@@ -488,51 +420,44 @@ def main(argv):
                           f"the four-line band - even when that rung costs "
                           f"more modelled supply than the band, in exchange "
                           f"for the picture it buys. Quoted in fractions of "
-                          f"the auto-budget utilisation HEADROOM, i.e. of the "
-                          f"margin between --budget-target "
-                          f"({nxv2enc.AUTO_BUDGET_TARGET_UTIL:.2f}) and the "
-                          f"1.00 refusal line: "
+                          f"the auto-budget utilisation HEADROOM between "
+                          f"--budget-target and the 1.00 refusal line: "
                           f"{nxv2enc.TILE_SLACK_MAX:.1f} is the CAP and "
                           f"spends all of that margin. The right value is "
-                          f"content-dependent - it helped 320-wide pans and "
-                          f"zooms on real hardware and does nothing for quiet "
-                          f"material - so try 0.5 first (it SATURATES around "
-                          f"there on measured footage) and read the "
-                          f"'tile-slack:' report line for what it cost. The "
-                          f"whole-line rung floor is NOT reachable from this "
-                          f"knob at any value (sub-line rungs tore on "
-                          f"silicon), and an encode this pushes past the "
-                          f"supply ceiling is REFUSED by the same gate as "
-                          f"ever, never quietly shipped")
+                          f"content-dependent - helps pans and zooms, does "
+                          f"nothing for quiet material - so try 0.5 first "
+                          f"and read the 'tile-slack:' report line for what "
+                          f"it cost. The whole-line rung floor is NOT "
+                          f"reachable from this knob at any value, and an "
+                          f"encode this pushes past the supply ceiling is "
+                          f"REFUSED by the same gate as ever, never quietly "
+                          f"shipped")
     ap.add_argument("--direct", action="store_true",
-                     help="SP15 3c direct-serve preset: all-literal "
-                          "raw-equivalent encode (every frame a full "
-                          "keyframe repaint, header direct-serve hint "
-                          "set) - the player serves it straight from "
-                          "SD to the surface, no ring. Gated by "
-                          "worst-frame WIRE feasibility "
+                     help="direct-serve preset: all-literal raw-equivalent "
+                          "encode (every frame a full keyframe repaint, "
+                          "header direct-serve hint set) - the player "
+                          "serves it straight from SD to the surface, no "
+                          "ring. Gated by worst-frame WIRE feasibility "
                           "(nxv2enc.direct_supply_check); small shapes "
-                          "only at 25 fps (raw bytes/frame = WxH). "
-                          "TIGHTEN policy (Card #5, 2026-07-26 owner "
-                          "ruling): the gate is unconditional - a "
-                          "worst-frame utilization above 1.00 refuses "
-                          "outright, and prints the at-rate envelope; "
-                          "there is no slow-playback override. Use a "
-                          "smaller shape, lower --fps, or drop "
-                          "--direct for the delta encoder instead")
+                          "only at 25 fps (raw bytes/frame = WxH). The "
+                          "gate is unconditional - a worst-frame "
+                          "utilization above 1.00 refuses outright and "
+                          "prints the at-rate envelope, with no "
+                          "slow-playback override. Use a smaller shape, "
+                          "lower --fps, or drop --direct for the delta "
+                          "encoder instead")
     ap.add_argument("--direct-transport-factor", dest="direct_transport_factor",
                      type=float, default=None, metavar="F",
                      help="EXPERT OVERRIDE for the direct-serve gate's "
                           "per-BYTE transport factor - default None uses "
-                          "the shipping DIRECT_TRANSPORT_FACTOR (1.00, "
-                          "the 2026-08-02 whole-frame silicon re-fit on "
-                          "the rebuilt T8 transport; the gate's fixed "
-                          "2.2 ms/frame transport overhead is NOT scaled "
-                          "by this flag). Probe encodes at a hypothesised "
-                          "rate go through this flag instead of editing "
-                          "the constant; probe files are diagnostic - a "
-                          "slow probe is a measurement, not a defect. "
-                          "Only meaningful with --direct")
+                          "the shipping DIRECT_TRANSPORT_FACTOR (the "
+                          "gate's fixed 2.2 ms/frame transport overhead "
+                          "is NOT scaled by this flag). Probe encodes at "
+                          "a hypothesised rate go through this flag "
+                          "instead of editing the constant; probe files "
+                          "are diagnostic - a slow probe is a "
+                          "measurement, not a defect. Only meaningful "
+                          "with --direct")
     ap.add_argument("--prefilter", nargs="?", const="hqdn3d=2:1.5:3:2.25",
                      default=None, metavar="FILTER",
                      help="OPT-IN (W4, default OFF - the extraction "
@@ -575,12 +500,7 @@ def main(argv):
         raise SystemExit(f"error: ffmpeg not found at {ffmpeg}")
 
     # Both scale the per-frame decode-T/byte caps (nxv2enc.encode_clip's
-    # cap_bytes_frac and budget_scale) - 0 or negative produces a
-    # zero/negative cap nothing can fit, and above 1.0 scales the usable
-    # budget PAST the per-frame decode-T contract usable_budget_t() was
-    # derived from (internally, stream_supply_check's own
-    # suggested_budget already clamps into this same range; the CLI must
-    # match it rather than silently accept an out-of-contract value).
+    # cap_bytes_frac and budget_scale), which must stay in (0, 1].
     if not (0 < args.byte_cap <= 1.0):
         raise SystemExit(f"error: --byte-cap must be in (0, 1], got {args.byte_cap}")
     if args.stream_budget is not None and not (0 < args.stream_budget <= 1.0):
@@ -592,16 +512,14 @@ def main(argv):
     if args.kf_cadence is not None and args.kf_cadence < 0:
         raise SystemExit(f"error: --kf-cadence must be >= 0 seconds "
                          f"(0 disables), got {args.kf_cadence}")
-    # Expert override, but not an unbounded one: far below the bare-wire
-    # byte factor (the 2026-08-02 re-fit measured 0.994 on silicon) or
-    # far above the pre-T8 1.20 it is a typo, not a probe.
+    # Expert override, bounded to reject an obvious typo rather than a
+    # real probe value.
     if args.direct_transport_factor is not None and not (
             0.5 <= args.direct_transport_factor <= 2.0):
         raise SystemExit(f"error: --direct-transport-factor must be in "
                          f"[0.5, 2.0], got {args.direct_transport_factor}")
-    # The knob is capped at exactly the auto-budget margin (see nxv2enc's
-    # THE SUPPLY-SLACK KNOB block) - a value past it is not a stronger
-    # request, it is a request to spend margin that does not exist.
+    # Capped at the auto-budget margin (see nxv2enc's SUPPLY-SLACK KNOB
+    # block) - there is no margin past it to spend.
     if args.tile_slack is not None and not (
             0.0 <= args.tile_slack <= nxv2enc.TILE_SLACK_MAX):
         raise SystemExit(

@@ -3,64 +3,39 @@
 # Builds a NextDAAD FONT.CHR: the interpreter installs this file by a
 # plain byte-for-byte copy into the tilemap driver's glyph table
 # (TM_DEFS, src/tilemap.asm tm_font_init / src/overlay2.asm font_load) -
-# 256 glyphs x 8 rows, 1bpp, exactly 2048 bytes, no expansion or other
-# conversion. That means this converter's output IS the installed bytes.
+# 256 glyphs x 8 rows, 1bpp, exactly 2048 bytes. This converter's output
+# IS the installed bytes.
 #
-# INPUT FORMATS, detected from the file's own signature and never from
-# its extension (lib\fontfmt.ps1, Get-FontFormat):
-#   FON    'MZ' - a 16-bit NE executable wrapping one or more FNT faces.
-#          -Face picks one; without it an exact declared 8x8 face wins,
-#          otherwise the tallest face whose MEASURED ink fits the cell -
-#          the same rule the acceptance gate below applies, so a face
-#          declaring more rows than it inks is not turned away on its
-#          header alone.
-#   PSF1   0x36 0x04 - Linux console font, 8 pixels wide by definition
-#          of the format, mode bit 0 selecting a 512-glyph table.
-#   PSF2   0x72 0xB5 0x4A 0x86 - console font with a declared cell. Any
-#          Unicode table is ignored: only 32-127 is read for text and
-#          every encoding this format carries agrees with ASCII there.
-#   BDF    'STARTFONT' - X11 bitmap font, the only text format here.
-#          Glyphs are POSITIONED from the baseline rather than stacked.
-#   SINTAC 'JSJ SINTAC' - DAAD Ready's PC.FNT and PCDAAD's DAAD.FNT.
-#          Recognised only so it can be refused by name: it stores
-#          per-character width tables, not a fixed cell.
-#   RAW    anything else - a headerless dump of 8 rows per glyph. 2048
-#          bytes is a full table and 768 bytes is chars 32-127; any
-#          other length needs -First naming the first glyph's code.
+# INPUT FORMATS, detected from the file's own signature, never from its
+# extension (lib\fontfmt.ps1, Get-FontFormat):
+#   FON    'MZ' - NE executable wrapping one or more FNT faces. -Face
+#          picks one; without it an exact 8x8 face wins, else the
+#          tallest face whose MEASURED ink fits the cell.
+#   PSF1   0x36 0x04 - Linux console font, 8px wide, mode bit 0 selects
+#          a 512-glyph table.
+#   PSF2   0x72 0xB5 0x4A 0x86 - console font with a declared cell;
+#          only 32-127 is read (any Unicode table is ignored).
+#   BDF    'STARTFONT' - X11 bitmap font, glyphs positioned from the
+#          baseline rather than stacked.
+#   SINTAC 'JSJ SINTAC' - DAAD Ready's PC.FNT / PCDAAD's DAAD.FNT -
+#          refused by name (per-character width table, not a fixed cell).
+#   RAW    anything else - headerless dump, 8 rows per glyph. 2048
+#          bytes = full table, 768 bytes = chars 32-127; any other
+#          length needs -First naming the first glyph's code.
 #
-# PASSTHROUGH. A 2048-byte RAW input is the author's finished word on
-# all 256 glyphs and is written out untouched - no gate, no slot
-# substitution, no mirror. Everything below is about tables this script
-# ASSEMBLES.
+# PASSTHROUGH: a 2048-byte RAW input is written out untouched - no gate,
+# no slot substitution, no mirror. Everything below is about tables
+# this script ASSEMBLES from a partial source.
 #
-# THE ACCEPTANCE GATE measures the real ink extent over codes 32-127
-# instead of reading the source's declared cell, because declarations
-# are routinely pessimistic: a 16-row PSF2 whose ink stops at row 7
-# loses nothing at 8 rows, and refusing it on its header alone would
-# turn away a font that converts perfectly. Ink reaching row 8 or beyond
-# inside 32-127 is fatal and names the codes. Outside 32-127 a glyph
-# that does not fit is DROPPED - the base font's glyph stays - and
-# counted in the output line, because half a box-drawing character
-# appearing in a game with no explanation is worse than not getting it.
-#
-# The same measurement decides which face of a multi-face FON is used,
-# so no face is passed over at selection for a declaration this gate
-# would have forgiven. That is not a guarantee the two always agree:
-# selection weighs ink alone, so a face whose glyph data is truncated
-# can be selected and then refused here even though another face in the
-# same file would have converted.
-#
-# Width is the one thing taken from the declaration, because the
-# intermediate holds one byte per row and an over-wide glyph's data is
-# therefore never read at all: PSF2 refuses a declared cell wider than
-# 8px in its own parser, while FON and BDF report per-glyph over-width
-# codes through OverWide - fatal inside 32-127, dropped and counted
-# outside it.
-#
-# Nothing is ever cropped, scaled or squeezed to fit. A squeeze to 8
-# rows was tried in three variants against a 9-row source and all three
-# were unusable on real hardware, chiefly because descenders lose the
-# row that makes them legible.
+# ACCEPTANCE GATE: measures the real ink extent over codes 32-127
+# instead of trusting the source's declared cell (declarations are
+# routinely pessimistic). Ink reaching row 8+ inside 32-127 is fatal
+# and names the codes; outside that range the glyph is DROPPED (base
+# font's glyph stays) and counted. Declared width above 8px is fatal
+# inside 32-127, dropped and counted outside it. The same ink
+# measurement picks the face for a multi-face FON. Nothing is ever
+# cropped, scaled or squeezed to fit - a squeezed 9-row source was
+# unusable on real hardware (descenders lose the row that reads them).
 #
 # SLOT MAP of an assembled table:
 #   0-15     base font (no print path reaches these)
@@ -77,66 +52,32 @@
 # ZX SLOT SUBSTITUTIONS (-Slots ZX, the default). CP437 and the ZX
 # charset disagree at exactly two printable codes: 96 is a grave accent
 # on a PC and a pound sterling here, 127 is a house on a PC and a
-# copyright sign here. Left alone a game printing a price prints a
-# backtick. Code 127 always comes from the base font, because CP437 has
-# no copyright sign to lift. Code 96 comes from the base font too,
-# EXCEPT when the source declares itself OEM (in practice a FON with
-# dfCharSet 0xFF) and its own slot 156 is non-blank, in which case the
-# pound is lifted from there so it stays in the converted face.
+# copyright sign here. Both come from the base font by default, except
+# 96 lifts from the source's own slot 156 instead when the source
+# declares itself OEM and that slot is non-blank. A 768-byte RAW input
+# read at its historic first character is EXEMPT from both
+# substitutions (that shape IS a classic ZX charset already). -Slots
+# Source turns both substitutions off everywhere. The output line
+# always says which path ran.
 #
-# A 768-byte RAW input read at its historic first character is EXEMPT
-# from both substitutions: that shape IS a classic ZX charset, so its
-# 96 and 127 are already a pound and a copyright in the source's own
-# face and replacing them would be a downgrade. No other shape is
-# exempt - a raw dump of another length placed with -First declares no
-# ordering and could be either charset. -Slots Source turns both
-# substitutions off everywhere and keeps whatever the source has. The
-# output line always says which path ran.
+# -Base <file> (SP18): source for every glyph the input doesn't supply
+# (0-15 always, plus 16-31/128-159 where the input has nothing) so a
+# second font conversion doesn't silently lose UDGs/accents the first
+# font defined. Must itself be a full 2048-byte table; validated
+# unconditionally. Does not reach 160-255 (mirrored from 32-127).
 #
-# -Base <file> (SP18): where every glyph the input does not supply comes
-# from - 0-15 always, plus 16-31 and 128-159 wherever the input has
-# nothing for them - defaulting to default.chr (below). A game that
-# switches between several fonts (GFX n 16) can define UDGs, accented
-# characters or a graphics set in glyphs 16-31/128-159 of its FIRST font
-# and then lose them when converting a SECOND font that does not carry
-# them, because the fill would otherwise always come from default.chr
-# regardless of what the first font defined. Pass -Base <the first
-# font's own 2048-byte FONT.CHR> so the second conversion fills from the
-# author's own table instead of the interpreter's embedded one. -Base
-# must itself be a full 2048-byte table - validated the same way as any
-# full-table input (existence and exact length; content is not
-# inspected, see the glyph 32 note below for why) - and is resolved and
-# validated unconditionally, so a bad -Base is caught even on a
-# passthrough input that never reads it. It no longer reaches 160-255:
-# those are mirrored from the assembled 32-127.
+# default.chr is a byte-for-byte copy of src/font.chr (SHA256
+# 9de51ef5d66c06f2845eacede265c303ddbaa10b5e47583d1f7b077ed2802c64).
+# Re-verify with `sha256sum src/font.chr authoring-kit/lib/default.chr`
+# whenever either file changes.
 #
-# default.chr (committed alongside this script) is a byte-for-byte copy
-# of src/font.chr, the interpreter's embedded font - verified identical
-# by SHA256 at the time this note was last updated (2026-07-22, the
-# glyph 38/$26 (ampersand) and glyph 96/$60 (pound sterling) content
-# fix - see .superpowers/sdd/keyboard-fix-report.md):
-#   9de51ef5d66c06f2845eacede265c303ddbaa10b5e47583d1f7b077ed2802c64
-# (src/font.chr is INCBIN'd at tilemap.asm:297, tracked in git, exactly
-# 2048 bytes - see .superpowers/sdd/fonts-task-1-report.md). Re-verify
-# and update this hash whenever either file changes - `sha256sum
-# src/font.chr authoring-kit/lib/default.chr` must print the SAME
-# digest for both.
-#
-# Glyph 32 (space) constraint: the tilemap driver relies on glyph 32
-# having an all-zero bitmap (src/tilemap.asm's tm_clear_blank comment) -
-# every cell the engine blanks is filled with glyph 32 at the ordinary
-# default attribute (black paper, white ink), same as a printed cell. A
-# custom font that redefines glyph 32 with non-zero pixels puts those
-# pixels in the ink colour, so blanked cells show white specks instead
-# of clean black paper. This is a WARNING, not a build failure - authors
-# overriding glyph 32 deliberately are not blocked, just told.
-#
-# The check runs on the bytes about to be written: the input itself on
-# the passthrough path, the assembled table otherwise. It is never run
-# against a -Base file on its own. A -Base glyph 32 only reaches the
-# output when the input supplies nothing at code 32, and what stands
-# there then is either the interpreter's own blank space or an earlier
-# converted table this same check has already seen.
+# GLYPH 32 (space): the tilemap driver relies on it having an all-zero
+# bitmap (src/tilemap.asm's tm_clear_blank comment) - every blanked cell
+# is filled with glyph 32 at the default attribute, so a non-zero glyph
+# 32 shows as ink-coloured specks instead of clean black paper. This is
+# a WARNING, not a build failure. The check runs on the bytes about to
+# be written (input or assembled table), never against a -Base file on
+# its own.
 #
 # Usage: fontconv.ps1 -In <font file in any format listed above>
 #          [-Out FONT.CHR] [-Base <2048-byte font supplying the glyphs
@@ -163,17 +104,9 @@ function Test-GlyphBlank([byte[]]$table, [int]$offset) {
     return $true
 }
 
-# The blank-glyph-32 warning, plus the one diagnosis it is in a position
-# to offer. A raw 768-byte charset is also the shape gfx2next writes with
-# -font, and gfx2next's -font-y writes a file of exactly the same length
-# with the rows interleaved within each tile row instead. Nothing can
-# tell those two apart - the column count -font-y interleaved by is not
-# recorded in the file, so the data cannot even be put back in order -
-# and what a Y-ordered file does do is put row 0 of the first several
-# glyphs where glyph 32 belongs. So this warning is usually the only
-# signal such an author ever gets, and it has to say so. Only usually:
-# a font whose first few glyphs all have a blank top row slips through
-# silently, which is why the manual tells authors to use -font.
+# Blank-glyph-32 warning: a 768-byte RAW source may be gfx2next's
+# -font-y output (rows interleaved) misread as -font; the two are
+# indistinguishable from the file, so this is usually the only signal.
 function Write-GlyphSpaceWarning([string]$src, [bool]$classicShape) {
     $msg = "$src : glyph 32 (space) is not all-zero - the tilemap driver relies on it staying blank, or blanked cells show ink-coloured specks instead of clean black paper (see src/tilemap.asm's tm_clear_blank comment); the font will still install as given"
     if ($classicShape) {
@@ -210,17 +143,7 @@ function Measure-FontInk($glyphs, [int[]]$codes) {
     [PSCustomObject]@{ Top = $top; Bottom = $bottom; Right = $right; Over = $over }
 }
 
-# Assemble the 2048-byte table. Slot map, from the design:
-#   0-15     base font (no print path reaches these)
-#   16-31    source where supplied, else base
-#   32-127   source, with the ZX slot substitutions
-#   128-159  source where supplied, else base
-#   160-255  mirror of the assembled 32-127
-# Glyphs 160-255 are what the engine prints ordinary characters through
-# under an upper-charset window or the GFX ON escape (glyph = char +
-# 128). Leaving them as the base font makes such a game print half a
-# sentence in the author's face and half in the built-in one, so the
-# mirror is a fix, not a preference.
+# Assemble the 2048-byte table (slot map: see header).
 function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$src, [bool]$classicZx) {
     $text = 32..127
 

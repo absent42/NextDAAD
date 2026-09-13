@@ -3,9 +3,10 @@
 
 No pytest dependency: `python tests\\nxv2_selftest.py` runs every case,
 prints a PASS/FAIL line per case plus a summary, and exits 0 if all
-passed, 1 otherwise. Cases are grouped by the plan's own 8 implementation
-steps (docs/superpowers/plans/2026-07-23-sp15-nxv2.md Task 1) - the
-suite accumulates as each step lands, per the plan's TDD instruction.
+passed, 1 otherwise. Cases are grouped by the encoder's 8 TDD steps
+(header roundtrip, opcode/decoder roundtrip, keyframe span, scene
+segmentation, palettes, rate control, ring sizing, CLI rewire) - the
+suite accumulates as each step lands.
 
 Steps 4/6/7 hit the real demo sources (tools/demo-files/) via ffmpeg and
 run genuine (short-duration) encodes - they are the slow cases in this
@@ -48,15 +49,12 @@ def expect(cond, msg="assertion failed"):
 
 @contextlib.contextmanager
 def _at_chunk_cap(cap):
-    """Evaluate the T model at a HISTORIC NXV2_DMA_CHUNK.
+    """Evaluate the T model at a historic NXV2_DMA_CHUNK.
 
-    Silicon rows are taken on one player revision. When the audio-safety
-    burst cap moves (256 -> 240 on 2026-08-03, the DI-bracket fix), the
-    same op genuinely costs more on the new player, so a row measured
-    under the old cap must be reproduced under the old cap or the pin
-    silently becomes a test of the cap rather than of the coefficients.
-    Both DMA caps move together - the player clips fill and copy through
-    the one vid_chunk_dst."""
+    A silicon row was taken under one burst-cap value; if the cap has
+    since moved, the same op costs differently on the current player,
+    so the row must be replayed under its own cap, not today's. Both
+    DMA caps move together - fill and copy share vid_chunk_dst."""
     saved = (enc.TMODEL_COEFFS["copy_dma_chunk"],
              enc.TMODEL_COEFFS["fill_dma_min"])
     enc.TMODEL_COEFFS["copy_dma_chunk"] = cap
@@ -292,9 +290,8 @@ def t1_audio_floor_arithmetic():
 def t1_stream_supply_gate():
     # A ring-streamed file must be PRODUCIBLE: mean decode wall time +
     # mean SD fetch time must fit the frame period (utilization <= 1.0
-    # or nxv2enc.encode refuses to write). Anchors are the Card #3
-    # silicon runs (2026-07-25): 007 classic HEALTHY at ~1.00, 008
-    # full COLLAPSED at ~1.74 (65.5 ms frames, underrun every frame).
+    # or nxv2enc.encode refuses to write). Anchored on silicon runs of
+    # fixtures 007 (streamable) and 008 (collapsed, underran every frame).
     clock = enc.TMODEL_COEFFS["clock_khz"]
     # silicon_r: measured composed-player ratios, density-keyed (W4).
     # With no density (planning-time callers) every class fails safe to
@@ -303,10 +300,9 @@ def t1_stream_supply_gate():
            "classic flat R")
     expect(enc.silicon_r(320, 256) == max(r for _, r in enc.TMODEL_SILICON_R["flat_320"]),
            "full flat R")
-    # Card #8 (2026-07-28): the two gapped rows SWAPPED ORDER on
-    # re-measurement, which refutes the 1/height slope. Every gapped
-    # height reads the ONE gapped class (density-keyed), sub-144
-    # included (still unmeasured, still not extrapolated).
+    # Gapped heights have no reliable 1/height slope (silicon rows
+    # swapped order on re-measurement), so every gapped height reads
+    # one density-keyed class, including unmeasured sub-144 heights.
     worst_gapped = max(r for _, r in enc.TMODEL_SILICON_R["gapped"])
     expect(enc.silicon_r(320, 192) == worst_gapped,
            "gapped 192 fails safe to the sparse-end gapped R")
@@ -316,12 +312,9 @@ def t1_stream_supply_gate():
            "sub-144 gapped is unmeasured - the same class, never an extrapolation")
     expect(enc.silicon_r(256, 100) == max(r for _, r in enc.TMODEL_SILICON_R["flat_256"]),
            "the gapped R must not leak into the flat 256 cluster")
-    # BUSY IS TRUE DECODE WALL TIME (Card #8): silicon_r carries R's own
-    # /af, so the gate divides by af again. These anchors state the
-    # busy_ms they mean and back-solve mean_t through that identity, so
-    # they stay pinned to the silicon figure and not to whatever
-    # silicon_r currently holds. The back-solve iterates because the W4
-    # gate reads the DENSITY-keyed R of the mean_t it is handed.
+    # busy_ms is true decode wall time (silicon_r already carries /af,
+    # so the gate divides by af again). Anchors state busy_ms and
+    # back-solve mean_t through that identity to stay pinned to it.
     af = enc.TMODEL_COEFFS["audio_factor"]
 
     def _mean_t_for(busy_ms, width, height):
@@ -335,26 +328,16 @@ def t1_stream_supply_gate():
     expect(abs(enc.stream_supply_check(_mean_t_for(20.0, 320, 256), 20000.0,
                                        1536, 25.0, 320, 256)["busy_ms"] - 20.0) < 1e-9,
            "busy_ms must be the true silicon decode time the anchor names")
-    # VSTR1 anchor: the first 008 encode (mean demand 43520 B/f incl
-    # 1536B audio pad, true decode 30.19 ms) is UNSTREAMABLE
+    # Fixture 008's first encode is unstreamable at its measured
+    # demand and decode time.
     t8 = _mean_t_for(30.187, 320, 256)
     s8 = enc.stream_supply_check(t8, 43520.0, 1536, 25.0, 320, 256)
     expect(1.70 < s8["utilization"] < 1.80,
            f"008 anchor utilization {s8['utilization']:.2f} (silicon: collapsed)")
     expect(0.45 < s8["suggested_budget"] < 0.55, "008 suggestion ~0.51")
-    # CARD #8 BRACKET (2026-07-28), RE-PRICED AT THE W4 TWO-KEY MODEL
-    # (mean_t scaled by the class's own measured old/new op-walk ratio,
-    # 008 /1.02407, 009 /1.02588):
-    #   008 sb0.51 - underran 914/1286 and 1141/1508 frames on two runs,
-    #                ring pinned at depth 1 -> must be REFUSED
-    #   009 sb0.54 - zero underruns, min ring depth 42 on silicon. The
-    #                W4 density-keyed gate prices it MARGINALLY over the
-    #                line (~1.01): a deliberate false-negative - the
-    #                re-key is 4% more conservative on streamed files
-    #                by design (the shape-keyed table was measured
-    #                1.6-10.1% optimistic), and the auto search simply
-    #                lands 009 a touch lower. Asserted to stay inside
-    #                the margin band, never above it.
+    # Under the current op-walk model, fixture 008 must be REFUSED
+    # (silicon: most frames underran) and 009 ADMITTED, though the
+    # gate deliberately prices 009 only marginally inside the line.
     s008 = enc.stream_supply_check(349307.5, 28460.7, 1536, 25.0, 320, 256)
     expect(s008["utilization"] > 1.0,
            f"008 (silicon: 71-76% of frames underran) scores "
@@ -363,27 +346,24 @@ def t1_stream_supply_gate():
     expect(0.97 < s009["utilization"] < 1.05,
            f"009 sb0.54 (silicon clean) scores {s009['utilization']:.3f} - "
            f"the W4 gate may price it conservatively but only just")
-    # ... and the ADMIT side of the bracket is the SHIPPING 009 auto
-    # operating point (pal9l staged bytes, W4 op-walk mean_t; demand =
-    # mean padded payload + audio pad of the same file):
+    # The admit side uses 009's actual shipping auto-encode operating
+    # point (mean padded payload + audio pad of the same file).
     s009a = enc.stream_supply_check(282340.9, 21435.0, 1536, 25.0, 320, 192)
     expect(0.90 < s009a["utilization"] < 1.0,
            f"009 auto (silicon: zero underruns, min depth 39-42) scores "
            f"{s009a['utilization']:.3f} - the gate must admit it")
-    # ... and the model still brackets 008's MEASURED frame time
-    # (42.0/42.1 ms, two runs): never optimistic by more than the old
-    # 2% band, conservative by at most ~4% (the density interpolation
-    # at 008's intermediate density reads above that stream's true R -
-    # the safe side, disclosed in the re-key block).
+    # The model must still bracket 008's measured frame time: never
+    # optimistic beyond its error band, conservative only because
+    # density interpolation reads above the stream's true R (safe side).
     predicted_008_ms = s008["busy_ms"] + s008["audio_ms"] + s008["sd_ms"]
     expect(42.05 - 0.85 < predicted_008_ms < 42.05 + 1.7,
            f"008 predicted frame {predicted_008_ms:.2f} ms vs 42.0/42.1 measured")
-    # the AUDIO phase is a real serial term the gate used to omit
+    # audio_ms is a real serial term the gate must include.
     expect(1.2 < s008["audio_ms"] < 1.5,
            f"audio copy term {s008['audio_ms']:.3f} ms (silicon: 20-21.6 ticks/frame)")
-    # suggestion self-consistency: scaling busy + payload-SD by the
-    # suggested budget lands the mean at STREAM_TARGET_UTIL (the audio
-    # pad's fetch AND its copy cost are the invariant part)
+    # Suggested budget is self-consistent: scaling busy + payload-SD
+    # by it must land mean utilization at STREAM_TARGET_UTIL (the
+    # audio pad's fetch and copy cost stay invariant either way).
     sug = s8["suggested_budget"]
     wire_eff = enc.SD_WIRE_BYTES_PER_MS * af
     audio_sd = 1536 / wire_eff
@@ -1145,11 +1125,9 @@ def t10_silicon_coeffs():
     expect(tc["fill_cpu"] == 16.70, f"fill_cpu should be the NXBO fit 16.70, got {tc['fill_cpu']}")
     expect(tc["fill_dma_setup"] == 849.0, f"fill_dma_setup should be the silicon 849, got {tc['fill_dma_setup']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
-    # SP17: the mem-to-mem DMA COPY terms. task-2-final-settlement.md
-    # measured these (CD1..CD4 chunk solve 1091.8 T/chunk; KF-vs-CD3
-    # cross-row solve 5.31 T/B unarmed) but they were never wired in -
-    # the model priced EVERY copy as LDI, ~2.1x over the silicon cost of
-    # a 256 B copy, on the DOMINANT op class.
+    # The mem-to-mem DMA COPY terms (chunk setup 1091.8 T, per-byte
+    # 5.31 T unarmed) were measured but never wired in - the model
+    # priced every copy as LDI, far over silicon cost on this op class.
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
     expect(tc["copy_dma_per_b"] == 5.08, f"copy_dma_per_b should be the NXBC C074-C103 slope 5.08, got {tc['copy_dma_per_b']}")
     # The audio-safety burst cap. 256 -> 240 on 2026-08-03: at 256 the
@@ -1164,37 +1142,22 @@ def t10_silicon_coeffs():
            "fill and copy DMA chunk caps must be the SAME NXV2_DMA_CHUNK (vid_chunk_dst clips both)")
     expect(tc["copy_dma_chunk"] <= 255,
            "the DMA chunk cap must fit one byte (vid_chunk_dst / kernel selects are single-byte)")
-    # The two kernel-select thresholds. Fill: DERIVED 2026-07-28
-    # (849.4/(17.17-5.11) = 70.43 -> 71; the SP17 NXBK sitting measured
-    # ~68 - left at 71, worst ~35 T/op on an op class the census shows
-    # barely executes, see the .inc note). Copy: MEASURED 2026-08-01
-    # (NXBC C073/C074): the kernel-only 73.08 -> 74 derivation missed
-    # the +128 T/op fast-handler -> slow-body path difference; with it
-    # folded in, (1091.8+128)/(20.25-5.31) = 81.65 modeled, 81.4
-    # measured -> 81. They MIRROR src/nextdaad.inc NXV2_RUN_DMA_MIN /
-    # NXV2_COPY_DMA_MIN - if these pins fail because the player moved,
-    # the model moved with it or it has desynchronised from the player.
+    # The two kernel-select thresholds mirror src/nextdaad.inc's
+    # NXV2_RUN_DMA_MIN / NXV2_COPY_DMA_MIN. If these pins fail because
+    # the player moved, the model must move with it.
     expect(tc["copy_dma_min"] == 81, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (81)")
     expect(tc["copy_dma_path_t"] == 128.0,
            "copy DMA path term must be the measured C073/C074 +128 T/op")
     expect(tc["run_dma_min"] == 71, "fill DMA threshold must be the PLAYER's NXV2_RUN_DMA_MIN (71)")
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
-    # Shape given explicitly (320x256, flat): composition_factor()'s
-    # unknown-shape default is the pessimistic gapped factor now (fail-
-    # safe fix), so a bare no-shape call here would not read the flat
-    # cap - pin the flat baseline against the real flat shape instead.
-    # 1120000*0.85/1.19 = 800000.0 (W4 re-derivation at the two-key
-    # model; was 835087.7 at 1.14, 952000 at 1.00)
+    # Shape given explicitly (320x256, flat): the no-shape default is
+    # the pessimistic gapped factor, so a bare call here would not
+    # read the flat cap.
     expect(abs(enc.usable_budget_t(25.0, 320, 256) - 800000.0) < 1.0,
            f"silicon usable budget @25 (flat 320x256) should be 800000.0 T, got {enc.usable_budget_t(25.0, 320, 256)}")
-    # Composed-player safety factor, re-derived at the W4 two-key model
-    # by the STANDING RULE (worst DENSE measured R x 1.12): the split
-    # made the model ~3.5-4% cheaper on the calibration streams, so
-    # every recomputed R rose by the same arithmetic and the factors
-    # move with them or the cap silently loses its margin. flat 1.062
-    # (002) -> 1.19; gapped 1.302 (003) -> 1.46. Pinned here so a
-    # coefficient re-fit cannot silently drop the de-rating that keeps
-    # a clip inside one period.
+    # Composition factor = worst dense measured R x 1.12 (standing
+    # rule) - if R is re-fit, the factor must move with it or the
+    # cap silently loses its margin.
     cf = enc.TMODEL_COMPOSITION_FACTOR
     expect(cf["flat"] == 1.19, f"flat composition factor should be 1.19, got {cf['flat']}")
     expect(cf["gapped"] == 1.46, f"gapped composition factor should be 1.46, got {cf['gapped']}")
@@ -1291,10 +1254,9 @@ def t10_copy_dma_model():
     setup, per_b, chunk, thr = (tc["copy_dma_setup"], tc["copy_dma_per_b"],
                                 tc["copy_dma_chunk"], tc["copy_dma_min"])
     path = tc["copy_dma_path_t"]
-    # RULE 1 - below the player's threshold the copy body is pure LDI.
-    # The model predicts what the PLAYER DOES (src/video.asm vid_copy_body
-    # takes vid_copy_ldi under NXV2_COPY_DMA_MIN). 74-80 are the band the
-    # 2026-08-01 correction moved BACK to LDI.
+    # RULE 1 - below the player's threshold the copy body is pure LDI,
+    # matching src/video.asm vid_copy_body (vid_copy_ldi under
+    # NXV2_COPY_DMA_MIN).
     for L in (1, 16, 64, 73, 74, 80):
         expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
                f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
@@ -1317,7 +1279,7 @@ def t10_copy_dma_model():
     # included. The ENTRY COST is the fast-handler -> slow-body path
     # difference for an 8-bit-operand op, and the measured slow-parser
     # entry (t_skip16 - t_skip) for a 16-bit-operand one, which has no
-    # fast handler to bail out of (_copy_t, REDERIVATION.md 6.4).
+    # fast handler to bail out of (_copy_t).
     entry16 = tc["t_skip16"] - tc["t_skip"]
     expect(abs(entry16 - 69.1) < 1e-6, "the slow-parser entry is 69.1 T")
     def entry(L):
@@ -1625,12 +1587,10 @@ def _slow_drift_clip(N=50, H=192, W=256):
     replenishment case where only accumulated decoded error (not palette
     fit) reveals the screen is wrong. Returns (orig, chg, po_ceil).
 
-    po_ceil (review MAJOR 2 fix, 2026-07-27): built via enc.display_ceiling,
-    same as _synth_clip (:1259-1272) - a REACHABLE display-pipeline ceiling
-    (dithered, lattice-snapped), not a 24-bit ADAPTIVE ceiling that sits
-    above anything the display pipeline can reach (which would either make
-    t11_staleness_bounded vacuous - the deficit gate never binds - or
-    thrash the staleness/drift trigger into per-frame keyframes)."""
+    po_ceil is built via enc.display_ceiling: a reachable display-pipeline
+    ceiling (dithered, lattice-snapped), not a 24-bit adaptive ceiling -
+    the latter would make t11_staleness_bounded's deficit gate vacuous or
+    thrash the staleness/drift trigger into per-frame keyframes."""
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     base = np.stack([128 + 110 * np.sin(xx * 0.20) * np.cos(yy * 0.13),
                      128 + 110 * np.sin(yy * 0.17 + 1.0),
@@ -1693,11 +1653,8 @@ def _build_vid(result, w, h, fps=25.0):
 
 
 def _synth_clip(orig):
-    """po_ceil + chg for a synthetic (N,H,W,3) stack, like _extract_source
-    (palette-collapse fix: the ceiling lives in DISPLAY space, exactly as
-    _extract_source computes it - a 24-bit ADAPTIVE ceiling would sit
-    several dB above anything the display pipeline can reach and thrash
-    the drift trigger into per-frame keyframes)."""
+    """po_ceil + chg for a synthetic (N,H,W,3) stack, like _extract_source.
+    Same display-space ceiling reasoning as _slow_drift_clip above."""
     N = orig.shape[0]
     po = np.empty(N)
     chg = np.zeros(N)
@@ -2055,13 +2012,9 @@ def t11_direct_gate():
         else:
             raise AssertionError("320x256@25 direct must be refused "
                                  "(raw 81920 B/frame over the wire)")
-    # DIRECT TRANSPORT RE-FIT (2026-08-02, DEBUG nex 6404FC6E, whole-
-    # frame two-point solve on probes 056/057 - see the governance
-    # block at DIRECT_TRANSPORT_FACTOR): the T8 rebuild took the
-    # per-byte transport to the bare wire floor (measured 0.994 of
-    # wire*af, shipped 1.00) and what remains is a fixed per-frame
-    # overhead (measured 2.021 ms, shipped 2.2). Both constants are
-    # pinned, and so are the silicon rows they reproduce.
+    # Direct transport is priced as the bare wire floor (per-byte
+    # factor) plus a fixed per-frame overhead; both constants are
+    # pinned against the silicon rows they reproduce.
     expect(enc.DIRECT_TRANSPORT_FACTOR == 1.00,
            f"direct transport byte factor should be the 2026-08-02 "
            f"silicon 1.00, got {enc.DIRECT_TRANSPORT_FACTOR}")
@@ -2106,10 +2059,9 @@ def t11_direct_gate():
     expect(enc.direct_supply_check(ok_worst, 25.0)["utilization"] <= 1.0,
            "256x133@25 stereo (the 010/011 TIGHTEN re-encode shape) must pass the gate")
 
-    # TIGHTEN (Card #5, 2026-07-26 owner ruling): the accept-slow escape
-    # is REMOVED, not just unused - assert it no longer exists anywhere
-    # in the encoder plumbing, and that the wire gate cannot be talked
-    # past by any flag.
+    # The accept-slow escape is removed, not just unused: it must not
+    # exist anywhere in the encoder plumbing, and the wire gate must
+    # not be bypassable by any flag.
     expect(not hasattr(enc, "DIRECT_ACCEPT_SLOW_MAX"),
            "DIRECT_ACCEPT_SLOW_MAX must not exist - no bounded override either")
     direct_params = inspect.signature(enc._encode_direct).parameters
@@ -2125,9 +2077,9 @@ def t11_direct_gate():
     else:
         raise AssertionError("_encode_direct must reject an unknown "
                              "direct_accept_slow kwarg outright")
-    # ... and at the CLI: --direct-accept-slow must be gone, and an
-    # over-wire direct encode must be refused REGARDLESS of any flags
-    # thrown at it (there is no flag left that changes the verdict).
+    # At the CLI: --direct-accept-slow must be gone, and an over-wire
+    # direct encode must be refused regardless of any flags (no flag
+    # left changes the verdict).
     import subprocess
     help_proc = subprocess.run(
         [sys.executable, str(LIB / "videnc.py"), "--help"],
@@ -2150,9 +2102,9 @@ def t11_direct_gate():
             stderr = proc.stderr.decode("utf-8", "replace")
             expect("unrecognized arguments" in stderr or "--direct-accept-slow" in stderr,
                    f"argparse should reject the removed flag, got:\n{stderr}")
-            # (b) REGARDLESS OF FLAGS: even with only the flags that DO
-            # still exist (no accept-slow at all), the same over-wire
-            # shape must be refused by the wire gate itself, not just
+            # (b) even with only the flags that still exist (no
+            # accept-slow at all), the same over-wire shape must be
+            # refused by the wire gate itself, not just
             # by argparse rejecting an unknown flag.
             out3 = Path(td) / "over_wire_plain.vid"
             cmd2 = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out3),
@@ -2937,13 +2889,9 @@ def t13_mixture_transparency_invariant():
     base[:, 20:32] = np.array([255, 0, 245], dtype=np.uint8)  # $E3 points
     pal = enc.display_palette(base)
 
-    # PRE-DODGE layer, exactly as t14's _collect_pal_rgb does it (Task
-    # 4c). build_palette_block scrubs any byte0 == $E3 unconditionally
-    # (9efd280), so asserting on ITS output bytes would be unsatisfiable
-    # for any input whatsoever - a check that cannot fail proves
-    # nothing. Pack the RGB the encoder CHOSE with build_palette_block's
-    # own formula instead: that is the layer the lattice exclusion
-    # defends, and the layer that can actually go wrong.
+    # Pre-dodge layer: build_palette_block scrubs byte0 $E3
+    # unconditionally, so pack the RGB the encoder chose instead of
+    # asserting on its output (same reasoning as t14's first case).
     def _byte0(rgb):
         r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
         return (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
@@ -3076,14 +3024,11 @@ def _near_white_gradient(N, h, w):
 
 @case(14, "no $E3-byte0 palette entry survives an encode of a magenta-hazard gradient clip")
 def t14_no_transparency_collision_on_wire():
-    # The magenta-hazard gradient (_near_white_gradient) slams the
-    # palette straight into (255,0,219)-(255,0,255). This case FAILS
-    # against the pre-fix encoder logic: display_palette's median-cut
-    # snap and dithered-composite refill both land on those two lattice
-    # points, and build_palette_block packs each to byte0 $E3. The
-    # negative control below re-encodes with the remap disabled to
-    # prove the clip still slams the collision points - so this case
-    # cannot rot silently.
+    # The magenta-hazard gradient hits the two $E3 collision lattice
+    # points against the pre-fix encoder logic (display_palette's
+    # median-cut snap and dithered-composite refill both land there).
+    # The negative control below confirms the clip still hits them
+    # with the lattice exclusion disabled.
     N, h, w = 12, 192, 256
     orig = _near_white_gradient(N, h, w)
     chg, po = _synth_clip(orig)
@@ -3108,14 +3053,12 @@ def t14_no_transparency_collision_on_wire():
     expect(rgb_hits == [], f"encoder selected the excluded collision "
            f"colour(s) internally, before the wire dodge: {rgb_hits}")
 
-    # Negative control: disable the lattice exclusion (the pre-fix
-    # lattice) and confirm the SAME clip does select a collision colour
-    # internally - proving this case bites the defect rather than
-    # passing vacuously. build_palette_block's OWN byte0 dodge
-    # (independent of TRANSP_REMAP, added 9efd280) still scrubs $E3 off
-    # the final WIRE bytes either way - that is the "two mechanisms
-    # must agree, not fight" property - so the control checks the
-    # PRE-dodge RGB selection, which only the lattice exclusion guards.
+    # Negative control: disable the lattice exclusion and confirm the
+    # same clip does select a collision colour internally, proving this
+    # case bites rather than passing vacuously. build_palette_block's
+    # own byte0 dodge still scrubs $E3 off the wire either way, so the
+    # control checks the pre-dodge RGB selection, which only the
+    # lattice exclusion guards.
     saved = enc.TRANSP_REMAP
     try:
         enc.TRANSP_REMAP = {}
@@ -3178,13 +3121,8 @@ def t14_no_transparency_collision_direct():
     expect(rgb_hits == [], f"direct-serve encoder selected the excluded "
            f"collision colour(s) internally, before the wire dodge: {rgb_hits}")
 
-    # Negative control, mirroring the streaming case: disable the
-    # lattice exclusion and confirm the pre-fix lattice still selects a
-    # collision colour internally through the direct path too - proving
-    # this case bites rather than passing vacuously. build_palette_block's
-    # own byte0 dodge (independent of TRANSP_REMAP) still keeps $E3 off
-    # the wire either way, so the control checks the pre-dodge RGB
-    # selection, which only the lattice exclusion guards.
+    # Negative control: see t14's first case for why build_palette_block's
+    # dodge doesn't invalidate this.
     saved = enc.TRANSP_REMAP
     try:
         enc.TRANSP_REMAP = {}
@@ -3805,22 +3743,10 @@ def t16_autobudget_override_e2e():
 def t16_autobudget_plateau():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
-    # 5 s of Sintel at 256x148 / --dither 0.5 streams (over the resident
-    # pool) at utilization 0.922 - over the 0.90 target - and that figure
-    # does NOT move with the budget, because the content is asking for
-    # less than the caps allow. Descending would be a pure quality loss
-    # for a hundredth of supply, so the search must not.
-    #
-    # OPERATING POINT RE-BASED at the W4 two-key model + density re-key
-    # (256x148 -> 256x152, measured across 136-160): at 148 the W4
-    # gate now reads util 0.899 - under the target, not a plateau case
-    # at all - while 152 is content-limited again (single probe, util
-    # 0.921). (Previously re-based at the Card #8 gate correction,
-    # 256x192 -> 256x160; at the SP17 copy-DMA model, 3 s / dither 0.25
-    # -> 5 s / dither 0.5; at SP17 T0 source retiming, 256x160 ->
-    # 256x152; at the pal9j ladder, 152 -> 112; at the ladder re-cut,
-    # back to 152; at pal9l, 152 -> 148.) The premise assertion at the
-    # end is what caught all seven.
+    # A content-limited clip must keep its budget ceiling - descending
+    # would be pure quality loss for negligible supply gain. This
+    # operating point is re-based against the auto-budget model each
+    # time the model changes; the premise assertion below catches drift.
     ex = enc._extract_source(str(SINTEL), 256, 152, 25.0, "00:00:00", "5.0",
                               str(FFMPEG), 0.5)
     search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
@@ -4083,35 +4009,21 @@ def t17_cli_and_arg_hash():
 
 
 # =======================================================================
-# Step 18: SP17 ADAPTIVE TILE LADDER (re-cut 2026-07-30)
-# =======================================================================
-# The budget-bound schedule used to spend on a FIXED tile (TILE_BAND rows /
-# columns, 1024 B on the two 256-line shapes). SP17 replaces that with an
-# ADAPTIVE LADDER - per bound frame, walk the rungs fine -> coarse and keep
-# the finest ADMISSIBLE one - and replaces the sqrt(err2) band-importance
-# weight with raw err2.
+# Step 18: adaptive tile ladder. Per bound frame, walk rungs fine -> coarse
+# and keep the finest admissible one (replaces a fixed-tile spend and the
+# sqrt(err2) band-importance weight with raw err2).
 #
-# The first cut of that ladder shipped as the literal (32,64,128,256,1024)
-# with byte spend as its only admissibility test, and owner silicon caught
-# it on fixture 007 (mode-0) the next day: displacement and tearing on a
-# clean transport. Both faults are pinned here.
-#   - SUB-LINE RUNGS. A rung finer than one paint-order line splits a row
-#     (mode-0) / column (mode-1) into independently-scheduled fragments.
-#     The re-cut ladder walks WHOLE LINES: 1, 2 and 4 of them (= quarter,
-#     half and whole band), so no rung can split a line on any shape.
-#   - UNPRICED DECODE-T. Byte spend guards the WIRE and is silent on T,
-#     but T is what the supply gate charges as busy_ms and what the
-#     auto-budget search pays for in budget - i.e. in wire bytes. The
-#     re-cut adds SUPPLY PRESERVATION: a finer rung is admissible only if
-#     the gate's own busy+wire arithmetic does not price it above the
-#     coarsest rung.
+# Two invariants a finer rung must not violate:
+#   - WHOLE-LINE FLOOR. A rung finer than one paint-order line would split
+#     a row/column into independently-scheduled fragments, so rungs walk
+#     whole lines only (1, 2, 4 = quarter/half/whole band).
+#   - SUPPLY PRESERVATION. Byte spend guards the wire but not decode-T; a
+#     finer rung is admissible only if the gate's busy+wire arithmetic
+#     does not price it above the coarsest rung.
 #
-# These cases pin: the rungs and the two constants, the whole-line floor,
-# the err2 weight (which orders bands differently from sqrt and must), the
-# spend-preservation invariant, the supply-preservation invariant (the one
-# the regression needed), the decode-T inversion spend preservation exists
-# to prevent, and that encode_clip really drives the priced ladder end to
-# end.
+# These cases pin: the rungs and constants, the whole-line floor, the err2
+# weight ordering, spend/supply preservation, and that encode_clip drives
+# the priced ladder end to end.
 # =======================================================================
 
 
@@ -4530,21 +4442,11 @@ def t18_ladder_must_be_priced():
 
 @case(18, "adaptive tile ladder - THE INVARIANT: the ladder cannot reduce the derived budget")
 def t18_ladder_cannot_cost_budget():
-    # WHY THIS CASE EXISTS (owner silicon 2026-07-30, fixture 007). The first
-    # cut of the ladder guarded BYTES only. Finer rungs fragment the op
-    # stream, decode-T rose 37% on 007's bound frames, the supply gate
-    # charged it as busy_ms, measured utilization went 0.892 -> 0.985 at the
-    # SAME budget, and the auto-budget search - which the approving A/B had
-    # deliberately pinned away - answered by cutting 007 from 0.64 to 0.47.
-    # Nineteen percent of the wire, gone, to buy tile granularity.
-    #
-    # The invariant that forbids it: THE LADDER'S MEAN SUPPLY COST MAY NOT
-    # EXCEED THE FIXED BAND SCHEDULER'S. utilization is a strictly
-    # increasing function of that mean (stream_supply_check), and the
-    # search's answer is a decreasing function of utilization, so a ladder
-    # that cannot raise the mean cannot lower the budget. This case measures
-    # the mean both ways over a real starved encode.
-    width, height = 256, 192          # MODE-0 - the shape that regressed
+    # A finer ladder rung must not raise mean supply cost above the fixed
+    # band scheduler's, or the auto-budget search answers by cutting the
+    # derived budget (regressed on fixture 007). Measures the mean both
+    # ways over a real starved encode.
+    width, height = 256, 192          # MODE-0
     raw = width * height
     nframes = 20
     rng = np.random.default_rng(1814)
@@ -4616,28 +4518,23 @@ def t18_ladder_cannot_cost_budget():
 
 
 # =======================================================================
-# Step 19: SP17 THE SUPPLY-SLACK KNOB (--tile-slack), opt-in, default off
+# Step 19: supply-slack knob (--tile-slack), opt-in, default off.
 # =======================================================================
-# With the step-18 re-cut in place the ladder is supply-NEUTRAL and buys
-# almost nothing: 21 of 007's 183 bound frames, 8 of 247 on 008, 12 of 249
-# on 009. But the behaviour owner silicon SAW AND APPROVED was the pal9j
-# ladder on his own 320-wide footage taking the ONE-COLUMN rung (256 B) on
-# 222 of 247 frames, and that gain was bought with SUPPLY. Owner ruling
-# (2026-07-30): ship it behind an opt-in per-title knob, because the right
-# value is content-dependent.
+# The step-18 ladder is supply-neutral and buys little on its own; an
+# opt-in per-title knob lets a title trade supply for tile granularity
+# when the content rewards it, since the right value is content-dependent.
 #
-# The knob relaxes rule (b), the supply-preservation test, and NOTHING
+# The knob relaxes rule (b), the supply-preservation test, and nothing
 # else. These cases pin, in order:
-#   - the constants, the default (OFF), and the CAP's derivation - the cap
+#   - the constants, the default (off), and the cap's derivation - the cap
 #     is exactly the auto-budget margin, so knob 1.0 lands the worst case
 #     on the refusal line and the knob cannot express more;
-#   - THE WHOLE-LINE FLOOR IS UNREACHABLE at every knob value, both in the
+#   - the whole-line floor is unreachable at every knob value, both in the
 #     ladder the encoder builds and in what encode_delta will accept;
 #   - default-off really is byte-for-byte today's encoder;
 #   - the knob moves the supply test only, monotonically;
-#   - the realised cost is bounded by the headroom the knob is quoted in
-#     (the arithmetic the cap rests on, measured over a real encode);
-#   - the supply gate still REFUSES rather than shipping an unplayable
+#   - the realised cost is bounded by the headroom the knob is quoted in;
+#   - the supply gate still refuses rather than shipping an unplayable
 #     file, and the knob is nowhere in the gate's own arithmetic;
 #   - the CLI/kit plumbing, including the sidecar arg hash.
 # =======================================================================

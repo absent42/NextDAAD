@@ -4,31 +4,26 @@ NXV v2 replaces the v1 fixed-container format with a FLIC-lineage delta
 opcode stream over the Layer 2 surface, content-triggered keyframes, and
 a dual-budget (bytes + modeled decode-T) rate control. This module is
 the OFFLINE encoder: header layout, opcode emission, scene segmentation,
-scene-scoped palettes, and the rate controller. The wire format this
-module writes is defined by docs/superpowers/plans/2026-07-23-sp15-
-nxv2.md's "Format reference" section - THAT document is the format
-authority; the constants below are its literal transcription (T1 keeps
-this module byte-identical to the doc's offset table; src/nextdaad.inc
-gets its own equates in Task 3 when the player side is built).
+scene-scoped palettes, and the rate controller. This module is the
+format authority; the constants below are the wire format's literal
+transcription (byte-identical to the header offset table; src/nextdaad.
+inc carries its own equates for the player side).
 
 nxv2dec.py is the reference decoder (also this encoder's own
 verification decoder) and imports the header/opcode constants from this
-module - one source of truth for both sides, as the format reference
-directs.
+module - one source of truth for both sides.
 
-Ported from the SP15 research prototypes (.superpowers/sdd/sp15-
-research/, code in the round-2 protovid/ scratch directory: flic2.py's
-tuned triggers/threshold ladder, tmodel.py's T-state coefficients,
-extract2.py's extraction method) and PRODUCTIONIZED against the real
-wire opcodes ($00-$0B) rather than the prototype's own alternating-skip
-byte scheme - the prototype measured feasibility in the abstract; this
-module emits the actual bytes a Z80 decoder will parse.
+Ported from the SP15 research prototypes (flic2.py's tuned triggers/
+threshold ladder, tmodel.py's T-state coefficients, extract2.py's
+extraction method) and PRODUCTIONIZED against the real wire opcodes
+($00-$0B) rather than the prototype's own alternating-skip byte scheme -
+the prototype measured feasibility in the abstract; this module emits
+the actual bytes a Z80 decoder will parse.
 
 Playback model: PATCH-IN-PLACE on a single Layer 2 surface for delta
-frames (research finding: the shadow-compose variant is priced out at
-320x256@25 - see research-realfootage-results.md finding 4). Keyframes
-paint the HIDDEN surface across a KSTART..KFLIP span and flip+palette-
-swap atomically on KFLIP.
+frames (the shadow-compose variant is priced out at 320x256@25).
+Keyframes paint the HIDDEN surface across a KSTART..KFLIP span and
+flip+palette-swap atomically on KFLIP.
 """
 import hashlib
 import math
@@ -375,217 +370,115 @@ L2_DODGE_BYTE0 = L2_TRANSPARENT_BYTE0 + 4
 assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 
 # ---------------------------------------------------------------------
-# TMODEL_COEFFS - Z80N decode+fetch T-state costs. SILICON-SETTLED on the
-# SECOND NXBEN sitting (core 3.02.04 KS3 TEST core, 2026-07-25), which
-# benched the OPTIMIZED decode kernels (commits bfadc71 + 5cc2c70):
-# .superpowers/sdd/task-2-final-settlement.md. Every entry cites its bench
-# row and the first-sitting value it replaces. The kernel wave did what it
-# claimed: the per-op dispatch envelope went 920 -> 267 T (copy) / 387 T
-# (run) and the SKIP8 envelope 360 -> 130 T, so the rate control now prices
-# with the optimized silicon truth. Whole-model cross-check: feeding these
-# coefficients through the SEG row's manifest op counts reproduces the
-# measured 3-frame mixed stream to +0.5%.
+# TMODEL_COEFFS - Z80N decode+fetch T-state costs. Silicon-settled against
+# the optimized decode kernels; each entry cites its bench row. Whole-
+# model cross-check: feeding these coefficients through a manifest's op
+# counts reproduces a measured mixed stream to +0.5%.
 #
-# Envelope convention (unchanged): the dispatch envelopes are measured on
-# real ops that already carry their count byte, so the count-byte parse is
-# FOLDED INTO them - header_rate stays 0 to avoid double-counting.
+# Envelope convention: dispatch envelopes are measured on real ops that
+# already carry their count byte, so the count-byte parse is FOLDED INTO
+# them - header_rate stays 0 to avoid double-counting.
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
-    "fetch_long": 20.2,        # T/byte LDI copy body [SILICON C8/C16 joint solve,
-                                #   sitting 2: 20.25 incl ~0.13 of window-seam
-                                #   cost; body preserved by the wave exactly as
-                                #   promised]. sitting 1: 20.2. model was 22.1
-    "fetch_short": 19.80,       # T/byte short-copy LDI body [SILICON NXBC
-                                #   sitting 3, 2026-08-01: C001..C073 CPU fit
-                                #   slope 19.797 T/B, residuals under 4 T].
-                                #   was 20.2 (= fetch_long); the short-burst
-                                #   rows resolve their own body now. No
-                                #   separate short-burst PENALTY exists -
-                                #   burst size is dispatch, priced separately
-    "t_skip": 141.6,            # SKIP8 op envelope [SILICON NXBO SK00 row,
-                                #   sitting 3 (2026-08-01 NXBO/NXBC bench,
-                                #   production routines): 141.61 T incl its
-                                #   count byte]. sitting 2: 130 (prototype
-                                #   kernel). sitting 1: 360. model was 45
-    "t_skip16": 210.7,          # SKIP16 op envelope [SILICON NXBO S160 row
-                                #   sitting 3: 210.68 T - the slow-parser
-                                #   16-bit path costs +69 T over SK00]. The
-                                #   old single-key model priced SKIP16 at the
-                                #   SKIP8 value (disclosed 62% under-price);
-                                #   the second key retires that disclosure
-    "t_op_run": 487.2,          # RUN op dispatch envelope [SILICON NXBO
-                                #   sitting 3: RU01/RU17/F063/F070 joint fit
-                                #   envelope 487.21 T, body 16.703 T/B]. The
-                                #   run envelope carries the computed-entry
-                                #   fill setup the copy path does not - the
-                                #   measured RUN/COPY ratio 1.449 equals the
-                                #   sitting-2 387/267 ratio exactly, so the
-                                #   TWO-KEY SPLIT retires the old single-key
-                                #   "take the dearer class" compromise (387)
-                                #   that over-priced the DOMINANT copy class
-                                #   15% and under-priced runs 21%. sitting 2:
-                                #   387 single-key. body priced separately
-    "t_op_copy": 336.3,         # COPY op dispatch envelope [SILICON NXBC
-                                #   sitting 3: C001..C073 CPU fit envelope
-                                #   336.32 T, residuals under 4 T]. sitting 2
-                                #   measured the same class at 267 on the
-                                #   prototype kernel; the production dispatch
-                                #   carries more glue. body priced separately
-    "t_op_misc": 487.2,         # KSTART/KFLIP/FEND/PAL dispatch - UNMEASURED
+    "fetch_long": 20.2,        # T/byte LDI copy body [silicon C8/C16 joint
+                                #   solve, incl ~0.13 window-seam cost]
+    "fetch_short": 19.80,      # T/byte short-copy LDI body [silicon NXBC
+                                #   C001..C073 CPU fit, slope 19.797 T/B,
+                                #   residuals under 4 T]. No separate
+                                #   short-burst penalty - burst size is
+                                #   dispatch, priced separately
+    "t_skip": 141.6,           # SKIP8 op envelope [silicon NXBO SK00 row,
+                                #   production routines, incl count byte]
+    "t_skip16": 210.7,         # SKIP16 op envelope [silicon NXBO S160 row];
+                                #   +69 T over SK00 - the slow-parser 16-bit
+                                #   path
+    "t_op_run": 487.2,         # RUN op dispatch envelope [silicon NXBO
+                                #   RU01/RU17/F063/F070 joint fit]; carries
+                                #   the computed-entry fill setup the copy
+                                #   path does not. Body priced separately
+    "t_op_copy": 336.3,        # COPY op dispatch envelope [silicon NXBC
+                                #   C001..C073 fit, residuals under 4 T].
+                                #   Body priced separately
+    "t_op_misc": 487.2,        # KSTART/KFLIP/FEND/PAL dispatch - unmeasured
                                 #   simple handlers, priced at the dearest
-                                #   measured envelope (t_op_run) by the same
-                                #   conservative-for-feasibility convention
-                                #   the single-key model used. Well under
-                                #   0.5% of any frame
-    "fill_cpu": 16.70,          # T/byte unrolled CPU fill [SILICON NXBO
-                                #   sitting 3: RUN fit slope 16.703 T/B on the
-                                #   production routine]. sitting 2: 17.17
-                                #   (R8U/R6U joint solve). sitting 1: 17.0.
-                                #   model was 13.2
-    "fill_dma_per_b": 5.1,      # T/byte DMA fill body [SILICON RD chunk solve
-                                #   sitting 2, over-determined against the DMA-copy
-                                #   KF/CD3 cross-row solve]. Hardware term - the
-                                #   wave cannot change it; sitting 1's 4.5 was an
-                                #   artifact of attributing 920 T/op. model was 4.0
-    "fill_dma_setup": 849.0,    # T per DMA fill chunk [SILICON RD1/RD2/RD3
-                                #   solve sitting 2 - both chunk differences give
-                                #   849.4 exactly; persistent-descriptor re-arm].
-                                #   sitting 1: 1273. hand count 683. model was 355
-    "fill_dma_min": 240,        # DMA fill CHUNK size (bytes); the SAME
+                                #   measured envelope (t_op_run) conservatively.
+                                #   Well under 0.5% of any frame
+    "fill_cpu": 16.70,         # T/byte unrolled CPU fill [silicon NXBO RUN
+                                #   fit slope on the production routine]
+    "fill_dma_per_b": 5.1,     # T/byte DMA fill body [silicon RD chunk
+                                #   solve, cross-checked against the DMA-copy
+                                #   KF/CD3 rows]. Hardware term
+    "fill_dma_setup": 849.0,   # T per DMA fill chunk [silicon RD1/RD2/RD3
+                                #   solve - both chunk differences give 849.4
+                                #   exactly; persistent-descriptor re-arm]
+    "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
                                 #   player clips both through vid_chunk_dst,
-                                #   so these two must move together. 256 -> 240
-                                #   on 2026-08-03 with the DI-bracket fix (see
-                                #   copy_dma_chunk). Historic name - it is a
-                                #   chunk size, not a threshold; the threshold
-                                #   is run_dma_min below
-    "run_dma_min": 71,          # the PLAYER's fill kernel-select threshold
-                                #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a fill
-                                #   chunk shorter than this goes unrolled-CPU.
-                                #   The 2026-07-28 derivation
-                                #   849.4/(17.17-5.11) = 70.43 -> 71 quoted TWO
-                                #   SUPERSEDED coefficients (17.17 became
-                                #   fill_cpu 16.703; 5.11 became ~5.0). Fresh
-                                #   NXBK rows (2026-08-03) solve the two
-                                #   envelopes directly - CPU 476.7 + 16.703 L
-                                #   against DMA 1289.6 + 4.888 L - and put the
-                                #   crossover at 68.8 -> 69.
-                                #   VALUE HELD AT 71: taking CPU for 69-70 B
-                                #   fills costs <= 34 T/op on a class that is
-                                #   0.00-0.08% of corpus decode-T. See the
-                                #   .inc comment for the full derivation and
-                                #   for why RUN correctly charges NO path
-                                #   term (measured at -36 T, not assumed)
-    "copy_dma_min": 81,         # the PLAYER's copy kernel-select threshold
+                                #   so these two must move together. Historic
+                                #   name - it is a chunk size, not a
+                                #   threshold; the threshold is run_dma_min
+                                #   below
+    "run_dma_min": 71,         # the PLAYER's fill kernel-select threshold
+                                #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a
+                                #   fill chunk shorter than this goes
+                                #   unrolled-CPU. Crossover measured directly
+                                #   from silicon NXBK rows at 68.8, held at
+                                #   71 (taking CPU for 69-70 B fills costs
+                                #   <= 34 T/op on 0.00-0.08% of corpus
+                                #   decode-T). See the .inc comment for the
+                                #   full derivation and for why RUN charges
+                                #   no path term
+    "copy_dma_min": 81,        # the PLAYER's copy kernel-select threshold
                                 #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
-                                #   MEASURED break-even 81.4 B (SP17 NXBC
-                                #   C073/C074 silicon rows): the 2026-07-28
-                                #   kernel-only derivation (1091.8/(20.25-5.31)
-                                #   = 73.08 -> 74) missed the fast-handler ->
-                                #   slow-body PATH difference (copy_dma_path_t
-                                #   below).
-                                #   DENOMINATOR CORRECTED 2026-08-03: the
-                                #   shipped arithmetic (1091.8+128)/14.94 =
-                                #   81.65 used fetch_long 20.25, but
-                                #   fetch_long is the >= 64 B LDI body and the
-                                #   ops that DECIDE this crossover are 73-83 B
-                                #   and run fetch_short. At sitting-3
-                                #   coefficients (1091.8+128)/(19.797-5.082)
-                                #   = 82.90. VALUE HELD AT 81 (the measured
-                                #   placement; silicon read 81.4, and the
-                                #   correction only means DMA is taken ~2 B
-                                #   early, worst +28 T/op at L=81 on ~0.3% of
-                                #   ops - inside the row resolution).
-                                #   History: 90 (undocumented) -> 74
-                                #   (kernel-only) -> 81 (measured)
-    "copy_dma_path_t": 128.0,   # T/op fast-handler -> slow-body path
+                                #   Measured break-even 81.4 B (silicon NXBC
+                                #   C073/C074 rows); held at 81 (worst-case
+                                #   +28 T/op at L=81 on ~0.3% of ops, inside
+                                #   row resolution)
+    "copy_dma_path_t": 128.0,  # T/op fast-handler -> slow-body path
                                 #   difference a sub-256 COPY8 pays to REACH
-                                #   the DMA kernel (NXBC C073/C074: DMA at the
-                                #   old 74 threshold cost +128 T/op over the
-                                #   fast LDI path). Charged once per op in
-                                #   _copy_t's DMA branch, and ONLY on
-                                #   8-bit-operand ops since 2026-08-03: a
+                                #   the DMA kernel [silicon NXBC C073/C074].
+                                #   Charged once per op in _copy_t's DMA
+                                #   branch, and ONLY on 8-bit-operand ops: a
                                 #   >= 256 B op has no fast handler to bail
                                 #   out of, so it pays the measured
                                 #   slow-parser entry (t_skip16 - t_skip)
-                                #   instead. Charging path_t there was a
-                                #   deliberate double-cover and it was the
-                                #   WHOLE of the model's 2.9% pessimism on
-                                #   K256 (REDERIVATION.md 6.4)
-    "copy_dma_per_b": 5.08,     # T/byte mem-to-mem DMA COPY body [SILICON
-                                #   NXBC sitting 3: C074-C103 slow-body slope
-                                #   5.082 T/B, UNARMED]. sitting 2: 5.31
-                                #   (KF-vs-CD3 cross-row solve; 6.21 armed -
+                                #   instead
+    "copy_dma_per_b": 5.08,    # T/byte mem-to-mem DMA COPY body [silicon
+                                #   NXBC C074-C103 slow-body slope, unarmed;
                                 #   the armed tax is carried globally by
-                                #   audio_factor, so the unarmed rate is the
-                                #   right one here)
-    "copy_dma_setup": 1091.8,   # T per DMA copy chunk [SILICON CD1..CD4 chunk
-                                #   solve sitting 2: the three chunk differences
-                                #   give 1091.8 / 1091.6 / 1091.9]. sitting 1:
-                                #   1273 (under the 920 T/op attribution error)
-    "copy_dma_chunk": 240,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
-                                #   the audio-safety burst cap the player clips
-                                #   every copy chunk to (vid_chunk_all).
-                                #   UNCONDITIONALLY CORRECT since 2026-08-03.
-                                #   It carried a "STEREO ONLY" caveat while a
-                                #   mono session took a 128 B cap the model
-                                #   could not see (which mispriced a mono
-                                #   stream ~10-38% optimistic on decode); mono
-                                #   was withdrawn with the cap that served it,
-                                #   so there is now exactly ONE cap, the
-                                #   player always applies it, and this value
-                                #   models the player exactly.
-                                #   256 -> 240 on 2026-08-03: at 256 the
-                                #   player's DI bracket was 1801 T against
-                                #   stereo HDMI's 1728 T period, so every
-                                #   chunk that spanned a tick boundary
-                                #   suppressed that audio interrupt and the
-                                #   clip ran slow and flat (five silicon PLAY=
-                                #   rows +2.1% to +5.2% over nominal; an exact
-                                #   op-walk attributes 0.5-0.8 pp of that to
-                                #   this mechanism - a real contributor, not
-                                #   the whole overrun). The player's arm was
-                                #   shortened 98 T in the same change and the
-                                #   cap bought the rest of the margin
-                                #   - 1621.7 T, 6.2% inside the tightest
-                                #   period. See src/nextdaad.inc
-                                #   NXV2_DMA_CHUNK for the full derivation,
-                                #   the per-mode margin table, and the
-                                #   measured cost of the drop (+0.609% of
-                                #   corpus decode-T, all of it over 1% falling
-                                #   on byte-bound clips)
-    "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
-                                #   dispatch envelopes above on silicon (see the
-                                #   envelope-convention note). model was 26.0
-    "t_frame_fixed": 1132.0,    # frame-fixed floor [SILICON FE row sitting 2:
-                                #   1132.4 T, inside the 1050-1200 hand count].
-                                #   Still a conservative overestimate of the
-                                #   PLAYER's own fixed cost - the FE row carries
-                                #   ~500 T of bench harness on top of it, which
-                                #   leaves headroom for the Task 3 player's real
-                                #   per-frame work (ring bookkeeping, audio
-                                #   hand-off) the bench does not model.
-                                #   sitting 1: 1735. model was 1000
-    "t_palette": 512 * 22.1 + 256 * 20.0,  # 16435 T - MODEL value kept: no
-                                #   silicon PAL row exists in either sitting; the
-                                #   wave's unrolled outinb path makes this an
-                                #   overestimate. PAL is <0.2% of any frame
+                                #   audio_factor]
+    "copy_dma_setup": 1091.8,  # T per DMA copy chunk [silicon CD1..CD4 chunk
+                                #   solve: the three chunk differences give
+                                #   1091.8 / 1091.6 / 1091.9]
+    "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
+                                #   the audio-safety burst cap the player
+                                #   clips every copy chunk to (vid_chunk_all);
+                                #   the one cap the player always applies, so
+                                #   this value models the player exactly. See
+                                #   src/nextdaad.inc NXV2_DMA_CHUNK for the
+                                #   per-mode margin table
+    "header_rate": 0.0,        # count/colour byte parse - FOLDED into the
+                                #   dispatch envelopes above on silicon (see
+                                #   the envelope-convention note)
+    "t_frame_fixed": 1132.0,   # frame-fixed floor [silicon FE row: 1132.4 T].
+                                #   A conservative overestimate of the
+                                #   PLAYER's own fixed cost - the FE row
+                                #   carries bench harness overhead on top of
+                                #   it, leaving headroom for real per-frame
+                                #   work (ring bookkeeping, audio hand-off)
+                                #   the bench does not model
+    "t_palette": 512 * 22.1 + 256 * 20.0,  # 16435 T - model value kept: no
+                                #   silicon PAL row exists; the unrolled
+                                #   outinb path makes this an overestimate.
+                                #   PAL is <0.2% of any frame
     "clock_khz": 28000.0,       # T per ms at 28MHz
-    "audio_factor": 0.85,       # usable budget after the armed-decode audio tax
-                                #   [SILICON sitting 2: CD armed/unarmed = 1.170-
-                                #   1.173 at c64/c128/c256 -> 0.853; held at 0.85].
-                                #   sitting 1: 0.85. model was 0.89.
-                                #   UNCONDITIONALLY CORRECT since 2026-08-03.
-                                #   The fit was taken at the stereo tick rate,
-                                #   which used to make it a "STEREO ONLY"
-                                #   caveat: the mono ISR was cheaper per tick
-                                #   (~145 T against ~190 T hand-counted) but
-                                #   fired 49% more often, ~14% more duty, an
-                                #   effective 0.83 - so mono streams were
-                                #   admitted ~2-2.5% optimistically
-                                #   (sp17-corpus/REDERIVATION.md 6.7). Mono is
-                                #   withdrawn, there is one tick rate, and
-                                #   this coefficient is fitted at it
+    "audio_factor": 0.85,       # usable budget after the armed-decode audio
+                                #   tax [silicon: CD armed/unarmed ratio
+                                #   1.170-1.173 at c64/c128/c256 -> 0.853,
+                                #   held at 0.85]. Fitted at the stereo tick
+                                #   rate - mono is withdrawn, there is one
+                                #   tick rate, and this coefficient is
+                                #   fitted at it
 }
 
 
@@ -595,221 +488,33 @@ TMODEL_COEFFS = {
 # TMODEL_COEFFS above are micro-bench truths: isolated kernels, isolated
 # dispatch, one op class at a time. The real player composes them - fast
 # handler vs chunked body selection, dest-cursor normalization, column
-# hops, window-seam walks, the audio-ring interleave and the per-frame
-# glue the bench cannot see. The stage-3a real-footage silicon leg
-# (2026-07-25, core 3.02.04 KS3 TEST, five staged fixtures sd\001-005,
-# DEBUG timeline DECODE rows) measured that composition tax directly:
+# hops, window-seam walks, the audio-ring interleave and per-frame glue
+# the bench cannot see. Measured directly from real-footage silicon
+# fixtures as R = silicon DECODE T/frame / (model T/frame / audio_factor).
 #
-#   R = (silicon DECODE T/frame) / (model T/frame / audio_factor)
-#   silicon T/frame = DECODE ticks / FRM * 1792 T   (CTC /16 x TC 112)
+# Two clean clusters split on one discriminator: the mode-1 letterbox
+# column gap. FLAT surfaces (any width/mode) cluster near 1.0-1.02.
+# GAPPED surfaces (mode-1, height != 256) cost more because every op
+# whose length crosses a column boundary leaves the fast handler and
+# rides the chunked body; a sparse gapped test-card row measures far
+# above the dense gapped cluster (disclosed model weakness, not a cap
+# hazard - a sparse frame is cheap in absolute terms and self-bounds on
+# byte demand).
 #
-#   AF CONVENTION (cross-refer stream_supply_check's own note): this
-#   formula divides the MODEL side by audio_factor before taking the
-#   ratio - af is folded into R's own calibration, once, here. So
-#   R x model_T = af x (true silicon decode T), and any consumer that
-#   wants the TRUE silicon decode time must divide by af again.
-#   stream_supply_check() now does exactly that (Card #8, 2026-07-28);
-#   it used to multiply R straight onto the raw model T and thereby
-#   price busy at 85% of the decode time silicon actually spends. That
-#   understatement was harmless while the T model was ~15% dearer than
-#   silicon and is not harmless now - see the gate's own block.
-#
-#   | fixture | shape             | gap | model T/f | silicon T/f | R     |
-#   |---------|-------------------|-----|-----------|-------------|-------|
-#   | 001.VID | 320x256 mode-1    | no  |   778,161 |     822,105 | 0.898 |
-#   | 002.VID | 256x192 mode-0    | no  |   488,954 |     479,700 | 0.834 |
-#   | 003.VID | 320x192 mode-1 LB | YES |   887,452 |   1,250,890 | 1.199 |
-#   | 004.VID | 320x144 mode-1 LB | YES |   577,674 |     952,053 | 1.401 |
-#   | 005.VID | 256x144 mode-0    | no  |   548,298 |     488,858 | 0.760 |
-#
-# The rows split into two clean clusters on ONE discriminator: the
-# mode-1 letterbox column gap. Flat surfaces (any width, any mode) come
-# in UNDER the model (0.76-0.90 - the model over-prices copies at the
-# 387 T run envelope). Gapped surfaces cost 1.20-1.40x the model,
-# because every op whose length crosses a column boundary leaves the
-# SMC'd fast handler and rides the chunked body (normalize + hop +
-# multiple chunk sizings). Shorter columns cross more often, which is
-# why 004 (h=144) is worse than 003 (h=192). 001 is 320-wide mode-1 and
-# FLAT, so this is the column gap and not a mode-1 display-fetch term.
-#
-# The factor DIVIDES the usable budget, so it is a straight de-rating of
-# the modeled-T cap. A frame emitted at the de-rated cap is predicted to
-# consume R/FACTOR of one frame period on silicon, leaving real PACE
-# margin on both classes.
-#
-# Calibrated at gapped heights 144 and 192. A NEW gapped height below
-# 144 must be re-checked on silicon before it is trusted (the crossing
-# rate scales roughly with 1/height).
-#
+# Factor = worst DENSE-cluster measured R x ~1.12 margin, taken at-cap
+# (only frames actually bound by the cap can drive a cap de-rating).
+# Re-derive whenever TMODEL_COEFFS's op dispatch costs change - a
+# cheaper model makes a cap-full of work MORE silicon time, not less,
+# so the factor must move with it or the cap silently loses its margin.
+# Calibrated at gapped heights 144 and 192; a new gapped height below
+# 144 needs a fresh silicon check (crossing rate scales roughly with
+# 1/height).
 # ---------------------------------------------------------------------
-# GAPPED RE-SETTLEMENT (SP15 Card #5, 2026-07-26, core 3.02.04) - the
-# COLUMN-HOP payback. Stage 3c gave the gapped fast handlers an INLINE
-# single-crossing column hop, so a crossing op no longer falls into the
-# chunked bodies. Card #5 re-measured R on the SAME staged streams
-# (sd\003/004/006, byte-identical since Card #2 - no re-encode enters
-# the ratio), same formula, same 1792 T tick:
-#
-#   | fixture | shape         | model T/f | silicon T/f | R post | R pre |
-#   |---------|---------------|-----------|-------------|--------|-------|
-#   | 003.VID | 320x192 LB    |   585,811 |     692,572 | 1.005  | 1.064 |
-#   | 004.VID | 320x144 LB    |   561,298 |     675,417 | 1.023  |   -   |
-#   | 006.VID | 320x192 LB TC |   251,202 |     566,172 | 1.916  | 2.015 |
-#   | 001/002/005 (flat, regression) 0.898 / 0.847 / 0.757 - UNMOVED   |
-#
-# The dense real-footage gapped rows collapsed onto the flat cluster:
-# 1.20/1.40 -> 1.005/1.023. The hop is worth 41,001 T/frame on 003
-# (5.6%) and 29,360 T/frame on 006 (4.9%) against the same streams.
-#
-# TWO REGIMES, and the factor is calibrated on the one the cap governs:
-#   - DENSE (003/004): frames are budget-BOUND (22 of 25 on 003), so
-#     their mean IS their at-cap cost. R 1.005-1.023. These are the
-#     rows a cap de-rating must answer to.
-#   - SPARSE (006, the test card): 90% of the surface is skipped every
-#     frame and the model prices it at 251 kT while silicon spends
-#     566 kT - R 1.92, twice out of family. DISCLOSED MODEL WEAKNESS,
-#     not a cap hazard: a sparse frame is cheap in ABSOLUTE terms
-#     (006 measures 20.2 ms of a 40 ms period, PACE 285 ticks), and
-#     sparseness bounds the byte demand in the same breath. The two
-#     gapped operating points are 2 clusters, not a curve - do NOT
-#     read a law into them; a third, genuinely intermediate gapped
-#     density would be the row that settles the shape.
-# Factor = worst DENSE gapped R x the same ~11% margin the 2026-07-25
-# calibration used: 1.023 x 1.12 = 1.15.
-#
-# ---------------------------------------------------------------------
-# SP17 RE-FIT - CLOSED ON SILICON (Card #8 Group A, 2026-07-28, core
-# 3.02.04, DEBUG nex BA2CA168). This block was OPEN: R had been fitted
-# against the PRE-SP17 T model, and SP17 then restored the mem-to-mem
-# DMA copy term the task-2 settlement measured but the encoder never
-# wired in (_copy_t / copy_dma_* in TMODEL_COEFFS), making the model
-# side ~15% cheaper. The paper prediction was that every R would rise
-# by 1.09x-1.31x and eat both margins. It was NOT re-fitted from that
-# arithmetic - a calibration whose authority is that it was measured
-# does not get corrected on paper. Card #8 measured it.
-#
-# Same method, same 1792 T tick, same op-walk of the EXACT staged bytes
-# (sd\001-006, sizes verified against the card - no re-encode enters
-# the ratio):
-#
-#   | fixture | shape          | class        | model T/f | silicon T/f | R     |
-#   |---------|----------------|--------------|-----------|-------------|-------|
-#   | 001.VID | 320x256        | FLAT         |   785,622 |     931,260 | 1.008 |
-#   | 002.VID | 256x192        | FLAT         |   449,158 |     539,432 | 1.021 |
-#   | 005.VID | 256x144        | FLAT         |   416,927 |     500,506 | 1.020 |
-#   | 003.VID | 320x192 LB     | GAPPED dense |   757,852 |   1,121,362 | 1.258 |
-#   | 004.VID | 320x144 LB     | GAPPED dense |   565,430 |     743,972 | 1.118 |
-#   | 006.VID | 320x192 LB TC  | GAPPED SPARSE|   261,853 |     582,386 | 1.890 |
-#
-# The prediction held and the margins were gone: flat 0.90 -> 1.01-1.02,
-# dense gapped 1.005/1.023 -> 1.258/1.118. Re-fitted by the same rule:
-#
-#   flat   = worst flat R  1.021 (002) x 1.12 = 1.144 -> 1.14
-#   gapped = worst DENSE R 1.258 (003) x 1.12 = 1.409 -> 1.41
-#
-# THE SHIPPED FACTORS WERE ALREADY BEING BLOWN THROUGH, and 003 proves
-# it directly rather than by extrapolation: its Card #8 row spends
-# 625.8 ticks/frame in DECODE ALONE (40.05 ms) and its whole frame
-# takes 678.0 ticks (43.4 ms) against a 625-tick period - the only row
-# in the set that misses its period. Every other fixture paces at
-# 616-622 ticks. At the shipped 1.15 the gapped cap is 827,826 T, which
-# at R 1.258 predicts 1,225,000 T = 43.8 ms on silicon; at 1.41 the cap
-# is 675,177 T and predicts 999,300 T = 35.7 ms, back inside the period
-# with the intended margin.
-#
-# HEIGHT SLOPE REFUTED. Card #5's gapped rows sloped with 1/height
-# (144 worse than 192, the crossing-rate story). Card #8 inverts it:
-# 003 (h=192) R 1.258 is now WORSE than 004 (h=144) R 1.118, on
-# fixtures whose density also changed. Two points that swapped order
-# are not a law in either direction, so silicon_r() no longer
-# interpolates on height - it returns the worst measured gapped R for
-# every gapped height. A third, genuinely intermediate gapped row is
-# still what would settle the shape.
-#
-# SPARSE ROW UNMOVED. 006 re-measures R 1.890 against Card #5's 1.916
-# - the disclosed model weakness (90% of the surface skipped every
-# frame, priced at 262 kT against 582 kT of silicon) is exactly where
-# it was, neither healed nor worse. It is still not a cap hazard: 006
-# spends 325.0 ticks (20.8 ms) of a 40 ms period and paces at 622.4
-# ticks. It does NOT drive the dense factor - the rule says worst DENSE.
-#
-# ---------------------------------------------------------------------
-# RE-CONFIRMED ON FRESH SILICON (2026-07-30, core 3.02.04, DEBUG nex
-# 847A6D80, era pal9h). The Card #8 re-fit was measured on the pal9f
-# staged bytes; the fixtures were then RE-ENCODED under the new factors,
-# so this sitting is an independent test of the fixed point: if the
-# factors are right, the re-encoded (smaller-budget) streams must come
-# back with the SAME R and now fit their period. Same method, same
-# 1792 T tick, op-walk of the exact pal9h staged bytes (the walk
-# consumes all nine files to the byte, header + audio pad + payload +
-# 512 B padding - no re-encode enters the ratio):
-#
-#   | fixture | shape         | class         | model T/f | silicon T/f | R     |
-#   |---------|---------------|---------------|-----------|-------------|-------|
-#   | 001.VID | 320x256       | FLAT at-cap   |   744,921 |     884,932 | 1.010 |
-#   | 002.VID | 256x192       | FLAT          |   449,340 |     539,950 | 1.021 |
-#   | 005.VID | 256x144       | FLAT          |   416,918 |     500,506 | 1.020 |
-#   | 003.VID | 320x192 LB    | GAPPED at-cap |   638,907 |     942,735 | 1.254 |
-#   | 004.VID | 320x144 LB    | GAPPED dense  |   564,510 |     741,888 | 1.117 |
-#   | 006.VID | 320x192 LB TC | GAPPED SPARSE |   261,761 |     582,271 | 1.891 |
-#   | 007.VID | 256x192 str   | FLAT sparse   |   338,195 |     412,633 | 1.037 |
-#   | 008.VID | 320x256 str   | FLAT sparse   |   276,289 |     351,100 | 1.080 |
-#   | 009.VID | 320x192 LB str| GAPPED sparse |   282,919 |     466,588 | 1.402 |
-#
-# EVERY Card #8 R REPRODUCES: 1.008->1.010, 1.021->1.021, 1.020->1.020,
-# 1.258->1.254, 1.118->1.117, 1.890->1.891 - inside 0.4%, against staged
-# bytes that moved by up to 15.7% (003's model T fell 757,852 ->
-# 638,907 as the tighter cap bit, and its silicon decode fell with it,
-# 1,121,362 -> 942,735). R is a property of the shape/density cluster,
-# not of the operating point, which is what makes the factor a fixed
-# point and not a moving target. The flat rows also repeat ACROSS
-# SITTINGS to ~0.1% on the raw tick counts.
-#
-# 003 NOW MAKES ITS PERIOD - the one row that missed it at pal9f. Its
-# phase sum is 590.7 ticks/frame (PACE 44.2 + AUDIO 19.9 + DECODE 526.1
-# + FLIP 0.5 + OTHER 0.2) against the 625-tick period: 34.3 ticks
-# (2.2 ms, 5.5%) of margin where Card #8 measured 678.0 ticks, 8.5%
-# OVER. DECODE alone went 625.8 -> 526.1 ticks (40.05 -> 33.67 ms), and
-# PACE is nonzero on all nine rows, so every fixture fits its period.
-#
-# FACTORS UNCHANGED. Worst at-cap flat R 1.021 x 1.12 = 1.14; worst
-# at-cap gapped R 1.254 x 1.12 = 1.404, and 1.41 ships - the shipped
-# gapped factor now carries its 12% margin plus 0.4%. Neither needs
-# moving. The at-cap rows are 001 (74% of frames within 3% of the cap),
-# 003 (96%) and 004 (98% of the cap at its peak); 002 and 005 are
-# content-limited (peak 0.61 / 0.53 of the cap) and 006/007/008/009 are
-# streamed at derived budgets, so none of those four can drive a cap
-# de-rating.
-#
-# THE SPARSE END, NOW WITH FOUR POINTS. R rises monotonically as
-# density falls, on both classes: flat 1.010-1.021 at-cap -> 1.037/1.080
-# on the two streamed flat clips (mean 0.33-0.41 of the cap), gapped
-# 1.254 at-cap -> 1.402 (009, streamed) -> 1.891 (006, test card, 8.6%
-# of the surface touched). 009 IS the intermediate gapped row Card #5
-# and Card #8 both asked for, and it says the two gapped clusters are
-# joined by a density slope rather than a height one - but it is a
-# STREAMED row at a derived budget, so it does NOT bear on the cap
-# de-rating (an at-cap frame is a DENSE frame by construction, and the
-# dense end is where the factor is fitted). It bears on the SUPPLY
-# GATE's busy term instead - see the note in stream_supply_check.
-# ---------------------------------------------------------------------
-# W4 RE-DERIVATION (2026-08-02, same standing rule: worst DENSE
-# measured R x 1.12). The two-key dispatch split made the model ~3.5-4%
-# cheaper on the calibration streams, so every recomputed R rose by the
-# same arithmetic (silicon numerator untouched) and the factors move
-# with them or the cap silently loses its margin: a cap-full of
-# NEW-model work is MORE silicon work than a cap-full of old-model
-# work. flat: worst dense 1.062 (002) x 1.12 = 1.189 -> 1.19; gapped:
-# worst dense 1.302 (003) x 1.12 = 1.458 -> 1.46. Caps @25fps:
-# flat 835,088 -> 800,000 T; gapped 675,177 -> 652,055 T (-4.2% / -3.4%
-# of budget, which is the honest price of the model having been
-# over-priced on the dominant copy class).
 TMODEL_COMPOSITION_FACTOR = {
-    "flat":   1.19,   # worst DENSE re-keyed R 1.062 (002) x 1.12 [W4,
-                       #   2026-08-02]. Was 1.14 (Card #8 re-fit at the
-                       #   single-key model, worst 1.021), 1.00 before.
-    "gapped": 1.46,   # worst DENSE re-keyed R 1.302 (003) x 1.12 [W4,
-                       #   2026-08-02]. Was 1.41 (Card #8, worst 1.258),
-                       #   1.15/1.55 before that.
+    "flat":   1.19,   # worst dense-cluster measured R (silicon
+                       #   real-footage fixtures) x 1.12 margin
+    "gapped": 1.46,   # worst dense-cluster measured R (silicon
+                       #   real-footage fixtures) x 1.12 margin
 }
 
 
@@ -845,7 +550,7 @@ def usable_budget_t(fps, width=None, height=None):
 
 
 # ---------------------------------------------------------------------
-# STREAMING SUPPLY MODEL (SP15 3b silicon follow-up, Card #3 VSTR1).
+# STREAMING SUPPLY MODEL
 #
 # A ring-streamed file must be PRODUCIBLE, not just decodable: the SD
 # producer runs only in the pace slack a frame leaves, so the mean
@@ -854,271 +559,89 @@ def usable_budget_t(fps, width=None, height=None):
 #   busy_ms + audio_ms + demand_bytes / (wire * audio_factor)
 #                                                   <=  frame period
 #
-# The dual budget (bytes + decode-T) bounds PER-FRAME peaks only; it
-# happily emits every frame AT the decode-T cap, which leaves ~zero
-# pace slack - exactly what shipped in the first -VidLong 008/009
-# encodes (mean busy modeled 39.5 ms of a 40 ms period). On silicon
-# that collapses into a chronic gate-driven regime: frame time =
-# busy + demand/wire, observed on Card #3 as VSTR1's ~1023-tick
-# (65.5 ms) frames with an underrun every frame and RING min depth 1.
-# The T1 placeholder note ("ring sizing against real prefetch cost
-# may refine this") was never followed up - this check is that
-# follow-up, silicon-calibrated:
+# The dual budget (bytes + decode-T) bounds PER-FRAME peaks only and
+# happily emits every frame at the decode-T cap, leaving ~zero pace
+# slack; on silicon that collapses into a chronic gate-driven regime
+# (frame time = busy + demand/wire, with the ring pinned at minimum
+# depth and an underrun most frames). This check catches that before
+# encode:
 #
-#   - wire floor 1264 KB/s: Card #3 FILL row (full-ring prefill).
+#   - wire floor: silicon-measured full-ring prefill rate.
 #   - the ISR audio tax (audio_factor) applies to the pace-window
 #     reads as well - the producer's ini loops are CPU-driven.
-#   - busy uses TMODEL_SILICON_R, the MEASURED composed-player
-#     ratios from the fixture table above - NOT the margined
-#     COMPOSITION factor, which de-rates the encode budget and would
-#     reject silicon-healthy encodes here (feasibility wants the
-#     honest estimate, budget de-rating wants the margin) - and it is
-#     converted to TRUE decode wall time (Card #8; see the function).
+#   - busy uses TMODEL_SILICON_R, the MEASURED composed-player ratios
+#     from the fixture table below - NOT the margined COMPOSITION
+#     factor, which de-rates the encode budget and would reject
+#     silicon-healthy encodes here (feasibility wants the honest
+#     estimate, budget de-rating wants the margin) - converted to true
+#     decode wall time (see stream_supply_check).
 #   - the AUDIO phase is serial with both, so it is subtracted too.
 #
-# Calibration anchors:
-#   007 classic  utilization 1.00 -> HEALTHY [Card #3, 2026-07-25]
-#                (period 623.8/625 ticks, 0 underruns - at capacity,
-#                and it held). Under the Card #8 gate this file reads
-#                ~1.07-1.10; see the RESIDUAL note in the function.
-#   008 full     utilization 1.74 -> COLLAPSED [Card #3] (predicted
-#                equilibrium ~70 ms/frame vs 65.5 observed; depth 1)
-#   008 sb0.51   utilization 0.934 under the PRE-Card #8 gate ->
-#                ADMITTED, and silicon underran it 914/1286 and
-#                1141/1508 frames on two runs, min depth 1 sector,
-#                frames 656-658 ticks vs a 625-tick period [Card #8,
-#                2026-07-28]. THE FAILURE THAT DROVE THE CORRECTION -
-#                the corrected gate reads it 1.060 and refuses it.
-#   009 sb0.54   utilization 0.805 pre-Card #8 / 0.970 corrected ->
-#                ADMITTED both ways, and silicon is CLEAN (zero
-#                underruns, min ring depth 42 blocks) [Card #8]. The
-#                pair 008/009 brackets the true ceiling from both
-#                sides, which is what makes the correction testable.
-#   008 pal9h    auto-derived budget 0.43, gate 0.879 -> ADMITTED, and
-#                silicon is CLEAN [2026-07-30, nex 847A6D80]: 772 frames
-#                (4 passes), ZERO underruns, zero depth clips, min ring
-#                depth 2103 blocks (1.08 MB = 44 frames of demand),
-#                624.5 ticks/frame against 625, ERR=00. THE CORRECTION'S
-#                OWN TEST PASSED - this is the file the pre-correction
-#                gate admitted at 0.934 and silicon underran on 71-76%
-#                of frames with the ring pinned at depth 1. Not
-#                over-corrected either: with the MEASURED R the true
-#                mean is 0.899 (the 0.90 target exactly) and the true
-#                ceiling (util 1.00) sits at sb ~0.48, so 0.43 is the
-#                intended ~10% p95 margin below capacity.
-#   009 pal9h    gate 0.896 -> ADMITTED, silicon CLEAN again (zero
-#                underruns, zero depth clips, FRM 252/252, 623.6
-#                ticks/frame; min depth 39 blocks is the play-once EOF
-#                drain) - no regression against the Card #8 row it
-#                repeats [2026-07-30].
-# The infeasibility line is utilization > 1.0; STREAM_WARN_UTIL warns
-# above 0.90 (at-capacity encodes have no burst margin beyond the
-# ring). Files at or below STREAM_RESIDENT_POOL_B load RESIDENT on
-# the reference fresh-boot 2MB machine and skip the check (smaller
-# pools stream them too, disclosed on the leg card as underrun-prone).
+# Silicon-calibrated against streamed fixtures spanning a healthy
+# at-capacity file (zero underruns), a collapsed one (chronic
+# underrun, ring pinned at minimum depth) and boundary cases bracketing
+# the true ceiling from both sides. STREAM_WARN_UTIL warns above 0.90
+# (at-capacity encodes have no burst margin beyond the ring); the
+# infeasibility line is utilization > 1.0. Files at or below
+# STREAM_RESIDENT_POOL_B load RESIDENT on the reference fresh-boot 2MB
+# machine and skip the check (smaller pools stream them too, and are
+# underrun-prone there).
 # ---------------------------------------------------------------------
-# SPARSE-GAPPED CAVEAT (Card #5, re-measured Card #8): the gapped rows
-# below are the DENSE real-footage measurement. A SPARSE gapped stream
-# (006-class: most of the surface skipped every frame) runs R ~1.89
-# (1.92 on Card #5 - unmoved), so busy_ms below is ~1.5x optimistic for
-# such content. It is not a streaming hazard because
-# the two terms are anti-correlated - sparseness that inflates R also
-# collapses the byte demand the wire term prices: a 006-class streamed
-# clip totals busy 20.2 ms + SD 6.0 ms = 0.66 utilization on the
-# measured numbers. Disclosed, not machined around (cf. the SKIP16
-# under-price, task-2-final-settlement section 5.3).
-# 2026-07-30 EXTENDS THE CAVEAT TO EVERY CLASS AND PUTS NUMBERS ON IT:
-# the three STREAMED fixtures were measured directly (007 R 1.037, 008
-# 1.080, 009 1.402 vs the 1.02 / 1.01 / 1.26 below), so the table is
-# 1.6-10.1% optimistic on the sparse-because-budget-scaled files this
-# gate actually governs, not only on 006-class test cards. Still not a
-# hazard - all three ran silicon-clean and their TRUE utilizations are
-# 0.896 / 0.899 / 0.938 - and still disclosed rather than nudged: the
-# under-price is a DENSITY effect, and re-keying these entries on
-# density (instead of shape alone) is the honest fix, not a constant
-# bump that would over-price dense streams. See stream_supply_check.
-# W4 RE-KEY (2026-08-02): the table is now DENSITY-keyed inside each
-# shape class - the 2026-07-30 sitting's own finding ("R rises
-# monotonically as density falls, on both classes") made actionable,
-# replacing the shape-only key that was 1.6-10.1% optimistic on exactly
-# the budget-scaled streamed files the supply gate governs. Each class
-# carries (density, R) anchors, where density = mean modeled decode-T
-# utilization of the shape's usable budget (the quantity the gate has
-# in hand); silicon_r() interpolates linearly between anchors and
-# CLAMPS to the nearest measured point outside them - no extrapolation.
-#
-# ANCHOR PROVENANCE - every R below is the W4 ARITHMETIC RECOMPUTE of a
-# measured row (R_new = R_measured x model_T_old / model_T_new, the
-# silicon numerator untouched; op-walk of the pal9l staged bytes under
-# both coefficient sets, W4 report table). Dense anchors: Card #8
-# (2026-07-28); streamed anchors: the 2026-07-30 sitting rows
-# 007/008/009. The recompute preserves R x model_T on the calibration
-# streams EXACTLY, so the gate's predicted decode time is unchanged
-# where it was calibrated (selftest-pinned):
-#
-#   | anchor | fixture | R meas | T old/new ratio | R re-keyed | density |
-#   |--------|---------|--------|-----------------|------------|---------|
-#   | flat_256 dense    | 002 | 1.021 | 1.03977 | 1.062 | 0.574 |
-#   | flat_256 streamed | 007 | 1.037 | 1.03300 | 1.071 | 0.416 |
-#   | flat_320 dense    | 001 | 1.008 | 1.04321 | 1.052 | 0.919 |
-#   | flat_320 streamed | 008 | 1.080 | 1.02407 | 1.106 | 0.342 |
-#   | gapped dense      | 003 | 1.258 | 1.03504 | 1.302 | 0.950 |
-#   | gapped streamed   | 009 | 1.402 | 1.02588 | 1.438 | 0.433 |
-#
-# Densities are quoted against the W4 caps (usable_budget_t at the
-# re-derived composition factors below) - the exact quantity the gate
-# computes for its own streams.
-#
-# Not anchored, disclosed: 005 (flat_256 dense, re-keyed 1.057 at
-# density 0.520) reads ~1% under the interpolated line - the line is
-# the conservative side and 002 stays the binding dense row, exactly as
-# the old worst-in-class key had it. 004 (gapped dense, re-keyed 1.165
-# at 0.878) is likewise below the gapped dense anchor - the class still
-# takes the WORST dense row (003), unchanged convention since Card #8
-# refuted the height slope. 006 (gapped SPARSE test card, re-keyed
-# 1.967 at density 0.386) sits far above the streamed anchor at nearly
-# the same density: mean-T density does not separate a skip-dominated
-# test card from a budget-scaled real clip, so the sparse end CLAMPS at
-# the streamed anchor and the 006-class under-price stays a disclosed
-# caveat exactly as before (not a hazard - sparseness collapses the
-# byte demand the wire term prices; see the block above).
+# TMODEL_SILICON_R - measured composed-player decode ratio R, keyed by
+# shape class and DENSITY (mean modeled decode-T utilization of the
+# shape's usable budget). Each class holds (density, R) anchors from
+# silicon fixtures at that density; silicon_r() interpolates linearly
+# between anchors and clamps outside them - no extrapolation. Density
+# keying replaced an earlier shape-only key that measured 1.6-10.1%
+# optimistic on budget-scaled streamed content (R rises as density
+# falls, on every shape class). A sparse skip-dominated test card can
+# still read well above the streamed anchor at the same density (mean-T
+# density does not separate a skip-heavy test card from a budget-scaled
+# real clip) - disclosed, not a hazard: the same sparseness that
+# inflates R also collapses the byte demand the wire term prices.
 TMODEL_SILICON_R = {
     "flat_256": ((0.416, 1.071), (0.574, 1.062)),
     "flat_320": ((0.342, 1.106), (0.919, 1.052)),
     "gapped":   ((0.433, 1.438), (0.950, 1.302)),
 }
 
-SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
-                                                # ~22.1 T/byte as originally
-                                                # documented (research-decode-
-                                                # models.md); the SECOND NXBEN
-                                                # sitting's settled PF row (see
-                                                # TMODEL_COEFFS docstring)
-                                                # measured 10,609 T/512B block
-                                                # = 20.72 T/byte, ~7% cheaper -
-                                                # this constant is left at the
-                                                # OLDER, more conservative
-                                                # figure deliberately, and
-                                                # Card #8 EXONERATED it: see
-                                                # the wire-term note in
-                                                # stream_supply_check, which
-                                                # measures what the ring
-                                                # producer actually delivered
-                                                # on silicon (1163 B/ms) and
-                                                # finds wire x af = 1100 B/ms
-                                                # conservative by 5.5%, i.e.
-                                                # margin and not the defect
+SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon-measured full-ring
+                                                # prefill floor; held
+                                                # deliberately conservative
+                                                # against the ring
+                                                # producer's true
+                                                # throughput - see the
+                                                # wire-term note in
+                                                # stream_supply_check
 
 # Per-frame AUDIO-COPY cost, in T per PADDED audio byte - the timeline's
-# own AUDIO phase (vid_aud_copy's 1250 B seam-walked LDIR into the
-# double buffer, plus the hand-off), which is serial with DECODE and
-# with the pace window and is therefore time the SD producer does NOT
-# have. The streaming gate omitted it entirely.
-#
-# DERIVED (Card #8, 2026-07-28) from the AUDIO phase of all eight Group
-# A rows at a 1536 B padded stereo layout: 19.88 / 20.09 / 20.60 /
-# 20.09 / 20.10 / 20.38 / 21.55 + 21.61 (008, two runs) / 20.81
-# ticks/frame. Taking the WORST, 21.61 ticks x 1792 T = 38,725 T over
-# 1536 padded bytes = 25.2 T/B -> 25.0. Expressed per padded byte
-# because that is the quantity the gate is handed; the copy itself is
-# one double-buffer half per frame, so the term tracks the layout.
+# own AUDIO phase (vid_aud_copy's seam-walked LDIR into the double
+# buffer, plus the hand-off), which is serial with DECODE and with the
+# pace window and is therefore time the SD producer does NOT have.
+# Silicon-fitted at the worst measured AUDIO-phase row for a 1536 B
+# padded stereo layout. Expressed per padded byte because that is the
+# quantity the gate is handed; the copy itself is one double-buffer
+# half per frame, so the term tracks the layout.
 AUDIO_COPY_T_PER_B = 25.0
 
 # ---------------------------------------------------------------------
-# LOW-FPS PACE CONTENTION (SP17, silicon 2026-08-02). The supply gate
-# below is EXACTLY fps-invariant by construction - every term is a
-# per-frame quantity over a per-frame period, so halving the fps doubles
-# both and the utilisation does not move. Silicon says that invariance
-# is wrong at 12.5 fps, and the player says why.
+# AUD_PUMP_CALL_T - per-produced-block pump overhead the streamed ring's
+# low-fps pace contention term (trickle_frac) charges when the audio
+# feed is ROOM-LIMITED (src/video.asm's `.pace` spin has to pay a full
+# vid_aud_pump per produced 512 B block instead of a cheap poll).
 #
-# RESOLVED AT SOURCE 2026-08-02 - READ THIS FIRST. The player's ring is
-# now the WHOLE 8 KB audio bank (NXV_AUD_RING 2560 -> 8192) and the
-# declarable per-frame bound is pinned at 3072, so the room condition
-# below holds for EVERY legal file with 2032 bytes to spare and
-# trickle_frac is identically zero at every encodable fps. The term,
-# its constant and this whole derivation are KEPT - they are the record
-# of what the defect was and the guard that re-prices it should either
-# constant ever move again - but they no longer fire. What follows is
-# stated in the past tense where it describes the pre-fix player.
+# RESOLVED AT SOURCE: the player's ring is now the whole 8 KB audio
+# bank and the declarable per-frame bound is pinned well inside its
+# usable span, so the room condition holds for every legal file and
+# trickle_frac is identically zero at every encodable fps. The term and
+# this constant are kept only as the record of the pre-fix defect and
+# the guard that re-prices it should the ring size or bound ever move
+# again - they do not currently affect any encode.
 #
-# THE PLAYER MECHANISM (src/video.asm, the T10 circular audio feed).
-# The writer may never be more than the ring's usable span (ring minus
-# the writer guard) ahead of the ISR read pointer, and at the pace
-# release the ring already holds one whole frame of audio. So the NEXT
-# frame's feed fits the single post-present pump (the `.qnext`
-# `ld bc,$FFFF` call) if and only if 2 x aBytes <= AUD_RING-AUD_GUARD.
-# That span was 2544 bytes; above it the remainder was ROOM-LIMITED and
-# trickled from the `.pace` spin - which is the SD producer's only
-# window. Each spin iteration was then
-#     vid_pace_poll -> vid_aud_pump (full path) -> ONE vid_prod_step
-# instead of poll -> `ret z` -> produce, so every produced 512 B block
-# also paid a complete pump call: two room computations, vid_src_seek
-# (ring-page derive + MMU6 map + cursor spill), a ~12-15 B LDIR, the
-# budget/feedRem/write-pointer accounting and vid_rl_mod's 24-bit
-# modulo. Only the LDIR was charged, through AUDIO_COPY_T_PER_B; the
-# rest was unpriced. Worse, the chunk loop advanced at the READER's
-# rate (a byte per ~896 T against a 1300-1400 T loop pass), so the
-# owner's 12.5 fps silicon rows spent 24-26 ms/frame in there against
-# 1.41 ms at 25 fps - ~8x pure waste, with the SD producer stopped.
-#
-# AND THE TERM UNDER-READ IT BY ~4x, recorded here because
-# AUD_PUMP_CALL_T is the sort of constant that gets reused. pump_ms
-# priced the per-produced-BLOCK pump overhead (5.2-6.2 ms/frame on
-# 016/017/018) but not the reader-paced WAIT, which the AUDIO phase
-# measured at 21.8-23.4 ms/frame on top of the ~2.3 ms one-pass copy.
-# The error is one-directional and benign: the three clips re-derive
-# their budgets from the smaller figure (0.69/0.73/0.83 ->
-# 0.75/0.87/0.93), so they get back less picture than the player
-# actually recovered and run with margin rather than at the line.
-#
-#   trickle_frac = max(0, 2*aBytes - (AUD_RING-AUD_GUARD)) / aBytes
-#                                 at 2544 span    at 8176 span
-#   25 fps      aBytes 1250 -> 0.0000          0.0000
-#   23.976 fps  aBytes 1304 -> 0.0491          0.0000
-#   20 fps      aBytes 1562 -> 0.3714          0.0000
-#   12.5 fps    aBytes 2500 -> 0.9824          0.0000
-#   10.17 fps   (the floor, aBytes 3072)       0.0000
-#
-# THE SILICON THAT FOUND IT (three independent rows, 2026-08-02, all
-# 320x256 stereo streamed, all admitted by the uncorrected gate):
-#   053 boat 12.5      gate 0.890 -> shallow ring
-#   054 Caprica lt 12.5 gate 0.898 -> shallow ring
-#   061 Caprica bm 12.5 gate 0.904 -> 2.9% OVER RATE, 85/107 underruns,
-#                                      min ring depth 4 blocks
-# The 25 fps arms of the same sources are clean at the same demand per
-# second (048 boat 522.3 KB/s vs 053 518.0; 060 Caprica bm 612.4 vs 061
-# 616.9), and the emitted op census matches per second (048/053: 8373 vs
-# 8410 ops/s, 16.86 vs 16.79 model T per payload byte) - so the missing
-# time is not decode, and silicon_r is not the defect. It is supply, and
-# it appears only where the pace loop is contended.
-#
-# AUD_PUMP_CALL_T is the HAND COUNT of that pump path from
-# src/video.asm (~1660 T unarmed, ~1950 T with the armed audio tax - the
-# gate's other terms are true wall time, so the armed figure is the one
-# used), NOT a fit to the desired verdict. The three rows above bracket
-# it at 1470-2890 T (1470 puts 054 at the 0.95 warn line, 2224 puts 061
-# exactly on the 1.00 refusal line, and 052 - clean at 12.5, util 0.727,
-# budget 1.00 - tolerates up to 7809 T), and the hand count sits inside
-# that bracket. MEASUREMENT ROW: a DEBUG timeline pair on the already
-# staged 048 (25 fps) and 053 (12.5 fps) - same source, same shape, same
-# demand per second - gives (PACE ticks / blocks produced) at each rate;
-# the difference divided by trickle_frac is this constant directly.
-# Card #8 already holds the 25 fps side (1163-1166 B/ms).
-#
-# RESIDUAL, DISCLOSED (superseded by the fix, kept for the record). At
-# 1950 T the corrected gate read the shipped 061 at 0.988, not the
-# 1.029 it measured - ~4% still optimistic on the worst row (2224 T
-# would put it exactly on the refusal line). That residual is moot on
-# the whole-bank ring: the term is zero, and what those three rows now
-# get back is the 7.4-8.9% of their frame the contention was charging.
-#
-# SCOPE. Streamed ring transport ONLY. The DIRECT path never runs the
-# producer (SD-to-surface, no ring) and has its own gate, and row 057
-# (320x256 @12.5 --direct) is silicon-clean - so direct_supply_check and
-# SD_WIRE_BYTES_PER_MS (co-fitted to DIRECT_TRANSPORT_FACTOR) are left
-# alone. At 25 fps the term was already EXACTLY zero, so every silicon
-# anchor the gate is calibrated on (007/008/009, Card #3, Card #8) was
-# untouched by the term and is untouched by its removal.
+# Hand-counted from src/video.asm's pump path (armed audio tax
+# included, since the gate's other terms are true wall time) and
+# bracketed against silicon rows that isolated the low-fps contention
+# on otherwise-identical 25 fps / 12.5 fps streams of the same source.
 # ---------------------------------------------------------------------
 AUD_PUMP_CALL_T = 1950.0
 
@@ -1128,35 +651,28 @@ STREAM_TARGET_UTIL = 0.90                       # suggestion target
 
 
 # ---------------------------------------------------------------------
-# AUTO-BUDGET (SP17 T1) - the encoder derives --stream-budget itself
+# AUTO-BUDGET - the encoder derives --stream-budget itself
 # ---------------------------------------------------------------------
-# WHY. --stream-budget is a SUPPLY CEILING, not a quality dial. SP17 E2
-# measured the whole ladder on one clip (Sintel classic, only the budget
-# varied): 0.85 -> util 1.00 / PSNR 25.27 / 42% of frames budget-bound;
-# 0.70 -> 0.89 / 23.83 / 66%; 0.55 -> 0.74 / 22.10 / 88%; 0.40 -> 0.56 /
-# 20.11 / 92%. Every metric moves the same way - a lower budget buys
-# nothing, it only starves the picture. There is exactly one right
-# answer per clip (the highest budget the wire can carry), no author can
-# guess it, and the default 1.0 is refused outright on ordinary content.
-# So the encoder searches for it, by default, and the author sets a
-# budget only to override that search.
+# WHY. --stream-budget is a SUPPLY CEILING, not a quality dial: a lower
+# budget only starves the picture (measured across a budget ladder on
+# one clip - utilization, PSNR and bound-frame fraction all move the
+# same way). There is exactly one right answer per clip (the highest
+# budget the wire can carry), no author can guess it, and the default
+# 1.0 is refused outright on ordinary content. So the encoder searches
+# for it by default; the author sets a budget only to override that
+# search.
 #
-# TARGET POINT (AUTO_BUDGET_TARGET_UTIL). "Highest accepted" is the
-# WRONG answer: the gate is a whole-clip MEAN (see its own limitation
-# block below), and SP17 E6 measured what a mean at the ceiling actually
-# contains - fixture 007 at mean utilization 0.981 has p95 1.071, max
-# 1.502, 138/250 frames instantaneously over budget in runs up to 19
-# consecutive frames (0.76 s). Owner silicon calls that band-and-judder,
-# not "fine, the ring absorbs it". The margin is derived from that same
-# row: p95/mean = 1.071/0.981 = 1.09, so holding the p95 frame at or
-# under 1.00 wants a mean at or under 1/1.09 = 0.917. 0.90 is the next
-# round figure below it, and it is already this module's own
-# STREAM_TARGET_UTIL - the point the supply gate's suggested_budget
-# aims at - so the automatic search and the gate's own advice now name
-# the same operating point instead of two different ones, and an
-# auto-derived encode never trips STREAM_WARN_UTIL either. Overridable
-# per encode (videnc --budget-target) for anyone re-deriving it against
-# fresh silicon.
+# TARGET POINT (AUTO_BUDGET_TARGET_UTIL). "Highest accepted" is wrong:
+# the gate is a whole-clip MEAN (see its own limitation block below),
+# and a mean at the ceiling still lets individual frames run well over
+# budget - measured p95/mean = 1.09 on a representative fixture, with
+# owner-silicon-confirmed band-and-judder at the ceiling. Holding the
+# p95 frame at or under 1.00 wants a mean at or under 1/1.09 = 0.917;
+# 0.90 is the round figure below it, and it is already this module's
+# own STREAM_TARGET_UTIL, so the automatic search and the gate's own
+# advice name the same operating point, and an auto-derived encode
+# never trips STREAM_WARN_UTIL either. Overridable per encode (videnc
+# --budget-target) for anyone re-deriving it against fresh silicon.
 AUTO_BUDGET_TARGET_UTIL = STREAM_TARGET_UTIL
 
 # Accept band. A probe landing in [target - TOL, target] stops the
@@ -1168,11 +684,10 @@ AUTO_BUDGET_TOL = 0.02
 # Cap on encode passes per clip, INCLUDING the first (budget 1.00) probe
 # and the pass whose payloads are ultimately written - the accepted
 # probe's stream is reused verbatim, so a converged search costs exactly
-# this many encode_clip passes and not one more. Measured (SP17 T1): 2
+# this many encode_clip passes and not one more. Measured range: 2
 # passes when the answer is the ceiling or the clip is content-limited,
-# 5 on the hardest case tried (Sintel classic at full 10 s - the E2
-# ladder clip - probing 1.00/0.85/0.65/0.72/0.71). 6 leaves one pass of
-# headroom without ever letting a kit BUILD run away.
+# up to 5 on the hardest case tried; 6 leaves one pass of headroom
+# without ever letting a kit BUILD run away.
 AUTO_BUDGET_MAX_PROBES = 6
 
 # Floor for a derived budget - matches stream_supply_check's own
@@ -1186,10 +701,9 @@ AUTO_BUDGET_MIN = 0.05
 # comment in auto_stream_budget for why a single step is not evidence.
 # Above the point where the per-frame caps actually bind, utilization is
 # set by the CONTENT and a budget cut moves it barely at all; below that
-# point the E2 ladder measures a slope near 0.7-1.0 (0.85/0.70 ->
-# 1.00/0.89 is 0.73). Anything under 0.10 is the flat region, where a
-# further cut is pure picture loss for no supply relief - the search
-# stops there rather than paying it.
+# point the measured ladder slope is near 0.7-1.0. Anything under 0.10
+# is the flat region, where a further cut is pure picture loss for no
+# supply relief - the search stops there rather than paying it.
 AUTO_BUDGET_MIN_SLOPE = 0.10
 
 # Largest single UNBRACKETED downward step. The secant's slope early in
@@ -1208,89 +722,27 @@ AUTO_BUDGET_STEP = 0.10
 # ---------------------------------------------------------------------
 # DELTA-STARVATION DIAGNOSTICS (report-only; thresholds RETIRED)
 # ---------------------------------------------------------------------
-# WHAT IS MEASURED, AND WHY IT IS WORTH MEASURING. The supply gate above
-# is a whole-clip MEAN over the transport and is blind to picture
-# damage: fixture 007 passed it at utilization 1.00 with every transport
-# counter clean on silicon (zero underruns, zero depth clips, ERR=00)
-# while the picture carried sustained horizontal banding. The artifact
-# is in the WIRE bytes, not the transport - when a frame's deltas do not
-# fit the per-frame caps, encode_delta spends the budget on whole
-# paint-order tiles (SP17: the finest ladder rung the byte spend allows,
-# coarsest TILE_BAND = 4 rows in mode-0) and the deferred tiles read as
-# strips of stale content. starvation_stats()
+# The supply gate above is a whole-clip MEAN over the transport and is
+# blind to picture damage: a clip can pass it with a clean transport
+# (zero underruns, zero depth clips) while still carrying sustained
+# banding, because when a frame's deltas do not fit the per-frame caps,
+# encode_delta spends the budget on whole paint-order tiles and the
+# deferred tiles read as stale strips of content. starvation_stats()
 # counts those budget-bound frames, their worst concentrated run, and
-# the delta-frame PSNR tail. Those measurements are sound and are
-# REPORTED on every streaming encode.
+# the delta-frame PSNR tail - sound measurements, reported on every
+# streaming encode.
 #
-# WHAT WAS WITHDRAWN. Owner ruling 2026-07-28 (second ruling, same day):
-# the WARNING this section used to emit is gone from the author-facing
-# output path. encode() now prints measurements and no verdict. The two
-# threshold constants and starvation_warns() below are RETIRED /
-# UNCALIBRATED - kept in place, unreferenced by encode(), so the
-# re-derivation work has them to hand. DO NOT re-enable a warning on
-# these numbers without new ground truth.
-#
-# WHY (do not re-derive the same wrong metric). The trigger fired on
-# budget-bound frame FRACTION, and that metric is refuted by its own
-# anchor:
-#
-#   008 (BBB full 320x256, sb 0.51)   250/252 = 99.2% bound, p10 25.98
-#                                     - owner passed it VISUALLY CLEAN
-#                                       on silicon
-#   007 (Sintel classic, sb 0.85,      91/250 = 36.4% bound, p10 24.68
-#        --dither 0.25)                - visibly BANDED on silicon
-#
-# A metric on which the CLEAN fixture scores nearly three times the
-# BANDED one separates nothing, in either direction. 0.08 was fitted to
-# a two-orders-of-magnitude gap that does not exist: the 008 row was
-# first transcribed as 2/252 = 0.8%, and a re-encode on 008's own
-# build-tests recipe reproduces util 0.93 and p10 25.98 EXACTLY while
-# reading 250/252 - so "0.8%" was "99.2%" with digits lost, not a
-# different operating point. The remaining fitted ground truth is void
-# as well: the owner reports banding across his own content, so the
-# 007/008 pair is not the banded/clean population pair the thresholds
-# were derived against.
-#
-# WHAT TO MEASURE INSTEAD. Deferral COUNT does not predict visibility -
-# deferral SEVERITY does. Every frame of a heavy clip can be
-# budget-bound while each defers only a band or two (invisible), and a
-# single frame that defers most of its bands is ruined on its own. The
-# likely axis is HOW MUCH of a bound frame went unpainted (deferred
-# bands, or deferred bytes as a fraction of that frame's full delta
-# demand) and how long any one band is held stale - not how many frames
-# touched the cap. Re-derivation needs a fresh silicon-graded ground
-# truth set; the per-frame records starvation_stats() already walks are
-# the right raw material to build the severity measure from.
-#
-# MEASURED POINTS, retained for re-derivation (007 = Sintel fight,
-# classic 256x192@25 sb 0.85; budget-bound = per_frame binding
-# "budget", over all emitted frames):
-#
-#   007 --dither 1.00   114/250 = 45.6%   p10 21.94  worst banding
-#   007 --dither 0.50   106/250 = 42.4%   p10 23.37  SEVERELY banded on silicon
-#   007 --dither 0.25    91/250 = 36.4%   p10 24.68  still visibly banded on silicon
-#   007 --dither 0.00    54/250 = 21.6%   p10 25.88  (not silicon-viewed)
-#   008 (util 0.93)     250/252 = 99.2%   p10 25.98  visually CLEAN on silicon
-#
-# (The 007 diagnosis also quoted 123/250 for the shipped d0.50 file:
-# that is the WIRE-TRACE count of frames within 512 B of the byte
-# ceiling, a looser proxy. These rows count the encoder's own binding
-# label, which is exact - a frame is budget-bound iff the full delta did
-# not fit and the region schedule ran.)
-#
-# RETIRED trigger, whole-clip. Was: warn above this bound fraction.
-# Refuted by the 008 row above - not calibrated, not referenced by
-# encode(), kept only as the starting point for re-derivation.
+# The two threshold constants below and starvation_warns() are RETIRED
+# and UNCALIBRATED: the bound-frame-fraction warning they drove was
+# withdrawn (owner ruling) once the metric was shown not to separate a
+# visually clean fixture from a visibly banded one. Kept in place,
+# unreferenced by encode(), only so re-derivation has a starting point
+# - do not re-enable a warning on these numbers without new ground
+# truth. The likely correct axis is deferral SEVERITY (how much of a
+# bound frame went unpainted, and how long a band is held stale), not
+# deferral COUNT; starvation_stats()'s per-frame records are the raw
+# material for building that measure.
 STARVE_WARN_BOUND_FRAC = 0.08
-
-# RETIRED trigger, concentrated burst. Was: warn when the worst sliding
-# window over the emitted frame sequence exceeded this fraction, to
-# catch short severe runs the whole-clip mean dilutes (15 consecutive
-# bound frames in a 250-frame clip is 6.0%, but at 25 fps it is 0.6 s of
-# unbroken banding). The window IDEA survives the retirement - a
-# severity measure will still need a concentration term - but the 0.60
-# bar was derived from the same refuted bound-fraction axis and against
-# the mis-transcribed 008 anchor, so it is UNCALIBRATED too.
 STARVE_WARN_BURST_FRAC = 0.60
 
 # LIVE measurement parameter (not a threshold): the sliding-window
@@ -1309,8 +761,7 @@ def silicon_r(width, height, density=None):
     """Measured composed-player decode ratio for this shape cluster at
     this DENSITY (mean modeled decode-T utilization of the shape's
     usable budget): R = silicon T/frame / (model T/frame / audio_factor),
-    so R x model_T is af x the true silicon decode T (see the AF
-    CONVENTION note in the composition-factor block - a caller wanting
+    so R x model_T is af x the true silicon decode T (a caller wanting
     true decode time divides by af again).
 
     density None fails safe to the SPARSE-end anchor (the largest R in
@@ -1319,12 +770,10 @@ def silicon_r(width, height, density=None):
     dense-by-construction frame (keyframe chunks) pass density=1.0 and
     clamp to the dense anchor.
 
-    W4 DENSITY KEY (2026-08-02): linear between the class's measured
-    anchors, clamped outside them - see the TMODEL_SILICON_R block for
-    the anchors, their provenance and the disclosed non-anchored rows.
-    NO HEIGHT INTERPOLATION on gapped shapes, unchanged since Card #8
-    refuted the height slope (h=192/h=144 swapped order): every gapped
-    height reads the one gapped class, worst dense row anchored."""
+    Linear between the class's measured anchors, clamped outside them -
+    see the TMODEL_SILICON_R block for the anchors and provenance. No
+    height interpolation on gapped shapes: every gapped height reads
+    the one gapped class, worst dense row anchored."""
     if not is_gapped(width, height):
         key = "flat_320" if int(width) == 320 else "flat_256"
     else:
@@ -1342,17 +791,17 @@ def silicon_r(width, height, density=None):
 
 def pace_trickle_frac(audio_real_bytes):
     """Fraction of a frame's audio feed that is ROOM-LIMITED and must
-    trickle from the player's `.pace` spin (see the LOW-FPS PACE
-    CONTENTION block). 0.0 whenever 2 x aBytes fits the ring's usable
-    span - which, since the ring became the whole audio bank, is EVERY
-    encodable fps: AUD_FRAME_MAX 3072 caps 2 x aBytes at 6144 against a
-    span of 8176. The function is kept as the live guard on that
-    inequality rather than hard-wired to zero, so that moving either
-    constant re-prices the gate instead of silently under-charging it.
+    trickle from the player's `.pace` spin (see AUD_PUMP_CALL_T). 0.0
+    whenever 2 x aBytes fits the ring's usable span - which, since the
+    ring became the whole audio bank, is EVERY encodable fps:
+    AUD_FRAME_MAX 3072 caps 2 x aBytes at 6144 against a span of 8176.
+    The function is kept as the live guard on that inequality rather
+    than hard-wired to zero, so that moving either constant re-prices
+    the gate instead of silently under-charging it.
 
-    NOTE the span is AUD_RING-AUD_GUARD, not AUD_FRAME_MAX: the two
-    were the same number until 2026-08-02 and this used the bound by
-    coincidence. The player's room test is against the ring."""
+    NOTE the span is AUD_RING-AUD_GUARD, not AUD_FRAME_MAX - the two
+    happen to be equal today. The player's room test is against the
+    ring."""
     a = float(audio_real_bytes or 0)
     if a <= 0.0:
         return 0.0
@@ -1372,109 +821,48 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     from the audio-demand-invariant solve). audio_real_bytes: the
     encode's REAL (pre-pad) audio bytes/frame - the quantity the
     player's ring room test uses; None (legacy callers) prices no pace
-    contention, which since 2026-08-02 is correct at EVERY encodable
-    fps (the ring is the whole audio bank - see pace_trickle_frac)."""
+    contention, which is correct at every encodable fps now that the
+    ring is the whole audio bank (see pace_trickle_frac).
+
+    busy_ms recovers TRUE silicon decode wall time via silicon_r()/af
+    (R already carries its own /af - see the silicon_r docstring); the
+    naive mean_t * silicon_r / clock double-counts af and under-prices
+    busy. wire_eff (SD_WIRE_BYTES_PER_MS * af) is deliberately
+    conservative against the ring producer's measured silicon
+    throughput - the margin covers the per-block open/re-arm/token-wait
+    transport glue the direct path prices explicitly via
+    DIRECT_TRANSPORT_FACTOR, not a second audio tax.
+
+    KNOWN OPTIMISM: busy is under-priced on sparse/derived-budget
+    streams, because R rises as density falls (see TMODEL_SILICON_R) -
+    a stream at its auto-derived budget is sparser than the at-cap rows
+    the table anchors on. Silicon-clean in every case measured so far
+    (the margin consumed sits inside AUTO_BUDGET_TARGET_UTIL's p95
+    headroom), disclosed rather than corrected: a density-aware R is
+    the honest fix, a shape-keyed nudge would over-price dense
+    streams."""
     af = TMODEL_COEFFS["audio_factor"]
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
     wire_eff = SD_WIRE_BYTES_PER_MS * af
-    # W4 density re-key: the gate knows its stream's density exactly -
-    # mean modeled T over the shape's usable budget - so the busy term
-    # reads the density-keyed R instead of the shape-only worst
+    # density-keyed R: the gate knows its stream's density exactly, so
+    # busy reads the density-keyed R rather than the shape-only worst
     density = mean_t / usable_budget_t(fps, width, height)
-    # THE BUSY TERM IS THE TRUE SILICON DECODE TIME (Card #8 correction,
-    # 2026-07-28). silicon_r() carries R's own /af (see the AF
-    # CONVENTION note in the composition-factor block), so R x mean_t is
-    # af x the decode time silicon actually spends; dividing by af here
-    # undoes that and leaves wall-clock decode. This term used to be
-    # mean_t * silicon_r / clock, defended as a deliberate second
-    # placement of af co-fitted with the wire floor - and it was
-    # measurably wrong on Card #8: for 008 it priced busy at 11.50 ms
-    # against a MEASURED DECODE phase of 16.18 ms (two runs, 252.8 and
-    # 252.4 ticks/frame). Two independent errors stacked: silicon_r was
-    # still fitted against the pre-SP17 T model (~15%), and the af
-    # division was never undone (~15%). The gate therefore admitted 008
-    # at utilization 0.934 - and silicon underran it on 71.1% and 75.7%
-    # of frames across two runs, ring pinned at a MINIMUM DEPTH OF ONE
-    # SECTOR throughout, frames stretched to 656-658 ticks (42.0 ms)
-    # against a 625-tick period. Both errors are fixed here (R re-fitted
-    # from Card #8's own rows; af undone).
-    #
-    # THE WIRE TERM IS NOT THE DEFECT, and Card #8 says so with a
-    # measurement rather than an argument. In 008's chronic regime the
-    # producer never idles, so its whole pace window IS production time:
-    # 28,461 B/frame over a PACE phase of 381.4 ticks (run 1) and 383.0
-    # ticks (run 2) = 1166 and 1161 B/ms delivered, agreeing to 0.4%.
-    # wire_eff below is 1100 B/ms - 5.5% CONSERVATIVE against what the
-    # ring producer actually achieved. SD_WIRE_BYTES_PER_MS stays where
-    # it is (and so, therefore, does DIRECT_TRANSPORT_FACTOR, which is
-    # co-fitted to it): the af on the wire is doing the work of a
-    # transport de-rating - the same per-block open, token-wait and
-    # re-arm glue the direct path measured explicitly as 1.20 - not a
-    # second audio tax, and it is carrying real margin.
-    #
-    # VALIDATION. With both corrections the gate predicts 008's frame at
-    # busy 15.18 + audio 1.37 + wire 25.87 = 42.42 ms against 42.0/42.1
-    # ms measured on two runs (0.9%), and 009 at 38.80 ms - inside the
-    # period, which is what 009 measured (zero underruns, min ring depth
-    # 42 blocks). The gate refuses 008 at 1.060 and admits 009 at 0.970.
-    #
-    # RESIDUAL SETTLED (2026-07-30 silicon, DEBUG nex 847A6D80, pal9h).
-    # Card #8 left this open: the Card #3 007 anchor was silicon-healthy
-    # at 623.8/625 ticks and admitted at util ~1.00 by the old gate, read
-    # ~1.07-1.10 under the correction, and its own DECODE phase had never
-    # been transcribed - so a low class R (0.78 rather than 0.834) was
-    # the available reconciliation. A VSTR0 row WITH its DECODE phase now
-    # exists (0000E0DE over 250 frames = 230.3 ticks = 14.74 ms/frame),
-    # and it REFUTES the low-R reading: 007-class content measures R
-    # 1.037 - at, and slightly ABOVE, the flat class value of 1.02, never
-    # anywhere near 0.78. So the old anchor's health at gate-util 1.00 is
-    # not explained by a cheap decode, and the correction stands on the
-    # measurement rather than on the conservative direction. What the old
-    # anchor actually was is an at-capacity operating point whose
-    # TRANSPORT counters were clean while the picture banded (SP17 E6),
-    # which is precisely the regime this gate now declines to admit.
-    # 007 remains the documented at-capacity stress fixture (owner
-    # ruling): on this sitting it still shows heavy horizontal banding
-    # with a completely clean transport (ERR=00, zero underruns, zero
-    # depth clips) at its auto-derived budget - and the walk says why,
-    # 67% of its frames are pinned at the BYTE cap (payload 21,086 B of
-    # a 21,086 B cap) rather than at the decode-T cap. That is content
-    # out-demanding the wire, not a supply defect.
-    #
-    # THE BUSY TERM IS OPTIMISTIC ON SPARSE STREAMS, QUANTIFIED. The
-    # three streamed fixtures measured on 2026-07-30 read R 1.037 (007),
-    # 1.080 (008) and 1.402 (009) against the class table's 1.02 / 1.01 /
-    # 1.26, because a stream at a derived budget is SPARSER than the
-    # at-cap rows the table was fitted on and R rises as density falls
-    # (see the composition-factor block's four-point sparse table). Busy
-    # is therefore under-priced by 1.6% / 6.5% / 10.1% on exactly the
-    # class of file this gate governs, and the true mean utilizations are
-    # 0.896 / 0.899 / 0.938 where the gate reports 0.890 / 0.879 / 0.896.
-    # All three are silicon-CLEAN, so this is margin consumed, not a
-    # failure - but it is the AUTO_BUDGET_TARGET_UTIL margin (0.90 held
-    # for p95 excursions) that is being consumed. The honest fix is a
-    # DENSITY-AWARE R rather than a nudge to the shape-keyed table (a
-    # nudge would over-price dense streams, which measure 1.25 at cap),
-    # so it is disclosed here and left to owner ratification.
     busy_ms = mean_t * silicon_r(width, height, density) / af / clock
-    # the AUDIO phase: serial with decode and with the pace window, so
-    # it is period the producer never gets (see AUDIO_COPY_T_PER_B)
+    # AUDIO phase: serial with decode and the pace window, so it is
+    # period the producer never gets (see AUDIO_COPY_T_PER_B)
     audio_ms = audio_pad_bytes * AUDIO_COPY_T_PER_B / clock
     sd_ms = mean_demand_bytes / wire_eff
-    # PACE CONTENTION (see the LOW-FPS PACE CONTENTION block): when the
-    # audio feed is room-limited the producer pays one full vid_aud_pump
-    # per produced 512 B block over trickle_frac of the frame. EXACTLY
-    # zero at every encodable fps since the player's ring became the
-    # whole audio bank, so this line cannot move ANY encode by so much
-    # as a rounding tick - it is the guard, not a live charge.
+    # pace contention (see AUD_PUMP_CALL_T): exactly zero at every
+    # encodable fps since the ring became the whole audio bank - a
+    # guard, not a live charge
     pump_ms = (pace_trickle_frac(audio_real_bytes)
                * (mean_demand_bytes / 512.0) * AUD_PUMP_CALL_T / clock)
     util = (busy_ms + audio_ms + sd_ms + pump_ms) / period_ms
     # scaling the operating point scales busy and the payload part of
     # demand; the audio pad and its copy cost are invariant. pump_ms is
-    # proportional to the produced blocks, so it scales too - which is
-    # what makes a contended clip RE-BUDGET rather than merely fail.
+    # proportional to produced blocks, so it scales too - which is what
+    # makes a contended clip RE-BUDGET rather than merely fail
     audio_sd_ms = audio_pad_bytes / wire_eff
     payload_sd_ms = sd_ms - audio_sd_ms
     fixed = audio_sd_ms + audio_ms
@@ -1486,8 +874,6 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
                 period_ms=period_ms, audio_sd_ms=audio_sd_ms,
                 demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
                 suggested_budget=max(0.05, min(1.0, suggested)))
-
-
 # ---------------------------------------------------------------------
 # LIMITATION (documented, not implemented - review closure Important 3;
 # future work, SP15 3c/T4 candidate): stream_supply_check() above is a
@@ -1531,133 +917,30 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 
 
 # ---------------------------------------------------------------------
-# DIRECT_TRANSPORT_FACTOR - the direct-serve TRANSPORT GLUE term, and
-# the 3c gate's one omission. SILICON-SETTLED on Card #5 (2026-07-26,
-# core 3.02.04), the first hardware run of the direct path:
+# DIRECT_TRANSPORT_FACTOR - direct-serve transport overhead beyond the
+# bare wire rate (block-open/re-arm/pad/copy-body costs scale with
+# BLOCKS, not picture content, so one per-byte factor plus one fixed
+# per-frame overhead covers every direct-serve frame). Silicon-fitted
+# from whole-frame playback timing (two-point solve isolating the
+# per-byte rate and the per-frame fixed term) against the current
+# player's direct transport; re-derive both constants together whenever
+# vid_ds_xfer/vid_ds_pad/vid_ds_copy_body's op costs change - they are
+# co-fitted to SD_WIRE_BYTES_PER_MS * audio_factor.
 #
-#   | leg   | FRM  | ticks/frame | ms/frame | B/frame | delivered   |
-#   |-------|------|-------------|----------|---------|-------------|
-#   | VDIR  |  250 |     663.37  |  42.456  | 38,932  | 916.99 B/ms |
-#   | VDIRL | 1016 |     663.60  |  42.470  | 38,932  | 916.69 B/ms |
-#
-# The 3c gate priced the frame at SD_WIRE_BYTES_PER_MS * audio_factor =
-# 1100.19 B/ms and stated that "decode-side overhead beyond the wire is
-# second-order ... covered by the same conservative wire floor". IT IS
-# NOT. Measured / modeled = 1100.19 / 917 = 1.200 on BOTH legs
-# independently (agreement 0.03%), i.e. the direct transport delivers
-# only 83% of the bare wire rate. What the missing 20% is:
-#   - vid_ds_blkopen once per 512 B block (76 per frame here): previous
-#     block's 2 CRC bytes drained off the wire, section-bound + pass-
-#     remain accounting, filemap run bookkeeping, and the BOUNDED DATA
-#     TOKEN WAIT - the card's own inter-block gap inside an open CMD18
-#     window, which no per-byte rate can express;
-#   - vid_ds_xfer re-arms inir every <= 256 B (144 arms/frame) with a
-#     min/clip chain and two 16-bit sbc pairs per arm;
-#   - section padding (793 B/frame here) is discarded through
-#     vid_ds_pad's byte loop at ~37 T/B, not through inir's 21 T/B;
-#   - vid_ds_copy_body's dest-normalize + chunk walk per segment, and
-#     the always-slow op parse (KSTART/COPY/KFLIP, +PAL on cuts).
-# All of it scales with BLOCKS, not with picture content, which is why
-# one factor on the byte demand reproduces both legs: the recalibrated
-# model predicts 010's ordinary (no-palette) frame at 42.44 ms against
-# 42.456 measured (0.03%), and its scene-start frame at 43.00 ms - the
-# gate's own worst-frame criterion. Same silicon-anchoring discipline
-# as the streaming
-# gate carries - and like it, the factor is CO-FITTED to the wire floor
-# above: do not move SD_WIRE_BYTES_PER_MS without re-deriving this.
-#
-# GOVERNANCE (SP17 T8, 2026-08-01) - RESOLVED 2026-08-02, see the
-# re-fit below. The player's direct transport was REBUILT in the T8
-# wave (vid_ds_xfer inir arms -> computed-entry unrolled-ini run;
-# vid_ds_pad byte loop -> unrolled in a,(n) run - REVERTED to the byte
-# loop 2026-08-02, commit 01466ec, after the silicon ERR=FD regression;
-# blkopen reload slim). The W2 arithmetic predicted factor 0.93-0.99,
-# but 1.20 was silicon-settled against the OLD transport, so the
-# default was HELD at 1.20 until the hardware round's NXBD re-run
-# measured the true new rate. That re-run has now happened.
-#
-# RE-FITTED FROM FRESH SILICON (2026-08-02, owner hardware, DEBUG nex
-# 6404FC6E post-01466ec, 010.VID at pal9m, DeZog per-row and full-table
-# dumps in exact agreement). NXBD rows, raster lines (T = lines * 1824
-# over 128 blocks; instrument ~167 T/block inside the absolutes):
-#
-#   | row | new  | 07-30 | T/blk new | T/blk old | meaning            |
-#   |-----|------|-------|-----------|-----------|--------------------|
-#   | DTA |  731 |  731  |  10,417   |  10,417   | wire ref, unchanged|
-#   | DTI |  756 |  757  |  10,773   |  10,787   | blkopen slim ~-14 T|
-#   | DTB | 1670 | 1672  |  23,798   |  23,826   | pad revert confirmed|
-#   | DTC |  816 |  961  |  11,628   |  13,694   | xfer swap: -2,066 T|
-#   | DTD |  894 | 1023  |  12,740   |  14,578   | 4x128B arm shape   |
-#   | TOK | 640/640 (2.000 polls/blk, ~126 T token wait - unchanged)  |
-#
-# The unrolled-ini xfer landed: whole-block transport 22.4 T/B against
-# 26.4 pre-W2 (DTC absolutes less instrument). DTB-DTI is POSITIVE
-# again (+25.4 T/B pad excess, matching July-30 within the one-line
-# quantum) - the pad revert on silicon, as expected. DTD-DTC rose
-# 883 -> 1112 T (the computed-entry per-call price on short arms);
-# irrelevant to shipping, real chunks are block-sized.
-#
-# THE SHIPPING NUMBERS COME FROM WHOLE-FRAME PLAYBACK, same sitting,
-# same build (Card #8 discipline: fit what the transport DELIVERED).
-# Two direct probes at --direct-transport-factor 0.96:
-#   056  256x160@25 stereo:  TOT unwraps 638.79 ticks/frame = 40.882
-#        ms for the 43,008 B ordinary section (2.2% OVER period);
-#   057  320x256@12.5 stereo: TOT exactly 1250 ticks/frame, PACE 1366
-#        ticks/74 frames -> busy 78.819 ms for the 84,992 B section.
-# Two-point solve (direct sections are 512-aligned, so per-block and
-# per-byte fold into one rate; what remains is per-FRAME):
-#   rate r = 41,984 / (78.819 - 40.882) = 1106.7 B/ms armed
-#   fixed F = 40.882 - 43,008/r        = 2.021 ms/frame
-# r sits 0.6% ABOVE wire*af (1100.19 B/ms): the T8 xfer win took the
-# per-byte transport to the bare wire floor. The old FLAT factor can no
-# longer express the truth: the 25 fps refusal line needs an effective
-# 1.047 (056 measured 1.046) while 12.5 fps needs 1.020 (057 measured
-# 1.020) - NO single flat factor both refuses 256x160@25 (silicon: 2.2%
-# slow) and admits 320x256@12.5 (silicon: at rate, 0.7 ms true slack).
-# The fps-dependence IS a fixed per-frame term, so the gate now carries
-# TWO constants: a per-byte factor and a per-frame overhead. F's
-# attribution: the section-pad byte-loop discard (~1.0-1.1 ms at the
-# reverted ~46 T/B), the audio-feed trickle bookkeeping, op parse
-# (KSTART/COPY16/KFLIP, +PAL on cuts) and per-frame session glue.
-# Bench cross-check: DTC absolute (22.39 T/B unarmed) puts the armed
-# block rate at 1063 B/ms, 4% under the playback r - the bench's tight
-# loop hits every data-token wait cold where playback's between-block
-# work gives the card staging time; playback is the authority.
-#
-# SHIPPED VALUES AND MARGIN. Factor 1.00 (+0.6% over the measured
-# 0.994) and overhead 2.2 ms (+8.9% over the measured 2.021) - a
-# combined ~1.1% margin at the 25 fps refusal line, ~0.8% at 12.5 fps.
-# Admissions against this sitting's silicon:
-#   256x160@25 st  refused at util 1.044 (silicon: 2.2% over - correct)
-#   320x256@12.5 st admitted at 0.999    (silicon: at rate + slack)
-#   256x153@25 st  admitted at 0.997, predicted worst 39.49 ms (the
-#                  re-encoded 056 acceptance probe - must play at rate)
-#   256x133@25 st  (010/011 anchors) 0.881, predicted 34.4 ms - clean,
-#                  as this sitting's PICK 10/11 exact-TOT rows show.
-# Direct at-rate envelope under this gate (util 1.00 / 0.90):
-#   25   fps  256x153 / 320x123   (0.90: 256x135 / 320x108)
-#   12.5 fps  full screen both widths (0.90: 320x228)
-# The expert override videnc --direct-transport-factor still exists and
-# overrides the BYTE factor only - the frame overhead is measured
-# physics, not policy, and always applies. Do not move either constant
-# without a fresh whole-frame silicon pair; both are co-fitted to
-# SD_WIRE_BYTES_PER_MS * audio_factor exactly as before.
+# The expert override videnc --direct-transport-factor scales only the
+# per-byte factor; the frame overhead is measured physics and always
+# applies.
+# ---------------------------------------------------------------------
 DIRECT_TRANSPORT_FACTOR = 1.00
 
-# The per-frame direct transport overhead (ms) - the fixed term of the
-# 2026-08-02 two-point whole-frame fit above (measured 2.021, shipped
-# 2.2 with the margin argued there). Applies to every direct-serve
-# frame regardless of size or fps; the transport_factor expert override
-# does NOT scale it.
+# Per-frame direct transport overhead (ms), the fixed term of the same
+# whole-frame fit. Applies to every direct-serve frame regardless of
+# size or fps; the transport_factor override does NOT scale it.
 DIRECT_FRAME_OVERHEAD_MS = 2.2
 
-# Policy line (OWNER-FACING, Card #5 TIGHTEN ruling, 2026-07-26): at
-# 1.20 the shipped 010 fixture (classic-wide 256x144 @25 stereo) scored
-# 1.075 - it would have played ~6% slow, which is what silicon does.
-# The owner ruled STRICT: direct-serve is on-rate or it is refused,
-# full stop. There is NO accept-slow override - a utilization > 1.0
-# ALWAYS raises SystemExit; see _encode_direct. (010/011 were
-# re-encoded inside the envelope rather than shipped slow.)
+# Policy (owner ruling): direct-serve is on-rate or refused, full stop
+# - there is no accept-slow override. A utilization > 1.0 always raises
+# SystemExit; see _encode_direct.
 
 
 def direct_supply_check(worst_frame_bytes, fps, transport_factor=None):
@@ -1795,15 +1078,13 @@ def _fill_t(L):
     re-selected - a 300 B fill is one DMA chunk plus a 60 B CPU tail,
     NOT two DMA setups. The model must predict what the player DOES.
 
-    run_dma_min sits at the derived break-even
-    (849.4/(17.17-5.11) = 70.43 -> 71), so the gate costs nothing against
-    the unconstrained optimum. There is deliberately NO min(cpu, dma)
-    floor: above its threshold the player is COMMITTED to the DMA kernel,
-    so a min() would model a cheaper kernel than the player can select -
-    optimism is the exact failure mode this model exists to avoid. If a
-    future re-fit made DMA dearer above the threshold, the honest answer
-    is to re-derive the threshold (and the .inc constant with it), not to
-    let the model quietly price a kernel the player never runs."""
+    There is deliberately NO min(cpu, dma) floor: above run_dma_min the
+    player is COMMITTED to the DMA kernel, so a min() would model a
+    cheaper kernel than the player can select - optimism is the exact
+    failure mode this model exists to avoid. If a future re-fit made DMA
+    dearer above the threshold, the honest answer is to re-derive the
+    threshold (and the .inc constant with it), not to let the model
+    quietly price a kernel the player never runs."""
     tc = TMODEL_COEFFS
     thr = tc["run_dma_min"]
     if L < thr:
@@ -1843,49 +1124,29 @@ def _copy_t(L, rate):
     add setups, so this stays the optimistic-but-close side of the real
     chunking.)
 
-    Mirrors _fill_t's chunk-and-gate shape. copy_dma_min sits at the
-    MEASURED break-even (81.4 B, NXBC C073/C074 - the kernel-only
-    73.08 derivation missed the +128 T/op fast-handler -> slow-body
-    path difference, carried as copy_dma_path_t and charged once per
-    DMA-path op below), and there is deliberately no min(cpu, dma)
-    floor - see _fill_t for why (above its threshold the player is
-    committed to DMA; a floor would price a kernel the player never
-    runs).
-
-    Two disclosed edges of the measured threshold, both faithful to
-    what the player DOES: (1) at exactly copy_dma_min the DMA path can
-    price a few T above pure LDI (81 sits a fraction below the modeled
-    81.9 break-even - the measured placement, inside the bench row
-    resolution); (2) a sub-threshold REMAINDER after full 240 B chunks
-    is priced as LDI even where the bare DMA kernel would be cheaper,
-    because the player's single threshold constant governs the
+    Mirrors _fill_t's chunk-and-gate shape - see copy_dma_min's own
+    comment in TMODEL_COEFFS for its measured break-even, and _fill_t
+    for why there is deliberately no min(cpu, dma) floor. The path-entry
+    cost (copy_dma_path_t vs the slow-parser entry for >=256B ops) is a
+    disclosed edge of the same threshold: a sub-threshold remainder
+    after full 240B chunks is priced as LDI even where DMA would be
+    cheaper, because the player's single threshold constant governs the
     in-slow-body re-select too - the model follows the player, not the
-    unconstrained optimum.
-
-    Restores the settlement term the T model dropped: task-2 measured
-    DMA copy at 1091.8 T/chunk + 5.31 T/B (final settlement, CD1..CD4 +
-    KF rows) but the model priced EVERY copy as LDI, over-pricing a 256B
-    copy 5171 T vs ~2451 T on silicon - on the dominant op class."""
+    unconstrained optimum."""
     tc = TMODEL_COEFFS
     if L < tc["copy_dma_min"]:
         return L * rate
     chunk = tc["copy_dma_chunk"]
     full, rem = divmod(L, chunk)
-    # OP-CLASS ENTRY COST (2026-08-03, REDERIVATION.md 6.4). An
-    # 8-BIT-operand COPY reaches the DMA kernel by bailing out of the
-    # fast LDI handler into the slow chunked body, and pays the
-    # measured path difference copy_dma_path_t for doing so. A
-    # 16-BIT-operand COPY (L >= 256) has NO fast handler to bail out
-    # of - it enters the slow parser directly - so it never pays that
-    # difference. What it does pay is the slow parser's own wider
-    # entry, measured as the SKIP16-vs-SKIP8 envelope delta
-    # (t_skip16 - t_skip = 69.1 T). Charging path_t there instead was
-    # deliberate "conservative double-cover", and the K256 silicon row
-    # measures exactly what that cost: modelled +2.91% against
-    # silicon, +0.80% with this term. Independent support: the same
-    # construction reads a RUN16 envelope of 386.3 T off F256 and a
-    # COPY16 envelope of 383.6 T off K256 - two different op classes
-    # landing 0.7% apart on the shared slow-parser entry.
+    # OP-CLASS ENTRY COST. An 8-BIT-operand COPY reaches the DMA kernel
+    # by bailing out of the fast LDI handler into the slow chunked
+    # body, and pays the measured path difference copy_dma_path_t for
+    # doing so. A 16-BIT-operand COPY (L >= 256) has NO fast handler to
+    # bail out of - it enters the slow parser directly - so it never
+    # pays that difference; instead it pays the slow parser's own wider
+    # entry, measured as the SKIP16-vs-SKIP8 envelope delta (t_skip16 -
+    # t_skip). Silicon-confirmed against a 256B copy fixture (+0.80%
+    # against measured, vs +2.91% charging path_t there instead).
     dma = (tc["copy_dma_path_t"] if L <= 255
            else tc["t_skip16"] - tc["t_skip"])
     dma += full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
@@ -2035,118 +1296,77 @@ STALE_LM_DB = 15.0         # whole-frame staleness bar, 4x4 local-mean dB
 DRIFT_LM_T, DRIFT_LM_T_REFRACT = 1.5, 3.0   # held-palette lm drift bar
 
 # ---------------------------------------------------------------------
-# KEYFRAME CADENCE (SP17 W4 item 2, 2026-08-01). Measured (palette-
-# lifecycle wave, owner clips): a forced keyframe every 5 s on the 001
-# pan is FREE in bytes (-0.1%) and buys +0.39 dB 4x4 local-mean; a 2 s
-# cadence on 002 costs +9.3% bytes for +0.65 dB overall / +1.02 dB
-# last-tenth - real but not free. The default is the measured free
-# point; 0 disables. The cadence engages only when no NATURAL keyframe
-# (cut / dissolve / staleness / drift) has occurred within the window,
-# and never when the remaining clip cannot hold a nominal refresh
-# window (a prophylactic refresh must not buy tail-of-clip
-# degradation).
+# KEYFRAME CADENCE. A forced keyframe on a stale-content clip is cheap
+# in bytes and buys real quality; on a busier clip it costs real bytes
+# for a smaller quality gain - measured across owner clips. The default
+# (5 s) is the measured free point; 0 disables. The cadence engages
+# only when no NATURAL keyframe (cut / dissolve / staleness / drift)
+# has occurred within the window, and never when the remaining clip
+# cannot hold a nominal refresh window (a prophylactic refresh must not
+# buy tail-of-clip degradation).
 #
-# ROLLING REFRESH (SP17 W5, owner-ruled 2026-08-02). The W4 cadence
-# emitted a full KEYFRAME SPAN, and owner silicon read it as "a paused
-# frame in the middle" of every ~10 s clip (048/049 boat, 050/051
-# church, 040/041 car chase) - bench rows EXACT rate, ZERO ring
-# underruns, so the pause is not a transport fault: a span's paced
-# repaint targets the HIDDEN surface, so the visible picture HOLDS for
-# the whole span (2-8 frame periods) until KFLIP. T2's peak pacing
-# removed the hitch; the hold was the residual visible cost.
+# ROLLING REFRESH. A full KEYFRAME SPAN reads on silicon as a paused
+# frame in the middle of the clip: a span's paced repaint targets the
+# HIDDEN surface, so the visible picture HOLDS for the whole span (2-8
+# frame periods) until KFLIP - a real, measured cost even with the
+# transport clean (exact rate, zero ring underruns).
 #
 # The cadence path therefore no longer emits a keyframe at all. It
 # schedules forced-clean coverage of the whole surface across N
 # consecutive ORDINARY delta frames (wire format untouched - the
 # refresh is plain RUN/COPY/SKIP traffic): each roll frame force-cleans
 # the next paint-order slice of pending positions to the FRESH
-# non-hysteresis quantize under the HELD palette (the drift probe's own
-# decode, so it costs no extra quantize) - which removes exactly what
-# the cadence keyframe removed short of a palette change: accumulated
-# paint drift and hysteresis index stickiness. Palette renewal remains
-# the business of the REAL triggers - cut/dissolve/staleness/drift
-# still emit true keyframe spans, because a genuinely broken screen
-# needs the atomic repaint.
+# non-hysteresis quantize under the HELD palette, which removes exactly
+# what the cadence keyframe removed short of a palette change:
+# accumulated paint drift and hysteresis index stickiness. Palette
+# renewal remains the business of the REAL triggers - cut/dissolve/
+# staleness/drift still emit true keyframe spans, because a genuinely
+# broken screen needs the atomic repaint.
 #
 # BUDGET HONESTY: the forced slice is substituted into the frame's
-# target and boosted to PHASE_FLOOR importance, then priced by the
-# SAME per-frame byte/decode-T caps and band scheduler as all other
-# delta traffic - no side budget, and the supply gate sees the real
-# emitted bytes. Positions the caps could not afford CARRY OVER to the
-# next frame, so contention lengthens the window (degrades the refresh
-# PERIOD); it never degrades the rate and never holds a frame.
+# target and boosted to PHASE_FLOOR importance, then priced by the SAME
+# per-frame byte/decode-T caps and band scheduler as all other delta
+# traffic - no side budget. Positions the caps could not afford CARRY
+# OVER to the next frame, so contention lengthens the refresh window;
+# it never degrades the rate and never holds a frame.
 #
 # KF_ROLL_SHARE sizes the per-frame quota CEILING: the slice's
 # worst-case literal bytes may claim at most this fraction of the
-# frame's own delta byte cap, so the nominal N = ceil(raw /
-# (KF_ROLL_SHARE * cap_bytes)) and a lower budget stretches the window
-# by construction. 0.5 is a stated margin, not a fitted value: at least
-# half of every roll frame's byte cap is always left to the normal
-# motion updates, and at the owner pair's operating points (048 boat
-# budget 0.42, 050 church 0.57, 320x256) it lands N at 8 and 6 frames -
-# the same order as the span the roll replaces (4 chunk frames), spread
-# thin instead of held.
+# frame's own delta byte cap. 0.5 is a stated margin, not a fitted
+# value - at least half of every roll frame's byte cap is always left
+# to normal motion updates.
 #
-# TWO GUARDS (corpus sweep .superpowers/sdd/sp17-corpus/ROLL-SWEEP.md,
-# verdict GO WITH CAVEAT; 90 matched pairs, 43/46 scored windows
-# improve, 150 held frames removed, but 33/46 still lose motion
-# coverage at the cadence position by up to -21%):
+# The roll is STRICTLY OPPORTUNISTIC: each armed frame is scheduled
+# WITHOUT the roll first, and its quota is min(KF_ROLL_SHARE ceiling,
+# cap_bytes - motion bytes) - a saturated frame emits the motion-only
+# schedule byte for byte and pending positions carry over until slack
+# appears, so the roll can only spend bytes the motion schedule did not
+# want. Discharge is on "the frame's own paint mask actually touched
+# this position", not exact-value equality (an equality check could
+# strand a position forever if content moved between scheduling and
+# emission, disabling all future refresh for the clip - fixed).
 #
-# (a) STRICTLY OPPORTUNISTIC. The roll may consume only byte budget the
-#     MOTION schedule did not want. Each armed frame is first scheduled
-#     WITHOUT the roll; the frame's quota is then min(KF_ROLL_SHARE
-#     ceiling, cap_bytes - motion bytes). A saturated frame leaves
-#     nothing, so it emits the motion-only schedule byte for byte and
-#     the pending positions carry over until slack appears. The sweep
-#     is unambiguous about why: all three corpus rows the roll made
-#     WORSE sit at byte-utilisation p95 0.998-0.999 (bunny sound
-#     classic, Pam Am Airport classic, jellyfish sound 16:9) - there the
-#     roll can only DISPLACE motion - while every large winner refreshes
-#     out of genuine slack (church byte-util p95 0.339-0.501, From car 2
-#     classic mean 0.472, 12 Monkeys classic mean 0.438), where the
-#     KF_ROLL_SHARE ceiling still binds and the behaviour is unchanged.
-#     Whole-clip quality cost of spending nothing on the saturated rows
-#     is within +-0.05 dB everywhere.
-#
-# (b) DISCHARGE ON "WAS UPDATED", NOT EXACT EQUALITY. The first
-#     implementation retired a forced position only when the surface
-#     later held the exact value it had been assigned. A position that
-#     WAS repainted, but to a different value because the content moved
-#     on between scheduling and emission, stayed pending forever - and
-#     `roll_pending is None` gates re-arming, so one stranded position
-#     disabled every future refresh for the rest of the clip. The sweep
-#     found it on 6 of 47 rows (fixture 009 stranded 12 positions for
-#     124 frames against a nominal N of 7). A slice is now discharged
-#     in the SAME frame, on the frame's own paint mask (plus positions
-#     that already held their fresh target when the slice was cut).
-#
-# NOT DONE, on the sweep's explicit guidance: the cadence mechanism is
-# not dropped (corpus clips are 6-19 s - too short to show what a
-# refresh prevents over a long title), the keyframe is not restored (it
-# is worse on 43 of 46 windows), and KF_ROLL_SHARE is not tuned (it sets
-# how thinly the tax is spread, not whether it is levied).
+# Silicon-swept against real footage: a net win on most clips, though a
+# refresh window can cost visible motion coverage on an already-
+# saturated frame - both effects are priced into the same per-frame
+# cap, not tuned away.
 # ---------------------------------------------------------------------
 KF_CADENCE_S_DEFAULT = 5.0
 KF_ROLL_SHARE = 0.5
 
 # ---------------------------------------------------------------------
-# KEYFRAME-SPAN PEAK PACING (SP17 W4 item T2, charter E5). Keyframe
-# chunks were sized by decode-T alone, so the byte peak was identical
-# (47,616 B) at every budget rung: 35.8-43.3 ms of SD wire ALONE
-# against a 40 ms frame period - every keyframe event a guaranteed
-# hitch, and blocks_max == hdr_cap_blocks on every fixture. The fix
-# bounds the PER-FRAME SUPPLY TIME of every span chunk frame (decode
-# busy + audio copy + SD wire for audio pad and 512-padded payload, the
-# supply gate's own prices) to this fraction of the frame period, which
-# splits oversized spans across more frames instead of hitching. 0.95
-# is the stated margin: 5% under the 1.00 infeasibility line, on wire
-# terms that are themselves conservative (Card #8 measured the
-# 1264 KB/s x af floor 5.5% under what the producer delivered).
-# Chosen over the charter's other two options because (a) scaling spans
-# with the budget multiplies span length on low-budget encodes that
-# never had a wire problem, and (b) a bare block-count cap ignores the
-# decode side of the same frame; bounding the modeled supply time
-# bounds both with one stated number.
+# KEYFRAME-SPAN PEAK PACING. Keyframe chunks were once sized by decode-T
+# alone, so the byte peak was identical at every budget rung - a
+# guaranteed hitch, the SD wire alone approaching a full frame period.
+# The fix bounds the PER-FRAME SUPPLY TIME of every span chunk frame
+# (decode busy + audio copy + SD wire, the supply gate's own prices) to
+# this fraction of the frame period, splitting oversized spans across
+# more frames instead of hitching. 0.95 is the stated margin: 5% under
+# the 1.00 infeasibility line, on wire terms that are themselves
+# conservative. Chosen over scaling spans with the budget (multiplies
+# span length on low-budget encodes that never had a wire problem) or a
+# bare block-count cap (ignores the decode side); bounding the modeled
+# supply time bounds both with one stated number.
 # ---------------------------------------------------------------------
 KF_SPAN_PEAK_UTIL = 0.95
 AGE_GAIN = 0.5             # (2) importance aging: a persistently-wrong, un-
@@ -2168,97 +1388,37 @@ PHASE_FLOOR = 3.0 * THRESHOLDS[-1] ** 2 + 1.0   # just above the coarsest mask
 # regional lag not hard-edged stale patchwork. Tunable granularity.
 TILE_BAND = 4
 
-# ADAPTIVE TILE LADDER (SP17, owner-approved on a hardware A/B 2026-07-30).
-# TILE_BAND alone is too coarse for concentrated motion: at 1024 B a bound
-# frame buys whole 4-row/4-column bands, so a small fast-moving region drags
-# in its whole band and the byte budget buys far less picture than it could.
-# A FIXED fine tile is NOT the fix - it fragments the op stream, decode-T
-# saturates before the byte budget does, and the encode strands wire it was
-# allowed to spend (measured: fixed t64/t32 strand 18%/38% of fixture 008's
-# byte budget, and 008 is the silicon-validated control).
+# ADAPTIVE TILE LADDER. TILE_BAND alone is too coarse for concentrated
+# motion: a bound frame buys whole 4-row/4-column bands, so a small
+# fast-moving region drags in its whole band and the byte budget buys
+# far less picture than it could. A FIXED fine tile is not the fix
+# either - it fragments the op stream, decode-T saturates before the
+# byte budget does, and the encode strands wire it was allowed to
+# spend.
 #
-# The rule that IS the fix is SPEND-PRESERVING. Per budget-bound frame, walk
-# the ladder fine -> coarse and keep the FINEST rung that still spends at
-# least TILE_SPEND_FRAC of the best (in practice the coarsest = today's)
-# rung's bytes. (READ THE LADDER RE-CUT BLOCK BELOW BEFORE ACTING ON THIS
-# ONE: spend preservation is necessary and was never sufficient - the rungs
-# and the rest of the admissibility test were both re-cut on 2026-07-30.) Finer granularity is taken only when it is FREE in wire
-# terms, so the decode-T inversion cannot bite: a rung that saturates
-# decode-T while leaving bytes unspent fails the spend test and is rejected.
-#
-# THRESHOLD PROVENANCE - the band is narrow, do not re-tune by eye.
-# Re-verified under the shipped OFFSET dither default:
-#   1.00  WRONG - an exact-tie requirement kicks the ladder off the finest
-#         rung on 56 of 132 bound frames on a starved Sintel leg
-#         (-0.53 dB per-pixel, -0.87 dB 4x4).
-#   0.99  SHIPPED - ties or beats 0.98 on all three legs and restores
-#         decode-T headroom.
-#   0.98  acceptable, no leg prefers it.
-#   0.90  OUT OF BAND under offset - strands 3% of fixture 008's wire
-#         (benign under the opt-in mixture dither, not under the default).
-TILE_SPEND_FRAC = 0.99
-
-# ---------------------------------------------------------------------
-# LADDER RE-CUT (2026-07-30, owner silicon caught the first cut)
-# ---------------------------------------------------------------------
-# The ladder above shipped as the literal (32, 64, 128, 256, 1024) with
-# spend-preservation as its only admissibility test. Owner silicon on the
-# very next sitting called fixture 007 (classic 256x192, MODE-0) "lots of
-# displacement and tearing" with a completely clean transport - worse than
-# the encoder it replaced - while the owner's own mode-1 clips improved.
-# Two faults, one root cause, both measured (scratchpad ladder-regression):
-#
-# 1. SUB-LINE RUNGS FRAGMENT THE PICTURE. A rung finer than one paint-order
-#    LINE cuts a scanline (mode-0) or a column (mode-1) into pieces that are
-#    scheduled independently, so one row can carry up to eight differently-
-#    AGED fragments side by side. That is not the "coherent regional lag"
-#    this scheduler exists to produce - it reads as displacement/tearing on
-#    moving edges. 007 took rung 32 (an EIGHTH of a row) on 184 of 184 bound
-#    frames; the owner-approved A/B ran on 320x256 mode-1 where the rule
-#    settled on 256 = exactly one column on 222 of 247 frames, so the
-#    sub-line region was approved by extrapolation and never eyeballed.
-#    Op-stream profile of the shipped 007: mean write patch 96.4 px -> 59.9,
-#    write ops/frame 195 -> 234, on 25% FEWER pixels painted per frame.
-#
-# 2. SUB-LINE RUNGS ALSO COST THE BYTE SUPPLY. Fragmenting runs multiplies
-#    per-op dispatch, so decode-T explodes: on 007 at a pinned 0.64 the
-#    shipped rule spent 1.37x the coarse rung's decode T to buy 1.7% more
-#    bytes. The supply gate charges that time (busy_ms), so measured
-#    utilization went 0.892 -> 0.985 at the SAME budget and the auto-budget
-#    search - which production always runs and the A/B deliberately pinned
-#    away - backed 007 off 0.64 to 0.47: 19% of the wire GONE, budget-bound
-#    frames 72.8% -> 93.6%. Spend preservation guards BYTES and is silent
-#    on T, and T is what sets the derived budget. That was the hole.
-#
-# THE RE-CUT, therefore, is two rules, not one:
-#
+# CURRENT RULE, two parts, both required (silicon-approved):
 #   (a) THE LADDER WALKS WHOLE LINES. Rungs are TILE_LADDER_QUARTERS
-#       quarter-bands - and a quarter band IS one paint-order line on every
-#       shape (default_tile_px = TILE_BAND lines), so the finest rung is one
-#       whole row (mode-0) / column (mode-1) and no rung can ever split one.
-#       This is a granularity floor in DISPLAY terms, which is the term the
-#       artifact is in; it also keeps exactly the rung the hardware A/B
-#       actually exercised and approved.
-#   (b) THE RUNG MUST BE FREE, AND MUST PAY. A finer rung is admissible only
-#       if it spends AT LEAST the coarsest rung's bytes, costs NO MORE than
-#       the coarsest rung's modelled SUPPLY - the supply gate's OWN busy +
-#       wire arithmetic, see supply_price() - and leaves NO MORE residual
-#       err2 on the surface. Finer tiling is then taken only where it is
-#       free in the currency that sets the budget AND actually improves the
-#       picture, so the derived budget cannot move, the byte supply cannot
-#       be traded away behind the author's back, and a rung cannot win on
-#       granularity alone.
+#       quarter-bands, and a quarter band IS one paint-order line on
+#       every shape, so the finest rung is one whole row (mode-0) /
+#       column (mode-1) and no rung can ever split one - a sub-line
+#       rung reads as displacement/tearing on moving edges.
+#   (b) THE RUNG MUST BE FREE, AND MUST PAY. A finer rung is
+#       admissible only if it spends AT LEAST the coarsest rung's
+#       bytes, costs NO MORE than the coarsest rung's modelled SUPPLY
+#       (the supply gate's own busy + wire arithmetic, see
+#       supply_price()), and leaves NO MORE residual err2 on the
+#       surface. Finer tiling is then taken only where it is free in
+#       the currency that sets the budget AND actually improves the
+#       picture, so the derived budget cannot move and a rung cannot
+#       win on granularity alone.
 #
-# TILE_SUPPLY_SLACK is the tolerance on (b) and its DEFAULT is 0.0.
-# Measured margin below the auto-budget target at the pal9i operating
-# points: 007 0.008, 009 0.005, 008 0.001. Fixture 008 - the silicon
-# control that underran once already - has one thousandth of utilization
-# in hand, so any positive slack is a coin flip on whether its budget
-# survives, and a budget step costs ~0.0105 of utilization to buy back.
-# By default, therefore, "free" means free. The SUPPLY-SLACK KNOB block
-# below is how an author opts a single title out of that default; rule
-# (a), the whole-line floor, is NOT reachable from the knob or from
-# anywhere else.
+# Per budget-bound frame, walk the ladder fine -> coarse and keep the
+# finest rung passing both rules. TILE_SPEND_FRAC (0.99) is the spend
+# tolerance on rule (b)'s byte side, silicon-verified against a narrow
+# band around 1.0. TILE_SUPPLY_SLACK is the tolerance on rule (b)'s
+# supply side, DEFAULT 0.0 ("free" means free) - see the SUPPLY-SLACK
+# KNOB block below for the opt-in per-clip override.
+TILE_SPEND_FRAC = 0.99
 TILE_LADDER_QUARTERS = (1, 2, 4)
 TILE_SUPPLY_SLACK = 0.0
 
@@ -2266,41 +1426,30 @@ TILE_SUPPLY_SLACK = 0.0
 # ---------------------------------------------------------------------
 # THE SUPPLY-SLACK KNOB (--tile-slack) - OPT-IN, DEFAULT OFF
 # ---------------------------------------------------------------------
-# WHY IT EXISTS. With rule (b) at TILE_SUPPLY_SLACK = 0.0 the ladder
-# buys almost nothing: it engages on 21 of 007's 183 bound frames, 8 of
-# 247 on 008, 12 of 249 on 009, and is a near no-op on the owner's own
-# footage. But the behaviour the owner SAW AND APPROVED on hardware was
-# the pal9j ladder on his own 320-wide clips, where it settled on the
-# ONE-COLUMN rung (256 B) on 222 of 247 frames. That gain was real, and
-# it was bought with SUPPLY - roughly one auto-budget step (util 0.880
-# -> 0.891 at a pinned budget on the boat pan). Owner ruling
-# (2026-07-30): ship the gain behind an opt-in knob, because the right
-# value is CONTENT-DEPENDENT - one-column granularity helped his 320-wide
-# pans and going finer wrecked the 256-wide fixture - which makes it a
-# per-clip setting, not a global default.
+# WHY IT EXISTS. At TILE_SUPPLY_SLACK = 0.0 the ladder engages rarely -
+# a near no-op on most footage. Real content can still benefit from
+# finer granularity bought with a small amount of supply margin
+# (silicon-confirmed real gain on wide pans), but the right value is
+# CONTENT-DEPENDENT - a granularity that helps a wide pan can hurt a
+# narrower fixture - so the gain ships behind an opt-in per-clip knob
+# rather than a global default.
 #
 # WHAT IT RELAXES, AND WHAT IT CANNOT REACH. The knob moves rule (b)
-# ONLY. Rule (a), the whole-line floor, is not a tunable: sub-line rungs
-# are what owner silicon read as displacement and tearing, and they are
-# also what widened the write span from 58% to 70% of the surface on a
-# LIVE patched surface against a free-running frame clock. The ladder is
-# built by tile_ladder_for() from TILE_LADDER_QUARTERS alone - the knob
-# is not an input to it - and encode_delta re-asserts the floor on the
-# rungs it is handed, at every knob value. See t19 in the selftest.
+# ONLY. Rule (a), the whole-line floor, is not a tunable - encode_delta
+# re-asserts it on the rungs it is handed, at every knob value (see t19
+# in the selftest).
 #
 # PARAMETERISATION: FRACTIONS OF THE AUTO-BUDGET UTILISATION HEADROOM.
 # The raw quantity rule (b) compares is a per-frame RELATIVE supply
 # allowance (ceil_ms = coarse_ms * (1 + s)), and a raw s is meaningless
-# to an author - it is a number in a unit nothing else in this encoder
-# is quoted in. What an author can reason about is the margin the
+# to an author. What an author can reason about is the margin the
 # encoder is holding back on his behalf: the auto-budget search targets
-# AUTO_BUDGET_TARGET_UTIL (0.90) and the gate refuses above
-# STREAM_CEILING_UTIL (1.00), so there is exactly one pot of utilisation
-# the ladder could spend, and the knob is quoted as a FRACTION OF THAT
-# POT. --tile-slack 0.15 means "let the ladder spend up to 15% of the
-# margin between the target and the refusal line". 0.0 spends none of
-# it (today's behaviour, and the default); 1.0 spends all of it and the
-# knob cannot express more.
+# AUTO_BUDGET_TARGET_UTIL and the gate refuses above STREAM_CEILING_UTIL,
+# so there is exactly one pot of utilisation the ladder could spend, and
+# the knob is quoted as a FRACTION OF THAT POT. --tile-slack 0.15 means
+# "let the ladder spend up to 15% of the margin between the target and
+# the refusal line". 0.0 spends none of it (the default); 1.0 spends
+# all of it and the knob cannot express more.
 #
 # THE CAP, AND WHERE IT COMES FROM. frame_supply_ms() IS the supply
 # gate's own per-frame busy + wire arithmetic, so the sum of it over the
@@ -2319,21 +1468,21 @@ TILE_SUPPLY_SLACK = 0.0
 #     HEADROOM = (STREAM_CEILING_UTIL - target) / target = 0.1111...
 #
 # i.e. k = TILE_SLACK_MAX = 1.0 spends the entire margin the target
-# holds back and NOT ONE PART MORE. That is the cap, and it is the
-# reason the knob is expressed in headroom units rather than in raw
-# relative supply: the cap is then 1.0 by construction and stays correct
-# if the target is ever re-derived (or overridden per encode with
-# --budget-target, which tile_slack_rel honours).
+# holds back and NOT ONE PART MORE - the reason the knob is expressed
+# in headroom units rather than in raw relative supply: the cap is then
+# 1.0 by construction and stays correct if the target is ever
+# re-derived (or overridden per encode with --budget-target, which
+# tile_slack_rel honours).
 #
-# The bound is loose in three independent directions - only BOUND frames
-# reach the ladder at all, only frames where a finer rung both wins and
-# actually costs more pay any of it, and with the default automatic
-# search the budget is re-derived so the realised utilisation comes back
-# to the target anyway (the knob's cost then shows up as BYTES, which is
-# what the report line makes visible). What the cap has to survive is
-# the OTHER case: an explicit --stream-budget, where nothing re-derives
-# and the utilisation simply rises. There the existing supply gate is
-# the backstop and it is unchanged - over 1.00 it REFUSES, it does not
+# The bound is loose in three independent directions - only BOUND
+# frames reach the ladder at all, only frames where a finer rung both
+# wins and actually costs more pay any of it, and with the default
+# automatic search the budget is re-derived so the realised utilisation
+# comes back to the target anyway (the knob's cost then shows up as
+# BYTES, which is what the report line makes visible). What the cap has
+# to survive is an explicit --stream-budget, where nothing re-derives
+# and the utilisation simply rises - there the existing supply gate is
+# the backstop and it is unchanged: over 1.00 it REFUSES, it does not
 # emit a file that will not play. The knob can make an encode be
 # refused; it cannot make an unplayable file be written.
 STREAM_CEILING_UTIL = 1.0        # the gate's own refusal line
@@ -2462,27 +1611,23 @@ def emit_delta_ops(target_flat, gcls, gstarts, glens):
 
 
 # ---------------------------------------------------------------------
-# Optimal gap-merge (SP15 encoder-optimization wave, encoder-only,
-# decoded-output-identical). Per-frame greedy pass over the emitted op
-# sequence that (a) bridges interior skips shorter than K* by re-copying
-# the unchanged surface bytes, (b) absorbs sub-threshold runs into a
-# contiguous copy, (c) drops the trailing skip. K* and the run-absorb
-# threshold derive from TMODEL_COEFFS at encode time, so the merge
-# self-retunes whenever the coefficients change (e.g. the Task-2 re-bench).
-# The research op-economy tooling proved this is byte-identical to the
-# un-merged decode (scratchpad/research-op-economy.md section 3,
-# scratchpad/opeconomy/analyze.py optimal_merge); the selftest asserts it
-# by decoding both streams. Empirically the greedy pass approaches the
-# DP upper bound the research measured (64-84% T cut at D=920).
+# Optimal gap-merge (encoder-only, decoded-output-identical). Per-frame
+# greedy pass over the emitted op sequence that (a) bridges interior
+# skips shorter than K* by re-copying the unchanged surface bytes, (b)
+# absorbs sub-threshold runs into a contiguous copy, (c) drops the
+# trailing skip. K* and the run-absorb threshold derive from
+# TMODEL_COEFFS at encode time, so the merge self-retunes whenever the
+# coefficients change. Proved byte-identical to the un-merged decode;
+# the selftest asserts it by decoding both streams. Empirically the
+# greedy pass approaches the DP upper bound measured against it.
 # ---------------------------------------------------------------------
 
 # THE SUPPLY EXCHANGE RATE - what one WIRE byte is worth in decode
-# T-states at the clip-level supply gate. Measured in
-# sp17-corpus/DECODE-COST.md section 3c from the shipped gate's own
-# arithmetic:
+# T-states at the clip-level supply gate. Derived from the shipped
+# gate's own arithmetic:
 #
 #     1 wire byte = 1/(SD_WIRE x af) ms = 9.089e-4 ms
-#     1 decode T  = R/af/clock ms       = 4.48e-5 ms   (church-050)
+#     1 decode T  = R/af/clock ms       = 4.48e-5 ms
 #     ---------------------------------------------------------------
 #     1 wire byte = 19.9 decode T-states   (19.6-20.2 on flat shapes,
 #                                           15.3-16.5 on gapped ones)
@@ -2503,34 +1648,22 @@ def merge_kstar(lam=None):
 
         K* = (t_skip + header_rate + t_op_copy) / lam
 
-    DENOMINATOR RE-DERIVED 2026-08-03 (REDERIVATION.md section 7). The
-    numerator was never in question - bridging removes one SKIP
-    dispatch and one COPY dispatch, 477.9 T of decode, exactly. The
-    denominator was: it used to be fetch_long (20.2 T/B), which is what
-    it costs the PLAYER to EXECUTE a bridged byte. But the question the
-    encoder is asking is "should I spend a wire byte to buy decode
-    time?", so the price of a bridged byte is its OPPORTUNITY COST -
-    the supply exchange rate lam above.
-
-    The two are unrelated quantities that happened to agree to 1.5%, so
-    the shipped 23.66 was right for the wrong reason; the value moves
-    to 24.02 and the COUPLING to fetch_long - under which an
-    improvement to the LDI kernel would silently move a MERGE threshold
-    that has nothing to do with LDI - is gone. (DECODE-COST.md once
-    proposed 9.345 T/B, the DMA marginal rate, giving 51.1 B: that is
-    the SAME category error on the other kernel, it would more than
-    double the threshold, and it is struck in that file.)
+    The numerator is fixed: bridging removes one SKIP dispatch and one
+    COPY dispatch, 477.9 T of decode, exactly. The denominator prices a
+    bridged byte at its OPPORTUNITY COST - what the encoder gives up in
+    decode budget by spending a wire byte (the supply exchange rate lam
+    above) - not at fetch_long, the cost to EXECUTE a bridged byte:
+    those are unrelated quantities (an execution-rate denominator once
+    shipped here by coincidence of the two agreeing to within 1.5%),
+    and coupling the threshold to a kernel's execution rate would let
+    an unrelated kernel improvement silently move a merge threshold
+    that has nothing to do with it.
 
     lam=None means SUPPLY_EXCHANGE_T_PER_BYTE, the flat-shape default.
     Passing a shape-specific lam makes the threshold shape-aware for
     free: gapped (letterbox) shapes exchange at 15.3-16.5 T/B, which
-    raises K* to 29-31 B there - and DECODE-COST.md measures the gapped
-    clips as the ones with the most merge headroom.
-
-    History of the value: 91 B at the old model's D=920/skip920; ~63 B
-    at sitting-1 silicon; ~26 B at sitting-2's D=387/skip130 - the
-    optimized kernels make fewer gaps worth bridging because a dispatch
-    is no longer expensive."""
+    raises K* to 29-31 B there - gapped clips measure the most merge
+    headroom."""
     tc = TMODEL_COEFFS
     if lam is None:
         lam = SUPPLY_EXCHANGE_T_PER_BYTE
@@ -2543,8 +1676,7 @@ def merge_run_absorb_max():
     """Max RUN length (bytes) worth absorbing into a contiguous COPY.
     Absorbing drops the run's own dispatch but re-prices its body at the
     copy rate instead of the (cheaper) fill rate, so it wins while
-    L < D / (copy_rate - fill_cpu_rate) (~287 B at sitting-1 silicon,
-    ~121 B at sitting-2 silicon's D=387).
+    L < D / (copy_rate - fill_cpu_rate).
 
     Wired into merge_delta_stream's region assembly (review finding, fix):
     this function used to be computed but never consulted, so every run
@@ -2554,26 +1686,18 @@ def merge_run_absorb_max():
     RUN op regardless of adjacency; only runs at or under it still fold
     into a neighbouring copy region.
 
-    VALUE HELD, DERIVATION DISCLOSED (2026-08-03, REDERIVATION.md 6.6).
-    139.2 B is NOT re-derived here, on purpose - RUN is 0.00-0.08% of
-    corpus decode-T, so moving it churns encoder output on a class that
-    cannot pay for the regression it would need. But three faults in the
-    derivation are recorded so nobody trusts it further than it goes:
-
-    1. WRONG COPY RATE. A region of <= 139 B runs fetch_short, not
-       fetch_long: 487.2/(19.797-16.703) = 157.5 B, 13% higher.
-    2. WRONG REGIME FOR THE CASE THAT MATTERS. If the absorbing COPY is
-       already on the DMA path its marginal rate is 5.082 T/B, BELOW
-       fill_cpu 16.703 - the denominator goes negative and absorption
-       always wins, at any length. One global answer cannot express
-       that, so this function declines absorptions that would win.
-    3. NUMERICALLY FRAGILE BY CONSTRUCTION. The denominator is a
-       difference of two nearly equal remeasured coefficients (3.5 out
-       of 20), so a 3% move in either moves the threshold 17%. Its
-       history for one unchanged physical fact: 152.2 -> 125.6 ->
-       139.3 -> 157.5 at sitting-3 rates. A proper fix is regime-aware
-       (it has to know which kernel the absorbing copy will run), not a
-       coefficient swap."""
+    VALUE HELD, NOT RE-DERIVED - RUN is 0.00-0.08% of corpus decode-T,
+    so moving this threshold churns encoder output on a class that
+    cannot pay for the regression it would need. Known faults, kept as
+    a record: (1) it uses the >=64B copy rate (fetch_long) rather than
+    the fetch_short rate a <=139B region actually runs; (2) it assumes
+    the absorbing copy takes the CPU path - if it is already on the DMA
+    path (marginal rate BELOW the fill rate) the denominator goes
+    negative and absorption always wins, at any length, which this
+    function cannot express; (3) the denominator is a difference of two
+    close coefficients, so a small re-bench swings the threshold hard.
+    A proper fix is regime-aware (it has to know which kernel the
+    absorbing copy will run), not a coefficient swap."""
     tc = TMODEL_COEFFS
     denom = tc["fetch_long"] - tc["fill_cpu"]
     if denom <= 0:
@@ -2732,9 +1856,9 @@ def tile_ladder_for(coarsest):
     (192, 384, 768) and 004-scope 320x144 gives (144, 288, 576). So the
     finest rung is one whole row (mode-0) / column (mode-1) on every shape,
     the coarsest is always today's fixed scheduler, and NO rung can ever
-    split a line (see the LADDER RE-CUT block: sub-line rungs are what the
-    owner's silicon read as displacement and tearing, and what took 37% more
-    decode T out of the byte supply)."""
+    split a line (a sub-line rung is what owner silicon read as
+    displacement and tearing, and it also inflates decode-T out of the
+    byte supply)."""
     coarsest = int(coarsest)
     line = max(1, coarsest // TILE_BAND)
     lad = tuple(sorted({min(q * line, coarsest)
@@ -2815,7 +1939,7 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     mode 'region:<kept>/<total>[+merge]'.
 
     ADAPTIVE TILE LADDER (tile_ladder given, as encode_clip always supplies -
-    see tile_ladder_for() and the LADDER RE-CUT block): the tile GRANULARITY
+    see tile_ladder_for() and the ADAPTIVE TILE LADDER block): the tile GRANULARITY
     is chosen per bound frame instead of being fixed. Every rung is scheduled
     in full and the FINEST ADMISSIBLE rung wins; mode gains an '@<rung>'
     suffix naming the granularity that was used. A rung is admissible when it
@@ -2871,12 +1995,12 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     if tile_px is None:
         tile_px = default_tile_px(n)
     if tile_ladder:
-        # ---- adaptive tile ladder (SP17, re-cut 2026-07-30) ----
+        # ---- adaptive tile ladder ----
         # Schedule the frame at every rung, then keep the finest rung that
-        # preserves the wire spend, the supply cost AND the picture (see the
-        # docstring and the LADDER RE-CUT block). Cost: one full schedule per
-        # rung on BOUND frames only (the fast path above already returned for
-        # everything else).
+        # preserves the wire spend, the supply cost AND the picture (see
+        # the docstring and the ADAPTIVE TILE LADDER block). Cost: one
+        # full schedule per rung on BOUND frames only (the fast path
+        # above already returned for everything else).
         if supply_px is None:
             raise ValueError(
                 "encode_delta: tile_ladder needs supply_px - an unpriced "
@@ -3040,19 +2164,18 @@ def adaptive_palette(rgb, colors=256):
 
 
 # ---------------------------------------------------------------------
-# Hardware display lattice (SP15 palette-collapse fix, 2026-07-27).
+# Hardware display lattice (palette-collapse fix).
 #
 # ROOT CAUSE this block exists for: the NR $44 palette is 9-bit RGB333
 # (512 displayable colours). The encoder used to generate/assign
 # palettes in 24-bit space and only truncate at build_palette_block
 # time - AND synthesized the 9th blue bit with the hardware's 8-bit
 # auto-expand OR rule (4 effective blue levels: 0/109/182/255). On real
-# footage the 256 ADAPTIVE entries collapsed onto ~19 distinct
-# displayed colours (004/001 leg fixtures, measured), while every
-# quality number (BuildReport PSNR, panels, drift triggers) was
-# computed against the UN-truncated 8-bit palette - a wire PSNR of
-# ~21 dB reported as ~36 dB. Verified NOT a regression: the T1-era
-# encoder (caa48ed) wire-measures identically (19 colours, 20.63 dB).
+# footage the 256 ADAPTIVE entries collapsed onto a few dozen distinct
+# displayed colours, while every quality number (BuildReport PSNR,
+# panels, drift triggers) was computed against the UN-truncated 8-bit
+# palette, reporting quality badly optimistic against what the
+# hardware actually showed.
 #
 # Fix, encoder-side only (wire format untouched - byte1 bit0 was
 # always spec'd as the 9th blue bit and the player forwards the whole
@@ -3102,67 +2225,43 @@ def _nearest_lattice_lut():
 
 LATTICE_NEAREST = _nearest_lattice_lut()
 
-# Transparency-collision exclusion (pal9d, 2026-07-28; retargeted pal9t,
-# 2026-08-07). ORIGIN, kept for the record: the player keeps Layer 2
+# Transparency-collision exclusion. The player keeps Layer 2
 # transparency ACTIVE during video with the global transparency colour
-# NR $14. Hardware transparency is a colour compare on the palette
-# entry's FIRST byte only (RRRGGGBB) - the 9th blue bit is not compared
-# - so any palette entry whose byte0 packs to that reserved value
-# renders as transparent holes over the blanked layer below
-# (black punch-through in bright regions, seen on real hardware in the
-# Big Buck Bunny demo). At the time this exclusion was written NR $14
-# was the cream $FE (R=111, G=111, Bhi=10: display colours (255,255,146)
-# and (255,255,182), both 9th-bit variants), and the fix moved one
-# collision point down the blue axis and the other up, keeping R=G=255
-# highlights on-hue.
+# NR $14 (L2_TRANSP_COLOUR, src/nextdaad.inc). Hardware transparency is
+# a colour compare on the palette entry's FIRST byte only (RRRGGGBB) -
+# the 9th blue bit is not compared - so any palette entry whose byte0
+# packs to that reserved value renders as transparent holes over the
+# blanked layer below (black punch-through in bright regions, seen on
+# real hardware). Re-derive this block's excluded pair whenever
+# L2_TRANSP_COLOUR moves.
 #
-# CURRENT STATE: the transparent colour is now $E3 (L2_TRANSP_COLOUR,
-# src/nextdaad.inc; TM_TRANSP_ATTR no longer exists as a symbol - it was
-# split into L2_TRANSP_COLOUR and L2_TRANSP_INDEX). The cream pair above
-# is harmless since Task 1 of the transparency-colour move and is no
-# longer excluded; $E3's pair - (255,0,219) and (255,0,255), both
-# 9th-bit variants (R=111, G=000, Bhi=11) - is the live hazard and is
-# excluded instead. Verify by packing through
-# (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6): both give $E3.
+# CURRENT STATE: transparent colour $E3 has two 9th-bit-blue variants
+# that pack to it - (255,0,219) and (255,0,255) (R=111, G=000, Bhi=11;
+# verify by packing (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6) == $E3) -
+# and both are excluded from the representable lattice and remapped.
 #
-# REMAP DECISION: unlike the cream pair, $E3's pair does not have one
-# point free to move up and one free to move down - (255,0,255) is
-# already at the TOP of the blue axis, with no upward neighbour to move
-# to. (255,0,219) keeps the old trick and moves one lattice step down
-# the blue axis, to (255,0,182). (255,0,255) moves on the GREEN axis
-# instead, to (255,36,255) - one step up, the only axis with headroom -
-# rather than also moving down the blue axis onto the same target as
-# the first point: collapsing two distinct source colours onto one
-# output colour would be a small extra loss of information for no
-# reason, when an unused axis is right there. Hue preservation matters
-# far less here than it did for the cream pair's near-white highlights:
-# $E3 is a colour authors are told to avoid outright, and is rare in
-# real footage, so a green-axis nudge on the one point that needs it is
-# an easy trade.
+# REMAP TARGETS differ by axis because (255,0,255) is already at the
+# top of the blue axis with no upward neighbour: (255,0,219) moves one
+# lattice step down the blue axis to (255,0,182); (255,0,255) moves on
+# the GREEN axis instead, to (255,36,255) - the only axis with headroom
+# - rather than collapsing both source colours onto the same output.
 #
-# The resident location-graphics path dodges this player-side
-# (src/overlay2.asm writes L2_TRANSP_DODGE = $E7, one green step up);
-# the video player has no such dodge of its own, so build_palette_block
-# (below) applies the matching +4 byte0 nudge as a final safety net on
-# emission. THIS exclusion is the earlier, upstream defence: it makes
-# the two points simply not representable at the lattice level, so the
-# nearest-level snap, palette derivation and every quantization target
-# land on the nearest remaining lattice colour, and the wire-true
-# quality metrics automatically measure what is actually displayed -
-# build_palette_block's safety net alone would let the encoder pick,
-# and score, a colour it never actually emits.
+# The resident location-graphics path dodges this separately
+# (src/overlay2.asm writes L2_TRANSP_DODGE = $E7); the video player has
+# no such dodge, so build_palette_block (below) applies a matching +4
+# byte0 nudge as a final safety net on emission. THIS exclusion is the
+# earlier, upstream defence: it makes the two points not representable
+# at the lattice level at all, so every quantization target and quality
+# metric measures what is actually displayed - build_palette_block's
+# safety net alone would let the encoder pick, and score, a colour it
+# never actually emits.
 #
-# THE NET'S OUTPUT NOW OVERLAPS THE REMAP - the lattice remaps
-# (255,0,219) -> (255,0,182) and (255,0,255) -> (255,36,255), while
-# build_palette_block adds 4 to byte0; for an entry whose true blue
-# bit is set the net's output IS the remap's (255,36,255), so emitted
-# wire bytes cannot tell which mechanism handled a colour. The
-# consequence for TESTS is unchanged and load-bearing: the net scrubs
-# $E3 from the wire UNCONDITIONALLY, so no assertion on emitted wire
-# bytes can ever prove this exclusion works - it passes even with
-# TRANSP_REMAP emptied. Assert at the PRE-DODGE RGB layer (what the
-# encoder chose) instead. Four assertions in this branch were hollow
-# for exactly this reason before anyone noticed; do not write a fifth.
+# TEST GOTCHA: the lattice remap and build_palette_block's +4 nudge can
+# produce the SAME output byte for an entry whose true blue bit is set,
+# so emitted wire bytes cannot prove which mechanism handled a colour -
+# the net scrubs $E3 from the wire unconditionally, so an assertion on
+# emitted wire bytes passes even with TRANSP_REMAP emptied. Assert at
+# the PRE-DODGE RGB layer (what the encoder chose) instead.
 TRANSP_COLLISION = ((255, 0, 219), (255, 0, 255))
 TRANSP_REMAP = {(255, 0, 219): (255, 0, 182),
                 (255, 0, 255): (255, 36, 255)}
@@ -3240,9 +2339,8 @@ BLUENOISE32 = np.array([
      392,  923,   90,  564,  411,  211,  842,  361,  253,  111,  425,  728,  363,  486,  838,  535,   17,  791,  877,  118,  242,  381,   13,  545, 1010,   76,  621,  802,  571,  152,  300, 1001,
 ], dtype=np.int32).reshape(32, 32)
 
-# Dither amplitude knob (owner-approved 2026-07-28; the SP17 Yliluoma
-# wave 2026-07-28 added a SECOND meaning for the opt-in mixture mode -
-# see the DITHER_MODE block below):
+# Dither amplitude knob. Meaning depends on DITHER_MODE (see the block
+# below):
 #
 #   mode "offset" (DEFAULT, unchanged behaviour):
 #       the per-pixel offset is (threshold_norm - 0.5) * DITHER_STEP *
@@ -3259,66 +2357,34 @@ BLUENOISE32 = np.array([
 #       amplitude - so this is the amplitude analogue that keeps the
 #       knob monotone, keeps 0.0 meaning "off", and keeps author control.
 #
-# DEFAULT 0.5 is UNCHANGED (the owner's ratified "0.5 looks best"). The
-# mixture meaning was chosen so that at 0.5 its measured GRAIN (fraction
-# of pixels emitted away from the pure nearest colour) lands on the
-# offset path's own 0.5 grain on all three leg sources (Sintel .286 vs
-# .320, Big Buck Bunny .30 vs .30, Jellyfish .21 vs .20) - the two modes
-# are comparable at the same number.
+# DEFAULT 0.5 (owner-ratified "0.5 looks best"); the mixture meaning was
+# chosen so both modes measure comparable GRAIN at the same number.
 # CLI: videnc --dither / --dither-mode; kit config: VIDOPTS/VIDOPTS_NNN.
 DITHER_STEP = LATTICE_BIN
 DITHER_AMP_DEFAULT = 0.5
 
-# WHICH DITHER IS DEFAULT (SP17 Yliluoma wave, decided on measurement
-# 2026-07-28). OFFSET, with the Yliluoma mixture path shipped OPT-IN.
-# The mixture algorithm is implemented in full below and is a genuine
-# improvement on some content, but it is NOT a win on this project's
-# real content and it must not be the silent default. The evidence, so
-# nobody re-litigates this blind:
-#
-#  - PER-PIXEL WIRE PSNR: mixture loses on EVERY fixture measured -
-#    -0.43 to -3.55 dB across the eleven leg fixtures here, and an
-#    independent measurement wave on the owner's own boat-pan and
-#    church-zoom clips found the same (-0.75 to -1.46 dB). Some of that
-#    is inherent to any dither, but the size of it is not.
-#  - LOCAL-MEAN FIDELITY (the metric that should favour a mixture
-#    dither): SPLIT. Mixture wins clearly on Jellyfish and on Sintel and
-#    at high amplitude everywhere, and loses on Big Buck Bunny and on
-#    the owner's church-zoom clip. It is not a uniform win.
-#  - COLOUR CAST: mixture carries a systematic PER-CHANNEL MEAN BIAS
-#    that the offset dither does not. Measured over 8 frames against
-#    the source mean: Big Buck Bunny blue -3.1 (offset -0.9) at
-#    amplitude 0.5 and -4.7 at 1.0; the independent wave measured the
-#    same shape as a green deficit on dark content. The cause is
-#    structural, not a bug: the plan minimizes the RGBL distance of the
-#    list's MEAN to the target, and RGBL deliberately discounts chroma
-#    (x0.75) against luma (+lumadiff^2), so the planner will trade a
-#    per-channel mean error for a luma match. Nothing in the article
-#    claims otherwise.
-#  - DELTA COST: up to +26% wire bytes on colourful moving content, and
-#    it pushed 003 from 72% to 92% budget-bound. See the wave report.
-#  - PALETTE MATERIAL: the display lattice holds only 510 usable
-#    colours and real clips occupy ~100 of them across a whole clip
-#    (~70 per frame), so scene palettes carry only ~85-95 DISTINCT
-#    entries. Algorithm 2 assumes a richer set to mix from than this
-#    content actually provides.
-#  - IT WEAKENS TWO KEYFRAME TRIGGERS. display_ceiling measures a
-#    FULLY dithered frame, while the achieved surface keeps pixels
-#    closer to the source (index hysteresis, partial delta updates).
-#    Mixture dithering's per-pixel penalty is large enough to invert
-#    that: measured over three leg clips, po_ceil - achieved stays
-#    POSITIVE on 110/110 frames in offset mode but goes NEGATIVE on
-#    105/110 in mixture mode (mean -0.63 to +0.09 dB, min -1.13). A
-#    negative deficit can never cross DRIFT_T or STALE_DB, so the drift
-#    and staleness keyframes go structurally inert. Fixing that means
-#    re-basing po_ceil, which would re-calibrate the triggers for BOTH
-#    modes - deliberately not done in this wave. Anyone promoting
-#    mixture to default must deal with this first.
+# WHICH DITHER IS DEFAULT. OFFSET, with the Yliluoma mixture path
+# shipped OPT-IN. Mixture is a genuine improvement on some content, but
+# measured against this project's real footage it loses on per-pixel
+# wire PSNR on every fixture tried, carries a systematic per-channel
+# colour-cast bias (the plan minimizes RGBL distance of the mean to the
+# target, and RGBL deliberately discounts chroma against luma, so it
+# trades a per-channel mean error for a luma match - a structural
+# property of the algorithm, not a bug), costs meaningfully more wire
+# bytes on colourful moving content, and weakens the drift/staleness
+# keyframe triggers (display_ceiling measures a fully-dithered frame
+# while the achieved surface tracks the source more closely, and
+# mixture's per-pixel penalty is large enough to push the achieved-vs-
+# ceiling margin negative on most frames, where it can never cross the
+# trigger). Local-mean fidelity is a genuine split - wins on some
+# content, loses on other - not a clean case either way.
 #
 # Both modes stay positionally deterministic, both honour --dither, and
-# the two unconditional halves of the wave - gamma-correct mixing and
-# the luminance-weighted RGBL distance metric - apply in BOTH modes and
-# stand on their own. Flip with videnc --dither-mode mixture.
+# the two unconditional halves of the implementation - gamma-correct
+# mixing and the luminance-weighted RGBL distance metric - apply in
+# BOTH modes and stand on their own. Flip with videnc --dither-mode
+# mixture; promoting mixture to default needs the keyframe-trigger
+# rebasing addressed first.
 DITHER_MODE_MIXTURE = "mixture"
 DITHER_MODE_OFFSET = "offset"
 DITHER_MODE_DEFAULT = DITHER_MODE_OFFSET
@@ -3878,28 +2944,26 @@ def display_ceilings(frame, amplitude=None, mode=None):
     return psnr(sub, dec), psnr_lm(sub, dec)
 
 
-# Quantizer index-hysteresis deadzone (SP15 encoder-optimization wave):
-# when re-quantizing to a HELD palette, a pixel keeps its previous-frame
-# index whenever that index's colour is within HYSTERESIS_EPS (squared RGB
-# distance) of the best match. This kills per-frame nearest-neighbour index
-# churn - 30-93% of delta-written bytes sit at visually-STABLE pixels
-# (scratchpad/research-op-economy.md section 5) - at near-zero perceptual
-# cost. Default tuned so a genuine colour move (well outside the deadzone)
-# still re-quantizes freely while sub-quantization-step flicker sticks.
-# The existing drift-triggered keyframe (encode_clip DRIFT_T) bounds any
-# slow freeze-drift accumulation - the research's drift-accumulator caveat.
+# Quantizer index-hysteresis deadzone: when re-quantizing to a HELD
+# palette, a pixel keeps its previous-frame index whenever that index's
+# colour is within HYSTERESIS_EPS (squared RGB distance) of the best
+# match. This kills per-frame nearest-neighbour index churn - most
+# delta-written bytes sit at visually-STABLE pixels - at near-zero
+# perceptual cost. Default tuned so a genuine colour move (well outside
+# the deadzone) still re-quantizes freely while sub-quantization-step
+# flicker sticks. The existing drift-triggered keyframe (encode_clip
+# DRIFT_T) bounds any slow freeze-drift accumulation.
 #
-# 150 (squared RGB distance): a pixel keeps its old index while the
-# old colour stays within ~sqrt(150) of the best match, aligning the
-# deadzone with the churn audit's "visually stable = max-channel source
-# move <= 10" population (scratchpad/research-op-economy.md section 5). On
-# a stable-scene-with-noise clip this cuts index churn by >10x for <0.5 dB
-# PSNR (per-pixel error is bounded eps above the best match - it does NOT
-# accumulate, since prev_d is re-measured against the CURRENT source each
-# frame). NOTE: on the two research clips at silicon prices the effect is a
-# WASH - the byte/T rate control already coarsens the churn away before
-# hysteresis can act (task-2b report); hysteresis pays off on quiet content
-# where the budget is not the binding constraint.
+# 150 (squared RGB distance): a pixel keeps its old index while the old
+# colour stays within ~sqrt(150) of the best match, aligning the
+# deadzone with "visually stable" (source moved by no more than ~10 on
+# any channel). On a stable-scene-with-noise clip this cuts index churn
+# by >10x for <0.5 dB PSNR (per-pixel error is bounded eps above the
+# best match - it does NOT accumulate, since prev_d is re-measured
+# against the CURRENT source each frame). On budget-bound content the
+# effect can be a wash - the byte/T rate control already coarsens the
+# churn away before hysteresis can act; hysteresis pays off on quiet
+# content where the budget is not the binding constraint.
 HYSTERESIS_EPS = 150.0
 
 # The same deadzone expressed in RGBL units, for the opt-in mixture path
@@ -4352,29 +3416,21 @@ def frame_wire_cap_bytes(fps, abytes_pad=None):
 
 def kf_chunk_budget_bytes(fps, first, width=None, height=None,
                           abytes_pad=None):
-    """Max keyframe literal bytes this frame's chunk may hold. Two
-    bounds, the tighter wins:
+    """Max keyframe literal bytes this frame's chunk may hold - the
+    tighter of two bounds:
 
-    DECODE-T: the modeled decode stays inside the usable per-frame T
-    budget (2% reserve), priced at the CHUNKED-DMA copy rate - a
-    keyframe chunk is exactly the long mem-to-mem DMA COPY the task-2
-    KF row measured, so the old fetch_long (LDI) pricing over-priced it
-    ~2.1x and under-sized nothing (flagged in e7b38fd's report,
-    deliberately left until this wave).
+    DECODE-T: modeled decode stays inside the usable per-frame T budget
+    (2% reserve), priced at the chunked-DMA COPY rate (a keyframe chunk
+    is one long mem-to-mem DMA COPY).
 
-    WIRE/SUPPLY (T2, charter E5): the frame's whole modeled supply time
-    (decode + audio copy + SD wire, the gate's prices) stays within
-    KF_SPAN_PEAK_UTIL of the frame period, so a keyframe event can
-    never demand more wire than a frame period buys - the peak is now
-    budget-independent by DESIGN instead of unbounded by accident.
+    WIRE/SUPPLY: the frame's whole modeled supply time (decode + audio
+    copy + SD wire) stays within KF_SPAN_PEAK_UTIL of the frame period,
+    so a keyframe event can never demand more wire than a frame buys.
+
     abytes_pad: the encode's padded audio bytes/frame (None = the
-    conservative stereo layout for this fps).
-
-    Ported from the research prototype's kf_chunk_cap, re-costed for
-    the real COPY op overhead (KSTART/PAL dispatch on the first chunk).
-    A keyframe chunk is one long COPY straight down the paint order, so
-    it crosses every column boundary a gapped surface has - the
-    composition factor applies here too."""
+    conservative stereo layout for this fps). A keyframe chunk crosses
+    every column boundary a gapped surface has, so the composition
+    factor applies here too."""
     tc = TMODEL_COEFFS
     budget_t = usable_budget_t(fps, width, height) * 0.98 - tc["t_frame_fixed"]
     # the COPY op's own dispatch + the terminal FEND/KFLIP dispatch
@@ -4389,9 +3445,7 @@ def kf_chunk_budget_bytes(fps, first, width=None, height=None,
     dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
     L_t = int(max(0.0, budget_t) / dma_rate)
     # descend by ONE CHUNK per step - each step is exactly one DMA setup
-    # plus one chunk of transfer. This was a hardcoded 256 until
-    # 2026-08-03, when the cap moved to 240 and left the step describing
-    # a chunk size the player no longer uses.
+    # plus one chunk of transfer.
     while L_t > 1 and _copy_t(L_t, tc["fetch_long"]) > budget_t:
         L_t -= tc["copy_dma_chunk"]
     L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad,
@@ -4888,9 +3942,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # Region-coherent tile size: a band of TILE_BAND rows (mode-0) / columns
     # (mode-1) is contiguous in paint order, so shortfall lags coherent
     # horizontal/vertical strips. That band is the COARSEST rung of the
-    # adaptive ladder (SP17) - encode_delta picks a finer granularity per
-    # bound frame whenever a finer one is free in bytes AND in supply, and
-    # actually improves the picture (LADDER RE-CUT).
+    # adaptive ladder - encode_delta picks a finer granularity per bound
+    # frame whenever a finer one is free in bytes AND in supply, and
+    # actually improves the picture (see the ADAPTIVE TILE LADDER block).
     tile_px = default_tile_px(raw, width=width, height=height, column_major=column_major)
     tile_ladder = tile_ladder_for(tile_px)
     # The ladder is priced with the SUPPLY GATE's own prices, so a finer
@@ -5049,11 +4103,10 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp,
                                    mode=dither_mode)
             planned = plan_kf_chunks(raw, fps, width, height, abytes_pad)
-            # Cut lookahead (T1 step 4): if this span would take >1
-            # chunk AND the very next frame independently looks like a
-            # hard cut too, defer starting the span to i+1 instead -
-            # avoids composing a mixed-scene frame on the hidden
-            # surface (research-realfootage-results.md HAZARD FOUND).
+            # Cut lookahead: if this span would take >1 chunk AND the
+            # very next frame independently looks like a hard cut too,
+            # defer starting the span to i+1 instead - avoids composing
+            # a mixed-scene frame on the hidden surface.
             if len(planned) > 1 and prev_flat is not None and _is_cut_at(chg, i + 1, CUT_T):
                 prev_idx = unflatten_frame(prev_flat, height, width, column_major)
                 target_idx, target_dec = dither_quantize(
@@ -5900,11 +4953,10 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     ceiling and the targets
     must live at the same amplitude.
 
-    quality_profile: only "max" is implemented in T1 (the dual-budget
-    streaming cap point from the research - cap_bytes=0.65x raw AND
-    cap_t=usable_budget_t(fps)). A byte-only "resident" profile is
-    future work (research-realfootage-results.md's resident-mode
-    finding: same streams re-priced without fetch cost).
+    quality_profile: only "max" is implemented (the dual-budget
+    streaming cap point: cap_bytes=0.65x raw AND
+    cap_t=usable_budget_t(fps)). A byte-only "resident" profile
+    (same streams re-priced without fetch cost) is future work.
 
     cap_bytes_frac (--byte-cap): delta per-frame byte cap as a fraction
     of the raw surface. stream_budget (--stream-budget): scales both
@@ -5930,15 +4982,15 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     measurements they come from. A source ALREADY at fps is untouched
     in every mode, filter chain and bytes alike.
 
-    tile_slack (--tile-slack, SP17, owner-approved 2026-07-30): the
-    OPT-IN supply-slack knob for the adaptive tile ladder, in fractions
-    of the auto-budget utilisation headroom - 0.0 (the default) is the
-    supply-neutral ladder and byte-for-byte today's output, 1.0 spends
-    the entire margin between budget_target and the 1.00 refusal line
-    and is the cap. It relaxes the ladder's supply-preservation test
-    ONLY; the whole-line rung floor is not reachable from it at any
-    value. See THE SUPPLY-SLACK KNOB block for the parameterisation and
-    the cap's derivation. A non-zero value prints tile_slack_line().
+    tile_slack (--tile-slack): the OPT-IN supply-slack knob for the
+    adaptive tile ladder, in fractions of the auto-budget utilisation
+    headroom - 0.0 (the default) is the supply-neutral ladder and
+    byte-for-byte today's output, 1.0 spends the entire margin between
+    budget_target and the 1.00 refusal line and is the cap. It relaxes
+    the ladder's supply-preservation test ONLY; the whole-line rung
+    floor is not reachable from it at any value. See THE SUPPLY-SLACK
+    KNOB block for the parameterisation and the cap's derivation. A
+    non-zero value prints tile_slack_line().
 
     direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
     every frame a full keyframe repaint, header direct-serve hint set
@@ -5947,26 +4999,24 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     (Card #5, 2026-07-26): the gate is unconditional - there is no
     slow-playback opt-out at this or any layer above it.
 
-    direct_transport_factor (--direct-transport-factor, SP17 T8): the
-    EXPERT OVERRIDE for the direct gate's transport factor - None (the
-    default) is the shipping silicon-settled DIRECT_TRANSPORT_FACTOR;
-    a number replaces it for THIS encode only, so the hardware round
-    can stage probe files at the predicted post-T8 rate (0.93-0.99)
-    before the NXBD re-run moves the default. See the governance block
-    at the constant. Only meaningful with direct=True; ignored (with
-    a note) otherwise - the delta pipeline's gate does not use it.
+    direct_transport_factor (--direct-transport-factor): the EXPERT
+    OVERRIDE for the direct gate's per-byte transport factor - None
+    (the default) is the shipping silicon-settled
+    DIRECT_TRANSPORT_FACTOR; a number replaces it for THIS encode only,
+    for staging probe files against a candidate rate before a fresh
+    silicon round moves the default. See the DIRECT_TRANSPORT_FACTOR
+    block. Only meaningful with direct=True; ignored (with a note)
+    otherwise - the delta pipeline's gate does not use it.
 
-    kf_cadence (--kf-cadence, SP17 W4, re-shaped W5): keyframe cadence
-    window in SECONDS - whenever no natural keyframe (cut / dissolve /
-    staleness / drift) has occurred within the window, the encoder
-    schedules a ROLLING REFRESH: forced-clean coverage of the whole
-    surface spread across ordinary delta frames (W5 owner ruling
-    2026-08-02 - the W4 forced keyframe SPAN this replaces held the
-    visible picture for the whole paced repaint and read as a mid-clip
-    pause on silicon). Trigger-forced keyframes stay real keyframes.
-    None means KF_CADENCE_S_DEFAULT (5 s, the measured free point:
-    -0.1% bytes for +0.39 dB 4x4 on the owner's pan clip); 0 disables
-    the cadence outright.
+    kf_cadence (--kf-cadence): keyframe cadence window in SECONDS -
+    whenever no natural keyframe (cut / dissolve / staleness / drift)
+    has occurred within the window, the encoder schedules a ROLLING
+    REFRESH: forced-clean coverage of the whole surface spread across
+    ordinary delta frames (a full keyframe SPAN held the visible
+    picture for the whole paced repaint and read as a mid-clip pause on
+    silicon - see the KEYFRAME CADENCE block). Trigger-forced keyframes
+    stay real keyframes. None means KF_CADENCE_S_DEFAULT (5 s, the
+    measured free point); 0 disables the cadence outright.
 
     prefilter (--prefilter, W4): OPT-IN ffmpeg filter stage inserted at
     SOURCE resolution before scaling (bare flag = conservative hqdn3d
@@ -6272,42 +5322,43 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 
 
 # ---------------------------------------------------------------------
-# Bench fixtures (SP15 T2 --bench-fixtures). The decode-kernel silicon
-# bench (src/video.asm NXBEN verb family, DEBUG builds) measures
-# prototype Z80N decode kernels against known payload shapes; the rows
-# feed back into TMODEL_COEFFS above, after which the format freezes.
-# Every synthetic payload below is a RAW OPCODE STREAM (no header, no
-# audio blocks, no 512-byte padding) built from this module's own op
-# emitters, then verified against nxv2dec.run_payload - the reference
-# decoder stays the single ground truth for what the bytes mean.
+# Bench fixtures (--bench-fixtures). The decode-kernel silicon bench
+# (src/video.asm NXBEN verb family, DEBUG builds) measures Z80N decode
+# kernels against known payload shapes; the rows feed TMODEL_COEFFS
+# above. Every synthetic payload below is a RAW OPCODE STREAM (no
+# header, no audio blocks, no 512-byte padding) built from this
+# module's own op emitters, then verified against nxv2dec.run_payload -
+# the reference decoder stays the single ground truth for what the
+# bytes mean.
 #
-# MERGE BYPASS (SP15 encoder-optimization wave): the synthetic fixtures
-# (NXB0-NXB7, NXB9) are hand-built directly from op_skip/op_run/op_copy and
-# NEVER pass through encode_delta / merge_delta_stream - the gap-merge would
-# collapse the dispatch-dominated op-soup (NXB0) that the SOU/dispatch bench
-# row is measuring, defeating the fixture's whole purpose. They stay dense
-# small ops BY DESIGN. NXB8 (the real-stream fixture) must likewise be cut
-# from a NON-merged encode to keep its worst-case op density (build-tests
-# encodes its segment source with videnc.py --no-merge).
+# MERGE BYPASS: the synthetic fixtures (NXB0-NXB7, NXB9) are hand-built
+# directly from op_skip/op_run/op_copy and never pass through
+# encode_delta / merge_delta_stream - the gap-merge would collapse the
+# dispatch-dominated op-soup (NXB0) the bench's dispatch row is
+# measuring, defeating the fixture's purpose. NXB8 (the real-stream
+# fixture) is likewise cut from a NON-merged encode to keep its
+# worst-case op density (build-tests encodes its segment source with
+# videnc.py --no-merge).
 #
 # File set (8.3 names, staged to sd\ by build-tests.ps1 -NxBench):
-#   NXB0.BIN  op-soup: dense [SKIP8 8][RUN8 8][COPY8 8] groups - the
-#             dispatch/parse-dominated worst case
-#   NXB1.BIN  all-RUN8: 256 x RUN8 192          (RUN8 CPU fill row)
-#   NXB2.BIN  all-RUN16: 48 x RUN16 1024        (RUN16 CPU + DMA rows)
-#   NXB3.BIN  all-COPY8: 256 x COPY8 192        (COPY8 CPU row)
-#   NXB4.BIN  all-COPY16: 48 x COPY16 1024      (COPY16 CPU + DMA rows)
-#   NXB5.BIN  skip8-soup: 6144 x SKIP8 8        (SKIP8 row)
-#   NXB6.BIN  all-SKIP16: 48 x SKIP16 1024      (SKIP16 row)
-#   NXB7.BIN  keyframe chunk: KSTART + one COPY16 of BENCH_KF_LITERALS
-#             literal bytes + KFLIP - the ~43KB shape-A chunk shape
-#             (43008 <= 49152, so the same file serves both display
-#             modes' rows)
-#   NXB8.BIN  real fixture segment: consecutive whole-frame payloads
-#             extracted from a real Task-1 encode (classic 256x192@25),
-#             concatenated raw, cut at a frame boundary outside any
-#             keyframe span, capped at BENCH_SEGMENT_CAP bytes
-#   NXB9.BIN  flip micro-payload: KSTART + KFLIP (KSTART/KFLIP row)
+#
+#   file     | payload                                    | bench row
+#   ---------|--------------------------------------------|----------------
+#   NXB0.BIN | dense [SKIP8 8][RUN8 8][COPY8 8] groups     | dispatch/parse
+#   NXB1.BIN | 256 x RUN8 192                              | RUN8 CPU fill
+#   NXB2.BIN | 48 x RUN16 1024                             | RUN16 CPU+DMA
+#   NXB3.BIN | 256 x COPY8 192                             | COPY8 CPU
+#   NXB4.BIN | 48 x COPY16 1024                            | COPY16 CPU+DMA
+#   NXB5.BIN | 6144 x SKIP8 8                              | SKIP8
+#   NXB6.BIN | 48 x SKIP16 1024                            | SKIP16
+#   NXB7.BIN | KSTART + one COPY16 of BENCH_KF_LITERALS    | KSTART/keyframe
+#            | literal bytes + KFLIP (~43KB, <= 49152 so   | chunk shape
+#            | the file serves both display modes)         |
+#   NXB8.BIN | consecutive whole-frame payloads from a     | real-stream mix
+#            | real classic 256x192@25 encode, cut at a    |
+#            | frame boundary outside any keyframe span,   |
+#            | capped at BENCH_SEGMENT_CAP bytes           |
+#   NXB9.BIN | KSTART + KFLIP                              | KSTART/KFLIP
 #
 # All synthetic cursor spans total BENCH_CLASSIC_RAW (256x192 = 49152),
 # the classic-shape surface, so mode-0 rows cover the whole surface and

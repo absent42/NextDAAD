@@ -33,20 +33,17 @@
 # byte-identical to the autoplay, so its control is only a
 # same-player-state control, not a same-material one.
 #
-# COLLECTION WINDOW. Both scenarios start collecting at their FIRST live
-# frame, so the frames immediately after PLY_AKY_INIT - where a DECAYING
-# residue would live, as opposed to a persistent one - are inside the
-# compared set. Settling first would have sampled the control's early
-# phases from its second pass and quietly dropped the transient.
+# COLLECTION WINDOW. Both scenarios collect from their FIRST live frame,
+# not after a settle, so a DECAYING residue right after PLY_AKY_INIT
+# stays inside the compared set instead of being silently dropped.
 #
 # EMULATOR-MODEL CAVEAT. Everything here is ZEsarUX's model of the AY
 # and of the Next's Turbo Sound, not silicon. The register-array half of
 # the mirror is plain Z80 memory and is as trustworthy as any other
 # memory read; the chip-readback half (offsets $10-$39) depends on
 # ZEsarUX implementing AY register READ on $FFFD per selected chip. Any
-# verdict from this script is emulator-model evidence and is written up
-# as such - see docs\hardware-test-checklist.md, audio section, and EAR
-# CARD #T7B.
+# verdict from this script is emulator-model evidence, not a silicon
+# fidelity verdict.
 
 import argparse
 import os
@@ -246,19 +243,10 @@ def dump_text(title, d):
 
 
 def diff(a, b):
-    """Byte offsets where two same-phase dumps differ, minus the fields
-    expected to differ BY CONSTRUCTION: the free-running sequence byte,
-    the transient request mailbox, and the song number (header+06,
-    audSongNum). audSongNum records which entry point loaded the song,
-    not player state - "$FF = none/GAME.AKY" (src\\audio\\audiobank.asm:
-    1838). Boot autoplay's aud_boot_probe (src\\overlay1.asm) forces it
-    to $FF and, absent a GAME.AYS (this fixture has none), hands
-    aud_load_song the $FF sentinel; the repro's restart verb runs
-    through h_sfx's SFX-7 case (.playloop), which hands aud_load_song
-    the verb's own number - LADR is "SFX 6 7", so audSongNum reads 06.
-    Both load the same bytes (006.AKY == GAME.AKY) through two different
-    entry points, so this field differs at every phase by design, not
-    by fault."""
+    """Byte offsets where two same-phase dumps differ, minus the sequence
+    byte, request mailbox, and song number - each differs by construction
+    (audSongNum records which entry point loaded the song, not player
+    state), not by fault."""
     skip = {OFF_SEQ, OFF_SEQ2, 0x0A, 0x0B, 0x06}
     out = []
     for i in range(SNAP_LEN):
@@ -295,13 +283,7 @@ def run_scenario(sd, port, do_stopm, log, restart="LADR"):
         d0 = wait_for(z, lambda d: playing(d), 60, "boot autoplay")
         log.append(dump_text("--- boot autoplay (first frame with music live)", d0))
         if not do_stopm:
-            # Collect from the FIRST live frame, not after a settle: the
-            # repro's collection starts at its own first live frame
-            # after PLY_AKY_INIT, and the two sets must cover the same
-            # part of the song - including the restart transient, where
-            # a DECAYING residue would live. A settle here would leave
-            # the control's early phases sampled from its second pass
-            # and silently drop the transient out of the comparison.
+            # No settle before collecting - see COLLECTION WINDOW above.
             return collect(z, COLLECT_S), log
         time.sleep(2.0)                     # let the tune get past its first note
         pre = wait_for(z, playing, 10, "a clean pre-STOPM sample")
@@ -318,9 +300,7 @@ def run_scenario(sd, port, do_stopm, log, restart="LADR"):
         rst = wait_for(z, lambda d: playing(d), 20, "MUSIC restart")
         log.append(dump_text("--- POINT 3: post-restart MUSIC (first live frame)", rst))
         log.append("restart transient phase = %04X:%04X" % phase(rst))
-        # No settle: collection starts HERE, on the frames immediately
-        # after PLY_AKY_INIT, so the restart transient is inside the
-        # compared set (see the control branch above).
+        # No settle here either - see COLLECTION WINDOW above.
         return collect(z, COLLECT_S), log
     finally:
         try:
@@ -458,10 +438,8 @@ def main():
     log.append("=== PHASE-MATCHED COMPARISON ===")
     log.append("control samples %d, repro samples %d, phases in common %d"
                % (len(ctrl), len(repro), len(common)))
-    # M2: prove the restart transient is inside the compared set rather
-    # than asserting it. The line above only says how many phases match;
-    # this one says whether the frames right after PLY_AKY_INIT - where
-    # a DECAYING residue would live - are among them.
+    # Confirm the restart transient phase is actually in the compared
+    # set (see COLLECTION WINDOW above), not just count matching phases.
     for line in log:
         if line.startswith("restart transient phase = "):
             tp = line.split("= ")[1].split(":")

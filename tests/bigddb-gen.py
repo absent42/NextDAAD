@@ -3,34 +3,20 @@
     python tests\\bigddb-gen.py [locations] [words/message] [words/location]
         [--dest PATH] [--vocab N]
 
-Run only when the fixture needs regrowing. The .dsf it writes is checked in,
-so a normal harness run never calls this - tests\\build-tests.ps1 compiles the
-committed .dsf and asserts the boundary crossings out of the compiled bytes.
+Run only when the fixture needs regrowing. The .dsf it writes is checked in;
+tests\\build-tests.ps1 compiles it and asserts the boundary crossings out of
+the compiled bytes.
 
-WHY GENERATED. The fixture has to exceed 31744 bytes AFTER text compression,
-which needs on the order of 85 KB of source prose. That is not something to
-hand-maintain.
-
-TWO COMPRESSORS, TWO FIXTURES. DRC compresses against a fixed English token
-table, so pseudo-random prose over a small vocabulary resists it. NDRC's
--auto-tokens builds the table from the game's own text, which that same small
-vocabulary feeds perfectly - the default 103-word pool compresses 58% smaller
-under -auto-tokens and lands the database back inside the classic reach. The
-auto-tokens variant therefore uses a wider --vocab to stay oversize. See
-tests\\build-tests.ps1 for both invocations.
-
-DETERMINISTIC. A plain LCG rather than random.Random, so the same .dsf comes
-out of any Python on any machine and a regenerated fixture does not show up as
-a whole-file diff. Changing the seed, the word list or any count changes every
-byte - regenerate deliberately, and re-run the harness, which will tell you if
-the result stopped crossing the boundary.
-
-THE SIZE IS EMERGENT. Compressed size is DRC's to decide, so the defaults below
-were chosen by compiling and measuring, not calculated. Two constraints the
-harness enforces and this script cannot: the database must stay under 65535
-bytes (the interpreter refuses larger with E2), and MESSAGE 254's text must
-itself land past 31744 - the messages have to carry the size, because if the
-location texts carry it instead the printed evidence proves nothing.
+Compressed size is DRC's to decide, so the defaults below were chosen by
+compiling and measuring, not calculated: the database must stay under 65535
+bytes (interpreter refuses larger with E2), and MESSAGE 254 must land past
+31744 - messages carry the size rather than locations, so the printed
+evidence proves what it claims. A plain LCG (not random.Random) keeps output
+byte-identical across machines, so a regeneration diffs cleanly; changing
+the seed, word list or any count changes every byte, and re-running the
+harness confirms the boundary is still crossed. --vocab widens the word pool
+for NDRC's -auto-tokens, which compresses the default pool too well to stay
+oversize (see tests\\build-tests.ps1 for both invocations).
 """
 import argparse
 import pathlib
@@ -277,16 +263,9 @@ def main():
         w('; The prose is pseudo-random because this wider pool keeps the')
         w('; fixture oversize under a per-game token table.')
     w(';')
-    w('; THE LOOP IS THE TEMPLATE SHAPE, trimmed - PRO 0 draws, PRO 1 parses.')
-    w('; An earlier version of this fixture ended PRO 0 without handing over')
-    w('; to a parser loop, so the interpreter restarted process 0 forever and')
-    w('; the screen flickered as it cleared and redrew. It read as correct')
-    w('; through the test harness, which compares tilemap snapshots: every')
-    w('; iteration redrew IDENTICAL content, so the grid compared equal and')
-    w('; nothing distinguished a settled screen from one being redrawn')
-    w('; hundreds of times a second. Reading the tilemap proves content, not')
-    w('; stability. It also could not accept a command, which the hardware')
-    w('; leg needs.')
+    w('; PRO 0 draws once then hands over to a parser loop in PRO 1 - a')
+    w('; tilemap-comparing harness cannot tell a settled screen from one')
+    w('; redrawing every frame, and PRO 0 alone could not accept a command.')
     w('')
     w('#define fPlayer 38')
     w('#define fVerb   33')
@@ -389,9 +368,6 @@ def main():
     w('        REDO')
     w('> _ _   SYSMESS 8')
     w('        REDO')
-    # One-shot startup. START_LOC is near the TOP of the location range so
-    # the description on screen is one of the last texts DRC wrote, and one
-    # below the highest so both NORTH and SOUTH work from the opening room.
     # Command decoder. SAVE and LOAD are here because a 49K database is
     # exactly where the save path is worth exercising: the position data it
     # writes and re-reads refers to a database whose tail the classic

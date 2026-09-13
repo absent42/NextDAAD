@@ -6,8 +6,7 @@ widget. The Qt surface lives in presetrow.py.
 CONTENT AUTHORITY is the manual's Video page, section 4 "The presets" -
 `authoring-kit/docs/video.html`. Every option string here is transcribed
 from it; if a preset changes there, this file follows. That page is
-GENERATED, so edit it at its repo source, not in the kit: maintenance
-contract repo docs/vidtune-maintenance.md.
+GENERATED, so edit it at its repo source, not in the kit.
 
 The six things in that doc are three different kinds of object, and this
 module keeps them apart:

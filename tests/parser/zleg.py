@@ -1,101 +1,25 @@
 #!/usr/bin/env python3
-"""The ZX leg: play a command script on the ORIGINAL DAAD ZX interpreter.
+"""Play a command script on the ORIGINAL DAAD ZX interpreter (ZEsarUX,
+headless, via ZRCP) and write a per-turn jsonl transcript.
 
-This is the harness's THIRD leg, and it is deliberately not shaped like
-the other two. jleg.js and nleg.py form the two-leg differential that is
-this project's day-to-day instrument: same DSF, both interpreters, STATE
-and TEXT compared byte-exactly every turn. The ZX leg cannot join that
-comparison as an equal - it has no state channel at all (see "WHAT THIS
-LEG CANNOT DO" below) - so it exists for two narrower jobs:
+Third leg alongside jleg.js and nleg.py, but not their equal: the
+original interpreter is an unannotated assembled blob with no symbols
+(tools/DAAD-READY/ASSETS/ZX/ZXSPECTRUM/*.BIN), so this leg has no state
+channel. The jsonl carries no "flags"/"objloc" keys - only TEXT is
+captured and compared (compare.compare_runs_text). Used for shipped-game
+text coverage against the interpreter NextDAAD reimplements, and for
+adjudicating disagreements between NextDAAD, jDAAD and msx2daad.
 
-  (a) shipped-game TEXT coverage. Run a corpus game on NextDAAD and on
-      the original interpreter it reimplements, and compare what the two
-      print. That is lineage evidence no amount of jDAAD agreement can
-      give, because jDAAD is itself a reimplementation.
-  (b) adjudication. When NextDAAD, jDAAD and msx2daad disagree about
-      what DAAD does, the original settles it. SP16 Task 5 settled five
-      register entries this way; this module is that rig, made
-      repeatable.
+To observe original-interpreter state, write a FIXTURE that prints the
+flags you care about and read them off the screen as text (zxadj.dsf's
+status line does this).
 
-WHAT THIS LEG CANNOT DO - state, and why.
-
-No flags. No object locations. Not "not yet": there is nothing to read
-them from. The other two legs know where the interpreter keeps its state
-because they have symbols - nleg reads build/nextdaad.map (FLAGS =
-0xA200, OBJTABLE, ...), jleg reaches into jDAAD's own JS objects. For the
-original there is no map file, no source and no debug symbols: the
-interpreter is a 6944-byte assembled blob
-(tools/DAAD-READY/ASSETS/ZX/ZXSPECTRUM/DS48IE3.BIN) shipped by DAAD Ready
-as a binary. Nor is one address good for all of them: DAAD Ready ships
-SIX ZX variants (ZXSPECTRUM/48K, 128K, PLUS3, ESXDOS, ZXUNO, ZXNEXT),
-each in an English and a Spanish build, all different sizes - 6944 bytes
-for DS48IE3 up to 8231 for DSZXUNOS3 - so any flags address found by
-inspection would be a per-binary constant with nothing to validate it
-against, silently wrong the moment the variant or language changed. The
-SP16 rig did NOT locate the flags block, and this module does not guess
-at one. The CONSERVATIVE SUBSET is therefore: NOTHING. No state is
-captured, the jsonl carries no "flags"/"objloc" keys at all (so feeding
-it to compare.compare_runs raises loudly rather than comparing empty
-arrays against real ones), and the only channel is TEXT.
-
-The supported way to observe original-interpreter STATE is the one SP16
-used: write a FIXTURE that prints the flags you care about, and read them
-off the screen as text. zxadj.dsf's "V=33 N=34 ..." status line is
-exactly that, and it is how D2, B21 and E4 were settled. Slower to author
-than a memory read, but it is measuring the interpreter through its own
-documented behaviour instead of through an address nobody can verify.
-
-Two more things the leg cannot pin, both consequences of the same
-missing symbols, both handled rather than ignored:
-
-  * the RANDOM PROMPT. The original picks its input prompt from SM2..SM5
-    (the SP16 transcript shows "What next?>" and "What now?>" on
-    successive turns of the same run; Dracula showed three different
-    ones in eight turns). nleg and jleg both force flag 42 to a fixed
-    prompt; this leg cannot write flags, so instead the pending prompt
-    MESSAGE and input ROW are excluded from the emitted text - neither is
-    turn output anyway (see _emit_text, and trim_prompt_tail for the
-    matching trim applied to the Next side of a ZX comparison).
-  * the INPUT TIMEOUT. nleg zeroes inpTOFrames every poll; here there is
-    nothing to zero. Scripts for this leg must not rely on a turn sitting
-    at a prompt indefinitely if the game arms TIME.
-
-HOW A TURN IS READ - screen decoding and settling.
-
-Text comes from zscreen.py, which decodes the ULA bitmap directly
-because ZEsarUX's get-ocr reads NOTHING from a DAAD ZX screen (measured
-in SP16 T5; see zscreen's docstring). Readiness is a POSITIVE signal, not
-a sleep: the DAAD ZX line editor draws its cursor "_" into the BITMAP
-(not as a flashing attribute - confirmed live: 12 consecutive captures at
-an idle prompt are byte-identical), so "the screen has stopped changing
-AND the last line ends in the cursor" means the editor is waiting for a
-line. Static with NO cursor is a pause the game is holding - a "More..."
-page or an ANYKEY wait - which is captured and then dismissed with a
-keypress, the same discipline nleg.settle uses.
-
-A turn is additionally required to have CHANGED the screen at least once
-before READY is accepted. Without that, settle() would return
-immediately on the still-unprocessed pre-Enter screen (which also ends in
-a cursor) and every turn would capture nothing.
-
-Script format is the SHARED one - the same JSON array of strings jleg.js
-and nleg.py consume, with the same three entry forms ("COMMAND", "!X",
-"?X") and the same `pre`-anchoring rules, so one script file drives all
-three legs.
-
-BUILD CHAIN. build_tap() is the SP16 chain in code: DRF zx 48k (with
--force-normal-messages, which a 48K tape requires - it has nowhere to put
-an XMB) + DRB + pager48k + daadmaker /48, all run by absolute path with
-cwd in a work directory. Nothing is ever written into tools/. A prebuilt
-TAP is accepted instead (--tap), so a shipped game with no source can
-still be played.
-
-CAVEAT worth stating once: the ZX leg compiles the 48K SUBTARGET while
-the Next leg builds `nextdaad`. DRF defines COLS from the subtarget: 42
-on the ZX leg against 80 on the Next leg. A game whose DSF branches on
-COLS (or on the target symbol) genuinely runs different code on the two
-legs. That is a property of the game, not a divergence - but read any
-COLS-conditional game's text differences with it in mind.
+Script format is shared with jleg.js and nleg.py: same JSON array of
+strings, same three entry forms ("COMMAND", "!X", "?X"), same
+`pre`-anchoring rules (see command_plan). See settle() for how a turn's
+readiness is decided, and trim_prompt_tail/_emit_text for how the
+original's random input prompt (PROMPT_SM) is kept out of the compared
+text.
 """
 import argparse
 import hashlib
@@ -342,31 +266,17 @@ class ZxLeg:
     def settle(self, pages, baseline=None, boot=False):
         """Poll until the line editor is ready, dismissing pauses.
 
-        `baseline` is the raw screen as it stood when the turn's keys
-        went out. NOTHING is believed until the screen has left it: a
-        capture identical to the baseline is the turn not having landed
-        yet, whatever it looks like. That distinction is not academic -
-        it was a real, measured desynchronisation. The first version of
-        this loop tracked "has any poll differed from the previous poll",
-        which is False for a turn whose output is complete before the
-        FIRST poll (fast Z80 work against a 0.25s poll: Dracula's
-        "LOOK DESK" does it). The ready screen then failed the change
-        test, fell through to the pause branch, and the leg pressed Enter
-        at an idle prompt - submitting an empty command into the game and
-        shifting every later turn's response by one. Three of eight turns
-        of the Dracula demo diverged, from nothing but that.
+        `baseline` is the screen as it stood when the turn's keys went
+        out; a capture identical to it means the turn has not landed yet,
+        however it looks (a poll-boundary false-ready cost 3/8 turns of
+        the Dracula demo before this check existed).
 
-        Returns True if at least one no-cursor pause was dismissed this
-        turn (the caller records it against the turn, exactly as nleg
-        records its anykey_heuristic - a page dismissed by the harness is
-        a turn whose text capture deserves a second look).
+        Returns True if a no-cursor pause was dismissed this turn (record
+        it like nleg's anykey_heuristic - worth a second look).
 
         Raises TimeoutError naming what it last saw, including whether
-        the screen ever moved off the baseline at all - a turn whose keys
-        never reached the interpreter and a turn stuck mid-print are
-        different failures and must not report the same way. A quiet
-        give-up here would hand the comparison a truncated capture that
-        reads as a game divergence instead of a harness failure.
+        the screen ever left the baseline - distinguishes keys that never
+        reached the interpreter from a turn stuck mid-print.
         """
         limit = BOOT_TIMEOUT_S if boot else SETTLE_TIMEOUT_S
         pause_polls = BOOT_PAUSE_STATIC_POLLS if boot else PAUSE_STATIC_POLLS
@@ -515,17 +425,11 @@ def command_plan(cmd):
 def play_charset(explicit=None, built=None, tap=None):
     """Which .CHR to DECODE with: explicit > as-built > beside the TAP.
 
-    The as-built charset is the one that matters and it is why this
-    function exists. build_tap resolves the font against the DSF's own
-    directory and hands it to daadmaker, so a game shipping its own
-    6-pixel font is BUILT with it - but the TAP it produces lands in a
-    work directory that contains no .CHR at all, so re-resolving against
-    the TAP would silently fall back to the stock AD8x6.CHR and decode
-    every redefined glyph wrongly. That is a silent mis-read surfacing as
-    text divergences, precisely the failure zscreen.resolve_charset
-    exists to prevent, and the first version of this leg had it: play()
-    re-resolved and the caller's built["charset"] was dropped on the
-    floor. Both call sites now go through here.
+    The as-built charset must win: build_tap resolves a game's own
+    6-pixel font against the DSF's directory and BUILDS with it, but the
+    TAP's work directory holds no .CHR, so re-resolving there falls back
+    to the stock AD8x6.CHR and decodes every redefined glyph wrongly.
+    Both call sites go through here to avoid that.
     """
     if explicit:
         return Path(explicit)

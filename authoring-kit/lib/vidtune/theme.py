@@ -1,30 +1,24 @@
 """Visual tokens and the application stylesheet.
 
-vidtune is a bench instrument for judging a 256-colour clip against a hard
-wire budget, so the chrome is built to get out of the way of the picture:
-a near-black grading surround (a light chrome around a 256-colour still
-lies about how it looks), one accent, and figures in a monospace face so a
-changing number never shifts the layout it sits in.
+Near-black grading surround (a light chrome would misrepresent how a
+256-colour still looks), one accent, monospace figures so a changing
+number never shifts its layout.
 
 Token groups
 ------------
-Surfaces are one hue - a cool near-black - separated by lightness only,
-in whisper-quiet steps: SURROUND (behind the picture, the darkest thing on
-screen) -> PANEL -> RAISED (menus, hover) -> INSET (inputs, which sit
-BELOW their surroundings because they receive content).
+Surfaces: one hue, separated by lightness only - SURROUND (darkest) ->
+PANEL -> RAISED (menus, hover) -> INSET (inputs, below their surroundings).
 
-Text has four levels - INK / INK_DIM / INK_FAINT / INK_GHOST - so
-hierarchy comes from weight and colour rather than size.
+Text: four levels (INK / INK_DIM / INK_FAINT / INK_GHOST) - hierarchy by
+weight and colour, not size.
 
-Colour means one thing each. ACCENT (blue) is the only UI accent:
-selection, focus, and the single primary action. The trace's
-green/amber/red are NOT decoration - they are meter stops encoding wire
-cost against the per-frame cap, and they are deliberately kept out of the
-blues so the accent stays the one thing that means "act here".
+Colour means one thing each: ACCENT (blue) is the only UI accent
+(selection, focus, primary action). The trace's green/amber/red are meter
+stops for wire cost against the per-frame cap, kept out of the blues so
+ACCENT stays the one "act here" signal.
 
-Deliberately no motion: Play/step/Preview Segment get hammered hundreds of
-times in a tuning session, and animating a control at that repetition rate
-only makes it feel slow.
+No motion: controls here get triggered hundreds of times per session, and
+animating at that rate reads as slow.
 """
 from PySide6.QtGui import QColor, QFont
 
@@ -55,11 +49,7 @@ FAULT    = "#d5453f"     # a hardware red, not the alert-box red this replaced
 HEADROOM = "#4fb06a"     # healthy - room under the cap, a clip already tuned
 
 # Trace meter stops: green below the cap, amber as it closes on it, red at
-# or over. A green-amber-red ramp is the headroom meter everyone already
-# knows how to read, and keeping the ramp out of the blues is what lets
-# the accent stay the ONE thing that means "UI, act here" - the segment
-# region is drawn in accent directly over these bars, and the slider
-# shares their axis, so a blue datum would blur the two jobs.
+# or over.
 WIRE_UNDER = HEADROOM
 WIRE_NEAR  = PHOSPHOR
 WIRE_OVER  = FAULT
