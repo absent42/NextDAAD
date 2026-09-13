@@ -479,6 +479,10 @@ vg_op_skip8:
 vg_op_run8:
     ld c, (hl)
     inc hl
+    ld a, c
+    cp NXV2_RUN_DMA_MIN
+    jr nc, .slow                 ; at/over the crossover: the body's DMA
+                                 ; kernel, crossing or not
     ld a, e
     add a, c
     jr c, .slow
@@ -486,15 +490,6 @@ vg_op_run8:
     cp 0                         ; SMC: content height
     jr c, .in
     jr z, .in
-    ; crossing: hop-eligible only under the DMA crossover (segments
-    ; are CPU-filled; at >= the crossover the body's DMA kernel is
-    ; the right engine anyway)
-    ld a, c
-    cp NXV2_RUN_DMA_MIN
-    jr nc, .slow
-    ld a, e
-    add a, c                     ; re-derive E+count (carry-free: the
-                                 ; 9-bit case took .slow above)
 .hsub:
     sub 0                        ; SMC height: A = seg2 (1..h-1)
 .hcmp2:
@@ -524,9 +519,6 @@ vg_op_run8:
     call vid_fill_cpu            ; seg2 into the new column
     jr .tail
 .in:
-    ld a, c
-    cp NXV2_RUN_DMA_MIN
-    jr nc, .slow
     ld a, (hl)
     inc hl                       ; A = colour (no cell round-trip)
     ld b, 0
@@ -555,6 +547,9 @@ vg_op_copy8:
     cp $DF
     jr nc, .srcedge
 .sok:
+    ld a, c
+    cp NXV2_COPY_DMA_MIN
+    jr nc, .slow                 ; at/over the crossover: the body
     ld a, e
     add a, c
     jr c, .slow
@@ -562,11 +557,6 @@ vg_op_copy8:
     cp 0                         ; SMC: content height
     jr c, .in
     jr z, .in
-    ld a, c
-    cp NXV2_COPY_DMA_MIN
-    jr nc, .slow
-    ld a, e
-    add a, c                     ; re-derive (carry-free, as run8)
 .hsub:
     sub 0                        ; SMC height: A = seg2 (1..h-1)
 .hcmp2:
@@ -590,9 +580,6 @@ vg_op_copy8:
     call vid_copy_ldi            ; seg2
     jr .tail
 .in:
-    ld a, c
-    cp NXV2_COPY_DMA_MIN
-    jr nc, .slow
     call vid_copy_ldi
 .tail:
     NXVNEXT vg_edge_relay, vg_bad_relay
