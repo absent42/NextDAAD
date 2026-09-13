@@ -220,8 +220,8 @@ tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0
 
-; SP14c's Release-only ALIGN pads (10 here, 8 in print.asm) went 2026-09:
-; the R1 rebalance left Release far clear of the $A100 boundary.
+; SP14c's Release-only ALIGN pads, here and in print.asm, went 2026-09:
+; pre-anchor ballast moved in keeps Release clear of the $A100 boundary.
 
 fontData:
     INCBIN "font.chr"           ; 2048 bytes, path relative to src/

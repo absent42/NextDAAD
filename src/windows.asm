@@ -51,7 +51,7 @@ win_home:
     ret
 
 ; Out: E = this window's resolved tilemap attribute. A plain fetch:
-; the pair is allocated and cached by win_attr_resolve (overlay0)
+; the pair is allocated and cached by win_attr_resolve (below)
 ; whenever ink or paper changes, never here. Preserves D.
 win_attr:
     ld a, WIN_ATTR

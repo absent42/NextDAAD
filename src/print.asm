@@ -83,7 +83,7 @@ prn_decoded:
     ld (chsGfx), a
     ret
 .objname:
-    jp objname_print            ; resident (objname.asm), always mapped
+    jp objname_print            ; resident (ddbtext.asm), always mapped
 
 ; C = decoded char in, C = final glyph out. Adds 128 (mod 256, like
 ; jDAAD's font[(c+shift)%256], jdaad.js:1967) when the window forces

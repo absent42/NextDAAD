@@ -196,7 +196,7 @@ DDB_MAGIC       equ 95      ; header offset 2. HISTORICALLY the /CTL null
 ; header byte 1: HIGH nibble = target machine, LOW nibble = language
 ; (drb.php writes getMachineIDByTarget << 4, then ORs bit 0 for ES/PT).
 ; The low nibble MUST be masked off before comparing - print.asm and
-; objname.asm read its bit 0 as "Spanish", so a whole-byte compare would
+; ddbtext.asm read its bit 0 as "Spanish", so a whole-byte compare would
 ; refuse every Spanish database.
 ;
 ; NextDAAD accepts its OWN machine and nothing else. The classic ZX

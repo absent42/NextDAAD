@@ -991,7 +991,7 @@ inp_capture_start:
 
 ; Out: E = the block cursor's inverted attribute - the pair with this
 ; window's ink and paper swapped. Resolved and cached per-window by
-; win_attr_resolve (overlay0) whenever the colours change, so a window
+; win_attr_resolve (windows.asm) whenever the colours change, so a window
 ; switch (e.g. inp_stream_push's flag-41 handling) picks up whichever
 ; window is current, not whichever window last set colours. Preserves D.
 inp_attr_inv:
@@ -2039,10 +2039,10 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; check would misfire on every genuine cross-part load. sav_read_v2
 ; reimplements the same staged, atomic read shape with the same
 ; resident primitives and the same resident scratch buffers sav_read
-; itself uses (savRdHdr/savStage/savLocs, file.asm), but skips that
+; itself used (savRdHdr/savStage/savLocs, file.asm), but skips that
 ; gate and reads one extra byte past the payload to tell v1 from v2 -
 ; restoring the numObj-vs-live check ONLY on the same-part path (.v1
-; below), where it is exactly as valid as it is in sav_read today.
+; below), where it is exactly as valid as it was in sav_read.
 ;
 ; swapStage/swapObjCount (Task 3, overlay0.asm) live in the OVL0 page -
 ; this file's own header comment ("Calls RESIDENT services only - never
@@ -2069,7 +2069,7 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; contract ("Exit (success): Fc=0; BC=bytes actually written" - no
 ; short-write exemption stated, unlike F_READ's explicit "EOF is not an
 ; error, check BC" note) was never checked against the requested count
-; - the routine trusted CF alone, exactly as sav_write itself does for
+; - the routine trusted CF alone, exactly as sav_write itself did for
 ; its own (proven-reliable, sequential-from-open) writes. Verdict: a
 ; write that seeks to the exact current end of an already-open,
 ; non-created handle and asks it to grow the file by one byte can
@@ -2087,9 +2087,9 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; on the resident primitives" precedent), the exact same call shape as
 ; the header/flags/objects writes immediately before it, which the
 ; owner's own evidence proves already write reliably. No second open,
-; no seek, no write-extend edge case. sav_write and sav_read (file.asm)
-; became unreachable from h_save and were deleted 2026-09 with zero
-; callers; sav_append_part's code went the same way, for the same reason.
+; no seek, no write-extend edge case. Once the v2 routines replaced
+; sav_write in h_save and sav_read in h_load, both were dead until
+; deleted 2026-09; sav_append_part was removed earlier, with this fix.
 ;
 ; Post-fix hardening (owner-approved pre-tag review): CF alone is not
 ; sufficient either - the SAME root-cause lesson applies to every write
@@ -2109,7 +2109,7 @@ sav_write_v2:
     ld ix, savName
     ld b, ESX_MODE_W               ; nextdaad.inc: write, create or
                                     ; truncate - the SAME mode sav_write
-                                    ; itself uses; always a fresh file,
+                                    ; itself used; always a fresh file,
                                     ; never a reopen of an existing one
     call esx_fopen
     jp c, .err
@@ -2117,7 +2117,7 @@ sav_write_v2:
     ld a, (numObj)
     ld (savNObj), a                ; savHdr+savNObj = the 6-byte header
                                     ; (file.asm) - same block sav_write
-                                    ; itself writes
+                                    ; itself wrote
     ; header (6 bytes)
     ld a, (savHandle)
     ld ix, savHdr

@@ -748,8 +748,8 @@ svc_fclose: jp esx_fclose         ; in A=handle
 ; store-to-buffer sink standing in for prn_decoded. Bytes are token-
 ; expanded (txt_next_decoded's own job) but control escapes ('_'/'@'
 ; and friends) are left raw - those are prn_decoded's job, not this
-; routine's, so they are NOT interpreted here. savStage (file.asm:593)
-; aliases sav_read's flags staging; safe because save/load and a
+; routine's, so they are NOT interpreted here. savStage (file.asm:479)
+; aliases sav_read_v2's flags staging; safe because save/load and a
 ; service call are both strictly foreground and never overlap - see
 ; savStage's own comment. Buffer valid until the next SVC_GETMSG call
 ; OR a save/load.

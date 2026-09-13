@@ -476,14 +476,14 @@ sav_scatter_from:
     ret
 
 savName:    ds 14                ; 8 + ".SAV" + NUL
-savStage:   ds 256               ; sav_read staging: flags commit only
-                                 ; after the whole file verifies. Also
-                                 ; aliased by SVC_GETMSG (main.asm) as
-                                 ; its decode buffer - safe because
-                                 ; save/load and a service call are both
-                                 ; strictly foreground and never overlap.
-                                 ; Contract: the returned pointer is
-                                 ; valid until the next SVC_GETMSG call
+savStage:   ds 256               ; sav_read_v2 (overlay1.asm) staging:
+                                 ; flags commit only after the whole file
+                                 ; verifies. Also aliased by SVC_GETMSG
+                                 ; (main.asm) as its decode buffer - safe
+                                 ; because save/load and a service call
+                                 ; are both strictly foreground and never
+                                 ; overlap. Contract: the returned pointer
+                                 ; is valid until the next SVC_GETMSG call
                                  ; OR a save/load.
 savHandle:  db 0
 savLocs:    ds 255

@@ -229,7 +229,7 @@ dbg_hex16:
 ; cumulative 16-bit iteration counter across the five deferred obj-
 ; table scan-hoist sites - obj_find_pass/h_dropall/owf_core/
 ; weight_total (overlay0.asm, OV0-3) and list_at's two passes
-; (objname.asm, the OBJ1 site). Every site calls this under IFDEF
+; (ddbtext.asm, the OBJ1 site). Every site calls this under IFDEF
 ; DEBUG (Release emits no call; the Release objscan_tick label below
 ; stays as part of the dbg_* stub alias block, zero bytes).
 ; Not auto-reset per turn: a resident per-turn zero hook
@@ -954,7 +954,7 @@ dbg_engage_tilemap:
 
 ; Shape matches errors.asm's runtime messages: "NextDAAD: <what> - E<n>"
 ; (n = the ddb_load result code returned to main.asm, DDB_E_* in
-; nextdaad.inc). Printed via fatal() -> fatal_puts (errors.asm) in both
+; nextdaad.inc). Printed via fatal() -> fatal_puts (file.asm) in both
 ; builds - see main.asm's ddb_load branch for which message pairs with
 ; which border colour/ERR_BORDER_*.
 msgMissing:  db "NextDAAD: DDB missing - E1", 0

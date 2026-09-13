@@ -3977,7 +3977,7 @@ ptrNameStem:  db "POINTER"
 ptrNameExt:   db ".SPR", 0
 
 ; Relocated from errors.asm (post-flags resident there had no room to
-; grow - see fatal_puts's MMU7 map, errors.asm). fatal_puts is the only
+; grow - see fatal_puts's MMU7 map, file.asm). fatal_puts is the only
 ; reader: it maps this page at MMU7 before dereferencing either string,
 ; reached via err_raise directly or ddbtext.asm's rd_stack_fatal -> fatal.
 ; Fixed prefix; err_raise appends the single decimal digit itself.

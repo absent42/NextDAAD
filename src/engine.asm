@@ -985,11 +985,11 @@ cdisp:
 ; below fires. That makes it worth printing, because the number is
 ; invisible otherwise and two budgets now compete: this pad, and the
 ; post-anchor headroom. Code moved pre-anchor in 2026-09 with the
-; sav_write/sav_read deletion is deliberate ballast, marked "pre-anchor
-; ballast" where it now sits - move any of it back here to rebalance.
-; READ THE DEBUG FIGURE: DEBUG carries the most pre-anchor code and is
-; always the tightest variant (2026-08-09: DEBUG 96, Force1MB 133,
-; Release 185), so a Release-only check will read 2x too generous.
+; sav_write/sav_read deletion is deliberate ballast, marked "Pre-anchor
+; ballast" - move any of it back to its post-anchor home to rebalance.
+; Moving code in shrinks the pad, deleting code grows it. READ THE DEBUG
+; FIGURE: DEBUG carries the most pre-anchor code, so it is the tightest
+; variant; the DISPLAY below reports the live pad at every build.
     DISPLAY "pre-flags pad ", /D, $A200 - $, " bytes free"
     ALIGN 256
 flags:      ds 256
