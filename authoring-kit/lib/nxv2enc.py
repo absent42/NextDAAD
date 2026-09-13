@@ -422,12 +422,10 @@ TMODEL_COEFFS = {
                                 #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a
                                 #   fill chunk shorter than this goes
                                 #   unrolled-CPU. Crossover measured directly
-                                #   from silicon NXBK rows at 68.8, held at
-                                #   71 (taking CPU for 69-70 B fills costs
-                                #   <= 34 T/op on 0.00-0.08% of corpus
-                                #   decode-T). See the .inc comment for the
-                                #   full derivation and for why RUN charges
-                                #   no path term
+                                #   from silicon NXBK rows at 68.8 on the
+                                #   earlier fill kernel and held at 71; the
+                                #   .inc notes it is due for re-derivation
+                                #   from NXBK against the faster kernel
     "copy_dma_min": 81,        # the PLAYER's copy kernel-select threshold
                                 #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
                                 #   Measured break-even 81.4 B (silicon NXBC
