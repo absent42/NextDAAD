@@ -6725,35 +6725,13 @@ vid_open_video_body:
     ld (hl), b
     inc hl
     add a, '0'
-    ld (hl), a
-    inc hl
-    ex de, hl                    ; DE = vidName+3 (write cursor)
-    ld hl, vidExtVid             ; ".VID",0 (5 bytes)
-    ld bc, 5
-    ldir
+    ld (hl), a                   ; ".VID",0 is the template's tail
     ld a, (curPart)
     dec a
     jr z, .openroot
-    ld hl, vidNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
-    ld a, (curPart)
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), 92                  ; '\' (decimal - rubric 8: sjasmplus
-    inc hl                       ; does not escape char literals)
-    ex de, hl                    ; DE = vidNamePart+6
-    ld hl, vidName
-    ld bc, 8                     ; "NNN.VID",0
-    ldir
-    ld ix, vidNamePart
+    add a, '1'                   ; digit = curPart + '0'
+    ld (vidNamePart+4), a        ; "PARTn\" template, digit patched;
+    ld ix, vidNamePart           ; vidName is its tail
     call vid_stream_open_body    ; same page - plain call
     jr nc, .done                 ; PARTn open succeeded
 .openroot:
@@ -6775,8 +6753,6 @@ vid_open_video_body:
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
-
-vidExtVid: db ".VID", 0
 
 ; Open-failure diagnostic prints - DEBUG ONLY (owner ruling 2026-08-27,
 ; reversing 2026-08-02's Release-visible ruling: a player must never see
@@ -6953,8 +6929,10 @@ vid_raw_seek0:
     jp esx_fseek
 
 vidRawResetByte: db 0
-vidName:     ds 8                ; "NNN.VID",0
-vidNamePart: ds 14               ; "PARTn\NNN.VID",0
+vidNamePart: db "PART0", 92      ; digit at +4 patched; 92 = '\' (the
+                                 ; assembler does not escape char literals)
+vidName:     ds 3                ; "NNN" patched
+             db ".VID", 0        ; the root name IS the PART name's tail
 vidFstatBuf: ds 11               ; F_FSTAT: +7(4) = file size
 
 ; =====================================================================
