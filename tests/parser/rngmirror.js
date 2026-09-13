@@ -1,7 +1,7 @@
-// Mirror of NextDAAD's rng_next (src/overlay0.asm), so the jDAAD leg draws
-// the identical random stream to the Z80 interpreter. See tests/parser/rng.py
-// for the transcription of the assembly. Kept in lockstep by the
-// t4_rng_js_mirror_matches_python selftest case.
+// Mirror of NextDAAD's rng_step and rng_next (src/main.asm, src/overlay0.asm),
+// so the jDAAD leg draws the identical random stream to the Z80 interpreter.
+// See tests/parser/rng.py for the transcription of the assembly. Kept in
+// lockstep by the t4_rng_js_mirror_matches_python selftest case.
 //
 // SP16 Task 5: the Z80 routine became a real 16-bit xorshift
 // (x ^= x<<7; x ^= x>>9; x ^= x<<8, period 65535) with a full-state

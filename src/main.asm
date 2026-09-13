@@ -569,16 +569,15 @@ svc_version:
     or a                          ; CF clear
     ret
 
-; xorshift on rngState (engine.asm), sharing the one stream h_random /
-; rng_next (overlay0.asm:502-592) already advances for CHANCE/RANDOM.
+; xorshift on rngState (engine.asm), the stream CHANCE and RANDOM draw.
 ; rng_next (overlay0.asm) calls rng_step below, so the transform lives
 ; here once and both streams share the one algorithm and the one
 ; rngState cell. Unlike rng_next this does NOT scale to 1..100: xbn.inc
 ; documents "SVC_RANDOM: out A = random byte", a raw full-range byte for
 ; extern use, not the CHANCE-specific 1..100 scaling.
 ; ISR-safe: the #int hook can call this mid-frame (xbntest.asm fn 35's
-; soak) while the foreground is also inside this routine, so the
-; rngState RMW is bracketed atomic vs interrupts using nr_read's idiom
+; soak) while the foreground is also drawing, so rng_step brackets the
+; rngState RMW atomic vs interrupts using nr_read's idiom
 ; (hardware.asm:145-165) - RTL-verified SAFE, no erratum on the Z80N
 ; core (P/V latches at T3, interrupt acceptance clears IFF2 at T5, all
 ; four core variants).
@@ -596,9 +595,9 @@ svc_random:
     or a                          ; CF clear
     ret
 
-; One xorshift step on rngState, DI-bracketed (IFF2 sampled twice, then
-; restored), so a foreground draw and a hook draw cannot interleave their
-; RMW. Out HL = new state (L = random byte). Corrupts AF, DE.
+; One xorshift step on rngState, DI-bracketed (IFF2 sampled, re-sampled if
+; it reads 0, then restored), so a foreground draw and a hook draw cannot
+; interleave their RMW. Out HL = new state (L = random byte). Corrupts AF, DE.
 rng_step:
     ld a, i
     jp pe, .sampled

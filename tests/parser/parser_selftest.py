@@ -420,7 +420,7 @@ def t4_rng_pins_the_z80_xorshift_sequence():
     needs pinning now is that the mirror still tracks the Z80 exactly.
 
     If this case fails:
-    - src/overlay0.asm rng_next has been changed, OR
+    - rng_step (src/main.asm) or rng_next (src/overlay0.asm) has been changed, OR
     - rng.py / rngmirror.js have drifted from it.
     Fix the mirrors and this pin in the SAME change as the Z80. Do not
     "improve" the mirror alone - the two interpreter legs must draw the

@@ -1,4 +1,4 @@
-"""Python reference of NextDAAD's rng_next (src/overlay0.asm).
+"""Python reference of NextDAAD's rng_step and rng_next (main.asm, overlay0.asm).
 
 Transcribed from the Z80 (SP16 Task 5 - the xorshift replacement; the
 old rotate-based routine and its mod-200/mod-100 reduction are gone):
@@ -27,7 +27,7 @@ period; CHANCE 50 measures 50.00% over a full period.
 
 This mirror exists so the jDAAD leg (tests/parser/rngmirror.js) and the
 Z80 draw the SAME stream from the same pinned seed. Faithfulness to the
-Z80 beats elegance here: if src/overlay0.asm's rng_next changes, this
+Z80 beats elegance here: if rng_step or rng_next changes, this
 file, rngmirror.js and the t4_rng_* selftest pins must change in the
 SAME commit.
 """

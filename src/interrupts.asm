@@ -274,8 +274,9 @@ im2_isr:
     ;      the selected register, the slot 6/7 mapping, and AF' all survive intact.
     ;  (3) Only one CTC nest is ever live (period >> its ~196T body), +4 bytes of
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
-    ; DI sections: nr_read's bracket ~76T (~2.7us) and the tick's pointer brackets
-    ; ~20T stay well under one CTC period (~50us at 20kHz); every indefinite-DI
+    ; DI sections: nr_read's bracket ~76T (~2.7us), rng_step's ~162T (~6us)
+    ; and the tick's pointer brackets ~20T stay well under one CTC period
+    ; (~50us at 20kHz); every indefinite-DI
     ; teardown calls audio_init (resets the CTC) first. PLY_AKY_PLAY nests
     ; too: its ret chain runs on akyRetShadow (main.asm) whose guard absorbs
     ; this ISR's pushes, and its one DI (the linker read) is ~350 T once per
