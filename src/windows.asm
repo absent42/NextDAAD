@@ -157,6 +157,7 @@ win_newline:
 ; Re-resolve the current window's attribute and the cursor's inverted
 ; attribute from its ink and paper. Called whenever either changes.
 ; Corrupts all registers.
+    ASSERT WIN_PAPER == WIN_INK+1
 win_attr_resolve:
     ld a, WIN_INK
     call win_field
