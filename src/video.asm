@@ -252,6 +252,12 @@ vid_ldi_blk:
     ASSERT (low vid_ldi_blk) <= 256-36
     ASSERT (high vid_ldi_blk) == (high vid_stub)
 
+; HL = cold body. Push it, hop to VID_PAGE2 (the body returns there).
+vid_hop2:
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+
 ; ---------------------------------------------------------------------
 ; Fast op handlers - FLAT set (mode-0 any height, mode-1 at native
 ; 256: the surface is linear in the dest window, so the only dest
@@ -1471,7 +1477,7 @@ vid_pos24:
     add a, h
     ld h, a                      ; HL = pos low16 (partial)
     ld a, 0
-    adc a, 0
+    rla                          ; A = carry
     ld b, a                      ; carry into the high byte
     ld a, c
     rrca
@@ -1923,13 +1929,9 @@ vid_pace_poll:
     or a
     sbc hl, de
     ld (vidPaceRem), hl
-    ld a, h
-    or l
-    scf
-    ret z                        ; rem == 0: released
-    ld a, h
-    rlca                         ; CF = rem bit 15 (negative = late =
-    ret                          ; released with deficit)
+    dec hl                       ; CF = bit 15 of rem-1: rem <= 0 ->
+    add hl, hl                   ; released (rem == 0 or negative); rem
+    ret                          ; never approaches -32768
 
 vid_aud_pump:
     ld (vidAudBudget), bc
@@ -2200,9 +2202,9 @@ vid_play:
     ld (vidLoopMode), a
     ld c, b                      ; video number travels in C
     ld hl, vid_open_video_body   ; cold: name build + PARTn probe +
-    push hl                      ; esx open + filemap capture (+ DEBUG
-    ld a, VID_PAGE2              ; missing print) - 3c reclaim: the
-    jp ovl_map_page              ; hot stub cluster moved cold
+                                 ; esx open + filemap capture (+ DEBUG
+                                 ; missing print)
+    jp vid_hop2                  ; push HL (the body), map VID_PAGE2
 .openret:
  IFDEF DEBUG
     ld a, b                      ; D1: neither name opened - vid_run is
@@ -2312,9 +2314,7 @@ vid_run:
     ld a, c
     ld (vidSvSfxRes), a
     ld hl, vid_run_orch_body
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
+    jp vid_hop2                  ; push HL (the body), map VID_PAGE2
 .orchret:
     ; B = 0: ready to arm (entry captured, file loaded/prefilled,
     ; L2/ISRs/session cells all set). B != 0: failed open - the orch
@@ -2499,10 +2499,9 @@ vid_run:
     ld hl, (vidPaceRem)
     ld de, (vidABytes)
     add hl, de
-    ld a, h
-    or l
-    jr z, .rclamp
-    bit 7, h
+    dec hl                       ; rem-1 negative <=> rem <= 0 (rem never
+    bit 7, h                     ; near -32768): clamp
+    inc hl
     jr z, .remok
 .rclamp:
     ex de, hl                    ; rem = aBytes (excess deficit dropped)
@@ -2639,9 +2638,8 @@ vid_run:
                                  ; vidWinOpenH (staged 0 resident), so
                                  ; the call is unconditional (3c).
     ld hl, vid_run_restore_body  ; stub/L2/presentation/MMU2 restore +
-    push hl                      ; ring free (EXIT ORDER FIX inside)
-    ld a, VID_PAGE2
-    jp ovl_map_page
+                                 ; ring free (EXIT ORDER FIX inside)
+    jp vid_hop2                  ; push HL (the body), map VID_PAGE2
 .restore_tail:
     ; vidPlaying: cleared here, the single restore tail (reached only
     ; via vid_run_restore_body's jp back to this label) - dominates
@@ -3832,9 +3830,7 @@ vidRlSpinDiv:    db 1            ; SPIN poll divider (counts down);
                                  ; the vid_rl_poll reset with vidRlDiv
 vid_tl_report:
     ld hl, vid_tl_report_body
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
+    jp vid_hop2                  ; push HL (the body), map VID_PAGE2
 vid_tl_report_ret:
     ret
 
@@ -5496,6 +5492,12 @@ nxv2_open_body:
     ret                          ; 3c: plain return to the cold
                                  ; orchestrator (B = verdict)
 
+; HL = hot body. Push it, hop back to VID_PAGE.
+vid_hop1:
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
 ; Shared contract validation (streaming + direct). CF set = refuse,
 ; B = verdict (1 bad header/read, 4 too fragmented); CF clear = Total/
 ; Cap/Apad/Need/EntCnt staged. Corrupts AF, B, DE, HL.
@@ -5839,9 +5841,7 @@ vid_run_orch_body:
     ld b, 0
 .back:
     ld hl, vid_run.orchret
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
+    jp vid_hop1
 .fail:
  IFDEF DEBUG
     push bc
@@ -6334,9 +6334,7 @@ vid_run_restore_body:
                                  ; hopping here); resident closed at
                                  ; load time - idempotent either way
     ld hl, vid_run.restore_tail
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
+    jp vid_hop1
 
 ; ---------------------------------------------------------------------
 ; vid_snap_save_body - SP15 L2 SNAPSHOT capture (cold, strictly
@@ -6676,9 +6674,7 @@ vid_open_video_body:
  ENDIF
 .haveresult:
     ld hl, vid_play.openret
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
+    jp vid_hop1
 
 ; Open-failure diagnostic prints - DEBUG ONLY (owner ruling 2026-08-27,
 ; reversing 2026-08-02's Release-visible ruling: a player must never see
@@ -7523,9 +7519,7 @@ vid_tl_report_body:
     ld a, (vidTlNr69)            ; hand the picture back
     nextreg NR_DISPLAY_CTRL, a
     ld hl, vid_tl_report_ret
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
+    jp vid_hop1
 
 ; FRM=live/mirror TRAP (SP15 Card #5, item 3). The intermittent
 ; FRM=0000 row (3 occurrences in ~13 runs across VLOP0/vply3/vply4;
