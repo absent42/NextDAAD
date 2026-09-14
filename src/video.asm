@@ -2217,6 +2217,20 @@ vid_play:
     ret nz                       ; neither name opened
     jp vid_run
 
+; Flip display+edit to the pending palette bank; no-op when none
+; pends. Corrupts AF.
+vid_pal_present:
+    ld a, (vidPalPending)
+    or a
+    ret z
+    ld a, (vidPalCtrl)
+    xor $44                      ; display+edit both to the new bank
+    ld (vidPalCtrl), a
+    nextreg NR_PAL_CTRL, a
+    xor a
+    ld (vidPalPending), a
+    ret
+
 ; ---------------------------------------------------------------------
 ; vid_run - orchestration. Entry/exit symmetry: everything touched is
 ; captured into a vidSv* cell and reversed on every exit path.
@@ -2522,16 +2536,7 @@ vid_run:
     ; keyframe present: palette swap (if a PAL rode the span) then
     ; the pixel-bank flip - two back-to-back nextreg writes, the
     ; v1-proven CPU choreography (no copper, no independent writer)
-    ld a, (vidPalPending)
-    or a
-    jr z, .kfnopal
-    ld a, (vidPalCtrl)
-    xor $44                      ; display+edit both to the new bank
-    ld (vidPalCtrl), a
-    nextreg NR_PAL_CTRL, a
-    xor a
-    ld (vidPalPending), a
-.kfnopal:
+    call vid_pal_present
     ld a, (l2FrontBank)
     ld b, a
     ld a, (l2BackBank)
@@ -2543,16 +2548,9 @@ vid_run:
 .delta:
     ld a, (vidInSpan)
     or a
-    jr nz, .present_done         ; span hold frame: nothing presents
-    ld a, (vidPalPending)        ; delta-frame PAL presents with its
-    or a                         ; frame (nxv2dec applies PAL to the
-    jr z, .present_done          ; visible palette on delta frames)
-    ld a, (vidPalCtrl)
-    xor $44
-    ld (vidPalCtrl), a
-    nextreg NR_PAL_CTRL, a
-    xor a
-    ld (vidPalPending), a
+    call z, vid_pal_present      ; delta-frame PAL presents with its
+                                 ; frame; a span hold frame presents
+                                 ; nothing
 .present_done:
     ; --- stage the NEXT frame's audio feed (T10) ---
     ld hl, (vidFramesLeft)
