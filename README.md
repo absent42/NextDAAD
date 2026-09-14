@@ -52,7 +52,8 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
   channels that auto-allocate with stealing or pin outright, looping
   ones resuming after a video
 - **Animation** - The Spectrum Next's sprite layer can be used to add 
-  animated aspects to location graphics
+  animated aspects to location graphics, and layer 2 graphics can have 
+  palette cycling
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
   `POINTER.SPR` and the interpreter picks them up at boot, and a game
   can switch between up to ten of each while it runs
@@ -61,6 +62,9 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 - **Multi-part games** - switch between databases at runtime with flags
   and objects intact, with per-part assets and saves that load from any
   part
+- **Loader intro** - the authoring kit includes an optional loader 
+  intro that can feature a layer 2 slideshow with wipes, scrolling text 
+  credits, AY music, stereo digitised music, or NextDAW music
 - **DAAD engine** - all 128 condacts, the eight-window system, the
   vocabulary parser with multi-command sentences, the object model,
   `SAVE`/`LOAD` and `RAMSAVE` to the card, and the DDB text reader
