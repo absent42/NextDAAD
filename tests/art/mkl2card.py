@@ -48,7 +48,8 @@
 #     chapter-next-tilemap.tex:18 "Tilemap layer overlaps ULA by 32
 #     pixels on each side", chapter-next-layer2.tex:308), so L2 row r
 #     lands on tilemap row r/8 + 4 and L2 column c on tilemap column
-#     c/4 + 8. 128 rows is also 128 dma_copy calls per DISPLAY 0.
+#     c/4 + 8. 128 rows is also 256 dma_copy calls per DISPLAY 0 (one
+#     fetch and one copy per row).
 #
 # FILE FORMAT (Gfx2Next .nxi, as the interpreter consumes it): 512-byte
 # palette FIRST - 256 entries x 2 bytes, byte 0 = RRRGGGBB, byte 1 bit 0
