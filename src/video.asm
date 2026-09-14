@@ -1392,18 +1392,9 @@ vid_dec_done_strm:
     srl b
     rra
     ld c, a                      ; BC = consumed blocks
-    ld hl, (vidRingDepth)
-    or a
-    sbc hl, bc
-    jr nc, .dok                  ; DEPTH FLOOR (3c hardening): the
- IFDEF DEBUG                     ; underflow class is impossible by
-    ld a, (vidDepthClip)         ; construction now, not merely by
-    inc a                        ; the gate contract - a clamp fires
-    ld (vidDepthClip), a         ; only on a bookkeeping bug and is
- ENDIF                           ; counted on the RING row (DEBUG)
-    ld hl, 0
-.dok:
-    ld (vidRingDepth), hl
+    call vid_depth_debit         ; depth -= consumed, floored (DEPTH
+                                 ; FLOOR, 3c hardening; DEBUG counts a
+                                 ; clamp on the RING row)
     ; the STREAMING file cursor counts BLOCKS (no byte cursor exists
     ; here - vid_src_seek reads vidRingRl): framePos += consumed
     ; blocks, then the shared bound check (B:HL candidate).
@@ -1415,6 +1406,23 @@ vid_dec_done_strm:
     ld (vidFramePos), hl
     ld (vidFramePos+2), a
     jp vid_dec_done.bound
+
+; BC = blocks. vidRingDepth -= BC, floored at 0 (DEBUG counts a clamp
+; in vidDepthClip - a clamp is a bookkeeping bug). Corrupts AF, HL.
+vid_depth_debit:
+    ld hl, (vidRingDepth)
+    or a
+    sbc hl, bc
+    jr nc, .ok
+ IFDEF DEBUG
+    ld a, (vidDepthClip)
+    inc a
+    ld (vidDepthClip), a
+ ENDIF
+    ld hl, 0
+.ok:
+    ld (vidRingDepth), hl
+    ret
 
 ; Fold a ring-linear position (A:HL, < 2*ringBytes) into the ring:
 ; one conditional ringBytes subtract, stored to vidRingRl. Corrupts
@@ -2175,19 +2183,7 @@ vid_aud_pump:
     inc (hl)
 .fpnc:
     ; depth -= audio-pad blocks (the gate's staged need covered them)
-    ld hl, (vidRingDepth)
-    or a
-    sbc hl, bc
-    jr nc, .dok                  ; DEPTH FLOOR (3c hardening)
- IFDEF DEBUG
-    ld a, (vidDepthClip)
-    inc a
-    ld (vidDepthClip), a
- ENDIF
-    ld hl, 0
-.dok:
-    ld (vidRingDepth), hl
-    ret
+    jp vid_depth_debit           ; depth -= audio-pad blocks, floored
 
 ; ---------------------------------------------------------------------
 ; vid_play - the player core entry. B = video number, C = 0 play-once
@@ -3235,20 +3231,10 @@ vid_loop_rewind:
     ld a, (vidStreaming)
     or a
     ret z
-    ld hl, (vidRingDepth)
-    ld a, h
-    or l
-    jr nz, .pos                  ; DEPTH FLOOR (3c hardening): the
- IFDEF DEBUG                     ; pre-review-fix loop-tail underflow
-    ld a, (vidDepthClip)         ; class dies here structurally
-    inc a
-    ld (vidDepthClip), a
- ENDIF
-    jr .dz                       ; hold at 0 (already stored)
-.pos:
-    dec hl
-    ld (vidRingDepth), hl
-.dz:
+    ld bc, 1
+    call vid_depth_debit         ; depth -= 1, floored (DEPTH FLOOR, 3c
+                                 ; hardening: the loop-tail underflow
+                                 ; class dies here structurally)
     ld hl, (vidRingRl)
     ld bc, 512
     add hl, bc
