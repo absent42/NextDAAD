@@ -4,6 +4,20 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.10.0 - Unreleased
 
+- Z80 review, wave 3 (ruling-gated blocks): the review items that needed
+  an owner ruling, each landed after its ruling. Bytes freed in the
+  release build: resident tail 449, overlay0 181, video 170, video2 219,
+  page 48 18. The resident pre-anchor area gives up 123 as routines move
+  into it, and the graphics overlay uses 30 more for its faster picture
+  path. Location pictures stage each row with one DMA copy, scatter
+  320-wide rows with the Z80N LDWS instruction, and skip the pre-clear
+  when the picture fills the screen. Printed characters, condition
+  condacts and the video decoder's copy, fill and direct-serve paths are
+  cheaper. CHANCE, RANDOM and the extern random service now share one
+  generator whose update an extern's frame hook cannot interrupt, so no
+  draw is lost when both run at once. The extern interface, the save
+  format and every condact are unchanged. Hardware passes H2 (pictures
+  and sampled audio) and H3 (video) are pending.
 - Z80 review, wave 2 (same-page helpers): repeated sequences within a
   page moved into one shared routine each, with no contract change.
   Bytes freed in the release build: resident 73, overlay0 5, overlay1
