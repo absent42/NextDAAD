@@ -1687,7 +1687,8 @@ vid_dst_setup:
     ret
 .fresh:
     ld a, (l2FrontBank)          ; delta frames patch the VISIBLE
-    jp vid_dst_base              ; surface in place, cursor 0
+                                 ; surface in place, cursor 0
+    ASSERT $ == vid_dst_base     ; falls into vid_dst_base
 
 ; A = 16K bank. Sets vidDstPage/vidDstEnd, maps MMU2, DE = cursor 0.
 ; Corrupts AF, C.
