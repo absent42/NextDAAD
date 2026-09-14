@@ -2,46 +2,8 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.0 - Unreleased
+## v0.10.0 - 14/09/2026
 
-- Z80 review, wave 3 (ruling-gated blocks): the review items that needed
-  an owner ruling, each landed after its ruling. Bytes freed in the
-  release build: resident tail 449, overlay0 181, video 170, video2 219,
-  page 48 18. The resident pre-anchor area gives up 123 as routines move
-  into it, and the graphics overlay uses 30 more for its faster picture
-  path. Location pictures stage each row with one DMA copy, scatter
-  320-wide rows with the Z80N LDWS instruction, and skip the pre-clear
-  when the picture fills the screen. Printed characters, condition
-  condacts and the video decoder's copy, fill and direct-serve paths are
-  cheaper. CHANCE, RANDOM and the extern random service now share one
-  generator whose update an extern's frame hook cannot interrupt, so no
-  draw is lost when both run at once. The extern interface, the save
-  format and every condact are unchanged. Hardware passes H2 (pictures
-  and sampled audio) and H3 (video) complete: wave 3 passed on Next
-  hardware.
-- Z80 review, wave 2 (same-page helpers): repeated sequences within a
-  page moved into one shared routine each, with no contract change.
-  Bytes freed in the release build: resident 73, overlay0 5, overlay1
-  223, overlay2 218, page 48 34, streamed effects 12. The extern
-  memory-map save and restore, the audio loaders' name, open, stop-wait
-  and end-of-file steps, the save and load gather and scatter, and the
-  graphics row blit, chain walk, picture fetch and GFX sub-command
-  dispatch now share code. A wav file that ends inside a skipped chunk
-  is refused at the first short read instead of after reading out the
-  rest of the chunk. The extern interface, the save format and every
-  condact are unchanged. Hardware pass H1 complete: waves 1 and 2
-  passed on Next hardware.
-- Z80 review, wave 1 (no contract change): a peephole and dead-code
-  pass over the resident core, both condact overlays, the graphics
-  overlay, the sprite engine and the audio pages. Bytes freed in the
-  release build: resident pre-anchor 127, resident tail 19, overlay0
-  174, overlay1 117, overlay2 205, sprites 62, page 48 20, streamed
-  effects 55. The debug build frees more where debug-only code was
-  removed. Hot paths are cheaper by the amounts the review measured,
-  chiefly printed characters, condact dispatch and the Next register
-  read. The sprite hook mask is now set and cleared in one
-  read-modify-write, so a frame tick can no longer observe it
-  half-updated. No condact, save format or extern contract changed.
 - Loader intro: `intro.nex`, a standalone launcher the kit stages as
   `<GAME>.NEX` when `INTRO.TXT` exists. It plays a scripted slideshow of
   320x256 or 256x192 pictures (cut, fade to any colour, wipes, dissolve,
@@ -140,6 +102,43 @@ All notable changes to NextDAAD are recorded here.
   touched (resident 6, overlay0 12, overlay1 6, overlay2 40, sprites
   4, audio page 10, less 2 spent on the streamed-effects loop guard)
   and DEBUG 8.
+- Bytes freed in the
+  release build: resident tail 449, overlay0 181, video 170, video2 219,
+  page 48 18. The resident pre-anchor area gives up 123 as routines move
+  into it, and the graphics overlay uses 30 more for its faster picture
+  path. Location pictures stage each row with one DMA copy, scatter
+  320-wide rows with the Z80N LDWS instruction, and skip the pre-clear
+  when the picture fills the screen. Printed characters, condition
+  condacts and the video decoder's copy, fill and direct-serve paths are
+  cheaper. CHANCE, RANDOM and the extern random service now share one
+  generator whose update an extern's frame hook cannot interrupt, so no
+  draw is lost when both run at once. The extern interface, the save
+  format and every condact are unchanged. Hardware passes H2 (pictures
+  and sampled audio) and H3 (video) complete: wave 3 passed on Next
+  hardware.
+- Repeated sequences within a
+  page moved into one shared routine each, with no contract change.
+  Bytes freed in the release build: resident 73, overlay0 5, overlay1
+  223, overlay2 218, page 48 34, streamed effects 12. The extern
+  memory-map save and restore, the audio loaders' name, open, stop-wait
+  and end-of-file steps, the save and load gather and scatter, and the
+  graphics row blit, chain walk, picture fetch and GFX sub-command
+  dispatch now share code. A wav file that ends inside a skipped chunk
+  is refused at the first short read instead of after reading out the
+  rest of the chunk. The extern interface, the save format and every
+  condact are unchanged. Hardware pass H1 complete: waves 1 and 2
+  passed on Next hardware.
+- Peephole and dead-code
+  pass over the resident core, both condact overlays, the graphics
+  overlay, the sprite engine and the audio pages. Bytes freed in the
+  release build: resident pre-anchor 127, resident tail 19, overlay0
+  174, overlay1 117, overlay2 205, sprites 62, page 48 20, streamed
+  effects 55. The debug build frees more where debug-only code was
+  removed. Hot paths are cheaper by the amounts the review measured,
+  chiefly printed characters, condact dispatch and the Next register
+  read. The sprite hook mask is now set and cleared in one
+  read-modify-write, so a frame tick can no longer observe it
+  half-updated. No condact, save format or extern contract changed.
 
 ## v0.9.0 - 03/09/2026
 

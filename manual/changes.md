@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.10.0 - Unreleased
+## 0.10.0 - 14 September 2026
 
 - **Loader intro.** A separate launcher, staged as `<GAME>.NEX`, plays a
   scripted slideshow with captions, a credits crawl and AKY, streamed
