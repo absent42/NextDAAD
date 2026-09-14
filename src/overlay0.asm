@@ -446,7 +446,8 @@ hasat_ptr:
     bit 0, (hl)                 ; V3 database?
     jr z, .base
     ld hl, flags+FLAG_OFLAGS
-    bit 1, (hl)                 ; F53_ALTFLAGS
+    bit 1, (hl)                 ; F53_ALTFLAGS (bit number pinned below)
+    ASSERT F53_ALTFLAGS == 1<<1
     jr z, .base
     ld a, 91                    ; alternative bank: flags 60-91
 .base:
