@@ -5239,13 +5239,6 @@ nxv2_open_body:
     ; Multiface restore + F_CLOSE now, pre-arm (resident playback
     ; never streams)
     call vid_stream_close
- IFDEF DEBUG
-    ld hl, (frameCounter)
-    ld de, (vidFillT0)
-    or a
-    sbc hl, de
-    ld (vidFillD), hl            ; ring-fill duration, 50Hz frames
- ENDIF
     call vid_stage_common        ; bracket returns OPEN
     ; resident extras: the streaming session cells parked off (a
     ; previous streaming run must not leak its flag/window into this
@@ -5314,13 +5307,6 @@ nxv2_open_body:
     ; path will not CMD12 a window it no longer owns; the esxDOS
     ; handle stays open for the session and the restore body F_CLOSEs
     ; it at teardown).
- IFDEF DEBUG
-    ld hl, (frameCounter)
-    ld de, (vidFillT0)
-    or a
-    sbc hl, de
-    ld (vidFillD), hl            ; prefill duration, 50Hz frames
- ENDIF
     call vid_stage_common        ; bracket returns OPEN
     ; --- streaming extras (same bracket) ---
     ld a, 1
@@ -5458,13 +5444,6 @@ nxv2_open_body:
     ld (vidStrmRunBlocks), hl
     call vid_ring_free           ; bank 0 served the parse only -
                                  ; direct needs NO pool banks
- IFDEF DEBUG
-    ld hl, (frameCounter)
-    ld de, (vidFillT0)
-    or a
-    sbc hl, de
-    ld (vidFillD), hl            ; FILL row = the header/probe time
- ENDIF
     call vid_stage_common        ; bracket returns OPEN (stages the
                                  ; ds decode vectors from vidDeliverDir)
     ; --- direct extras (same bracket) ---
@@ -5609,7 +5588,10 @@ vid_stage_common:
     ld bc, VID_RING_MAX
     ldir
  IFDEF DEBUG
-    ld hl, (vidFillD)
+    ld hl, (frameCounter)        ; FILL= row: frames since vidFillT0
+    ld de, (vidFillT0)           ; (prefill / ring fill / direct probe)
+    or a
+    sbc hl, de
     ld (vidTlFillFrames + DATA_WINDOW - OVL_ORG), hl
  ENDIF
     ld a, (vidP_GapFlag)
@@ -5768,7 +5750,6 @@ vidRingCapBlkC: dw 0
 vidEntCntC:    db 0              ; filemap entries in use
  IFDEF DEBUG
 vidFillT0:     dw 0
-vidFillD:      dw 0
  ENDIF
 
 ; Free the session audio bank (idempotent; 3c). Corrupts AF, BC, HL.
