@@ -272,8 +272,9 @@ that back to `get-ocr`.
   only a reminder of which condacts exist.
 - RANDOM and CHANCE are made deterministic by MIRRORING NextDAAD's
   generator, not by stubbing it. `rng.py` is a transcription of
-  `rng_next` (`src/overlay0.asm`) - the SP16 Task 5 XORSHIFT, with the
-  `(x*100)>>16` scaling, NOT the old rotate-and-modulo routine - and
+  `rng_step` (`src/main.asm`, the SP16 Task 5 XORSHIFT, shared by
+  `rng_next` and SVC_RANDOM) plus `rng_next`'s `(x*100)>>16` scaling
+  (`src/overlay0.asm`), NOT the old rotate-and-modulo routine - and
   `rngmirror.js` repoints jDAAD's `condactTable[95]`/`[10]` at the same
   stream from the same pinned seed. If the Z80 generator changes, both
   mirrors must change with it or every RANDOM/CHANCE turn diverges for a
