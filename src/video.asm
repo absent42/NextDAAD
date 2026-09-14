@@ -2198,8 +2198,6 @@ vid_aud_pump:
 ; never resumes (the dispatch trampoline's stacked return).
 ; ---------------------------------------------------------------------
 vid_play:
-    ld a, b
-    ld (vidNum), a
     ld a, c
     ld (vidLoopMode), a
     ld c, b                      ; video number travels in C
@@ -3606,20 +3604,15 @@ vid_ds_done:
 ; ---------------------------------------------------------------------
 ; Hot cells.
 ; ---------------------------------------------------------------------
-vidNum:          db 0
 vidLoopMode:     db 0            ; 0 = play once, 1 = loop
 
 ; Header-derived parameter block - staged by nxv2_open_body as ONE
 ; MMU6-translated LDIR from its cold staging twin (vidP_*, VID_PAGE2;
 ; the "copy-across" pattern, rubric 3). ORDER AND SIZES MUST MATCH
 ; the cold block exactly (VIDP_LEN asserted there).
-vidShape:        db 0            ; width code: 0 = 256/mode-0, 1 = 320/mode-1
 vidHeightB:      db 0            ; height byte (0 = 256)
 vidGapFlag:      db 0            ; 1 = mode-1 letterbox (column gaps)
 vidDstPages:     db 0            ; dest surface span: 10 (mode-1) / 6
-vidClipY1:       db 0
-vidClipY2:       db 0
-vidYofs:         db 0
 vidABytes:       dw 0            ; REAL audio bytes/frame
 vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block)
 vidFrames:       dw 0            ; container frame count
@@ -5581,8 +5574,8 @@ vid_stage_common:
     call data_save
     ld a, VID_PAGE
     call data_map_page
-    ld hl, vidP_Shape
-    ld de, vidShape + DATA_WINDOW - OVL_ORG
+    ld hl, vidP_HeightB
+    ld de, vidHeightB + DATA_WINDOW - OVL_ORG
     ld bc, VIDP_LEN
     ldir
     ld a, (vidRingCntC)
@@ -5708,20 +5701,21 @@ vid_file_blocks:
 nxvMagic: db "NXVID"
 
 ; Cold staging twin of the hot parameter block (order/sizes MUST
-; match vidShape.. exactly - one LDIR stages it).
-vidP_Shape:    db 0
+; match vidHeightB.. exactly - one LDIR stages it). Shape/Clip/Yofs
+; have only cold readers on this page and are not staged.
 vidP_HeightB:  db 0
 vidP_GapFlag:  db 0
 vidP_DstPages: db 0
-vidP_ClipY1:   db 0
-vidP_ClipY2:   db 0
-vidP_Yofs:     db 0
 vidP_ABytes:   dw 0
 vidP_ABytesPad: dw 0
 vidP_Frames:   dw 0
 vidP_FileEnd:  ds 3
-VIDP_LEN equ $ - vidP_Shape
-    ASSERT VIDP_LEN == vidFileEnd + 3 - vidShape
+VIDP_LEN equ $ - vidP_HeightB
+    ASSERT VIDP_LEN == vidFileEnd + 3 - vidHeightB
+vidP_Shape:    db 0
+vidP_ClipY1:   db 0
+vidP_ClipY2:   db 0
+vidP_Yofs:     db 0
 
 ; Ring bookkeeping (cold canonical copy - the allocator-facing list;
 ; the hot copy serves only the armed seam walker).
