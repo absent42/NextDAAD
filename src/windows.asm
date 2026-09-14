@@ -191,7 +191,6 @@ winTpl:
     db 0                        ; WIN_FLAGS
     db 7                        ; WIN_INK (hardware 7 = white)
     db 0                        ; WIN_PAPER
-    db 0                        ; WIN_LASTPIC
     db 0                        ; WIN_LINES
     db TM_ATTR_DEFAULT          ; WIN_ATTR - reserved pair 0 until ink/paper change
     db TM_ATTR_CURSOR           ; WIN_ATTRINV - reserved pair 2, the boot inverse

@@ -907,21 +907,20 @@ WIN_CURY        equ 5
 WIN_FLAGS       equ 6       ; bit 0 force upper charset, bit 1 disable More
 WIN_INK         equ 7
 WIN_PAPER       equ 8
-WIN_LASTPIC     equ 9
-WIN_LINES       equ 10      ; lines printed since last pause
-WIN_ATTR        equ 11      ; resolved tilemap attribute for this window's
+WIN_LINES       equ 9       ; lines printed since last pause
+WIN_ATTR        equ 10      ; resolved tilemap attribute for this window's
                             ; ink/paper. Written only when the colours
                             ; change, so win_attr - which runs for every
                             ; character printed - is a plain fetch and
                             ; never allocates.
-WIN_ATTRINV     equ 12      ; the block cursor's resolved inverse (ink and
+WIN_ATTRINV     equ 11      ; the block cursor's resolved inverse (ink and
                             ; paper swapped) for this window. Per-window,
                             ; not global: WINDOW condacts and
                             ; inp_stream_push (flag 41) can make the input
                             ; cursor's window differ from whichever window
                             ; last set colours. Written alongside WIN_ATTR
                             ; by win_attr_resolve.
-WIN_SIZE        equ 13
+WIN_SIZE        equ 12
 WINDOW_COUNT    equ 8
 
 ; --- Mouse (SP10 Task 5) ---
