@@ -1885,13 +1885,15 @@ vid_aud_stage:
 
 ; The consumption integrator (T10 pacing core): debit vidPaceRem by
 ; the bytes the ISR consumed since the last call (read-pointer delta,
-; mod ring). Out: CF set = released (rem reached 0 or went negative -
-; rem stays stored either way; the ack at .paced carries sub-frame
-; deficit as catch-up). Called from every wait loop that can hold for
-; a while (.pace, .drainlast, the ring gate's force-fill, the .paced
-; force-finish) so the reader can never advance more than one ring
-; lap between calls in any non-degraded regime - the delta stays
-; mod-ring-unambiguous.
+; mod ring). Out: CF set = released (rem reached 0 or went negative,
+; short of its most negative value - rem stays stored either way; the
+; ack at .paced carries sub-frame deficit as catch-up). Only a degraded
+; SD stall can drive rem that low: a streaming ring-gate hold, or
+; direct-serve .ffin on a failing card. Called from every wait loop
+; that can hold for a while (.pace, .drainlast, the ring gate's
+; force-fill, the .paced force-finish) so the reader can never advance
+; more than one ring lap between calls in any non-degraded regime -
+; the delta stays mod-ring-unambiguous.
 ;
 ; THAT MARGIN USED TO BE THIN, and the bigger ring is what makes it
 ; safe. The gap between two polls spans AUDIO + DECODE + FLIP + the
@@ -1929,9 +1931,9 @@ vid_pace_poll:
     or a
     sbc hl, de
     ld (vidPaceRem), hl
-    dec hl                       ; CF = bit 15 of rem-1: rem <= 0 ->
-    add hl, hl                   ; released (rem == 0 or negative); rem
-    ret                          ; never approaches -32768
+    dec hl                       ; CF = bit 15 of rem-1: rem <= 0 releases, bar
+    add hl, hl                   ; the most negative rem, which only a degraded
+    ret                          ; SD stall reaches (ring gate, direct .ffin)
 
 vid_aud_pump:
     ld (vidAudBudget), bc
@@ -2499,9 +2501,9 @@ vid_run:
     ld hl, (vidPaceRem)
     ld de, (vidABytes)
     add hl, de
-    dec hl                       ; rem-1 negative <=> rem <= 0 (rem never
-    bit 7, h                     ; near -32768): clamp
-    inc hl
+    dec hl                       ; HL-1 negative <=> HL <= 0: clamp. The one
+    bit 7, h                     ; exception, the most negative HL, is never
+    inc hl                       ; a released rem plus aBytes
     jr z, .remok
 .rclamp:
     ex de, hl                    ; rem = aBytes (excess deficit dropped)
@@ -6021,8 +6023,8 @@ vidSvNr14:       db 0            ; presentation isolation: transparency
 ; the idempotent-free sentinel, like vidAudBankC).
 vidSnapCnt:      db 0
 vidSnapBanks:    ds VID_SNAP_MAX
-vidSnapDE:       dw 0            ; copy engine direction as D/E chunk
-                                 ; high bytes ($40C0 save, $C040 restore)
+vidSnapDE:       dw 0            ; copy engine direction: the port-A (D)
+                                 ; and port-B (E) window high bytes
 vidSnapPal:      ds NXV_PAL_BYTES ; 256 entries x NR $44 pair (512B)
 
 ; ---------------------------------------------------------------------
@@ -6528,10 +6530,10 @@ vid_snap_restore_body:
 ; everything.
 ; ---------------------------------------------------------------------
 vid_snap_copy:
-    or a                         ; A = 1 save: port A = L2 ($40xx),
-    ld de, $40C0                 ;   port B = pool ($C0xx)
+    or a                         ; A != 0 save: port A = L2, port B = pool
+    ld de, (high VID_DST_WIN << 8) | high DATA_WINDOW
     jr nz, .dir                  ; A = 0 restore: the other way round
-    ld de, $C040
+    ld de, (high DATA_WINDOW << 8) | high VID_DST_WIN
 .dir:
     ld (vidSnapDE), de           ; per-session direction, read per page
     call data_save
