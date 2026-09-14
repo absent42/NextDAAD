@@ -6021,7 +6021,8 @@ vidSvNr14:       db 0            ; presentation isolation: transparency
 ; the idempotent-free sentinel, like vidAudBankC).
 vidSnapCnt:      db 0
 vidSnapBanks:    ds VID_SNAP_MAX
-vidSnapDir:      db 0            ; copy engine direction (1 = save)
+vidSnapDE:       dw 0            ; copy engine direction as D/E chunk
+                                 ; high bytes ($40C0 save, $C040 restore)
 vidSnapPal:      ds NXV_PAL_BYTES ; 256 entries x NR $44 pair (512B)
 
 ; ---------------------------------------------------------------------
@@ -6529,7 +6530,12 @@ vid_snap_restore_body:
 ; everything.
 ; ---------------------------------------------------------------------
 vid_snap_copy:
-    ld (vidSnapDir), a
+    or a                         ; A = 1 save: port A = L2 ($40xx),
+    ld de, $40C0                 ;   port B = pool ($C0xx)
+    jr nz, .dir                  ; A = 0 restore: the other way round
+    ld de, $C040
+.dir:
+    ld (vidSnapDE), de           ; per-session direction, read per page
     call data_save
     ; session WR2/WR5 (the never-changing halves - each chunk's arm
     ; below carries its own WR0/WR1, the hot kernels' scheme)
@@ -6559,26 +6565,16 @@ vid_snap_copy:
     and 1
     add a, d                     ; pool page = bank*2 + (index & 1)
     call data_map_page           ; -> MMU6
-    ld d, high VID_DST_WIN       ; D = L2-side chunk high byte ($40)
-    ld e, high DATA_WINDOW       ; E = pool-side chunk high byte ($C0)
+    ld de, (vidSnapDE)           ; D = port-A chunk high byte, E = port-B
     ld b, 32                     ; 32 x 256B chunks per 8K page
 .chunk:
     push bc
     push de
     ld l, 0                      ; chunks are 256-aligned
-    ld a, (vidSnapDir)
-    or a
-    jr z, .rst
     ld h, d
-    ld (vidSnapDmaArm.asrc), hl  ; save: port A = the L2 chunk
+    ld (vidSnapDmaArm.asrc), hl  ; port A = this side's chunk
     ld h, e
-    ld (vidSnapDmaArm.bdst), hl  ;       port B = the pool chunk
-    jr .arm
-.rst:
-    ld h, e
-    ld (vidSnapDmaArm.asrc), hl  ; restore: port A = the pool chunk
-    ld h, d
-    ld (vidSnapDmaArm.bdst), hl  ;          port B = the L2 chunk
+    ld (vidSnapDmaArm.bdst), hl  ; port B = the other side's chunk
 .arm:
     ld hl, vidSnapDmaArm
     ld bc, (vidSnapDmaArm_len << 8) | DMA_PORT
