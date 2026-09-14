@@ -17,7 +17,8 @@ All notable changes to NextDAAD are recorded here.
   generator whose update an extern's frame hook cannot interrupt, so no
   draw is lost when both run at once. The extern interface, the save
   format and every condact are unchanged. Hardware passes H2 (pictures
-  and sampled audio) and H3 (video) are pending.
+  and sampled audio) and H3 (video) complete: wave 3 passed on Next
+  hardware.
 - Z80 review, wave 2 (same-page helpers): repeated sequences within a
   page moved into one shared routine each, with no contract change.
   Bytes freed in the release build: resident 73, overlay0 5, overlay1
