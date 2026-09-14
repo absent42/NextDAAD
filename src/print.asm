@@ -37,6 +37,12 @@ print_msg:
 ; A = decoded 7-bit character. Dispatches escapes, prints the rest.
 ; Token references are resolved by txt_next_decoded before this runs.
 prn_decoded:
+    cp '_'
+    jr z, .objname              ; always a substitution, every database
+    cp '@'
+    jr z, .at
+    cp $10
+    jr nc, .plain               ; printable: no control escape >= $10
     cp $0D
     jp z, prn_newline
     cp $0B
@@ -47,10 +53,18 @@ prn_decoded:
     jr z, .gfxon
     cp $0F
     jr z, .gfxoff
-    cp '_'
-    jr z, .objname              ; always a substitution, every database
-    cp '@'
-    jr nz, .plain
+.plain:                         ; unmatched control: prints as a character
+    ld c, a
+    jr prn_char
+.gfxon:
+    ld a, 128
+    ld (chsGfx), a
+    ret
+.gfxoff:
+    xor a
+    ld (chsGfx), a
+    ret
+.at:
     ; '@' is the CAPITALISED object-name escape and it exists ONLY in
     ; Spanish databases - DAAD_Ready_Documentation_V2.md's escape table:
     ; "@ | Same as the underscore, but the article has its first letter
@@ -70,18 +84,7 @@ prn_decoded:
     ; database this interpreter accepts (file.asm's DDB_MAGIC check).
     ld hl, ddbHeader+1          ; target/machine + language byte
     bit 0, (hl)                 ; bit 0 = Spanish (drb.php: ES and PT)
-    jr nz, .objname
-.plain:
-    ld c, a
-    jr prn_char
-.gfxon:
-    ld a, 128
-    ld (chsGfx), a
-    ret
-.gfxoff:
-    xor a
-    ld (chsGfx), a
-    ret
+    jr z, .plain                ; English: an ordinary printable
 .objname:
     jp objname_print            ; resident (ddbtext.asm), always mapped
 
