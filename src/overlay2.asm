@@ -590,9 +590,9 @@ l2_flip_swap:
 ; (one chunk, never split), or 320 bytes for 320-wide art (two chunks).
 ; A 320-wide row cut at a page edge instead hands the leftover part:
 ; 64, 128, 192 or 256 bytes, a multiple of 64 whose shortest equals
-; GFX_DMA_MIN_LEN (one chunk). 256 still makes the 256-byte pair's
-; call ONE chunk instead
-; of two, saving per call one arm upload (209 T), one zxnDMA sequencing
+; GFX_DMA_MIN_LEN (one chunk). 256 still makes the 256-byte pair's call
+; ONE chunk instead of two, saving per call one arm upload (209 T), one
+; zxnDMA sequencing
 ; residual (183 T) and one pass of the loop glue (~390 T) - about 780 T,
 ; or 27.9 us at 28 MHz. On the model that priced cap 128 at DISPLAY 0
 ; 66.8 ms and GFX 0/1 42.9 ms (256x192) / 71.5 ms (320x256):
@@ -604,9 +604,9 @@ l2_flip_swap:
 ; and all three are UPPER bounds, because the model still prices the
 ; transfer at 5.082 T/B where silicon bounds this path under 4.21.
 ; 320-wide LOCATION art now reaches this routine too, through
-; gfx_row_fetch's .fits path: only gfx_row_scatter320's own
-; scatter still has no DMA branch
-; (see its own header). The owner's ruling that made the 128 acceptable
+; gfx_row_fetch's .fits path: only gfx_row_scatter320's own scatter
+; still has no DMA branch (see its own header). The owner's ruling that
+; made the 128 acceptable
 ; - "for sampled sound effects and location picture drawing the audio
 ; quality shouldn't suffer for a slight slow down in picture drawing" -
 ; no longer has to be spent: the audio is fixed AND the draw is faster.
@@ -3849,8 +3849,8 @@ font_load_switch:
 ; SP12 T1 font-load state, overlay2-local - parallel to gfxHandle/
 ; gfxNamePart's own PARTn machinery above, but see font_load's header
 ; for why the read never targets TM_DEFS directly.
-fontHandle:   db $FF              ; esxDOS handle, $FF = none open
-fontBank:     db $FF              ; transient scratch 16K bank while held
+fontHandle:   db $FF              ; esxDOS handle, valid only inside font_load
+fontBank:     db $FF              ; scratch 16K bank, valid only inside font_load
 fontNum:      db 0                ; number being built/loaded
 fontNameLen:  db 9                ; bytes in fontNameBuf including the NUL
 fontCur:      db $FF              ; installed font, $FF = unknown. $FF at

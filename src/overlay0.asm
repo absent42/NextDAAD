@@ -3960,7 +3960,7 @@ pointer_load_boot:
 ; fontNamePart's own PARTn machinery (overlay2.asm), but no scratch bank
 ; is needed here (see pointer_load's header: swapStage is directly
 ; addressable from this page already).
-ptrHandle:    db $FF              ; esxDOS handle, $FF = none open
+ptrHandle:    db $FF              ; esxDOS handle, valid only inside pointer_load
 ptrNum:       db 0                ; number being built/loaded
 ptrNameLen:   db 12               ; bytes in ptrNameBuf including the NUL
 ptrCur:       db $FF              ; installed shape, $FF = unknown

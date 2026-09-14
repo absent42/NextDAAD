@@ -879,8 +879,8 @@ DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
                             ; edge instead hands the leftover part: 64, 128,
                             ; 192 or 256 bytes, a multiple of 64 whose
                             ; shortest equals GFX_DMA_MIN_LEN (one chunk).
-                            ; 256 still
-                            ; cuts the two 256-byte calls from two chunks
+                            ; 256 still cuts the two 256-byte calls from two
+                            ; chunks
                             ; to one: ~780 T saved per call, about
                             ; -5.4 ms on a location DISPLAY 0 and -10.7 ms
                             ; on GFX 0/1 at 256x192. A ONE-CONSTANT KNOB

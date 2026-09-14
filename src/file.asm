@@ -299,8 +299,8 @@ fatal:
                                  ; fatal_puts is about to need it
     call txt_init                ; force the tilemap live: a boot-time DDB
                                  ; failure reaches fatal() before
-                                 ; windows_init ever runs (tmUp still 0),
-                                 ; so the old tmUp gate skipped this whole
+                                 ; windows_init ever runs, so a
+                                 ; tilemap-ready gate would skip this whole
                                  ; block - see main.asm's ddb_load branch.
                                  ; txt_init's embedded-font fallback needs
                                  ; no DDB/SD state (tm_font_init is a pure
@@ -308,7 +308,7 @@ fatal:
                                  ; so re-arming it here is always safe,
                                  ; including the esxDOS-absent case that
                                  ; likely caused the failure. fatal() never
-                                 ; returns, so clobbering tmUp/tmAttr/the
+                                 ; returns, so clobbering tmAttr and the
                                  ; whole tilemap is fine even mid-game.
     ld a, TM_ATTR_ERROR         ; reserved pair 1: magenta paper, white ink
     ld (tmAttr), a
@@ -331,7 +331,7 @@ fatal:
 ; HL = ASCIIZ message. Prints at row 0 from col 0, using the current
 ; tmAttr - fatal() and err_raise both set tmAttr and paint the row-0
 ; bar with it just before calling this, so the text lands on that same
-; background. Release-safe: no DEBUG gate, no windows_init/tmUp
+; background. Release-safe: no DEBUG gate, no windows_init
 ; dependency, just tm_putc_at (always resident) - the only precondition
 ; is txt_init having run at least once (fatal() forces this itself;
 ; err_raise only ever runs post-boot, long after boot's txt_init).

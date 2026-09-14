@@ -2149,8 +2149,8 @@ sav_write_v2:
     sub c
     or b                        ; zero only when BC == numObj
     jp nz, .errclose
-    ; trailing part byte - the ONLY new write versus sav_write, same
-    ; open/close session, same call shape as the three writes above
+    ; trailing part byte - the one write the v2 format adds to the v1
+    ; payload; same open/close session and call shape as the writes above
     ld a, (savHandle)
     ld ix, curPart
     ld bc, 1
@@ -2179,9 +2179,9 @@ sav_read_v2:
     call esx_fopen
     jp c, .ioerr                 ; not-found or any open error: h_load
                                   ; only tests CF, never the A code, so
-                                  ; sav_read's own notfound-vs-ioerr
-                                  ; split is not user-visible - one
-                                  ; CF-set exit suffices here
+                                  ; a notfound-vs-ioerr split is not
+                                  ; user-visible - one CF-set exit
+                                  ; suffices here
     ld (savHandle), a
     ld a, (savHandle)
     ld ix, savRdHdr
@@ -2263,10 +2263,10 @@ sav_read_v2:
 .v1:
     ld a, (savHandle)
     call esx_fclose
-    ld a, (savRdHdr+5)            ; same-part safety net (mirrors
-    ld hl, numObj                 ; sav_read's own numObj check exactly,
+    ld a, (savRdHdr+5)            ; same-part safety net: the saved
+    ld hl, numObj                 ; object count must equal numObj,
     cp (hl)                       ; scoped only to this path - see
-    jp nz, .ioerr                 ; header comment above)
+    jp nz, .ioerr                 ; header comment above
     ld hl, savStage
     ld de, flags
     ld bc, 256
