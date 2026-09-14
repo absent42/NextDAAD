@@ -1242,14 +1242,8 @@ vid_op_kstart:
     inc a
     ld (vidInSpan), a
     ld a, (l2BackBank)
-    add a, a
-    ld (vidDstPage), a
-    nextreg NR_MMU2, a
-    ld c, a
-    ld a, (vidDstPages)
-    add a, c
-    ld (vidDstEnd), a
-    ld de, VID_DST_WIN           ; cursor = 0 (KSTART's own effect)
+    call vid_dst_base            ; hidden surface, cursor 0 (KSTART's
+                                 ; own effect)
 .next:
     jp vid_next                  ; SMC: vid_ds_next when direct (3c -
                                  ; the handler itself is shared: it
@@ -1684,27 +1678,28 @@ vid_dst_setup:
     ld a, (vidInSpan)
     or a
     jr z, .fresh
-    ld a, (vidSpanDstPage)       ; continue the hidden-surface span
+    ld a, (l2BackBank)           ; continue the hidden-surface span:
+    call vid_dst_base            ; End from the back bank ...
+    ld a, (vidSpanDstPage)       ; ... cursor page from the spill
     ld (vidDstPage), a
     nextreg NR_MMU2, a
-    ld a, (l2BackBank)
-    add a, a
-    ld c, a
-    ld a, (vidDstPages)
-    add a, c
-    ld (vidDstEnd), a
     ld de, (vidSpanDE)
     ret
 .fresh:
     ld a, (l2FrontBank)          ; delta frames patch the VISIBLE
-    add a, a                     ; surface in place
+    jp vid_dst_base              ; surface in place, cursor 0
+
+; A = 16K bank. Sets vidDstPage/vidDstEnd, maps MMU2, DE = cursor 0.
+; Corrupts AF, C.
+vid_dst_base:
+    add a, a
     ld (vidDstPage), a
     nextreg NR_MMU2, a
     ld c, a
     ld a, (vidDstPages)
     add a, c
     ld (vidDstEnd), a
-    ld de, VID_DST_WIN           ; cursor 0
+    ld de, VID_DST_WIN
     ret
 
 ; Direct-serve frame decode (3c): the payload arrives ONE BYTE AT A
