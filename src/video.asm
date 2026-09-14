@@ -2871,6 +2871,20 @@ vid_ring_gate:
     scf
     ret
 
+; Fragment boundary: close the window, take the next filemap run, reopen.
+; CF set = fault, A = VID_ERR_SHORT (map exhausted) / VID_ERR_CMD;
+; CF clear = HL = the fresh run's blocks. Corrupts AF, BC, DE, HL.
+vid_run_walk_h:
+    call vid_win_close_h         ; CMD12
+    call vid_next_run_h
+    ld a, VID_ERR_SHORT          ; map exhausted with blocks owed
+    ret c
+    call vid_win_open_h          ; CMD18 at the fresh run's cursor
+    ld a, VID_ERR_CMD
+    ret c
+    ld hl, (vidStrmRunBlkH)      ; the fresh run's count
+    ret
+
 ; ---------------------------------------------------------------------
 ; Produce ONE 512-byte block into the ring at the write cursor. No-op
 ; when the ring is full or the pass is fully streamed (loop mode
@@ -2911,9 +2925,8 @@ vid_prod_step:
     ld a, h
     or l
     jr nz, .run
-    call vid_win_close_h         ; fragment boundary / rewind: CMD12
-    call vid_next_run_h
-    jr c, .short                 ; map exhausted with blocks owed
+    call vid_run_walk_h          ; fragment boundary only
+    jr c, .fault
 .run:
     call vid_win_open_h          ; CMD18 at the run cursor (idempotent)
     jr c, .cmdfail
@@ -2973,9 +2986,6 @@ vid_prod_step:
     dec a
     ld (vidStrmRemainBlk+2), a
     jr .remd                     ; HL = 0 -> dec -> $FFFF
-.short:
-    ld a, VID_ERR_SHORT
-    jr .fault
 .cmdfail:
     ld a, VID_ERR_CMD
     jr .fault
@@ -3361,16 +3371,9 @@ vid_ds_blkopen:
     ld hl, (vidStrmRunBlkH)
     ld a, h
     or l
-    jr nz, .rundec               ; common path: HL is already the run
-                                 ; count - reload only after the rare
-                                 ; fragment walk rewrites it (T8 slim,
-                                 ; -16T/block)
-    call vid_win_close_h         ; fragment boundary / rewind resume:
-    call vid_next_run_h          ; CMD12, next filemap run, CMD18
-    jr c, .short
-    call vid_win_open_h
-    jr c, .cmdfail
-    ld hl, (vidStrmRunBlkH)      ; the fresh run's block count
+    jr nz, .rundec
+    call vid_run_walk_h          ; fragment boundary / rewind resume
+    jr c, .fault
 .rundec:
     dec hl
     ld (vidStrmRunBlkH), hl
@@ -3389,12 +3392,6 @@ vid_ds_blkopen:
     dec a
     ld (vidStrmRemainBlk+2), a
     jr .remd                     ; HL = 0 -> dec -> $FFFF
-.short:
-    ld a, VID_ERR_SHORT
-    jr .fault
-.cmdfail:
-    ld a, VID_ERR_CMD
-    jr .fault
 .ovr:
     ld a, VID_ERR_SRCOVR
     jr .fault
