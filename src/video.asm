@@ -6028,8 +6028,6 @@ vidSvCtcStub:    dw 0
 vidSvAudEnable:  db 0
 vidSvL2Front:    db 0
 vidSvL2Back:     db 0
-vidSvNr43:       db 0            ; captured constant (PAL_L2_FIRST) -
-                                 ; NR $43 is not readable (v1 finding)
 vidSvNr6b:       db 0            ; presentation isolation: tilemap
 vidSvNr4a:       db 0            ; presentation isolation: fallback
 vidSvNr14:       db 0            ; presentation isolation: transparency
@@ -6078,11 +6076,10 @@ vid_run_l2setup_body:
     ld (vidSvNr4a), a            ; page-local (3c cell move)
     xor a
     nextreg NR_FALLBACK, a
-    ; NR $43 is not reliably readable: capture the game's convention
-    ; (PAL_L2_FIRST - every L2 palette writer asserts it) and prime
-    ; the double-buffer tracker to match (v1 finding, carried)
+    ; NR $43 is not reliably readable: the game's convention is
+    ; PAL_L2_FIRST (every L2 palette writer asserts it); prime the
+    ; double-buffer tracker to match, restore the constant at teardown
     ld a, PAL_L2_FIRST
-    ld (vidSvNr43), a            ; page-local (3c cell move)
     ld (vidPalCtrl+DATA_WINDOW-OVL_ORG), a
     ld e, NR_L2_TRANSP
     call nr_read
@@ -6328,8 +6325,7 @@ vid_run_restore_body:
     nextreg NR_L2_CLIP, a        ; Y2
     nextreg NR_L2_XOFS, 0
     nextreg NR_L2_YOFS, 0
-    ld a, (vidSvNr43)
-    nextreg NR_PAL_CTRL, a
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST   ; the game convention (v1 finding)
     ; step 4b (SP15 snapshot): pixels + palette return while Layer 2
     ; is still hidden (see the matrix comment)
     call vid_snap_restore_body
@@ -6373,7 +6369,7 @@ vid_run_restore_body:
 ; nr_read $44 (bit7 priority + bit0 blue LSB), stored exactly as the
 ; NR $44 replay pair. The readback goes through the FIRST-palette
 ; edit target, the convention every game-side L2 palette writer
-; asserts (vidSvNr43's own finding); the explicit NR $43 select makes
+; asserts (the NR $43 readback finding); the explicit NR $43 select makes
 ; the target deterministic and equals the value the restore body
 ; rewrites anyway. NR $41/$44 VALUE readback is the design's one
 ; silicon unknown - the owner leg's colour-correct return is the
@@ -6502,7 +6498,7 @@ vidChkSumL: ds 4                 ; little-endian 32-bit sum (report
 ; palette written back while Layer 2 is still hidden (called between
 ; step 4 and the step-5 re-show). No-op when vidSnapCnt = 0 -
 ; restore-to-hidden is already exact. NR $43 = PAL_L2_FIRST here
-; (step 4 just wrote vidSvNr43: edit = first palette, auto-inc on).
+; (step 4 just wrote NR $43: edit = first palette, auto-inc on).
 ; audEnable was restored at step 1, so the 50Hz frame ISR's MMU6/7
 ; remap around aud_tick is LIVE - the copy engine's DI-bracketed
 ; one-shot discipline covers it (doc 11's law). ~14ms mode-1 (~9ms
