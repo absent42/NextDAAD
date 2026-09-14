@@ -835,46 +835,6 @@ dma_prog:
 dma_prog_len equ $ - dma_prog
     ASSERT dma_prog_len == DMA_ARM_LEN
 
-; --- DMA timing measurement (SP11 Task 2, diagnostic, OFF by default) ---
-; frameCounter deltas (src/interrupts.asm - incremented once per frame
-; by BOTH the frame ISR's fast and full-context paths) around the two
-; DMA-eligible operations, printed via the DEBUG dbg_* console. OFF by
-; default; assemble with -DDMA_MEASURE=1 ALONGSIDE the default DEBUG
-; build. Verified this also assembles cleanly under a Release-style
-; build (debug.asm's dbg_* Release stubs are shared no-op `ret`s, not
-; missing labels - see debug.asm:791 "Release stubs: same entry points,
-; no output, minimal size") but is pointless there: every dbg_* call
-; silently discards its output, so the printed numbers never appear -
-; DEBUG is where this diagnostic actually earns its ~94 bytes. Formerly
-; an A/B leg (build once with DMA_GFX, once with -NoDmaGfx, compare the
-; two printed deltas) - that question closed 2026-07-21 (owner hardware
-; test, see dma_copy's own header) and -NoDmaGfx retired with its CPU-
-; only fallback, so this now just measures the (sole) DMA path's own
-; timing; there is no in-build CPU-vs-DMA runtime toggle to compare
-; against any more.
-;   C256/C320 (row 18) - one l2_copy_back_front call (GFX condact subs
-;     0/1), labelled by l2Mode at the moment it runs (0 = 256x192, 6
-;     pages; 1 = 320x256, 10 pages).
-;   SCAT (row 19) - one full gfx_blit, ONLY when stagedMode = 1 (320-
-;     wide, the gfx_row_scatter320 path - see that routine's own header
-;     for why it never had a DMA branch to begin with, -NoDmaGfx or
-;     not: the scatter pattern was always CPU-only on its own merits).
- IFDEF DMA_MEASURE
-dma_meas_report:
-    call dbg_puts                ; HL = label (ASCIIZ); advances past it
-    ld hl, (frameCounter)
-    ld de, (dmaMeasT0)
-    or a
-    sbc hl, de                   ; HL = frame delta since dmaMeasT0
-    call dbg_hex16
-    ld a, 13
-    jp dbg_putc
-dmaMeasT0:      dw 0
-dmaMeasLblC256: db "C256 ", 0
-dmaMeasLblC320: db "C320 ", 0
-dmaMeasLblScat: db "SCAT ", 0
- ENDIF
-
 ; Copy one Layer 2 surface onto the other, page for page. Slot 6 is
 ; the ONLY data window available to this overlay - slot 7 holds this
 ; very code (see gfxRowBuf's header, and banks.asm's ovl_map_page
@@ -898,10 +858,6 @@ GFX_COPY_CHUNK equ 256                  ; divides 8192 evenly, fits
                                          ; inside gfxRowBuf (320 bytes)
 GFX_COPY_CHUNKS_PER_PAGE equ 8192/GFX_COPY_CHUNK
 l2_copy_back_front:
- IFDEF DMA_MEASURE
-    ld hl, (frameCounter)
-    ld (dmaMeasT0), hl
- ENDIF
     add a, a
     ld (l2CopySrcPage), a
     ld a, d
@@ -947,20 +903,7 @@ l2_copy_back_front:
     ld hl, l2CopyPageCnt
     dec (hl)
     jr nz, .page
-    call data_restore
- IFDEF DMA_MEASURE
-    ld a, (l2Mode)
-    ld hl, dmaMeasLblC256
-    or a
-    jr z, .measl
-    ld hl, dmaMeasLblC320
-.measl:
-    ld b, 18
-    ld c, 0
-    call dbg_at
-    call dma_meas_report
- ENDIF
-    ret
+    jp data_restore
 
 l2CopySrcPage:  db 0
 l2CopyDstPage:  db 0
@@ -3090,10 +3033,6 @@ gfx_rows_blit:
 ; artifact. 256-wide mode is trivially linear-to-linear (row-major
 ; both sides): 2 remaps per row.
 gfx_blit:
- IFDEF DMA_MEASURE
-    ld hl, (frameCounter)
-    ld (dmaMeasT0), hl
- ENDIF
     ld a, (stagedEntry)
     inc a                        ; GFX_EMPTY -> 0: nothing staged
     ret z
@@ -3184,18 +3123,6 @@ gfx_blit:
     call l2_palette_load_ctl
     call data_restore
     nextreg NR_PAL_CTRL, PAL_L2_FIRST   ; identical contents: invisible
- IFDEF DMA_MEASURE
-    ld a, (stagedMode)
-    or a
-    jr z, .measskip               ; only the 320-wide (scatter) path -
-                                   ; see gfx_row_scatter320's own header
-    ld hl, dmaMeasLblScat
-    ld b, 19
-    ld c, 0
-    call dbg_at
-    call dma_meas_report
-.measskip:
- ENDIF
     xor a
     ld (palBusy), a               ; palBusy: narrow palette/reveal section only (spec ruling) - clear BEFORE the tail jump
     jp l2_enable
