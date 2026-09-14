@@ -3606,10 +3606,9 @@ vid_ds_done:
 ; ---------------------------------------------------------------------
 vidLoopMode:     db 0            ; 0 = play once, 1 = loop
 
-; Header-derived parameter block - staged by nxv2_open_body as ONE
-; MMU6-translated LDIR from its cold staging twin (vidP_*, VID_PAGE2;
-; the "copy-across" pattern, rubric 3). ORDER AND SIZES MUST MATCH
-; the cold block exactly (VIDP_LEN asserted there).
+; Header-derived parameter block - staged by vid_stage_common as ONE
+; MMU6-translated LDIR from its cold twin on VID_PAGE2. ORDER AND SIZES
+; MUST MATCH vidP_HeightB..vidP_FileEnd exactly (VIDP_LEN asserted there).
 vidHeightB:      db 0            ; height byte (0 = 256)
 vidGapFlag:      db 0            ; 1 = mode-1 letterbox (column gaps)
 vidDstPages:     db 0            ; dest surface span: 10 (mode-1) / 6
