@@ -107,8 +107,8 @@
 ;      write - no surface clears anywhere - so an early FEND leaves
 ;      the untouched frame tail exactly as it stands (patch-in-place).
 ;   3. DMA chunks <= NXV2_DMA_CHUNK (240 B): every chunk path is
-;      capped by vid_chunk_dst/vid_chunk_all before a DMA kernel can
-;      see it. The cap is encoder-priced and structural (single-byte
+;      capped by vid_chunk_dst_*/vid_chunk_all before a DMA kernel
+;      can see it. The cap is encoder-priced and structural (single-byte
 ;      compare, ASSERTed <= 255); its original rationale - the DI
 ;      bracket had to fit one audio ISR period - retired when the
 ;      kernels dropped their brackets (SP18 item 5, silicon leg
@@ -720,8 +720,12 @@ vid_skip_body:
     or c
 .next:
     jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
-    call vid_dst_norm
-    call vid_chunk_dst_nocap     ; BC = min(remain, dest/col room) -
+    ; per-session SMC: _flat or _gap, the geometry test hoisted out of
+    ; the chunk loop (patched by vid_stage_common / nxb_ops_setup)
+.dn:
+    call vid_dst_norm_flat
+.cd:
+    call vid_chunk_dst_nocap_flat ; BC = min(remain, dest/col room) -
                                  ; skips move no bytes, so no DMA cap
     push hl
     ld hl, (vidRemain)
@@ -743,8 +747,10 @@ vid_run_body:
     or c
 .next:
     jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
-    call vid_dst_norm
-    call vid_chunk_dst           ; BC = chunk (rooms + the DMA cap)
+.dn:
+    call vid_dst_norm_flat       ; per-session SMC: _flat or _gap
+.cd:
+    call vid_chunk_dst_flat      ; BC = chunk (rooms + the DMA cap)
     push hl
     ld hl, (vidRemain)
     or a
@@ -752,7 +758,7 @@ vid_run_body:
     ld (vidRemain), hl
     pop hl
     ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA
-    ; fill. B is 0 by vid_chunk_dst's post-condition (cap <= 255).
+    ; fill. B is 0 by vid_chunk_dst_*'s post-condition (cap <= 255).
     ld a, c
     cp NXV2_RUN_DMA_MIN
     jr nc, .dma
@@ -773,7 +779,8 @@ vid_copy_body:
     ld a, h
     cp $E0
     call nc, vid_src_next
-    call vid_dst_norm
+.dn:
+    call vid_dst_norm_flat       ; per-session SMC: _flat or _gap
     call vid_chunk_all           ; BC = chunk (src+dest rooms + cap)
     push hl
     ld hl, (vidRemain)
@@ -794,9 +801,18 @@ vid_copy_body:
 ; Dest normalize: hop a finished column (gapped) then cross the
 ; window seam if due. Preserves BC, HL; DE/pages updated. Corrupts AF.
 ; Gapped invariant: between ops/chunks 0 <= E <= height; E == height
-; means "column finished, hop deferred to the next normalize".
+; means "column finished, hop deferred to the next normalize"; a chunk
+; therefore never crosses a column boundary or the window seam - this
+; lands both, the sizer below clips to whichever room is left.
+; Per-session SMC pair: the geometry test and the height read are
+; hoisted out of the chunk loop, every caller's call operand patched
+; to one entry at open. The Z80N has no I-cache, so a patched operand
+; is seen on the next fetch.
+; The DEBUG raster arm is INLINE in BOTH entries - a shared helper
+; would add a call/ret to every chunk in exactly the builds the
+; per-chunk timings are measured on.
 ; ---------------------------------------------------------------------
-vid_dst_norm:
+vid_dst_norm_gap:
  IFDEF DEBUG
     ; PLAY= raster clock (see vid_rl_poll). Decode has no wait loop in
     ; it, so the clock has to be read from inside it or a long decode
@@ -810,16 +826,26 @@ vid_dst_norm:
     ld (vidRlDiv), a
     call z, vid_rl_poll
  ENDIF
-    ld a, (vidGapFlag)
-    or a
-    jr z, .win
-    ld a, (vidHeightB)
+.h1:
+    ld a, 0                      ; SMC: content height (1-255)
     cp e
     jr nz, .win                  ; E < height: inside the column
     xor a
     ld e, a
     inc d                        ; next 256-aligned column base
 .win:
+    ld a, d
+    cp $60
+    ret c
+    jp vid_dst_next              ; maps the next surface page, D -= $20
+
+vid_dst_norm_flat:
+ IFDEF DEBUG
+    ld a, (vidRlDiv)             ; PLAY= clock: the same arm and the
+    dec a                        ; same VID_RL_DIV cadence as the
+    ld (vidRlDiv), a             ; gapped entry - exactly one entry is
+    call z, vid_rl_poll          ; live per session, so still per chunk
+ ENDIF
     ld a, d
     cp $60
     ret c
@@ -863,13 +889,15 @@ vid_dst_norm:
 ;                   shared vidRlSpinDiv cell once poll density was
 ;                   shown to cause the measured CTC tick loss; see the
 ;                   safety-floor arithmetic at vidRlSpinDiv     ~6.4 ms
-;   vid_dst_norm    every VID_RL_DIV = 16 decode chunks; a RAM-kernel
+;   vid_dst_norm_*  every VID_RL_DIV = 16 decode chunks; a RAM-kernel
 ;                   chunk is <= 256 B, worst 16 x 2392 T      ~1.7 ms
+;                   (the arm is inline in BOTH entries, exactly one of
+;                   which is live per session - so still per chunk)
 ;   vid_ds_blkopen  the same divider on the direct-serve wire. A ds
 ;                   COPY chunk is NOT capped at 256 B (no DI bracket
 ;                   to hold), so on a flat surface it can be a whole
 ;                   8 KB window - ~5.6 ms of unrolled ini that
-;                   vid_dst_norm alone would let 16 of stack up. One
+;                   vid_dst_norm_* alone would let 16 of stack up. One
 ;                   blkopen per 512 B bounds it                ~5.6 ms
 ;   vid_aud_pump    every VID_RL_DIV = 16 feed chunks - Phase 2-POLL,
 ;                   same shared vidRlSpinDiv cadence as vid_pace_poll
@@ -898,7 +926,7 @@ vid_dst_norm:
 ; of every existing field are unchanged.
 ;
 ; Out: nothing. Preserves BC, DE, HL, IX (vid_pace_poll's and
-; vid_dst_norm's contracts both need that). Corrupts AF only.
+; vid_dst_norm_*'s contracts both need that). Corrupts AF only.
 ; ---------------------------------------------------------------------
 vid_rl_poll:
     push bc
@@ -1009,19 +1037,50 @@ vid_play_close:
 ; ---------------------------------------------------------------------
 ; Chunk sizing. In: HL = src, DE = dest (normalized), BC = remaining.
 ; Out: BC = chunk >= 1. Preserves HL, DE. Corrupts AF (+ stack temp).
-; ---------------------------------------------------------------------
-; COPY: fold the src window room in, then dest room + DMA cap.
-vid_chunk_all:
-    call vid_chunk_src
-    ; falls into vid_chunk_dst
-; RUN: dest room + the DMA cap (contract 3). NXV2_DMA_CHUNK is 240 -
-; a single-byte cap since 2026-08-03 - so the test is a plain 16-bit
-; "> cap" and the post-condition is B == 0 ALWAYS, which is what lets
-; vid_run_body's and vid_copy_body's kernel selects drop their
-; high-byte test.
+; The geometry select and the gapped height are per-session SMC (the
+; _flat/_gap pairs below), so the chunk loop pays neither. The DMA
+; transfer size cap itself is UNTOUCHED - NXV2_DMA_CHUNK still bounds
+; every kernel-visible chunk, so the interval a DMA runs for, and the
+; frame ISR's hold-off with it, is exactly as it was.
+; NXV2_DMA_CHUNK is 240 - a single-byte cap since 2026-08-03 - so the
+; test is a plain "> cap" and the post-condition is B == 0 ALWAYS on
+; every capped exit, which is what lets vid_run_body's and
+; vid_copy_body's kernel selects drop their high-byte test.
     ASSERT NXV2_DMA_CHUNK <= 255
-vid_chunk_dst:
-    call vid_chunk_dst_nocap
+; ---------------------------------------------------------------------
+; COPY: dest room + cap first, then the src window room - min() is
+; commutative, so BC is identical to the old src-first order. After
+; the dest step B == 0 and BC <= 240, so H <= $DE means src room
+; >= $E000-$DEFF = 257 > BC and nothing can bind; $DFxx takes the
+; exact routine, which also serves vid_op_pal.straddle uncapped.
+    ASSERT $E000 - $DEFF > NXV2_DMA_CHUNK
+vid_chunk_all:
+.dj:
+    call vid_chunk_dst_flat      ; per-session SMC: _flat or _gap
+    ld a, h
+    cp $DF
+    ret c
+    jp vid_chunk_src
+
+; RUN/COPY dest step: dest room + the DMA cap (contract 3).
+    ASSERT $6000 - $5EFF > NXV2_DMA_CHUNK && $6000 - $5EFF > 255
+vid_chunk_dst_flat:
+    ld a, d
+    cp $5F
+    jr nc, .exact
+    ; D <= $5E: window room >= $6000-$5EFF = 257, over both 255 and
+    ; the cap, so only the cap can bind (same test as vf_op_copy8)
+    ld a, b
+    or a
+    jr nz, .cap                  ; >= 256
+    ld a, c
+    cp NXV2_DMA_CHUNK+1
+    ret c                        ; <= cap: keep BC
+.cap:
+    ld bc, NXV2_DMA_CHUNK
+    ret
+.exact:
+    call vid_chunk_dst_nocap_flat
     ld a, b
     or a
     jr nz, .clip                 ; >= 256
@@ -1032,13 +1091,31 @@ vid_chunk_dst:
     ld bc, NXV2_DMA_CHUNK
     ret
 
-; SKIP (and the inner step for the others): dest room only - column
-; room when gapped, window room when flat.
-vid_chunk_dst_nocap:
-    ld a, (vidGapFlag)
-    or a
-    jr z, .flat
-    ld a, (vidHeightB)
+vid_chunk_dst_gap:
+.h1:
+    ld a, 0                      ; SMC: content height (1-255)
+    sub e                        ; A = column room (1..255; normalized)
+    inc b
+    dec b                        ; Z = (B == 0), A preserved
+    jr nz, .takea                ; BC >= 256 > room: take the room
+    cp c
+    jr nc, .cap                  ; room >= count: keep BC
+.takea:
+    ld c, a
+    ld b, 0
+.cap:
+    ld a, c                      ; B is 0 on every arm above
+    cp NXV2_DMA_CHUNK+1
+    ret c                        ; <= cap: keep BC
+    ld bc, NXV2_DMA_CHUNK
+    ret
+
+; SKIP and direct-serve COPY: dest room only - column room when
+; gapped, window room when flat - and no DMA cap (neither path arms a
+; DMA; the direct transport holds no bracket of any kind).
+vid_chunk_dst_nocap_gap:
+.h1:
+    ld a, 0                      ; SMC: content height (1-255)
     sub e                        ; A = column room (1..255; normalized)
     inc b
     dec b                        ; Z = (B == 0), A preserved
@@ -1049,7 +1126,8 @@ vid_chunk_dst_nocap:
     ld c, a
     ld b, 0
     ret
-.flat:
+
+vid_chunk_dst_nocap_flat:
     push hl
     ld hl, $6000
     or a
@@ -1063,7 +1141,10 @@ vid_chunk_dst_nocap:
     pop hl
     ret
 
-; PAL/COPY head: BC = min(BC, src window room). Preserves HL, DE.
+; PAL/COPY tail: BC = min(BC, src window room). Preserves HL, DE.
+; EXACT and standalone - vid_op_pal.straddle calls it with BC = 512
+; and no cap ahead of it, so the high-byte arm in vid_chunk_all (which
+; is only sound behind that cap) must never be folded in here.
 vid_chunk_src:
     push hl
     push de
@@ -3339,9 +3420,9 @@ vid_ds_byte:
 vid_ds_blkopen:
  IFDEF DEBUG
     ld a, (vidRlDiv)             ; PLAY= clock, same divider as
-    dec a                        ; vid_dst_norm: one blkopen per 512 B
+    dec a                        ; vid_dst_norm_*: one blkopen per 512 B
     ld (vidRlDiv), a             ; of ds wire bounds the UNCAPPED ds
-    call z, vid_rl_poll          ; chunk that vid_dst_norm cannot
+    call z, vid_rl_poll          ; chunk that vid_dst_norm_* cannot
  ENDIF
     push bc
     push de
@@ -3525,8 +3606,10 @@ vid_ds_copy_body:
     ld a, b
     or c
     jp z, vid_ds_next
-    call vid_dst_norm            ; preserves BC, HL
-    call vid_chunk_dst_nocap     ; BC = min(remain, dest/column room)
+.dn:
+    call vid_dst_norm_flat       ; SMC _flat/_gap; preserves BC, HL
+.cd:
+    call vid_chunk_dst_nocap_flat ; BC = min(remain, dest/column room)
     push hl
     ld hl, (vidRemain)
     or a
@@ -3610,7 +3693,11 @@ vidLoopMode:     db 0            ; 0 = play once, 1 = loop
 ; MMU6-translated LDIR from its cold twin on VID_PAGE2. ORDER AND SIZES
 ; MUST MATCH vidP_HeightB..vidP_FileEnd exactly (VIDP_LEN asserted there).
 vidHeightB:      db 0            ; height byte (0 = 256)
-vidGapFlag:      db 0            ; 1 = mode-1 letterbox (column gaps)
+vidGapFlag:      db 0            ; 1 = mode-1 letterbox (column gaps).
+                                 ; Both are STAGING cells only - the
+                                 ; decode path reads the per-session
+                                 ; SMC copies vid_stage_common patches
+                                 ; from vidP_HeightB / vidP_GapFlag
 vidDstPages:     db 0            ; dest surface span: 10 (mode-1) / 6
 vidABytes:       dw 0            ; REAL audio bytes/frame
 vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block)
@@ -3799,7 +3886,7 @@ VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlFrames
 ; decode path, already divided 1-in-16 via vidRlDiv, loses ~0. This
 ; cell applies the same VID_RL_DIV = 16 divider to the two SPIN sites,
 ; sharing one budget between them (mirrors vidRlDiv, shared between
-; vid_dst_norm and vid_ds_blkopen) and reset by vid_rl_poll alongside
+; vid_dst_norm_* and vid_ds_blkopen) and reset by vid_rl_poll alongside
 ; vidRlDiv.
 ;
 ; SAFETY FLOOR: vid_rl_poll infers a field wrap from a 9-bit raster
@@ -3991,6 +4078,17 @@ nxb_ops_setup:
     ld (vid_stub + VOP_RUN8 + 1), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1), hl
+    ld hl, vid_dst_norm_flat     ; chunk-loop geometry select (flat)
+    ld (vid_skip_body.dn + 1), hl
+    ld (vid_run_body.dn + 1), hl
+    ld (vid_copy_body.dn + 1), hl
+    ld (vid_ds_copy_body.dn + 1), hl
+    ld hl, vid_chunk_dst_nocap_flat
+    ld (vid_skip_body.cd + 1), hl
+    ld (vid_ds_copy_body.cd + 1), hl
+    ld hl, vid_chunk_dst_flat
+    ld (vid_run_body.cd + 1), hl
+    ld (vid_chunk_all.dj + 1), hl
     ld hl, nxb_term              ; FEND -> the bench terminal (through
     ld (vid_term_exit + 1), hl   ; vid_op_fend's plain path, vidInSpan = 0)
     ld hl, nxbDmaInit
@@ -5555,8 +5653,9 @@ vid_strm_validate:
 
 ; Common hot staging (both deliveries): fileEnd, the parameter block,
 ; ring count + bank list, DEBUG fill row, per-file SMC patches (stub
-; dispatch targets + gap height immediates - doc 08, written through
-; the window, rubric 3). OPENS the MMU6 bracket and RETURNS WITH IT
+; dispatch targets, the chunk loop's geometry-selected call operands
+; and the gap height immediates - written through the window,
+; rubric 3). OPENS the MMU6 bracket and RETURNS WITH IT
 ; OPEN - the caller stages its delivery extras then closes with
 ; data_restore. Corrupts everything.
 vid_stage_common:
@@ -5609,6 +5708,23 @@ vid_stage_common:
     ld (vg_op_copy8.hcmp + 1 + DATA_WINDOW - OVL_ORG), a
     ld (vg_op_copy8.hsub + 1 + DATA_WINDOW - OVL_ORG), a
     ld (vg_op_copy8.hcmp2 + 1 + DATA_WINDOW - OVL_ORG), a
+    ld (vid_dst_norm_gap.h1 + 1 + DATA_WINDOW - OVL_ORG), a
+    ld (vid_chunk_dst_gap.h1 + 1 + DATA_WINDOW - OVL_ORG), a
+    ld (vid_chunk_dst_nocap_gap.h1 + 1 + DATA_WINDOW - OVL_ORG), a
+    ; chunk-loop geometry select: the call operands, not a per-chunk
+    ; test (both sets patched every open - a previous file may have
+    ; left the other one)
+    ld hl, vid_dst_norm_gap
+    ld (vid_skip_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_run_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_copy_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_ds_copy_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_chunk_dst_nocap_gap
+    ld (vid_skip_body.cd + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_ds_copy_body.cd + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_chunk_dst_gap
+    ld (vid_run_body.cd + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_chunk_all.dj + 1 + DATA_WINDOW - OVL_ORG), hl
     jr .vec
 .flatset:
     ld hl, vf_op_skip8
@@ -5617,6 +5733,17 @@ vid_stage_common:
     ld (vid_stub + VOP_RUN8 + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_dst_norm_flat
+    ld (vid_skip_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_run_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_copy_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_ds_copy_body.dn + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_chunk_dst_nocap_flat
+    ld (vid_skip_body.cd + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_ds_copy_body.cd + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_chunk_dst_flat
+    ld (vid_run_body.cd + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_chunk_all.dj + 1 + DATA_WINDOW - OVL_ORG), hl
 .vec:
     ; --- per-session decode vectoring (3c direct-serve): the fetch
     ; vector, the shared bodies' exit jumps, slow-op's COPY body
