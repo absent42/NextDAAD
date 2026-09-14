@@ -5255,7 +5255,7 @@ nxv2_open_body:
  ENDIF
     call data_restore
     ld b, 0                      ; verdict: loaded
-    jp .backhop
+    ret                          ; 3c: plain return to the orchestrator
 
 .stream_setup:
     ; --- 3b RING STREAMING setup. Contract validation first: the
@@ -6189,8 +6189,7 @@ vid_run_l2setup_body:
     ld (vidFramePos+DATA_WINDOW-OVL_ORG), hl
     ld hl, (vidFrames+DATA_WINDOW-OVL_ORG)
     ld (vidFramesLeft+DATA_WINDOW-OVL_ORG), hl
-    call data_restore
-    ret                          ; 3c: plain return to the orchestrator
+    jp data_restore              ; 3c: plain return to the orchestrator
 
 ; Zero both Layer 2 palette banks (256 entries x 2 zero writes each;
 ; NR $44 9-bit pairs, index auto-increments after the second write).
