@@ -2183,7 +2183,7 @@ vid_aud_pump:
     inc (hl)
 .fpnc:
     ; depth -= audio-pad blocks (the gate's staged need covered them)
-    jp vid_depth_debit           ; depth -= audio-pad blocks, floored
+    jp vid_depth_debit
 
 ; ---------------------------------------------------------------------
 ; vid_play - the player core entry. B = video number, C = 0 play-once
@@ -2871,7 +2871,7 @@ vid_ring_gate:
     scf
     ret
 
-; Fragment boundary: close the window, take the next filemap run, reopen.
+; Fragment boundary or rewind: close the window, next filemap run, reopen.
 ; CF set = fault, A = VID_ERR_SHORT (map exhausted) / VID_ERR_CMD;
 ; CF clear = HL = the fresh run's blocks. Corrupts AF, BC, DE, HL.
 vid_run_walk_h:
@@ -2925,7 +2925,7 @@ vid_prod_step:
     ld a, h
     or l
     jr nz, .run
-    call vid_run_walk_h          ; fragment boundary only
+    call vid_run_walk_h          ; fragment boundary / producer rewind
     jr c, .fault
 .run:
     call vid_win_open_h          ; CMD18 at the run cursor (idempotent)
@@ -3374,6 +3374,7 @@ vid_ds_blkopen:
     jr nz, .rundec
     call vid_run_walk_h          ; fragment boundary / rewind resume
     jr c, .fault
+    ; HL = run count on both arms: vid_run_walk_h ends by reloading it
 .rundec:
     dec hl
     ld (vidStrmRunBlkH), hl
