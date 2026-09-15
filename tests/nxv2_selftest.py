@@ -1104,34 +1104,35 @@ def _op_kinds(payload):
     return out
 
 
-@case(10, "silicon TMODEL adopted - optimized-kernel dispatch 387T, K* self-retunes from coeffs")
+@case(10, "silicon TMODEL adopted - two-key dispatch, K* self-retunes from coeffs")
 def t10_silicon_coeffs():
     tc = enc.TMODEL_COEFFS
-    # Third sitting (NXBO/NXBC production-routine bench, 2026-08-01) -
-    # the W4 TWO-KEY DISPATCH SPLIT. The old single key priced RUN and
-    # COPY at the dearer class (387); the measured envelopes split
-    # 487.2 (RUN, carries the computed-entry fill setup) / 336.3
-    # (COPY), same 1.449 ratio the sitting-2 prototype measured.
+    # Re-fit 2026-09-15 (NXBO/NXBC/NXBK rows, VGA-0, core 3.02.04) after
+    # the chunk-loop change. The TWO-KEY DISPATCH SPLIT stands; both
+    # fast-handler envelopes fell, RUN 487.2 -> 367.4 and COPY
+    # 336.3 -> 303.7, ratio 1.449 -> 1.210.
     expect("t_op_parse" not in tc, "the single-key t_op_parse must be RETIRED")
-    expect(tc["t_op_run"] == 487.2, f"t_op_run should be the NXBO 487.2, got {tc['t_op_run']}")
-    expect(tc["t_op_copy"] == 336.3, f"t_op_copy should be the NXBC 336.3, got {tc['t_op_copy']}")
-    expect(tc["t_op_misc"] == tc["t_op_run"],
-           "unmeasured simple dispatches must take the dearest measured envelope")
-    expect(tc["t_skip"] == 141.6, f"t_skip should be the NXBO SK00 141.6, got {tc['t_skip']}")
-    expect(tc["t_skip16"] == 210.7, f"t_skip16 should be the NXBO S160 210.7, got {tc['t_skip16']}")
+    expect(tc["t_op_run"] == 367.4, f"t_op_run should be the NXBO 367.4, got {tc['t_op_run']}")
+    expect(tc["t_op_copy"] == 303.7, f"t_op_copy should be the NXBC 303.7, got {tc['t_op_copy']}")
+    # >= not ==: t_op_misc is unmeasured and HELD at the dearest envelope
+    # ever measured, which no longer equals t_op_run.
+    expect(tc["t_op_misc"] >= tc["t_op_run"],
+           "unmeasured simple dispatches must be at or above the dearest measured envelope")
+    expect(tc["t_skip"] == 141.8, f"t_skip should be the NXBO SK00 141.8, got {tc['t_skip']}")
+    expect(tc["t_skip16"] == 210.9, f"t_skip16 should be the NXBO S160 210.9, got {tc['t_skip16']}")
     # ... and the skip pricer actually uses the second key
     expect(enc.op_cost("skip", 255)[1] < enc.op_cost("skip", 256)[1],
            "a 16-bit skip must price at the dearer S160 envelope")
-    expect(tc["fetch_long"] == 20.2, f"fetch_long should be the silicon 20.2, got {tc['fetch_long']}")
+    expect(tc["fetch_long"] == 19.76, f"fetch_long should be the C080 19.76, got {tc['fetch_long']}")
     expect(tc["fetch_short"] == 19.80, f"fetch_short should be the NXBC fit 19.80, got {tc['fetch_short']}")
-    expect(tc["fill_cpu"] == 16.70, f"fill_cpu should be the NXBO fit 16.70, got {tc['fill_cpu']}")
-    expect(tc["fill_dma_setup"] == 849.0, f"fill_dma_setup should be the silicon 849, got {tc['fill_dma_setup']}")
+    expect(tc["fill_cpu"] == 15.86, f"fill_cpu should be the NXBO fit 15.86, got {tc['fill_cpu']}")
+    expect(tc["fill_dma_setup"] == 781.0, f"fill_dma_setup should be the F071 781.0, got {tc['fill_dma_setup']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
-    # The mem-to-mem DMA COPY terms (chunk setup 1091.8 T, per-byte
-    # 5.31 T unarmed) were measured but never wired in - the model
-    # priced every copy as LDI, far over silicon cost on this op class.
+    # copy_dma_setup is HELD at its pre-change solve: the 2026-09-15
+    # sitting carries no two-chunk-count pair to re-solve it, so
+    # copy_dma_path_t absorbs the chunk-loop saving instead.
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
-    expect(tc["copy_dma_per_b"] == 5.08, f"copy_dma_per_b should be the NXBC C074-C103 slope 5.08, got {tc['copy_dma_per_b']}")
+    expect(tc["copy_dma_per_b"] == 5.10, f"copy_dma_per_b should be the NXBC (C103-C081)/22 slope 5.10, got {tc['copy_dma_per_b']}")
     # The audio-safety burst cap. 256 -> 240 on 2026-08-03: at 256 the
     # player's DI bracket ran 1801 T against stereo HDMI's 1728 T audio
     # period and suppressed one interrupt per boundary-spanning chunk
@@ -1148,8 +1149,8 @@ def t10_silicon_coeffs():
     # NXV2_RUN_DMA_MIN / NXV2_COPY_DMA_MIN. If these pins fail because
     # the player moved, the model must move with it.
     expect(tc["copy_dma_min"] == 81, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (81)")
-    expect(tc["copy_dma_path_t"] == 128.0,
-           "copy DMA path term must be the measured C073/C074 +128 T/op")
+    expect(tc["copy_dma_path_t"] == -227.9,
+           "copy DMA path term must be the C081 -227.9 T/op (setup held)")
     expect(tc["run_dma_min"] == 71, "fill DMA threshold must be the PLAYER's NXV2_RUN_DMA_MIN (71)")
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     # Shape given explicitly (320x256, flat): the no-shape default is
@@ -1218,21 +1219,19 @@ def t10_silicon_coeffs():
            f"{gap_plan[0][1]} !< {flat_plan[0][1]}")
     # K* derives from the coefficients (self-retunes). A bridge saves a
     # SKIP8 + a COPY dispatch, and the bytes it costs are priced at the
-    # SUPPLY EXCHANGE RATE - the opportunity cost of a wire byte -
-    # NOT at any kernel's execution rate: (141.6+336.3)/19.9 = 24.0 B.
-    # (It was 23.7 while the denominator was fetch_long 20.2; the two
-    # quantities are unrelated and agreed only by coincidence - see
-    # merge_kstar, re-derived 2026-08-03.)
+    # SUPPLY EXCHANGE RATE - the opportunity cost of a wire byte - NOT
+    # at any kernel's execution rate: (141.8+303.7)/19.9 = 22.4 B
+    # (24.0 before the 2026-09-15 dispatch re-fit).
     ks = enc.merge_kstar()
-    expect(23.5 < ks < 24.5, f"silicon K* should be ~24.0 B, got {ks:.1f}")
-    expect(abs(ks - (141.6 + 336.3) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 1e-9,
+    expect(21.9 < ks < 22.9, f"silicon K* should be ~22.4 B, got {ks:.1f}")
+    expect(abs(ks - (141.8 + 303.7) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 1e-9,
            "K* is the dispatch saving over the supply exchange rate")
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["t_op_copy"] = 150.0
         ks2 = enc.merge_kstar()
         expect(ks2 < ks, f"K* must fall when dispatch falls: {ks2:.1f} !< {ks:.1f}")
-        expect(abs(ks2 - (141.6 + 150) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 0.1,
+        expect(abs(ks2 - (141.8 + 150) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 0.1,
                "K* recomputes from live coeffs")
         # DECOUPLED FROM THE LDI KERNEL (the point of the re-derivation):
         # moving the copy body rate must NOT move a merge threshold.
@@ -1279,20 +1278,28 @@ def t10_copy_dma_model():
     for L in (1, 16, 64, 73, 74, 80):
         expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
                f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
-    # RULE 1b - the threshold SITS ON the break-even, WITH the measured
-    # fast-handler -> slow-body path difference folded in (NXBC
-    # C073/C074, 2026-08-01: the kernel-only 73.08 -> 74 placement cost
-    # +128 T/op at the seam). Modeled (1091.8+128)/(20.25-5.31) = 81.65;
-    # measured 81.4; shipped 81. Pinned as a distance so it self-retunes
-    # with the coefficients.
-    breakeven = (setup + path) / (rate - per_b)
-    expect(abs(thr - breakeven) <= 1.5,
-           f"copy threshold {thr} must sit on the path-corrected break-even "
-           f"{breakeven:.2f} B "
+    # RULE 1b - the player's threshold against the coefficients' own
+    # break-even, as a SIGNED divergence, not an equality the player no
+    # longer satisfies: the 2026-09-15 loop change made the DMA branch
+    # cheaper and moved the break-even to 58.8 B while NXV2_COPY_DMA_MIN
+    # stays 81. fetch_short is the deciding rate - the ops at the seam
+    # are 73-83 B and run the short body. Worst mispricing: at L=80 the
+    # player runs LDI for +312 T/op over what the DMA branch would cost.
+    short = tc["fetch_short"]
+    breakeven = (setup + path) / (short - per_b)
+    expect(abs(breakeven - 58.77) <= 1.0,
+           f"copy break-even should be the 2026-09-15 58.77 B, got {breakeven:.2f}")
+    expect(0.0 <= thr - breakeven <= 25.0,
+           f"copy threshold {thr} must sit at or above the break-even "
+           f"{breakeven:.2f} B and within 25 B of it "
            "(re-derive NXV2_COPY_DMA_MIN and these coefficients together)")
-    for L in range(1, thr):
-        expect(L * rate <= setup + path + L * per_b + 1e-9,
-               f"below the threshold LDI must be the CHEAPER path, fails at {L} B")
+    lost = (thr - 1) * short - (setup + path + (thr - 1) * per_b)
+    expect(0.0 < lost <= 340.0,
+           f"the LDI band above the break-even costs the player {lost:.0f} T/op "
+           f"at {thr - 1} B - bounded at 340")
+    for L in range(1, int(breakeven) + 1):
+        expect(L * short <= setup + path + L * per_b + 1e-9,
+               f"below the break-even LDI must be the CHEAPER path, fails at {L} B")
     # RULE 2 - at/above the threshold: the DMA price, which the player is
     # committed to (no min() floor - see _copy_t), op-class entry cost
     # included. The ENTRY COST is the fast-handler -> slow-body path
@@ -1321,24 +1328,27 @@ def t10_copy_dma_model():
     # 16 B LDI tail and legitimately costs more. The silicon row still
     # validates the COEFFICIENTS; it must be evaluated at the cap it was
     # taken under, not at today's.
+    # The row also PREDATES the 2026-09-15 chunk-loop change (~279 T per
+    # chunk): the change-adjusted row is 2496.9 T and the model prices
+    # +10.9% over it - the safe side.
     with _at_chunk_cap(256):
         k256 = tc["t_op_copy"] + enc._copy_t(256, rate)
     expect(abs(k256 / 2775.90 - 1.0) < 0.01,
            f"a 256 B COPY16 at the cap K256 was measured under must model "
            f"within 1% of the silicon row (2775.90 T), got {k256:.1f} "
            f"({100 * (k256 / 2775.90 - 1):+.2f}%)")
-    # RULE 3 - the kernel switch must not be a large cost DISCONTINUITY.
-    # Two DISCLOSED exceptions exist now that the threshold sits on the
-    # measured OP-level break-even rather than the kernel-only one
-    # (_copy_t docstring): (a) the step ACROSS the op threshold is a
-    # couple of bytes of LDI, not under one (81 sits a fraction below
-    # the modeled 81.9); (b) a remainder crossing the threshold after
-    # full 256 B chunks can get CHEAPER (the bare kernel break-even is
-    # ~73 B but the player's single constant re-selects at 81 there
-    # too), bounded by thr*(rate-per_b) - setup ~= 114 T. Assert the
-    # bound rather than pretending monotonicity the player does not
-    # have.
-    seam_bound = thr * (rate - per_b) - setup + 1e-6
+    # RULE 3 - the kernel switch must not be an UNBOUNDED cost
+    # discontinuity. Two DISCLOSED seams, both asserted rather than
+    # wished away: (a) the step across the op threshold now FALLS,
+    # because the player's 81 sits 22 B above the break-even (RULE 1b);
+    # (b) a remainder crossing the threshold after full chunks falls by
+    # at most thr*(rate-per_b) - setup. Assert the bound rather than
+    # pretending monotonicity the player does not have.
+    thr_seam = (thr - 1) * rate - (path + setup + thr * per_b)
+    tail_seam = thr * (rate - per_b) - setup
+    expect(abs(thr_seam - 303.8) <= 5.0,
+           f"the op-threshold seam should be the 2026-09-15 303.8 T, got {thr_seam:.1f}")
+    seam_bound = max(thr_seam, tail_seam) + 1e-6
     prev = 0.0
     for L in range(1, 601):
         cur = enc._copy_t(L, rate)
@@ -1346,12 +1356,13 @@ def t10_copy_dma_model():
                f"copy body price fell by more than the disclosed seam bound "
                f"({seam_bound:.0f} T): {L - 1} B {prev:.1f} -> {L} B {cur:.1f}")
         prev = cur
-    expect(enc._copy_t(thr, rate) - enc._copy_t(thr - 1, rate) < 2 * rate,
-           "the step across the kernel threshold must stay under two bytes of LDI")
-    expect(enc._copy_t(thr, rate) > enc._copy_t(thr - 1, rate),
-           "the op-level threshold step must still RISE (the path term is in the price)")
+    expect(abs((enc._copy_t(thr - 1, rate) - enc._copy_t(thr, rate)) - thr_seam) < 1e-6,
+           "the step across the kernel threshold must be exactly the disclosed op seam")
     # RULE 4 - multi-chunk: full chunks go DMA (one path term per op), a
     # sub-threshold tail goes LDI (the player re-selects per chunk).
+    # DISCLOSED GAP: silicon C256/F256 show the tail also pays a
+    # chunk-loop iteration the model does not charge (+212 T copy,
+    # +540 T fill) - the under-price t10_bench_rows still reports.
     tail300 = 300 - chunk
     expect(tail300 < thr, "the 300 B case must leave a sub-threshold tail")
     expect(abs(enc._copy_t(300, rate) - (entry16 + (setup + chunk * per_b) + tail300 * rate)) < 1e-6,
@@ -1368,14 +1379,13 @@ def t10_copy_dma_model():
     for L in (1, 63, 89, 90, 256, 1024, 65535):
         expect(enc._copy_t(L, rate) <= L * rate + 1e-6,
                f"the DMA term may only ever LOWER the {L} B copy price")
-    # (240*20.2)/(128 + 1091.8 + 240*5.08) = 1.99 at the W4 NXBC slope
-    # (2.10 at the 256 B cap this test was written against; 2.05 while a
-    # COPY16 was charged the 128 T path term as well). A full chunk is
+    # (240*19.76)/(-227.9 + 1091.8 + 240*5.10) = 2.27 at the 2026-09-15
+    # coefficients (1.99 before the chunk-loop change). A full chunk is
     # the right length to price here because it is the DMA path at its
     # most efficient - one setup amortised over the whole cap.
     fullx = (chunk * rate) / enc._copy_t(chunk, rate)
-    expect(abs(fullx - 1.99) < 0.05,
-           f"a full-chunk copy body must price ~1.99x under all-LDI, got {fullx:.2f}x")
+    expect(abs(fullx - 2.27) < 0.05,
+           f"a full-chunk copy body must price ~2.27x under all-LDI, got {fullx:.2f}x")
     # RULE 6 - agreement with the silicon rows the coefficients came
     # from, each EVALUATED AT THE CAP IT WAS MEASURED UNDER (256 - see
     # the K256 note above; the shipping cap is 240 and legitimately
@@ -1386,8 +1396,12 @@ def t10_copy_dma_model():
     with _at_chunk_cap(256):
         cd3 = enc._copy_t(1024, rate) / 1024
         kfr = enc._copy_t(43008, rate) / 43008
-    expect(abs(cd3 - 9.84) < 0.5,
-           f"1024 B copy body should sit on CD3's 9.84 T/B, got {cd3:.2f}")
+    # CD3 PREDATES the 2026-09-15 chunk-loop change; at cap 256 that
+    # change is worth ~1.09 T/B, putting the adjusted row at 8.75 T/B.
+    # The model must not price below it.
+    expect(8.75 <= cd3 <= 10.34,
+           f"1024 B copy body should sit between CD3's change-adjusted 8.75 "
+           f"and its measured 9.84+0.5 T/B, got {cd3:.2f}")
     expect(9.0 < kfr < 10.6,
            f"43008 B copy body should sit near the KF row's unarmed rate, "
            f"got {kfr:.2f}")
@@ -1405,24 +1419,25 @@ def t10_copy_dma_model():
            "coefficients restored")
     # RULE 8 - the FILL model is gated the same way, on the player's own
     # NXV2_RUN_DMA_MIN (src/video.asm vid_run_body re-selects per chunk),
-    # with the threshold on its own derived break-even
-    # 849.4/(17.17-5.11) = 70.43 -> 71. Before 2026-07-28 _fill_t took a
-    # bare min(cpu, dma) over the WHOLE length, which priced a 300 B fill
-    # as two DMA setups when the player really runs one DMA chunk and a
-    # CPU tail.
+    # with the threshold checked against its own derived break-even.
+    # Before 2026-07-28 _fill_t took a bare min(cpu, dma) over the WHOLE
+    # length, which priced a 300 B fill as two DMA setups when the player
+    # really runs one DMA chunk and a CPU tail.
     fcpu, fsetup, fper = tc["fill_cpu"], tc["fill_dma_setup"], tc["fill_dma_per_b"]
     fchunk, fthr = tc["fill_dma_min"], tc["run_dma_min"]
     fbreakeven = fsetup / (fcpu - fper)
-    # W4 DISCLOSURE: the NXBO fill_cpu re-fit (17.0 -> 16.70) moved the
-    # derived break-even 70.4 -> 73.2 B while the PLAYER's constant
-    # (NXV2_RUN_DMA_MIN, src frozen this wave) stays 71 - the model
-    # mirrors the player, so 71-72 B fills commit to DMA at a worst
-    # mispricing of ~26 T/op on a length band the op census shows
-    # barely executes. Tolerance covers the disclosed 2.2 B gap; the
-    # .inc constant and this bound re-derive together next player wave.
-    expect(abs(fthr - fbreakeven) <= 2.5,
+    # SIGNED divergence, same shape as RULE 1b. The 2026-09-15 fit puts
+    # the break-even at 72.58 B while the PLAYER's constant
+    # (NXV2_RUN_DMA_MIN) stays 71, so 71-72 B fills commit to DMA 1.6 B
+    # early at a worst mispricing of +17 T/op.
+    expect(abs(fbreakeven - 72.58) <= 1.0,
+           f"fill break-even should be the 2026-09-15 72.58 B, got {fbreakeven:.2f}")
+    expect(-2.5 <= fthr - fbreakeven <= 2.5,
            f"fill threshold {fthr} must sit near the break-even {fbreakeven:.2f} B "
            "(re-derive NXV2_RUN_DMA_MIN and this coefficient together)")
+    flost = (fsetup + fthr * fper) - fthr * fcpu
+    expect(0.0 <= flost <= 40.0,
+           f"the early-DMA band must cost the player at most 40 T/op, got {flost:.0f}")
     for L in (1, 16, 64, fthr - 1):
         expect(abs(enc._fill_t(L) - L * fcpu) < 1e-6,
                f"fill body of {L} B (< {fthr}) must be priced as unrolled CPU fill")
@@ -1763,7 +1778,9 @@ def t12_moving_edge_pixel_exact():
 def t13_run_absorb_threshold():
     tc = enc.TMODEL_COEFFS
     absorb_max = enc.merge_run_absorb_max()
-    expect(100.0 < absorb_max < 200.0, f"sanity: silicon absorb_max ~121B, got {absorb_max:.1f}")
+    # 94.2 B at the 2026-09-15 coefficients (139 before the re-fit): the
+    # denominator is a difference of two close terms, so it swings hard.
+    expect(80.0 < absorb_max < 160.0, f"sanity: silicon absorb_max ~94B, got {absorb_max:.1f}")
 
     rng = np.random.default_rng(51)
     n = 3000
@@ -1803,12 +1820,12 @@ def t13_run_absorb_threshold():
         tc.clear()
         tc.update(saved)
     # THE TRADE (SP17). Before the T model carried a mem-to-mem DMA copy
-    # term, absorbing re-priced the run's body at the 20.2 T/B LDI rate
-    # and the guard SAVED decode T outright - the review finding's
+    # term, absorbing re-priced the run's body at the LDI rate then in
+    # force and the guard SAVED decode T outright - the review finding's
     # original claim, and what this case used to assert. With copy bodies
-    # now priced at 1091.8 T/chunk + 5.31 T/B the arithmetic INVERTS at
+    # now priced at 1091.8 T/chunk + 5.10 T/B the arithmetic INVERTS at
     # this length: absorbing is a few hundred T cheaper, so a pure-T
-    # reading would push the crossover from ~121 B out past 700 B.
+    # reading would push the crossover from ~94 B out past 700 B.
     #
     # The guard is kept regardless, and this case now pins the reason:
     # what it costs is decode T (noise), what it buys is WIRE BYTES (the

@@ -371,46 +371,47 @@ assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 
 # ---------------------------------------------------------------------
 # TMODEL_COEFFS - Z80N decode+fetch T-state costs. Silicon-settled against
-# the optimized decode kernels; each entry cites its bench row. Whole-
-# model cross-check: feeding these coefficients through a manifest's op
-# counts reproduces a measured mixed stream to +0.5%.
+# the optimized decode kernels; each entry cites its bench row. Re-fit
+# 2026-09-15 (NXBO/NXBC/NXBK rows, VGA-0, core 3.02.04) after the
+# chunk-loop change; the model still owes a per-chunk term on a
+# sub-threshold trailing chunk (silicon C256 +212 T, F256 +540 T).
 #
 # Envelope convention: dispatch envelopes are measured on real ops that
 # already carry their count byte, so the count-byte parse is FOLDED INTO
 # them - header_rate stays 0 to avoid double-counting.
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
-    "fetch_long": 20.2,        # T/byte LDI copy body [silicon C8/C16 joint
-                                #   solve, incl ~0.13 window-seam cost]
+    "fetch_long": 19.76,       # T/byte LDI copy body [silicon C080 row less
+                                #   t_op_copy, 2026-09-15; single-row evidence]
     "fetch_short": 19.80,      # T/byte short-copy LDI body [silicon NXBC
-                                #   C001..C073 CPU fit, slope 19.797 T/B,
-                                #   residuals under 4 T]. No separate
-                                #   short-burst penalty - burst size is
-                                #   dispatch, priced separately
-    "t_skip": 141.6,           # SKIP8 op envelope [silicon NXBO SK00 row,
-                                #   production routines, incl count byte]
-    "t_skip16": 210.7,         # SKIP16 op envelope [silicon NXBO S160 row];
-                                #   +69 T over SK00 - the slow-parser 16-bit
-                                #   path
-    "t_op_run": 487.2,         # RUN op dispatch envelope [silicon NXBO
-                                #   RU01/RU17/F063/F070 joint fit]; carries
-                                #   the computed-entry fill setup the copy
-                                #   path does not. Body priced separately
-    "t_op_copy": 336.3,        # COPY op dispatch envelope [silicon NXBC
-                                #   C001..C073 fit, residuals under 4 T].
-                                #   Body priced separately
+                                #   C001/C004/C008/C038 CPU fit]. HELD: the
+                                #   2026-09-15 fit gives 19.784, inside its
+                                #   own 3.0 T residual
+    "t_skip": 141.8,           # SKIP8 op envelope [silicon NXBO SK00 row,
+                                #   2026-09-15, incl count byte]
+    "t_skip16": 210.9,         # SKIP16 op envelope [silicon NXBO S160 row,
+                                #   2026-09-15]; +69.1 T over SK00 - the
+                                #   slow-parser 16-bit path
+    "t_op_run": 367.4,         # RUN op dispatch envelope [silicon NXBO
+                                #   RU01/RU17/F063/F070 fit, worst residual
+                                #   5.2 T, 2026-09-15]. FAST-HANDLER
+                                #   intercept; body priced separately
+    "t_op_copy": 303.7,        # COPY op dispatch envelope [silicon NXBC
+                                #   C001/C004/C008/C038 fit, worst residual
+                                #   3.0 T, 2026-09-15]. FAST-HANDLER
+                                #   intercept; body priced separately
     "t_op_misc": 487.2,        # KSTART/KFLIP/FEND/PAL dispatch - unmeasured
-                                #   simple handlers, priced at the dearest
-                                #   measured envelope (t_op_run) conservatively.
+                                #   simple handlers, HELD at the dearest
+                                #   envelope ever measured (>= t_op_run).
                                 #   Well under 0.5% of any frame
-    "fill_cpu": 16.70,         # T/byte unrolled CPU fill [silicon NXBO RUN
-                                #   fit slope on the production routine]
+    "fill_cpu": 15.86,         # T/byte unrolled CPU fill [silicon NXBO
+                                #   RU01/RU17/F063/F070 fit slope, 2026-09-15]
     "fill_dma_per_b": 5.1,     # T/byte DMA fill body [silicon RD chunk
                                 #   solve, cross-checked against the DMA-copy
                                 #   KF/CD3 rows]. Hardware term
-    "fill_dma_setup": 849.0,   # T per DMA fill chunk [silicon RD1/RD2/RD3
-                                #   solve - both chunk differences give 849.4
-                                #   exactly; persistent-descriptor re-arm]
+    "fill_dma_setup": 781.0,   # T per DMA fill chunk [silicon NXBO F071 row
+                                #   less t_op_run and 71 B of transfer,
+                                #   2026-09-15]; persistent-descriptor re-arm
     "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
                                 #   player clips both through vid_chunk_dst,
@@ -421,33 +422,38 @@ TMODEL_COEFFS = {
     "run_dma_min": 71,         # the PLAYER's fill kernel-select threshold
                                 #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a
                                 #   fill chunk shorter than this goes
-                                #   unrolled-CPU. Crossover measured directly
-                                #   from silicon NXBK rows at 68.8 on the
-                                #   earlier fill kernel and held at 71; the
-                                #   .inc notes it is due for re-derivation
-                                #   from NXBK against the faster kernel
+                                #   unrolled-CPU. The 2026-09-15 rows put the
+                                #   break-even at 72.6 B, so 71 commits to
+                                #   DMA 1.6 B early at up to +17 T/op
     "copy_dma_min": 81,        # the PLAYER's copy kernel-select threshold
                                 #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
-                                #   Measured break-even 81.4 B (silicon NXBC
-                                #   C073/C074 rows); held at 81 (worst-case
-                                #   +28 T/op at L=81 on ~0.3% of ops, inside
-                                #   row resolution)
-    "copy_dma_path_t": 128.0,  # T/op fast-handler -> slow-body path
-                                #   difference a sub-256 COPY8 pays to REACH
-                                #   the DMA kernel [silicon NXBC C073/C074].
+                                #   The 2026-09-15 rows put the break-even at
+                                #   58.9 B, so 81 is 22 B late - the player
+                                #   runs LDI on 59-80 B copies at up to
+                                #   +309 T/op. Model follows the player
+    "copy_dma_path_t": -227.9, # T/op an 8-bit COPY carries over t_op_copy
+                                #   on the DMA branch, beyond copy_dma_setup
+                                #   [silicon NXBC C081, 2026-09-15]. NEGATIVE
+                                #   because copy_dma_setup is held at its
+                                #   pre-change value, so this term absorbs the
+                                #   chunk-loop saving - the split between the
+                                #   two is not separable from these rows.
                                 #   Charged once per op in _copy_t's DMA
                                 #   branch, and ONLY on 8-bit-operand ops: a
                                 #   >= 256 B op has no fast handler to bail
                                 #   out of, so it pays the measured
                                 #   slow-parser entry (t_skip16 - t_skip)
                                 #   instead
-    "copy_dma_per_b": 5.08,    # T/byte mem-to-mem DMA COPY body [silicon
-                                #   NXBC C074-C103 slow-body slope, unarmed;
+    "copy_dma_per_b": 5.10,    # T/byte mem-to-mem DMA COPY body [silicon
+                                #   NXBC (C103-C081)/22, unarmed, 2026-09-15;
                                 #   the armed tax is carried globally by
                                 #   audio_factor]
     "copy_dma_setup": 1091.8,  # T per DMA copy chunk [silicon CD1..CD4 chunk
                                 #   solve: the three chunk differences give
-                                #   1091.8 / 1091.6 / 1091.9]
+                                #   1091.8 / 1091.6 / 1091.9]. HELD - the
+                                #   2026-09-15 sitting has no two-chunk-count
+                                #   pair to re-solve it; copy_dma_path_t
+                                #   carries the change
     "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player
                                 #   clips every copy chunk to (vid_chunk_all);
@@ -1647,7 +1653,7 @@ def merge_kstar(lam=None):
         K* = (t_skip + header_rate + t_op_copy) / lam
 
     The numerator is fixed: bridging removes one SKIP dispatch and one
-    COPY dispatch, 477.9 T of decode, exactly. The denominator prices a
+    COPY dispatch, 445.5 T of decode, exactly. The denominator prices a
     bridged byte at its OPPORTUNITY COST - what the encoder gives up in
     decode budget by spending a wire byte (the supply exchange rate lam
     above) - not at fetch_long, the cost to EXECUTE a bridged byte:
@@ -1660,7 +1666,7 @@ def merge_kstar(lam=None):
     lam=None means SUPPLY_EXCHANGE_T_PER_BYTE, the flat-shape default.
     Passing a shape-specific lam makes the threshold shape-aware for
     free: gapped (letterbox) shapes exchange at 15.3-16.5 T/B, which
-    raises K* to 29-31 B there - gapped clips measure the most merge
+    raises K* to 27-29 B there - gapped clips measure the most merge
     headroom."""
     tc = TMODEL_COEFFS
     if lam is None:
@@ -1688,7 +1694,7 @@ def merge_run_absorb_max():
     so moving this threshold churns encoder output on a class that
     cannot pay for the regression it would need. Known faults, kept as
     a record: (1) it uses the >=64B copy rate (fetch_long) rather than
-    the fetch_short rate a <=139B region actually runs; (2) it assumes
+    the fetch_short rate a <=94B region actually runs; (2) it assumes
     the absorbing copy takes the CPU path - if it is already on the DMA
     path (marginal rate BELOW the fill rate) the denominator goes
     negative and absorption always wins, at any length, which this
