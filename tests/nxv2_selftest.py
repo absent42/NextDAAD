@@ -1128,9 +1128,10 @@ def t10_silicon_coeffs():
     expect(tc["fill_cpu"] == 15.86, f"fill_cpu should be the NXBO fit 15.86, got {tc['fill_cpu']}")
     expect(tc["fill_dma_setup"] == 781.0, f"fill_dma_setup should be the F071 781.0, got {tc['fill_dma_setup']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
-    # copy_dma_setup is HELD at its pre-change solve: the 2026-09-15
-    # sitting carries no two-chunk-count pair to re-solve it, so
-    # copy_dma_path_t absorbs the chunk-loop saving instead.
+    # copy_dma_setup is HELD at its pre-change solve although C161+C256
+    # against C081/C103 measure it at 882.56 T: re-solving it alone
+    # deepens the C256/K256 under-price to -13.1%, so the re-solve and
+    # the trailing-chunk term must land together.
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
     expect(tc["copy_dma_per_b"] == 5.10, f"copy_dma_per_b should be the NXBC (C103-C081)/22 slope 5.10, got {tc['copy_dma_per_b']}")
     # The audio-safety burst cap. 256 -> 240 on 2026-08-03: at 256 the
@@ -1281,10 +1282,12 @@ def t10_copy_dma_model():
     # RULE 1b - the player's threshold against the coefficients' own
     # break-even, as a SIGNED divergence, not an equality the player no
     # longer satisfies: the 2026-09-15 loop change made the DMA branch
-    # cheaper and moved the break-even to 58.8 B while NXV2_COPY_DMA_MIN
-    # stays 81. fetch_short is the deciding rate - the ops at the seam
-    # are 73-83 B and run the short body. Worst mispricing: at L=80 the
-    # player runs LDI for +312 T/op over what the DMA branch would cost.
+    # cheaper and moved the break-even to 58.77 B while NXV2_COPY_DMA_MIN
+    # stays 81. fetch_short is the deciding rate here - the ops at the
+    # seam are 73-83 B and run the short body; copy_dma_min's own comment
+    # quotes the same break-even at fetch_long (58.9 B), not an error.
+    # Worst mispricing: at L=80 the player runs LDI for +312 T/op over
+    # what the DMA branch would cost (+309 at fetch_long).
     short = tc["fetch_short"]
     breakeven = (setup + path) / (short - per_b)
     expect(abs(breakeven - 58.77) <= 1.0,

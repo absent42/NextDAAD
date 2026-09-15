@@ -41,9 +41,13 @@ def _lsq(points):
     return intercept, slope, resid
 
 
-def _fmt(name, value, worst, note=""):
-    if worst > RESIDUAL_LIMIT:
-        return f"  {name:<18} REFUSED (worst residual {worst:.1f} T > {RESIDUAL_LIMIT}) {note}"
+def _fmt(name, value, worst, note="", dep=0.0):
+    """dep = worst residual of a fit this value is DERIVED from. A refused
+    parent must refuse its derivatives: the single-row terms carry no
+    residual of their own, so without this the guard passes them through."""
+    bad = max(worst, dep)
+    if bad > RESIDUAL_LIMIT:
+        return f"  {name:<18} REFUSED (worst residual {bad:.1f} T > {RESIDUAL_LIMIT}) {note}"
     return f"  {name:<18} {value:>10.4f}   worst residual {worst:>6.2f} T  {note}"
 
 
@@ -80,7 +84,8 @@ def fit(sitting):
     # fetch_long: one row, so no residual - single-row evidence.
     fetch_long = (t["C080"] - t_op_copy) / 80.0
     out["fetch_long"] = fetch_long
-    print(_fmt("fetch_long", fetch_long, 0.0, "[C080 - t_op_copy, SINGLE ROW]"))
+    print(_fmt("fetch_long", fetch_long, 0.0, "[C080 - t_op_copy, SINGLE ROW]",
+               dep=worst_c))
 
     # fill DMA setup: F071 is the shortest fill that commits to the DMA
     # kernel. fill_dma_per_b is a held hardware term, not re-fit here.
@@ -88,7 +93,7 @@ def fit(sitting):
     fill_dma_setup = t["F071"] - t_op_run - 71 * fdper
     out["fill_dma_setup"] = fill_dma_setup
     print(_fmt("fill_dma_setup", fill_dma_setup, 0.0,
-               f"[F071 - t_op_run - 71*{fdper}, SINGLE ROW]"))
+               f"[F071 - t_op_run - 71*{fdper}, SINGLE ROW]", dep=worst))
 
     # COPY DMA line: two slow-body rows 22 B apart give the per-byte
     # slope; C081 then places the path term against the held setup.
@@ -99,7 +104,8 @@ def fit(sitting):
     copy_dma_path_t = t["C081"] - t_op_copy - copy_dma_setup - 81 * copy_dma_per_b
     out["copy_dma_path_t"] = copy_dma_path_t
     print(_fmt("copy_dma_path_t", copy_dma_path_t, 0.0,
-               f"[C081 - t_op_copy - {copy_dma_setup} - 81*per_b, SINGLE ROW]"))
+               f"[C081 - t_op_copy - {copy_dma_setup} - 81*per_b, SINGLE ROW]",
+               dep=worst_c))
 
     # skips are read straight off their rows.
     out["t_skip"], out["t_skip16"] = t["SK00"], t["S160"]
@@ -110,6 +116,9 @@ def fit(sitting):
     # once the fitted terms above are charged. 256 B = one 240 B DMA
     # chunk plus a sub-threshold tail the model prices as bare CPU.
     print("\ntrailing-chunk evidence (model owes, per op)")
+    if max(worst, worst_c) > RESIDUAL_LIMIT:
+        print("  REFUSED - derived from a refused fit")
+        return out
     chunk = tc["copy_dma_chunk"]
     c256_model = (t_op_copy + (tc["t_skip16"] - tc["t_skip"])
                   + copy_dma_setup + chunk * copy_dma_per_b

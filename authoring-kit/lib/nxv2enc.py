@@ -428,9 +428,12 @@ TMODEL_COEFFS = {
     "copy_dma_min": 81,        # the PLAYER's copy kernel-select threshold
                                 #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
                                 #   The 2026-09-15 rows put the break-even at
-                                #   58.9 B, so 81 is 22 B late - the player
-                                #   runs LDI on 59-80 B copies at up to
-                                #   +309 T/op. Model follows the player
+                                #   58.9 B AT fetch_long (58.77 at fetch_short,
+                                #   which is what t10_copy_dma_model asserts),
+                                #   so 81 is 22 B late - the player runs LDI on
+                                #   59-80 B copies at up to +309 T/op
+                                #   (+312 at fetch_short). Model follows the
+                                #   player
     "copy_dma_path_t": -227.9, # T/op an 8-bit COPY carries over t_op_copy
                                 #   on the DMA branch, beyond copy_dma_setup
                                 #   [silicon NXBC C081, 2026-09-15]. NEGATIVE
@@ -450,10 +453,15 @@ TMODEL_COEFFS = {
                                 #   audio_factor]
     "copy_dma_setup": 1091.8,  # T per DMA copy chunk [silicon CD1..CD4 chunk
                                 #   solve: the three chunk differences give
-                                #   1091.8 / 1091.6 / 1091.9]. HELD - the
-                                #   2026-09-15 sitting has no two-chunk-count
-                                #   pair to re-solve it; copy_dma_path_t
-                                #   carries the change
+                                #   1091.8 / 1091.6 / 1091.9]. HELD although
+                                #   C161+C256 against C081/C103 DO measure it
+                                #   at 882.56 T: re-solving it alone deepens
+                                #   the C256/K256 under-price to -13.1%, so
+                                #   the re-solve and the trailing-chunk term
+                                #   must land TOGETHER, never the setup alone.
+                                #   Until then it over-prices every DMA copy
+                                #   chunk by 209.24 T, unoffset on 16-bit ops
+                                #   (no copy_dma_path_t on that branch)
     "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player
                                 #   clips every copy chunk to (vid_chunk_all);
