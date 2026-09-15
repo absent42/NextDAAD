@@ -22,11 +22,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "authoring-kit" / "lib"
 sys.path.insert(0, str(LIB))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
 import nxv2enc as enc
 import nxv2dec as dec
+import nxv2_bench_rows as bench
 
 SINTEL = ROOT / "tools" / "demo-files" / "Sintel_1080_10s_30MB.mp4"
 BBB = ROOT / "tools" / "demo-files" / "Big_Buck_Bunny_1080_10s_30MB.mp4"
@@ -1245,6 +1247,23 @@ def t10_silicon_coeffs():
     # exchanges at 15.3-16.5 T/B, which RAISES K* there
     expect(enc.merge_kstar(16.0) > ks,
            "a gapped-shape lam must raise K*, not lower it")
+
+
+@case(10, "silicon bench rows - the model prices every measured row inside its band")
+def t10_bench_rows():
+    # Band, not equality: a row is measured to +-2 raster lines, which is
+    # under 1.5 T/op on the widest row here. Over-pricing is the safe
+    # direction (the encoder spends less than the player has); under-
+    # pricing produces frames the player cannot decode in time, so it is
+    # held to the row resolution.
+    OVER, UNDER, FLOOR = 0.05, 0.01, 3.0
+    bad = []
+    for tag, (measured, modeled) in sorted(bench.priced(enc).items()):
+        d = modeled - measured
+        if not -max(FLOOR, UNDER * measured) <= d <= max(FLOOR, OVER * measured):
+            bad.append(f"{tag}: model {modeled:.1f} vs silicon {measured:.1f} "
+                       f"({d:+.1f} T, {100 * d / measured:+.2f}%)")
+    expect(not bad, "rows outside the band:\n  " + "\n  ".join(bad))
 
 
 @case(10, "copy/fill T model - DMA terms gated on the PLAYER's derived kernel thresholds")
