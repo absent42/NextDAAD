@@ -1134,9 +1134,19 @@ def t10_silicon_coeffs():
            f"fill DMA path term should be the F071 -71.7 T/op, got {tc['fill_dma_path_t']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
     # The 240 B cap makes every 256-aligned op a chunk plus a tail, and
-    # silicon charges a chunk-loop iteration on that tail.
+    # silicon charges a chunk-loop iteration on that tail. The 8-bit and
+    # 16-bit terms differ for OPPOSITE reasons: on copy because
+    # copy_dma_path_t already cancels the held setup's over-charge, so
+    # the 8-bit branch has no slack to net against; on fill because the
+    # 16-bit branch pays the t_skip16 - t_skip entry the 8-bit one does
+    # not, and R161 measures only their sum.
     expect(tc["copy_dma_tail_t"] == 210.7, f"copy trailing-chunk term should be the C256/K256 210.7, got {tc['copy_dma_tail_t']}")
-    expect(tc["fill_dma_tail_t"] == 468.1, f"fill trailing-chunk term should be the F256 468.1, got {tc['fill_dma_tail_t']}")
+    expect(tc["copy_dma_tail8_t"] == 420.8, f"8-bit copy trailing-chunk term should be 420.8, got {tc['copy_dma_tail8_t']}")
+    expect(tc["fill_dma_tail_t"] == 399.0, f"fill trailing-chunk term should be the F256 399.0, got {tc['fill_dma_tail_t']}")
+    expect(tc["fill_dma_tail8_t"] == 468.1, f"8-bit fill trailing-chunk term should be 468.1, got {tc['fill_dma_tail8_t']}")
+    expect(abs((tc["fill_dma_tail_t"] + tc["t_skip16"] - tc["t_skip"])
+               - tc["fill_dma_tail8_t"]) < 1e-9,
+           "the 16-bit fill entry plus its tail must equal the 8-bit tail - R161 measures that sum")
     # copy_dma_setup is HELD at its pre-change solve although the
     # 2026-09-15 ONE-chunk rows measure 881.7 T: the per-chunk cost
     # RISES with op length. The cap-256 rows, adjusted by the measured
@@ -1383,6 +1393,12 @@ def t10_copy_dma_model():
     # C256/F256 showed the model owed before it had this term.
     tail300 = 300 - chunk
     expect(tail300 < thr, "the 300 B case must leave a sub-threshold tail")
+    # 8-bit ops take the LARGER tail (no path-term slack to net against):
+    # a 250 B copy is one chunk + a 10 B tail at copy_dma_tail8_t.
+    expect(abs(enc._copy_t(250, rate)
+               - (path + (setup + chunk * per_b) + 10 * rate + tc["copy_dma_tail8_t"])) < 1e-6,
+           f"a 250 B copy = the 8-bit path term + one DMA chunk + a 10 B LDI tail "
+           f"+ the 8-bit trailing-chunk term, got {enc._copy_t(250, rate):.1f}")
     expect(abs(enc._copy_t(300, rate)
                - (entry16 + (setup + chunk * per_b) + tail300 * rate + tc["copy_dma_tail_t"])) < 1e-6,
            f"a 300 B copy = the entry term + one DMA chunk + a {tail300} B LDI tail "
@@ -1471,13 +1487,23 @@ def t10_copy_dma_model():
         expect(abs(enc._fill_t(L) - (fpath + fsetup + L * fper)) < 1e-6,
                f"fill body of {L} B must be the 8-bit entry + one DMA setup + transfer, "
                f"got {enc._fill_t(L):.1f}")
+    # A 16-bit RUN pays the slow-parser entry its 8-bit twin does not -
+    # the same t_skip16 - t_skip the copy branch charges.
+    fentry16 = tc["t_skip16"] - tc["t_skip"]
     ftail300 = 300 - fchunk
     expect(ftail300 < fthr, "the 300 B fill case must leave a sub-threshold tail")
+    expect(abs(enc._fill_t(250)
+               - (fpath + (fsetup + fchunk * fper) + 10 * fcpu + tc["fill_dma_tail8_t"])) < 1e-6,
+           f"a 250 B fill = the 8-bit path term + one DMA chunk + a 10 B CPU tail "
+           f"+ the 8-bit trailing-chunk term, got {enc._fill_t(250):.1f}")
     expect(abs(enc._fill_t(300)
-               - ((fsetup + fchunk * fper) + ftail300 * fcpu + tc["fill_dma_tail_t"])) < 1e-6,
-           f"a 300 B fill = one DMA chunk + a {ftail300} B CPU tail + the trailing-chunk term")
-    expect(abs(enc._fill_t(2 * fchunk) - 2 * (fsetup + fchunk * fper)) < 1e-6,
-           f"a {2 * fchunk} B fill = two DMA chunks")
+               - (fentry16 + (fsetup + fchunk * fper) + ftail300 * fcpu
+                  + tc["fill_dma_tail_t"])) < 1e-6,
+           f"a 300 B fill = the 16-bit entry + one DMA chunk + a {ftail300} B CPU tail "
+           f"+ the trailing-chunk term")
+    expect(abs(enc._fill_t(2 * fchunk) - (fentry16 + 2 * (fsetup + fchunk * fper))) < 1e-6,
+           f"a {2 * fchunk} B fill = the 16-bit entry + two DMA chunks (no tail, so the "
+           f"entry is charged on its own - it was free before 2026-09-15)")
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["run_dma_min"] = 1024
@@ -3821,6 +3847,11 @@ def t16_autobudget_plateau():
     search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
     expect(not search["resident"], "5 s of BBB at 256x152 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
+    # ...and by the SLOPE test, not auto_stream_budget's one-probe
+    # fallback (plateau = not at_target), which reports the same flag
+    # without ever measuring a flat region.
+    expect(len(search["probes"]) >= 2,
+           f"the plateau must be measured across at least two probes, got {search['probes']}")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")
     util = search["stats"]["utilization"]

@@ -423,12 +423,20 @@ TMODEL_COEFFS = {
                                 #   bailing out of the fast handler costs
                                 #   less than the fast handler's own
                                 #   intercept. 8-bit-operand ops only
-    "fill_dma_tail_t": 468.1,  # T/op for a sub-threshold TAIL that follows at
-                                #   least one DMA chunk [silicon NXBK F256]:
-                                #   the 240 B cap makes a 256-aligned op a
-                                #   chunk plus a tail, and the tail still pays
-                                #   a chunk-loop iteration. Fitted against
-                                #   fill_dma_setup 852.8 - re-fit if it moves
+    "fill_dma_tail_t": 399.0,  # T/op for a sub-threshold TAIL that follows at
+                                #   least one DMA chunk, 16-BIT-operand ops
+                                #   [silicon NXBK F256]: the 240 B cap makes a
+                                #   256-aligned op a chunk plus a tail, and
+                                #   the tail still pays a chunk-loop
+                                #   iteration. R161 measures the 16-bit entry
+                                #   and this iteration only as a SUM (468.1),
+                                #   so the split is a choice: the entry is
+                                #   charged the copy twin's t_skip16 - t_skip
+                                #   and this term carries the rest
+    "fill_dma_tail8_t": 468.1, # the same tail on an 8-BIT-operand RUN, which
+                                #   pays no 16-bit entry, so it carries the
+                                #   whole 468.1. Dearest of the two readings
+                                #   R161 admits, per the standing rule
     "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
                                 #   player clips both through vid_chunk_dst,
@@ -465,13 +473,18 @@ TMODEL_COEFFS = {
                                 #   slow-parser entry (t_skip16 - t_skip)
                                 #   instead
     "copy_dma_tail_t": 210.7,  # T/op for a sub-threshold TAIL that follows at
-                                #   least one DMA chunk [silicon NXBC C256 /
-                                #   NXBK K256], the copy twin of
-                                #   fill_dma_tail_t. FITTED AGAINST THE HELD
-                                #   copy_dma_setup below, so it carries that
-                                #   hold's 210.2 T/chunk over-charge with the
-                                #   opposite sign - re-fit it if the setup
-                                #   ever moves
+                                #   least one DMA chunk, 16-BIT-operand ops
+                                #   [silicon NXBC C256 / NXBK K256]. FITTED
+                                #   AGAINST THE HELD copy_dma_setup below, so
+                                #   it carries one chunk of that hold's
+                                #   210.2 T over-charge with the opposite sign
+                                #   - re-fit it if the setup ever moves
+    "copy_dma_tail8_t": 420.8, # the same tail on an 8-BIT-operand COPY. Twice
+                                #   the 16-bit term because copy_dma_path_t
+                                #   already cancels the held setup's
+                                #   over-charge on that branch (which is why
+                                #   C081/C103 land at +0.3 T), so this one is
+                                #   the bare chunk-loop iteration
     "copy_dma_per_b": 5.10,    # T/byte mem-to-mem DMA COPY body [silicon
                                 #   NXBC (C103-C081)/22, unarmed, 2026-09-15;
                                 #   the armed tax is carried globally by
@@ -1140,15 +1153,21 @@ def _fill_t(L):
     full, rem = divmod(L, chunk)
     # OP-CLASS ENTRY COST, the same split _copy_t makes: an 8-bit-operand
     # RUN bails out of the fast handler and pays fill_dma_path_t for it;
-    # a 16-bit one enters the slow parser directly and pays nothing extra
-    # over t_op_run (silicon R161 puts that entry at t_op_run).
-    dma = tc["fill_dma_path_t"] if L <= 255 else 0.0
+    # a 16-bit one enters the slow parser and pays its wider entry, the
+    # measured t_skip16 - t_skip. R161 measures that entry and one
+    # chunk-loop iteration only as a SUM, so charging it here and 69.1
+    # less in fill_dma_tail_t is the dearer of the two readings on every
+    # class - a RUN16 with no sub-threshold tail paid nothing before.
+    dma = (tc["fill_dma_path_t"] if L <= 255
+           else tc["t_skip16"] - tc["t_skip"])
     dma += full * (tc["fill_dma_setup"] + chunk * tc["fill_dma_per_b"])
     if rem:
         if rem >= thr:
             dma += tc["fill_dma_setup"] + rem * tc["fill_dma_per_b"]
         else:
-            dma += rem * tc["fill_cpu"] + (tc["fill_dma_tail_t"] if full else 0.0)
+            tail = (tc["fill_dma_tail8_t"] if L <= 255
+                    else tc["fill_dma_tail_t"])
+            dma += rem * tc["fill_cpu"] + (tail if full else 0.0)
     return dma
 
 
@@ -1212,7 +1231,12 @@ def _copy_t(L, rate):
         if rem >= tc["copy_dma_min"]:
             dma += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]
         else:
-            dma += rem * rate + (tc["copy_dma_tail_t"] if full else 0.0)
+            # 8-bit ops take the LARGER tail: copy_dma_path_t has already
+            # cancelled the held setup's over-charge on that branch, so
+            # there is no slack for the 16-bit term to net against.
+            tail = (tc["copy_dma_tail8_t"] if L <= 255
+                    else tc["copy_dma_tail_t"])
+            dma += rem * rate + (tail if full else 0.0)
     return dma
 
 
