@@ -87,13 +87,16 @@ def fit(sitting):
     print(_fmt("fetch_long", fetch_long, 0.0, "[C080 - t_op_copy, SINGLE ROW]",
                dep=worst_c))
 
-    # fill DMA setup: F071 is the shortest fill that commits to the DMA
-    # kernel. fill_dma_per_b is a held hardware term, not re-fit here.
+    # fill DMA entry: F071 is the shortest fill that commits to the DMA
+    # kernel, and it measures fill_dma_setup + fill_dma_path_t as ONE
+    # number - the row cannot separate them (F256 does, see below).
+    # fill_dma_per_b is a held hardware term, not re-fit here.
     fdper = tc["fill_dma_per_b"]
     fill_dma_setup = t["F071"] - t_op_run - 71 * fdper
-    out["fill_dma_setup"] = fill_dma_setup
-    print(_fmt("fill_dma_setup", fill_dma_setup, 0.0,
-               f"[F071 - t_op_run - 71*{fdper}, SINGLE ROW]", dep=worst))
+    out["fill_dma_entry"] = fill_dma_setup
+    print(_fmt("fill_dma_entry", fill_dma_setup, 0.0,
+               f"[F071 - t_op_run - 71*{fdper}, SINGLE ROW; = setup + path_t]",
+               dep=worst))
 
     # COPY DMA line: two slow-body rows 22 B apart give the per-byte
     # slope; C081 then places the path term against the held setup.
@@ -112,34 +115,50 @@ def fit(sitting):
     print(_fmt("t_skip", t["SK00"], 0.0, "[SK00]"))
     print(_fmt("t_skip16", t["S160"], 0.0, "[S160]"))
 
-    # Trailing-chunk evidence: what the model still owes on a 256 B op
-    # once the fitted terms above are charged. 256 B = one 240 B DMA
-    # chunk plus a sub-threshold tail the model prices as bare CPU.
+    # Trailing-chunk evidence: what a model built from the fitted lines
+    # above still owes on a 256 B op. 256 B = one 240 B DMA chunk plus a
+    # sub-threshold tail such a model prices as bare CPU. REFUSED PER
+    # LINE - the copy figure descends from the COPY line and the fill
+    # figure from the RUN line, so a poisoned RUN line must neither
+    # suppress a clean copy figure nor let it print unmarked.
     print("\ntrailing-chunk evidence (model owes, per op)")
-    if max(worst, worst_c) > RESIDUAL_LIMIT:
-        print("  REFUSED - derived from a refused fit")
-        return out
+    REFUSED = "REFUSED - derived from a refused fit"
     chunk = tc["copy_dma_chunk"]
-    c256_model = (t_op_copy + (tc["t_skip16"] - tc["t_skip"])
-                  + copy_dma_setup + chunk * copy_dma_per_b
-                  + (256 - chunk) * fetch_long)
-    f256_model = (t_op_run + fill_dma_setup + chunk * fdper
-                  + (256 - chunk) * fill_cpu)
-    print(f"  copy trailing term  {t['C256'] - c256_model:>10.2f} T  [C256 - modelled C256]")
-    print(f"  fill trailing term  {t['F256'] - f256_model:>10.2f} T  [F256 - modelled F256]")
+    if worst_c > RESIDUAL_LIMIT:
+        print(f"  copy trailing term  {REFUSED}")
+    else:
+        c256_model = (t_op_copy + (tc["t_skip16"] - tc["t_skip"])
+                      + copy_dma_setup + chunk * copy_dma_per_b
+                      + (256 - chunk) * fetch_long)
+        print(f"  copy trailing term  {t['C256'] - c256_model:>10.2f} T  [C256 - modelled C256]")
+    if worst > RESIDUAL_LIMIT:
+        print(f"  fill trailing term  {REFUSED}")
+    else:
+        f256_model = (t_op_run + fill_dma_setup + chunk * fdper
+                      + (256 - chunk) * fill_cpu)
+        print(f"  fill trailing term  {t['F256'] - f256_model:>10.2f} T  [F256 - modelled F256]")
 
     # Slow-body intercept, measured on its own. C161/R161 are 16-bit ops
     # of one byte: they enter the slow body directly and run its cheapest
     # kernel, so they price slow-body entry + one chunk iteration with no
     # DMA and almost no transfer. Not scored (the encoder never emits a
-    # 16-bit op below 256 B) but a valid measurement.
+    # 16-bit op below 256 B) but a valid measurement. REFUSED PER LINE,
+    # like the block above: sb_copy descends from the COPY line and
+    # sb_run from the RUN line, so one refused parent must not suppress
+    # - or silently pass through - the other's figure.
     print("\nslow-body intercept (C161/R161, not scored)")
-    sb_copy = t["C161"] - 1 * fetch_short
-    sb_run = t["R161"] - 1 * fill_cpu
-    print(f"  copy slow body      {sb_copy:>10.2f} T   vs t_op_copy {t_op_copy:.2f} "
-          f"(+{sb_copy - t_op_copy:.2f})")
-    print(f"  run  slow body      {sb_run:>10.2f} T   vs t_op_run  {t_op_run:.2f} "
-          f"(+{sb_run - t_op_run:.2f})")
+    if worst_c > RESIDUAL_LIMIT:
+        print(f"  copy slow body      {REFUSED}")
+    else:
+        sb_copy = t["C161"] - 1 * fetch_short
+        print(f"  copy slow body      {sb_copy:>10.2f} T   vs t_op_copy {t_op_copy:.2f} "
+              f"(+{sb_copy - t_op_copy:.2f})")
+    if worst > RESIDUAL_LIMIT:
+        print(f"  run  slow body      {REFUSED}")
+    else:
+        sb_run = t["R161"] - 1 * fill_cpu
+        print(f"  run  slow body      {sb_run:>10.2f} T   vs t_op_run  {t_op_run:.2f} "
+              f"(+{sb_run - t_op_run:.2f})")
     return out
 
 

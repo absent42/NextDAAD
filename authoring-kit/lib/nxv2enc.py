@@ -409,9 +409,26 @@ TMODEL_COEFFS = {
     "fill_dma_per_b": 5.1,     # T/byte DMA fill body [silicon RD chunk
                                 #   solve, cross-checked against the DMA-copy
                                 #   KF/CD3 rows]. Hardware term
-    "fill_dma_setup": 781.0,   # T per DMA fill chunk [silicon NXBO F071 row
-                                #   less t_op_run and 71 B of transfer,
-                                #   2026-09-15]; persistent-descriptor re-arm
+    "fill_dma_setup": 852.8,   # T per DMA fill CHUNK [silicon NXBK F256 less
+                                #   R161's slow-body entry and its 16 B CPU
+                                #   tail, 2026-09-15]; persistent-descriptor
+                                #   re-arm. The 8-bit op's cheaper entry is
+                                #   carried separately by fill_dma_path_t -
+                                #   the two sum to the 781.1 the break-even
+                                #   reads, which is what F071 alone measured
+    "fill_dma_path_t": -71.7,  # T/op an 8-bit RUN carries over t_op_run on
+                                #   the DMA branch, beyond fill_dma_setup
+                                #   [silicon NXBO F071, 2026-09-15]. NEGATIVE
+                                #   for the same reason as copy_dma_path_t:
+                                #   bailing out of the fast handler costs
+                                #   less than the fast handler's own
+                                #   intercept. 8-bit-operand ops only
+    "fill_dma_tail_t": 468.1,  # T/op for a sub-threshold TAIL that follows at
+                                #   least one DMA chunk [silicon NXBK F256]:
+                                #   the 240 B cap makes a 256-aligned op a
+                                #   chunk plus a tail, and the tail still pays
+                                #   a chunk-loop iteration. Fitted against
+                                #   fill_dma_setup 852.8 - re-fit if it moves
     "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
                                 #   player clips both through vid_chunk_dst,
@@ -447,6 +464,14 @@ TMODEL_COEFFS = {
                                 #   out of, so it pays the measured
                                 #   slow-parser entry (t_skip16 - t_skip)
                                 #   instead
+    "copy_dma_tail_t": 210.7,  # T/op for a sub-threshold TAIL that follows at
+                                #   least one DMA chunk [silicon NXBC C256 /
+                                #   NXBK K256], the copy twin of
+                                #   fill_dma_tail_t. FITTED AGAINST THE HELD
+                                #   copy_dma_setup below, so it carries that
+                                #   hold's 210.2 T/chunk over-charge with the
+                                #   opposite sign - re-fit it if the setup
+                                #   ever moves
     "copy_dma_per_b": 5.10,    # T/byte mem-to-mem DMA COPY body [silicon
                                 #   NXBC (C103-C081)/22, unarmed, 2026-09-15;
                                 #   the armed tax is carried globally by
@@ -454,14 +479,18 @@ TMODEL_COEFFS = {
     "copy_dma_setup": 1091.8,  # T per DMA copy chunk [silicon CD1..CD4 chunk
                                 #   solve: the three chunk differences give
                                 #   1091.8 / 1091.6 / 1091.9]. HELD although
-                                #   C161+C256 against C081/C103 DO measure it
-                                #   at 882.56 T: re-solving it alone deepens
-                                #   the C256/K256 under-price to -13.1%, so
-                                #   the re-solve and the trailing-chunk term
-                                #   must land TOGETHER, never the setup alone.
-                                #   Until then it over-prices every DMA copy
-                                #   chunk by 209.24 T, unoffset on 16-bit ops
-                                #   (no copy_dma_path_t on that branch)
+                                #   the 2026-09-15 ONE-chunk rows (C161+C256
+                                #   against C081/C103) measure 881.7 T: the
+                                #   per-chunk cost RISES with op length. The
+                                #   cap-256 rows, adjusted by the 283.8
+                                #   T/chunk loop saving measured between the
+                                #   two sittings, imply 819 T (K256, 256 B),
+                                #   918 T (CD3, 1024 B) and 1078 T (KF,
+                                #   43008 B). At 1091.8 the model prices the
+                                #   43008 B keyframe class +0.8% over its
+                                #   row; at 881.7 it would price it 8.0%
+                                #   UNDER. Re-solve only against a long-op
+                                #   DMA copy row taken on this player
     "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player
                                 #   clips every copy chunk to (vid_chunk_all);
@@ -1096,19 +1125,30 @@ def _fill_t(L):
     failure mode this model exists to avoid. If a future re-fit made DMA
     dearer above the threshold, the honest answer is to re-derive the
     threshold (and the .inc constant with it), not to let the model
-    quietly price a kernel the player never runs."""
+    quietly price a kernel the player never runs.
+
+    A sub-threshold TAIL after at least one full chunk pays a chunk-loop
+    iteration of its own (fill_dma_tail_t): the 240 B cap turns every
+    256-aligned op into "chunk plus tail". The rows that validated this
+    model before the cap moved to 240 had no tail, which is why the term
+    is newer than the shape."""
     tc = TMODEL_COEFFS
     thr = tc["run_dma_min"]
     if L < thr:
         return L * tc["fill_cpu"]
     chunk = tc["fill_dma_min"]
     full, rem = divmod(L, chunk)
-    dma = full * (tc["fill_dma_setup"] + chunk * tc["fill_dma_per_b"])
+    # OP-CLASS ENTRY COST, the same split _copy_t makes: an 8-bit-operand
+    # RUN bails out of the fast handler and pays fill_dma_path_t for it;
+    # a 16-bit one enters the slow parser directly and pays nothing extra
+    # over t_op_run (silicon R161 puts that entry at t_op_run).
+    dma = tc["fill_dma_path_t"] if L <= 255 else 0.0
+    dma += full * (tc["fill_dma_setup"] + chunk * tc["fill_dma_per_b"])
     if rem:
         if rem >= thr:
             dma += tc["fill_dma_setup"] + rem * tc["fill_dma_per_b"]
         else:
-            dma += rem * tc["fill_cpu"]
+            dma += rem * tc["fill_cpu"] + (tc["fill_dma_tail_t"] if full else 0.0)
     return dma
 
 
@@ -1144,7 +1184,13 @@ def _copy_t(L, rate):
     after full 240B chunks is priced as LDI even where DMA would be
     cheaper, because the player's single threshold constant governs the
     in-slow-body re-select too - the model follows the player, not the
-    unconstrained optimum."""
+    unconstrained optimum.
+
+    That tail still pays a chunk-loop iteration of its own
+    (copy_dma_tail_t): the 240 B cap turns every 256-aligned op into
+    "chunk plus tail". The rows that validated this model before the cap
+    moved to 240 had no tail, which is why the term is newer than the
+    shape."""
     tc = TMODEL_COEFFS
     if L < tc["copy_dma_min"]:
         return L * rate
@@ -1166,7 +1212,7 @@ def _copy_t(L, rate):
         if rem >= tc["copy_dma_min"]:
             dma += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]
         else:
-            dma += rem * rate
+            dma += rem * rate + (tc["copy_dma_tail_t"] if full else 0.0)
     return dma
 
 

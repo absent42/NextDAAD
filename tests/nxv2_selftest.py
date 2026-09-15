@@ -1126,12 +1126,24 @@ def t10_silicon_coeffs():
     expect(tc["fetch_long"] == 19.76, f"fetch_long should be the C080 19.76, got {tc['fetch_long']}")
     expect(tc["fetch_short"] == 19.80, f"fetch_short should be the NXBC fit 19.80, got {tc['fetch_short']}")
     expect(tc["fill_cpu"] == 15.86, f"fill_cpu should be the NXBO fit 15.86, got {tc['fill_cpu']}")
-    expect(tc["fill_dma_setup"] == 781.0, f"fill_dma_setup should be the F071 781.0, got {tc['fill_dma_setup']}")
+    # The fill DMA chunk cost and the 8-bit op's cheaper entry are now
+    # carried separately (F256 gives the chunk, F071 the entry); they
+    # sum to the 781.1 every break-even figure below reads.
+    expect(tc["fill_dma_setup"] == 852.8, f"fill_dma_setup should be the F256 852.8, got {tc['fill_dma_setup']}")
+    expect(tc["fill_dma_path_t"] == -71.7,
+           f"fill DMA path term should be the F071 -71.7 T/op, got {tc['fill_dma_path_t']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
-    # copy_dma_setup is HELD at its pre-change solve although C161+C256
-    # against C081/C103 measure it at 882.56 T: re-solving it alone
-    # deepens the C256/K256 under-price to -13.1%, so the re-solve and
-    # the trailing-chunk term must land together.
+    # The 240 B cap makes every 256-aligned op a chunk plus a tail, and
+    # silicon charges a chunk-loop iteration on that tail.
+    expect(tc["copy_dma_tail_t"] == 210.7, f"copy trailing-chunk term should be the C256/K256 210.7, got {tc['copy_dma_tail_t']}")
+    expect(tc["fill_dma_tail_t"] == 468.1, f"fill trailing-chunk term should be the F256 468.1, got {tc['fill_dma_tail_t']}")
+    # copy_dma_setup is HELD at its pre-change solve although the
+    # 2026-09-15 ONE-chunk rows measure 881.7 T: the per-chunk cost
+    # RISES with op length. The cap-256 rows, adjusted by the measured
+    # 283.8 T/chunk loop saving, imply 819 (K256, 256 B), 918 (CD3,
+    # 1024 B) and 1078 (KF, 43008 B); at 1091.8 the model prices the
+    # keyframe class +0.8% over its row, at 881.7 it would price it
+    # 8.0% UNDER. copy_dma_tail_t is fitted against this held value.
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
     expect(tc["copy_dma_per_b"] == 5.10, f"copy_dma_per_b should be the NXBC (C103-C081)/22 slope 5.10, got {tc['copy_dma_per_b']}")
     # The audio-safety burst cap. 256 -> 240 on 2026-08-03: at 256 the
@@ -1348,7 +1360,11 @@ def t10_copy_dma_model():
     # at most thr*(rate-per_b) - setup. Assert the bound rather than
     # pretending monotonicity the player does not have.
     thr_seam = (thr - 1) * rate - (path + setup + thr * per_b)
-    tail_seam = thr * (rate - per_b) - setup
+    # The tail bound WIDENS by the trailing-chunk term: a remainder that
+    # grows across the threshold drops that term as well as the LDI
+    # transfer, so an op with a DMA tail is cheaper than one with a CPU
+    # tail by more than the kernel difference alone.
+    tail_seam = thr * (rate - per_b) - setup + tc["copy_dma_tail_t"]
     expect(abs(thr_seam - 303.8) <= 5.0,
            f"the op-threshold seam should be the 2026-09-15 303.8 T, got {thr_seam:.1f}")
     seam_bound = max(thr_seam, tail_seam) + 1e-6
@@ -1362,14 +1378,15 @@ def t10_copy_dma_model():
     expect(abs((enc._copy_t(thr - 1, rate) - enc._copy_t(thr, rate)) - thr_seam) < 1e-6,
            "the step across the kernel threshold must be exactly the disclosed op seam")
     # RULE 4 - multi-chunk: full chunks go DMA (one path term per op), a
-    # sub-threshold tail goes LDI (the player re-selects per chunk).
-    # DISCLOSED GAP: silicon C256/F256 show the tail also pays a
-    # chunk-loop iteration the model does not charge (+212 T copy,
-    # +540 T fill) - the under-price t10_bench_rows still reports.
+    # sub-threshold tail goes LDI (the player re-selects per chunk) AND
+    # pays one chunk-loop iteration, copy_dma_tail_t - the charge silicon
+    # C256/F256 showed the model owed before it had this term.
     tail300 = 300 - chunk
     expect(tail300 < thr, "the 300 B case must leave a sub-threshold tail")
-    expect(abs(enc._copy_t(300, rate) - (entry16 + (setup + chunk * per_b) + tail300 * rate)) < 1e-6,
-           f"a 300 B copy = the entry term + one DMA chunk + a {tail300} B LDI tail")
+    expect(abs(enc._copy_t(300, rate)
+               - (entry16 + (setup + chunk * per_b) + tail300 * rate + tc["copy_dma_tail_t"])) < 1e-6,
+           f"a 300 B copy = the entry term + one DMA chunk + a {tail300} B LDI tail "
+           f"+ the trailing-chunk term")
     expect(abs(enc._copy_t(2 * chunk, rate) - (entry16 + 2 * (setup + chunk * per_b))) < 1e-6,
            f"a {2 * chunk} B copy = the entry term + two DMA chunks")
     # RULE 5 - the restored term must never make copy MORE expensive than
@@ -1428,7 +1445,11 @@ def t10_copy_dma_model():
     # really runs one DMA chunk and a CPU tail.
     fcpu, fsetup, fper = tc["fill_cpu"], tc["fill_dma_setup"], tc["fill_dma_per_b"]
     fchunk, fthr = tc["fill_dma_min"], tc["run_dma_min"]
-    fbreakeven = fsetup / (fcpu - fper)
+    fpath = tc["fill_dma_path_t"]
+    # 8-bit ops decide the threshold, so the break-even is read off the
+    # SUM of the chunk cost and that op class's cheaper entry (781.1) -
+    # the single number F071 measured before the two were separated.
+    fbreakeven = (fsetup + fpath) / (fcpu - fper)
     # SIGNED divergence, same shape as RULE 1b. The 2026-09-15 fit puts
     # the break-even at 72.58 B while the PLAYER's constant
     # (NXV2_RUN_DMA_MIN) stays 71, so 71-72 B fills commit to DMA 1.6 B
@@ -1438,21 +1459,23 @@ def t10_copy_dma_model():
     expect(-2.5 <= fthr - fbreakeven <= 2.5,
            f"fill threshold {fthr} must sit near the break-even {fbreakeven:.2f} B "
            "(re-derive NXV2_RUN_DMA_MIN and this coefficient together)")
-    flost = (fsetup + fthr * fper) - fthr * fcpu
+    flost = (fsetup + fpath + fthr * fper) - fthr * fcpu
     expect(0.0 <= flost <= 40.0,
            f"the early-DMA band must cost the player at most 40 T/op, got {flost:.0f}")
     for L in (1, 16, 64, fthr - 1):
         expect(abs(enc._fill_t(L) - L * fcpu) < 1e-6,
                f"fill body of {L} B (< {fthr}) must be priced as unrolled CPU fill")
-        expect(L * fcpu <= fsetup + L * fper + 1e-9,
+        expect(L * fcpu <= fsetup + fpath + L * fper + 1e-9,
                f"below the threshold CPU fill must be the CHEAPER kernel, fails at {L} B")
     for L in (fthr, 128, fchunk - 1, fchunk):
-        expect(abs(enc._fill_t(L) - (fsetup + L * fper)) < 1e-6,
-               f"fill body of {L} B must be one DMA setup + transfer, got {enc._fill_t(L):.1f}")
+        expect(abs(enc._fill_t(L) - (fpath + fsetup + L * fper)) < 1e-6,
+               f"fill body of {L} B must be the 8-bit entry + one DMA setup + transfer, "
+               f"got {enc._fill_t(L):.1f}")
     ftail300 = 300 - fchunk
     expect(ftail300 < fthr, "the 300 B fill case must leave a sub-threshold tail")
-    expect(abs(enc._fill_t(300) - ((fsetup + fchunk * fper) + ftail300 * fcpu)) < 1e-6,
-           f"a 300 B fill = one DMA chunk + a {ftail300} B CPU tail (the player re-selects per chunk)")
+    expect(abs(enc._fill_t(300)
+               - ((fsetup + fchunk * fper) + ftail300 * fcpu + tc["fill_dma_tail_t"])) < 1e-6,
+           f"a 300 B fill = one DMA chunk + a {ftail300} B CPU tail + the trailing-chunk term")
     expect(abs(enc._fill_t(2 * fchunk) - 2 * (fsetup + fchunk * fper)) < 1e-6,
            f"a {2 * fchunk} B fill = two DMA chunks")
     saved = dict(enc.TMODEL_COEFFS)
@@ -3780,16 +3803,23 @@ def t16_autobudget_override_e2e():
 
 @case(16, "auto-budget - a content-limited clip keeps its bytes instead of descending into starvation")
 def t16_autobudget_plateau():
-    if not SINTEL.exists() or not FFMPEG.exists():
+    if not BBB.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
     # A content-limited clip must keep its budget ceiling - descending
     # would be pure quality loss for negligible supply gain. This
     # operating point is re-based against the auto-budget model each
     # time the model changes; the premise assertion below catches drift.
-    ex = enc._extract_source(str(SINTEL), 256, 152, 25.0, "00:00:00", "5.0",
+    # RE-BASED 2026-09-15 for the trailing-chunk T model: Sintel 256x152
+    # 5 s fell to util 0.891, under the 0.90 target, so that clip was no
+    # longer content-limited at all (the search accepted the ceiling on
+    # probe 1 and plateau read False). Big Buck Bunny 256x152 5 s is the
+    # replacement and demonstrates the flat region outright - budgets
+    # 1.00 and 0.95 both measure util 0.976, so a 5% cut buys exactly no
+    # supply relief.
+    ex = enc._extract_source(str(BBB), 256, 152, 25.0, "00:00:00", "5.0",
                               str(FFMPEG), 0.5)
     search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
-    expect(not search["resident"], "5 s of Sintel at 256x152 must exceed the resident pool")
+    expect(not search["resident"], "5 s of BBB at 256x152 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")
