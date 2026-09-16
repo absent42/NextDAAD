@@ -7,7 +7,9 @@ its siblings in. A stale bundle silently emits old-encoder bytes, which has
 happened twice with nothing to catch it. This unmarshals each bundle's code
 objects and compares their instruction streams with the working tree's.
 Only __doc__ stores are masked: every other string literal, argparse help
-text included, is code. Fails if nxv2enc is not compared in a bundle.
+text included, is code. Exit 1 = stale. Exit 2 = not verified: an exe is
+missing, an LFS pointer or unreadable, nxv2enc was not compared, or the
+host Python minor version differs from the bundle's.
 """
 import dis
 import marshal
@@ -21,6 +23,7 @@ LIB = ROOT / "authoring-kit" / "lib"
 EXES = [ROOT / "authoring-kit" / "tools" / "videnc" / "videnc.exe",
         ROOT / "authoring-kit" / "tools" / "vidtune" / "vidtune.exe"]
 MAGIC = b"MEI\014\013\012\013\016"
+LFS_POINTER = b"version https://git-lfs"
 REQUIRED = {"nxv2enc"}
 SIG = ("co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_flags",
        "co_varnames", "co_freevars", "co_cellvars", "co_name", "co_qualname")
@@ -30,7 +33,7 @@ def carchive(path):
     data = path.read_bytes()
     pos = data.rfind(MAGIC)
     if pos < 0:
-        raise SystemExit(f"{path.name}: no PyInstaller archive cookie")
+        raise ValueError("no PyInstaller archive cookie")
     _, pkg_len, toc_off, toc_len, pyver, _ = struct.unpack(
         "!8sIIII64s", data[pos:pos + 88])
     start = pos + 88 - pkg_len
@@ -105,15 +108,29 @@ def module_name(path):
 
 
 def main():
-    failed = unread = False
+    failed = unverified = False
+    host = sys.version_info.major * 100 + sys.version_info.minor
     for exe in EXES:
         if not exe.exists():
-            print(f"check_frozen_exes: {exe.name} missing")
-            return 1
-        pyver, mods = frozen_modules(exe)
-        host = sys.version_info.major * 100 + sys.version_info.minor
+            unverified = True
+            print(f"check_frozen_exes: NOT VERIFIED {exe.name} - missing")
+            continue
+        with exe.open("rb") as f:
+            if f.read(len(LFS_POINTER)) == LFS_POINTER:
+                unverified = True
+                print(f"check_frozen_exes: NOT VERIFIED {exe.name} - Git LFS pointer, run git lfs pull")
+                continue
+        try:
+            pyver, mods = frozen_modules(exe)
+        except (ValueError, struct.error, zlib.error) as e:
+            unverified = True
+            print(f"check_frozen_exes: NOT VERIFIED {exe.name} - unreadable bundle: {e}")
+            continue
         if pyver != host:
-            print(f"check_frozen_exes: SKIP {exe.name} - bundle python {pyver}, host {host}")
+            unverified = True
+            print(f"check_frozen_exes: NOT VERIFIED {exe.name} - bundle Python "
+                  f"{pyver // 100}.{pyver % 100}, host {host // 100}.{host % 100}; "
+                  "bytecode compares only within a minor version")
             continue
         compared = set()
         for src_path in sorted(LIB.rglob("*.py")):
@@ -133,12 +150,17 @@ def main():
                     print("    " + line)
         # an unreadable archive format must not pass having compared nothing
         if REQUIRED - compared:
-            unread = True
-            print(f"check_frozen_exes: {exe.name} - not found in the bundle: "
+            unverified = True
+            print(f"check_frozen_exes: NOT VERIFIED {exe.name} - not found in the bundle: "
                   + ", ".join(sorted(REQUIRED - compared)))
-    print("check_frozen_exes: " + ("FAIL - rebuild both exes" if failed else
-                                   "FAIL - bundle not read" if unread else "OK"))
-    return 1 if failed or unread else 0
+    if failed:
+        print("check_frozen_exes: FAIL - rebuild both exes")
+        return 1
+    if unverified:
+        print("check_frozen_exes: FAIL - staleness not verified")
+        return 2
+    print("check_frozen_exes: OK")
+    return 0
 
 
 if __name__ == "__main__":
