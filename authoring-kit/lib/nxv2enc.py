@@ -444,8 +444,8 @@ TMODEL_COEFFS = {
     "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
                                 #   player clips both through
-                                #   vid_chunk_dst_flat/_gap,
-                                #   so these two must move together. Historic
+                                #   vid_chunk_dst_flat/_gap, so these two
+                                #   must move together. Historic
                                 #   name - it is a chunk size, not a
                                 #   threshold; the threshold is run_dma_min
                                 #   below
@@ -507,9 +507,9 @@ TMODEL_COEFFS = {
                                 #   (change-adjusted 819 / 918 / 1078 T at
                                 #   256 / 1024 / 43008 B); at 881.7 the
                                 #   43008 B keyframe class prices 8.0% UNDER,
-                                #   at 1091.8 +0.8% over.
-                                #   Re-solve only against a long-op DMA copy
-                                #   row on this player, and TOGETHER with
+                                #   at 1091.8 +0.8% over. Re-solve only
+                                #   against a long-op DMA copy row on this
+                                #   player, and TOGETHER with
                                 #   copy_dma_path_t and copy_dma_tail_t,
                                 #   which are fitted against this value
     "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
@@ -1083,9 +1083,8 @@ def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
 # splitting's measured ceiling is +0.207% of decode net of wire on BBB,
 # -0.001% on Sintel. Fill: tail 468.1 exceeds t_op_run 367.4 by 100.7,
 # but zero splittable RUN ops occurred in 200 encoded frames across two
-# sources.
-# Splitting is an EMISSION decision, so skipping it can never under-price
-# a frame - the only downside is forgone decode time.
+# sources. Splitting is an EMISSION decision, so skipping it can never
+# under-price a frame - the only downside is forgone decode time.
 # ---------------------------------------------------------------------
 
 def _chunk_lengths(n):
