@@ -3783,64 +3783,21 @@ if ($Font) {
 # default-path, so this switch's rule fires. See $encoderGeneration
 # 'pal9u' in authoring-kit/lib/video.ps1 for the full account.
 # BUMP pal9u -> pal9v (T model re-fit to the 8c0cb61 decode chunk-loop
-# change, 2026-09-15): TMODEL_COEFFS' dispatch envelopes, fill/copy DMA
-# setup and per-byte rates all move to fresh silicon NXBO/NXBC/NXBK
-# rows; composition factors held (flat 1.19, gapped 1.46). Default-
-# path, so this switch's rule fires. A cheaper decode model prices MORE
-# work into the same per-frame budget, so fixture bytes are expected to
-# RISE, not a regression. Measured at the bump against the pal9u
-# caches, byte deltas below. See $encoderGeneration 'pal9v' in
-# authoring-kit/lib/video.ps1 for the full account.
-#
-# Fixture byte deltas (pal9u cache -> pal9v re-encode), no gate refusal:
-#   001 full             939520 -> 922112   -17408
-#   002 classic          924672 -> 896512   -28160
-#   003 16:9              745472 -> 727552   -17920
-#   004 scope             948736 -> 912384   -36352
-#   005 classic-wide      905728 -> 891392   -14336
-#   006 16:9 (card)      1030656 -> 1025536   -5120
-#   007 classic streamed 5287424 -> 5359616  +72192
-#   008 full streamed    5915136 -> 5922816   +7680
-#   009 16:9 streamed    5075968 -> 5199360 +123392
-#   010 256x133 direct   8966144 -> 8966144       0
-#   011 256x133 direct   4481024 -> 4481024       0
-#   099 (= 007 copy)     5287424 -> 5359616  +72192
-# The three streamed fixtures (007-009) grew, matching the "cheaper
-# model prices more work in" framing; the six resident fixtures
-# (001-006) SHRANK instead - the resident path has no supply gate, so a
-# cheaper T model can also tip a marginal tile-ladder or merge choice
-# onto a coarser, cheaper rung. 009 grew the most and is CONTENT-LIMITED
-# at capacity (util 0.90, remedy "the automatic search could not reach
-# ~0.90 on this content") - completed and wrote OK, and per the owner's
-# 007/0.981 at-capacity precedent (banding/judder on a mean that hides
-# per-frame excursions) becomes a named by-eye check on the hardware
-# sheet, backing VSTR2. Direct-serve (010/011) DOES read TMODEL_COEFFS
-# (direct_supply_check prices audio_factor into sd_ms/utilization) but
-# did not move here because the constants it depends on - audio_factor
-# 0.85, DIRECT_TRANSPORT_FACTOR 1.00, DIRECT_FRAME_OVERHEAD_MS 2.2 - are
-# unchanged across both eras; this re-fit touched only decode-loop
-# terms. Not immune in general - a future bump to those constants would
-# move 010/011 too.
-# Quality check: the plan checks 007 alone, but 007 is the one fixture
-# that GREW - the resident fixtures that SHRANK are where quality could
-# have fallen, so 004 (largest shrink) and 006 (smallest shrink) were
-# checked too. Same-pipeline comparison (nxv2enc.encode() run against
-# the pal9u-era coefficients from commit 9fa076c, then against HEAD,
-# same source/args both times - isolates TMODEL_COEFFS as the only
-# variable):
-#   004 scope:    mean 25.5541 -> 25.5543 dB, worst 6.2419 -> 6.2419 dB,
-#                 bound_fraction 0.0233 -> 0.0000
-#   006 16:9 (card): mean 29.4893 -> 29.4893 dB, worst 3.1535 -> 3.1535 dB,
-#                 bound_fraction 0.0000 -> 0.0000 (byte-for-byte quality
-#                 identical, cheaper only)
-#   007 classic:  mean 24.4782 -> 24.8434 dB, worst 4.0610 -> 4.0610 dB,
-#                 bound_fraction 0.7680 -> 0.6720
-# All three: mean PSNR holds or rises, worst PSNR never falls,
-# bound_fraction falls or holds - 004 (shrank) and 007 (grew) agree in
-# direction, so no fourth fixture was needed. RULING: quality holds or
-# rises on every fixture checked, so the shrink on 001-006 is the model
-# correctly charging decode work it previously under-charged, not a
-# quality regression. Shipped as-is.
+# change, 2026-09-15): default-path, so this switch's rule fires. See
+# $encoderGeneration 'pal9v' in authoring-kit/lib/video.ps1.
+# Bytes at the bump (pal9u caches -> pal9v, no gate refusal): resident
+# 001-006 shrank 5120-36352 B, streamed 007-009 (and 099) grew
+# 7680-123392 B, direct 010/011 unchanged. The resident shrink comes from
+# T-derived emission thresholds, which move even with no frame
+# budget-bound (006: bound_fraction 0 in both eras): merge K* 24.0 ->
+# 22.4 B, absorb_max 139 -> 94 B. Same-pipeline PSNR on 004/006/007: mean
+# holds or rises, worst never falls - not a quality regression.
+# 009 grew most and is content-limited at capacity (util 0.90, wrote OK):
+# per the 007/0.981 precedent, a named by-eye check backing VSTR2 on the
+# hardware sheet. 010/011 read audio_factor (direct_supply_check) but none
+# of their constants moved; not immune in general - a change to
+# audio_factor, DIRECT_TRANSPORT_FACTOR or DIRECT_FRAME_OVERHEAD_MS moves
+# them.
 $vidLegSettlementTag = 'pal9v'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in

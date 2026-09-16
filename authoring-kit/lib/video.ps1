@@ -138,13 +138,17 @@ if (-not $sources) { exit 0 }
 # pal9v: TMODEL_COEFFS re-fit to the 8c0cb61 chunk-loop SMC change
 # (per-chunk savings COPY flat -279 T, COPY gapped -233 T, RUN flat
 # -173 T, RUN gapped -127 T), against fresh 2026-09-15 silicon
-# NXBO/NXBC/NXBK bench rows: dispatch envelopes, fill/copy DMA setup
-# and per-byte rates all move. TMODEL_COMPOSITION_FACTOR is HELD (flat
-# 1.19, gapped 1.46) - R is a ratio against the model so both sides
-# moved together, confirmed by whole-clip hardware PLAY vs NOM (5/9
-# comparable clips faster, 3 equal). A cheaper decode model prices more
-# work into the same per-frame budget, so fixture bytes are expected to
-# RISE, not regress.
+# NXBO/NXBC/NXBK bench rows: dispatch envelopes, fetch_long, fill_cpu,
+# fill_dma_setup, copy_dma_per_b and copy_dma_path_t move;
+# fill_dma_path_t and four DMA trailing-chunk terms are new;
+# copy_dma_setup, fetch_short and fill_dma_per_b are HELD.
+# TMODEL_COMPOSITION_FACTOR is HELD (flat 1.19, gapped 1.46) - R is a
+# ratio against the model. Sitting 1 (pal9u encodes, whole-clip PLAY vs
+# NOM) showed the player faster; the hold's margin at pal9v density is
+# for the confirmation sitting to confirm (pending). Test fixture bytes
+# move both ways: streamed 007-009 grew, resident 001-006 shrank, as
+# T-derived emission thresholds move even where no frame is budget-bound
+# (006): merge K* 24.0 -> 22.4 B, absorb_max 139 -> 94 B.
 $encoderGeneration = 'pal9v'
 
 function Get-ArgHash([string[]]$argList) {
