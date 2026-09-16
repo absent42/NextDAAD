@@ -59,8 +59,8 @@ CURRENT = {
     "K256": (30, 96, 17, -210),
 }
 
-# Sitting 3, 2026-09-16, NXBX run 1 plus the first NXBC block (owner's
-# readout). (O, R, F, D) keyed by tag, D signed 16-bit.
+# Sitting 3, 2026-09-16, NXBX run 1 plus the first NXBC block, transcribed
+# from the silicon readout. (O, R, F, D) keyed by tag, D signed 16-bit.
 SITTING3 = {
     "C001": (255, 64, 9, 117),
     "C004": (255, 64, 11, 5),
@@ -86,7 +86,7 @@ SITTING3 = {
     "D081": (95, 64, 17, -19),
 }
 
-SITTING4 = {}   # filled in Task 7
+SITTING4 = {}   # sitting 4 rows, transcribed after the sitting is run
 
 ROWS = {"pre_fix": PRE_FIX, "current": CURRENT,
         "sitting3": SITTING3, "sitting4": SITTING4}

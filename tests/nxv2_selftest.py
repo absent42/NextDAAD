@@ -1334,8 +1334,8 @@ def t10_bench_tables():
         tc["copy_dma_min"] = ship
     expect(abs(bench.row_predicted(enc, "L080") - c080) < 1e-9, "L080 must price as C080 at 81")
     expect(abs(bench.row_predicted(enc, "D081") - c081) < 1e-9, "D081 must price as C081 at 81")
-    expect(bench.row_predicted(enc, "D060") > bench.row_predicted(enc, "L048"),
-           "a forced DMA row must price on the DMA branch")
+    expect(bench.row_predicted(enc, "D060") < bench.row_predicted(enc, "L060"),
+           "a forced DMA row must price cheaper than the same L on LDI")
     tags = [r[0] for rows in bench.BENCH_TABLES.values() for r in rows]
     expect(len(tags) == len(set(tags)) and all(len(t) == 4 for t in tags),
            "bench tags must be unique and exactly 4 characters")
@@ -1395,10 +1395,37 @@ def t10_copy_threshold_fit():
             rc = fct.main([str(path)])
         expect(rc == 0 and "implied NXV2_COPY_DMA_MIN = 59" in out.getvalue(),
                f"CLI run failed (rc {rc}):\n{out.getvalue()}")
-    # Pricing: L080 and D081 are C080 and C081 at their own select value.
-    # The anchor-trip check on a moving copy_dma_min is t10_bench_tables'
-    # job now - row_predicted prices each row at its own thr, so a shipped-
-    # constant move can never be observed through it by design.
+    # Gapped fit: a synthetic NXBX+NXBG screen recovers the gapped
+    # crossover, and the four L-divides-192 rows are reported as excluded
+    # from the fit even when pushed far off the lines.
+    gline_ldi, gline_dma = (330.0, 22.0), (1250.0, 7.5)
+    gexact = (gline_dma[0] - gline_ldi[0]) / (gline_ldi[1] - gline_dma[1])
+    glines = []
+    for tag, _kind, L, o, r, _thr, _geo in fct.GAPPED_ROWS:
+        path = bench.row_path(tag)
+        a, b = gline_ldi if path == "ldi" else gline_dma
+        t = a + b * L
+        if tag in ("GL48", "GD48", "GL64", "GD64"):
+            t += 5000.0
+        f, d = divmod(round(t * r * o / bench.T_PER_LINE), bench.LINES_PER_FRAME)
+        glines.append(f"{tag} O={o:02X} R={r:04X} F={f:04X} D={d & 0xFFFF:04X}")
+    flat_text, _ = _nxbx_screen((303.7, 19.80), (1167.6, 5.10))
+    gtext = flat_text + "\n".join(glines) + "\n"
+    grows, gwarnings = fct.parse_rows(gtext)
+    expect(not gwarnings, f"combined screen must parse whole, warnings {gwarnings}")
+    gres = fct.fit(grows)
+    expect(abs(gres["gapped"]["crossover"] - gexact) <= 0.5,
+           f"gapped crossover {gres['gapped']['crossover']:.3f} B, lines cross at {gexact:.3f}")
+    gout = io.StringIO()
+    with contextlib.redirect_stdout(gout):
+        fct.report(grows, gwarnings, gres)
+    printed = gout.getvalue()
+    for skip_tag in ("GL48", "GD48", "GL64", "GD64"):
+        matches = [ln for ln in printed.splitlines() if ln.strip().startswith(skip_tag + " ")]
+        expect(matches and "excluded from the gapped fit (L divides 192)" in matches[0],
+               f"{skip_tag} must be reported as excluded from the gapped fit")
+    # L080/D081 price as C080/C081 at their own select value; row_predicted
+    # reads thr from the row, so a shipped copy_dma_min move can't perturb it.
     ship = tc["copy_dma_min"]
     tc["copy_dma_min"] = 81
     try:
@@ -1691,6 +1718,29 @@ def t10_copy_census():
             expect(tc["copy_dma_min"] == saved, "copy_dma_min must be restored after threshold_cost")
     finally:
         tc["copy_dma_min"] = saved
+
+    # worst_gapped_fraction prices the denominator at copy_thr too: a
+    # synthetic gapped frame with one 70 B COPY8 must land on the DMA
+    # class at copy_thr=59 in BOTH the surcharge and the modelled T.
+    orig_is_gapped, orig_frames_of = census_mod.is_gapped_file, census_mod.frames_of
+    census_mod.is_gapped_file = lambda p: True
+    census_mod.frames_of = lambda p: iter([[(enc.OP_COPY8, 70)]])
+    try:
+        surcharge = {"copy_dma": 42.0, "copy_ldi": 5.0}
+        got_frac = census_mod.worst_gapped_fraction(["fake.vid"], surcharge, 59)
+    finally:
+        census_mod.is_gapped_file = orig_is_gapped
+        census_mod.frames_of = orig_frames_of
+    expect(tc["copy_dma_min"] == saved, "copy_dma_min must be restored after worst_gapped_fraction")
+    saved2 = tc["copy_dma_min"]
+    tc["copy_dma_min"] = 59
+    try:
+        want_modelled = tc["t_frame_fixed"] + enc.op_cost("copy", 70)[1]
+    finally:
+        tc["copy_dma_min"] = saved2
+    want_frac = surcharge["copy_dma"] / want_modelled
+    expect(abs(got_frac - want_frac) < 1e-9,
+           f"worst_gapped_fraction at copy_thr=59: got {got_frac:.6f}, want {want_frac:.6f}")
 
 
 @case(10, "optimal gap-merge - decoded output BYTE-IDENTICAL to un-merged, fewer ops, lower T")

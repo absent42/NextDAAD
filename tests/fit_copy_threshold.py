@@ -1,27 +1,7 @@
 #!/usr/bin/env python3
-"""tests/fit_copy_threshold.py - NXV2_COPY_DMA_MIN from NXBX/NXBG bench rows.
-
-Usage: python tests/fit_copy_threshold.py ROWS.txt
-
-ROWS.txt is the NXBX (and optionally NXBG) screen as transcribed, one row
-per line:
-    L048 O=9D R=0040 F=0013 D=003E
-    GL56 O=6A R=0040 F=0014 D=FFB0
-0= parses as O=; a D= field longer than 4 hex digits keeps its first 4
-(screen residue). Lines that are not bench rows this script knows are
-ignored.
-
-Fits a least-squares line T(L) to the flat L rows (fast-handler LDI) and
-to the flat D rows (body + DMA, D081 included) exactly as before, and
-separately to the gapped GL/GD rows restricted to L in 56/60/72/80 (GL48/
-GD48/GL64/GD64 divide 192 - every bench rep starts at column 0 with
-uniform ops, so those two rows measure an alignment artifact rather than
-the arbitrary column positions real streams land on; GD81 has no paired
-GL row and is reported but not fitted). GC03/GK56/GF71/GF56 are not L/D
-pair rows and are out of this script's scope. Prints both lines, both
-crossovers L* (warned when outside the measured L span), the threshold
-each implies (smallest integer L >= L*), each row against the model, and
-any pair whose measured order contradicts its lines.
+"""tests/fit_copy_threshold.py - NXV2_COPY_DMA_MIN from NXBX/NXBG bench
+rows: fits L (LDI) and D (DMA) lines per surface, prints the crossover
+and implied threshold. Usage: python tests/fit_copy_threshold.py ROWS.txt
 """
 import math
 import re
@@ -45,6 +25,10 @@ GAPPED_SKIP_L = (48, 64)   # L divides 192: excluded, alignment artifact
 GEOMETRY = {tag: (L, o, r, bench.row_path(tag))
             for tag, _kind, L, o, r, _thr, _geo in FLAT_ROWS + GAPPED_ROWS}
 
+# Every tag any bench mode defines - used only to tell a genuinely unknown
+# tag apart from a known row this script does not fit (GC03/GK56/GF71/GF56).
+ALL_BENCH_TAGS = {r[0] for rows in bench.BENCH_TABLES.values() for r in rows}
+
 ROW_RE = re.compile(r"^\s*([A-Z0-9]{4})\s+[O0]=([0-9A-F]{2})\s+R=([0-9A-F]{4})"
                     r"\s+F=([0-9A-F]{4})\s+D=([0-9A-F]{4,})", re.IGNORECASE)
 
@@ -61,7 +45,8 @@ def parse_rows(text):
             continue
         tag = m.group(1).upper()
         if tag not in GEOMETRY:
-            warnings.append(f"line {n}: {tag} is not a known bench row, ignored")
+            if tag not in ALL_BENCH_TAGS:
+                warnings.append(f"line {n}: {tag} is not a known bench row, ignored")
             continue
         o, r, f = (int(m.group(i), 16) for i in (2, 3, 4))
         d = int(m.group(5)[:4], 16)
@@ -99,13 +84,15 @@ def _fit_surface(t, tags, fit_l, pair_of):
     span = (max(min(x) for x in spans), min(max(x) for x in spans))
     extrapolated = crossover is not None and not span[0] <= crossover <= span[1]
     contradictions = []
-    for tag in tags:
+    for tag in sorted(tags, key=lambda tg: (GEOMETRY[tg][0], tg)):
         if tag not in t or GEOMETRY[tag][3] != "ldi":
+            continue
+        L = GEOMETRY[tag][0]
+        if fit_l is not None and L not in fit_l:
             continue
         pair = pair_of(tag)
         if pair not in t or pair not in tags:
             continue
-        L = GEOMETRY[tag][0]
         measured = t[tag] - t[pair]
         fitted = (a + b * L) - (c + s * L)
         if measured * fitted < 0:
@@ -116,13 +103,9 @@ def _fit_surface(t, tags, fit_l, pair_of):
 
 
 def fit(rows):
-    """Measured T/op per row, both lines, crossover, implied threshold and
-    contradicting pairs for the flat surface (top-level keys, unchanged
-    shape), plus a best-effort gapped fit under res["gapped"]. ValueError
-    when the FLAT set has under two distinct L on either path - most
-    sittings carry NXBX rows only, so the gapped fit is not required to
-    succeed; when it can't (too few gapped rows), res["gapped"] holds
-    {"error": ...} instead of raising."""
+    """Flat surface result at top level (unchanged shape); res["gapped"]
+    holds the gapped fit, or {"error": ...} when too few gapped rows are
+    present. Raises ValueError only when the flat fit itself fails."""
     t = {tag: bench.t_per_op(*rows[tag]) for tag in rows}
     out = _fit_surface(t, FLAT_TAGS, None, lambda tag: "D" + tag[1:])
     out["t"] = t
