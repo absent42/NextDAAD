@@ -135,7 +135,17 @@ if (-not $sources) { exit 0 }
 # pal9u: the dodge target is byte0+4 (green one step up), matching the
 # interpreter's l2_palette_load dodge, so a net-caught colour renders
 # identically in video and stills. Supersedes pal9t's dodge-output byte.
-$encoderGeneration = 'pal9u'
+# pal9v: TMODEL_COEFFS re-fit to the 8c0cb61 chunk-loop SMC change
+# (per-chunk savings COPY flat -279 T, COPY gapped -233 T, RUN flat
+# -173 T, RUN gapped -127 T), against fresh 2026-09-15 silicon
+# NXBO/NXBC/NXBK bench rows: dispatch envelopes, fill/copy DMA setup
+# and per-byte rates all move. TMODEL_COMPOSITION_FACTOR is HELD (flat
+# 1.19, gapped 1.46) - R is a ratio against the model so both sides
+# moved together, confirmed by whole-clip hardware PLAY vs NOM (5/9
+# comparable clips faster, 3 equal). A cheaper decode model prices more
+# work into the same per-frame budget, so fixture bytes are expected to
+# RISE, not regress.
+$encoderGeneration = 'pal9v'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

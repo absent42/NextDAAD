@@ -3768,7 +3768,56 @@ if ($Font) {
 # byte0-1 to byte0+4 in lockstep with the interpreter dodge -
 # default-path, so this switch's rule fires. See $encoderGeneration
 # 'pal9u' in authoring-kit/lib/video.ps1 for the full account.
-$vidLegSettlementTag = 'pal9u'
+# BUMP pal9u -> pal9v (T model re-fit to the 8c0cb61 decode chunk-loop
+# change, 2026-09-15): TMODEL_COEFFS' dispatch envelopes, fill/copy DMA
+# setup and per-byte rates all move to fresh silicon NXBO/NXBC/NXBK
+# rows; composition factors held (flat 1.19, gapped 1.46). Default-
+# path, so this switch's rule fires. A cheaper decode model prices MORE
+# work into the same per-frame budget, so fixture bytes are expected to
+# RISE, not a regression. Measured at the bump against the pal9u
+# caches, byte deltas below. See $encoderGeneration 'pal9v' in
+# authoring-kit/lib/video.ps1 for the full account.
+#
+# Fixture byte deltas (pal9u cache -> pal9v re-encode), no gate refusal:
+#   001 full             939520 -> 922112   -17408
+#   002 classic          924672 -> 896512   -28160
+#   003 16:9              745472 -> 727552   -17920
+#   004 scope             948736 -> 912384   -36352
+#   005 classic-wide      905728 -> 891392   -14336
+#   006 16:9-card        1030656 -> 1025536   -5120
+#   007 classic streamed 5287424 -> 5359616  +72192
+#   008 full streamed    5915136 -> 5922816   +7680
+#   009 16:9 streamed    5075968 -> 5199360 +123392
+#   010 256x133 direct   8966144 -> 8966144       0
+#   011 256x133 direct   4481024 -> 4481024       0
+#   099 (= 007 copy)     5287424 -> 5359616  +72192
+# The three streamed fixtures (007-009) grew, matching the "cheaper
+# model prices more work in" framing; the six resident fixtures
+# (001-006) SHRANK instead - the resident path has no supply gate, so a
+# cheaper T model can also tip a marginal tile-ladder or merge choice
+# onto a coarser, cheaper rung. Direct-serve (010/011) is byte-for-byte
+# unchanged - it is gated on wire feasibility alone, not TMODEL_COEFFS.
+# Quality check: the plan checks 007 alone, but 007 is the one fixture
+# that GREW - the resident fixtures that SHRANK are where quality could
+# have fallen, so 004 (largest shrink) and 006 (smallest shrink) were
+# checked too. Same-pipeline comparison (nxv2enc.encode() run against
+# the pal9u-era coefficients from commit 9fa076c, then against HEAD,
+# same source/args both times - isolates TMODEL_COEFFS as the only
+# variable):
+#   004 scope:    mean 25.5541 -> 25.5543 dB, worst 6.2419 -> 6.2419 dB,
+#                 bound_fraction 0.0233 -> 0.0000
+#   006 16:9-card: mean 29.4893 -> 29.4893 dB, worst 3.1535 -> 3.1535 dB,
+#                 bound_fraction 0.0000 -> 0.0000 (byte-for-byte quality
+#                 identical, cheaper only)
+#   007 classic:  mean 24.4782 -> 24.8434 dB, worst 4.0610 -> 4.0610 dB,
+#                 bound_fraction 0.7680 -> 0.6720
+# All three: mean PSNR holds or rises, worst PSNR never falls,
+# bound_fraction falls or holds - 004 (shrank) and 007 (grew) agree in
+# direction, so no fourth fixture was needed. RULING: quality holds or
+# rises on every fixture checked, so the shrink on 001-006 is the model
+# correctly charging decode work it previously under-charged, not a
+# quality regression. Shipped as-is.
+$vidLegSettlementTag = 'pal9v'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the
