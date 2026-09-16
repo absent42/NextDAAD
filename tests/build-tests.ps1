@@ -947,6 +947,20 @@ Assert-PaletteWriterCensus
 & python "$PSScriptRoot\art\pngchain.py"
 if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-transparency chain is broken" }
 
+# videnc.exe/vidtune.exe are PyInstaller bundles that FREEZE the encoder
+# source in; a stale bundle has silently shipped old-encoder bytes twice.
+# tests\check_frozen_exes.py unmarshals each bundle and diffs it against
+# the working tree. It SKIPs (exit 0, printing a SKIP line) when the host
+# Python's minor version does not match the bundle's, since bytecode only
+# compares within a minor version - that must never read as a verified
+# pass, so a SKIP line is reported as a warning, not silence.
+$frozenExeOut = & python "$PSScriptRoot\check_frozen_exes.py" 2>&1
+$frozenExeOut | ForEach-Object { "$_" }
+if ($LASTEXITCODE -ne 0) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild both" }
+if (($frozenExeOut -join "`n") -match 'check_frozen_exes: SKIP') {
+    "WARNING: check_frozen_exes SKIPPED for at least one exe - host Python minor version does not match the bundle, staleness NOT verified"
+}
+
 function Assert-ManualFresh {
     # authoring-kit\docs is GENERATED and SHIPPED. A .md edited without
     # regenerating ships stale HTML to authors - the same silent-staleness
