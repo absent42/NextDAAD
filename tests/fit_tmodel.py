@@ -10,7 +10,10 @@ is not evidence.
 Terms that need a held input (fill_dma_per_b, copy_dma_setup, the DMA
 chunk cap) read it from TMODEL_COEFFS and print it inline.
 
-Usage: python tests/fit_tmodel.py [pre_fix|current]
+long_copy() and tails() price the NXBL and NXBT rows against a sitting
+that has them, print only, and restore every coefficient they move.
+
+Usage: python tests/fit_tmodel.py [pre_fix|current|sitting4]
 
 The pre_fix sitting is the control: it must reproduce t_op_run 367.6 and
 fill_cpu 15.856 with residuals at or under 5.3 T.
@@ -162,11 +165,80 @@ def fit(sitting):
     return out
 
 
+# (row, base, what row - base measures) on the long-copy rows.
+LONG_CONTRASTS = (
+    ("LGDS", "LG4K", "one vid_dst_next"),
+    ("LFDS", "LF7K", "one vid_dst_next, two exact-room sizings, ldi16+dma224 for a dma240"),
+)
+
+
+def long_copy(sitting):
+    """Per LF/LG/LK row: the copy_dma_setup that prices it exactly at
+    silicon, every other coefficient held. The price is linear in the
+    setup, so one unit step gives the setups charged. Gapped rows price flat."""
+    rows = bench.ROWS[sitting]
+    tags = [r for mode in bench.BENCH_TABLES.values() for r in mode
+            if r[0][:2] in ("LF", "LG", "LK") and r[0] in rows]
+    if not tags:
+        return {}
+    tc = enc.TMODEL_COEFFS
+    held = tc["copy_dma_setup"]
+    out = {}
+    print(f"\nlong copies (copy_dma_setup solve per row, held {held}; "
+          f"diff = measured - model, + is under)")
+    print("  tag      L  O  surface      measured      model      diff  setups   solved")
+    try:
+        for tag, _kind, L, o, _r, _thr, geo in tags:
+            m = bench.t_per_op(*rows[tag])
+            model = bench.row_predicted(enc, tag)
+            tc["copy_dma_setup"] = held + 1.0
+            k = bench.row_predicted(enc, tag) - model
+            tc["copy_dma_setup"] = held
+            out[tag] = held + (m - model) / k
+            surface = ("gapped" if geo & 1 else "flat") + ("+seam" if geo & 2 else "")
+            print(f"  {tag} {L:>5} {o:>2}  {surface:<11} {m:>9.1f} {model:>10.1f} "
+                  f"{m - model:>+9.1f} {k:>6.0f} {out[tag]:>8.1f}")
+    finally:
+        tc["copy_dma_setup"] = held
+    for row, base, what in LONG_CONTRASTS:
+        if row in rows and base in rows:
+            d = bench.t_per_op(*rows[row]) - bench.t_per_op(*rows[base])
+            print(f"  {row} - {base} {d:>+8.1f} T/op  [{what}]")
+    return out
+
+
+def tails(sitting):
+    """NXBT rows priced with row_predicted at their own select value against
+    silicon. Gapped rows price flat; the path column is the flat chunking."""
+    rows = bench.ROWS[sitting]
+    tags = [r for r in bench.BENCH_TABLES[8] if r[0] in rows]
+    if not tags:
+        return {}
+    chunk = enc.TMODEL_COEFFS["copy_dma_chunk"]
+    out = {}
+    print("\ntails (row_predicted at the row's own thr; diff = measured - model, + is under)")
+    print("  tag      L thr  surface  flat path         measured      model      diff")
+    for tag, _kind, L, _o, _r, thr, geo in tags:
+        m = bench.t_per_op(*rows[tag])
+        model = bench.row_predicted(enc, tag)
+        full, rem = divmod(L, chunk)
+        if not full:
+            path = "ldi" if L < thr else "dma"
+        else:
+            path = f"{full}x{chunk} + {'dma' if rem >= thr else 'ldi'} {rem}"
+        out[tag] = (m, model)
+        print(f"  {tag} {L:>5} {thr:>3}  {'gapped' if geo & 1 else 'flat':<7}  {path:<16} "
+              f"{m:>9.1f} {model:>10.1f} {m - model:>+9.1f}")
+    return out
+
+
 def main():
     sitting = sys.argv[1] if len(sys.argv) > 1 else "current"
     if sitting not in bench.ROWS:
         raise SystemExit(f"unknown sitting {sitting!r}; have {sorted(bench.ROWS)}")
     fit(sitting)
+    long_copy(sitting)
+    tails(sitting)
     return 0
 
 
