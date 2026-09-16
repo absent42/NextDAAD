@@ -329,7 +329,7 @@ vid_dec_abort_pos:               ; entry with vidErrPos already stored
     call nxb_reclaim             ; abort chain never returns to the
     pop af                       ; bench, so its banks/audEnable/MMU
                                  ; state have to come back HERE. Whole
-                                 ; routine is two shipping-value stores
+                                 ; routine is three shipping-value stores
                                  ; and a no-op unless a standalone
                                  ; bench row is live.
  ENDIF
@@ -458,6 +458,7 @@ vg_op_copy8:
     jr nc, .srcedge
 .sok:
     ld a, c
+.thr equ $+1                     ; DEBUG writers: nxb_run_table, nxb_reclaim
     cp NXV2_COPY_DMA_MIN
     jr nc, .slow                 ; at/over the crossover: the body
     ld a, e
@@ -627,7 +628,7 @@ vid_skip_body:
 .next:
     jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
     ; per-session SMC: _flat or _gap, the geometry test hoisted out of
-    ; the chunk loop (patched by vid_stage_common / nxb_ops_setup)
+    ; the chunk loop (patched by vid_stage_common / nxb_geo_setup)
 .dn:
     call vid_dst_norm_flat
 .cd:
@@ -3746,8 +3747,6 @@ NXB_ROW0         equ 8       ; bench rows start here (the timeline
                              ; report owns 24-29)
 NXB_LINE_MSB     equ $1E     ; active video line, bit 8
 NXB_LINE_LSB     equ $1F     ; active video line, bits 7:0
-NXB_DMA_FORCE    equ $80     ; row opcode flag: COPY select operands = 1
-                             ; for the row (opcodes are $00-$3C)
 
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
@@ -3795,8 +3794,9 @@ nxb_entry:
 ; ---------------------------------------------------------------------
 ; Standalone setup: two pool banks (source stream / paint target), the
 ; decode loop's session cells staged flat, the per-session SMC slots
-; pointed at the RAM+flat set (a previous video session may have left
-; the direct-serve set), the terminal exit diverted to nxb_term
+; pointed at the RAM set (a previous video session may have left the
+; direct-serve set; geometry is per row, nxb_geo_setup), the terminal
+; exit diverted to nxb_term
 ; (vid_dec_done's file-position accounting is meaningless with no
 ; session; vid_op_fend's plain path still runs), and the zxnDMA WR2/WR5
 ; one-time program sent (the shipping vidDmaInit lives on VID_PAGE2,
@@ -3847,7 +3847,7 @@ nxb_ops_setup:
     ld (vidStreaming), a
     ld (vidInSpan), a
     ld (vidDirect), a
-    ; per-session SMC: RAM fetch, flat fast handlers, RAM bodies
+    ; per-session SMC: RAM fetch, RAM bodies
     ld hl, vid_fetch_ram
     ld (vid_fetch.vec + 1), hl
     ld hl, vid_next
@@ -3856,23 +3856,6 @@ nxb_ops_setup:
     ld (vid_op_kstart.next + 1), hl
     ld hl, vid_copy_body
     ld (vid_slow_op.cj + 1), hl
-    ld hl, vf_op_skip8
-    ld (vid_stub + VOP_SKIP8 + 1), hl
-    ld hl, vf_op_run8
-    ld (vid_stub + VOP_RUN8 + 1), hl
-    ld hl, vf_op_copy8
-    ld (vid_stub + VOP_COPY8 + 1), hl
-    ld hl, vid_dst_norm_flat     ; chunk-loop geometry select (flat)
-    ld (vid_skip_body.dn + 1), hl
-    ld (vid_run_body.dn + 1), hl
-    ld (vid_copy_body.dn + 1), hl
-    ld (vid_ds_copy_body.dn + 1), hl
-    ld hl, vid_chunk_dst_nocap_flat
-    ld (vid_skip_body.cd + 1), hl
-    ld (vid_ds_copy_body.cd + 1), hl
-    ld hl, vid_chunk_dst_flat
-    ld (vid_run_body.cd + 1), hl
-    ld (vid_chunk_all.dj + 1), hl
     ld hl, nxb_term              ; FEND -> the bench terminal (through
     ld (vid_term_exit + 1), hl   ; vid_op_fend's plain path, vidInSpan = 0)
     ld hl, nxbDmaInit
@@ -3904,6 +3887,7 @@ nxb_ops_restore:
 nxb_reclaim:
     ld a, NXV2_COPY_DMA_MIN
     ld (vf_op_copy8.thr), a
+    ld (vg_op_copy8.thr), a
     ld (vid_copy_body.thr), a
     ld a, (nxbBankCnt)
     or a
@@ -3936,12 +3920,11 @@ nxb_term:
     ret
 
 ; ---------------------------------------------------------------------
-; Row table walker. HL = table; entries are 8 bytes:
-;   dw tag, db opcode, dw count, db ops-per-rep, dw reps
-; terminated by a zero tag pointer. Builds the stream once per row
-; (untimed), then runs the row. Every row stores both COPY select
-; operands (vf_op_copy8.thr, vid_copy_body.thr) untimed: 1 when the
-; opcode carries NXB_DMA_FORCE, else NXV2_COPY_DMA_MIN.
+; Row table walker. HL = table; entries are 10 bytes:
+;   dw tag, db opcode, dw count, db ops-per-rep, dw reps, db thr, db geo
+; terminated by a zero tag pointer. thr: 0 = NXV2_COPY_DMA_MIN, 1-255 =
+; that value in all three COPY select operands. geo: nxb_geo_setup.
+; Operands, geometry and stream are set per row, untimed.
 ; ---------------------------------------------------------------------
 nxb_run_table:
     ld a, (hl)
@@ -3957,16 +3940,7 @@ nxb_run_table:
     pop hl
     ld a, (hl)
     inc hl
-    ld c, NXV2_COPY_DMA_MIN
-    cp NXB_DMA_FORCE
-    jr c, .ship
-    sub NXB_DMA_FORCE
-    ld c, 1                      ; every nonzero count: body + DMA
-.ship:
     ld (nxbOpc), a
-    ld a, c
-    ld (vf_op_copy8.thr), a
-    ld (vid_copy_body.thr), a
     ld e, (hl)
     inc hl
     ld d, (hl)
@@ -3980,13 +3954,48 @@ nxb_run_table:
     ld d, (hl)
     inc hl
     ld (nxbReps), de
+    ld a, (hl)                   ; thr: 0 = NXV2_COPY_DMA_MIN
+    inc hl
+    or a
+    jr nz, .thr
+    ld a, NXV2_COPY_DMA_MIN
+.thr:
+    ld (vf_op_copy8.thr), a
+    ld (vg_op_copy8.thr), a
+    ld (vid_copy_body.thr), a
+    ld a, (hl)                   ; geo
+    inc hl
+    ld (nxbGeo), a
     push hl
+    call nxb_geo_setup
     call nxb_build
     ld hl, nxb_ops_body
     ld (nxb_body + 1), hl
     call nxb_row
     pop hl
     jr nxb_run_table
+
+; Per-row surface geometry (untimed). Flat only: nxbGeo bit 0 (gapped)
+; is not yet dispatched.
+nxb_geo_setup:
+    ld hl, vf_op_skip8
+    ld (vid_stub + VOP_SKIP8 + 1), hl
+    ld hl, vf_op_run8
+    ld (vid_stub + VOP_RUN8 + 1), hl
+    ld hl, vf_op_copy8
+    ld (vid_stub + VOP_COPY8 + 1), hl
+    ld hl, vid_dst_norm_flat
+    ld (vid_skip_body.dn + 1), hl
+    ld (vid_run_body.dn + 1), hl
+    ld (vid_copy_body.dn + 1), hl
+    ld (vid_ds_copy_body.dn + 1), hl
+    ld hl, vid_chunk_dst_nocap_flat
+    ld (vid_skip_body.cd + 1), hl
+    ld (vid_ds_copy_body.cd + 1), hl
+    ld hl, vid_chunk_dst_flat
+    ld (vid_run_body.cd + 1), hl
+    ld (vid_chunk_all.dj + 1), hl
+    ret
 
 ; Build one rep's op stream at $C000: nxbOps copies of the row's op,
 ; then a FEND. COPY literal bodies are left as whatever the bank
@@ -4436,41 +4445,49 @@ nxbTabOpd:
     dw 0
     db 255
     dw 64
+    db 0, 0
     dw nxbTagS160
     db VOP_SKIP16
     dw 0
     db 255
     dw 64
+    db 0, 0
     dw nxbTagRU01
     db VOP_RUN8
     dw 1
     db 255
     dw 32
+    db 0, 0
     dw nxbTagRU17
     db VOP_RUN8
     dw 17
     db 255
     dw 32
+    db 0, 0
     dw nxbTagCP01
     db VOP_COPY8
     dw 1
     db 255
     dw 32
+    db 0, 0
     dw nxbTagCP17
     db VOP_COPY8
     dw 17
     db 255
     dw 32
+    db 0, 0
     dw nxbTagR161
     db VOP_RUN16
     dw 1
     db 255
     dw 32
+    db 0, 0
     dw nxbTagC161
     db VOP_COPY16
     dw 1
     db 255
     dw 32
+    db 0, 0
     dw 0
 
 ; GROUP 3 - the COPY size ladder, weighted where real content lives.
@@ -4489,46 +4506,55 @@ nxbTabCpy:
     dw 1
     db 255
     dw 64
+    db 0, 0
     dw nxbTagC004
     db VOP_COPY8
     dw 4
     db 255
     dw 64
+    db 0, 0
     dw nxbTagC008
     db VOP_COPY8
     dw 8
     db 255
     dw 48
+    db 0, 0
     dw nxbTagC016
     db VOP_COPY8
     dw 16
     db 255
     dw 48
+    db 0, 0
     dw nxbTagC038
     db VOP_COPY8
     dw 38
     db 197
     dw 48
+    db 0, 0
     dw nxbTagC080
     db VOP_COPY8
     dw 80
     db 96
     dw 64
+    db 0, 0
     dw nxbTagC081
     db VOP_COPY8
     dw 81
     db 95
     dw 64
+    db 0, 0
     dw nxbTagC103
     db VOP_COPY8
     dw 103
     db 75
     dw 64
+    db 0, 0
     dw nxbTagC256
     db VOP_COPY16
     dw 256
     db 30
     dw 96
+    db 0, 0
     dw 0
 
 ; GROUP 4 - fill crossover + the DMA DI window. F070/F071 straddle
@@ -4545,98 +4571,116 @@ nxbTabKrn:
     dw 63
     db 125
     dw 64
+    db 0, 0
     dw nxbTagF070
     db VOP_RUN8
     dw 70
     db 112
     dw 64
+    db 0, 0
     dw nxbTagF071
     db VOP_RUN8
     dw 71
     db 111
     dw 64
+    db 0, 0
     dw nxbTagF256
     db VOP_RUN16
     dw 256
     db 30
     dw 96
+    db 0, 0
     dw nxbTagK256
     db VOP_COPY16
     dw 256
     db 30
     dw 96
+    db 0, 0
     dw 0
 
-; GROUP 5 - COPY path pairs, run back to back. Lnnn: shipping select;
-; Dnnn: NXB_DMA_FORCE (D081 unforced, as C081). Forces the flat set
-; only - vg_op_copy8's operand is not patched.
-    ASSERT NXV2_COPY_DMA_MIN == 81   ; re-cut the L/D split and D081 if it moves
+; GROUP 5 - COPY path pairs, run back to back. Explicit select values,
+; so the rows measure the same paths wherever NXV2_COPY_DMA_MIN sits:
+; Lnnn and D081 thr 81 (fast-handler LDI below 81), Dnnn thr 1 (body +
+; DMA for every nonzero count).
 nxbTabThr:
     dw nxbTagL048
     db VOP_COPY8
     dw 48
     db 157
     dw 64
+    db 81, 0
     dw nxbTagD048
-    db VOP_COPY8 | NXB_DMA_FORCE
+    db VOP_COPY8
     dw 48
     db 157
     dw 64
+    db 1, 0
     dw nxbTagL056
     db VOP_COPY8
     dw 56
     db 136
     dw 64
+    db 81, 0
     dw nxbTagD056
-    db VOP_COPY8 | NXB_DMA_FORCE
+    db VOP_COPY8
     dw 56
     db 136
     dw 64
+    db 1, 0
     dw nxbTagL060
     db VOP_COPY8
     dw 60
     db 127
     dw 64
+    db 81, 0
     dw nxbTagD060
-    db VOP_COPY8 | NXB_DMA_FORCE
+    db VOP_COPY8
     dw 60
     db 127
     dw 64
+    db 1, 0
     dw nxbTagL064
     db VOP_COPY8
     dw 64
     db 119
     dw 64
+    db 81, 0
     dw nxbTagD064
-    db VOP_COPY8 | NXB_DMA_FORCE
+    db VOP_COPY8
     dw 64
     db 119
     dw 64
+    db 1, 0
     dw nxbTagL072
     db VOP_COPY8
     dw 72
     db 106
     dw 64
+    db 81, 0
     dw nxbTagD072
-    db VOP_COPY8 | NXB_DMA_FORCE
+    db VOP_COPY8
     dw 72
     db 106
     dw 64
+    db 1, 0
     dw nxbTagL080
     db VOP_COPY8
     dw 80
     db 96
     dw 64
+    db 81, 0
     dw nxbTagD080
-    db VOP_COPY8 | NXB_DMA_FORCE
+    db VOP_COPY8
     dw 80
     db 96
     dw 64
+    db 1, 0
     dw nxbTagD081
     db VOP_COPY8
     dw 81
     db 95
     dw 64
+    db 81, 0
     dw 0
 
 ; zxnDMA WR1/WR2/WR5 one-time program - the VID_PAGE-local twin of
@@ -4709,6 +4753,7 @@ nxbOpc:      db 0
 nxbCnt:      dw 0
 nxbOps:      db 0
 nxbReps:     dw 0
+nxbGeo:      db 0
 nxbLeft:     dw 0
 nxbFrames:   dw 0
 nxbPrev:     dw 0
