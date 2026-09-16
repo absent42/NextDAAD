@@ -578,8 +578,9 @@ TMODEL_COEFFS = {
 # ---------------------------------------------------------------------
 # HELD across the 2026-09-15 re-fit: R is a ratio against the model, so
 # both sides moved together. Confirmed by whole-clip PLAY vs NOM on
-# hardware: 5/9 comparable clips faster, 3 equal, VPLY4 reproducibly 2
-# fields slower (read as pacing quantisation, not a regression).
+# hardware (VGA-0, core 3.02.04): 5/9 comparable clips faster, 3 equal,
+# VPLY4 reproducibly 2 fields slower (read as pacing quantisation, not
+# a regression).
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.19,   # worst dense-cluster measured R (silicon
