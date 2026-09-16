@@ -3784,7 +3784,7 @@ if ($Font) {
 #   003 16:9              745472 -> 727552   -17920
 #   004 scope             948736 -> 912384   -36352
 #   005 classic-wide      905728 -> 891392   -14336
-#   006 16:9-card        1030656 -> 1025536   -5120
+#   006 16:9 (card)      1030656 -> 1025536   -5120
 #   007 classic streamed 5287424 -> 5359616  +72192
 #   008 full streamed    5915136 -> 5922816   +7680
 #   009 16:9 streamed    5075968 -> 5199360 +123392
@@ -3795,8 +3795,18 @@ if ($Font) {
 # model prices more work in" framing; the six resident fixtures
 # (001-006) SHRANK instead - the resident path has no supply gate, so a
 # cheaper T model can also tip a marginal tile-ladder or merge choice
-# onto a coarser, cheaper rung. Direct-serve (010/011) is byte-for-byte
-# unchanged - it is gated on wire feasibility alone, not TMODEL_COEFFS.
+# onto a coarser, cheaper rung. 009 grew the most and is CONTENT-LIMITED
+# at capacity (util 0.90, remedy "the automatic search could not reach
+# ~0.90 on this content") - completed and wrote OK, and per the owner's
+# 007/0.981 at-capacity precedent (banding/judder on a mean that hides
+# per-frame excursions) becomes a named by-eye check on the hardware
+# sheet, backing VSTR2. Direct-serve (010/011) DOES read TMODEL_COEFFS
+# (direct_supply_check prices audio_factor into sd_ms/utilization) but
+# did not move here because the constants it depends on - audio_factor
+# 0.85, DIRECT_TRANSPORT_FACTOR 1.00, DIRECT_FRAME_OVERHEAD_MS 2.2 - are
+# unchanged across both eras; this re-fit touched only decode-loop
+# terms. Not immune in general - a future bump to those constants would
+# move 010/011 too.
 # Quality check: the plan checks 007 alone, but 007 is the one fixture
 # that GREW - the resident fixtures that SHRANK are where quality could
 # have fallen, so 004 (largest shrink) and 006 (smallest shrink) were
@@ -3806,7 +3816,7 @@ if ($Font) {
 # variable):
 #   004 scope:    mean 25.5541 -> 25.5543 dB, worst 6.2419 -> 6.2419 dB,
 #                 bound_fraction 0.0233 -> 0.0000
-#   006 16:9-card: mean 29.4893 -> 29.4893 dB, worst 3.1535 -> 3.1535 dB,
+#   006 16:9 (card): mean 29.4893 -> 29.4893 dB, worst 3.1535 -> 3.1535 dB,
 #                 bound_fraction 0.0000 -> 0.0000 (byte-for-byte quality
 #                 identical, cheaper only)
 #   007 classic:  mean 24.4782 -> 24.8434 dB, worst 4.0610 -> 4.0610 dB,
