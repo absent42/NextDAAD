@@ -3733,8 +3733,9 @@ vid_tl_report_ret:
 ;   5 COPY path pairs (fast-handler LDI vs body + DMA) for
 ;     NXV2_COPY_DMA_MIN.
 ;   6 group 5's pairs and the chunk rows on the gapped surface.
+;   8 rows at a simulated NXV2_COPY_DMA_MIN of 59.
 ;
-; STANDALONE MODES (2-6) synthesize their op streams into a pool bank
+; STANDALONE MODES (2-6, 8) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
 ; display state is disturbed and no session is needed. Streams are
 ; sized so the source cursor never reaches $DF00 and the dest cursor
@@ -3753,7 +3754,7 @@ NXB_GAP_H        equ 192     ; gapped rows' content height
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
-; Modes 2-6 run standalone; mode 1 is NOT reachable here - the
+; Modes 2-6 and 8 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
 ; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
 ; Corrupts everything.
@@ -3786,6 +3787,9 @@ nxb_entry:
     jr z, .go
     ld hl, nxbTabGap
     cp 6
+    jr z, .go
+    ld hl, nxbTabNew
+    cp 8
     jr z, .go
     ld hl, nxbTabOpd            ; unknown mode: the dispatch table
 .go:
@@ -4829,6 +4833,78 @@ nxbTabGap:
     db 0, 1
     dw 0
 
+; GROUP 8 - rows at a simulated NXV2_COPY_DMA_MIN of 59: E058/E059 the
+; 8-bit edge, Tnnn 16-bit ops whose tail after a 240 B chunk falls either
+; side of it, Unnn/V300 the same ops at 81; S299/V300/S300 gapped (192).
+nxbTabNew:
+    dw nxbTagE058
+    db VOP_COPY8
+    dw 58
+    db 131
+    dw 64
+    db 59, 0
+    dw nxbTagE059
+    db VOP_COPY8
+    dw 59
+    db 129
+    dw 64
+    db 59, 0
+    dw nxbTagT298
+    db VOP_COPY16
+    dw 298
+    db 26
+    dw 96
+    db 59, 0
+    dw nxbTagT299
+    db VOP_COPY16
+    dw 299
+    db 26
+    dw 96
+    db 59, 0
+    dw nxbTagU300
+    db VOP_COPY16
+    dw 300
+    db 26
+    dw 96
+    db 81, 0
+    dw nxbTagT300
+    db VOP_COPY16
+    dw 300
+    db 26
+    dw 96
+    db 59, 0
+    dw nxbTagU320
+    db VOP_COPY16
+    dw 320
+    db 24
+    dw 96
+    db 81, 0
+    dw nxbTagT320
+    db VOP_COPY16
+    dw 320
+    db 24
+    dw 96
+    db 59, 0
+    dw nxbTagS299
+    db VOP_COPY16
+    dw 299
+    db 19
+    dw 96
+    db 59, 1
+    dw nxbTagV300
+    db VOP_COPY16
+    dw 300
+    db 19
+    dw 96
+    db 81, 1
+    dw nxbTagS300
+    db VOP_COPY16
+    dw 300
+    db 19
+    dw 96
+    db 59, 1
+    dw 0
+
 ; zxnDMA WR1/WR2/WR5 one-time program - the VID_PAGE-local twin of
 ; vidDmaInit (VID_PAGE2, unreachable from here). Byte-for-byte the
 ; same six bytes; if that block ever changes, this one moves with it.
@@ -4908,6 +4984,17 @@ nxbTagGC03: db "GC03", 0
 nxbTagGK56: db "GK56", 0
 nxbTagGF71: db "GF71", 0
 nxbTagGF56: db "GF56", 0
+nxbTagE058: db "E058", 0
+nxbTagE059: db "E059", 0
+nxbTagT298: db "T298", 0
+nxbTagT299: db "T299", 0
+nxbTagU300: db "U300", 0
+nxbTagT300: db "T300", 0
+nxbTagU320: db "U320", 0
+nxbTagT320: db "T320", 0
+nxbTagS299: db "S299", 0
+nxbTagV300: db "V300", 0
+nxbTagS300: db "S300", 0
 
 nxbMode:     db 0
 nxbRow:      db 0
