@@ -846,9 +846,9 @@ vid_rl_poll:
 ; the rate ratio directly, whatever a clip holds.
 ; Open, load and ring prefill stay outside the bracket (they run before
 ; the loop) - the owner's requirement: time the playback, not the
-; launch. Residuals, both under one frame: a key exit truncates the
-; last frame's period, and the nominal 50.000 Hz field rate is really
-; 50.080 Hz (69888 T per field at 3.5 MHz), so NOM runs 0.16% long.
+; launch. Residuals: a key exit truncates the last frame's period, and
+; NOM counts 50 Hz fields while the machine timing sets the real rate -
+; 49.36 Hz on the default +3 timing (NOM ~1.3% long), 50.08 Hz on 48K.
 ; Corrupts AF, BC, DE, HL.
 vid_play_frame:
     ld hl, (vidTlFrames)         ; FRM=. Counted HERE since v0.5.0 - it
@@ -3676,9 +3676,9 @@ VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlFrames
 ; by vid_rl_poll alongside vidRlDiv.
 ;
 ; SAFETY FLOOR: vid_rl_poll infers a field wrap from a 9-bit raster
-; DECREASE, so a poll must land at least once per field (312 lines =
-; 20 ms) or PLAY undercounts. A spin pass is ~0.4 ms streamed (faster
-; resident), so 16 passes between polls is a worst case of
+; DECREASE, so a poll must land at least once per field (the shortest
+; field, 48K timing's 20 ms) or PLAY undercounts. A spin pass is ~0.4 ms
+; streamed (faster resident), so 16 passes between polls is a worst case of
 ; 16 x 0.4 ms = ~6.4 ms streamed - inside the 20 ms floor with ~3x
 ; margin (20 / 6.4 ~ 3.1x). Not applied to the decode-path divider
 ; either (vidRlDiv, unchanged).
