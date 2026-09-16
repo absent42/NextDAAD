@@ -736,11 +736,11 @@ l2scr_trampoline:
     jp ovl_map_page
 
 ; EXTERN vector 12: DEBUG-only route for tests/test.dsf's NXBO/NXBC/
-; NXBK verbs (12-15 are the last free vectors; 5 forwards to a
+; NXBK/NXBX verbs (12-15 are the last free vectors; 5 forwards to a
 ; loaded XBN, inert when the suite stages none). ONE vector for all
-; three modes: the mode rides flags+250, set by the verb's LET before
-; the shared EXTERN, so a new mode costs a table row rather than a
-; vector. A fourth mode (direct-serve transport) needs a LIVE armed
+; the standalone modes: the mode rides flags+250, set by the verb's LET
+; before the shared EXTERN, so a new mode costs a table row rather than
+; a vector. The direct-serve transport mode (NXBD) needs a LIVE armed
 ; session and cannot come through here - it rides the player instead
 ; (flags+248 + a GFX n 13 verb; see video.asm's vid_run bench hook).
 ; Same push-target/ovl_map_page idiom as the trampolines above.

@@ -239,7 +239,7 @@ vf_op_copy8:
     cp $5F
     jr nc, .slow
     ld a, c
-.thr equ $+1                     ; operand patched by DEBUG nxb_run_table
+.thr equ $+1                     ; DEBUG writers: nxb_run_table, nxb_reclaim
     cp NXV2_COPY_DMA_MIN
     jr nc, .slow
     call vid_copy_ldi
@@ -696,7 +696,7 @@ vid_copy_body:
     pop hl
     ld a, c                      ; B is 0 by vid_chunk_all's post-
                                  ; condition (cap <= 255)
-.thr equ $+1                     ; operand patched by DEBUG nxb_run_table
+.thr equ $+1                     ; DEBUG writers: nxb_run_table, nxb_reclaim
     cp NXV2_COPY_DMA_MIN
     jr nc, .dma
     call vid_copy_ldi
@@ -4570,6 +4570,7 @@ nxbTabKrn:
 ; GROUP 5 - COPY path pairs, run back to back. Lnnn: shipping select;
 ; Dnnn: NXB_DMA_FORCE (D081 unforced, as C081). Forces the flat set
 ; only - vg_op_copy8's operand is not patched.
+    ASSERT NXV2_COPY_DMA_MIN == 81   ; re-cut the L/D split and D081 if it moves
 nxbTabThr:
     dw nxbTagL048
     db VOP_COPY8
