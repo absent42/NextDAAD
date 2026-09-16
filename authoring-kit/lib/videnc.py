@@ -44,7 +44,7 @@ mci opts into motion-compensated interpolation for slow global motion
 
 Quality: NXV v2 is a content-triggered-keyframe, dual-budget (bytes +
 modeled decode-T) delta codec - encode time is the main quality lever
-(nxv2enc.TMODEL_COEFFS is model-not-silicon). --report writes the
+(nxv2enc.TMODEL_COEFFS is fitted to the player's own decode bench). --report writes the
 BuildReport (mean/worst PSNR, keyframe count, bytes, binding-budget
 histogram) as JSON next to the output file.
 

@@ -576,6 +576,12 @@ TMODEL_COEFFS = {
 # 144 needs a fresh silicon check (crossing rate scales roughly with
 # 1/height).
 # ---------------------------------------------------------------------
+# HELD across the 2026-09-15 re-fit: R is a ratio against the model, so
+# both sides moved together. Not re-measured via DEBUG per-phase decode
+# rows (those went in v0.5.0); confirmed instead by whole-clip PLAY
+# against NOM on hardware (VGA-0, core 3.02.04) - faster on every
+# comparable clip: VPACE -3 fields, VSTR0 and VSTRU -3, VSTR2 -1, VPLY2 -1.
+# ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.19,   # worst dense-cluster measured R (silicon
                        #   real-footage fixtures) x 1.12 margin
