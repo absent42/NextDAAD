@@ -576,8 +576,8 @@ TMODEL_COEFFS = {
 # both sides moved together. Player speed is measured by the bench rows,
 # not DEBUG PLAY: decode time saved goes into the polled pace spin and
 # each PLAY= poll loses a CTC edge ~7% of the time, so PLAY can rise as
-# decode gets faster. The hold's margin at pal9v density is for the
-# confirmation sitting to confirm (pending).
+# decode gets faster. The hold kept its margin at pal9v density on
+# hardware (2026-09-16): every clip within NOM+1, no under-runs.
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.19,   # worst dense-cluster measured R (silicon
