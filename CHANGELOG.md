@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.0 - 14/09/2026
+## v0.10.0 - 16/09/2026
 
 - Loader intro: `intro.nex`, a standalone launcher the kit stages as
   `<GAME>.NEX` when `INTRO.TXT` exists. It plays a scripted slideshow of

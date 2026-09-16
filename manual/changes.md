@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.10.0 - 14 September 2026
+## 0.10.0 - 16 September 2026
 
 - **Loader intro.** A separate launcher, staged as `<GAME>.NEX`, plays a
   scripted slideshow with captions, a credits crawl and AKY, streamed
@@ -19,6 +19,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   teardown.** Hook code no longer needs to poll `SVC_BUSY` bit 0 to
   keep a clip safe; a clip's own palette streaming is now protected by
   the suspend. `SVC_BUSY` bit 3 reports an armed cycle.
+- **Optimisations.** The interpreter video player has been optimised 
+  and the encoder updated to reflect that.
 
 ## 0.9.0 - 3 September 2026
 
