@@ -436,7 +436,9 @@ TMODEL_COEFFS = {
     "fill_dma_tail8_t": 468.1, # the same tail on an 8-BIT-operand RUN, which
                                 #   pays no 16-bit entry, so it carries the
                                 #   whole 468.1. Dearest of the two readings
-                                #   R161 admits, per the standing rule
+                                #   R161 admits, per the standing rule - the
+                                #   copy twin copy_dma_tail8_t takes the same
+                                #   envelope over the same unmeasured split
     "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
                                 #   player clips both through vid_chunk_dst,
@@ -479,12 +481,22 @@ TMODEL_COEFFS = {
                                 #   it carries one chunk of that hold's
                                 #   210.2 T over-charge with the opposite sign
                                 #   - re-fit it if the setup ever moves
-    "copy_dma_tail8_t": 420.8, # the same tail on an 8-BIT-operand COPY. Twice
-                                #   the 16-bit term because copy_dma_path_t
-                                #   already cancels the held setup's
-                                #   over-charge on that branch (which is why
-                                #   C081/C103 land at +0.3 T), so this one is
-                                #   the bare chunk-loop iteration
+    "copy_dma_tail8_t": 489.9, # the same tail on an 8-BIT-operand COPY, where
+                                #   copy_dma_path_t has already cancelled the
+                                #   held setup's over-charge (which is why
+                                #   C081/C103 land at +0.3 T), so this term is
+                                #   the bare chunk-loop iteration. An ENVELOPE,
+                                #   not a fit: C161 measures the 16-bit entry
+                                #   and that iteration only as a SUM, so the
+                                #   iteration is 420.8 if the entry delta is
+                                #   the full t_skip16 - t_skip and 489.9 if it
+                                #   is zero, and the dearer end is taken here
+                                #   exactly as fill_dma_tail8_t takes it. Cost
+                                #   if the entry delta is really 69.1: 241-255 B
+                                #   copies over-price 2.3-2.5%, under 0.1% of a
+                                #   25 fps frame at the 2.5-10.2 tail-carrying
+                                #   copy ops a frame measures. Measure the
+                                #   entry delta and this collapses to 420.8
     "copy_dma_per_b": 5.10,    # T/byte mem-to-mem DMA COPY body [silicon
                                 #   NXBC (C103-C081)/22, unarmed, 2026-09-15;
                                 #   the armed tax is carried globally by

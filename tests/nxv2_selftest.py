@@ -1141,12 +1141,27 @@ def t10_silicon_coeffs():
     # 16-bit branch pays the t_skip16 - t_skip entry the 8-bit one does
     # not, and R161 measures only their sum.
     expect(tc["copy_dma_tail_t"] == 210.7, f"copy trailing-chunk term should be the C256/K256 210.7, got {tc['copy_dma_tail_t']}")
-    expect(tc["copy_dma_tail8_t"] == 420.8, f"8-bit copy trailing-chunk term should be 420.8, got {tc['copy_dma_tail8_t']}")
+    expect(tc["copy_dma_tail8_t"] == 489.9, f"8-bit copy trailing-chunk term should be the 489.9 envelope, got {tc['copy_dma_tail8_t']}")
     expect(tc["fill_dma_tail_t"] == 399.0, f"fill trailing-chunk term should be the F256 399.0, got {tc['fill_dma_tail_t']}")
     expect(tc["fill_dma_tail8_t"] == 468.1, f"8-bit fill trailing-chunk term should be 468.1, got {tc['fill_dma_tail8_t']}")
+    # Both 8-bit terms are ENVELOPES over the same unmeasured quantity:
+    # C161/R161 measure the 16-bit entry and one chunk-loop iteration
+    # only as a SUM, so each 8-bit tail takes the dearer end (entry
+    # delta zero). These two relations keep the halves from drifting
+    # apart; they are documentary, not independent - no scored row
+    # constrains the split at all.
     expect(abs((tc["fill_dma_tail_t"] + tc["t_skip16"] - tc["t_skip"])
                - tc["fill_dma_tail8_t"]) < 1e-9,
            "the 16-bit fill entry plus its tail must equal the 8-bit tail - R161 measures that sum")
+    # The copy pair carries one extra term: copy_dma_tail_t nets off one
+    # chunk of the held setup's over-charge against the 2026-09-15
+    # one-chunk cost, and the 8-bit branch has no such slack.
+    copy_chunk_one = 881.65
+    expect(abs((tc["copy_dma_tail8_t"] - tc["copy_dma_tail_t"]
+                - (tc["t_skip16"] - tc["t_skip"]))
+               - (tc["copy_dma_setup"] - copy_chunk_one)) < 0.2,
+           "the 8-bit copy tail must exceed the 16-bit one by the 16-bit entry plus "
+           "the held setup's per-chunk over-charge - re-fit all three together")
     # copy_dma_setup is HELD at its pre-change solve although the
     # 2026-09-15 ONE-chunk rows measure 881.7 T: the per-chunk cost
     # RISES with op length. The cap-256 rows, adjusted by the measured
