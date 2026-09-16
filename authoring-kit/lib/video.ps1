@@ -143,9 +143,8 @@ if (-not $sources) { exit 0 }
 # fill_dma_path_t and four DMA trailing-chunk terms are new;
 # copy_dma_setup, fetch_short and fill_dma_per_b are HELD.
 # TMODEL_COMPOSITION_FACTOR is HELD (flat 1.19, gapped 1.46) - R is a
-# ratio against the model. Sitting 1 (pal9u encodes, whole-clip PLAY vs
-# NOM) showed the player faster; the hold's margin at pal9v density is
-# for the confirmation sitting to confirm (pending). Test fixture bytes
+# ratio against the model; its margin at pal9v density is for the
+# confirmation sitting to confirm (pending). Test fixture bytes
 # move both ways: streamed 007-009 grew, resident 001-006 shrank, as
 # T-derived emission thresholds move even where no frame is budget-bound
 # (006): merge K* 24.0 -> 22.4 B, absorb_max 139 -> 94 B.

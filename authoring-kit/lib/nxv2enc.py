@@ -573,12 +573,11 @@ TMODEL_COEFFS = {
 # 1/height).
 # ---------------------------------------------------------------------
 # HELD across the 2026-09-15 re-fit: R is a ratio against the model, so
-# both sides moved together. Sitting 1 (pal9u encodes on the changed
-# player, whole-clip PLAY vs NOM, VGA-0, core 3.02.04) shows the PLAYER
-# got faster: 5/9 comparable clips faster, 3 equal, VPLY4 reproducibly 2
-# fields slower (read as pacing quantisation, not a regression). It
-# cannot show the hold keeps its margin at pal9v density - the
-# confirmation sitting confirms that (pending).
+# both sides moved together. Player speed is measured by the bench rows,
+# not DEBUG PLAY: decode time saved goes into the polled pace spin and
+# each PLAY= poll loses a CTC edge ~7% of the time, so PLAY can rise as
+# decode gets faster. The hold's margin at pal9v density is for the
+# confirmation sitting to confirm (pending).
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.19,   # worst dense-cluster measured R (silicon

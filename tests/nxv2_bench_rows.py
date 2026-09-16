@@ -8,9 +8,8 @@ conversion is T = (F * 311 + D) * 1824 at 28 MHz. PRE_FIX is the player
 before the decode-loop change, kept as history; CURRENT is the player
 these coefficients describe, read 2026-09-15.
 """
-# Model's fitted scale (NOT the bench machine's physical VGA-0 timing,
-# 312 x 1792). Every earlier row and shipping coefficient uses this
-# scale - do not "correct" it, that would under-price the model.
+# Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
+# Every row and shipping coefficient uses this scale.
 LINES_PER_FRAME = 311
 T_PER_LINE = 1824
 
