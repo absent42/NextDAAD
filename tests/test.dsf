@@ -314,15 +314,16 @@ LS256 111     verb
 ; graduated into the production decoder. The revival measures the
 ; SHIPPING routines instead of prototypes, so the rows answer decode
 ; questions the player actually has. Four verbs on the last of the old
-; 102-116 block plus NXBX at 119 and NXBG at 120; the standalone modes
-; share EXTERN vector 12 (debug.asm's nxb_trampoline -> video.asm's
-; nxb_entry) with the mode in flag 250, and NXBD rides the PLAYER
-; because its rows need a live armed direct-serve session.
+; 102-116 block plus NXBX, NXBG and NXBT at 119, 120 and 122; the
+; standalone modes share EXTERN vector 12 (debug.asm's nxb_trampoline ->
+; video.asm's nxb_entry) with the mode in flag 250, and NXBD rides the
+; PLAYER because its rows need a live armed direct-serve session.
 ;   NXBO - mode 2, op dispatch envelope (8 rows)
 ;   NXBC - mode 3, COPY kernel size ladder (9 rows)
 ;   NXBK - mode 4, fill crossover + DMA DI window (5 rows)
 ;   NXBX - mode 5, COPY path pair ladder (13 rows)
 ;   NXBG - mode 6, gapped path pairs and chunk rows (17 rows)
+;   NXBT - mode 8, rows at a simulated threshold of 59 (11 rows)
 ;   NXBD - flag 248 + GFX 10 13: the direct-serve transport
 ;          breakdown against 010.VID (6 rows). NEEDS -VidLong staged.
 ;          Playback is REPLACED by the bench - nothing plays.
@@ -335,6 +336,7 @@ NXBK  114     verb
 NXBD  115     verb
 NXBX  119     verb
 NXBG  120     verb
+NXBT  122     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -1082,6 +1084,10 @@ $pictureOK
                 DONE
 
 > NXBG    _     LET     250 6
+                EXTERN  0 12
+                DONE
+
+> NXBT    _     LET     250 8
                 EXTERN  0 12
                 DONE
 
