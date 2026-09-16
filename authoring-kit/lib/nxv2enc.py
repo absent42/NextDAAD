@@ -373,8 +373,8 @@ assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 # TMODEL_COEFFS - Z80N decode+fetch T-state costs. Silicon-settled against
 # the optimized decode kernels; each entry cites its bench row. Re-fit
 # 2026-09-15 (NXBO/NXBC/NXBK rows, VGA-0, core 3.02.04) after the
-# chunk-loop change; the model still owes a per-chunk term on a
-# sub-threshold trailing chunk (silicon C256 +212 T, F256 +540 T).
+# chunk-loop change. A sub-threshold trailing chunk IS charged, per op:
+# copy_dma_tail_t/copy_dma_tail8_t and fill_dma_tail_t/fill_dma_tail8_t.
 #
 # Envelope convention: dispatch envelopes are measured on real ops that
 # already carry their count byte, so the count-byte parse is FOLDED INTO
@@ -419,10 +419,12 @@ TMODEL_COEFFS = {
     "fill_dma_path_t": -71.7,  # T/op an 8-bit RUN carries over t_op_run on
                                 #   the DMA branch, beyond fill_dma_setup
                                 #   [silicon NXBO F071, 2026-09-15]. NEGATIVE
-                                #   for the same reason as copy_dma_path_t:
-                                #   bailing out of the fast handler costs
-                                #   less than the fast handler's own
-                                #   intercept. 8-bit-operand ops only
+                                #   because bailing out of the fast handler
+                                #   costs less than the fast handler's own
+                                #   intercept. fill_dma_setup is measured,
+                                #   not held, so unlike copy_dma_path_t this
+                                #   term nets nothing else. 8-bit-operand
+                                #   ops only
     "fill_dma_tail_t": 399.0,  # T/op for a sub-threshold TAIL that follows at
                                 #   least one DMA chunk, 16-BIT-operand ops
                                 #   [silicon NXBK F256]: the 240 B cap makes a
@@ -441,7 +443,8 @@ TMODEL_COEFFS = {
                                 #   envelope over the same unmeasured split
     "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
                                 #   audio-safety cap as copy_dma_chunk - the
-                                #   player clips both through vid_chunk_dst,
+                                #   player clips both through
+                                #   vid_chunk_dst_flat/_gap,
                                 #   so these two must move together. Historic
                                 #   name - it is a chunk size, not a
                                 #   threshold; the threshold is run_dma_min
@@ -463,17 +466,19 @@ TMODEL_COEFFS = {
                                 #   player
     "copy_dma_path_t": -227.9, # T/op an 8-bit COPY carries over t_op_copy
                                 #   on the DMA branch, beyond copy_dma_setup
-                                #   [silicon NXBC C081, 2026-09-15]. NEGATIVE
-                                #   because copy_dma_setup is held at its
-                                #   pre-change value, so this term absorbs the
-                                #   chunk-loop saving - the split between the
-                                #   two is not separable from these rows.
-                                #   Charged once per op in _copy_t's DMA
-                                #   branch, and ONLY on 8-bit-operand ops: a
-                                #   >= 256 B op has no fast handler to bail
-                                #   out of, so it pays the measured
-                                #   slow-parser entry (t_skip16 - t_skip)
-                                #   instead
+                                #   [silicon NXBC C081, 2026-09-15], placed
+                                #   against the HELD copy_dma_setup. NEGATIVE
+                                #   for two reasons: about -210 cancels the
+                                #   hold's over-charge (the one-chunk rows
+                                #   measure the setup at 881.7), and the
+                                #   other ~-18 is fill_dma_path_t's reason -
+                                #   bailing out of the fast handler costs
+                                #   less than its own intercept. Charged once
+                                #   per op in _copy_t's DMA branch, ONLY on
+                                #   8-bit-operand ops: a >= 256 B op has no
+                                #   fast handler to bail out of, so it pays
+                                #   the measured slow-parser entry
+                                #   (t_skip16 - t_skip) instead
     "copy_dma_tail_t": 210.7,  # T/op for a sub-threshold TAIL that follows at
                                 #   least one DMA chunk, 16-BIT-operand ops
                                 #   [silicon NXBC C256 / NXBK K256]. FITTED
@@ -482,40 +487,31 @@ TMODEL_COEFFS = {
                                 #   210.2 T over-charge with the opposite sign
                                 #   - re-fit it if the setup ever moves
     "copy_dma_tail8_t": 489.9, # the same tail on an 8-BIT-operand COPY, where
-                                #   copy_dma_path_t has already cancelled the
-                                #   held setup's over-charge (which is why
-                                #   C081/C103 land at +0.3 T), so this term is
-                                #   the bare chunk-loop iteration. An ENVELOPE,
-                                #   not a fit: C161 measures the 16-bit entry
-                                #   and that iteration only as a SUM, so the
-                                #   iteration is 420.8 if the entry delta is
-                                #   the full t_skip16 - t_skip and 489.9 if it
-                                #   is zero, and the dearer end is taken here
-                                #   exactly as fill_dma_tail8_t takes it. Cost
-                                #   if the entry delta is really 69.1: 241-255 B
-                                #   copies over-price 2.3-2.5%, under 0.1% of a
-                                #   25 fps frame at the 2.5-10.2 tail-carrying
-                                #   copy ops a frame measures. Measure the
-                                #   entry delta and this collapses to 420.8
+                                #   copy_dma_path_t already cancels the held
+                                #   setup's over-charge. An ENVELOPE, not a
+                                #   fit: C161 measures the 16-bit entry and
+                                #   this iteration only as a SUM (420.8 at an
+                                #   entry delta of t_skip16 - t_skip, 489.9 at
+                                #   zero); the dearer end is taken, as in
+                                #   fill_dma_tail8_t - at most +2.5% on
+                                #   241-255 B copies. Measuring the entry
+                                #   delta collapses it to 420.8
     "copy_dma_per_b": 5.10,    # T/byte mem-to-mem DMA COPY body [silicon
                                 #   NXBC (C103-C081)/22, unarmed, 2026-09-15;
                                 #   the armed tax is carried globally by
                                 #   audio_factor]
     "copy_dma_setup": 1091.8,  # T per DMA copy chunk [silicon CD1..CD4 chunk
-                                #   solve: the three chunk differences give
-                                #   1091.8 / 1091.6 / 1091.9]. HELD although
-                                #   the 2026-09-15 ONE-chunk rows (C161+C256
-                                #   against C081/C103) measure 881.7 T: the
-                                #   per-chunk cost RISES with op length. The
-                                #   cap-256 rows, adjusted by the 283.8
-                                #   T/chunk loop saving measured between the
-                                #   two sittings, imply 819 T (K256, 256 B),
-                                #   918 T (CD3, 1024 B) and 1078 T (KF,
-                                #   43008 B). At 1091.8 the model prices the
-                                #   43008 B keyframe class +0.8% over its
-                                #   row; at 881.7 it would price it 8.0%
-                                #   UNDER. Re-solve only against a long-op
-                                #   DMA copy row taken on this player
+                                #   solve, 1091.6-1091.9]. HELD although the
+                                #   2026-09-15 one-chunk rows measure 881.7:
+                                #   per-chunk cost rises with op length
+                                #   (change-adjusted 819 / 918 / 1078 T at
+                                #   256 / 1024 / 43008 B); at 881.7 the
+                                #   43008 B keyframe class prices 8.0% UNDER,
+                                #   at 1091.8 +0.8% over.
+                                #   Re-solve only against a long-op DMA copy
+                                #   row on this player, and TOGETHER with
+                                #   copy_dma_path_t and copy_dma_tail_t,
+                                #   which are fitted against this value
     "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player
                                 #   clips every copy chunk to (vid_chunk_all);
@@ -577,10 +573,12 @@ TMODEL_COEFFS = {
 # 1/height).
 # ---------------------------------------------------------------------
 # HELD across the 2026-09-15 re-fit: R is a ratio against the model, so
-# both sides moved together. Confirmed by whole-clip PLAY vs NOM on
-# hardware (VGA-0, core 3.02.04): 5/9 comparable clips faster, 3 equal,
-# VPLY4 reproducibly 2 fields slower (read as pacing quantisation, not
-# a regression).
+# both sides moved together. Sitting 1 (pal9u encodes on the changed
+# player, whole-clip PLAY vs NOM, VGA-0, core 3.02.04) shows the PLAYER
+# got faster: 5/9 comparable clips faster, 3 equal, VPLY4 reproducibly 2
+# fields slower (read as pacing quantisation, not a regression). It
+# cannot show the hold keeps its margin at pal9v density - the
+# confirmation sitting confirms that (pending).
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.19,   # worst dense-cluster measured R (silicon
@@ -1079,13 +1077,15 @@ def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
 #
 # Split-rule decision (silicon rows, VGA-0, core 3.02.04, 2026-09-15): an
 # op with a sub-threshold remainder after full DMA chunks is NOT split
-# into two ops, for copies or fills. Copy: tail 210.7 against t_op_copy
-# 303.7 - the decode-loop change removed the reason (ceiling +0.207% of
-# decode net of wire on one clip, -0.001% on the other). Fill: tail 468.1
-# exceeds t_op_run 367.4 by 100.7, but zero splittable RUN ops occurred
-# in 200 encoded frames across two sources, and splitting is an EMISSION
-# decision, so skipping it can never under-price a frame - the only
-# downside is forgone decode time, never a silent failure.
+# into two ops, for copies or fills - decided on measured worth, not on
+# the tail terms. Copy: the 16-bit tail 210.7 is under t_op_copy 303.7,
+# but the 8-bit tail 489.9 exceeds it by 186 T (+185.8 T at L=250);
+# splitting's measured ceiling is +0.207% of decode net of wire on BBB,
+# -0.001% on Sintel. Fill: tail 468.1 exceeds t_op_run 367.4 by 100.7,
+# but zero splittable RUN ops occurred in 200 encoded frames across two
+# sources.
+# Splitting is an EMISSION decision, so skipping it can never under-price
+# a frame - the only downside is forgone decode time.
 # ---------------------------------------------------------------------
 
 def _chunk_lengths(n):
@@ -1155,8 +1155,9 @@ def _fill_t(L):
     select rule - the same shape as _copy_t.
 
     The player (src/video.asm vid_run_body) clips every fill chunk to
-    NXV2_DMA_CHUNK (240) via vid_chunk_dst, then takes vid_fill_dma when
-    the chunk is >= NXV2_RUN_DMA_MIN (71) and vid_fill_cpu otherwise.
+    NXV2_DMA_CHUNK (240) via vid_chunk_dst_flat/_gap, then takes
+    vid_fill_dma when the chunk is >= NXV2_RUN_DMA_MIN (71) and
+    vid_fill_cpu otherwise.
     So the full 240 B chunks are DMA and only the trailing remainder is
     re-selected - a 300 B fill is one DMA chunk plus a 60 B CPU tail,
     NOT two DMA setups. The model must predict what the player DOES.
