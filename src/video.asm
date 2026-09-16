@@ -239,6 +239,7 @@ vf_op_copy8:
     cp $5F
     jr nc, .slow
     ld a, c
+.thr equ $+1                     ; operand patched by DEBUG nxb_run_table
     cp NXV2_COPY_DMA_MIN
     jr nc, .slow
     call vid_copy_ldi
@@ -328,8 +329,9 @@ vid_dec_abort_pos:               ; entry with vidErrPos already stored
     call nxb_reclaim             ; abort chain never returns to the
     pop af                       ; bench, so its banks/audEnable/MMU
                                  ; state have to come back HERE. Whole
-                                 ; routine is a 7-cycle no-op unless a
-                                 ; standalone bench row is live.
+                                 ; routine is two shipping-value stores
+                                 ; and a no-op unless a standalone
+                                 ; bench row is live.
  ENDIF
     ld sp, (vidDecSp)
     jp vid_run.decfail
@@ -693,7 +695,9 @@ vid_copy_body:
     ld (vidRemain), hl
     pop hl
     ld a, c                      ; B is 0 by vid_chunk_all's post-
-    cp NXV2_COPY_DMA_MIN         ; condition (cap <= 255)
+                                 ; condition (cap <= 255)
+.thr equ $+1                     ; operand patched by DEBUG nxb_run_table
+    cp NXV2_COPY_DMA_MIN
     jr nc, .dma
     call vid_copy_ldi
     jr .seg
@@ -3725,8 +3729,10 @@ vid_tl_report_ret:
 ;   3 COPY kernel across the size distribution real streams produce
 ;     (census: COPY p50 = 1-5 B, 61-99% of COPY ops are 1-8 B).
 ;   4 fill crossover + the DMA DI-window margin.
+;   5 COPY path pairs (fast-handler LDI vs body + DMA) for
+;     NXV2_COPY_DMA_MIN.
 ;
-; STANDALONE MODES (2-4) synthesize their op streams into a pool bank
+; STANDALONE MODES (2-5) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
 ; display state is disturbed and no session is needed. Streams are
 ; sized so the source cursor never reaches $DF00 and the dest cursor
@@ -3740,11 +3746,13 @@ NXB_ROW0         equ 8       ; bench rows start here (the timeline
                              ; report owns 24-29)
 NXB_LINE_MSB     equ $1E     ; active video line, bit 8
 NXB_LINE_LSB     equ $1F     ; active video line, bits 7:0
+NXB_DMA_FORCE    equ $80     ; row opcode flag: COPY select operands = 1
+                             ; for the row (opcodes are $00-$3C)
 
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
-; Modes 2/3/4 run standalone; mode 1 is NOT reachable here - the
+; Modes 2-5 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
 ; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
 ; Corrupts everything.
@@ -3771,6 +3779,9 @@ nxb_entry:
     jr z, .go
     ld hl, nxbTabKrn
     cp 4
+    jr z, .go
+    ld hl, nxbTabThr
+    cp 5
     jr z, .go
     ld hl, nxbTabOpd            ; unknown mode: the dispatch table
 .go:
@@ -3882,13 +3893,18 @@ nxb_ops_restore:
 ; Shared standalone reclaim - called on the CLEAN exit above and from
 ; vid_dec_abort_pos on a structural fault (review fix). nxbBankCnt is
 ; the ownership flag and is zeroed here, so the routine is idempotent
-; and a plain video session's own abort runs it as a 7-cycle no-op.
+; and a plain video session's own abort runs it as a no-op (the COPY
+; select operands are rewritten ahead of the ownership test, so the
+; clean, no-bank and abort exits all leave NXV2_COPY_DMA_MIN).
 ; The abort case ALSO has to stage vidSvMmu6/vidSvMmu7: the standalone
 ; modes never went through vid_run, so those cells hold a previous
 ; session's values (or none), and vid_run.restore_tail - which the
 ; abort chain reaches - would otherwise map two arbitrary pages and
 ; leave MMU7 off VID_PAGE for the ret that follows.
 nxb_reclaim:
+    ld a, NXV2_COPY_DMA_MIN
+    ld (vf_op_copy8.thr), a
+    ld (vid_copy_body.thr), a
     ld a, (nxbBankCnt)
     or a
     ret z
@@ -3923,7 +3939,9 @@ nxb_term:
 ; Row table walker. HL = table; entries are 8 bytes:
 ;   dw tag, db opcode, dw count, db ops-per-rep, dw reps
 ; terminated by a zero tag pointer. Builds the stream once per row
-; (untimed), then runs the row.
+; (untimed), then runs the row. Every row stores both COPY select
+; operands (vf_op_copy8.thr, vid_copy_body.thr) untimed: 1 when the
+; opcode carries NXB_DMA_FORCE, else NXV2_COPY_DMA_MIN.
 ; ---------------------------------------------------------------------
 nxb_run_table:
     ld a, (hl)
@@ -3939,7 +3957,16 @@ nxb_run_table:
     pop hl
     ld a, (hl)
     inc hl
+    ld c, NXV2_COPY_DMA_MIN
+    cp NXB_DMA_FORCE
+    jr c, .ship
+    sub NXB_DMA_FORCE
+    ld c, 1                      ; every nonzero count: body + DMA
+.ship:
     ld (nxbOpc), a
+    ld a, c
+    ld (vf_op_copy8.thr), a
+    ld (vid_copy_body.thr), a
     ld e, (hl)
     inc hl
     ld d, (hl)
@@ -4095,7 +4122,7 @@ nxb_at:
 ; bracket only after nxbL1 has been read; the TOK tail times nothing),
 ; so no row's raster delta can see either of them. Mapping a different
 ; page into the SAME slot is timing-neutral in any case.
-; The standalone rows (NXBO/NXBC/NXBK) never borrowed MMU3 -
+; The standalone rows (NXBO/NXBC/NXBK/NXBX) never borrowed MMU3 -
 ; nxb_ops_setup zeroes vidDirect, which gates both halves to a no-op.
 ; nxbSvTm3 is captured hot in vid_run; nxbSvAud3 in nxb_ds_rows.
 ; Corrupts AF; preserves BC, DE, HL.
@@ -4540,6 +4567,77 @@ nxbTabKrn:
     dw 96
     dw 0
 
+; GROUP 5 - COPY path pairs, run back to back. Lnnn: shipping select;
+; Dnnn: NXB_DMA_FORCE (D081 unforced, as C081). Forces the flat set
+; only - vg_op_copy8's operand is not patched.
+nxbTabThr:
+    dw nxbTagL048
+    db VOP_COPY8
+    dw 48
+    db 157
+    dw 64
+    dw nxbTagD048
+    db VOP_COPY8 | NXB_DMA_FORCE
+    dw 48
+    db 157
+    dw 64
+    dw nxbTagL056
+    db VOP_COPY8
+    dw 56
+    db 136
+    dw 64
+    dw nxbTagD056
+    db VOP_COPY8 | NXB_DMA_FORCE
+    dw 56
+    db 136
+    dw 64
+    dw nxbTagL060
+    db VOP_COPY8
+    dw 60
+    db 127
+    dw 64
+    dw nxbTagD060
+    db VOP_COPY8 | NXB_DMA_FORCE
+    dw 60
+    db 127
+    dw 64
+    dw nxbTagL064
+    db VOP_COPY8
+    dw 64
+    db 119
+    dw 64
+    dw nxbTagD064
+    db VOP_COPY8 | NXB_DMA_FORCE
+    dw 64
+    db 119
+    dw 64
+    dw nxbTagL072
+    db VOP_COPY8
+    dw 72
+    db 106
+    dw 64
+    dw nxbTagD072
+    db VOP_COPY8 | NXB_DMA_FORCE
+    dw 72
+    db 106
+    dw 64
+    dw nxbTagL080
+    db VOP_COPY8
+    dw 80
+    db 96
+    dw 64
+    dw nxbTagD080
+    db VOP_COPY8 | NXB_DMA_FORCE
+    dw 80
+    db 96
+    dw 64
+    dw nxbTagD081
+    db VOP_COPY8
+    dw 81
+    db 95
+    dw 64
+    dw 0
+
 ; zxnDMA WR1/WR2/WR5 one-time program - the VID_PAGE-local twin of
 ; vidDmaInit (VID_PAGE2, unreachable from here). Byte-for-byte the
 ; same six bytes; if that block ever changes, this one moves with it.
@@ -4589,6 +4687,19 @@ nxbTagF070: db "F070", 0
 nxbTagF071: db "F071", 0
 nxbTagF256: db "F256", 0
 nxbTagK256: db "K256", 0
+nxbTagL048: db "L048", 0
+nxbTagD048: db "D048", 0
+nxbTagL056: db "L056", 0
+nxbTagD056: db "D056", 0
+nxbTagL060: db "L060", 0
+nxbTagD060: db "D060", 0
+nxbTagL064: db "L064", 0
+nxbTagD064: db "D064", 0
+nxbTagL072: db "L072", 0
+nxbTagD072: db "D072", 0
+nxbTagL080: db "L080", 0
+nxbTagD080: db "D080", 0
+nxbTagD081: db "D081", 0
 
 nxbMode:     db 0
 nxbRow:      db 0
