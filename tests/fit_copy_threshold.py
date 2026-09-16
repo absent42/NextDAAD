@@ -10,9 +10,9 @@ ROWS.txt is the NXBX screen as transcribed, one row per line:
 
 Fits a least-squares line T(L) to the L rows (fast-handler LDI) and to
 the D rows (body + DMA, D081 included), then prints both lines, their
-crossover L*, the threshold it implies (smallest integer L >= L*), each
-row against the model, and any pair whose measured order contradicts
-the lines.
+crossover L* (warned when outside the measured L span), the threshold it
+implies (smallest integer L >= L*), each row against the model, and any
+pair whose measured order contradicts the lines.
 """
 import math
 import re
@@ -73,6 +73,10 @@ def fit(rows):
     crossover = (c - a) / (b - s) if b != s else None
     threshold = (math.ceil(crossover - 1e-9)
                  if crossover is not None and s < b else None)
+    # Both lines are measured only where the two L ranges overlap.
+    spans = [[GEOMETRY[tag][0] for tag in t if GEOMETRY[tag][3] == p] for p in ("ldi", "dma")]
+    span = (max(min(x) for x in spans), min(max(x) for x in spans))
+    extrapolated = crossover is not None and not span[0] <= crossover <= span[1]
     contradictions = []
     for tag, (L, _o, _r, path) in GEOMETRY.items():
         pair = "D" + tag[1:]
@@ -83,14 +87,18 @@ def fit(rows):
         if measured * fitted < 0:
             contradictions.append((L, measured, fitted))
     return {"t": t, "ldi": lines["ldi"], "dma": lines["dma"],
-            "crossover": crossover, "threshold": threshold,
-            "contradictions": contradictions}
+            "crossover": crossover, "threshold": threshold, "span": span,
+            "extrapolated": extrapolated, "contradictions": contradictions}
 
 
 def report(rows, warnings, res):
-    model = bench.nxbx_predicted(enc)
     for w in warnings:
         print(f"WARNING {w}")
+    try:
+        model = bench.nxbx_predicted(enc)
+    except AssertionError as exc:
+        model = None
+        print(f"model unavailable: {exc}")
     print(f"NXBX rows, T/op = (F*{bench.LINES_PER_FRAME} + D)*{bench.T_PER_LINE}/(R*O)")
     print("  tag    L  path      O   R     F     D   measured      model      diff")
     for tag, L, _o, _r, path in bench.NXBX_ROWS:
@@ -99,8 +107,9 @@ def report(rows, warnings, res):
             continue
         o, r, f, d = rows[tag]
         m = res["t"][tag]
-        print(f"  {tag} {L:>4}  {path}  {o:>5} {r:>3} {f:>5} {d:>5} {m:>10.2f} "
-              f"{model[tag]:>10.2f} {m - model[tag]:>+9.2f}")
+        cols = (f"{model[tag]:>10.2f} {m - model[tag]:>+9.2f}" if model
+                else f"{'n/a':>10} {'n/a':>9}")
+        print(f"  {tag} {L:>4}  {path}  {o:>5} {r:>3} {f:>5} {d:>5} {m:>10.2f} {cols}")
     for path, name in (("ldi", "L"), ("dma", "D")):
         icpt, slope, resid = res[path]
         worst = max(abs(dv) for _, dv in resid)
@@ -110,6 +119,9 @@ def report(rows, warnings, res):
         print("crossover: none, the lines are parallel")
     else:
         print(f"crossover L* = {res['crossover']:.2f} B")
+    if res["extrapolated"]:
+        print(f"WARNING L* is outside the measured L span {res['span'][0]}-{res['span'][1]} B"
+              " (extrapolated)")
     shipping = enc.TMODEL_COEFFS["copy_dma_min"]
     if res["threshold"] is None:
         print("implied threshold: none, the D slope is not below the L slope")

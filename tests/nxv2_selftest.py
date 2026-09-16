@@ -1341,11 +1341,22 @@ def t10_copy_threshold_fit():
         expect(res["threshold"] == math.ceil(exact),
                f"threshold {res['threshold']}, lines imply {math.ceil(exact)}")
         expect(not res["contradictions"], f"exact lines flagged {res['contradictions']}")
+        expect(res["span"] == (48, 80) and not res["extrapolated"],
+               f"L* {exact:.2f} is inside the measured span, got {res['span']} "
+               f"extrapolated={res['extrapolated']}")
+    # A crossover below the measured span is flagged as extrapolated.
+    res = fct.fit(fct.parse_rows(_nxbx_screen((300.0, 20.0), (700.0, 6.0))[0])[0])
+    expect(res["extrapolated"] and res["crossover"] < 48,
+           f"L* {res['crossover']:.2f} outside 48-80 must be flagged extrapolated")
     # Parser: 0= for O=, a 5-digit D keeps its first 4 (D048 is also a
     # negative D), fields match what the generator wrote.
     text, want = _nxbx_screen((303.7, 19.80), (1167.6, 5.10),
                               zero_tag="L056", residue_tag="D048")
-    expect("L056 0=" in text and "D048 " in text, "generator did not write the variants")
+    d048 = next(line for line in text.splitlines() if line.startswith("D048 "))
+    dfield = d048.rsplit("D=", 1)[1]
+    expect("L056 0=" in text and len(dfield) == 5
+           and all(ch in "0123456789ABCDEF" for ch in dfield),
+           f"generator did not write the variants (D048 line {d048!r})")
     rows, warnings = fct.parse_rows(text)
     expect(not warnings, f"variants must parse without warnings, got {warnings}")
     expect(rows == want, f"parsed rows differ:\n  {rows}\n  {want}")
