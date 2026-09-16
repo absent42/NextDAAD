@@ -1076,6 +1076,16 @@ def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
 # a single op's count field is CHUNKED into consecutive ops of the same
 # kind (matches _chunk_lengths below) - correctness never depends on
 # the 64-byte DMA threshold, only on the count-field width.
+#
+# Split-rule decision (silicon rows, VGA-0, core 3.02.04, 2026-09-15): an
+# op with a sub-threshold remainder after full DMA chunks is NOT split
+# into two ops, for copies or fills. Copy: tail 210.7 against t_op_copy
+# 303.7 - the decode-loop change removed the reason (ceiling +0.207% of
+# decode net of wire on one clip, -0.001% on the other). Fill: tail 468.1
+# exceeds t_op_run 367.4 by 100.7, but zero splittable RUN ops occurred
+# in 200 encoded frames across two sources, and splitting is an EMISSION
+# decision, so skipping it can never under-price a frame - the only
+# downside is forgone decode time, never a silent failure.
 # ---------------------------------------------------------------------
 
 def _chunk_lengths(n):
