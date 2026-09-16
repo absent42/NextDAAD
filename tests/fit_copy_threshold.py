@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""tests/fit_copy_threshold.py - NXV2_COPY_DMA_MIN from NXBX bench rows.
+"""tests/fit_copy_threshold.py - NXV2_COPY_DMA_MIN from NXBX/NXBG bench rows.
 
 Usage: python tests/fit_copy_threshold.py ROWS.txt
 
-ROWS.txt is the NXBX screen as transcribed, one row per line:
+ROWS.txt is the NXBX (and optionally NXBG) screen as transcribed, one row
+per line:
     L048 O=9D R=0040 F=0013 D=003E
+    GL56 O=6A R=0040 F=0014 D=FFB0
 0= parses as O=; a D= field longer than 4 hex digits keeps its first 4
-(screen residue). Lines that are not NXBX rows are ignored.
+(screen residue). Lines that are not bench rows this script knows are
+ignored.
 
-Fits a least-squares line T(L) to the L rows (fast-handler LDI) and to
-the D rows (body + DMA, D081 included), then prints both lines, their
-crossover L* (warned when outside the measured L span), the threshold it
-implies (smallest integer L >= L*), each row against the model, and any
-pair whose measured order contradicts the lines.
+Fits a least-squares line T(L) to the flat L rows (fast-handler LDI) and
+to the flat D rows (body + DMA, D081 included) exactly as before, and
+separately to the gapped GL/GD rows restricted to L in 56/60/72/80 (GL48/
+GD48/GL64/GD64 divide 192 - every bench rep starts at column 0 with
+uniform ops, so those two rows measure an alignment artifact rather than
+the arbitrary column positions real streams land on; GD81 has no paired
+GL row and is reported but not fitted). GC03/GK56/GF71/GF56 are not L/D
+pair rows and are out of this script's scope. Prints both lines, both
+crossovers L* (warned when outside the measured L span), the threshold
+each implies (smallest integer L >= L*), each row against the model, and
+any pair whose measured order contradicts its lines.
 """
 import math
 import re
@@ -26,8 +35,17 @@ import nxv2enc as enc
 import nxv2_bench_rows as bench
 from fit_tmodel import _lsq
 
-GEOMETRY = {tag: (L, o, r, path) for tag, L, o, r, path in bench.NXBX_ROWS}
-ROW_RE = re.compile(r"^\s*([LD]\d{3})\s+[O0]=([0-9A-F]{2})\s+R=([0-9A-F]{4})"
+FLAT_ROWS = bench.BENCH_TABLES[5]
+GAPPED_ROWS = tuple(r for r in bench.BENCH_TABLES[6] if r[0][:2] in ("GL", "GD"))
+FLAT_TAGS = {r[0] for r in FLAT_ROWS}
+GAPPED_TAGS = {r[0] for r in GAPPED_ROWS}
+GAPPED_FIT_L = (56, 60, 72, 80)
+GAPPED_SKIP_L = (48, 64)   # L divides 192: excluded, alignment artifact
+
+GEOMETRY = {tag: (L, o, r, bench.row_path(tag))
+            for tag, _kind, L, o, r, _thr, _geo in FLAT_ROWS + GAPPED_ROWS}
+
+ROW_RE = re.compile(r"^\s*([A-Z0-9]{4})\s+[O0]=([0-9A-F]{2})\s+R=([0-9A-F]{4})"
                     r"\s+F=([0-9A-F]{4})\s+D=([0-9A-F]{4,})", re.IGNORECASE)
 
 
@@ -43,7 +61,7 @@ def parse_rows(text):
             continue
         tag = m.group(1).upper()
         if tag not in GEOMETRY:
-            warnings.append(f"line {n}: {tag} is not an NXBX row, ignored")
+            warnings.append(f"line {n}: {tag} is not a known bench row, ignored")
             continue
         o, r, f = (int(m.group(i), 16) for i in (2, 3, 4))
         d = int(m.group(5)[:4], 16)
@@ -58,13 +76,16 @@ def parse_rows(text):
     return rows, warnings
 
 
-def fit(rows):
-    """Measured T/op per row, both lines, crossover, implied threshold and
-    contradicting pairs. ValueError when a set has under two distinct L."""
-    t = {tag: bench.t_per_op(*rows[tag]) for tag in rows}
+def _fit_surface(t, tags, fit_l, pair_of):
+    """Least-squares L/D lines and crossover for one surface's rows
+    present in t. fit_l, given, restricts the fitted points to those L
+    values (rows outside it are still measured, just not fitted).
+    ValueError when a path has under two distinct fitted L."""
     lines = {}
     for path in ("ldi", "dma"):
-        pts = [(GEOMETRY[tag][0], t[tag]) for tag in t if GEOMETRY[tag][3] == path]
+        pts = [(GEOMETRY[tag][0], t[tag]) for tag in t
+               if tag in tags and GEOMETRY[tag][3] == path
+               and (fit_l is None or GEOMETRY[tag][0] in fit_l)]
         if len({x for x, _ in pts}) < 2:
             raise ValueError(f"{path} rows need at least two distinct L, have {len(pts)}")
         lines[path] = _lsq(pts)
@@ -73,65 +94,102 @@ def fit(rows):
     crossover = (c - a) / (b - s) if b != s else None
     threshold = (math.ceil(crossover - 1e-9)
                  if crossover is not None and s < b else None)
-    # Both lines are measured only where the two L ranges overlap.
-    spans = [[GEOMETRY[tag][0] for tag in t if GEOMETRY[tag][3] == p] for p in ("ldi", "dma")]
+    spans = [[GEOMETRY[tag][0] for tag in t if tag in tags and GEOMETRY[tag][3] == p
+              and (fit_l is None or GEOMETRY[tag][0] in fit_l)] for p in ("ldi", "dma")]
     span = (max(min(x) for x in spans), min(max(x) for x in spans))
     extrapolated = crossover is not None and not span[0] <= crossover <= span[1]
     contradictions = []
-    for tag, (L, _o, _r, path) in GEOMETRY.items():
-        pair = "D" + tag[1:]
-        if path != "ldi" or tag not in t or pair not in t:
+    for tag in tags:
+        if tag not in t or GEOMETRY[tag][3] != "ldi":
             continue
+        pair = pair_of(tag)
+        if pair not in t or pair not in tags:
+            continue
+        L = GEOMETRY[tag][0]
         measured = t[tag] - t[pair]
         fitted = (a + b * L) - (c + s * L)
         if measured * fitted < 0:
             contradictions.append((L, measured, fitted))
-    return {"t": t, "ldi": lines["ldi"], "dma": lines["dma"],
-            "crossover": crossover, "threshold": threshold, "span": span,
-            "extrapolated": extrapolated, "contradictions": contradictions}
+    return {"ldi": lines["ldi"], "dma": lines["dma"], "crossover": crossover,
+            "threshold": threshold, "span": span, "extrapolated": extrapolated,
+            "contradictions": contradictions}
+
+
+def fit(rows):
+    """Measured T/op per row, both lines, crossover, implied threshold and
+    contradicting pairs for the flat surface (top-level keys, unchanged
+    shape), plus a best-effort gapped fit under res["gapped"]. ValueError
+    when the FLAT set has under two distinct L on either path - most
+    sittings carry NXBX rows only, so the gapped fit is not required to
+    succeed; when it can't (too few gapped rows), res["gapped"] holds
+    {"error": ...} instead of raising."""
+    t = {tag: bench.t_per_op(*rows[tag]) for tag in rows}
+    out = _fit_surface(t, FLAT_TAGS, None, lambda tag: "D" + tag[1:])
+    out["t"] = t
+    try:
+        out["gapped"] = _fit_surface(t, GAPPED_TAGS, GAPPED_FIT_L,
+                                      lambda tag: "GD" + tag[2:])
+    except ValueError as exc:
+        out["gapped"] = {"error": str(exc)}
+    return out
+
+
+def _report_rows(rows, res, table, name, gapped=False):
+    print(f"{name} rows, T/op = (F*{bench.LINES_PER_FRAME} + D)*{bench.T_PER_LINE}/(R*O)")
+    print("  tag    L  path      O   R     F     D   measured      model      diff  note")
+    for tag, _kind, L, _o, _r, _thr, _geo in table:
+        note = "excluded from the gapped fit (L divides 192)" if gapped and L in GAPPED_SKIP_L else ""
+        path = GEOMETRY[tag][3]
+        if tag not in rows:
+            print(f"  {tag} {L:>4}  {path}  missing  {note}")
+            continue
+        o, r, f, d = rows[tag]
+        m = res["t"][tag]
+        model = bench.row_predicted(enc, tag)
+        print(f"  {tag} {L:>4}  {path}  {o:>5} {r:>3} {f:>5} {d:>5} "
+              f"{m:>10.2f} {model:>10.2f} {m - model:>+9.2f}  {note}")
+
+
+def _report_fit(fit_res, label, line_prefix=""):
+    """label: '' for the flat surface (message text unchanged from the
+    original single-surface script) or 'gapped ' for the gapped surface.
+    line_prefix: '' or 'G' for the L/D line names (L/D vs GL/GD)."""
+    if "error" in fit_res:
+        print(f"no {label}fit: {fit_res['error']}")
+        return
+    for path, name in (("ldi", "L"), ("dma", "D")):
+        icpt, slope, resid = fit_res[path]
+        worst = max(abs(dv) for _, dv in resid)
+        print(f"{line_prefix}{name} line  T = {icpt:.2f} + {slope:.4f} L   "
+              f"({len(resid)} rows, worst residual {worst:.2f} T)")
+    if fit_res["crossover"] is None:
+        print(f"{label}crossover: none, the lines are parallel")
+    else:
+        print(f"{label}crossover L* = {fit_res['crossover']:.2f} B")
+    if fit_res["extrapolated"]:
+        print(f"WARNING {label}L* is outside the measured L span "
+              f"{fit_res['span'][0]}-{fit_res['span'][1]} B (extrapolated)")
+    shipping = enc.TMODEL_COEFFS["copy_dma_min"]
+    if fit_res["threshold"] is None:
+        print(f"implied {label}threshold: none, the D slope is not below the L slope")
+    else:
+        print(f"implied {label}NXV2_COPY_DMA_MIN = {fit_res['threshold']} (shipping {shipping})")
+    pair_name = f"{line_prefix}L-{line_prefix}D" if line_prefix else "L-D"
+    if not fit_res["contradictions"]:
+        print(f"{label}pair order: every measured pair agrees with the lines")
+    for L, measured, fitted in fit_res["contradictions"]:
+        print(f"{label.upper()}CONTRADICTS at L={L}: measured {pair_name} "
+              f"{measured:+.2f} T, lines {pair_name} {fitted:+.2f} T")
 
 
 def report(rows, warnings, res):
     for w in warnings:
         print(f"WARNING {w}")
-    try:
-        model = bench.nxbx_predicted(enc)
-    except AssertionError as exc:
-        model = None
-        print(f"model unavailable: {exc}")
-    print(f"NXBX rows, T/op = (F*{bench.LINES_PER_FRAME} + D)*{bench.T_PER_LINE}/(R*O)")
-    print("  tag    L  path      O   R     F     D   measured      model      diff")
-    for tag, L, _o, _r, path in bench.NXBX_ROWS:
-        if tag not in rows:
-            print(f"  {tag} {L:>4}  {path}  missing")
-            continue
-        o, r, f, d = rows[tag]
-        m = res["t"][tag]
-        cols = (f"{model[tag]:>10.2f} {m - model[tag]:>+9.2f}" if model
-                else f"{'n/a':>10} {'n/a':>9}")
-        print(f"  {tag} {L:>4}  {path}  {o:>5} {r:>3} {f:>5} {d:>5} {m:>10.2f} {cols}")
-    for path, name in (("ldi", "L"), ("dma", "D")):
-        icpt, slope, resid = res[path]
-        worst = max(abs(dv) for _, dv in resid)
-        print(f"{name} line  T = {icpt:.2f} + {slope:.4f} L   "
-              f"({len(resid)} rows, worst residual {worst:.2f} T)")
-    if res["crossover"] is None:
-        print("crossover: none, the lines are parallel")
-    else:
-        print(f"crossover L* = {res['crossover']:.2f} B")
-    if res["extrapolated"]:
-        print(f"WARNING L* is outside the measured L span {res['span'][0]}-{res['span'][1]} B"
-              " (extrapolated)")
-    shipping = enc.TMODEL_COEFFS["copy_dma_min"]
-    if res["threshold"] is None:
-        print("implied threshold: none, the D slope is not below the L slope")
-    else:
-        print(f"implied NXV2_COPY_DMA_MIN = {res['threshold']} (shipping {shipping})")
-    if not res["contradictions"]:
-        print("pair order: every measured pair agrees with the lines")
-    for L, measured, fitted in res["contradictions"]:
-        print(f"CONTRADICTS at L={L}: measured L-D {measured:+.2f} T, "
-              f"lines L-D {fitted:+.2f} T")
+    _report_rows(rows, res, FLAT_ROWS, "NXBX")
+    _report_fit(res, "")
+    print()
+    _report_rows(rows, res, GAPPED_ROWS, "NXBG", gapped=True)
+    _report_fit(res["gapped"], "gapped ", "G")
 
 
 def main(argv=None):

@@ -1308,7 +1308,8 @@ def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None
     lines as the bench reads them; odd rows take the wrap early (negative
     D). shift = {tag: T/op offset}. -> (text, {tag: (o, r, f, d)})."""
     text, want = [], {}
-    for i, (tag, L, o, r, path) in enumerate(bench.NXBX_ROWS):
+    for i, (tag, _kind, L, o, r, _thr, _geo) in enumerate(bench.BENCH_TABLES[5]):
+        path = bench.row_path(tag)
         a, b = line_ldi if path == "ldi" else line_dma
         t = a + b * L + (shift or {}).get(tag, 0.0)
         f, d = divmod(round(t * r * o / bench.T_PER_LINE), bench.LINES_PER_FRAME)
@@ -1319,6 +1320,25 @@ def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None
         oname = "0" if tag == zero_tag else "O"
         text.append(f"{tag} {oname}={o:02X} R={r:04X} F={f:04X} D={dfield}")
     return "\n".join(text) + "\n", want
+
+
+@case(10, "bench tables - explicit-threshold pricing reproduces the shipped anchors")
+def t10_bench_tables():
+    tc = enc.TMODEL_COEFFS
+    ship = tc["copy_dma_min"]
+    tc["copy_dma_min"] = 81
+    try:
+        c080 = bench.PRICERS["C080"](enc)
+        c081 = bench.PRICERS["C081"](enc)
+    finally:
+        tc["copy_dma_min"] = ship
+    expect(abs(bench.row_predicted(enc, "L080") - c080) < 1e-9, "L080 must price as C080 at 81")
+    expect(abs(bench.row_predicted(enc, "D081") - c081) < 1e-9, "D081 must price as C081 at 81")
+    expect(bench.row_predicted(enc, "D060") > bench.row_predicted(enc, "L048"),
+           "a forced DMA row must price on the DMA branch")
+    tags = [r[0] for rows in bench.BENCH_TABLES.values() for r in rows]
+    expect(len(tags) == len(set(tags)) and all(len(t) == 4 for t in tags),
+           "bench tags must be unique and exactly 4 characters")
 
 
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")
@@ -1333,7 +1353,7 @@ def t10_copy_threshold_fit():
         exact = (line_dma[0] - line_ldi[0]) / (line_ldi[1] - line_dma[1])
         text, _ = _nxbx_screen(line_ldi, line_dma)
         rows, warnings = fct.parse_rows(text)
-        expect(not warnings and len(rows) == len(bench.NXBX_ROWS),
+        expect(not warnings and len(rows) == len(bench.BENCH_TABLES[5]),
                f"clean screen must parse whole, warnings {warnings}")
         res = fct.fit(rows)
         expect(abs(res["crossover"] - exact) <= 0.5,
@@ -1375,25 +1395,22 @@ def t10_copy_threshold_fit():
             rc = fct.main([str(path)])
         expect(rc == 0 and "implied NXV2_COPY_DMA_MIN = 59" in out.getvalue(),
                f"CLI run failed (rc {rc}):\n{out.getvalue()}")
-    # Pricing: L080 and D081 are C080 and C081, and the check trips when a
-    # threshold move puts either anchor on the other path.
-    pred = bench.nxbx_predicted(enc)
-    expect(abs(pred["L080"] - bench.PRICERS["C080"](enc)) < 1e-9, "L080 must price as C080")
-    expect(abs(pred["D081"] - bench.PRICERS["C081"](enc)) < 1e-9, "D081 must price as C081")
-    expect(pred["D048"] > pred["L048"] and pred["D080"] < pred["L080"],
-           "forced D rows must price on the DMA path below 81")
-    saved = tc["copy_dma_min"]
+    # Pricing: L080 and D081 are C080 and C081 at their own select value.
+    # The anchor-trip check on a moving copy_dma_min is t10_bench_tables'
+    # job now - row_predicted prices each row at its own thr, so a shipped-
+    # constant move can never be observed through it by design.
+    ship = tc["copy_dma_min"]
+    tc["copy_dma_min"] = 81
     try:
-        for thr, anchor in ((60, "L080"), (82, "D081")):
-            tc["copy_dma_min"] = thr
-            try:
-                bench.nxbx_predicted(enc)
-            except AssertionError as exc:
-                expect(anchor in str(exc), f"copy_dma_min {thr} tripped the wrong anchor: {exc}")
-            else:
-                raise AssertionError(f"copy_dma_min {thr} must trip the {anchor} anchor")
+        c080 = bench.PRICERS["C080"](enc)
+        c081 = bench.PRICERS["C081"](enc)
     finally:
-        tc["copy_dma_min"] = saved
+        tc["copy_dma_min"] = ship
+    expect(abs(bench.row_predicted(enc, "L080") - c080) < 1e-9, "L080 must price as C080")
+    expect(abs(bench.row_predicted(enc, "D081") - c081) < 1e-9, "D081 must price as C081")
+    expect(bench.row_predicted(enc, "D048") > bench.row_predicted(enc, "L048")
+           and bench.row_predicted(enc, "D080") < bench.row_predicted(enc, "L080"),
+           "forced D rows must price on the DMA path below 81")
 
 
 @case(10, "copy/fill T model - DMA terms gated on the PLAYER's derived kernel thresholds")
@@ -1620,6 +1637,60 @@ def t10_copy_dma_model():
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
+
+
+@case(10, "copy census - op walk round-trip, threshold_cost lines, COPY16 model pricing")
+def t10_copy_census():
+    import nxv2_copy_census as census_mod
+    # ops_of_payload must return exactly what was put in, skips included.
+    payload = (enc.op_skip(5) + enc.op_run(10, 7) + enc.op_copy(bytes(range(20)))
+               + enc.op_skip(300) + enc.op_run(300, 3) + enc.op_copy(bytes(400))
+               + bytes([enc.OP_FEND]))
+    got = list(census_mod.ops_of_payload(payload))
+    want = [(enc.OP_SKIP8, 5), (enc.OP_RUN8, 10), (enc.OP_COPY8, 20),
+            (enc.OP_SKIP16, 300), (enc.OP_RUN16, 300), (enc.OP_COPY16, 400)]
+    expect(got == want, f"ops_of_payload round-trip: got {got}, want {want}")
+
+    # threshold_cost: hand-built 8-bit census against two made-up lines,
+    # one per surface, equals the hand-computed total at n=59 and n=81.
+    c_flat = census_mod.Census()
+    c_flat.copy8[40] = 3
+    c_flat.copy8[70] = 2
+    c_flat.copy8[100] = 1
+    c_gap = census_mod.Census()
+    c_gap.copy8[50] = 4
+    c_gap.copy8[90] = 1
+    cen = {"flat": c_flat, "gapped": c_gap}
+    lines = {"flat": ((300.0, 20.0), (1100.0, 6.0)),
+             "gapped": ((350.0, 22.0), (1200.0, 7.0))}
+    for n in (59, 81):
+        want_total = 0.0
+        for surface, c in cen.items():
+            (a_l, b_l), (a_d, b_d) = lines[surface]
+            want_total += sum(k * ((a_l + b_l * L) if L < n else (a_d + b_d * L))
+                              for L, k in c.copy8.items())
+        got_total = census_mod.threshold_cost(cen, lines, n, enc=enc)
+        expect(abs(got_total - want_total) < 1e-9,
+               f"threshold_cost at n={n}: got {got_total:.4f}, want {want_total:.4f}")
+
+    # COPY16: priced by the model's own terms at copy_dma_min = n, not a
+    # line intercept - and copy_dma_min must come back afterwards.
+    c16 = census_mod.Census()
+    c16.copy16[300] = 1
+    cen16 = {"flat": c16, "gapped": census_mod.Census()}
+    tc = enc.TMODEL_COEFFS
+    saved = tc["copy_dma_min"]
+    try:
+        for n in (59, 81):
+            tc["copy_dma_min"] = n
+            want16 = enc._cost_copy_chunk(300)[1]
+            tc["copy_dma_min"] = saved
+            got16 = census_mod.threshold_cost(cen16, lines, n, enc=enc)
+            expect(abs(got16 - want16) < 1e-9,
+                   f"COPY16 pricing at n={n}: got {got16:.4f}, want {want16:.4f}")
+            expect(tc["copy_dma_min"] == saved, "copy_dma_min must be restored after threshold_cost")
+    finally:
+        tc["copy_dma_min"] = saved
 
 
 @case(10, "optimal gap-merge - decoded output BYTE-IDENTICAL to un-merged, fewer ops, lower T")

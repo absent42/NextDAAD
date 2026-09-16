@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """tests/nxv2_bench_rows.py - silicon decode-bench rows as test data.
 
-Rows come from the DEBUG NXBEN verbs (NXBO/NXBC/NXBK) on real hardware,
-VGA-0 timing, core 3.02.04. A row is (ops per rep, reps, frame wraps,
-raster-line delta) exactly as the bench prints it; the bench's own
-conversion is T = (F * 311 + D) * 1824 at 28 MHz. PRE_FIX is the player
-before the decode-loop change, kept as history; CURRENT is the player
-these coefficients describe, read 2026-09-15.
+Rows come from the DEBUG NXBEN verbs (NXBO/NXBC/NXBK/NXBX/NXBG/NXBL/NXBT)
+on real hardware, VGA-0 timing, core 3.02.04. A row is (ops per rep, reps,
+frame wraps, raster-line delta) exactly as the bench prints it; the
+bench's own conversion is T = (F * 311 + D) * 1824 at 28 MHz. PRE_FIX is
+the player before the decode-loop change, kept as history; CURRENT is the
+player these coefficients describe, read 2026-09-15.
+
+BENCH_TABLES holds the bench modes 5-8 row geometry (NXBX/NXBG/NXBL/NXBT)
+exactly as src/video.asm defines nxbTabThr/nxbTabGap/nxbTabLong/nxbTabNew:
+each row carries its own explicit COPY kernel-select value (thr), so the
+bench measures a fixed select value directly instead of depending on
+whatever NXV2_COPY_DMA_MIN currently ships.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -53,7 +59,37 @@ CURRENT = {
     "K256": (30, 96, 17, -210),
 }
 
-ROWS = {"pre_fix": PRE_FIX, "current": CURRENT}
+# Sitting 3, 2026-09-16, NXBX run 1 plus the first NXBC block (owner's
+# readout). (O, R, F, D) keyed by tag, D signed 16-bit.
+SITTING3 = {
+    "C001": (255, 64, 9, 117),
+    "C004": (255, 64, 11, 5),
+    "C008": (255, 48, 10, -30),
+    "C016": (255, 48, 13, 58),
+    "C038": (197, 48, 18, -123),
+    "C080": (96, 64, 20, 127),
+    "C081": (95, 64, 17, -19),
+    "C103": (75, 64, 15, -211),
+    "C256": (30, 96, 16, 102),
+    "L048": (157, 64, 22, 28),
+    "D048": (157, 64, 25, 6),
+    "L056": (136, 64, 22, -100),
+    "D056": (136, 64, 22, 92),
+    "L060": (127, 64, 21, 105),
+    "D060": (127, 64, 21, 35),
+    "L064": (119, 64, 21, 6),
+    "D064": (119, 64, 20, 18),
+    "L072": (106, 64, 21, -91),
+    "D072": (106, 64, 19, -200),
+    "L080": (96, 64, 20, 127),
+    "D080": (96, 64, 17, 19),
+    "D081": (95, 64, 17, -19),
+}
+
+SITTING4 = {}   # filled in Task 7
+
+ROWS = {"pre_fix": PRE_FIX, "current": CURRENT,
+        "sitting3": SITTING3, "sitting4": SITTING4}
 
 # R161/C161 are NOT scored: they are 16-bit-operand ops of 1 byte, which
 # the encoder never emits (below 256 B it emits the 8-bit op), and the
@@ -82,42 +118,114 @@ PRICERS = {
 }
 
 
-# NXBX (bench mode 5), (tag, L, O, R, path): "ldi" = fast-handler LDI,
-# "dma" = vid_copy_body + vid_copy_dma (forced below 81, D081 unforced).
-NXBX_ROWS = (
-    ("L048", 48, 157, 64, "ldi"), ("D048", 48, 157, 64, "dma"),
-    ("L056", 56, 136, 64, "ldi"), ("D056", 56, 136, 64, "dma"),
-    ("L060", 60, 127, 64, "ldi"), ("D060", 60, 127, 64, "dma"),
-    ("L064", 64, 119, 64, "ldi"), ("D064", 64, 119, 64, "dma"),
-    ("L072", 72, 106, 64, "ldi"), ("D072", 72, 106, 64, "dma"),
-    ("L080", 80, 96, 64, "ldi"),  ("D080", 80, 96, 64, "dma"),
-    ("D081", 81, 95, 64, "dma"),
-)
+# BENCH_TABLES: {mode: ((tag, kind, L, O, R, thr, geo), ...)} for bench
+# modes 5-8, exactly as src/video.asm defines nxbTabThr/nxbTabGap/
+# nxbTabLong/nxbTabNew. kind is "copy8"/"copy16"/"run8"/"run16"
+# (VOP_COPY8/VOP_COPY16/VOP_RUN8/VOP_RUN16). thr 0 = shipping select
+# value; geo bit 0 = gapped, bit 1 = mid-page dest.
+BENCH_TABLES = {
+    5: (   # NXBX - nxbTabThr: COPY path pairs at an explicit select value
+        ("L048", "copy8", 48, 157, 64, 81, 0),
+        ("D048", "copy8", 48, 157, 64, 1, 0),
+        ("L056", "copy8", 56, 136, 64, 81, 0),
+        ("D056", "copy8", 56, 136, 64, 1, 0),
+        ("L060", "copy8", 60, 127, 64, 81, 0),
+        ("D060", "copy8", 60, 127, 64, 1, 0),
+        ("L064", "copy8", 64, 119, 64, 81, 0),
+        ("D064", "copy8", 64, 119, 64, 1, 0),
+        ("L072", "copy8", 72, 106, 64, 81, 0),
+        ("D072", "copy8", 72, 106, 64, 1, 0),
+        ("L080", "copy8", 80, 96, 64, 81, 0),
+        ("D080", "copy8", 80, 96, 64, 1, 0),
+        ("D081", "copy8", 81, 95, 64, 81, 0),
+    ),
+    6: (   # NXBG - nxbTabGap: gapped surface, height 192
+        ("GL48", "copy8", 48, 124, 64, 81, 1),
+        ("GD48", "copy8", 48, 124, 64, 48, 1),
+        ("GL56", "copy8", 56, 106, 64, 81, 1),
+        ("GD56", "copy8", 56, 106, 64, 56, 1),
+        ("GL60", "copy8", 60, 99, 64, 81, 1),
+        ("GD60", "copy8", 60, 99, 64, 60, 1),
+        ("GL64", "copy8", 64, 93, 64, 81, 1),
+        ("GD64", "copy8", 64, 93, 64, 64, 1),
+        ("GL72", "copy8", 72, 82, 64, 81, 1),
+        ("GD72", "copy8", 72, 82, 64, 72, 1),
+        ("GL80", "copy8", 80, 74, 64, 81, 1),
+        ("GD80", "copy8", 80, 74, 64, 80, 1),
+        ("GD81", "copy8", 81, 73, 64, 81, 1),
+        ("GC03", "copy8", 103, 57, 64, 81, 1),
+        ("GK56", "copy16", 256, 23, 96, 81, 1),
+        ("GF71", "run8", 71, 83, 64, 0, 1),
+        ("GF56", "run16", 256, 23, 96, 0, 1),
+    ),
+    7: (   # NXBL - nxbTabLong: long COPY16 ops at 81 (LK43 not coverable)
+        ("LF1K", "copy16", 1000, 7, 64, 81, 0),
+        ("LF4K", "copy16", 4000, 1, 64, 81, 0),
+        ("LF7K", "copy16", 7680, 1, 64, 81, 0),
+        ("LFDS", "copy16", 7680, 1, 64, 81, 2),
+        ("LG1K", "copy16", 1000, 5, 64, 81, 1),
+        ("LG4K", "copy16", 4000, 1, 64, 81, 1),
+        ("LGDS", "copy16", 4000, 1, 64, 81, 3),
+    ),
+    8: (   # NXBT - nxbTabNew: rows at a simulated NXV2_COPY_DMA_MIN of 59
+        ("E058", "copy8", 58, 131, 64, 59, 0),
+        ("E059", "copy8", 59, 129, 64, 59, 0),
+        ("T298", "copy16", 298, 26, 96, 59, 0),
+        ("T299", "copy16", 299, 26, 96, 59, 0),
+        ("U300", "copy16", 300, 26, 96, 81, 0),
+        ("T300", "copy16", 300, 26, 96, 59, 0),
+        ("U320", "copy16", 320, 24, 96, 81, 0),
+        ("T320", "copy16", 320, 24, 96, 59, 0),
+        ("S299", "copy16", 299, 19, 96, 59, 1),
+        ("V300", "copy16", 300, 19, 96, 81, 1),
+        ("S300", "copy16", 300, 19, 96, 59, 1),
+    ),
+}
 
 
-def nxbx_predicted(enc):
-    """{tag: modeled T/op} on each row's own path whatever copy_dma_min
-    says (_cost_copy_chunk's one-chunk terms). Raises AssertionError when
-    L080 or D081 stops matching the C080 or C081 price."""
+def _row(tag):
+    for rows in BENCH_TABLES.values():
+        for row in rows:
+            if row[0] == tag:
+                return row
+    raise KeyError(tag)
+
+
+_KIND_PRICE = {
+    "copy8": lambda e, L: e._cost_copy_chunk(L)[1],
+    "copy16": lambda e, L: e._cost_copy_chunk(L)[1],
+    "run8": lambda e, L: e._cost_run_chunk(L)[1],
+    "run16": lambda e, L: e._cost_run_chunk(L)[1],
+}
+
+
+def row_predicted(enc, tag):
+    """Flat-model T/op for one bench row at its own COPY select value
+    (thr 0 = the shipping copy_dma_min). Gapped rows are priced flat on
+    purpose: measured minus this is the gapped surcharge."""
+    _tag, kind, L, _o, _r, thr, _geo = _row(tag)
     tc = enc.TMODEL_COEFFS
-    out = {}
-    for tag, L, _o, _r, path in NXBX_ROWS:
-        env = tc["t_op_copy"] + 1 * tc["header_rate"]
-        if path == "ldi":
-            rate = tc["fetch_long"] if L >= 64 else tc["fetch_short"]
-            out[tag] = env + L * rate
-        else:
-            if L > tc["copy_dma_chunk"]:
-                raise AssertionError(f"{tag}: {L} B is not one DMA chunk")
-            body = tc["copy_dma_path_t"] + (tc["copy_dma_setup"]
-                                            + L * tc["copy_dma_per_b"])
-            out[tag] = env + body
-    for tag, anchor in (("L080", "C080"), ("D081", "C081")):
-        shipped = PRICERS[anchor](enc)
-        if abs(out[tag] - shipped) > 1e-9:
-            raise AssertionError(f"{tag} prices {out[tag]:.4f} T/op but the "
-                                 f"model prices {anchor} at {shipped:.4f}")
-    return out
+    saved = tc["copy_dma_min"]
+    try:
+        if thr:
+            tc["copy_dma_min"] = thr
+        return _KIND_PRICE[kind](enc, L)
+    finally:
+        tc["copy_dma_min"] = saved
+
+
+def row_path(tag):
+    """"dma" when L >= the row's own select value (thr, or the shipping
+    copy_dma_min when thr is 0), else "ldi". COPY8 rows only."""
+    _tag, kind, L, _o, _r, thr, _geo = _row(tag)
+    if kind != "copy8":
+        raise ValueError(f"{tag}: row_path only applies to copy8 rows")
+    if thr:
+        sel = thr
+    else:
+        import nxv2enc   # no copy8 row ships thr=0 today; kept for the interface
+        sel = nxv2enc.TMODEL_COEFFS["copy_dma_min"]
+    return "dma" if L >= sel else "ldi"
 
 
 def t_per_op(o, r, f, d):
