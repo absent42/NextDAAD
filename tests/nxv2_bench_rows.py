@@ -82,6 +82,44 @@ PRICERS = {
 }
 
 
+# NXBX (bench mode 5), (tag, L, O, R, path): "ldi" = fast-handler LDI,
+# "dma" = vid_copy_body + vid_copy_dma (forced below 81, D081 unforced).
+NXBX_ROWS = (
+    ("L048", 48, 157, 64, "ldi"), ("D048", 48, 157, 64, "dma"),
+    ("L056", 56, 136, 64, "ldi"), ("D056", 56, 136, 64, "dma"),
+    ("L060", 60, 127, 64, "ldi"), ("D060", 60, 127, 64, "dma"),
+    ("L064", 64, 119, 64, "ldi"), ("D064", 64, 119, 64, "dma"),
+    ("L072", 72, 106, 64, "ldi"), ("D072", 72, 106, 64, "dma"),
+    ("L080", 80, 96, 64, "ldi"),  ("D080", 80, 96, 64, "dma"),
+    ("D081", 81, 95, 64, "dma"),
+)
+
+
+def nxbx_predicted(enc):
+    """{tag: modeled T/op} on each row's own path whatever copy_dma_min
+    says (_cost_copy_chunk's one-chunk terms). Raises AssertionError when
+    L080 or D081 stops matching the C080 or C081 price."""
+    tc = enc.TMODEL_COEFFS
+    out = {}
+    for tag, L, _o, _r, path in NXBX_ROWS:
+        env = tc["t_op_copy"] + 1 * tc["header_rate"]
+        if path == "ldi":
+            rate = tc["fetch_long"] if L >= 64 else tc["fetch_short"]
+            out[tag] = env + L * rate
+        else:
+            if L > tc["copy_dma_chunk"]:
+                raise AssertionError(f"{tag}: {L} B is not one DMA chunk")
+            body = tc["copy_dma_path_t"] + (tc["copy_dma_setup"]
+                                            + L * tc["copy_dma_per_b"])
+            out[tag] = env + body
+    for tag, anchor in (("L080", "C080"), ("D081", "C081")):
+        shipped = PRICERS[anchor](enc)
+        if abs(out[tag] - shipped) > 1e-9:
+            raise AssertionError(f"{tag} prices {out[tag]:.4f} T/op but the "
+                                 f"model prices {anchor} at {shipped:.4f}")
+    return out
+
+
 def t_per_op(o, r, f, d):
     """Measured T per op for one bench row."""
     return (f * LINES_PER_FRAME + d) * T_PER_LINE / float(r * o)

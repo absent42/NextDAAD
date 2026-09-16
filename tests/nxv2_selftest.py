@@ -1303,6 +1303,88 @@ def t10_bench_rows():
     expect(not bad, "rows outside the band:\n  " + "\n  ".join(bad))
 
 
+def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None):
+    """An NXBX screen from two exact T(L) lines, rounded to whole raster
+    lines as the bench reads them; odd rows take the wrap early (negative
+    D). shift = {tag: T/op offset}. -> (text, {tag: (o, r, f, d)})."""
+    text, want = [], {}
+    for i, (tag, L, o, r, path) in enumerate(bench.NXBX_ROWS):
+        a, b = line_ldi if path == "ldi" else line_dma
+        t = a + b * L + (shift or {}).get(tag, 0.0)
+        f, d = divmod(round(t * r * o / bench.T_PER_LINE), bench.LINES_PER_FRAME)
+        if i % 2:
+            f, d = f + 1, d - bench.LINES_PER_FRAME
+        want[tag] = (o, r, f, d)
+        dfield = f"{d & 0xFFFF:04X}" + ("7" if tag == residue_tag else "")
+        oname = "0" if tag == zero_tag else "O"
+        text.append(f"{tag} {oname}={o:02X} R={r:04X} F={f:04X} D={dfield}")
+    return "\n".join(text) + "\n", want
+
+
+@case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")
+def t10_copy_threshold_fit():
+    import io
+    import math
+    import fit_copy_threshold as fct
+    tc = enc.TMODEL_COEFFS
+    # Crossover recovered through integer F/D rounding, threshold exact.
+    for line_ldi, line_dma in (((303.7, 19.80), (1167.6, 5.10)),
+                               ((300.0, 20.0), (1300.0, 6.0))):
+        exact = (line_dma[0] - line_ldi[0]) / (line_ldi[1] - line_dma[1])
+        text, _ = _nxbx_screen(line_ldi, line_dma)
+        rows, warnings = fct.parse_rows(text)
+        expect(not warnings and len(rows) == len(bench.NXBX_ROWS),
+               f"clean screen must parse whole, warnings {warnings}")
+        res = fct.fit(rows)
+        expect(abs(res["crossover"] - exact) <= 0.5,
+               f"crossover {res['crossover']:.3f} B, lines cross at {exact:.3f}")
+        expect(res["threshold"] == math.ceil(exact),
+               f"threshold {res['threshold']}, lines imply {math.ceil(exact)}")
+        expect(not res["contradictions"], f"exact lines flagged {res['contradictions']}")
+    # Parser: 0= for O=, a 5-digit D keeps its first 4 (D048 is also a
+    # negative D), fields match what the generator wrote.
+    text, want = _nxbx_screen((303.7, 19.80), (1167.6, 5.10),
+                              zero_tag="L056", residue_tag="D048")
+    expect("L056 0=" in text and "D048 " in text, "generator did not write the variants")
+    rows, warnings = fct.parse_rows(text)
+    expect(not warnings, f"variants must parse without warnings, got {warnings}")
+    expect(rows == want, f"parsed rows differ:\n  {rows}\n  {want}")
+    expect(rows["D048"][3] < 0, "D048's D must parse as signed 16-bit")
+    # A pair whose measured order flips against the lines is flagged.
+    text, _ = _nxbx_screen((303.7, 19.80), (1167.6, 5.10), shift={"L060": -40.0})
+    res = fct.fit(fct.parse_rows(text)[0])
+    expect([c[0] for c in res["contradictions"]] == [60],
+           f"L060 pushed under D060 must flag L=60 only, got {res['contradictions']}")
+    # The script runs on a file named on the command line.
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "nxbx.txt"
+        path.write_text(_nxbx_screen((303.7, 19.80), (1167.6, 5.10))[0])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = fct.main([str(path)])
+        expect(rc == 0 and "implied NXV2_COPY_DMA_MIN = 59" in out.getvalue(),
+               f"CLI run failed (rc {rc}):\n{out.getvalue()}")
+    # Pricing: L080 and D081 are C080 and C081, and the check trips when a
+    # threshold move puts either anchor on the other path.
+    pred = bench.nxbx_predicted(enc)
+    expect(abs(pred["L080"] - bench.PRICERS["C080"](enc)) < 1e-9, "L080 must price as C080")
+    expect(abs(pred["D081"] - bench.PRICERS["C081"](enc)) < 1e-9, "D081 must price as C081")
+    expect(pred["D048"] > pred["L048"] and pred["D080"] < pred["L080"],
+           "forced D rows must price on the DMA path below 81")
+    saved = tc["copy_dma_min"]
+    try:
+        for thr, anchor in ((60, "L080"), (82, "D081")):
+            tc["copy_dma_min"] = thr
+            try:
+                bench.nxbx_predicted(enc)
+            except AssertionError as exc:
+                expect(anchor in str(exc), f"copy_dma_min {thr} tripped the wrong anchor: {exc}")
+            else:
+                raise AssertionError(f"copy_dma_min {thr} must trip the {anchor} anchor")
+    finally:
+        tc["copy_dma_min"] = saved
+
+
 @case(10, "copy/fill T model - DMA terms gated on the PLAYER's derived kernel thresholds")
 def t10_copy_dma_model():
     tc = enc.TMODEL_COEFFS
