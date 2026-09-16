@@ -735,8 +735,8 @@ l2scr_trampoline:
     ld a, OVL2_PAGE
     jp ovl_map_page
 
-; EXTERN vector 12: DEBUG-only route for tests/test.dsf's NXBO/NXBC/
-; NXBK/NXBX verbs (12-15 are the last free vectors; 5 forwards to a
+; EXTERN vector 12: DEBUG-only route for tests/test.dsf's standalone
+; NXB bench verbs (12-15 are the last free vectors; 5 forwards to a
 ; loaded XBN, inert when the suite stages none). ONE vector for all
 ; the standalone modes: the mode rides flags+250, set by the verb's LET
 ; before the shared EXTERN, so a new mode costs a table row rather than

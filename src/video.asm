@@ -2,7 +2,7 @@
 ; streaming + direct-serve/column-hop). v1 player deleted, git holds it.
 ;
 ; PAGE LAYOUT:
-;   VID_PAGE (59, MMU7, $E000-$F7FF) - HOT: everything that runs while
+;   VID_PAGE (59, MMU7, $E000-OVL_LIMIT) - HOT: everything that runs while
 ;     the video CTC ISR is armed (dispatch, decode/op handlers, DMA/chunk
 ;     bodies, PAL/KSTART/KFLIP/FEND handlers, frame loop + pacing, audio
 ;     CTC ISRs, streaming/direct-serve clusters, hot session/filemap
@@ -3733,14 +3733,15 @@ vid_tl_report_ret:
 ;   5 COPY path pairs (fast-handler LDI vs body + DMA) for
 ;     NXV2_COPY_DMA_MIN.
 ;   6 group 5's pairs and the chunk rows on the gapped surface.
+;   7 long multi-chunk COPY16 ops, in window and across one dest seam.
 ;   8 rows at a simulated NXV2_COPY_DMA_MIN of 59.
 ;
-; STANDALONE MODES (2-6, 8) synthesize their op streams into a pool bank
+; STANDALONE MODES (2-8) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
 ; display state is disturbed and no session is needed. Streams are
-; sized so the source cursor never reaches $DF00 and the dest cursor
-; never leaves the 8K window, so the seam walkers are deliberately NOT
-; exercised here (they are their own question, not this one's).
+; sized so the source cursor never reaches $DF00 (vid_src_next is never
+; exercised) and the dest cursor stays in the 8K window, except geo bit
+; 1 rows: one vid_dst_next into the dest bank's second page.
 ; vidDecSp is anchored at entry: a structural fault therefore unwinds
 ; into the ordinary abort path and prints ERR= rather than hanging.
 ; =====================================================================
@@ -3750,11 +3751,13 @@ NXB_ROW0         equ 8       ; bench rows start here (the timeline
 NXB_LINE_MSB     equ $1E     ; active video line, bit 8
 NXB_LINE_LSB     equ $1F     ; active video line, bits 7:0
 NXB_GAP_H        equ 192     ; gapped rows' content height
+NXB_MID_DST      equ $5000   ; geo bit 1 dest start (gapped: column $50)
+    ASSERT (low NXB_MID_DST) == 0 && (low VID_DST_WIN) == 0
 
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
-; Modes 2-6 and 8 run standalone; mode 1 is NOT reachable here - the
+; Modes 2-8 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
 ; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
 ; Corrupts everything.
@@ -3787,6 +3790,9 @@ nxb_entry:
     jr z, .go
     ld hl, nxbTabGap
     cp 6
+    jr z, .go
+    ld hl, nxbTabLong
+    cp 7
     jr z, .go
     ld hl, nxbTabNew
     cp 8
@@ -3886,8 +3892,8 @@ nxb_ops_restore:
 ; vid_dec_abort_pos on a structural fault (review fix). nxbBankCnt is
 ; the ownership flag and is zeroed here, so the routine is idempotent
 ; and a plain video session's own abort runs it as a no-op (the COPY
-; select operands are rewritten ahead of the ownership test, so the
-; clean, no-bank and abort exits all leave NXV2_COPY_DMA_MIN).
+; select and nxb_ops_body.dst operands are rewritten ahead of the
+; ownership test, so every exit leaves their shipping values).
 ; The abort case ALSO has to stage vidSvMmu6/vidSvMmu7: the standalone
 ; modes never went through vid_run, so those cells hold a previous
 ; session's values (or none), and vid_run.restore_tail - which the
@@ -3898,6 +3904,8 @@ nxb_reclaim:
     ld (vf_op_copy8.thr), a
     ld (vg_op_copy8.thr), a
     ld (vid_copy_body.thr), a
+    ld hl, VID_DST_WIN
+    ld (nxb_ops_body.dst), hl
     ld a, (nxbBankCnt)
     or a
     ret z
@@ -3985,9 +3993,16 @@ nxb_run_table:
     jr nxb_run_table
 
 ; Per-row surface geometry (untimed). nxbGeo bit 0 set = gapped at
-; NXB_GAP_H (vid_stage_common's gapped set), clear = flat. Corrupts AF, HL.
+; NXB_GAP_H (vid_stage_common's gapped set), clear = flat. Bit 1 set = dest
+; start NXB_MID_DST, clear = VID_DST_WIN (nxb_ops_body.dst). Corrupts AF, HL.
 nxb_geo_setup:
     ld a, (nxbGeo)
+    ld hl, VID_DST_WIN
+    bit 1, a
+    jr z, .dst
+    ld hl, NXB_MID_DST
+.dst:
+    ld (nxb_ops_body.dst), hl
     bit 0, a
     jr nz, .gap
     ld hl, vf_op_skip8
@@ -4094,6 +4109,7 @@ nxb_ops_body:
     ld a, (nxbDstP)
     ld (vidDstPage), a
     nextreg NR_MMU2, a
+.dst equ $+1                     ; SMC: nxb_geo_setup per row, nxb_reclaim
     ld de, VID_DST_WIN
     ld hl, DATA_WINDOW
     ld iy, vid_stub              ; IYH pinned (the shipping contract)
@@ -4474,7 +4490,7 @@ nxb_ds_d:
 ; ---------------------------------------------------------------------
 ; Row tables. Every entry: ops*(header+body) < 7900 (source cursor stays
 ; below $DF00), ops*count <= 8192, gapped 5952 = 31 columns of 192 (dest
-; cursor stays in the window) - no row reaches a seam walker.
+; cursor stays in the window); geo bit 1 rows cross one dest seam instead.
 ; ---------------------------------------------------------------------
 ; GROUP 2 - op dispatch envelope. SK00 is the floor: SKIP8 with a zero
 ; count runs the fast handler and NOTHING else, so it IS the dispatch
@@ -4833,6 +4849,54 @@ nxbTabGap:
     db 0, 1
     dw 0
 
+; GROUP 7 - long COPY16 ops at 81: LF1K/LF4K/LF7K flat and LG1K/LG4K gapped
+; in window; LFDS (flat) and LGDS (gapped) start at NXB_MID_DST and cross
+; the dest seam into the bank's second page.
+nxbTabLong:
+    dw nxbTagLF1K
+    db VOP_COPY16
+    dw 1000
+    db 7
+    dw 64
+    db 81, 0
+    dw nxbTagLF4K
+    db VOP_COPY16
+    dw 4000
+    db 1
+    dw 64
+    db 81, 0
+    dw nxbTagLF7K
+    db VOP_COPY16
+    dw 7680
+    db 1
+    dw 64
+    db 81, 0
+    dw nxbTagLFDS
+    db VOP_COPY16
+    dw 7680
+    db 1
+    dw 64
+    db 81, 2
+    dw nxbTagLG1K
+    db VOP_COPY16
+    dw 1000
+    db 5
+    dw 64
+    db 81, 1
+    dw nxbTagLG4K
+    db VOP_COPY16
+    dw 4000
+    db 1
+    dw 64
+    db 81, 1
+    dw nxbTagLGDS
+    db VOP_COPY16
+    dw 4000
+    db 1
+    dw 64
+    db 81, 3
+    dw 0
+
 ; GROUP 8 - rows at a simulated NXV2_COPY_DMA_MIN of 59: E058/E059 the
 ; 8-bit edge, Tnnn 16-bit ops whose tail after a 240 B chunk falls either
 ; side of it, Unnn/V300 the same ops at 81; S299/V300/S300 gapped (192).
@@ -4984,6 +5048,13 @@ nxbTagGC03: db "GC03", 0
 nxbTagGK56: db "GK56", 0
 nxbTagGF71: db "GF71", 0
 nxbTagGF56: db "GF56", 0
+nxbTagLF1K: db "LF1K", 0
+nxbTagLF4K: db "LF4K", 0
+nxbTagLF7K: db "LF7K", 0
+nxbTagLFDS: db "LFDS", 0
+nxbTagLG1K: db "LG1K", 0
+nxbTagLG4K: db "LG4K", 0
+nxbTagLGDS: db "LGDS", 0
 nxbTagE058: db "E058", 0
 nxbTagE059: db "E059", 0
 nxbTagT298: db "T298", 0
