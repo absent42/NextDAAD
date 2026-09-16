@@ -1180,8 +1180,10 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; 7.1% of the body) and 90 took it 16 B late (worst +237.8 T at L=89,
 ; 15.2% of the body). The 2026-07-28 kernel-only values were 71/74;
 ; COPY's 74 took the DMA path 7 B early once the +128 T path
-; difference is charged (worst +~104 T at L=74). At 81 the player sits
-; on the measured COPY break-even; RUN is held at 71 as above.
+; difference is charged (worst +~104 T at L=74). 81 sat on the measured
+; 81.4 B COPY break-even before the 2026-09-15 chunk-loop change; rows
+; since (C081 1580.4 T against C080 1884.3 T) put it at 58.8 B, so 81 is
+; now 22 B late and not yet re-derived. RUN is held at 71 as above.
 ;
 ; The encoder's T model MIRRORS these two constants
 ; (authoring-kit/lib/nxv2enc.py TMODEL_COEFFS run_dma_min/copy_dma_min,
@@ -1286,10 +1288,10 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; programmed CTC TC: the encoder's supply gate has to PRICE the cap
 ; and cannot know which timing mode the machine will run in, so a
 ; mode-dependent cap could only ever be priced at its worst case
-; anyway - which is this. It must also be <= 255: vid_chunk_dst's
-; single-byte compare and both kernel selects depend on it (ASSERTed
-; in video.asm).
-NXV2_DMA_CHUNK   equ 240      ; vid_chunk_all / vid_chunk_dst
+; anyway - which is this. It must also be <= 255: the single-byte
+; compares in vid_chunk_dst_flat/_gap and both kernel selects depend on
+; it (ASSERTed in video.asm).
+NXV2_DMA_CHUNK   equ 240      ; vid_chunk_all / vid_chunk_dst_flat/_gap
 NXV2_RUN_DMA_MIN equ 71
 NXV2_COPY_DMA_MIN equ 81
 

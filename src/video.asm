@@ -4677,11 +4677,12 @@ nxbTabOpd:
 ; Delta-stream census (250/252-frame Sintel and Big Buck Bunny
 ; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
 ; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
-; C080/C081 straddle the DMA crossover (NXV2_COPY_DMA_MIN = 81, the
-; measured 81.4 break-even - the rows that FOUND the old 74's missing
-; +128 T/op path difference were C073/C074, retired with it); C256 is
-; the COPY16 bulk-repaint path (40 keyframe ops carry 16-21% of
-; Sintel's copied bytes).
+; C080/C081 straddle the COPY kernel select (NXV2_COPY_DMA_MIN = 81,
+; placed at the 81.4 B break-even measured before the 2026-09-15
+; chunk-loop change; these two rows now put the break-even at 58.8 B.
+; C073/C074 found the old 74's missing +128 T/op path difference and
+; were retired with it); C256 is the COPY16 bulk-repaint path (40
+; keyframe ops carry 16-21% of Sintel's copied bytes).
 nxbTabCpy:
     dw nxbTagC001
     db VOP_COPY8
