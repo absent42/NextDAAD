@@ -68,10 +68,9 @@
 ;     and green, but the packed RRRGGGBB byte carries only its top
 ;     two and $41 derives the third as B2 OR B1 - four levels. Lerping
 ;     the packed byte therefore moved blue in steps twice the size of
-;     red's, and floor division put the error on both sides of the
-;     true ramp: fading in, blue stayed black two steps longer, then
-;     overshot red at step 5. Every step is streamed as a $44 pair
-;     instead, so all three channels walk the same eight levels
+;     red's, with floor division putting the error on both sides of
+;     the true ramp. Every step is streamed as a $44 pair instead, so
+;     all three channels walk the same eight levels
 ;
 ; RULES this example obeys (see the externs chapter of the manual):
 ;   - do not fade while a PICTURE/DISPLAY is drawing or a video clip
@@ -169,17 +168,13 @@ TB_SELECT       equ $243B        ; TBBlue register select - documented RW,
                                  ; so the latch can be saved and restored
 TB_ACCESS       equ $253B        ; TBBlue register access (select+1 in B)
 NR_PAL_IDX      equ $40          ; colour index for read/write
-NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes. The
-                                 ; byte's two blue bits are the TOP two of
-                                 ; the hardware's 3-bit blue (the dev guide
-                                 ; names them B2 and B1), and it fills in
-                                 ; the third itself: "Least significant bit
-                                 ; of blue is set to OR between B2 and B1".
-                                 ; So this register can only express blue
-                                 ; 0, 3, 5 and 7 of 8 - four levels against
-                                 ; red and green's eight, which is why the
-                                 ; fade interpolates through $44 instead
-                                 ; (see precalc and int).
+NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes. Blue's
+                                 ; LSB is derived, not stored - dev guide:
+                                 ; "Least significant bit of blue is set to
+                                 ; OR between B2 and B1" - four levels of
+                                 ; eight, same quantisation issue as the
+                                 ; header note; the fade interpolates
+                                 ; through $44 instead (see precalc and int).
                                  ; A write here also ZEROES the entry's
                                  ; priority bits: the core issues the same
                                  ; palette write as a $44 pair does but
@@ -487,14 +482,11 @@ int:
 .chkin:
     or a
     ret nz                       ; still on the way in
-    ; Reached step 0, and apply9 has just streamed the snapshot as true
-    ; 9-bit pairs - blue LSB and priority bit included, the only write
-    ; that reproduces what the interpreter's own loader put there. The
-    ; endpoint is exact by construction now that every step takes that
-    ; path; it used to need a second closing burst here because the
-    ; steps were 8-bit and landed the picture a measured 3.3% low in
-    ; blue. The snapshot is exactly back on screen, so forget it and let
-    ; the next fn 40 re-snapshot whatever is displayed by then.
+    ; Reached step 0: apply9 has just streamed the snapshot as true 9-bit
+    ; pairs (blue LSB and priority bit included - same blue quantisation
+    ; issue as the header note), so the endpoint is exact by construction.
+    ; Forget the snapshot and let the next fn 40 re-snapshot whatever is
+    ; displayed by then.
     xor a
     ld (valid), a
     ld a, 1
@@ -773,9 +765,8 @@ precalc:
     ; hole (the interpreter's index-255 convention, and anything else
     ; the art left transparent). Holes must stay holes for the whole
     ; fade - fading one makes every cut-out turn opaque on the way out
-    ; and pop back with a magenta flash on the way in (observed on the
-    ; bench before this rule existed). Pin it to TRANSP in every table,
-    ; including the solid table 8 written above.
+    ; and pop back with a magenta flash on the way in. Pin it to TRANSP
+    ; in every table, including the solid table 8 written above.
     cp TRANSP
     jr nz, .lerp
     ld a, (kcur)
@@ -836,12 +827,9 @@ precalc:
     ld a, (rcur)
     or c
     ld (rcur), a
-    ; blue: 3 bits, not the 2 the packed byte shows. Bits 1-0 are B2 and
-    ; B1; B0 lives in the snapshot's second byte. Lerping only the pair
-    ; moved blue a whole 2-bit quantum where red moved a 3-bit one, so
-    ; it fell off twice as fast at step 1 and, with floor division,
-    ; overshot red at step 5. Interpolating all three bits puts every
-    ; channel on the same eight-level ramp.
+    ; blue: 3 bits, not the 2 the packed byte shows (same quantisation
+    ; issue as the header note). Bits 1-0 are B2 and B1; B0 lives in the
+    ; snapshot's second byte.
     ld a, (scur)
     and 3
     add a, a                     ; B2 B1 -> bits 2-1

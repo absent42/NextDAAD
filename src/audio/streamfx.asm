@@ -342,15 +342,13 @@ sfx_mf_restore:
     ret
 
 ; ---------------------------------------------------------------------
-; sfx_stream_open - the open ritual, window staging and the free hybrid
-; (SP18 item 7 Task 5). Turns an already-open, already-header-validated
-; WAV file into a staged channel window.
+; sfx_stream_open - opens a staged channel window from an already-open,
+; already-header-validated WAV file (SP18 item 7 Task 5).
 ;
-; Runs from MAINLINE (overlay1's aud_load_wav, through the resident
-; sfx_open_tramp - overlay1 shares this slot-7 window, so the map/call/
-; unmap has to happen from resident code). Slot 6 holds AUD_PAGE_LO on
-; entry; this routine borrows it for the window pages while staging and
-; hands it back as AUD_PAGE_LO on every exit path.
+; Runs from mainline via the resident sfx_open_tramp (overlay1's
+; aud_load_wav calls in, since overlay1 shares this slot-7 window).
+; Slot 6 holds AUD_PAGE_LO on entry; borrowed for window pages while
+; staging, restored on every exit path.
 ;
 ; In:  A  = effect number 1-254 (this channel's keep-last key)
 ;      L  = the open esxDOS handle
@@ -370,35 +368,27 @@ sfx_mf_restore:
 ;                 always has.
 ; Corrupts everything.
 ;
-; STAGING IS VERBATIM FROM FILE OFFSET 0 - the WAV header stages with the
-; payload. The card side of this feature reads whole 512-byte blocks at
-; addresses taken from the filemap, so no byte-shifting is possible on
-; the wire; the CONSUMER skips the header instead, by starting at the
-; data offset (the window descriptor's anchor, nextdaad.inc SFXW_STIDX).
+; Staging is verbatim from file offset 0: the WAV header stages with
+; the payload (the card reads fixed 512-byte blocks, no byte-shifting
+; on the wire), and the consumer skips the header by starting at
+; SFXW_STIDX instead.
 ;
-; THE FREE HYBRID: a file that fits the window stages whole, is flagged
-; COMPLETE and has its handle closed - it is resident, costs no further
-; card traffic, and a repeat trigger of the same number rewinds for free
-; through overlay1's keep-last check. A larger file stages its first
-; SFX_WIN_BYTES, is flagged STREAMING, and keeps its handle and hot
-; filemap as this channel's cached stream for the refiller.
+; A file that fits the window stages whole, is flagged COMPLETE, and
+; has its handle closed - a repeat trigger rewinds for free through the
+; keep-last check. A larger file stages its first SFX_WIN_BYTES, is
+; flagged STREAMING, and keeps its handle and hot filemap as this
+; channel's cached stream for the refiller.
 ;
-; PER-CHANNEL ADDRESSING (Task 11). Every cell this routine owns lives in
-; the channel's own group, reached IY-relative through SMPB_STRM - that
-; is what makes one body serve both channels. Two riders:
-;   - IY IS RELOADED FROM sfxCellPtr AFTER EVERY esxDOS CALL. The esxDOS
-;     register contract does not promise IY back, and this path makes a
-;     dozen calls. IX gets the same treatment through sfxChanPtr, for the
-;     different reason that esxDOS reads IX as its buffer register.
-;   - the handle is read from sfxNewHandle, not from the group, once it
-;     has been adopted at .fresh: the two hold the same value from there
-;     to the end, and the plain absolute read needs no live IY.
-; The RUN CONTEXT (hot filemap, run cursor) is written straight into the
-; channel's group here, NEVER into the shared working cells the refiller
-; swaps through. That is load-bearing: this runs from mainline with
-; cardBusy clear between esxDOS calls, so a frame ISR can land in the
-; middle of it and refill the OTHER channel, which owns those working
-; cells while it does.
+; Per-channel addressing (Task 11): every cell here lives in the
+; channel's own group via SMPB_STRM, so one body serves both channels.
+; IY is reloaded from sfxCellPtr after every esxDOS call (not
+; guaranteed preserved); IX likewise from sfxChanPtr, since esxDOS uses
+; IX as its buffer register. The handle is read from sfxNewHandle once
+; adopted at .fresh, needing no live IY. Run context (hot filemap, run
+; cursor) is written straight into the channel's group, never into the
+; refiller's shared working cells: this runs from mainline with
+; cardBusy clear between esxDOS calls, so a frame ISR can refill the
+; OTHER channel mid-call.
 sfx_stream_open:
     ld (sfxOpenNum), a
     ld (sfxChanPtr), ix
@@ -818,56 +808,33 @@ msgSfxFrag: db "SFX FRAG?", 0
  ENDIF
 
 ; ---------------------------------------------------------------------
-; sfx_stream_rewind - the CACHED REWIND of a STREAMED effect (owner
-; ruling, SP18 item 7 Task 12 fix).
+; sfx_stream_rewind - cached rewind of a STREAMED effect (owner ruling,
+; SP18 item 7 Task 12 fix): a file that overflows the window used to
+; pay the whole open ritual (F_OPEN, chunk walk, seeks, DISK_FILEMAP,
+; F_FSTAT) on every re-trigger even though the channel still held its
+; handle and hot filemap. This entry reuses both and pays only the
+; window re-stage, rejoining the ordinary open at its staging loop -
+; same code, not a copy.
 ;
-; A file that fits the window is COMPLETE and its re-trigger costs
-; nothing at all. A file that does NOT fit used to pay the whole open
-; ritual again on every trigger - F_OPEN, the RIFF/fmt/data chunk walk,
-; F_SEEK, the priming read, F_SEEK, DISK_FILEMAP, F_FSTAT - even though
-; the channel was still holding the handle and the hot filemap of that
-; exact file. The spec's cached-rewind says it should not: reuse what is
-; held and pay only the window re-staging.
+; sfx_alloc gates entry: effect number matches the candidate channel's
+; SMPB_KEEP, the channel is not COMPLETE (that has its own free rewind),
+; and SFXS_HANDLE is not $FF. A held handle can only mean a cached
+; STREAM on this channel (only .streaming leaves it held; COMPLETE and
+; the refusal funnel both close it and write $FF), so the matching
+; SMPB_KEEP guarantees the cached filemap belongs to the cached file;
+; an evicted stream (refiller error path clears SMPB_KEEP) fails the
+; number test and takes the full open instead. SFXS_FILEBLK and
+; SFXS_DATAOFF are likewise still valid, so neither F_FSTAT nor the
+; chunk walk needs re-running.
 ;
-; That is what this entry does. It skips every one of those calls and
-; rejoins the ordinary open at its staging loop, so the staging itself,
-; the depth arithmetic, the consumer anchor, the window descriptor write
-; and the STREAMING commit are the SAME CODE, not a copy.
+; Staging restarts at file offset 0 (blocks stage verbatim from 0; see
+; sfx_stream_open), so sfx_seek0 is the correct seek and the consumer
+; anchor rebuilds from SFXS_DATAOFF as on a fresh open.
 ;
-; VALIDITY - the test, stated. sfx_alloc decides it, because it is
-; already walking both channels' blocks: the effect number must equal
-; the candidate channel's SMPB_KEEP, the channel must NOT be COMPLETE
-; (that case has its own, cheaper free rewind), and SFXS_HANDLE must not
-; be $FF. That last one is the whole condition, and it is sufficient
-; rather than merely suggestive:
-;   - only sfx_stream_open's .streaming arm leaves a handle held; the
-;     COMPLETE arm closes it and writes $FF, and so does the refusal
-;     funnel. So a held handle means "this channel is carrying a cached
-;     STREAM", which in turn means the file exceeded the window;
-;   - the hot filemap and the run cursor live in the same channel's
-;     SFXS_CTX and are only ever rewritten by an open ON THIS CHANNEL or
-;     by this channel's own refiller leg, so a held handle and a matching
-;     SMPB_KEEP mean the cached map belongs to the cached file;
-;   - the refiller's error eviction clears SMPB_KEEP (leaving the handle
-;     held for the funnel to close later), so an evicted stream fails the
-;     number test and takes the full open, which closes the stale handle
-;     at .fresh.
-; SFXS_FILEBLK and SFXS_DATAOFF are likewise still the cached file's, so
-; neither F_FSTAT nor the chunk walk has anything to re-establish.
-;
-; STAGING RESTARTS AT FILE OFFSET 0, not at the payload: blocks stage
-; VERBATIM from 0 in this design (the WAV header stages with the payload
-; and the CONSUMER skips it, see sfx_stream_open's header), so "the start
-; of payload staging" is offset 0 and sfx_seek0 is exactly the right
-; seek. The consumer's anchor is rebuilt from SFXS_DATAOFF by the shared
-; tail, as on a fresh open.
-;
-; The caller must have STOPPED THIS CHANNEL AND WAITED, exactly as
-; aud_load_wav does before a fresh stage - h_sfx calls sfx_stop_wait
-; first. That is not politeness: the re-stage overwrites the window the
-; pump is reading, and the stop is also what shuts sfx_chan_refill's gate
-; (aud_smp_stop clears bit 2 STREAMING) for the whole of the staging,
-; which is only re-raised at .streaming after the last write.
+; The caller must stop this channel and wait first (h_sfx calls
+; sfx_stop_wait): the re-stage overwrites the window the pump reads,
+; and the stop also clears STREAMING, shutting the refiller's gate
+; until .streaming re-raises it after the last write.
 ;
 ; In:  A bit 0 = channel index (0 = channel 1). Slot 6 = AUD_PAGE_LO,
 ;      slot 7 = SFX_PAGE, mainline.
@@ -1001,18 +968,10 @@ aud_clk16_tab:
     db $CC,$BF,$19              ; HDMI 27000000/16 = 1687500
 
 ; ---------------------------------------------------------------------
-; THE CHANNEL ALLOCATOR (SP18 item 7 Task 12)
-;
-; One entry point serves every channel decision the SFX condact makes:
-; picking a channel for a play trigger (subs 1/2 auto, 11-14 pinned) and
-; releasing a pin (subs 15/16 and 5). It lives HERE rather than in
-; overlay1 for space - overlay1 is the tightest code pool this
-; sub-project touches and this page has thousands of bytes free - and it
-; can live here because everything it reads is either page-48 data
-; (sfxChan0, in slot 6 for the whole call) or resident (sfxChan1, the
-; mailbox parameter cells, frameCounter). overlay1 reaches it through
-; sfx_page_call (main.asm, resident), because overlay1 and this page
-; share the slot-7 window.
+; Channel allocator: serves every channel decision the SFX condact
+; makes (auto-allocate for subs 1/2, pin/unpin for 11-16/5). Lives here
+; rather than overlay1 for space; reached via sfx_page_call (main.asm)
+; since overlay1 and this page share the slot-7 window.
 ;
 ; In:  A = request. 0 = auto-allocate, 1 = pin channel 1, 2 = pin
 ;          channel 2, 3 = unpin channel 1, 4 = unpin channel 2,
@@ -1040,33 +999,15 @@ aud_clk16_tab:
 ; Preconditions: slot 6 = AUD_PAGE_LO, slot 7 = SFX_PAGE, mainline
 ; context (it takes no interrupt-sensitive action and does not halt).
 ;
-; THE DECISION TREE, in order:
-;   explicit (subs 11-14) - the named channel, always, whatever is
-;     playing on it and whether or not it is already pinned. The pin is
-;     set here; from now on auto-allocation may not touch that channel.
-;   auto (subs 1/2)
-;     (a) a channel that already CACHES this effect number and is not
-;         pinned. Cheapest possible outcome: a free rewind (COMPLETE) or
-;         a cached rewind (a held stream), and at worst a re-open that
-;         evicts nothing else.
-;     (b) an IDLE, unpinned channel (SMPB_FLAGS bit 0 clear). A pinned
-;         channel is skipped EVEN WHEN IDLE - the pin is a reservation,
-;         not a busy flag (owner ruling).
-;     (c) STEAL an unpinned ACTIVE channel: a ONE-SHOT (bit 1 clear)
-;         before a LOOP, and between two of the same kind the one whose
-;         SMPB_STAMP is oldest.
-;     (d) nothing left - drop, with the DEBUG marker.
-; Channel 1 is the fixed preference at every tie in (a) and (b).
-;
-; STEALING AND THE MAILBOX. Nothing is filed here. The caller stops the
-; victim through aud_load_wav, which files the chosen channel's stop bit
-; and HALT-WAITS for it to be consumed before a single byte is staged -
-; so the victim's playback is provably over before its window is
-; overwritten, and its stop and the new start land in different frames.
-; A same-tick stop-then-start on ONE channel would be legal anyway
-; (aud_tick consumes audRequest2 bit 2 before bit 3 and audRequest bit 7
-; before bit 6, all in one pass - see aud_tick's header), but no path
-; here relies on it.
+; Decision order: explicit (11-14) always takes the named channel and
+; sets its pin. Auto (1/2) prefers, in order: (a) an unpinned channel
+; already caching this effect, (b) an idle unpinned channel (a pin is
+; a reservation, skipped even when idle), (c) steal an unpinned active
+; channel - one-shot before loop, oldest SMPB_STAMP on a tie - or
+; (d) drop with a DEBUG marker. Channel 1 wins ties in (a)/(b).
+; Stealing files nothing here: the caller stops the victim through
+; aud_load_wav and waits before staging, so stop and new start always
+; land in different frames.
 sfx_alloc:
     ld c, b                          ; C = effect number; B is the
                                      ; caller's and must survive (its AY
@@ -1286,42 +1227,30 @@ msgSfxBusy: db "SFX BUSY?", 0
  ENDIF
 
 ; ---------------------------------------------------------------------
-; sfx_vid_resume - THE VIDEO AUTO-RESUME (owner ruling, 2026-08-10).
+; sfx_vid_resume - video auto-resume (owner ruling, 2026-08-10): a
+; LOOPING sampled effect restarts by itself when a cutscene ends, a
+; one-shot stays stopped. video.asm captures which channels were
+; looping before its teardown clears bits 0/1 and hops here with the
+; mask.
 ;
-; A LOOPING sampled effect comes back BY ITSELF when a cutscene ends; a
-; one-shot stays stopped. vid_run_entry_body aborts both channels before
-; the clip starts (stop bits filed and waited, cache kept) and the
-; teardown used to leave them idle, so the author had to re-trigger by
-; hand. video.asm captures which channels were looping before the abort
-; clears bits 0/1 and hops here with the mask once teardown is over.
+; Restart is the ordinary re-trigger ladder: the allocator re-commits
+; this channel's start parameters, a COMPLETE window rewinds free and
+; a cached STREAM re-stages via sfx_stream_rewind - same as h_sfx's
+; repeat-trigger path.
 ;
-; THE RESTART IS THE ORDINARY RE-TRIGGER LADDER, not a copy of it: the
-; allocator re-commits this channel's own start parameters from its
-; latches, a COMPLETE window rewinds for free and a cached STREAM
-; re-stages through sfx_stream_rewind - exactly what h_sfx does for a
-; repeat trigger of the same number on the same channel.
+; One channel per tick: sfx_alloc derives Ctrl/Tc via aud_ctc_params
+; into audReqSmpRate/Ctrl/Tc/Len/LenHi, which are shared across
+; channels (aud_tick's header), so a second alloc before the first
+; start is consumed would corrupt it. h_sfx's own .pend drain keeps
+; the two restarts in different ticks.
 ;
-; ONE CHANNEL PER TICK, DELIBERATELY. The per-channel re-commit does NOT
-; make the two channels independent within a tick: sfx_alloc reads this
-; channel's SMPB_RATE/LEN, derives Ctrl/Tc fresh through aud_ctc_params
-; against the LIVE video mode, and writes all four into
-; audReqSmpRate/Ctrl/Tc/Len/LenHi, which are SHARED (aud_tick's own header
-; states the limitation). A second alloc before the first start had been
-; consumed would therefore hand channel 1's start channel 2's rate and
-; length. The drain below is h_sfx's own .pend rule and is what puts the
-; two restarts in different ticks.
+; The pin is restored to its pre-video state (SMPB_FLAGS bit 5): not
+; pinned before stays not pinned, pinned before stays pinned.
 ;
-; THE PIN IS NOT A SIDE EFFECT. Allocator requests 1/2 name a channel and
-; set SMPB_FLAGS bit 5 in doing so; a bed that was not pinned before the
-; video must not come back pinned, so the bit is put back exactly as the
-; video found it. A bed that WAS pinned resumes still pinned.
-;
-; A cached STREAM whose re-stage FAILS is left stopped. h_sfx retries the
-; full open at that point, but aud_load_wav is overlay1 code and overlay1
-; shares the slot-7 window with this page, so the honest answer here is
-; to drop the resume rather than fake a retry. The refusal funnel has
-; already invalidated the cache, so the author's next trigger of that
-; number takes the full open and plays normally.
+; A cached STREAM whose re-stage fails is left stopped rather than
+; retried here (aud_load_wav is overlay1 code and overlay1 shares this
+; page's slot-7 window); the cache is already invalidated, so the next
+; trigger of that number takes a full open.
 ;
 ; In:  D = mask, bit 0 = channel 1, bit 1 = channel 2 - the channels that
 ;      were ACTIVE and LOOPING when vid_run captured them. Mainline,
@@ -1420,75 +1349,46 @@ sfx_chan_block:
     ret
 
 ; ---------------------------------------------------------------------
-; THE REFILLER (SP18 item 7 Task 6) - channel 1 streaming becomes real.
+; Refiller (SP18 item 7 Task 6): called once per frame from aud_tick,
+; after the pump, via a dispatcher that maps this page into slot 7 and
+; restores AUD_PAGE_HI after. Slot 6 stays AUD_PAGE_LO except around
+; each block transfer, where a WINDOW page is mapped over it as the
+; card's destination and restored immediately after.
 ;
-; Called once per frame from aud_tick, AFTER the pump (aud_smp_tick), by
-; a three-instruction dispatcher that maps this page into slot 7 and
-; hands slot 7 back to AUD_PAGE_HI afterwards. On entry slot 6 holds
-; AUD_PAGE_LO (page 48) - the channel block, its window descriptor and
-; the pump's own scratch - and this code keeps it that way except for
-; the few instructions around each block transfer, where a WINDOW page
-; is mapped over slot 6 as the card's destination and restored the
-; instant the transfer ends. Slot 6 is AUD_PAGE_LO on every exit path.
+; Per tick: at most SFX_BURST_CAP blocks per channel, SFX_TICK_CAP
+; across all channels, inside one CMD18 window opened at the run
+; cursor and closed before return - it never outlives the tick, so
+; mainline always finds the card free at the next frame boundary.
 ;
-; WHAT ONE TICK DOES: at most SFX_BURST_CAP blocks for a channel and at
-; most SFX_TICK_CAP across all channels, inside ONE CMD18 window that is
-; opened at the run cursor and CLOSED before this routine returns. The
-; window never outlives the tick, so mainline always finds the card free
-; on the next frame boundary; that is also why the burst caps are small.
+; Wire rules match the video player: $EB touches go through the sfx_*
+; clones above, interrupts stay on, ini trains use A as the outer
+; counter, every poll is bounded. Multiface bracketing is not done
+; here - sfx_win_open/close handle it, since a second sfx_mf_disable
+; would save the already-masked NR $06 and leave it disabled for good.
 ;
-; THE WIRE RULES ARE THE VIDEO PLAYER'S, UNCHANGED: every $EB touch goes
-; through the sfx_* clones above, interrupts stay ON throughout (no DI
-; or EI anywhere in this file), A is the outer counter of the ini train,
-; and every poll is bounded. Multiface bracketing is NOT done here -
-; sfx_win_open disables MF when it actually opens and sfx_win_close
-; restores it, and calling sfx_mf_disable a second time would save the
-; ALREADY-MASKED NR $06 value over the real one and leave the Multiface
-; disabled for good. The video player brackets it the same way, for the
-; same reason.
+; SMPB_DEPTH (a word) needs no lock: the pump and this refiller are
+; both called from the same aud_tick chain and never run concurrently;
+; the only interrupt nesting inside aud_tick is ctc_isr, which touches
+; only the ring cursors and the DAC port.
 ;
-; DEPTH IS SHARED WITH THE PUMP AND NEEDS NO LOCK. SMPB_DEPTH is a word,
-; so a torn read would matter - but the pump (aud_smp_tick/aud_smp_copy)
-; and this refiller are two calls in the SAME aud_tick chain and never
-; run concurrently. The only interrupt that nests inside aud_tick is
-; ctc_isr, which touches the resident ring cursors and the DAC port and
-; nothing else. So the credits below are plain reads and writes.
+; The video player cannot race this: it holds its own CMD18 window
+; open from mainline, but it freezes audEnable for the whole session,
+; so aud_tick (and this refiller) does not run while a video plays.
 ;
-; WHY THE VIDEO PLAYER CANNOT RACE THIS. The player is the tree's other
-; raw-SD client and it holds a CMD18 window open across many blocks from
-; MAINLINE, where cardBusy is clear - so the gate below would not see it.
-; It does not have to: the player freezes audEnable for the whole of a
-; video session (video.asm, the same freeze that stops the 50Hz tick
-; remapping MMU6/7 under it), so im2_isr takes its fast path and neither
-; aud_tick nor this refiller runs at all while a video is playing. It
-; also waits for any sampled effect to stop before it starts.
+; sfx_stream_open cannot race this either: aud_load_wav stops the
+; channel and waits before opening, and a stop clears bits 2 (STREAMING)
+; and 4 (REWIND), so the channel gate below refuses for the whole open.
 ;
-; WHY THE OPEN CANNOT RACE THIS. sfx_stream_open runs from mainline with
-; cardBusy set only inside each esxDOS call, so a frame ISR can land
-; between two of them - but aud_load_wav stops the channel and waits
-; before it calls in, and a stop clears bit 2 STREAMING and bit 4
-; REWIND, so the channel gate below refuses for the whole of an open.
+; A wire failure on a stream's FIRST block latches the fail counter
+; straight to SFX_FAIL_LIMIT (CSpect has no SPI engine behind $EB, so
+; every tick would otherwise pay the same bounded-poll cost for
+; nothing); a failure after a block has been delivered is a genuine
+; transient and retries up to SFX_FAIL_LIMIT consecutive ticks.
 ;
-; THE FIRST-FAILURE LATCH (and the CSpect verdict). A wire failure on
-; the FIRST block a stream ever asks for means the environment has no
-; raw SD path at all rather than a transient - under CSpect there is no
-; SPI engine behind port $EB, so CMD18's bounded R1 poll (256 tries,
-; ~9k T) rejects and every subsequent tick would pay the same price for
-; nothing. So that first failure latches the fail counter straight to
-; SFX_FAIL_LIMIT and the channel is stopped after ONE cheap failed tick.
-; A failure AFTER a block has been delivered is a genuine transient and
-; is retried up to SFX_FAIL_LIMIT consecutive ticks.
-;
-; ERROR EVICTION. When the limit is reached the channel's stop is filed
-; through the existing resident mailbox (channel 1: audRequest bit 7;
-; channel 2: audRequest2 bit 2 - both consumed at the top of the next
-; aud_tick) and the cache is invalidated by clearing bits 2/4 and zeroing
-; SFXS_KEEP. SFXS_HANDLE KEEPS the real handle: this
-; runs in ISR context and esxDOS is mainline-only, so the refiller must
-; not call F_CLOSE. sfx_stream_open's eviction step closes whatever
-; handle it finds cached before it adopts a new one, so the next WAV
-; load on this channel releases it - which is the same exposure the
-; keep-open ruling already accepts for a stopped stream.
+; On limit, the channel's stop is filed through the resident mailbox
+; and the cache invalidated (bits 2/4 cleared, SFXS_KEEP zeroed).
+; SFXS_HANDLE keeps the real handle - this runs in ISR context and
+; esxDOS is mainline-only, so F_CLOSE happens later, at the next open.
 SFX_TICK_CAP   equ 4             ; blocks per tick, all channels
 SFX_BURST_CAP  equ 2             ; blocks per channel per tick
 SFX_FAIL_LIMIT equ 8             ; consecutive failed ticks -> stop

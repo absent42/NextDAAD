@@ -38,16 +38,12 @@
 ; The sample refeed (aud_smp_tick, once per channel) runs every tick
 ; regardless of audFlags.
 ;
-; SHARED START PARAMETERS - A STATED LIMITATION (SP18 item 7 Task 11).
-; The start bits are per channel but the parameter cells they read are
-; NOT: audReqSmpCtrl/Tc/Len/LenHi/Loop are single copies. Both start
-; bits are consumed in ONE pass through this chain, reading the same
-; cells, so two starts filed in the same frame would take the same
-; rate, length and loop mode. Nothing does that today (mainline files
-; one start per condact execution) and the allocator that picks a
-; channel files one start at a time, so the ordering that matters -
-; stop before start, per channel - holds regardless. Filing two starts
-; in one frame would need a second parameter set first.
+; Shared start parameters: the start bits are per channel but the
+; parameter cells they read (audReqSmpCtrl/Tc/Len/LenHi/Loop) are single
+; copies, so two starts filed in the same frame would take the same
+; rate, length and loop mode. Mainline files one start per condact and
+; the channel allocator files one start at a time, so this never
+; happens in practice.
 ;
 ; Player gate: PLY_AKY_PLAY runs when audFlags bit 0 (music) OR bit 2
 ; (effect active) is set - the player is also what advances PSG-3
@@ -276,11 +272,7 @@ aud_tick:
     and %00000101                   ; music playing OR effect active
     ; No DI bracket: the player is nest-safe (player_aky.asm header). Its
     ; only DI is the linker read, ~350 T once per pattern, under one CTC
-    ; period, so the sample feed is delayed there, never dropped. The old
-    ; whole-call bracket masked the CTC for the player's 5.5k-15k T every
-    ; frame; hw IM2 keeps ONE pending request per source (im2_peripheral
-    ; im2_int_req), so every further edge in that window was lost - the
-    ; 50 Hz notch heard on the 880 Hz sine under a three-PSG tune.
+    ; period, so the sample feed is delayed there, never dropped.
     call nz, PLY_AKY_PLAY           ; music + effects on PSG 3
     ; effect-end watch (see header)
     ld a, (audFlags)
@@ -363,85 +355,20 @@ aud_init_song:
     ret
 
 ; --- envelope retrigger arm (SP16 Task 7 follow-up) ------------------
-
+;
 ; Poison the AKY player's four R13 (envelope shape) shadow cells with
 ; $FF so the first hardware-envelope note of a newly started song is
-; guaranteed to WRITE R13 and therefore RETRIGGER the envelope
-; generator. Called only from aud_init_song, after its PLY_AKY_INIT;
-; the three song-start routes (aud_tick's start-music, aud_music_stop
-; and aud_ensure_player) all reach it through that shared tail.
+; guaranteed to WRITE R13 and retrigger the envelope generator. Called
+; only from aud_init_song, after PLY_AKY_INIT.
 ;
-; THE DEFECT. PLY_AKY_SENDPSGREGISTERS_SPECTRUMRELATED pushes R0-R12
-; out unconditionally through an outi chain, but writes R13 only when
-; the value CHANGES (player_aky.asm:740 "ld a,(hl) / inc hl / cp (hl) /
-; jr z,...REGISTER13_END"), because a write to R13 restarts the
-; envelope generator on AY silicon and a per-frame rewrite would
-; retrigger every envelope fifty times a second. The byte it compares
-; against is the shadow cell immediately after R13 in each hardware
-; register array. PLY_AKY_INIT does not clear those cells - its whole
-; reset set is the linker position, the nine REGISTERBLOCKLINESTATE
-; opcodes, the pattern frame counter and the three SOUNDEFFECTDATA
-; words - and aud_psg_silence writes only R7/R8/R9/R10. So a restarted
-; song whose first envelope note asks for the shape already sitting in
-; the shadow never retriggers: a hold-type shape stays parked at its
-; terminal level, the buzzer's content is gone and only the tone
-; generator's fundamental remains, which is what "the tune came back at
-; a lower tone" describes. Shape $0A is also a triangle one octave
-; below $08 at the same envelope period.
-;
-; WHY A REGISTER DUMP CANNOT SEE IT. The discriminator is the WRITE
-; EVENT, not a value: control (shadow differed, R13 written, envelope
-; retriggered, shadow updated) and repro (shadow already matched, write
-; skipped, envelope not retriggered) end the frame byte-identical, and
-; the envelope generator's phase, direction and step counter are not
-; registers on any AY. The SP16 T7 three-point dump returned 654 of 654
-; byte-identical for exactly this reason; its dismissal of the R13
-; residue rested on "the next PLY_AKY_PLAY rewrites R0-R13
-; unconditionally" - true of R0-R12, false for R13.
-;
-; WHY $FF. R13 is a 4-bit register and the player masks every shape it
-; stores ("and $f" on the hardware path, "and $7 / add a,$8" on the
-; effects path), so a shadow of $FF can never equal a real shape and
-; the cp always mismatches. This is not an invention: $FF is the
-; player's OWN retrig idiom - a register block flagged retrig does
-; "ld (iy+3),$ff" (player_aky.asm:495) and the effects stream does the
-; same to PLY_AKY_SFXRETRIG (:134). This routine files exactly the
-; event the song data files for a retrig-flagged note.
-;
-; CORRECT BY CONSTRUCTION, two ways.
-; 1. It cannot cause an unwanted retrigger in normal play. The poison
-;    is consumed by the first R13 write after it, which stores the real
-;    shape into the shadow (player_aky.asm:744 "ld (hl),a"); from the
-;    next frame on, the comparison is against a genuine value again and
-;    the per-frame suppression works exactly as before. One forced
-;    write per song start, zero per-frame cost, cold paths only.
-; 2. It cannot mis-set an envelope. The VALUE written to R13 still
-;    comes from the song data via the register array - only the "skip
-;    the write" optimisation is defeated, and only for one note. The
-;    poison byte is never sent to the chip: the shadow is compared and
-;    overwritten, never output.
-; The two silence-song sites force that one write on channels the
-; silence song holds at volume 0, so nothing is audible. An effect live
-; on PSG 3 across a STOPM gets one extra envelope restart on its next
-; frame - the same event its own data files on any retrig-flagged note.
-;
-; THE FOUR CELLS. PSG 1's is named; PSG 2's and PSG 3's are the unnamed
-; +3 offsets of their hardware register arrays (the Disark conversion
-; named only PSG 1's); the fourth is PLY_AKY_SFXRETRIG. PSG 3's is the
-; persistent one - each frame the player LDIRs PSG 3's software +
-; hardware arrays into the SFX array (player_aky.asm:461) and copies
-; the shadow back afterwards (:473), so PLY_AKY_SFXRETRIG is a
-; per-frame working copy. Poisoning it too is belt-and-braces, 3 bytes.
-;
-; NOTHING ELSE LEAVES A STALE SHADOW that this misses. No other code in
-; the tree writes R13 through the shadow: aud_psg_silence,
-; aud_beep_start / aud_beep_silence and video.asm's video-entry
-; .psgpark touch only R0/R1/R7/R8/R9/R10. The AYS stream engine
-; (aud_ays_tick) writes whatever registers its frame mask selects
-; straight to the chip with no shadow at all, so it CAN desynchronise
-; chip from shadow - covered here, because a stream and an AKY song are
-; mutually exclusive and the next song start comes through
-; PLY_AKY_INIT.
+; PLY_AKY_SENDPSGREGISTERS_SPECTRUMRELATED writes R13 only when its
+; shadow changes (player_aky.asm:740) - a write restarts the envelope
+; generator on AY silicon, so a per-frame rewrite would retrigger every
+; envelope 50 times a second. PLY_AKY_INIT does not clear those shadow
+; cells, so a restarted song whose first envelope note asks for the
+; shape already shadowed never retriggers. $FF is safe poison because
+; R13 is 4-bit and the player masks every shape it stores, so a shadow
+; of $FF can never equal a real shape.
 ;
 ; Corrupts AF. Preserves BC, DE, HL, IX, IY.
 aud_env_arm:
@@ -754,30 +681,16 @@ aud_smp_rewind_depth:
     ld hl, 0
     ld (ix+SMPB_DEPTH), l
     ld (ix+SMPB_DEPTH+1), h
-    ; AND END THIS COPY AT THE SEAM (SP18 item 7 Task 6). The caller is
-    ; mid-fill: it rewound the cursor and is about to reload remain from
-    ; LEN and keep copying. Every byte it would copy now comes from a
-    ; window position the producer overwrote passes ago, and the frontier
-    ; clamp cannot stop it - that clamp is computed once, before the
-    ; copy, from the PRE-rewind DEPTH. Zeroing toFill drops the caller
-    ; straight through its own top-of-loop test into .filldone, which
-    ; commits the rewound position normally; the refiller re-stages from
-    ; the anchor on the next tick and the clamp takes over from there.
-    ; Without this the loop seam of a > 24K effect plays up to a ring's
-    ; worth of stale window bytes.
+    ; The caller is mid-fill and about to reload remain from LEN and keep
+    ; copying from a window position the producer already overwrote; the
+    ; frontier clamp cannot catch this because it is computed once,
+    ; before the copy, from the pre-rewind DEPTH. Zeroing toFill drops
+    ; the caller into .filldone instead, committing the rewound position;
+    ; the refiller re-stages from the anchor on the next tick.
     ;
-    ; WHAT THE SEAM SOUNDS LIKE - NOT A SILENT GAP. The ring gets a
-    ; shorter fill this frame, so play catches write and ctc_isr's
-    ; natural hold-last takes over: it keeps re-outputting the LAST REAL
-    ; SAMPLE, a DC level, until the refiller has staged enough for the
-    ; clamp to release bytes again. The DAC_SILENCE guard pad is NOT
-    ; involved - aud_smp_tick writes that pad only on the play-once
-    ; drain path, and its loop-mode test returns before reaching it (see
-    ; the bit-1 branch there). So a > 24K looping effect holds a brief
-    ; DC level across the loop seam rather than falling silent. That is
-    ; the established engine discipline (hold-last, not silence, for
-    ; every mid-playback shortfall) and is deliberately unchanged here;
-    ; what this fix buys is a DC hold instead of stale window content.
+    ; Effect on a > 24K looping effect: ctc_isr's hold-last keeps
+    ; re-outputting the last real sample (a DC level) across the seam
+    ; until the refill lands, instead of playing stale window bytes.
     ld (smpCpTo), hl
     set 4, (ix+SMPB_FLAGS)       ; the refiller owes a re-stage
     ret
@@ -891,33 +804,21 @@ aud_smp_copy:
     jr c, .strm                 ; toFill < free-1: keep (smpCpTo already set)
     ld (smpCpTo), de            ; toFill >= free-1: clamp to free-1
 .strm:
-    ; STREAMING FRONTIER CLAMP (SP18 item 7 Task 6). A channel the
-    ; refiller is still feeding may only be pumped as far as the refiller
-    ; has actually STAGED, or a starved stream replays stale window bytes
-    ; instead of underrunning cleanly and recovering. UNDERRUNNING
-    ; CLEANLY IS NOT SILENCE: a short fill lets play catch write and
-    ; ctc_isr holds the LAST REAL SAMPLE (a DC level) until the refiller
-    ; catches up. The DAC_SILENCE guard pad belongs to the play-once
-    ; drain path only - aud_smp_tick's loop-mode test returns before it -
-    ; so a starved LOOPING stream is audibly a DC hold, not a gap. That
-    ; hold-last behaviour is the engine's established discipline and is
-    ; unchanged; the clamp only decides DC-hold versus stale bytes.
-    ; The available figure is the identity recorded at the debit site
-    ; below:
-    ;     available = SMPB_DEPTH*512 - (SMPB_OFF & $1FF)
-    ; i.e. whole staged blocks ahead of the consumer, less how far into
-    ; the block it currently sits. Applied LAST, after the play-once and
-    ; backpressure clamps, so "it bit" means the staged frontier - not
-    ; the ring and not the payload - was the binding limit; that is what
-    ; the DEBUG underrun counter records.
-    ; GATED ON BITS 2/4 ONLY. A COMPLETE window (bit 3) holds the whole
+    ; Streaming frontier clamp: a channel the refiller is still feeding
+    ; may only be pumped as far as the refiller has actually staged, or
+    ; a starved stream replays stale window bytes instead of
+    ; underrunning cleanly. A short fill lets play catch write and
+    ; ctc_isr holds the last real sample (a DC level) until the refiller
+    ; catches up - same hold-last discipline as every other shortfall.
+    ; available = SMPB_DEPTH*512 - (SMPB_OFF & $1FF): whole staged
+    ; blocks ahead of the consumer, less how far into the block it sits.
+    ; Applied last, after the play-once and backpressure clamps.
+    ; Gated on bits 2/4 only: a COMPLETE window (bit 3) holds the whole
     ; file permanently, and a stream whose refiller reached EOF (all
-    ; three bits clear, window holding the tail) holds every byte the
-    ; consumer can still want; neither may be penalised by a
-    ; block-granular figure. DEPTH's high byte is not read: the
-    ; refiller's room gate and the open both cap DEPTH at SFX_WIN_BLKS,
-    ; and were it ever larger this would under-report and starve, which
-    ; is the safe direction.
+    ; three bits clear) holds every byte the consumer can still want -
+    ; neither may be penalised by a block-granular figure. DEPTH's high
+    ; byte is not read: the refiller's room gate and the open both cap
+    ; DEPTH at SFX_WIN_BLKS.
     ld a, (ix+SMPB_FLAGS)
     and %00010100               ; STREAMING or REWIND owed
     jr z, .snap
@@ -1145,14 +1046,10 @@ aud_smp_copy:
     ld (ix+SMPB_W+1), h
     ret
 
-; (SP18 item 7 Task 11: the cold boot-only seed routine that used to sit
-; here - aud_smp_chan1_init - moved to SFX_PAGE as aud_sfx_init, where it
-; also seeds channel 2. It runs once per boot and never again, so it had
-; no business holding page-48 code space, which is this sub-project's
-; binding budget; the move gave that space back to the per-frame pump.
-; overlay1's aud_boot_probe now reaches it through the resident
-; sfx_page_call trampoline (main.asm) - Task 12 generalised the old
-; per-callee aud_sfx_init_tramp into this one shared (HL) routine.)
+; The channel init seed (aud_smp_chan1_init) lives in SFX_PAGE as
+; aud_sfx_init, seeding both channels; it runs once per boot, off the
+; page-48 code budget. overlay1's aud_boot_probe reaches it through
+; the resident sfx_page_call trampoline (main.asm).
 
 ; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
 ; aud_smp_copy stages the source position + copy plan here BEFORE it windows a
@@ -1220,9 +1117,9 @@ sfxWin1:
     dw 0
     ASSERT sfxWin1 - sfxWin0 == SFXW_SIZE
 
-; (SP10 CTC pivot: the zxnDMA sample-program template retired here - the CTC
-; per-sample ISR replaces DMA burst playback entirely. The DMA is now free for
-; future use, e.g. GFX blits; audio_init still issues a harmless disable.)
+; The CTC per-sample ISR replaces DMA burst playback entirely; the DMA
+; is free for other use (e.g. GFX blits), audio_init still issues a
+; harmless disable.
 
 ; --- banked-stream engine (SP10 client 2: AYS streamed song) ---------
 ;
@@ -1758,12 +1655,12 @@ aud_dbg_cells:
 ; 2. safe player state: aud_music_stop/aud_ensure_player INIT the
 ;    player to audSilenceSong so effect-only PLY_AKY_PLAY runs real
 ;    (silent) music machinery instead of popping garbage.
-; Layout verified against real SongToAky binary exports (Task 4
-; report): header = format byte, channel-count byte, 4 bytes per PSG;
-; the linker follows immediately (dw duration + one track pointer per
-; channel per entry, dw 0 + dw loop pointer at the end); tracks are
-; "db wait / dw register block" entries. PLY_AKY_INIT skips 2 + 12
-; header bytes, so the linker must sit at song + 14 (3-PSG shape).
+; Layout matches real SongToAky binary exports: header = format byte,
+; channel-count byte, 4 bytes per PSG; the linker follows immediately
+; (dw duration + one track pointer per channel per entry, dw 0 + dw
+; loop pointer at the end); tracks are "db wait / dw register block"
+; entries. PLY_AKY_INIT skips 2 + 12 header bytes, so the linker must
+; sit at song + 14 (3-PSG shape).
 audSilenceSong:
     db $81                          ; format: version 1, little-endian
     db 9                            ; channels (3 PSGs; read + ignored)

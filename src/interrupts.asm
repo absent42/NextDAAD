@@ -71,95 +71,44 @@ im2_init:
                                          ; SP18 item 7 Task 10: bit 1 added for
                                          ; channel 2's CTC (ctc2_isr, above) - same
                                          ; belt-and-braces reasoning, one channel over.
-    ; DMA PRE-EMPTION PERMISSIONS (NR $CC/$CD/$CE) - 2026-08-03, CONFIRMED
-    ; ON SILICON. The zxnDMA's mem-to-mem transfers run in CONTINUOUS mode,
-    ; which "runs to completion without allowing the CPU to run" (dev guide
-    ; chapter-next-dma.tex, WR4 bits 6-5; tools/NextZXOS/docs/extra-hw/dma/
-    ; zxndma.txt says the same). The CPU is BUS-STALLED for the whole
-    ; transfer and no ei can shorten that, so a picture blit used to hold
-    ; ctc_isr off the DAC for ~1900 T per chunk - not a lost tick (hardware
-    ; IM2 CACHES a held request) but a late one, which pulse-width-mangles
-    ; the reconstruction staircase. That is audible, and it is what the
-    ; owner heard as gross distortion on tests/sfxdi.dsf. In hardware IM2
-    ; (nextreg $C0 bit 0, set above) the stall can be broken PER SOURCE:
-    ; $CC/$CD/$CE choose which interrupters may interrupt a running DMA
-    ; (chapter-next-interrupts.tex:296-301 for the feature, :512-564 for the
-    ; bit layouts). With these three writes plus the deletion of dma_copy's
-    ; per-chunk di/ei, a 16 kHz sampled effect stayed CLEAN through a forty-
-    ; call GFX 0 0 burst that was grossly distorted before (owner, real
-    ; Next, HDMI). An independent LDIR-only build was clean too, so the
-    ; bus-stall mechanism is confirmed twice over.
+    ; DMA PRE-EMPTION PERMISSIONS (NR $CC/$CD/$CE). A running zxnDMA
+    ; CONTINUOUS-mode transfer bus-stalls the CPU for its whole duration
+    ; (dev guide chapter-next-dma.tex WR4 bits 6-5; tools/NextZXOS/docs/
+    ; extra-hw/dma/zxndma.txt says the same), which without these
+    ; writes can hold ctc_isr off the DAC long enough to audibly distort
+    ; sampled playback. $CC/$CD/$CE admit only the DAC sample-timer CTC
+    ; channels to interrupt a running DMA (chapter-next-interrupts.tex:
+    ; 296-301, :512-564 for bit layouts) - the only sources dma_copy's
+    ; callers need.
     ;
-    ; ALL THREE ARE WRITTEN EXPLICITLY. The dev guide gives the bit layouts
-    ; but states NO reset value for any of the three registers, so the
-    ; ambient default is unknown in both directions - and both directions
-    ; matter. A restrictive default would deny the permission this fix
-    ; needs; a PERMISSIVE one would mean the frame ISR could already have
-    ; been pre-empting every DMA in the tree, with only the DI suppressing
-    ; it. Writing all three settles it either way.
-    nextreg NR_DMA_INT_EN_1, 0           ; $CC = 0: neither the ULA frame
-                                         ; interrupt (bit 0) nor the line
-                                         ; interrupt (bit 1) may EVER interrupt
-                                         ; a DMA. MANDATORY, not tidiness:
-                                         ; im2_isr's full-context path REMAPS
-                                         ; MMU6/7 around aud_tick, so a
-                                         ; transfer left running across a frame
-                                         ; tick would read and write through the
-                                         ; AUDIO banks' mapping instead of the
-                                         ; caller's - a corrupt picture and
-                                         ; trashed audio state. That hazard is
-                                         ; the ORIGINAL reason dma_copy carried
-                                         ; a DI at all (see its header in
-                                         ; overlay2.asm); $CC = 0 is what
-                                         ; replaces the DI, and it must never be
-                                         ; relaxed without re-reading that
-                                         ; hazard note.
-    nextreg NR_DMA_INT_EN_2, %00000011   ; $CD bit 0 = CTC channel 0, the DAC
-                                         ; sample timer - one of the two sources
-                                         ; allowed to pre-empt a DMA. Safe because
-                                         ; its ISR is MMU-free BY EXPLICIT CONTRACT:
-                                         ; ctc_isr (below) saves only AF/HL and
-                                         ; touches no MMU slot, no $243B/$253B
-                                         ; register-select pair, no banked
-                                         ; memory and never the DMA port - the
-                                         ; same contract that already makes it
-                                         ; nestable inside im2_isr. A transfer
-                                         ; resumed after it therefore sees
-                                         ; exactly the mapping it was armed
-                                         ; with. Channels 2-7 stay barred here
-                                         ; and are not enabled in $C5 either.
-                                         ; NOTE FOR THE VIDEO PATH: video.asm
-                                         ; repoints IM2_CTC_STUB to
-                                         ; video_ctc_isr_stereo while a clip
-                                         ; plays, so this permission also
-                                         ; applies to the video player's own DMA
-                                         ; kernels. That ISR meets the same
-                                         ; contract (AF/IX only, the DAC pair,
-                                         ; the MMU3 ring pinned for the whole
-                                         ; session, RETI exit). Since SP18
-                                         ; item 5 the video kernels run
-                                         ; unbracketed and this permission is
-                                         ; their only guard (silicon leg
-                                         ; PASSED 2026-08-08: corruption gate
-                                         ; byte-exact on every staged clip
-                                         ; including the fill path; core
-                                         ; 3.02.04).
-                                         ; SP18 item 7 Task 10: bit 1 = CTC
-                                         ; channel 1, SFX channel 2's DAC sample
-                                         ; timer, admitted under the IDENTICAL
-                                         ; MMU-free/RETI contract - ctc2_isr
-                                         ; (above) saves only AF/HL, touches no
-                                         ; MMU slot, no register-select pair, no
-                                         ; banked memory and never the DMA port,
-                                         ; the sole condition of admission stated
-                                         ; above. Channel 2 is driven by the
-                                         ; sfxChan1 pump: aud_tick audRequest2
-                                         ; bits 2/3 (SP18 item 7 Task 11).
+    ; ALL THREE WRITTEN EXPLICITLY: the dev guide gives bit layouts but no
+    ; reset value for $CC/$CD/$CE, so the ambient default is unknown and
+    ; could deny the needed permission or already allow pre-emption everywhere.
+    nextreg NR_DMA_INT_EN_1, 0           ; $CC = 0: frame/line ints barred from
+                                         ; interrupting a DMA - im2_isr remaps
+                                         ; MMU6/7 around aud_tick, so a transfer
+                                         ; left running would corrupt picture and
+                                         ; audio state. Replaces dma_copy's old DI
+                                         ; (overlay2.asm); do not relax.
+    nextreg NR_DMA_INT_EN_2, %00000011   ; $CD bit 0 = CTC channel 0 (DAC sample
+                                         ; timer) may pre-empt a DMA - safe because
+                                         ; ctc_isr is MMU-free by contract (AF/HL
+                                         ; only, no MMU slot, register-select pair,
+                                         ; banked memory or DMA port), the same
+                                         ; contract that makes it nestable inside
+                                         ; im2_isr, so a resumed transfer sees the
+                                         ; mapping it was armed with. Channels 2-7
+                                         ; stay barred (not enabled in $C5 either).
+                                         ; video.asm repoints this vector to
+                                         ; video_ctc_isr_stereo during clips under
+                                         ; the identical contract, so this permission
+                                         ; covers the video DMA kernels too. Bit 1 =
+                                         ; CTC channel 1, SFX channel 2's DAC timer
+                                         ; (ctc2_isr), admitted under the same
+                                         ; MMU-free/RETI contract.
     nextreg NR_DMA_INT_EN_3, 0           ; $CE = 0: no UART source may interrupt
-                                         ; a DMA. Nothing here uses the UARTs
-                                         ; and $C6 is never written, so this
-                                         ; closes an ambient default that would
-                                         ; otherwise simply be inherited.
+                                         ; a DMA; nothing here uses UARTs and $C6
+                                         ; is never written, closing that default.
     im 2
     ; SP11 frame-tick fix: prime the hw-IM2 daisy chain before releasing
     ; interrupts. Entering hw-IM2 mode (nextreg $C0 bit 0 = 1, above) can leave a

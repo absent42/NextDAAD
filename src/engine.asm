@@ -10,46 +10,23 @@ eng_init_game:
     ld bc, 255
     ld (hl), 0
     ldir
-    ; FLAGS 37 (max carried) AND 52 (strength) ARE DELIBERATELY LEFT AT
-    ; ZERO - do not "restore" the manual's 4 and 10 here (owner ruling
-    ; 2026-08-04). NEITHER reference pre-initialises them: msx2daad's
-    ; initFlags is a bare "memset(flags, 0, 256)" followed only by the
-    ; screen-mode flags (daad/daad_init.c:110-118), and fMaxCarr /
-    ; fStrength are written in exactly one place, do_ABILITY
-    ; (daad_condacts.c:1597-8); jDAAD's resetFlags loops every flag to 0
-    ; with no exceptions (jdaad.js:575-581) and only _ABILITY writes
-    ; them. Setting them here was a literal reading of the manual
-    ; against BOTH references, the same shape as the two defects the
-    ; TestUnitDAAD adoption turned up. Games set their own limits: the
-    ; standard DAAD idiom is "LET fStrength 10 / LET fMaxCarr n" in the
-    ; RESET process (what STARTER.DSF, Rabenstein, Urban Upstart and
-    ; every surveyed corpus game do) or an explicit ABILITY. Suite
-    ; check 04 pins the zeros.
-    ; SP16 C1 (docs/daad-compliance-report.md section 4): flag 29
-    ; fGFlags is the capability byte a period game gates its artwork
-    ; on - "HASAT GMODE" (attribute 247 -> flag 29 bit 7) is the
-    ; canonical test, "HASAT MOUSE" (240 -> bit 0) the other. It was
-    ; never written, so every such game ran here as if text-only.
-    ; The value is DERIVED FROM THIS INTERPRETER'S CAPABILITIES, not
-    ; copied from jDAAD (owner ruling 2026-07-27): bit 7 because
-    ; Layer 2 location graphics exist, bit 0 because MOUSE (condact
-    ; 66) is implemented. Bits 1-6 are drawstring-machine options
-    ; (invisible draw, pictures off, wait-for-key, border) that this
-    ; interpreter does not have, so they stay clear.
+    ; Flags 37 (max carried) and 52 (strength) stay zero: neither
+    ; reference pre-inits them (msx2daad daad_init.c:110-118; jdaad.js:
+    ; 575-581); both set them only in do_ABILITY (daad_condacts.c:
+    ; 1597-8). Games set their own via LET or ABILITY. Suite check 04.
+    ; Flag 29 fGFlags (HASAT GMODE=bit 7, HASAT MOUSE=bit 0) was never
+    ; written, so period games saw text-only. Value reflects this
+    ; interpreter's own capabilities (Layer 2 graphics, MOUSE condact
+    ; 66), not jDAAD; other bits are unimplemented drawstring-machine
+    ; options, so stay clear.
     ld a, %10000001              ; = 129
     ld (flags+FLAG_GFLAGS), a
-    ; SP16 C2: flag 62 fScMode is the absolute screen-mode byte,
-    ; also never written. msx2daad's convention (daad_platform_msx2.c
-    ; gfxSetScreenModeFlags) is "16|SCREEN" - bit 4 marks a native
-    ; machine mode, distinguishing it from the ST (bits 0-3 = 0/1)
-    ; and PC (4/7/13) values the field originally carried - with
-    ; bits 0-3 naming the mode. Bit 7 means "palette switching
-    ; available", which the Next has (the template's own comment
-    ; reads "2=Text, 4=CGA, 13=EGA, 141=VGA"; jDAAD forces 14+128).
-    ; So: bit 7 + bit 4 + mode 0, where 0 mirrors l2Mode's own
-    ; encoding for Layer 2 256x192 256-colour, the boot default
-    ; (overlay2.asm l2_mode_set). Static - this interpreter does not
-    ; re-publish the byte when a game switches Layer 2 mode.
+    ; Flag 62 fScMode (screen-mode byte) was never written. msx2daad's
+    ; convention (daad_platform_msx2.c gfxSetScreenModeFlags) is
+    ; "16|SCREEN": bit 4 = native mode, bit 7 = palette switching
+    ; (both true here); mode 0 mirrors l2Mode's own encoding for
+    ; Layer 2 256x192 256-colour, the boot default (overlay2.asm
+    ; l2_mode_set). Static - not re-published on a Layer 2 mode switch.
     ld a, %10010000              ; = 144
     ld (flags+FLAG_SCMODE), a
     ld a, (ddbHeader+HDR_NUMOBJ)
@@ -124,22 +101,17 @@ eng_load_objects:
     ld de, OBJ_SIZE
     add ix, de
     djnz .attrs
-    ; Extended attributes (2 bytes each). SP16 A5
-    ; (docs/daad-compliance-report.md section 2, Appendix A probe 4):
-    ; the DDB stores the 16 user attribute bits as ONE LITTLE-ENDIAN
-    ; WORD (drb.php generateObjectExtraAttr -> writeWord). HASAT n
-    ; addresses them as flags[59 - (n>>3)], so attributes 0-7 must
-    ; reach flag 59 and 8-15 flag 58 - i.e. flag 59 takes the word's
-    ; LOW byte, which is the FIRST byte in the file. A probe object
-    ; declared with only attribute 0 set compiles to the bytes
-    ; 01 00, and both references agree (jdaad.js:739-740,
+    ; Extended attributes (2 bytes/obj): the DDB stores the 16 user
+    ; attribute bits as one little-endian word (drb.php
+    ; generateObjectExtraAttr -> writeWord); HASAT n = flags[59-(n>>3)]
+    ; so attrs 0-7 -> flag 59 (word's low byte, first in file), 8-15
+    ; -> flag 58. Confirmed both references (jdaad.js:739-740,
     ; daad_init.c:168-169 + daad_objects.c:56-57).
-    ; objTable therefore holds the pair in FLAG ORDER, high attribute
-    ; byte first: +2 = attrs 8-15 -> flag 58 / 39, +3 = attrs 0-7 ->
-    ; flag 59 / 40. This is the ONLY place the file's order is
-    ; interpreted; obj_set_refs (overlay0.asm) and obj2_resolve
-    ; (overlay1.asm) then copy +2/+3 out sequentially and both land
-    ; correctly. Do not "fix" the swap here without fixing both.
+    ; objTable holds the pair high-attribute-byte first: +2 = attrs
+    ; 8-15 -> flag 58/39, +3 = attrs 0-7 -> flag 59/40. Only place the
+    ; file's order is interpreted; obj_set_refs (overlay0.asm) and
+    ; obj2_resolve (overlay1.asm) depend on this order - fix both if
+    ; it ever changes.
     ld a, (numObj)
     ld b, a
     ld ix, objTable
@@ -521,25 +493,10 @@ eng_ptr_abs:
     ld a, (rdPage)
     sub DDB_PAGE_FIRST           ; a = page index, PROVABLY 0..7 (rd_seek
                                  ; masks offset>>13 with AND 7, ddbtext.asm)
-    ; (The SP14c E6 histogram instrument lived here until the SP17 T8
-    ; wave - stripped at batch close as promised, verdict long landed:
-    ; owner-measured Rabenstein session read buckets
-    ; 00 00 FF 00 00 00 00 00 - every condact dispatch hit page index
-    ; a=2, nothing else, ever; DRC places process tables at the END of
-    ; the DDB, so condact fetches always target the highest pages.)
-    ; SP14c E6 (owner-endorsed on that histogram): flat,
-    ; unconditional shift replaces the old data-dependent DEC-loop.
-    ; a*$2000 = (a<<5) placed as the high byte of a 16-bit word (low
-    ; byte 0), since $2000/$100 = $20 = 1<<5; exact for the full
-    ; provable range a=0..7 (2^5*7 = 224, fits one byte, no overflow).
-    ; Verdict rationale: real dispatch never observed a=0 (the
-    ; feared regression case the gate's rule guarded against), so the
-    ; old loop's a=0 fast exit bought nothing in practice while its
-    ; cost grew with a on every other call; this form is constant-time
-    ; (124T) for every a in 0..7, faster than the loop at every a>=1
-    ; and only slightly slower than the loop's unreachable a=0 case
-    ; (106T) - see the findings report for the full instruction-by-
-    ; instruction derivation (doc 05/06 shift-by-constant idiom).
+    ; a*$2000 as the high byte of a 16-bit word (low byte 0): $2000/
+    ; $100 = $20 = 1<<5, exact for the full provable range a=0..7.
+    ; Flat 5x ADD A,A is constant-time (124T) for every a, faster than
+    ; a data-dependent loop for every a>=1.
     add a, a                    ; T=4 B=1
     add a, a                    ; T=4 B=1
     add a, a                    ; T=4 B=1
@@ -554,11 +511,11 @@ eng_ptr_abs:
     add hl, de                  ; = the file offset, which IS the
     ret                         ; pointer for a NextDAAD database
 
-; V3 INDIR's one-shot arg2 override (SP16 A2). Placed HERE, before this
-; file's ALIGN 256/flags boundary, for the same reason as the histogram
-; above: pre-anchor slack rather than the scarce post-flags
-; RESIDENT_LIMIT budget. eng_exec reaches indirArg2 with DEC HL from
-; indirValid, so the ORDER of these two bytes is load-bearing.
+; V3 INDIR's one-shot arg2 override. Placed HERE, before this file's
+; ALIGN 256/flags boundary, to use pre-anchor slack rather than the
+; scarce post-flags RESIDENT_LIMIT budget. eng_exec reaches indirArg2
+; with DEC HL from indirValid, so the ORDER of these two bytes is
+; load-bearing.
 indirArg2:  db 0
 indirValid: db 0
 
@@ -662,14 +619,11 @@ eng_doall_next:
     cp (iy+5)
     jr z, .next
 .take:
-    ; SP16 T6, V3 flag 53 bit 0. BOTH references write this bit at TWO
-    ; sites, not one: SET at DOALL entry (h_doall) and CLEAR here, the
-    ; moment a first object is found - msx2daad daad_condacts.c:2280
-    ; and :2255, PCDAAD condacts.pas:1460/1467. Setting it only on the
-    ; caso-A arm below would leave the bit stale through a later
-    ; successful DOALL, which is why the NOTE that used to sit at
-    ; .exhausted (SP16 B14, "bit 0 belongs on that arm alone") is
-    ; superseded. B is live across this call and eng_v3f53 preserves it.
+    ; V3 flag 53 bit 0: both references write it at TWO sites - SET at
+    ; DOALL entry (h_doall), CLEAR here on first object found (msx2daad
+    ; daad_condacts.c:2280/:2255, PCDAAD condacts.pas:1460/1467). A
+    ; caso-A-only SET (below) would leave the bit stale through a later
+    ; successful DOALL. B is live across this call; eng_v3f53 preserves it.
     ld de, $00FE                ; OR 0, AND ~F53_DOALLNONE
     call eng_v3f53
     ld a, b
@@ -694,41 +648,30 @@ eng_doall_next:
     inc b
     jr .scan
 .exhausted:
-    ; SP16 B14. BOTH references split the exhausted DOALL into two
-    ; cases, and NextDAAD reaches them through this one label, so the
-    ; ENTRY value of doallObj is the discriminator: h_doall resets it
-    ; to $FF before the initial scan (overlay0.asm:218), and
-    ; eng_pop_proc's step-4 re-entry only reaches here when it is NOT
-    ; $FF (:327-329). Nothing between entry and here writes it - .take
-    ; is the only writer and .take returns.
-    ;   caso A - the INITIAL scan found nothing at all: NEWTEXT then
-    ;     NOTDONE. msx2daad do_DOALL (daad_condacts.c:2286-2295,
-    ;     "Caso A", PCDAAD condacts.pas:1486-1491 cited) runs
-    ;     clearLogicalSentences() + isDone=false + popPROC; jDAAD's
-    ;     _DOALL else arm (jdaad.js:3578-3582) runs newtext();
-    ;     _NOTDONE();. Without this the level exits DONE - DOALL is
-    ;     action-typed, so the dispatcher had already set the done-flag
-    ;     to 1 - and the rest of the player's compound order survives.
-    ;   caso B - the DOALL DID iterate and has now run out: plain pop,
-    ;     completing the level as DONE. msx2daad is explicit that this
-    ;     arm must not be merged with caso A -
-    ;     _internal_doall_continue (:2265-2276) "No isDone/checkEntry/
-    ;     lsBuffer mutation here (caso B per PCDAAD spec)" - and
-    ;     unitTests/src/tests_condacts_v3.c carries D-CANCEL-2d,
-    ;     "DOALL exhausted *after iterating* must mark DONE", as a
-    ;     regression test against exactly that merge (a NOTDONE here
-    ;     made a successful DROP ALL answer "I can't do that" too).
-    ; NEWTEXT is h_newtext's whole body (clear inpPending, a resident
+    ; Both references split the exhausted DOALL into two cases;
+    ; NextDAAD reaches both through this label, discriminated by the
+    ; ENTRY value of doallObj: h_doall resets it to $FF before the
+    ; initial scan (overlay0.asm:218), eng_pop_proc's step-4 re-entry
+    ; only reaches here when it is NOT $FF (:327-329). Only .take
+    ; writes it, and .take returns.
+    ;   caso A - INITIAL scan found nothing: NEWTEXT then NOTDONE.
+    ;     msx2daad do_DOALL (daad_condacts.c:2286-2295, "Caso A",
+    ;     PCDAAD condacts.pas:1486-1491) runs clearLogicalSentences()
+    ;     + isDone=false + popPROC; jDAAD's _DOALL else arm (jdaad.js:
+    ;     3578-3582) runs newtext(); _NOTDONE(). Without this the level
+    ;     exits DONE (DOALL is action-typed, so the dispatcher already
+    ;     set done=1) and the rest of the compound order survives.
+    ;   caso B - DOALL iterated and ran out: plain pop, DONE. msx2daad
+    ;     _internal_doall_continue (:2265-2276) is explicit this must
+    ;     not merge with caso A ("No isDone/checkEntry/lsBuffer
+    ;     mutation here"); unitTests tests_condacts_v3.c D-CANCEL-2d
+    ;     regression-tests against exactly that merge (a NOTDONE here
+    ;     made a successful DROP ALL answer "I can't do that").
+    ; NEWTEXT is h_newtext's body inlined (clear inpPending, a resident
     ; cell - overlay0.asm:1947-1950); h_newtext itself lives in
-    ; overlay0 and cannot be called from here, so the single store is
-    ; inlined.
-    ; SUPERSEDED NOTE (SP16 T6): this used to read "caso A is the ONE
-    ; place DOALL found nothing at all is known, so flag 53 bit 0
-    ; belongs on that arm alone". It does not - both references SET the
-    ; bit at DOALL entry and CLEAR it on the first object found, so
-    ; nothing is needed here: an exhausted-with-nothing DOALL simply
-    ; never reached the clear at .take. A caso-A-only SET would also
-    ; leave the bit lit through the NEXT, successful, DOALL.
+    ; overlay0 and cannot be called from here.
+    ; Flag 53 bit 0 needs no action here: caso A never reaches .take's
+    ; clear, so the entry-time SET from h_doall simply stands.
     xor a
     ld (doallLevel), a
     ld hl, doallObj

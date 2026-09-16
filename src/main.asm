@@ -1,5 +1,5 @@
 ; NextDAAD - DAAD interpreter for the ZX Spectrum Next
-; Foundation: boot, memory, DDB loading. See docs/superpowers/specs.
+; Foundation: boot, memory, DDB loading.
 
     DEVICE ZXSPECTRUMNEXT
     SLDOPT COMMENT WPMEM, LOGPOINT, ASSERTION
@@ -527,17 +527,11 @@ call_dispatch:
     ld ix, flags                 ; contract: IX valid, A/B/C/HL/DE undefined
     jp ext_dispatch
 
-; --- XBN service table (Task 6) ---------------------------------------
+; --- XBN service table ---------------------------------------------
 ; Frozen JP table at XBN_API ($BEC8, nextdaad.inc), called directly by
 ; extern code with the XBN bank mapped into slots 6+7 (overlay0 NOT
-; mapped) - every row target below must therefore be resident. The
-; template and boot copy were planned for overlay0 (cheap there), but
-; overlay0's DEBUG headroom is 9 bytes at this point in the project and
-; cannot take xbn_api_tpl+xbn_api_init (30+9 bytes); this resident tail
-; had ~1557 bytes free at the last build, so template, init and every
-; service body land here instead. Rows 3-7 (fopen/fread/fwrite/fseek/
-; fclose) landed Task 7; row 9 (getmsg) landed Task 8; unimplemented
-; rows set CF and A = $FF.
+; mapped) - every row target below must therefore be resident.
+; Unimplemented rows set CF and A = $FF.
 xbn_api_tpl:
     jp svc_version               ; 0
     jp svc_putchar                ; 1
@@ -785,21 +779,9 @@ svc_getmsg:
     ld hl, savStage
     ld bc, 0                     ; running count
 .loop:
-    push hl                      ; the store pointer MUST be preserved
-                                 ; by us, not by the callee:
-                                 ; txt_next_decoded guarantees only BC.
-                                 ; Its token paths load HL with the
-                                 ; token-table seek address and rd_pop
-                                 ; corrupts HL outright - without this
-                                 ; bracket every decoded byte after the
-                                 ; first token reference was stored
-                                 ; THROUGH the stale HL into the mapped
-                                 ; DDB page, physically overwriting the
-                                 ; token table (the svc-getmsg
-                                 ; corruption defect, found in the
-                                 ; field 2026-08-15; print_msg never
-                                 ; hit it because it holds no pointer
-                                 ; across the call)
+    push hl                      ; must bracket ourselves - txt_next_decoded
+                                 ; preserves only BC (see its own header,
+                                 ; ddbtext.asm)
     call txt_next_decoded        ; preserves BC (and only BC)
     pop hl
     jr c, .done                  ; CF = message terminator

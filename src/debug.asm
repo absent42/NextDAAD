@@ -281,14 +281,10 @@ boot_banner:
     call nr_read
     jp dbg_hex8
 
-; Expected free-bank counts. These MUST match what bank_table_init
-; actually frees - they are the allocator's tripwire, and a stale value
-; here disables it. Both were one too high until 2026-08-12 because they
-; still counted bank 35, which BANK_POOL_B stopped including when
-; VID_PAGE2/SFX_PAGE took it (the withdrawal was made unconditional in
-; both build variants, see nextdaad.inc's bank map). Check 1 had been
-; failing ever since, on the ULA console where the verdict was never
-; replayed to the tilemap and so was never seen.
+; Expected free-bank counts. Must match what bank_table_init actually
+; frees - they are the allocator's tripwire, and a stale value here
+; disables it. Bank 35 is withdrawn for VID_PAGE2/SFX_PAGE in both
+; build variants (see nextdaad.inc's bank map) and excluded here.
 SELFTEST_FREE_2MB equ 81    ; 14,15 + 20-23 + 37-47 + 48-111 (28,29 withdrawn
                             ; for the overlays, 30-34 for the Layer 2 back
                             ; surface, 35 for VID_PAGE2/SFX_PAGE, 36 for the
@@ -693,34 +689,20 @@ ktest_trampoline:
     ld a, OVL1_PAGE
     jp ovl_map_page
 
-; EXTERN vector 8: NXBEN (the SP15 T2 decode-kernel bench) is RETIRED
-; with the v2 format freeze (SP15 3a page-layout redesign): its job -
-; the silicon coefficients behind the freeze - is done, its kernels
-; graduated into the production decoder (video.asm hot page), and its
-; ~2.4KB of VID_PAGE2 DEBUG space now funds the v2 open/load cluster
-; plus the streaming cluster's move off the hot page. git holds the
-; bench (commits 5cc2c70/a63ccfd lineage) and the DMAT/DMACC
-; precedent before it. Vector 8 is reused below (Card #6 fixture
-; wave); 5 forwards to a loaded XBN (suite check 44 holds because the
-; suite stages no XBN - the no-XBN fallback is inert), 6 is KTEST's.
-;
-; EXTERN vectors 8/9/10 (Card #6 SNAP=03/00 sitting follow-up,
-; .superpowers/sdd/sp14a-task-4-report.md section 41): DEBUG-only
-; routes for tests/test.dsf's L2MOD/LHIDE/LSHOW verbs, so the owner
-; can drive the two snapshot branches the seven-leg sitting could not
-; reach (the test template runs 320x256 mode-1 always, so
-; vid_snap_geom's mode-0/hidden-L2 branches never ran on silicon).
-; L2MOD (vector 8) drops the template into the mode-0 test-card state
-; (l2_testcard, overlay2.asm) - a following VPLY1 should then read
-; SNAP=03. LHIDE/LSHOW (vectors 9/10) trampoline straight to
-; l2_disable/l2_enable (overlay2.asm) - the same NR $69 bit
-; vid_snap_geom reads - so a following VPLY1 after LHIDE should read
-; SNAP=00. Same push-target/ovl_map_page idiom as ktest_trampoline.
-; l2mod_run's overlay2.asm wrapper exists only because l2_testcard
-; needs A = mode on entry, which this trampoline cannot set before
-; the page switch (ovl_map_page's own A-clobber, loading OVL2_PAGE);
-; LHIDE/LSHOW need no such wrapper since l2_disable/l2_enable take no
-; argument, so they push those routines directly.
+; EXTERN vector 8 is reused for L2MOD; 5 forwards to a loaded XBN
+; (inert when the suite stages none); 6 is KTEST's. Vectors 8/9/10
+; drive tests/test.dsf's L2MOD/LHIDE/LSHOW verbs (DEBUG-only) so the
+; mode-0/hidden-L2 snapshot branches in vid_snap_geom can be exercised
+; directly (the test template runs 320x256 mode-1 always, so those
+; branches never run otherwise). L2MOD (vector 8) drops the template
+; into the mode-0 test-card state (l2_testcard, overlay2.asm) - a
+; following VPLY1 should then read SNAP=03. LHIDE/LSHOW (9/10)
+; trampoline straight to l2_disable/l2_enable (overlay2.asm), the
+; same NR $69 bit vid_snap_geom reads, so VPLY1 after LHIDE should
+; read SNAP=00. l2mod_run's wrapper exists because l2_testcard needs
+; A = mode on entry, which ovl_map_page clobbers before the page
+; switch; LHIDE/LSHOW need no wrapper since l2_disable/l2_enable take
+; no argument.
 l2mod_trampoline:
     ld hl, l2mod_run
     push hl
@@ -737,37 +719,29 @@ l2show_trampoline:
     ld a, OVL2_PAGE
     jp ovl_map_page
 
-; EXTERN vector 11 (SP17 T5 Layer 2 scroll bring-up, run sheet
-; .superpowers/sdd/sp14a-task-4-report.md section 41.4): DEBUG-only
-; route for tests/test.dsf's ten LSxxx owner verbs, which prove the
-; Layer 2 offset registers on silicon (the 9th X bit NR $71, X/Y wrap
-; at both modes, clip-window interaction, mid-raster write tearing)
-; before T5 designs a pan around them. ONE vector for all ten: the
-; EXTERN's first parameter selects a config row in overlay2's l2sCfg,
-; so a new probe costs a table row, not a vector (11-15 are the last
-; free ones - 5 forwards to a loaded XBN; suite check 44 holds because
-; the suite stages no XBN, so the no-XBN fallback stays inert). Same
-; push-target/ovl_map_page idiom as the trampolines above; the config
-; index rides in B because ovl_map_page clobbers A (h_extern leaves
-; the parameter in both).
+; EXTERN vector 11: DEBUG-only route for tests/test.dsf's ten LSxxx
+; verbs, which exercise the Layer 2 offset registers on silicon (9th
+; X bit NR $71, X/Y wrap at both modes, clip-window interaction,
+; mid-raster write tearing). ONE vector for all ten: the EXTERN's
+; first parameter selects a config row in overlay2's l2sCfg, so a new
+; probe costs a table row, not a vector (11-15 are the last free
+; ones; 5 forwards to a loaded XBN, inert when the suite stages
+; none). Same push-target/ovl_map_page idiom as the trampolines
+; above; the config index rides in B because ovl_map_page clobbers A
+; (h_extern leaves the parameter in both).
 l2scr_trampoline:
     ld hl, l2scr_run
     push hl
     ld a, OVL2_PAGE
     jp ovl_map_page
 
-; EXTERN vector 12 (SP17 player bench - the NXBEN revival, card
-; .superpowers/sdd/sp14a-task-4-report.md section 42): DEBUG-only
-; route for tests/test.dsf's NXBO/NXBC/NXBK verbs. NXBEN's vector 8
-; went to the Card #6 fixture wave while the bench was retired, so the
-; revival takes 12 (12-15 are the last free ones; 5 forwards to a
-; loaded XBN - suite check 44 holds because the suite stages no XBN,
-; so the no-XBN fallback stays inert). ONE vector for all three modes:
-; the mode rides flags+250 (the stage-ladder convention the retired
-; bench used), set by the verb's LET before the shared EXTERN, so a
-; new mode costs a table row rather than a vector. The bench's fourth
-; row group (direct-serve transport) needs a LIVE armed session and
-; cannot come through here at all - it rides the player instead
+; EXTERN vector 12: DEBUG-only route for tests/test.dsf's NXBO/NXBC/
+; NXBK verbs (12-15 are the last free vectors; 5 forwards to a
+; loaded XBN, inert when the suite stages none). ONE vector for all
+; three modes: the mode rides flags+250, set by the verb's LET before
+; the shared EXTERN, so a new mode costs a table row rather than a
+; vector. A fourth mode (direct-serve transport) needs a LIVE armed
+; session and cannot come through here - it rides the player instead
 ; (flags+248 + a GFX n 13 verb; see video.asm's vid_run bench hook).
 ; Same push-target/ovl_map_page idiom as the trampolines above.
 nxb_trampoline:

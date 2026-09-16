@@ -1,138 +1,42 @@
-; NextDAAD code page: video (NXV v2 delta-video player, SP15 Task 3
-; stages 3a resident + 3b ring streaming + 3c direct-serve/column-hop
-; - the v1 player is DELETED; git holds it).
+; NextDAAD video: NXV v2 delta-video player (resident load + ring
+; streaming + direct-serve/column-hop). v1 player deleted, git holds it.
 ;
-; PAGE LAYOUT (SP15 3a redesign + 3b streaming + 3c - the layout
-; authority):
+; PAGE LAYOUT:
+;   VID_PAGE (59, MMU7, $E000-$F7FF) - HOT: everything that runs while
+;     the video CTC ISR is armed (dispatch, decode/op handlers, DMA/chunk
+;     bodies, PAL/KSTART/KFLIP/FEND handlers, frame loop + pacing, audio
+;     CTC ISRs, streaming/direct-serve clusters, hot session/filemap
+;     cells - audio buffer NOT here, see RULE 4).
+;   VID_PAGE2 (70, $E000-$F7FF) - COLD (pre-arm/post-disarm only):
+;     nxv2_open_body, entry/l2setup/restore body, L2 snapshot + esxDOS
+;     open clusters, cold SD streaming (pre-arm only - the armed session
+;     runs on the hot clones), DEBUG failure/timeline.
 ;
-;   VID_PAGE (59, MMU7 while any video code runs, $E000-$F7FF) - HOT:
-;     everything that can execute while the video CTC ISR is armed.
-;     $E000        vid_stub - 64-byte 256-aligned dispatch block (16
-;                  4-byte JP slots; the wire opcode IS the offset;
-;                  3c: the PAL slot is per-session SMC too)
-;     $E040..      decode kernels (computed-entry fill/LDI blocks,
-;                  ALIGN 64), fast op handlers (flat + gapped sets,
-;                  3c inline column hop), central dispatch, chunked
-;                  bodies (SMC exits), DMA arm blocks, seam walkers
-;                  (streaming-aware: circular wrap + walk bound),
-;                  PAL/KSTART/KFLIP/FEND handlers, vid_pos24
-;     then         vid_decode_frame/_ds + vid_dst_setup,
-;                  vid_src_seek / vid_aud_stage + vid_aud_pump (T10
-;                  circular feed), vid_play / vid_run + the frame
-;                  loop (T10 consumption-integrator pacing),
-;                  vid_key_any, the two audio CTC ISRs (T10 ring
-;                  wrap), the 3b STREAMING PRODUCER + hot SD cluster
-;                  (gate/prod_step/win/cmd/tok/block - see its
-;                  banner), the 3c DIRECT-SERVE cluster (ds_next/
-;                  byte/blkopen/pad/xfer/copy_body/pal/terminals -
-;                  see its banner), DEBUG timeline stamp
-;     then         hot cells (ring bank list, streaming + direct
-;                  session cells, hot filemap, vidSvMmu6/7; the
-;                  AUDIO BUFFER is NOT here any more - FOURTH RULE)
-;
-;   VID_PAGE2 (70, $E000-$F7FF) - COLD (pre-arm / post-disarm only):
-;     vid_run_orch_body (3c: the whole pre-arm ladder as plain calls)
-;     -> nxv2_open_body (v2 header validate + audio bank + snapshot
-;     bank reservation + ring alloc + delivery decision by hint/size
-;     + resident load / streaming
-;     ring PREFILL / direct rewind-and-handoff + hot staging incl.
-;     the per-session decode vectors), vid_run_entry_body /
-;     vid_run_l2setup_body / vid_run_restore_body (EXIT ORDER FIX
-;     lives there), the SP15 L2 snapshot cluster (vid_snap_save_body /
-;     vid_snap_restore_body / vid_snap_copy + the 512B palette
-;     readback buffer), the esxDOS open cluster (vid_open_video_body /
-;     vid_stream_open_body / vid_raw_setup), the cold SD streaming
-;     cluster (vid_stream_read raw CMD18 machinery - pre-arm
-;     load/prefill only; the ARMED session runs on the hot clones),
-;     the cold-only vidSv* cells (3c move). DEBUG: the failure
-;     prints + the timeline report body.
-;
-; ONE RULE (unchanged from every prior video task): MMU7 = VID_PAGE for
-; the entire window the video CTC ISR can fire (from the time-constant
-; write in vid_run through the CTC reset in .restore) - every cross-page
-; hop in this file happens strictly pre-arm or post-disarm.
-;
-; SECOND RULE (new, 3a): MMU2 ($4000-$5FFF) is the decode loop's
-; borrowed Layer 2 dest window for the whole playback session (saved in
-; vid_run_entry_body, restored in vid_run_restore_body - the NXBEN
-; precedent: nothing else touches $4000-$5FFF during playback; the 50Hz
-; im2_isr fast path is AF/HL/frameCounter only, the video CTC ISR is
-; AF/IX only, and nothing prints while a video plays). SP18 item 7 added
-; one more inhabitant of that window - sampled-effect channel 2's DAC
-; ring at AUD_STAGE2 - and it is dead for the same reason the $7C00 ring
-; is (FOURTH RULE): vid_run_entry_body aborts BOTH sample channels and
-; waits for the stops before anything is borrowed, so ctc2_isr is off
-; for the whole session.
-;
-; THIRD RULE (new, 3b; extended 3c): while a STREAMING or DIRECT-SERVE
-; session is armed, the CMD18 window may be open across frames and the
-; Multiface is disabled for each open span - no other filesystem/SD
-; access can happen (structurally true: audEnable is frozen, nothing
-; else runs), and the hot side owns every window/run/MF cell (the cold
-; twins hand off at .strm_loaded / .direct_setup and take nothing back
-; until teardown). MF protection is per-window, not per-session:
-; vid_win_close_h restores MF, so brief re-enabled gaps exist at
-; fragment boundaries and rewinds until the next vid_win_open_h
-; re-disables it (v1's shape - an NMI in a gap hits with the window
-; CLOSED, which is safe).
-;
-; FOURTH RULE (new, 3c): MMU3 ($6000-$7FFF) is the session's borrowed
-; AUDIO window - one pool bank holding the circular audio feed ring
-; (vidAudBuf = VID_AUD_WIN, NXV_AUD_RING = the whole 8 KB page since
-; 2026-08-02), mapped in vid_run_l2setup_body and
-; restored in the restore body (the MMU2 pattern). Safe by the same
-; freeze arguments as the SECOND RULE: the tilemap (bank 5) is hidden
-; and isolated, the sample machinery (both channels, their $7C00 and
-; AUD_STAGE2 stage rings included) is aborted - channel 1 with its CTC
-; vector replaced, channel 2 by the waited stop that leaves its CTC
-; reset and its ISR silent - and nothing else reads
-; slot 3 while a video plays; bank 5's CONTENT is untouched - only
-; the CPU mapping is borrowed. This was the 2560-byte hot-page reclaim
-; that funds the 3c direct-serve + column-hop features; the bank has
-; always been a whole 8 KB and the ring now uses all of it.
-;
-; Format authority: docs/superpowers/plans/2026-07-23-sp15-nxv2.md
-; (FROZEN 2026-07-25); nextdaad.inc's NXV2_* block is the player-side
-; transcription; authoring-kit/lib/nxv2dec.py is the executable spec.
-; Silicon coefficients: .superpowers/sdd/task-2-final-settlement.md.
-;
-; THE THREE DECODER CONTRACTS (freeze caveat (c)) and where they live:
-;   1. Misaligned-opcode validation: dispatch masks the fetched byte
-;      with AND $C3 and rejects nonzero (VID_ERR_OP) - only offsets
-;      $00-$3C, multiples of 4, can reach the stub block, whose $24/
-;      $2C/$30/$34-$3C slots are error stubs. Cost: +14T per op (AND 7T +
-;      untaken JR 7T; ~+16T at 28MHz with wait states) = ~0.5% of a
-;      transfer-dominated real frame, bounded by design.
-;   2. Early-FEND tail semantics: the decoder only writes what ops
-;      write - no surface clears anywhere - so an early FEND leaves
-;      the untouched frame tail exactly as it stands (patch-in-place).
-;   3. DMA chunks <= NXV2_DMA_CHUNK (240 B): every chunk path is
-;      capped by vid_chunk_dst_*/vid_chunk_all before a DMA kernel
-;      can see it. The cap is encoder-priced and structural (single-byte
-;      compare, ASSERTed <= 255); its original rationale - the DI
-;      bracket had to fit one audio ISR period - retired when the
-;      kernels dropped their brackets (SP18 item 5, silicon leg
-;      PASSED 2026-08-08: corruption gate byte-exact on every staged
-;      clip including the fill path; core 3.02.04; see the zxnDMA
-;      kernel header).
-; CORRUPT-INPUT DIVERGENCE NOTE (3b carried minor): a RUN8/COPY8 with
-; n = 0 is a SILENT NO-OP here (the kernels' structural zero-count
-; guards) where nxv2dec raises. The encoder never emits n = 0, so the
-; divergence is reachable only on corrupt input, where this player's
-; contract is "abort or benign no-op, never UB" - not output equality.
-; KF-INHERIT CAVEAT (freeze caveat (a)): KSTART performs NO visible->
-; hidden inherit copy - keyframe spans are encoder-guaranteed FULL
-; repaints (every pixel covered across the span), so the composition
-; needs none and the ~0.44-frame copy cost is designed OUT.
-;
-; docs/Z80 citations (per the plans-cite-docs convention): doc 07
-; (dense dispatch via the 256-aligned stub block + JP (IY)), doc 01
-; (all instruction costs; JP cc vs JR cc choices), doc 05 (Z80N ADD
-; rr,A / ADD rr,nn pointer math; 24-bit carry chains), doc 04 via the
-; NXBEN-graduated kernels (computed-entry unrolled fill/LDI), doc 08
-; (SMC: per-file stub/height patches, written cold through the MMU6
-; window - rubric 3), doc 11 (MMU model, zxnDMA one-shot law, DI
-; brackets), doc 13 (all eight rubrics - sweep in the task report).
+; RULES:
+;   1. MMU7 = VID_PAGE for the whole window the CTC ISR can fire (from
+;      vid_run's time-constant write to the CTC reset in .restore); every
+;      cross-page hop happens strictly pre-arm or post-disarm.
+;   2. MMU2 ($4000-$5FFF) is the decode loop's borrowed L2 dest window;
+;      both sample DAC channels are aborted first, so their ISRs stay
+;      silent for the session.
+;   3. While streaming/direct-serve is armed the CMD18 window may stay
+;      open across frames; Multiface is disabled per window, not session
+;      (an NMI in a re-enabled gap always hits a closed window).
+;   4. MMU3 ($6000-$7FFF) is the session's borrowed audio window (the
+;      circular feed ring, whole 8KB pool bank), safe as RULE 2 - only
+;      the CPU mapping is borrowed, bank 5's content untouched.
+; Format: nextdaad.inc's NXV2_* block is the player-side transcription;
+; authoring-kit/lib/nxv2dec.py is the executable spec.
+; DECODER CONTRACTS: (1) dispatch masks the fetched byte with AND $C3,
+; rejects nonzero (VID_ERR_OP) - only offsets $00-$3C (multiples of 4)
+; reach the stub block. (2) early-FEND tail: the decoder only writes
+; what ops write, so an early FEND leaves the untouched tail as-is.
+; (3) DMA chunks <= NXV2_DMA_CHUNK (240B), capped before a DMA kernel
+; sees them. CORRUPT-INPUT DIVERGENCE: a RUN8/COPY8 with n=0 is a silent
+; no-op here (structural zero-count guards) where nxv2dec raises -
+; reachable only on corrupt input; contract is abort-or-no-op, never
+; UB. KSTART does no visible->hidden inherit copy - keyframe spans are
+; encoder-guaranteed full repaints, so none is needed.
 
     MMU 7, VID_PAGE, OVL_ORG
 
@@ -853,80 +757,28 @@ vid_dst_norm_flat:
 
  IFDEF DEBUG
 ; ---------------------------------------------------------------------
-; PLAY= WALL-CLOCK INSTRUMENT (DEBUG only). Everything else in the
-; timeline is measured in video-CTC ISR ticks (vidTlTicks), and that is
-; STRUCTURALLY BLIND to a suppressed interrupt: the frame loop paces on
-; audio CONSUMPTION, so a tick the 256-byte DMA DI bracket swallowed is
-; simply never counted - the player waits for the same number of REAL
-; firings, takes longer in wall-clock, and TOT lands EXACTLY nominal.
-; The withdrawn mono format proved it: row 059 read TOT = 250 x 933 to
-; the digit while running 4.5% slow on silicon. Extra firings (ring
-; underrun) DO show; missing ones do not.
+; PLAY= WALL-CLOCK INSTRUMENT (DEBUG only). Ticks elsewhere in the
+; timeline (vidTlTicks) count video-CTC ISR firings and go blind when a
+; DI bracket swallows one; PLAY instead counts field wraps off the
+; free-running raster counter NR_RASTER_MSB/LSB (no interrupt in its
+; path, so no DI bracket can lose a count). frameCounter is not usable
+; here - im2_isr increments it and shares the same blind spot.
 ;
-; CLOCK SOURCE: the read-only raster position, NR_RASTER_MSB/LSB. It is
-; a free-running hardware counter driven by the video timing generator -
-; no interrupt anywhere in its path - so no DI bracket of any length can
-; make it lose a count. frameCounter is NOT usable here: interrupts.asm
-; increments it inside im2_isr, so the same suppression that hides the
-; defect would hide it from the instrument (the ULA INT pulse is shorter
-; than the 1802 T DMA bracket, and ~12% of a heavy frame is spent inside
-; those brackets).
+; Resolution is one field (20ms); the count is 16-bit, so PLAY wraps
+; after 65536 fields (21.8 min).
 ;
-; RESOLUTION: this counts FIELD WRAPS, i.e. 50 Hz fields (20 ms). It
-; never needs the display's total line count - a wrap is simply the
-; raster value going down. Over a 10 s clip one field is 0.2%, against
-; a defect measured at 4.5%. The count is 16-bit, so PLAY wraps after
-; 65536 fields (21.8 min).
+; Poll density is the whole contract: a wrap is inferred from the raster
+; value decreasing, so two field boundaries between polls under-count by
+; one. Poll intervals, all bounded well under one field:
+;   vid_pace_poll   every VID_RL_DIV = 16 wait-loop passes    ~6.4 ms
+;   vid_dst_norm_*  every VID_RL_DIV = 16 decode chunks       ~1.7 ms
+;   vid_ds_blkopen  one blkopen per 512B on the direct-serve wire ~5.6 ms
+;   vid_aud_pump    every VID_RL_DIV = 16 feed chunks          ~2.6 ms
+; The pump poll also bounds the one-pass audio feed at
+; <= NXV_AUD_FRAME_MAX (the ring is the whole 8KB bank, so every legal
+; feed completes in one pass).
 ;
-; POLL DENSITY IS THE WHOLE CONTRACT. A wrap is inferred from the raster
-; value DECREASING, so if TWO field boundaries pass between two polls
-; only ONE is counted and 20 ms is lost. Every stretch of a frame must
-; therefore be polled at an interval bounded well under one field:
-;
-;   vid_pace_poll   every VID_RL_DIV = 16 wait-loop passes (pace spin,
-;                   ring-gate force-fill, drain tail) - Phase 2-POLL
-;                   (2026-08-09): was every pass, divided via the
-;                   shared vidRlSpinDiv cell once poll density was
-;                   shown to cause the measured CTC tick loss; see the
-;                   safety-floor arithmetic at vidRlSpinDiv     ~6.4 ms
-;   vid_dst_norm_*  every VID_RL_DIV = 16 decode chunks; a RAM-kernel
-;                   chunk is <= 256 B, worst 16 x 2392 T      ~1.7 ms
-;                   (the arm is inline in BOTH entries, exactly one of
-;                   which is live per session - so still per chunk)
-;   vid_ds_blkopen  the same divider on the direct-serve wire. A ds
-;                   COPY chunk is NOT capped at 256 B (no DI bracket
-;                   to hold), so on a flat surface it can be a whole
-;                   8 KB window - ~5.6 ms of unrolled ini that
-;                   vid_dst_norm_* alone would let 16 of stack up. One
-;                   blkopen per 512 B bounds it                ~5.6 ms
-;   vid_aud_pump    every VID_RL_DIV = 16 feed chunks - Phase 2-POLL,
-;                   same shared vidRlSpinDiv cadence as vid_pace_poll
-;                   above (was every chunk)                     ~2.6 ms
-;
-; THE PUMP SITE is the one the first cut of this instrument missed, and
-; it cost 12-20% of PLAY on every 12.5 fps row (016/017/018 read PLAY
-; BELOW nominal, which is physically impossible). At low fps the staged
-; feed (2 x aBytes = 5000 B at 12.5 fps stereo) did not fit the ring's
-; free room (2544 B of usable span then), so vid_aud_pump's unbounded-
-; budget callers - the post-present pump at .qnext and the force-finish
-; at .ffin - kept looping on whatever room the READER had just freed.
-; That loop advances at the reader's rate (one byte per ~896 T stereo),
-; not the copier's, so ONE call occupied tens of milliseconds: the
-; owner's 12.5 fps rows spent 24-26 ms per frame inside it (AUDIO phase
-; 0xA7A2-0xB7F0 ticks over 107-125 frames) against 1.4 ms at 25 fps,
-; where the whole feed fitted a single pass. Unpolled, that lost ~0.5
-; fields per frame. RESOLVED at source 2026-08-02 (the ring is the whole
-; 8 KB bank, so every legal feed completes in one pass), but the poll
-; stays: it bounds the ONE-PASS chunk too, at <= NXV_AUD_FRAME_MAX
-; 3072 B at ~24 T/B = ~2.6 ms.
-;
-; DEBUG COST, disclosed: the divided decode/blkopen poll adds ~0.2-0.3%
-; to the DECODE phase; the pump poll adds ~130 T to a loop pass that is
-; reader-paced, so it costs no wall-clock at all. Positions and meanings
-; of every existing field are unchanged.
-;
-; Out: nothing. Preserves BC, DE, HL, IX (vid_pace_poll's and
-; vid_dst_norm_*'s contracts both need that). Corrupts AF only.
+; Out: nothing. Preserves BC, DE, HL, IX. Corrupts AF only.
 ; ---------------------------------------------------------------------
 vid_rl_poll:
     push bc
@@ -1042,7 +894,7 @@ vid_play_close:
 ; transfer size cap itself is UNTOUCHED - NXV2_DMA_CHUNK still bounds
 ; every kernel-visible chunk, so the interval a DMA runs for, and the
 ; frame ISR's hold-off with it, is exactly as it was.
-; NXV2_DMA_CHUNK is 240 - a single-byte cap since 2026-08-03 - so the
+; NXV2_DMA_CHUNK is 240 - a single-byte cap - so the
 ; test is a plain "> cap" and the post-condition is B == 0 ALWAYS on
 ; every capped exit, which is what lets vid_run_body's and
 ; vid_copy_body's kernel selects drop their high-byte test.
@@ -1374,7 +1226,7 @@ vid_term_exit:
 ; (consumed bytes rounded up to the 512-byte block - valid absolute
 ; rounding because every frame section is block-aligned), bounds-check
 ; against the file end, return A = terminal op to the frame loop.
-; CEILING LIFT (2026-08-02): the FILE unit is the 512-byte BLOCK. The
+; CEILING LIFT: the FILE unit is the 512-byte BLOCK. The
 ; bound check and vidFileEnd count blocks, so the same 3-byte cells
 ; address 8 GB instead of the 16 MB the old 24-bit BYTE quantities
 ; reached. vidFramePos keeps BYTE granularity on the RESIDENT path
@@ -1583,25 +1435,16 @@ vid_pos24:
 ; INCREMENTING/timing) are programmed once per session (vidDmaInit,
 ; sent by vid_run_l2setup_body; nxbDmaInit is the bench's twin).
 ;
-; DESCRIPTOR SPLIT (2026-08-03). The two arms used to differ in ONE
-; register - WR1's port A mode, FIXED for the fill and INCREMENTING
-; for the copy - and both carried it so fill and copy could interleave
-; freely inside a frame. WR1 sets D6, which obliges its timing byte to
-; follow, so that is a 2-byte pair. The interleave is real but
-; ONE-SIDED: DMA fills are 0.003% of ops (the whole SP17 corpus emits
-; ONE, a 125 B chunk in fplane-full - DECODE-COST.jsonl body_dmafill),
-; so the pair now lives in the session init and the COPY arm - the
-; 99.997% - no longer carries it. vid_fill_dma sends WR1 = FIXED
-; inside its own arm exactly as before and RE-SENDS WR1 =
-; INCREMENTING after the arm train; the DMA is idle by the time the
-; CPU reaches the restore (WR5 is stop-on-end-of-block; three-yields
-; bound, see the pre-emption contract below), so it is a register
-; write, not a transfer. Behaviour-neutral BY CONSTRUCTION: no state
-; cell, no runtime test, and the copy path pays nothing. The two other
-; descriptors in the tree both leave WR1 = INCREMENTING (vidSnapDmaArm
-; here, a full descriptor; and overlay2's dma_copy, which took this same
-; split later the same day and re-sends the WR1 pair in its own per-CALL
-; prefix), so neither can break the invariant.
+; DESCRIPTOR SPLIT: WR1 (port A mode - FIXED for fill, INCREMENTING for
+; copy - sets D6, obliging its timing byte, a 2-byte pair) lives in the
+; session init as INCREMENTING; the copy arm no longer carries it.
+; vid_fill_dma sends WR1 = FIXED inside its own arm and re-sends
+; INCREMENTING after the arm train, so the DMA is idle (a register
+; write, not a transfer) by the time the CPU reaches restore.
+; Behaviour-neutral by construction: no state cell, no runtime test.
+; vidSnapDmaArm and overlay2's dma_copy both leave WR1 = INCREMENTING
+; and re-send their own pair in their per-CALL prefix, so neither can
+; break the invariant.
 ;
 ; UPLOAD PRIMITIVE. The arm goes out with an unrolled OUTINB run
 ; (Z80N ED 90, out (BC),(HL); HL++, B untouched) instead of OTIR -
@@ -1612,8 +1455,8 @@ vid_pos24:
 ; 16 T spacing floor that reverted vid_ds_pad (commit 01466ec, ERR=FD)
 ; governs PORT_SPI_DAT reads and has nothing to say here.
 ;
-; INTERRUPTS ARE LIVE THROUGHOUT - arm and transfer (SP18 item 5; the
-; treatment overlay2's dma_copy took on 2026-08-03). ctc_isr /
+; INTERRUPTS ARE LIVE THROUGHOUT - arm and transfer (overlay2's dma_copy
+; takes the same treatment). ctc_isr /
 ; video_ctc_isr_stereo are admitted mid-chunk by nextreg $CD bit 0 and
 ; service the DAC on time; the frame ISR is barred from a running DMA
 ; by $CC = 0 and a pending frame tick runs when the chunk ends. Both
@@ -1634,11 +1477,6 @@ vid_pos24:
 ; re-checked against that bound. tests/dma_contract.py pins the
 ; emitted shape (no F3/FB around the arm trains).
 ;
-; HISTORICAL: the brackets these kernels carried until SP18 enforced
-; "the whole bracket fits inside one audio ISR period", the constraint
-; that priced the arm at copy A = 402 T / fill A = 440 T and moved the
-; chunk cap 256 -> 240 (nextdaad.inc NXV2_DMA_CHUNK still records the
-; arithmetic; the cap stays for its own structural reasons).
 ; ---------------------------------------------------------------------
 
 ; Arm lengths as assembly-time constants: the DUP counts below need
@@ -1697,10 +1535,9 @@ vid_copy_dma:
     ret
 
 ; Arm programs (zxndma.txt WR bit tables; overlay2.asm's dma_prog +
-; dma_prog_static pair is the canonical full program these derive from -
-; it was one 16-byte block when these arms were written, and took the
-; same split later on 2026-08-03). WR1/WR2/WR5 persist from the session
-; init (vidDmaInit, sent by vid_run_l2setup_body).
+; dma_prog_static pair is the canonical full program these derive from,
+; carrying the same descriptor split). WR1/WR2/WR5 persist from the
+; session init (vidDmaInit, sent by vid_run_l2setup_body).
 vidDmaFiArm:                     ; per-chunk fill arm (13 bytes)
     db $83                       ; WR6: disable (known-clean re-entry)
     db %01111101                 ; WR0: A->B; A addr + length follow
@@ -1918,13 +1755,10 @@ vid_src_seek:
 ; therefore the whole ring (minus NXV_AUD_GUARD), not one fixed half:
 ; the 24.40 fps stereo floor moves to 10.17 (the playvid differential).
 ;
-; The ring was 2560 bytes until 2026-08-02, which is what made the
-; feed room-limited below ~24.6 fps stereo: at the pace release the
-; ring already holds one whole frame, so the next feed needs
-; 2*aBytes <= ring-guard to complete in the single post-present pump.
-; It now does for EVERY legal file (2*NXV_AUD_FRAME_MAX = 6144 against
-; 8176), so the .pace trickle path below is a backstop rather than the
-; normal low-fps regime. See the nextdaad.inc constant block.
+; At the full ring, every legal file's frame feed fits the single
+; post-present pump (2*NXV_AUD_FRAME_MAX = 6144 against 8176), so the
+; .pace trickle path below is a backstop rather than the normal
+; low-fps regime. See the nextdaad.inc constant block.
 ;
 ; PROTOCOL (three pieces, no ISR involvement beyond the ring wrap):
 ;   vid_aud_stage - after present: arm the feed (vidAudFeedRem =
@@ -1976,15 +1810,10 @@ vid_aud_stage:
 ; more than one ring lap between calls in any non-degraded regime -
 ; the delta stays mod-ring-unambiguous.
 ;
-; THAT MARGIN USED TO BE THIN, and the bigger ring is what makes it
-; safe. The gap between two polls spans AUDIO + DECODE + FLIP + the
-; loop tail - no vid_pace_poll runs inside the decode - so it is a
-; whole frame period at best. The reader laps the ring in
-; NXV_AUD_RING / 31250 s. At the old 2560-byte ring that was 81.9 ms
-; against an 80 ms period at 12.5 fps: a 2.4% margin, on exactly the
-; rows that were measured running 2.9% OVER rate - i.e. the alias was
-; reachable. At 8192 it is 262 ms, 3.3x the period. Corrupts AF, DE, HL.
-; Preserves BC, IX.
+; Margin: the reader laps the ring in NXV_AUD_RING / 31250 s, which
+; must clear one whole frame period (worst case AUDIO+DECODE+FLIP+tail)
+; with room to spare - at 8192 bytes that is 3.3x the period.
+; Corrupts AF, DE, HL. Preserves BC, IX.
 vid_pace_poll:
  IFDEF DEBUG
     ; Phase 2-POLL causation probe: divided 1-in-16 via vidRlSpinDiv
@@ -2061,34 +1890,14 @@ vid_aud_pump:
     sbc hl, bc
     jr nc, .room                 ; room >= wanted: the whole chunk
     add hl, bc                   ; HL = room (< wanted: ROOM-LIMITED)
-    ; ROOM FLOOR (2026-08-02). A room-limited partial costs the same
-    ; ~1950 T pump path as a full one, and the reader frees room at
-    ; ONE BYTE PER ~896 T, so entering here for the handful of bytes
-    ; the reader has just released is ~8x pure waste - it was 77 calls
-    ; a frame moving ~14 bytes each on the 12.5 fps rows. Below the
-    ; chunk size, return and let the caller poll; the room only grows.
-    ;
-    ; THE FLOOR IS min(NXV_AUD_PUMP_CHUNK, feedRem), NOT THE CONSTANT
-    ; (corrected 2026-08-03). NXV_AUD_PUMP_CHUNK was derived as the
-    ; pace-spin TRICKLE chunk and was given this second, unrelated job
-    ; without re-deriving it. Holding out for a whole chunk of room is
-    ; only sound while the feed still WANTS a whole chunk: with 100
-    ; bytes left to feed and 90 bytes of room the old test refused the
-    ; 90 and waited for 256 bytes the feed can never consume - up to
-    ; 8.2 ms of dead spin in .ffin, which runs BEFORE the ring gate and
-    ; therefore produces no SD blocks while it waits. So: room >= 256
-    ; always proceeds; below that, proceed anyway once the feed itself
-    ; wants less than a chunk (feedRem high byte zero), which is the
-    ; only case where "wait for more room" cannot be repaid.
-    ;
-    ; UNREACHABLE ON ANY LEGAL FILE, and kept correct anyway. The
-    ; ASSERT below (2*NXV_AUD_FRAME_MAX <= NXV_AUD_RING-NXV_AUD_GUARD,
-    ; nextdaad.inc) makes every declarable frame's feed fit the single
-    ; post-present pump in one pass, so no room-limited partial arises
-    ; at all. This is the degraded-regime and future-bound backstop -
-    ; the kind of code that is only ever read after something else has
-    ; already gone wrong, which is exactly why it must not be subtly
-    ; wrong when it is.
+    ; ROOM FLOOR: below chunk size, return and let the caller poll - the
+    ; reader frees room at ~896 T/byte, so entering the pump path for a
+    ; few bytes wastes the ~1950 T pump cost. Floor is
+    ; min(NXV_AUD_PUMP_CHUNK, feedRem), not the raw constant, so a small
+    ; remaining feed is not held out waiting for room it will never
+    ; need. Unreachable on any legal file (the frame-size ASSERT below
+    ; guarantees every feed fits a single pass) but kept correct as a
+    ; degraded-regime backstop.
     ASSERT NXV_AUD_PUMP_CHUNK == 256
     ld a, h
     or a
@@ -2355,21 +2164,12 @@ vid_run:
     call nr_read
     ld (nxbSvTm3), a
  ENDIF
-    ; --- AUTO-RESUME CAPTURE (owner ruling 2026-08-10): a LOOPING
-    ; sampled effect must come back BY ITSELF when the clip ends; a
-    ; one-shot stays stopped. vid_run_entry_body aborts both channels
-    ; and a stop clears SMPB_FLAGS bits 0/1, so which channels were
-    ; looping has to be recorded before that happens.
-    ;
-    ; Recorded HERE, hot, rather than at the abort itself: page budgets
-    ; at the time chose the placement, and the two sites are
-    ; equivalent - they are separated only by the hop into the
-    ; orchestrator, and nothing between them can change a LOOPING
-    ; channel's active bit (mainline is this code; the only self-stop in
-    ; the pump is a play-once drain end, which by definition is not a
-    ; loop). audEnable = 0 means aud_tick never runs, so nothing is
-    ; playing and nothing filed on the way out would ever be consumed -
-    ; the capture is gated on it exactly as the abort is.
+    ; AUTO-RESUME CAPTURE: a LOOPING sampled effect must resume itself
+    ; when the clip ends (a one-shot stays stopped), so which channels
+    ; were looping is recorded here, hot, before vid_run_entry_body's
+    ; abort clears SMPB_FLAGS bits 0/1 - equivalent to capturing at the
+    ; abort site since nothing between them can change a looping
+    ; channel's active bit. Gated on audEnable exactly as the abort is.
     ld c, 0                      ; C = the pending-resume mask
     ld a, (audEnable)
     or a
@@ -2741,7 +2541,7 @@ vid_run:
     ld (xbnIntOn), a
     xor a
     ld (vidSvHook), a            ; consumed, like vidSvSfxRes: a bench abort must not OR a stale mask back
-    ; --- AUTO-RESUME (owner ruling 2026-08-10). The teardown is over:
+    ; --- AUTO-RESUME. The teardown is over:
     ; audEnable, the IM2 stub and the CTC/DAC parks are all back, the
     ; CMD18 window is closed and the video handle is F_CLOSEd, so the
     ; card is free and this is ordinary mainline. Hand the mask to the
@@ -2788,9 +2588,9 @@ vid_key_any:
 ; LAP - now every ~6 frames at 25 fps stereo).
 ;
 ; THE TWO WRAP COMPARES ARE THE MOST TIMING-CRITICAL INSTRUCTIONS IN
-; THE PLAYER, so they were re-verified by hand when the ring grew from
-; 2560 to 8192 (2026-08-02). The INSTRUCTION SHAPE is unchanged and so
-; is its cost - the ring size moves only the two 8-bit IMMEDIATES:
+; THE PLAYER, hand-verified when the ring grew to 8192 from its earlier
+; 2560-byte size. The INSTRUCTION SHAPE is unchanged and so is its cost -
+; the ring size moves only the two 8-bit IMMEDIATES:
 ;   ring end-2 $69FE -> $7FFE: cp $FE unchanged / cp $69 -> $7F
 ; The base sits at $..00 and the size is a whole number of pages, so
 ; the ring end keeps its $FE low byte: the high compare is still
@@ -2809,7 +2609,7 @@ vid_key_any:
 ; Not one T-state moved; the only change is that the 88 T wrap arrives
 ; once per 8192 ticks instead of once per 2560, so the MEAN ISR is
 ; 0.01 T cheaper. Against the TIGHTEST period the format can select -
-; stereo HDMI 1728 T (REDERIVATION.md sec 3) - the worst tick is 14.1%
+; stereo HDMI 1728 T - the worst tick is 14.1%
 ; of the period, margin 86%.
 ; WHY 8192 AND NOT 7680: 7680 ($1E00) is equally page-aligned and
 ; would have cost exactly the same compares, so the cheap-compare test
@@ -2835,8 +2635,8 @@ vid_key_any:
 ;
 ; ONE ISR, because the format carries ONE channel count. The mono
 ; twin (one DAC write per SAMPLE at 23325 Hz) was withdrawn with mono
-; itself on 2026-08-03 - see nextdaad.inc NXV2_OFF_ACHAN. The routine
-; below is UNCHANGED by that removal, byte for byte.
+; itself - see nextdaad.inc NXV2_OFF_ACHAN. The routine below is
+; UNCHANGED by that removal, byte for byte.
 ; DMA-PRE-EMPTION CONTRACT (SP18 item 5): this ISR may run INSIDE a
 ; suspended video DMA transfer ($CD bit 0). It is MMU-free, never
 ; touches port $6B, and MUST EXIT VIA RETI - the RETI is what returns
@@ -3368,19 +3168,14 @@ vid_loop_rewind:
 ; abort) and counts against the per-frame section bound
 ; (cap + apad + 1 blocks, staged at open) - a corrupt payload cannot
 ; read unboundedly; the token/R1 polls carry the settled bounds.
-; docs/Z80 citations: doc 01/04/08 (computed-entry unrolled-ini
-; transport, SP17 T8 - the NXBD sitting REFUTED the old "wire-bound
-; by design" claim here: the inir arms measured 26.75 T/B while the
-; same open CMD18 window served a 32x-unrolled ini block shape at
-; 19.55 T/B, and the SD data-token wait is only ~96 T/block (~3.1%
-; of the glue) - the transport is CPU-BOUND, so the primitive was
-; swapped for the unrolled run), doc 05 (16-bit min/clip chains),
-; doc 08 (the per-session SMC vectors, patched cold through the
-; MMU6 window - rubric 3), doc 11 (no DMA-from-SPI -
-; measured-rejected; the ini arms stay <= 256B and IRQ-open - ini
-; accepts an interrupt between instructions exactly as inir does
-; between iterations - so the audio ISR is never starved - the
-; contract-3 concern class).
+; TRANSPORT IS CPU-BOUND (measured): the unrolled-ini transport replaced
+; inir here because the inir arms measured 26.75 T/B against 19.55 T/B
+; for a 32x-unrolled ini block over the same open CMD18 window, and the
+; SD data-token wait is only ~96 T/block (~3.1% of the glue) - refuting
+; the "wire-bound by design" assumption. DMA-from-SPI was
+; measured-rejected: the ini arms stay <= 256B and IRQ-open (ini accepts
+; an interrupt between instructions exactly as inir does between
+; iterations), so the audio ISR is never starved.
 ;
 ; LATCH HAZARD (review fix, 3c): any ds op that selects a NextReg on
 ; the $243B/$253B pair ONCE and then relies on the latch across MORE
@@ -3483,22 +3278,16 @@ vid_ds_blkopen:
 ; Discard the rest of the open block (every frame section is
 ; 512-aligned: sections end by discarding to the boundary). In/out:
 ; HL = remaining count (0 on exit). Corrupts AF.
-; SILICON REGRESSION REVERT (2026-08-02, first W2 silicon contact):
-; the T8 computed-entry 32x in a,(n) unroll read the SD data port at
-; 11 T-state spacing - the only sub-15T read train on any SPI path,
-; and the only silicon-unproven element of the W2 transport. On real
-; hardware every direct session died ERR=FD (VID_ERR_TOKEN) at the
-; first section boundary AFTER a pad ran (010/011 playback and the
-; NXBD bench alike), with the consumption arithmetic host-audited
-; exact - the drift is physical: reads spaced below the silicon
-; shifter's restart interval can return without consuming a wire
-; byte. Proven spacings are >= 15T (blkopen's CRC pair) and the 16T
-; ini train (vid_sd_blk_h / bench DTI, silicon-green); the measured
-; wire floor is ~21-22 T/B regardless (hardware checklist,
-; 2026-07-23 differential measurement), so a sub-16T pad buys
-; nothing even where it works. Reverted to the pre-T8 byte loop
-; (~37 T/B CPU, wire-bound in practice). The T8 xfer unroll below
-; KEEPS its win: its ini train is the silicon-proven DTI shape.
+; SILICON CONSTRAINT: reads spaced below the SD shifter's restart
+; interval can return without consuming a wire byte - a sub-15T read
+; train (an 11T computed-entry unroll tried here) is measured to fail
+; on hardware (ERR=FD/VID_ERR_TOKEN at a section boundary after a pad).
+; Proven spacings are >= 15T (blkopen's CRC pair) and the 16T ini train
+; (vid_sd_blk_h / bench DTI); the measured wire floor is ~21-22 T/B
+; regardless, so a sub-16T pad buys nothing even where it works. This
+; routine uses the byte loop (~37 T/B CPU, wire-bound in practice) for
+; that reason. The T8 xfer unroll below KEEPS its win: its ini train is
+; the silicon-proven DTI shape.
 vid_ds_pad:
     ld a, h
     or l
@@ -3704,8 +3493,8 @@ vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block)
 vidFrames:       dw 0            ; container frame count
 vidFileEnd:      ds 3            ; file size in 512-byte BLOCKS (24-bit
                                  ; == last frame's rounded payload end;
-                                 ; blocks since the 2026-08-02 ceiling
-                                 ; lift - the byte form capped at 16MB)
+                                 ; blocks, not bytes, for the 8GB reach
+                                 ; - see CEILING LIFT above)
 
 ; Resident ring (source): allocated pool banks, in load order. The
 ; seam walker derives page = bank*2 + parity, so only banks are
@@ -3833,17 +3622,16 @@ vidSvHook:       db 0            ; HOOK_XBN|HOOK_CYC bits suspended for the clip
 ; must be mirrored EXACTLY in the page-local block at the foot of
 ; VID_PAGE2 - the ASSERT there is what enforces it.
 ;
-; The tick-based phase timeline that used to head this block (v0.5.0)
-; is gone: vidTlTicks/LastTick/LastPhase/Acc, the vidLn* raster sums,
-; vid_tl_stamp and its five frame-loop call sites. It measured phase
+; The tick-based phase timeline this block used to carry is gone
+; (vidTlTicks/LastTick/LastPhase/Acc, the vidLn* raster sums,
+; vid_tl_stamp and its five frame-loop call sites): it measured phase
 ; occupancy in video-CTC ISR ticks, which the PLAY= banner below
-; explains is structurally blind to a suppressed interrupt - and the
-; 2026-08-08 PACE-loss investigation ended by finding the instrument
-; itself was the artifact (vid_rl_poll merging ~1 edge per 8 polls),
-; so its per-phase figures were inflated in every DEBUG run before
-; that date. PLAY= replaced it on the strength of exactly that, and
-; is what survives here. Do not reintroduce a tick-derived wall
-; measurement without reading vid_rl_poll's divider first.
+; explains is structurally blind to a suppressed interrupt - the
+; instrument itself proved to be the artifact (vid_rl_poll merging ~1
+; edge per 8 polls), inflating every per-phase figure. PLAY= replaced
+; it on that strength and is what survives here. Do not reintroduce a
+; tick-derived wall measurement without reading vid_rl_poll's divider
+; first.
 vidTlFrames:     dw 0            ; delivered frames (FRM=); counted by
                                  ; vid_play_frame, once per frame
 vidErrCode:      db 0            ; 0 = clean; VID_ERR_* on abort
@@ -3878,16 +3666,14 @@ vidNomStep:      dw 0            ; nominal fields per frame, 8.8 fixed
 vidNomAcc:       ds 3            ; nominal fields accumulator, 8.8
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlFrames
 VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlFrames
-; Phase 2-POLL causation probe (2026-08-09): SPIN-side poll divider.
-; vid_pace_poll (the .pace/.ffin/.drainlast/ring-gate wait-loop sites)
-; and vid_aud_pump's .next chunk loop both called vid_rl_poll on EVERY
-; pass; measurement showed CTC-tick loss proportional to that poll
-; density (resident clip: ~2,500 lost/s at full cadence) while the
-; decode path, already divided 1-in-16 via vidRlDiv, loses ~0. This
-; cell applies the same VID_RL_DIV = 16 divider to the two SPIN sites,
-; sharing one budget between them (mirrors vidRlDiv, shared between
-; vid_dst_norm_* and vid_ds_blkopen) and reset by vid_rl_poll alongside
-; vidRlDiv.
+; SPIN-side poll divider: vid_pace_poll (the .pace/.ffin/.drainlast/
+; ring-gate wait-loop sites) and vid_aud_pump's .next chunk loop both
+; called vid_rl_poll on EVERY pass; poll density that high measurably
+; costs CTC ticks, while the decode path, already divided 1-in-16 via
+; vidRlDiv, loses ~0. This cell applies the same VID_RL_DIV = 16 divider
+; to the two SPIN sites, sharing one budget between them (mirrors
+; vidRlDiv, shared between vid_dst_norm_* and vid_ds_blkopen) and reset
+; by vid_rl_poll alongside vidRlDiv.
 ;
 ; SAFETY FLOOR: vid_rl_poll infers a field wrap from a 9-bit raster
 ; DECREASE, so a poll must land at least once per field (312 lines =
@@ -3895,11 +3681,7 @@ VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlFrames
 ; resident), so 16 passes between polls is a worst case of
 ; 16 x 0.4 ms = ~6.4 ms streamed - inside the 20 ms floor with ~3x
 ; margin (20 / 6.4 ~ 3.1x). Not applied to the decode-path divider
-; either (vidRlDiv, unchanged). The third exemption named here used to
-; be vid_tl_stamp, which polled undivided 5x/frame for stamp-accurate
-; walls; it went with the tick timeline in v0.5.0, and its poll
-; density was the very thing the 2026-08-08 investigation found was
-; costing CTC edges.
+; either (vidRlDiv, unchanged).
 ;
 ; This cell sits AFTER vidNomAcc, outside VID_TL_BLOCK_LEN (the
 ; report's mirrored span) - nothing reads it for the report, so it
@@ -3916,24 +3698,15 @@ vid_tl_report_ret:
     ret
 
 ; =====================================================================
-; NXB - SP17 PLAYER-PATH SILICON BENCH (the SP15 3a NXBEN revival).
-; DEBUG builds only; Release carries none of it (byte-identity is a
-; commit-time gate). Owner card: .superpowers/sdd/sp14a-task-4-report
-; .md section 42.
-; =====================================================================
-; WHAT CHANGED vs THE RETIRED NXBEN (commit 0c292ae, stripped at
-; 08edaf5): that bench measured PROTOTYPE kernels to settle the format
-; freeze, so it carried its own copies of everything (its own stub
-; page, its own fill/copy kernels, its own SD primitives, ~2.4KB). The
-; player has SHIPPED since; every question SP17 needs answered is
-; about the code that actually runs. So this revival keeps NXBEN's
-; INSTRUMENT (raster frame clock, raw-count rows, the F/D reporting
-; convention, the flags+250 mode entry) and points every measured loop
-; at the PRODUCTION routines - vid_ds_blkopen / vid_ds_pad /
-; vid_ds_xfer / vid_sd_blk_h / vid_stub / vid_copy_ldi / vid_fill_cpu
-; / vid_copy_dma / vid_fill_dma are CALLED, never re-implemented. That
-; is also why the bench lives HERE, on VID_PAGE: those routines are
-; MMU7-resident on this page and no other page can reach them.
+; NXB - player-path silicon bench. DEBUG builds only; Release carries
+; none of it (byte-identity is a commit-time gate).
+; Instrument (raster frame clock, raw-count rows, the F/D reporting
+; convention, the flags+250 mode entry) points every measured loop at
+; the PRODUCTION routines - vid_ds_blkopen / vid_ds_pad / vid_ds_xfer /
+; vid_sd_blk_h / vid_stub / vid_copy_ldi / vid_fill_cpu / vid_copy_dma /
+; vid_fill_dma are CALLED, never re-implemented. The bench lives HERE,
+; on VID_PAGE, because those routines are MMU7-resident on this page
+; and no other page can reach them.
 ;
 ; CLOCK (carried verbatim from NXBEN, so results stay on the settled
 ; scale): the raster line pair NR $1E/$1F. One wrap = one frame; rows
@@ -3946,8 +3719,8 @@ vid_tl_report_ret:
 ; ROW GROUPS (the card decodes each; every row is a DIFFERENCE that
 ; isolates ONE cost, or the row is not worth running):
 ;   1 direct-serve transport breakdown - rides the LIVE armed direct
-;     session (see nxb_ds_rows); answers card5-settlement-report.md
-;     :282-287, "~3,100 T/block is attributed, not measured".
+;     session (see nxb_ds_rows); answers the open question of whether
+;     ~3,100 T/block is attributed rather than measured.
 ;   2 op dispatch envelope - the shipping vid_stub / NXVNEXT path.
 ;   3 COPY kernel across the size distribution real streams produce
 ;     (census: COPY p50 = 1-5 B, 61-99% of COPY ops are 1-8 B).
@@ -4428,9 +4201,9 @@ nxb_fail_row:
 ;               are byte-identical on both sides and cancel).
 ;   DTB - DTI = vid_ds_pad's excess over a bare ini (the ~37 vs ~21
 ;               T/B class). The byte loop is BACK: the T8 pad unroll
-;               was reverted 2026-08-02 after the silicon FD
-;               regression (see vid_ds_pad's banner) - this
-;               difference is expected POSITIVE again.
+;               was reverted after the silicon constraint (see
+;               vid_ds_pad's banner) - this difference is expected
+;               POSITIVE again.
 ;   DTC - DTI = vid_ds_xfer's clip/min chain + arm-entry glue over a
 ;               bare looped ini. T8 NOTE: the xfer transport is now
 ;               the same 32x-ini block shape as the DTI reference, so
@@ -4678,8 +4451,8 @@ nxbTabOpd:
 ; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
 ; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
 ; C080/C081 straddle the COPY kernel select (NXV2_COPY_DMA_MIN = 81,
-; placed at the 81.4 B break-even measured before the 2026-09-15
-; chunk-loop change; these two rows now put the break-even at 58.8 B.
+; placed at the 81.4 B break-even measured before the current
+; chunk-loop shape; these two rows now put the break-even at 58.8 B.
 ; C073/C074 found the old 74's missing +128 T/op path difference and
 ; were retired with it); C256 is the COPY16 bulk-repaint path (40
 ; keyframe ops carry 16-21% of Sintel's copied bytes).
@@ -4906,8 +4679,8 @@ nxv2_open_body:
     ; --- the AUDIO BANK (3c): one pool bank pinned at MMU3 for the
     ; session's circular audio feed ring (vidAudBuf = $6000 - moved
     ; OFF the hot code page; the reclaim that funds the 3c features).
-    ; The ring is the WHOLE 8 KB bank since 2026-08-02 - the bank was
-    ; always exclusive, only 2560 of it was ever used. Allocated
+    ; The ring is the WHOLE 8 KB bank - it is exclusive, so all of it
+    ; is usable. Allocated
     ; before the ring sizing so the delivery decision sees the
     ; reduced pool naturally. ---
     call bank_alloc
@@ -4997,7 +4770,7 @@ nxv2_open_body:
     jp nc, .badu                 ; > 192
 .h_ok:
     ; channels + rate must pair. STEREO IS THE ONLY SUPPORTED PAIRING
-    ; (mono withdrawn 2026-08-03) and this test is what enforces it:
+    ; (mono withdrawn) and this test is what enforces it:
     ; a channels = 1 header falls through cp 2 to .badu -> B = 1 ->
     ; "VID FMT?" at OPEN, before the CTC is programmed, before the ISR
     ; vector is patched and before a byte of payload is decoded. It
@@ -5971,7 +5744,7 @@ vid_run_orch_body:
     call vid_open_fail_print     ; per-verdict message (plain call;
     pop bc                       ; DEBUG only - Release fails silently,
                                  ; owner ruling 2026-08-27, see the
-                                 ; print block)
+                                 ; print block below)
  ENDIF
     ; nothing armed, nothing displayed, ring freed: only the music
     ; freeze needs reversing (the PSG park recovers on the next tick)
@@ -6067,19 +5840,14 @@ vid_run_entry_body:
     xor a
     ld (audEnable), a
 
-    ; --- AY park (owner hardware finding + SP15 3a leg regression).
-    ; ENTRY ORDER (load-bearing): capture -> samples abort (waited,
-    ; needs the tick alive) -> audEnable=0 (tick frozen) -> park. The
-    ; park MUST follow the freeze: a park before it would be re-latched
-    ; by the very next 50Hz music tick. audEnable=0 leaves every PSG
-    ; latched on its last tone, and nothing can rewrite ANY of them for
-    ; the whole session - so park ALL THREE. The v1 park covered only
-    ; PSG 1/2 ("PSG 3 left to beeps/effects", the explicit-stop
-    ; convention); but the multi-PSG AKY player drives music channels
-    ; 7-9 + effects on PSG 3 (audiobank aud_music_stop parks it for the
-    ; same reason), and a frozen beep/effect/AYS stream holds PSG 3
-    ; forever too - the 3a leg's "TONE HELD" was a held PSG-3 voice
-    ; sounding under the video. Resume needs nothing for music: the
+    ; --- AY park. ENTRY ORDER (load-bearing): capture -> samples abort
+    ; (waited, needs the tick alive) -> audEnable=0 (tick frozen) ->
+    ; park. The park MUST follow the freeze: a park before it would be
+    ; re-latched by the very next 50Hz music tick. audEnable=0 leaves
+    ; every PSG latched on its last tone, so park ALL THREE - PSG 3
+    ; carries music channels 7-9 plus beep/effect/AYS streams (audiobank
+    ; aud_music_stop parks it for the same reason), so it must freeze
+    ; too, not just PSG 1/2. Resume needs nothing for music: the
     ; AKY tick rewrites PSG 1-3 every frame once audEnable is
     ; restored. A beep straddling the video is TRUNCATED, not
     ; resumed: aud_beep_start programs PSG 3's tone/mixer/volume
@@ -6337,10 +6105,10 @@ vid_pal_black:
     ret
 
 ; zxnDMA session init program (WR1 + WR2 + WR5; see the hot arm
-; blocks). WR1 joined this block with the 2026-08-03 descriptor split:
-; the hot COPY arm no longer carries port A's mode, so the session
-; default IS incrementing and only vid_fill_dma ever departs from it
-; (and restores it immediately).
+; blocks). WR1 lives here per the descriptor split above: the hot COPY
+; arm no longer carries port A's mode, so the session default IS
+; incrementing and only vid_fill_dma ever departs from it (and restores
+; it immediately).
 vidDmaInit:
     db $83                       ; WR6: disable (clean slate)
     db %01010100                 ; WR1: A memory, INCREMENTING, timing
@@ -6353,7 +6121,7 @@ vidDmaInit_len equ $ - vidDmaInit
 ; Per-video-mode CTC time constants for the ONE supported audio rate
 ; (carried verbatim from v1 - same rate, same derivation; see git
 ; history for the full per-mode error tables and for the mono table
-; that stood beside this one until 2026-08-03).
+; that used to stand beside this one).
 vidCtcTcNxvStereo:
     db 112, 114, 117, 120, 124, 128, 132, 108
 
@@ -6793,18 +6561,18 @@ vid_open_video_body:
     call vid_play_missing_print  ; "VID FILE?" (plain call, 3c; DEBUG
     pop bc                       ; only - Release fails silently, owner
                                  ; ruling 2026-08-27, see the print
-                                 ; block)
+                                 ; block below)
  ENDIF
 .haveresult:
     ld hl, vid_play.openret
     jp vid_hop1
 
-; Open-failure diagnostic prints - DEBUG ONLY (owner ruling 2026-08-27,
-; reversing 2026-08-02's Release-visible ruling: a player must never see
-; error codes mid-game - an SFX/GFX-triggered stream refused on a
-; platform without SD streaming fails silently in Release; authors
-; diagnose with the DEBUG build). Printed via the resident tm_putc_at
-; instead of the dbg console (one route, no double print in DEBUG).
+; Open-failure diagnostic prints - DEBUG ONLY (owner ruling 2026-08-27:
+; a player must never see error codes mid-game) - an SFX/GFX-triggered
+; stream refused on a platform without SD streaming fails silently in
+; Release; authors diagnose with the DEBUG build. Printed via the
+; resident tm_putc_at instead of the dbg console (one route, no double
+; print in DEBUG).
 ; Safe from here because both call sites fire strictly pre-arm: the
 ; video never started, no L2/mode switch happened (vid_run_l2setup_body
 ; runs only on success), the game's tilemap at TM_MAP ($6000, MMU3) is
@@ -7644,23 +7412,18 @@ vid_tl_report_body:
     ld hl, vid_tl_report_ret
     jp vid_hop1
 
-; FRM=live/mirror TRAP (SP15 Card #5, item 3). The intermittent
-; FRM=0000 row (3 occurrences in ~13 runs across VLOP0/vply3/vply4;
-; every re-run reads correctly, playback and every other field sane -
-; owner-assessed as transcription, kept instrumented rather than
-; investigated) has two candidate sides: the hot cell itself, or the
-; report path (the mirror LDIR / its layout). This routine re-reads
-; vidTlFrames STRAIGHT from the hot page, in its own MMU6 bracket,
-; AFTER the block LDIR has already snapshotted it - so the next
-; occurrence localizes the fault by inspection:
+; FRM=live/mirror TRAP (Card #5): catches whether an intermittent
+; FRM=0000 report row is a mirror-path fault or a live-cell fault - left
+; deliberately instrumented rather than resolved. Re-reads vidTlFrames
+; from the hot page, in its own MMU6 bracket, after the block LDIR has
+; already snapshotted it:
 ;   FRM=xxxx/xxxx (equal, nonzero) - normal.
 ;   FRM=xxxx/0000 - the MIRROR side is wrong: the LDIR or the mirror
 ;                   layout dropped it (the hot counter was fine).
 ;   FRM=0000/xxxx - the LIVE cell was zeroed BETWEEN the LDIR and this
 ;                   read, i.e. something is still writing post-park.
 ;   FRM=0000/0000 - the counter was already zero when the report ran:
-;                   the fault is upstream of the report path entirely
-;                   (stamp path or an early zero), not in the mirror.
+;                   the fault is upstream of the report path, not mirror.
 ; Out: HL = live vidTlFrames. Corrupts AF; preserves DE (data_save's
 ; own contract).
 vid_tl_frames_live:

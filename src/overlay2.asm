@@ -5,10 +5,9 @@
 ; DEBUG boot hook (debug.asm). Calls RESIDENT services only - never
 ; overlay0/overlay1.
 ;
-; Register recipes below are cited against docs/zx-next-dev-guide-
-; 2022-07-15/chapter-next-layer2.tex (section "Layer 2 Registers") and
-; chapter-next-palette.tex, cross-checked against the guide's own
-; samples/layer2-256x192 and samples/layer2-320x256 example code.
+; Register recipes below are cited against the ZX Next dev guide's
+; Layer 2 and palette chapters, cross-checked against its own
+; layer2-256x192 and layer2-320x256 example code.
 
     MMU 7, OVL2_PAGE, OVL_ORG
 
@@ -116,15 +115,9 @@ l2_enable:
     or %10000000                 ; bit7: enable Layer 2
     nextreg NR_DISPLAY_CTRL, a
     jp gfx_layer_apply           ; compose NR $15 bits 4-2 from
-                                 ; gfxLayerOrder. This used to write the
-                                 ; register WHOLE, which cleared the
-                                 ; sprite enable bits (overlay0 then had
-                                 ; to re-arm them) and, once a layer
-                                 ; order existed, would have reverted it
-                                 ; on every picture operation - this
-                                 ; routine runs from six sites, most of
-                                 ; them mid-game picture paths, not just
-                                 ; at boot.
+                                 ; gfxLayerOrder; never a whole-register
+                                 ; write (would clear sprite enable and
+                                 ; revert the layer order).
 
 ; Disable Layer 2 display (NR $69 bit 7 = 0, other bits preserved).
 ; Layer priority (NR $15) is left as l2_enable set it - harmless,
@@ -252,57 +245,35 @@ gfx_pal_rewind_at:
 ; for edit and as the active display palette, auto-increment on,
 ; guide 203-230), index reset to 0 (NR $40 = 0). Corrupts AF, BC, HL.
 ;
-; Transparency contract (settled 2026-08-06, SP18 Priority 0):
-; L2_TRANSP_COLOUR ($E3) is a COLOUR in NR $14; L2_TRANSP_INDEX (255) is
-; the PIXEL value the interpreter writes to punch a hole. They are
-; separate on purpose - one constant used to be both, plus a tilemap
-; attribute, which is how Layer 2 ended up transparent on a warm cream
-; (255,255,146) that artists actually use.
-;
-; Transparency invariant: NR $14 transparency is a COLOUR compare, not
-; an index compare - the hardware matches the TOP 8 BITS of each Layer 2
-; pixel's final RRRGGGBB palette output against the register
-; (https://wiki.specnext.dev/Global_Transparency_Colour_Register,
-; "compared only by the MSB bits of the final colour", and guide
-; chapter-next-layer2.tex line 71 "transparent colour of Layer 2"; the
-; guide's OWN register table at line 619 calls it an "index" - that
-; entry is simply wrong, the wiki page and the owner's milestone run
-; both confirm the colour reading: all 21 Rabenstein NX2 palettes map
-; entry 254 to black, and the $FE surface fill rendered opaque black
-; over the text rows). So a loaded palette must reserve one colour for
-; punch-through:
-; - copy loops dodge collisions: any entry whose FIRST byte equals
-;   L2_TRANSP_COLOUR ($E3) is written as L2_TRANSP_DODGE ($E7)
-;   instead. Only the RRRGGGBB byte is compared, so dodging it
-;   suffices (the 9-bit second byte passes through as supplied) - and
-;   it is also NECESSARY, because the compare is against the top 8
-;   bits of the 9-bit entry, which means TWO of the 512 RGB333 colours
-;   match any given transparency value and the 9th bit cannot rescue
-;   an entry. The nudge is one step up the 3-bit green field (0 -> 1,
-;   displayed 0 -> 36), blue untouched, and is the SAME single step on
-;   both palette formats - green is a whole byte0 field in each. By
-;   the supplied blue LSB the outputs are (255,36,219) or (255,36,255);
-;   the latter is exactly the escape nxv2enc.py's TRANSP_REMAP picks
-;   for pure magenta, and build_palette_block applies the same +4 on
-;   emission. +4 is only a green step while L2_TRANSP_COLOUR's green
-;   field is 000 (asserted in nextdaad.inc). Any art whose palette
-;   lands on $E3 would otherwise punch holes;
+; Transparency contract: L2_TRANSP_COLOUR ($E3) is a COLOUR compared in
+; NR $14; L2_TRANSP_INDEX (255) is the PIXEL value the interpreter
+; writes to punch a hole - kept separate and reserved on every load:
+; - NR $14 matches the TOP 8 BITS of each Layer 2 pixel's final
+;   RRRGGGBB output, not an index (wiki.specnext.dev/Global_
+;   Transparency_Colour_Register; the dev guide's own register table
+;   calls it an index, which is wrong). So any palette entry whose
+;   first byte equals L2_TRANSP_COLOUR is written as L2_TRANSP_DODGE
+;   ($E7) instead - one step up the 3-bit green field (0 -> 1), the
+;   same nudge on both palette formats since green is a whole byte0
+;   field in each; +4 only while L2_TRANSP_COLOUR's green field is 000
+;   (asserted in nextdaad.inc). Needed because the compare covers only
+;   the top 8 bits of a 9-bit entry, so two of the 512 RGB333 colours
+;   match a given transparency value and the 9th bit can't rescue one.
+;   The dodge matches nxv2enc.py's TRANSP_REMAP and build_palette_
+;   block's emission-time +4, so art tooling and runtime agree.
 ; - entry 255 (L2_TRANSP_INDEX) is then stamped $E3 via the 9-bit pair
-;   (NR $44 = L2_TRANSP_COLOUR, then 0: blue LSB 0, priority 0 -
-;   chosen over an NR $41 write so the priority bit is explicitly
-;   cleared), making index 255 the ONLY transparent entry after ANY
-;   l2_palette_load. No Rabenstein art uses pixel value 255
-;   (L2_TRANSP_INDEX, nextdaad.inc: art is supplied quantized to 255
-;   colours, so nothing reaches it), so reserving the index costs nothing.
-;   The DEBUG test card DOES paint pixel 255 (TC_MARK_COLOUR), but it
-;   never calls l2_palette_load - it runs on the reset identity
-;   palette, where 255 is white - so the invariant is untouched by it.
-; C = the NR $43 value to program before loading, i.e. WHICH BANK the
+;   (NR $44 = L2_TRANSP_COLOUR, then 0: blue LSB 0, priority cleared),
+;   making index 255 the only transparent entry after any
+;   l2_palette_load. No Rabenstein art uses pixel value 255 (art is
+;   supplied quantized to 255 colours, nextdaad.inc), so reserving the
+;   index costs nothing. The DEBUG test card paints pixel 255 but never
+;   calls l2_palette_load - it runs on the reset identity palette,
+;   where 255 is white.
+; C = the NR $43 value to program before loading, i.e. which bank the
 ; entries land in and which bank stays on screen while they do.
 ; l2_palette_load presets C = PAL_L2_FIRST and falls in; gfx_blit
-; passes an "edit the other bank" value so a
-; picture's palette can be built where nobody can see it and swapped
-; in atomically. See PAL_L2_* in nextdaad.inc.
+; passes the other bank so a picture's palette can build off-screen
+; and swap in atomically. See PAL_L2_* in nextdaad.inc.
 l2_palette_load:
     ld c, PAL_L2_FIRST           ; edit and display bank 1 (the standing convention)
 l2_palette_load_ctl:
@@ -452,220 +423,100 @@ l2_flip_swap:
 
 ; --- DMA-accelerated block copy (SP11 Task 2) ---
 ; HL = source, DE = dest, BC = length - all three within the currently-
-; mapped windows (the zxnDMA reads the LIVE Z80 MMU map, exactly like a
-; CPU access would).
+; mapped windows (the zxnDMA reads the live Z80 MMU map).
 ;
-; HAZARD: the frame ISR's full-context path (audEnable != 0 - sticky
-; once set, so effectively true for the whole session after the first
-; note of boot music) saves and REMAPS MMU6/7 around aud_tick
-; (interrupts.asm) to reach the audio banks, then restores them before
-; it returns. A DMA transfer left running across that tick would
-; therefore run through the AUDIO banks' mapping instead of the
-; caller's - corrupting the picture and trashing audio state. LDIR was
-; immune (the CPU simply suspends mid-instruction; the ISR restores the
-; map before LDIR resumes on the far side).
+; Must not run concurrently with aud_tick's MMU6/7 remap (interrupts.asm)
+; - a transfer left running across that tick would run through the
+; audio banks' mapping instead of the caller's. Closed by hardware, not
+; a DI: NR $CC/$CD/$CE (see interrupts.asm's im2_init) forbid every
+; source but the DAC sample-timer CTC channels from pre-empting a
+; running DMA, and a CONTINUOUS-mode transfer bus-stalls the CPU for
+; its whole duration regardless. Every chunk is one-shot CONTINUOUS
+; mode: never burst, auto-restart, a live counter read, or a refeed
+; while enabled.
 ;
-; THAT HAZARD IS NOW CLOSED BY HARDWARE, NOT BY A DI (2026-08-03).
-; im2_init writes nextreg $CC = 0, which forbids the ULA frame interrupt
-; (and the line interrupt) from EVER interrupting a running DMA, and
-; nextreg $CD = %00000001, which admits exactly one source: CTC channel
-; 0, the DAC sample timer, whose ISR is MMU-free by explicit contract.
-; So the mapping a transfer was armed with is the mapping it finishes
-; under, and the per-chunk di/ei that used to enforce that is DELETED.
-; Every chunk is still a one-shot CONTINUOUS transfer: continuous holds
-; the bus to completion (no burst hand-back) and completion is IMPLICIT
-; - the final OUT (dma_prog's WR6 enable byte) does not return to the
-; next instruction until the whole chunk has transferred, so there is no
-; status poll anywhere. NEVER: burst mode, auto-restart, a live counter
-; read, or a refeed while enabled.
-;
-; WHY THE DI HAD TO GO, AND WHY IT WAS NEVER THE GOVERNING QUANTITY.
-; CONTINUOUS mode "runs to completion without allowing the CPU to run"
-; (dev guide chapter-next-dma.tex WR4 bits 6-5; tools/NextZXOS/docs/
-; extra-hw/dma/zxndma.txt). The CPU is BUS-STALLED for the whole
-; transfer, so the window in which ctc_isr cannot reach the DAC was
-; never the di/ei pair - it was A + r*chunk, of which the DI was only
-; the ~219 T arm upload. Hardware IM2 CACHES a held request rather than
-; losing it, so nothing was ever dropped and the PITCH was always exact;
-; what the delay does is stretch one step of the reconstruction
-; staircase and shorten the next, and that is an in-band error pulse.
-; The owner heard it as gross distortion on tests/sfxdi.dsf, at constant
-; pitch, on every leg - which is why four rounds of shortening the
-; bracket never fixed it and why chunk size is no longer the knob.
-; Confirmed on silicon 2026-08-03 (real Next, HDMI): this build stayed
-; CLEAN through a forty-call GFX 0 0 burst under a 16 kHz effect, and an
-; independent build with the DMA replaced by LDIR was clean too.
-;
-; PROVENANCE NOTE ON THE TRANSFER RATE r. The clean 16 kHz leg bounds
-; the blocking window below one HDMI period, W(256) = A + 256r < 1680 T
-; with A = 603 T, hence r < 4.21 T/byte on THIS path - the RTL-nominal
-; 4 T/B for 2+2 cycle timing, not the 5.082 T/B fitted from the video
-; kernels (those write Layer 2 and pay its auto-slowdown; dma_copy moves
-; through an MMU window and does not). A stopwatch cross-check on the
-; same run put a GFX 0 0 at roughly 25 ms against the ~44.5 ms the
-; 5.082 figure predicts, which agrees. BOTH ARE BOUNDS, NOT FITS: every
-; figure below is still quoted at 5.082 T/B, deliberately, because
-; nothing is to be re-fitted on an ear-and-stopwatch reading. A proper
-; re-fit needs a bench row with the CTC armed at a sample-engine TC
-; (REDERIVATION.md recommendation #7).
-;
-; Chunks are capped at DMA_CHUNK_MAX. THE COST MODEL, HAND-COUNTED -
-; still the right arithmetic for how LONG a chunk takes, now that it is
-; no longer the arithmetic of a deadline. The figure for this path had
-; been wrong four times ("roughly 1.1k T-states", SP14c T4's 1379 T, the
-; 2026-08-02 re-derivation's 1802 T, this header's own ~1871 T) before
-; it was re-counted; nothing below is inherited except ONE named
-; measured constant, and that one reconciles against two shipped arms.
+; Chunks are capped at DMA_CHUNK_MAX. THE COST MODEL:
 ;
 ;     W(chunk) = A + 5.082 * chunk
-;       5.082 T/B is the zxnDMA 2/2-cycle rate FITTED FROM THE VIDEO
-;       KERNELS at 28 MHz (REDERIVATION.md 2.2). It is an upper bound
-;       here - see the provenance note above, r < 4.21 T/B on this path
-;       - and is kept deliberately, because a pessimistic cost model is
-;       the safe direction and nothing is to be re-fitted on an ear.
+;       5.082 T/B is the zxnDMA 2/2-cycle rate at 28 MHz, an upper
+;       bound on this path (dma_copy moves through an MMU window and
+;       does not pay Layer 2's auto-slowdown).
 ;     A = (arm upload) + 183 T of zxnDMA disable/load/enable sequencing
-;       latency, which elapses between the $CF load byte and transfer
-;       completion. The 183 T is the one inherited quantity: A(video,
-;       13-byte OTIR arm) = 500 +/- 20 T (REDERIVATION.md 2.2b,
-;       four-point inversion of the bench tick-shortfall table) minus
-;       that arm's own 317 T of code. It reproduces the SHIPPED video
-;       fix's published A for BOTH its arms to the T - copy
-;       5+11*19+5+183 = 402, fill 5+13*19+5+183 = 440 - so it is not a
-;       free parameter here.
-;     28 MHz rule (docs/Z80/01-instruction-timing.md): +1 T on every
-;       opcode fetch and every memory read, none on I/O or writes.
-;       OTIR = 24 T/byte repeating, 19 T final; OUTINB (Z80N ED 90) is
-;       a flat 19 T/byte.
+;       latency between the $CF load byte and transfer completion.
+;     28 MHz rule: +1 T on every opcode fetch and every memory read,
+;       none on I/O or writes. OTIR = 24 T/byte repeating, 19 T final;
+;       OUTINB (Z80N ED 90) is a flat 19 T/byte.
 ;
-;     16-byte OTIR arm (before 4cda75e)   A = 603 T
-;     11-byte OUTINB arm (now)            A = 402 T
+;     11-byte OUTINB arm   A = 402 T
 ;       W(128) = 402 + 650.5  = 1052.5 T (37.6 us)
 ;       W(256) = 402 + 1301.0 = 1703.0 T (60.8 us)
 ;
-; WHAT THE PERIOD TABLE IS NOW FOR. ctc_isr feeds the DAC one byte per
-; CTC zero-count; the period is 16 * TC T-states EXACTLY (the CTC input
-; clock and the CPU clock are the same FPGA system clock, so this is
-; clock-independent), with TC = floor(clk16/rate) from aud_ctc_params /
-; aud_clk16_tab (SFX_PAGE, src/audio/streamfx.asm):
+; ctc_isr feeds the DAC one byte per CTC zero-count; the period is
+; 16 * TC T-states exactly, with TC = floor(clk16/rate) from
+; aud_ctc_params / aud_clk16_tab (SFX_PAGE, src/audio/streamfx.asm):
 ;
 ;     rate       VGA0  VGA1  VGA2  VGA3  VGA4  VGA5  VGA6  HDMI
 ;     16000 Hz   1744  1776  1840  1872  1936  2000  2048  1680
 ;     20000 Hz   1392  1424  1472  1488  1536  1600  1648  1344
 ;
-; 16000 Hz is the only rate this project has ever shipped (the kit's
-; AUDIO/001.wav, the runbook's 002.WAV - aud_load_wav takes the rate
-; verbatim from the WAV header and nothing in the pipeline resamples),
-; and 20000 Hz = AUD_RATE_MAX is what README/manual/audio.md publish as
-; supported and what a DAAD-DOS SOUNDS set drops in at. THE INHERITED
-; "1400 T" DEADLINE CORRESPONDED TO NEITHER: it assumed a flat 28 MHz
-; and ignored both the TC floor and HDMI's 27 MHz clock.
+; 16000 Hz is the only rate this project has shipped; 20000 Hz =
+; AUD_RATE_MAX is the published supported ceiling. The pre-emption
+; permission means the DAC feed is serviced INSIDE the transfer, so a
+; chunk's transfer time W may exceed one CTC period P freely - a
+; longer chunk simply admits more CTC edges, each taken on time. The
+; producer is consumption-paced (aud_smp_copy fills only the ring's
+; free space) and hardware IM2 holds a request raised during a stall
+; rather than losing it, so the sample count and pitch stay exact
+; regardless of chunk size.
 ;
-; W VS P IS NO LONGER A CONSTRAINT AT ALL. It used to be read as "a
-; chunk longer than one period costs a tick", and the whole 2026-08-03
-; cap fit was built on it. That is retired: the pre-emption permission
-; means the DAC feed is serviced INSIDE the transfer, so W may exceed P
-; freely - a longer chunk simply admits more CTC edges, each of which is
-; taken on time. The table stays because the period is still the right
-; scale for reasoning about the path, not because anything must fit
-; under it.
+; Cap is 256: the row copy and the surface copy hand this routine
+; exactly 256 bytes, one chunk each; gfx_row_fetch hands a whole row
+; (256 bytes for 256-wide art, one chunk; 320 bytes for 320-wide art,
+; two chunks; a page-edge split hands the leftover, a multiple of 64
+; down to GFX_DMA_MIN_LEN). 256 keeps the 256-byte pair's call to one
+; chunk instead of two. 320-wide LOCATION art reaches this routine
+; through gfx_row_fetch's .fits path; only gfx_row_scatter320's own
+; scatter still has no DMA branch (see its own header).
 ;
-; NOTHING WAS EVER LOST OR CLICKED. The producer is consumption-paced
-; (aud_smp_copy fills only the ring's free space), so it cannot lap the
-; consumer, and hardware IM2 holds a request raised during a stall
-; instead of losing it - so the sample COUNT, and therefore the pitch,
-; were always exact. The defect was purely one of OUTPUT TIMING: each
-; blocking window delayed one DAC update by a large fraction of a sample
-; period and the next one caught up. That is inaudible to every
-; automated check and invisible to every pitch-based model, which is
-; exactly how it survived from SP11 to 2026-08-03 and why the first
-; three explanations of it were all wrong.
+; ANY CAP IN 1..256 IS LEGAL: the arm's block length is a 16-bit field
+; written whole, so the cap is free anywhere in 1..256 including
+; exactly 256. Changing the cap is a one-constant edit; the ASSERTs
+; below enforce the legal range.
 ;
-; WHY THE CAP IS 256 AGAIN. It was cut to 128 earlier the same day to
-; shorten the blocking window, on the model that a window longer than
-; one CTC period cost a tick. That model is dead (see above): the DAC
-; feed is now serviced INSIDE the transfer, so the window's length no
-; longer buys anything and the 128 was pure cost. The row copy and
-; the surface copy hand this routine exactly 256 bytes, one chunk
-; each; gfx_row_fetch hands a whole row: 256 bytes for 256-wide art
-; (one chunk, never split), or 320 bytes for 320-wide art (two chunks).
-; A 320-wide row cut at a page edge instead hands the leftover part:
-; 64, 128, 192 or 256 bytes, a multiple of 64 whose shortest equals
-; GFX_DMA_MIN_LEN (one chunk). 256 still makes the 256-byte pair's call
-; ONE chunk instead of two, saving per call one arm upload (209 T), one
-; zxnDMA sequencing
-; residual (183 T) and one pass of the loop glue (~390 T) - about 780 T,
-; or 27.9 us at 28 MHz. On the model that priced cap 128 at DISPLAY 0
-; 66.8 ms and GFX 0/1 42.9 ms (256x192) / 71.5 ms (320x256):
-;
-;     DISPLAY 0, 256-wide art   192 calls   -5.4 ms  ->  61.4 ms
-;     GFX 0/1, 256x192          384 calls  -10.7 ms  ->  32.2 ms
-;     GFX 0/1, 320x256          640 calls  -17.8 ms  ->  53.7 ms
-;
-; and all three are UPPER bounds, because the model still prices the
-; transfer at 5.082 T/B where silicon bounds this path under 4.21.
-; 320-wide LOCATION art now reaches this routine too, through
-; gfx_row_fetch's .fits path: only gfx_row_scatter320's own scatter
-; still has no DMA branch (see its own header). The owner's ruling that
-; made the 128 acceptable
-; - "for sampled sound effects and location picture drawing the audio
-; quality shouldn't suffer for a slight slow down in picture drawing" -
-; no longer has to be spent: the audio is fixed AND the draw is faster.
-;
-; ANY CAP IN 1..256 IS NOW LEGAL, and that is deliberate. The routine
-; used to hard-wire 256 by setting alen's low byte to 0 and its high
-; byte to `high DMA_CHUNK_MAX`, which is ZERO for every cap below 256 -
-; a zero-length block and a dead transfer - and its dispatch test ("B
-; != 0, so remaining > 255, so chunk = 256") was wrong for a sub-256 cap
-; too. The 2026-08-03 rewrite made the selection a general
-; chunk = min(BC, cap) but paid for it with an alen high byte pinned to
-; a constant 0, which barred 256. The form below is general in BOTH
-; directions: one 16-bit compare, one 16-bit store, cap free anywhere
-; in 1..256, three bytes dearer than the byte-wise version it replaces.
-; NEITHER TRAP MAY RETURN. If a future change wants a different cap it
-; is now genuinely a one-constant edit, and the ASSERTs enforce it.
-;
-; DESCRIPTOR SPLIT (2026-08-03), the same treatment the video kernels
-; took in 446f33d. dma_prog's five STATIC bytes (the WR1 pair, the WR2
-; pair, WR5) left the per-chunk arm for dma_prog_static, sent ONCE PER
-; CALL at the top of this routine WITH INTERRUPTS LIVE - the DMA is
-; idle there (WR5 = stop on end of block), so those are register
-; writes, not a transfer; it is exactly the idiom vid_fill_dma uses to
-; restore WR1 after its own bracket. PER-CALL, NEVER A SESSION INIT: a
-; session init would make this overlay depend on video-player state and
-; would break the invariant recorded at video.asm:1517 (the descriptors
-; outside the video kernel leave WR1 = INCREMENTING). As written that
-; invariant HOLDS - dma_copy sends WR1 = INCREMENTING on entry to every
-; call and never departs from it, so WR1 is INCREMENTING both during
-; and after any dma_copy, on every exit path. No state cell, no
-; cross-module coupling, no runtime test.
+; DESCRIPTOR SPLIT: dma_prog's five STATIC bytes (the WR1 pair, the
+; WR2 pair, WR5) are the per-call prefix, sent ONCE PER CALL at the top
+; of this routine with interrupts LIVE - the DMA is idle there (WR5 =
+; stop on end of block), so those are register writes, not a transfer.
+; PER-CALL, NEVER A SESSION INIT: a session init would make this
+; overlay depend on video-player state and would break the invariant
+; recorded at video.asm:1517 (descriptors outside the video kernel
+; leave WR1 = INCREMENTING). dma_copy sends WR1 = INCREMENTING on
+; entry to every call and never departs from it, so WR1 is
+; INCREMENTING both during and after any dma_copy, on every exit path.
 ;
 ; INTERRUPTS ARE LIVE THROUGHOUT, including across the transfer itself.
 ; ctc_isr is admitted mid-chunk by $CD bit 0 and services the DAC on
-; time; a pending frame tick is held by $CC = 0 until the chunk ends and
-; then runs with the DMA idle, exactly as it did between chunks before.
-; ONE CONSEQUENCE TO KNOW ABOUT (dev guide, Alvin Albrecht): when the
-; DMA yields for an interrupt the CPU executes ONE mainline instruction
-; before the interrupt is seen, and RETI returns the bus to the DMA. The
-; instruction that follows the arm here is `pop bc`, then pointer
-; arithmetic that only reads dma_prog's own already-loaded fields - so a
-; slip costs nothing. It would only matter if enough edges landed in one
-; chunk to walk the mainline back round to .loop, where dma_prog is
-; re-patched and re-armed; at the shipped rates a chunk sees at most one
-; or two. Anything that shortens the tail below the arm, or moves a DMA
-; write earlier, must be re-checked against that.
+; time; a pending frame tick is held by $CC = 0 until the chunk ends
+; and then runs with the DMA idle. When the DMA yields for an
+; interrupt the CPU executes one mainline instruction before the
+; interrupt is seen, and RETI returns the bus to the DMA (dev guide).
+; The instruction following the arm here is `pop bc`, then pointer
+; arithmetic reading only dma_prog's own already-loaded fields, so a
+; slip costs nothing; it would only matter if enough edges landed in
+; one chunk to walk the mainline back round to .loop, where dma_prog
+; is re-patched and re-armed - at the shipped rates a chunk sees at
+; most one or two. Anything that shortens the tail below the arm, or
+; moves a DMA write earlier, must be re-checked against that.
 ;
-; Splits BC into <=DMA_CHUNK_MAX-byte chunks and loops; returns once the
-; whole length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's
-; own end state exactly (HL/DE left just past the last byte moved,
-; BC = 0), so it drops into any LDIR call site with no other change
-; needed.
+; Splits BC into <=DMA_CHUNK_MAX-byte chunks and loops; returns once
+; the whole length has transferred. Corrupts AF, BC, DE, HL - matches
+; LDIR's own end state exactly (HL/DE left just past the last byte
+; moved, BC = 0), so it drops into any LDIR call site with no other
+; change needed.
 ;
-; Unconditional since SP14a T4's follow-up wave (was IFDEF DMA_GFX,
-; A/B against a -NoDmaGfx CPU-only LDIR fallback) - the owner's DMA-
-; during-samples question closed 2026-07-21 (real hardware, kit Release
-; build: location-art DMA blit mid-sample-playback, clean draw), so
-; -NoDmaGfx and its fallback retired together (build.ps1, and every
-; call site below).
+; Unconditional since SP14a T4's follow-up wave: the DMA-during-samples
+; question is closed (real hardware confirmed clean location-art DMA
+; blit mid-sample-playback), so the CPU-only LDIR fallback retired.
 
 ; Arm/prefix lengths as assembly-time constants: the DUP counts need
 ; them before the blocks exist. The ASSERTs after the blocks pin them to
@@ -764,16 +615,11 @@ dma_copy:
 ; thing re-sent per chunk. .aaddr/.alen/.baddr are patched in place
 ; first, each chunk.
 ;
-; Bytes verified against docs/Z80_DMA_Chip__ps0179.pdf's WR0/WR1/WR2/
-; WR4/WR5/WR6 bit tables (the PDF is scan-only in this checkout, no
-; extractable text - cross-checked instead via tools/NextZXOS/docs/
+; Bytes verified against the Zilog Z80 DMA datasheet's WR0/WR1/WR2/
+; WR4/WR5/WR6 bit tables, cross-checked via tools/NextZXOS/docs/
 ; extra-hw/dma/zxndma.txt, which transcribes the same Zilog-convention
 ; tables AND ships a worked mem-to-mem CONTINUOUS example, "TransferDMA",
-; that this template now matches byte for byte) and against the retired
-; SP8/f-prime sample engine (git show d464951, audDmaProg), which cites
-; the same PDF by page number. Two bytes the brief's sketch omitted were
-; added back after that check - see sp11-task-2-report.md "Program bytes
-; used" for the full derivation:
+; that this template matches byte for byte:
 ;   - WR1's base byte (%01010100) sets D6, which per the datasheet
 ;     requires an associated "port A timing byte" to follow; without it
 ;     every subsequent byte in the program desyncs. Added %00000010
@@ -2387,40 +2233,22 @@ gfx_direct_read256:
 ; dzx0_standard.asm was the vendoring source).
 ;
 ; FORMAT: ZX0 CLASSIC (v1), and that is a hard requirement - ZX0 v2
-; changed the stream format and the two are mutually unreadable.
-; Measured 2026-08-05, all three components agree:
-;   - tools/z88dk/bin/z88dk-zx0.exe reports "ZX0 v1.5" and offers only
-;     -f/-b/-q. The -c switch that asks a v2 compressor for this
-;     "classic" format exists only from ZX0 v2 on, so a build without
-;     it PREDATES the change and emits v1 unconditionally.
-;   - gfx2next's built-in compressor is the same vintage (-zx0-back /
-;     -zx0-quick mirror v1.5's -b/-q; there is no -zx0-classic), and
-;     produces BYTE-IDENTICAL output to z88dk-zx0 on the same input:
-;     30720 bytes of Rabenstein art -> 6563 bytes from both. ZX0 is an
-;     optimal compressor, so two independent binaries agreeing exactly
-;     means one format and one encoder generation.
-;   - this decoder came from the z88dk tree shipping that same v1.5
-;     tool, so encoder and decoder match by construction.
-; A ZX0 stream carries NO magic number and NO version field, so
-; upgrading either tool to v2 would break picture loading SILENTLY -
-; corrupt output or a bare zx0_fail, with nothing pointing at the
-; compressor. Re-run the byte-identical comparison above after any
-; tool bump.
+; changed the stream format and the two are mutually unreadable. A ZX0
+; stream carries no magic number and no version field, so upgrading
+; either tool (tools/z88dk/bin/z88dk-zx0.exe or gfx2next's built-in
+; compressor, both v1.5-vintage and byte-identical on the same input)
+; to v2 would break picture loading SILENTLY - corrupt output or a
+; bare zx0_fail, with nothing pointing at the compressor. Re-verify
+; byte-identical output across both tools after any tool bump.
 ;
-; AND DO NOT CHASE v2 FOR SPEED. Its README claims only that the new
-; format lets decompressors be "slightly smaller and run slightly
-; faster", unquantified, and gfx2next embeds its OWN compressor - so
-; v2 would need a gfx2next release emitting it, z88dk-zx0 upgraded in
-; lockstep and this decoder changed to match, all at once, or pictures
-; break with no diagnostic. The real speed lever is the DECODER
-; VARIANT, which reads the same v1 stream: upstream measures Standard
-; (68 bytes, what this is) against Turbo (126, ~21% faster), Fast
-; (187, ~25%) and Mega (673, ~28%), and z88dk ships all four. Temper
-; those figures before believing them here: they are measured against
-; LDIR into flat memory, while this port replaces the copies with
-; byte-at-a-time banked-window access that would not speed up at all,
-; so the realisable share is well under 21% and needs measuring rather
-; than assuming. Control flow, the
+; Not chasing v2 for speed: gfx2next embeds its own compressor, so v2
+; would need a coordinated bump across gfx2next, z88dk-zx0 and this
+; decoder or pictures break with no diagnostic. The real speed lever is
+; the DECODER VARIANT, which reads the same v1 stream: upstream ships
+; Standard (68 bytes, what this is), Turbo (126), Fast (187) and Mega
+; (673), each faster against flat-memory LDIR; this port's copies are
+; byte-at-a-time banked-window access instead, so any gain here needs
+; measuring rather than assuming from upstream's figures. Control flow, the
 ; interlaced-Elias reader and the negative-offset arithmetic are kept
 ; verbatim; only the three memory primitives differ, because here
 ; neither the source nor the destination is flat memory:
@@ -3049,14 +2877,9 @@ gfx_blit:
     call gfx_rows_blit          ; clears BACK unless full, opens data_save, all rows
     ; Rows done. The palette goes into the Layer 2 bank that is NOT on
     ; screen, so none of it is visible while it loads, and the flip
-    ; below swaps surface and palette together.
-    ;
-    ; Loading into the live bank (what this did before) is visible byte
-    ; by byte, and it is not raster-synchronised: the beam scans out
-    ; part of the frame with the old colours and the rest with the new,
-    ; which shows as a band of wrong colour across the picture. Fading
-    ; to black and changing scene made it obvious - the incoming
-    ; picture flashed through the black.
+    ; below swaps surface and palette together - loading into the live
+    ; bank is not raster-synchronised and shows as a band of wrong
+    ; colour across the picture.
     ;
     ; The display goes back to bank 1 at the end. It cannot simply stay
     ; on bank 2: every tilemap palette write programs NR $43 with bit 2
@@ -3254,8 +3077,7 @@ gfx_row_copy256:
 ; only "batching" possible would be one DMA chunk per PIXEL, and a
 ; length-1 chunk costs ~600T of program+dispatch overhead to move one
 ; byte the CPU's own per-pixel loop body moves for ~27T (ldws/djnz) -
-; more than an order of magnitude worse, not just a wash. See
-; sp11-task-2-report.md "320 scatter" for the full T-state comparison.
+; more than an order of magnitude worse, not just a wash.
 gfx_row_scatter320:
     ld hl, gfxRowBuf
     ld a, (gfxSurfPage)
@@ -3525,60 +3347,48 @@ introDatName: db "INTRO", 92, "INTRO.DAT", 0
 ; (overlay1.asm) via the ovl_map_page trampoline, entered with
 ; OVL2_PAGE freshly mapped at MMU7. Probes the 6 DAAD.* names
 ; (title_probe); CF set (none staged) is a normal, silent, fail-quiet
-; return - a game shipping no title boots exactly as before, and no
-; DEBUG marker fires (absence is normal here, unlike a numbered PICTURE
-; miss). On a hit: streams into scratch banks (gfx_read_banks), depacks
-; them if the row was ZX0 (gfx_depack - skipped for a raw hit, the same
-; call-nz idiom gfx_load uses), derives the row count
+; return - a game shipping no title boots exactly as before. On a hit:
+; streams into scratch banks (gfx_read_banks), depacks them if the row
+; was ZX0 (gfx_depack, skipped for a raw hit), derives the row count
 ; (gfx_derive_height), then title_blit (below) blits the run straight
 ; off gfxArenaStart to the Layer 2 BACK surface and flips - gfx_load's
 ; own cache-miss pipeline, stopping short of a cache commit.
-; gfx_direct_stream (location art's OWN transient fallback) is
-; deliberately NOT reused here, even for a raw hit: partway through, it
-; closes and REOPENS the file via gfx_open_chain to reach the palette
-; (F_SEEK unproven, see its own header) - and gfx_open_chain
-; unconditionally rebuilds a "NNN.ext" 3-DIGIT name from gfxPicNum,
-; which can never spell "DAAD". The bank-based path never reopens
-; anything (gfxHandle is closed exactly once, by gfx_read_banks, and
-; never touched again), so it has no such dependency. gfx_load_rollback
-; frees the banks immediately after the blit either way - transient,
-; nothing here ever touches gfxCache/stagedPic/stagedEntry. Ends with
-; the picture flipped visible, then the any-key wait (wait_key,
-; print.asm/SP4 - unconditional, no DAAD flag/timeout dependency, since
-; flags/eng_init_game haven't run yet), then h_display's own non-zero
-; (clear+flip) shape so the game starts on a clean Layer 2 with no
-; title art left behind. Music keeps playing throughout -
-; aud_boot_probe already started it, nothing here touches audio.
+; gfx_direct_stream (location art's transient fallback) is deliberately
+; not reused here: it reopens the file via gfx_open_chain to reach the
+; palette, which rebuilds a "NNN.ext" 3-digit name from gfxPicNum and
+; can never spell "DAAD". The bank-based path never reopens anything
+; (gfxHandle closed once, by gfx_read_banks). gfx_load_rollback frees
+; the banks immediately after the blit either way - transient, nothing
+; here touches gfxCache/stagedPic/stagedEntry. Ends with the picture
+; flipped visible, then the any-key wait (wait_key, print.asm), then
+; h_display's own clear+flip so the game starts on a clean Layer 2 with
+; no title art left behind. Music keeps playing throughout.
+;
 ; Returns via a threaded one-way hop into overlay0's pointer_load_boot
-; (SP12 T3 wired the .toPointer hop; pointer_load_boot itself seeds the
-; live buffer from the pristine arrow before pointer_load's own base-
-; shape probe runs - see that routine's header, overlay0.asm, for why
-; neither this call nor switch_to_part can be relied on to have seeded
-; it first), whose tail-jp into pointer_load's plain ret then pops
-; whatever was on the stack before this whole chain began - thanks to
+; (pointer_load_boot seeds the live buffer from the pristine arrow
+; before pointer_load's own base-shape probe runs - see that routine's
+; header, overlay0.asm), whose tail-jp into pointer_load's plain ret
+; then pops whatever was on the stack before this chain began - via
 ; the chain's stack trick (overlay1.asm), that is still aud_boot_probe's
-; own caller (main.asm), unchanged from before SP12 T3 - the same final
-; ret target, just reached one hop later. MMU7 is left mapped OVL0_PAGE
-; afterward, harmless (main.asm/eng_run don't care what overlay page is
-; mapped - the same precedent as switch_to_part's own chain tail,
-; overlay0.asm). Corrupts everything.
-; SP12 T1: font_load is called on EVERY exit below (the title-absent
-; early path via .noTitle, the mid-load-failure .rollback path also via
-; .noTitle, and the after-keypress success path just before its own
-; tail-jump) - the SP11 T1 exit-coverage lesson (an early ret that skips
-; a chain call silently loses the feature for a whole class of games).
-; SP12 T3 threads pointer_load the exact same way, through .toPointer:
-; the after-keypress path now CALLs h_display (was a tail-jump) so its
-; own ret lands back here in OVL2, letting it fall into the same shared
-; trampoline the other two exits use, rather than needing a second,
-; separate hop back from OVL0 into OVL2 just to reach h_display (which
-; physically lives in this overlay page and cannot execute correctly
-; while MMU7 holds pointer_load's OVL0_PAGE).
-; The release banner and DEBUG diagnostics (debug.asm) render BEFORE
-; this point, still in the embedded font by design - they are
-; interpreter furniture, not game text; everything from here on
-; (the title screen has no text of its own, so in practice this means
-; the game's own first text) uses the custom font, once loaded.
+; own caller (main.asm). MMU7 is left mapped OVL0_PAGE afterward,
+; harmless (main.asm/eng_run don't care what overlay page is mapped).
+; Corrupts everything.
+;
+; font_load is called on EVERY exit below (the title-absent early path
+; via .noTitle, the mid-load-failure .rollback path also via .noTitle,
+; and the after-keypress success path just before its own tail-jump) -
+; an early ret must never skip a chain call and lose the feature for a
+; whole class of games. pointer_load is threaded the same way, through
+; .toPointer: the after-keypress path CALLs h_display (not a tail-jump)
+; so its own ret lands back here in OVL2 and falls into the same shared
+; trampoline the other two exits use, since h_display physically lives
+; in this overlay page and cannot execute while MMU7 holds
+; pointer_load's OVL0_PAGE.
+;
+; The release banner and DEBUG diagnostics (debug.asm) render before
+; this point, still in the embedded font by design - interpreter
+; furniture, not game text; everything from here on uses the custom
+; font, once loaded.
 title_boot:
     call title_probe
     jr c, .noTitle                ; no DAAD.* staged: silent, normal boot
@@ -3719,23 +3529,16 @@ font_name_build:
 ; 16K scratch bank first (mapped into slot 6/DATA_WINDOW via
 ; data_save/data_map_page - ext_xmes's own idiom, overlay0.asm) and is
 ; only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
-; then-install. Exact-size validation (BC checked, not CF alone - the
-; F_READ/F_WRITE count lesson) plus the 1-byte-overshoot probe mirror
-; tm_font_init's own GAME.CHR check byte for byte. THIS ROUTINE only
-; ever writes fontCur after that final ldir, so a failed load (absent
-; file, wrong size, no free bank, no drive) leaves it exactly as this
-; routine found it. Note that its CALLERS do write it beforehand, and
-; both write $FF (unknown), never a number: h_gfx's .font pre-sets $FF
-; for the n=0 path before laying the embedded table down, and
-; font_load_switch does the same across a part switch. So the invariant
-; that actually holds system-wide is the one that matters - fontCur
-; NAMES A NUMBER only when that number's glyphs are genuinely in
-; TM_DEFS, so GFX sub 16's already-installed check can never
-; short-circuit a retry of a font that failed to install. The no-free-
-; bank path is the one that made this load-bearing: bank_alloc has no
-; eviction fallback and the picture cache holds pool banks, so a
-; mid-game GFX n 16 against a warm cache is a REACHABLE failure, unlike
-; the boot and part-switch calls that ran against a fresh pool.
+; then-install. Exact-size validation (BC checked, not CF alone) plus a
+; 1-byte-overshoot probe mirror tm_font_init's own GAME.CHR check byte
+; for byte. THIS ROUTINE only ever writes fontCur after that final
+; ldir, so a failed load (absent file, wrong size, no free bank, no
+; drive) leaves it exactly as this routine found it; callers pre-set it
+; to $FF (unknown) beforehand. Invariant: fontCur NAMES A NUMBER only
+; when that number's glyphs are genuinely in TM_DEFS, so GFX sub 16's
+; already-installed check can never short-circuit a retry of a font
+; that failed to install - reachable mid-game since bank_alloc has no
+; eviction fallback and the picture cache holds pool banks.
 ; Corrupts AF, BC, DE, HL, IX.
 font_load:
     call font_name_build         ; A = font number, in
@@ -4169,9 +3972,8 @@ tc_mark_320:
     call tc_mark
     jp data_restore
 
-; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
-; report.md section 41): EXTERN vector 8 (debug.asm's
-; l2mod_trampoline, tests/test.dsf's L2MOD verb) lands here once
+; EXTERN vector 8 (debug.asm's l2mod_trampoline, tests/test.dsf's
+; L2MOD verb) lands here once
 ; OVL2_PAGE is mapped. Only reason this wrapper exists at all: A must
 ; be set to the mode AFTER the page switch, since ovl_map_page's own
 ; A-clobber (loading OVL2_PAGE for the NR_MMU7 write) would otherwise
@@ -4188,7 +3990,6 @@ l2mod_run:
     jp l2_testcard
 
 ; --- SP17 T5 Layer 2 SCROLL bring-up probes -------------------------
-; Owner run sheet: .superpowers/sdd/sp14a-task-4-report.md section 41.4.
 ; T5 (global motion compensation) wants to encode a camera pan as "move
 ; the Layer 2 offset by (dx,dy), repaint only the newly exposed edge".
 ; Nothing about that can be designed until the offset registers'

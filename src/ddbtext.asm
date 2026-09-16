@@ -166,14 +166,10 @@ msg_seek:
 ; token references inline. CF set = end of message (decoded $0A).
 ; Message bytes are 255-complemented; token bytes are raw 7-bit with
 ; bit 7 terminating the token. Callers must zero tokActive before the
-; first call on a freshly-seeked stream. Preserves BC - AND NOTHING
-; ELSE: the token paths CORRUPT HL (.tokref loads the token-table
-; address and rd_seeks it; rd_pop corrupts HL by its own contract).
-; A caller holding a pointer across this call must bracket it in
-; push/pop itself - svc_getmsg (main.asm) shipped without that
-; bracket and every post-token store landed in the mapped DDB page,
-; overwriting the token table (the svc-getmsg corruption defect,
-; 2026-08-15).
+; first call on a freshly-seeked stream. Preserves BC only - the token
+; paths corrupt HL (.tokref reseeks the token table; rd_pop corrupts HL
+; by its own contract). A caller holding a pointer across this call
+; must bracket it in push/pop itself.
 txt_next_decoded:
     ld a, (tokActive)
     or a
@@ -540,8 +536,7 @@ objname_article:
 ; msx2daad's SM53 carries its own newline, so NextDAAD's extra
 ; prn_newline was a third line neither reference produces.
 ; The terminator stays SM48 for LISTAT as well as LISTOBJ (jDAAD's
-; choice; msx2daad uses SM51 there) - reference disagreement recorded
-; in docs/daad-compliance-report.md, not this task's to move.
+; choice; msx2daad uses SM51 there - the references disagree).
 ; The referenced object (flag 51) is NOT written - see objname_print_n.
 list_at:
     cp LOC_HERE

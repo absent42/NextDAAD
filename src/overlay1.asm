@@ -120,23 +120,10 @@ kbMapCaps:                      ; caps: letters upper; digits/edit keys
 kbMapSym:                       ; symbol shift: classic punctuation
     db   0, ':', 96, '?','/',  '~','|', 92, '{','}'  ; 92 = '\' (0x5C) as
                                  ; a decimal literal, NOT '\\' - sjasmplus
-                                 ; expands a quoted '\\' into TWO bytes
-                                 ; (5C 5C, a 2-char string), not one
-                                 ; escaped backslash. That extra byte was
-                                 ; the whole bug: kbMapSym assembled 41
-                                 ; bytes instead of 40, shifting every
-                                 ; entry from matrix 8 onward down by one
-                                 ; physical position - kbMapSym[N] held
-                                 ; the value meant for matrix N-1, for
-                                 ; every symbol-shifted key from F onward
-                                 ; (confirmed via build/nextdaad.sld: the
-                                 ; table was 57547..57588 = 41 bytes, and
-                                 ; the .lst dump showed "5C 5C" for this
-                                 ; single db element). See 96/39 above/
-                                 ; below for the SAME decimal-literal
-                                 ; convention already used here for
-                                 ; backtick/apostrophe - now applied
-                                 ; consistently to backslash too.
+                                 ; expands a quoted '\\' into two bytes
+                                 ; (a 2-char string), not one escaped
+                                 ; backslash. Same convention as 96/39
+                                 ; for backtick/apostrophe.
     db   0,   0,   0, '<','>',  '!','@','#','$','%'
     db '_',')','(', 39, '&',  '"',';',   0,']','['
     db  13, '=','+','-','^',  ' ',  0, '.',',','*'
@@ -286,40 +273,24 @@ kb_char:
     ret
 
  IFDEF DEBUG
-; KTEST diagnostic (EXTERN 0 6, tests/test.dsf's KTEST verb - see
-; overlay0.asm's extVec vector 6 / debug.asm's ktest_trampoline;
-; DEBUG-only, no
-; footprint in Release). Called once per engine step by the DSF's own
-; PROCESS/REDO loop (PRO 9); draws:
-;   - the 8 raw keyboard half-row bytes as binary (pressed=1, the TRUE
-;     unmasked electrical state - unlike kb_raw's own masking, which
-;     hides a held shift key's bit from its own row);
-;   - the kb_raw-decoded matrix code and shift state (C/S bits);
-;   - the kb_char-decoded character (hex + glyph if printable) - this
-;     exercises the REAL production settle/repeat/decode path, so a
-;     brief tap may show 0 until the 2-frame settle catches it, exactly
-;     as real typing would;
-;   - the capsLock state.
-; All rendered natively via the resident dbg_* console (DAAD's own
-; PRINT is decimal-only and cannot show binary/hex/glyphs). Exit:
-; flags+130 is set to 1 when TRUE VIDEO (CAPS+3, matrix 17) is the
-; currently-held key, 0 otherwise - the DSF checks this every pass and
-; DONEs on nonzero. TRUE VIDEO is a deliberate two-key chord unlikely
-; to be hit while sweeping single keys/combos (named as a safe exit
-; choice in the owning task brief); it is excluded from live sweep by
-; this choice, same trade-off the brief accepted.
+; KTEST diagnostic (EXTERN 0 6, tests/test.dsf's KTEST verb; see
+; overlay0.asm's extVec vector 6 / debug.asm's ktest_trampoline).
+; DEBUG-only, no footprint in Release. Called once per engine step;
+; draws the 8 raw keyboard half-row bytes as binary (true unmasked
+; state), the kb_raw-decoded matrix/shift, and the kb_char-decoded
+; character (via the real production settle/repeat/decode path), plus
+; capsLock. Rendered via the resident dbg_* console (DAAD's own PRINT
+; is decimal-only). Exit: flags+130 set to 1 when TRUE VIDEO (CAPS+3,
+; matrix 17) is held; the DSF DONEs on nonzero.
 ;
-; Register-liveness note (doc-13 rubric 1): dbg_putc/dbg_puts/dbg_hex8
-; corrupt AF, BC, DE, HL (dbg_putc's own 8-row glyph copy uses B as an
-; unconditional djnz counter). Every loop/state value this routine
-; needs across a dbg_* call is therefore kept in memory (ktestIdx/
+; dbg_putc/dbg_puts/dbg_hex8 corrupt AF, BC, DE, HL, so every loop/
+; state value needed across a dbg_* call is kept in memory (ktestIdx/
 ; ktestRowSel/ktestBits/ktestMatrix/ktestShift/ktestChar), never in a
-; register held live across such a call. Corrupts everything.
+; register held live across such a call.
 ktest_poll:
     call dbg_cls
     ld b, 12                     ; rows 0-11 sit under the test game's
-                                  ; location art (owner bench finding) -
-                                  ; the whole readout lives at 12+
+                                  ; location art - readout lives at 12+
     call dbg_at0
     ld hl, ktestTitle
     call dbg_puts
@@ -329,8 +300,7 @@ ktest_poll:
     ld a, (ktestIdx)
     cp 8
     jp z, .rowsdone
-    add a, 16                    ; screen row = 16 + index (below the
-                                  ; art + the latched readout rows)
+    add a, 16                    ; screen row = 16 + index
     ld b, a
     call dbg_at0
     ld a, (ktestIdx)
@@ -340,11 +310,8 @@ ktest_poll:
     add hl, de
     ld a, (hl)
     ld (ktestRowSel), a
-    call dbg_hex8                ; row-select byte identifies the row -
-                                  ; see the report's row-name table
-                                  ; (kbRows order); trimmed the on-
-                                  ; screen name label here for overlay1
-                                  ; budget (owner bench feedback task)
+    call dbg_hex8                ; row-select byte identifies the row
+                                  ; (kbRows order); no name label shown
     ld a, ':'
     call dbg_putc
     ld a, ' '
@@ -391,26 +358,17 @@ ktest_poll:
     ld (ktestIdx), a
     jp .rowloop
 .rowsdone:
-    ; --- owner bench feedback (2026-07-22): the old level-triggered
-    ; readout (kb_raw/kb_char re-read and re-printed every frame)
-    ; flashed and cleared on release - unreadable at the bench. The
-    ; decoded MATRIX/SHIFT/CHAR lines below now LATCH: they update
-    ; only on a genuine NEW press (edge, not level), consume-on-press
-    ; like capsLockArmed's own gate, and hold across release until the
-    ; next press. The raw bit rows above stay live per the same
-    ; feedback. A rolling 8-entry decoded-char history (hex, newest
-    ; first) lets a typing sequence be reviewed after the fact.
+    ; The decoded MATRIX/SHIFT/CHAR lines below LATCH: they update only
+    ; on a genuine new press (edge, not level) and hold across release.
+    ; The raw bit rows above stay live. A rolling 8-entry decoded-char
+    ; history (hex, newest first) lets a typing sequence be reviewed.
     ;
-    ; The decode below (.kdnl/.kdns/.kdix/.kdgot) is a deliberate,
-    ; self-contained MIRROR of kb_char's own .notlock/.idx/letters-
-    ; case-lock logic (overlay1.asm, same file) - NOT a shared call:
-    ; kb_char's own settle timing (2 frames) would hide exactly the
-    ; "pressed but not yet decoded" state this tool exists to show
-    ; (e.g. the owner's reported comma/period/"!" symptom), and this
-    ; task's own constraint is to touch nothing outside this KTEST
-    ; block. kb_char is still called below for its REAL side effects
-    ; (autorepeat bookkeeping, the actual capsLock toggle) - this
-    ; mirror never writes capsLock itself.
+    ; .kdnl/.kdns/.kdix/.kdgot is a self-contained MIRROR of kb_char's
+    ; own .notlock/.idx/letters-case-lock logic, not a shared call:
+    ; kb_char's 2-frame settle would hide the pressed-but-not-yet-
+    ; decoded state this tool shows. kb_char is still called below for
+    ; its real side effects (autorepeat, capsLock toggle); this mirror
+    ; never writes capsLock itself.
     call kb_raw                  ; A = matrix ($FF none), B = shift (fresh every frame - feeds the LIVE exit check and the edge test)
     ld (ktestFreshM), a
     ld a, b
@@ -480,8 +438,7 @@ ktest_poll:
     call kb_char                 ; real side effects only (autorepeat
                                   ; state, the actual capsLock toggle);
                                   ; return value unused for display
-    ; --- decoded matrix code + shift state (row 13, LATCHED - rows
-    ; 11-12 sit under the test game's location art; owner bench) ---
+    ; --- decoded matrix code + shift state (row 13, LATCHED) ---
     ld b, 13
     call dbg_at0
     ld hl, ktestMatrixLbl
@@ -601,9 +558,8 @@ ktestLockLbl:   db "  CAPSLOCK=", 0
 ktestHistLbl:   db "HIST: ", 0
 ; Row-name labels (kbRows order: $FE=CZXCV $FD=ASDFG $FB=QWERT
 ; $F7=12345 $EF=09876 $DF=POIUY $BF=ELKJH $7F=_SMNB, bit0..4 left to
-; right) were trimmed from the on-screen raw-bits rows for overlay1
-; budget (owner bench feedback task) - the row-select hex byte alone
-; identifies the row; see the report for the full table.
+; right) are not shown on-screen; the row-select hex byte identifies
+; the row alone.
  ENDIF
 
 ; --- input line editor ---
@@ -1322,24 +1278,9 @@ parse_order:
     ; 1. convertible noun: verb empty, noun1 <= 39 -> verb = noun1
     ;    (noun1 keeps its value - both hold the same code)
     ;
-    ; SP16 D2, SETTLED 2026-07-31 on the ORIGINAL ZX interpreter. This
-    ; was 20 (following msx2daad's "id<20") against jdaad's "id<=39",
-    ; and the two references could not settle it. The lineage this
-    ; interpreter reimplements was asked directly: the fixture
-    ; .superpowers/sdd/sp16-adjudications/zxadj.dsf, compiled for the
-    ; classic 48K target and run against ASSETS/ZX/ZXSPECTRUM/
-    ; DS48IE3.BIN under ZEsarUX, types bare nouns of id 19, 20, 25, 39,
-    ; 40 and 60 and prints the resulting verb/noun flags:
-    ;
-    ;   19 -> V=19 N=19    39 -> V=39 N=39
-    ;   20 -> V=20 N=20    40 -> V=255 N=40
-    ;   25 -> V=25 N=25    60 -> V=255 N=60
-    ;
-    ; The boundary is exactly 39/40, i.e. jdaad's LAST_CONVERTIBLE_NOUN
-    ; = 39, and msx2daad's "< 20" is the deviation. Full transcript:
-    ; .superpowers/sdd/sp16-adjudications/zxadj-transcript.txt.
-    ; Visible effect: bare nouns with ids 20-39 now act as commands, as
-    ; they do on the machine this interpreter is a port of.
+    ; Boundary is noun1 <= 39 (jdaad's LAST_CONVERTIBLE_NOUN), confirmed
+    ; against the original ZX interpreter; msx2daad's "id<20" is wrong.
+    ; Bare nouns with ids 20-39 act as commands.
     ld a, (flags+FLAG_VERB)
     inc a
     jr nz, .p2
@@ -1640,43 +1581,16 @@ h_parse:                        ; 73: condition-like. B = option.
     scf
     ret
 .quoted:
-    ; SP16 B21 - PARSE 1+ re-runs the logical-sentence fill over the
-    ; quoted section lifted from the order by quote_split. No prompt,
-    ; no input, no pending_compact: inpPending's own cursor is not
-    ; involved, so the buffered-orders chain is untouched.
+    ; PARSE 1+ re-runs the logical-sentence fill over the quoted section
+    ; lifted from the order by quote_split. No prompt, no input, no
+    ; pending_compact: the buffered-orders chain is untouched.
     ;
-    ; The rule below is MEASURED, not argued. The three references gave
-    ; three different answers - jdaad's parseEnd ends
-    ; "return result || (globalParseOption>0)" (jdaad.js:1548), so for
-    ; it the verdict is pure EXISTENCE; msx2daad's useLiteralSentence
-    ; returns whether ANY of the seven slots got filled - so the
-    ; original ZX interpreter was asked, on the rig in
-    ; .superpowers/sdd/sp16-adjudications/ (V/N are the sentence flags,
-    ; QV/QN the markers that show which way the condition went: 254 =
-    ; PARSE 1 PASSED, anything else = it FAILED; A is the adverb):
-    ;
-    ;   SAY FAST PLUGH  V=40  N=25  QV=254 A=55   no quotes: passes,
-    ;                                             flags left alone
-    ;   SAY ""          V=255 N=255 QV=254 A=255  empty quotes: flags
-    ;                                             CLEARED, passes
-    ;   SAY "ZZZZ"      V=255 N=255 QV=254 A=255  unknown words: same
-    ;   SAY "FAST"      V=255 N=255 QV=254 A=55   adverb only: FILLED
-    ;                                             the adverb, still passes
-    ;   SAY "PLUGH"     V=25  N=25  QV=25        verb+noun: FAILS
-    ;   SAY "N40"       V=255 N=40  QV=255       noun only: FAILS
-    ;
-    ; which is two rules, both simple:
-    ;   - EXISTENCE decides whether the fill runs at all. No quoted
-    ;     section and the sentence flags are not touched; a quoted
-    ;     section, even an empty one, clears them first.
-    ;   - CONTENT decides the condition, by exactly the test PARSE 0
-    ;     already uses - verb or noun1 present. "SAY "FAST"" is the
-    ;     discriminator: it demonstrably filled the adverb (A=55) and
-    ;     still passed, so msx2daad's any-slot rule is out, and it
-    ;     parsed nothing into verb/noun1 yet a quoted section existed,
-    ;     so jdaad's existence rule is out too.
-    ; Both references deviate; NextDAAD follows the machine it is a
-    ; port of. Falling into .verdict is what implements the second rule.
+    ; Two rules, confirmed against the original ZX interpreter (both
+    ; jdaad and msx2daad deviate from it): EXISTENCE decides whether the
+    ; fill runs at all - no quoted section leaves the sentence flags
+    ; alone, a quoted section (even empty) clears them first. CONTENT
+    ; decides the condition, by the same verb-or-noun1-present test
+    ; PARSE 0 uses. Falling into .verdict implements the second rule.
     ld a, (inpQuoted)
     or a                        ; clears CF
     ret z                       ; no quoted section at all: flags stay, pass
@@ -1709,25 +1623,15 @@ ls_reset:                       ; flags is ALIGN 256: INC L walks it
     ret
     ASSERT FLAG_NOUN1 == FLAG_VERB+1 && FLAG_ADJ1 == FLAG_VERB+2 && FLAG_ADVERB == FLAG_VERB+3 && FLAG_NOUN2 == FLAG_PREP+1 && FLAG_ADJ2 == FLAG_PREP+2
 
-; SP16 B21. Lift a quoted section out of the order at (inpPtr) into
-; inpQuoted (ASCIIZ, empty when there is no quote), blanking it - both
-; quote characters included - in the order itself so the REMAINDER
-; still parses normally.
-;
-; The split follows msx2daad's parser() (daad_parser_sentences.c:55-62
-; and 128-136), which switches the logical-sentence buffer on the
-; opening quote and switches BACK on the closing one, so words after
-; the closing quote keep feeding the normal sentence. jdaad's parseB
-; (jdaad.js:1393-1397) instead truncates the order at the opening
-; quote and throws the tail away; on `SAY "HELLO" LOUDLY` msx2daad
-; still sees LOUDLY and jdaad does not. Blanking rather than
-; truncating gives msx2daad's answer and costs nothing - the order's
-; separator and terminator stay exactly where pending_compact expects
-; them.
+; Lift a quoted section out of the order at (inpPtr) into inpQuoted
+; (ASCIIZ, empty when there is no quote), blanking it - both quote
+; characters included - in the order itself so the REMAINDER still
+; parses normally (e.g. `SAY "HELLO" LOUDLY` still sees LOUDLY).
+; Blanking rather than truncating costs nothing - the order's
+; separator and terminator stay exactly where pending_compact expects.
 ;
 ; The scan stops at an order separator, so the quoted section cannot
-; run past the end of its own order. That matches both references,
-; which split the input into orders BEFORE looking for quotes.
+; run past the end of its own order.
 ;
 ; No length guard is needed: the quoted section is a substring of one
 ; order inside inpPending (INP_MAX+1 bytes) minus at least the opening
@@ -1753,13 +1657,9 @@ quote_split:
     ld de, inpQuoted
     ; A leading space, so that EMPTY quotes still leave inpQuoted
     ; non-empty and h_parse can tell `SAY ""` (a quoted section that
-    ; happens to be empty) from `SAY JOHN` (no quoted section at all).
-    ; The original ZX interpreter distinguishes them - measured, see
-    ; h_parse's .quoted - and jdaad reaches the same end by forcing
-    ; playerOrderQuoted to " " with the comment "Because original
-    ; interpreters make a difference between 'SAY JOHN' and
-    ; 'SAY JOHN \"\"'" (jdaad.js:1401). A leading space is free:
-    ; word_next skips spaces before every word.
+    ; happens to be empty) from `SAY JOHN` (no quoted section at all) -
+    ; see h_parse's .quoted. A leading space is free: word_next skips
+    ; spaces before every word.
     ;
     ; It still fits. The quoted section is a substring of one order in
     ; inpPending (INP_MAX chars) minus at least the opening quote, so at
@@ -1793,11 +1693,10 @@ quote_split:
 ; stream in flag 41; only the switch was missing.
 ;
 ; What is deliberately NOT done: flag 63 (the current-window flag) is
-; left alone. jdaad backs up windows.activeWindow and never touches
-; the flag, so a game reading it during input still sees the window it
-; selected with WINDOW. The stash below is that backup - it is the
-; window POINTER rather than the number, so the restore cannot be
-; thrown off by a game writing flag 63 directly while input is open.
+; left alone, so a game reading it during input still sees the window
+; it selected with WINDOW. The stash below is a window POINTER rather
+; than the number, so the restore cannot be thrown off by a game
+; writing flag 63 directly while input is open.
 ; Corrupts AF, C, DE, HL (push); AF, DE, HL (pop).
 inp_stream_push:
     ld hl, (curWin)
@@ -1928,17 +1827,11 @@ sav_prompt:
     ret                         ; the name-error CF for the caller
 
 ; Post-process savName's name field (written by sav_fname) toward the
-; DAAD manual's SAVE opt wording: "this is not checked on 8 bit
-; machines, the file name is MADE acceptable!" (DAAD_Manual_1991.md /
-; DAAD_Ready_Documentation_V2.md) - the manual does not specify HOW,
-; so: sav_fname already uppercases a-z and drops spaces; this maps
-; every remaining non-alphanumeric byte to 'X'. Needed because
-; sav_fname otherwise copies punctuation/control bytes into savName
-; verbatim - a raw '.' typed mid-name would land ahead of the literal
-; ".SAV" suffix appended below it (e.g. typing "my.sv!" would produce
-; "MY.SV!.SAV", a malformed multi-dot 8.3 name) and other bytes may
-; not be legal in an esxDOS/FAT filename at all, so an unsanitized
-; SAVE could fail outright instead of just looking odd.
+; DAAD manual (DAAD_Manual_1991.md): filenames are "MADE acceptable"
+; on 8-bit machines, method unspecified. sav_fname already uppercases
+; a-z and drops spaces; this maps every remaining non-alphanumeric
+; byte to 'X', so a raw '.' or other punctuation typed mid-name cannot
+; produce a malformed multi-dot 8.3 name or an illegal FAT filename.
 ; In: A and C = name length (1-8), as sav_fname leaves them on return.
 ; savName[0..len-1] holds the space-dropped, letter-uppercased chars;
 ; the loop below never touches savName+len.. (the literal ".SAV",0
@@ -2021,31 +1914,21 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 
 ; --- SP11 Task 4: part-aware SAVE/LOAD helpers -----------------------
 ; .SAV v2 = the v1 payload (unchanged byte-for-byte) + ONE trailing part
-; byte. SAVE always writes v2 (sav_write_v2). LOAD tells the format
-; apart by length, not a version field: EOF right at the v1 payload's
-; end is v1 (pre-Task-4 file) and is always current-part; one more byte
-; present is v2's part number - equal to curPart, restore in place
-; exactly like v1; different, hand off to switch_to_part (Task 3,
-; overlay0.asm) for a fresh part entry (sav_read_v2). RAMSAVE/RAMLOAD
-; fork identically (h_ramsave/h_ramload below) against a stored curPart
-; snapshot instead of a file byte.
+; byte. SAVE always writes v2. LOAD tells the format apart by length,
+; not a version field: EOF at the v1 payload's end is v1 (always
+; current-part); one more byte present is v2's part number - equal to
+; curPart, restore in place; different, hand off to switch_to_part
+; (overlay0.asm) for a fresh part entry. RAMSAVE/RAMLOAD fork the same
+; way against a stored curPart snapshot instead of a file byte.
 ;
-; sav_read_v2 could not reuse the resident sav_read (file.asm, deleted
-; 2026-09): sav_read rejected any file whose header numObj differed
-; from the LIVE numObj as "wrong game" (error 3). Correct for same-part
-; loads, but wrong for a legitimate v2 cross-part save, which by
-; construction has a DIFFERENT numObj than whatever part is currently
-; active (each part is its own DDB with its own object count) - the
-; check would misfire on every genuine cross-part load. sav_read_v2
-; reimplements the same staged, atomic read shape with the same
-; resident primitives and the same resident scratch buffers sav_read
-; itself used (savRdHdr/savStage/savLocs, file.asm), but skips that
-; gate and reads one extra byte past the payload to tell v1 from v2 -
-; restoring the numObj-vs-live check ONLY on the same-part path (.v1
-; below), where it is exactly as valid as it was in sav_read.
+; sav_read_v2 does not use sav_read's numObj-vs-live "wrong game" gate
+; (file.asm) - that check is invalid for a legitimate cross-part load,
+; where numObj differs by construction. It reads one extra byte past
+; the payload to tell v1 from v2, and restores the numObj check only on
+; the same-part path.
 ;
-; swapStage/swapObjCount (Task 3, overlay0.asm) live in the OVL0 page -
-; this file's own header comment ("Calls RESIDENT services only - never
+; swapStage/swapObjCount (overlay0.asm) live in the OVL0 page - this
+; file's own header comment ("Calls RESIDENT services only - never
 ; overlay0") rules out writing them directly from here. The cross-part
 ; branch below stages into the resident savStage/savLocs instead (the
 ; same buffers the same-part path commits from) and hands off to a new
@@ -2055,54 +1938,21 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; entry also serves h_ramload's cross-part path, below, staged from
 ; ramSaveBuf instead.
 
-; sav_write_v2 REPLACES an earlier append-after-close shape (owner
-; CSpect sweep evidence: every SAVE reported OK, but PT.SAV/T1.SAV/
-; MYXSV.SAV were all landing at exactly the v1 size - 265/266 bytes,
-; never 266/267 - the trailing byte was silently never written).
-; Investigation (instruction-by-instruction re-read of the committed
-; append routine, since removed): the byte count WAS correctly reloaded
-; to BC=1 immediately before the esx_fwrite that followed the F_SEEK -
-; no register-reuse bug, contrary to the first suspicion. A, IX, and
-; the F_OPEN mode ($02: write + open-existing, confirmed against
-; NextZXOS_and_esxDOS_APIs.odt's F_OPEN entry as a valid, well-formed
-; combination) were all correct too. But F_WRITE's own documented exit
-; contract ("Exit (success): Fc=0; BC=bytes actually written" - no
-; short-write exemption stated, unlike F_READ's explicit "EOF is not an
-; error, check BC" note) was never checked against the requested count
-; - the routine trusted CF alone, exactly as sav_write itself did for
-; its own (proven-reliable, sequential-from-open) writes. Verdict: a
-; write that seeks to the exact current end of an already-open,
-; non-created handle and asks it to grow the file by one byte can
-; return Fc=0 with BC=0 (silent short write); whether that is a CSpect
-; esxDOS-emulation gap in extending mode-$02 handles past their
-; original EOF, or a genuine esxDOS/FatFS characteristic that would
-; reproduce on real hardware too, could not be determined without
-; hardware access - either way it is a real hazard in the seek-then-
-; extend shape, not something worth re-proving with a BC check bolted
-; onto the same shape.
+; sav_write_v2 writes the trailing part byte as a fourth sequential
+; esx_fwrite inside sav_write's own single open/create/truncate/close
+; session, the same call shape as the header/flags/objects writes
+; immediately before it. No second open, no seek, no write-extend edge
+; case (a seek-then-extend write on an already-open handle can return
+; Fc=0 with BC=0, a silent short write).
 ;
-; Fix: eliminate the shape entirely - write the trailing byte as a
-; fourth sequential esx_fwrite inside sav_write's own single open/
-; create/truncate/close session (mirrors sav_read_v2's own "reimplement
-; on the resident primitives" precedent), the exact same call shape as
-; the header/flags/objects writes immediately before it, which the
-; owner's own evidence proves already write reliably. No second open,
-; no seek, no write-extend edge case. Once the v2 routines replaced
-; sav_write in h_save and sav_read in h_load, both were dead until
-; deleted 2026-09; sav_append_part was removed earlier, with this fix.
-;
-; Post-fix hardening (owner-approved pre-tag review): CF alone is not
-; sufficient either - the SAME root-cause lesson applies to every write
-; here, not just the removed append: F_WRITE's "Fc=0" success flag does
-; not guarantee the full requested count was written (see the append
-; bug above - that is exactly how it went unnoticed). Each of the four
-; writes below now also checks its own returned BC against what it
-; asked for, routing any shortfall to the same .errclose fail-loud path
-; as a CF failure - a disk-full mid-write (or any other partial write)
-; now fails SAVE outright instead of silently landing a truncated file
-; while still reporting OK. Every count check below folds both bytes of
-; BC into one zero test (sub n / or b; dec a / or c for 256; dec bc /
-; or c for 1), so a nonzero high byte can never pass.
+; F_WRITE's "Fc=0" success flag does not guarantee the full requested
+; count was written, so each of the four writes below also checks its
+; own returned BC against what it asked for, routing any shortfall to
+; the same .errclose fail-loud path as a CF failure - a disk-full
+; mid-write now fails SAVE outright instead of silently landing a
+; truncated file while still reporting OK. Every count check below
+; folds both bytes of BC into one zero test (sub n / or b; dec a / or c
+; for 256; dec bc / or c for 1), so a nonzero high byte can never pass.
 sav_write_v2:
     call esx_getsetdrv
     jp c, .err
@@ -2380,24 +2230,14 @@ ramSaveNObj: db 0
 ; direct bank-24 access here is BYTE LOADING through slot-6 windows
 ; inside data_save brackets (aud_load_song / aud_load_sfb).
 
-; SP16 A3 (docs/daad-compliance-report.md section 2): the compiler
-; SWAPS BEEP's two parameters for every ZX target, so a real database
-; carries the TONE in arg1 and the DURATION in arg2 - the reverse of
-; what the DAAD manual, jDAAD and msx2daad all document:
-;   drb.php:900-914
-;     if (($condact->Param2<48) || ($condact->Param2>238))
-;         ... replace the whole condact with PAUSE ...
-;     else if ($target=='ZX') // Zx Spectrum interpreter expects BEEP
-;                             // parameters in opposite order
-;     { swap Param1 and Param2 }
-; Probe (compliance report Appendix A probe 3): "BEEP 50 120" compiled
-; for "zx next" emits 64, 120, 30 - opcode, tone 120, then duration 30
-; (50 scaled by the target's 120/200 duration factor, A6).
-; This handler reads the COMPILED order and must not be "corrected"
-; back to the documented one: doing so plays the duration as a note.
-; Note also that DRB rewrites any BEEP whose tone falls outside 48..238
-; into a PAUSE before the swap, so a ZX-target DDB only ever reaches
-; here with a tone in that range.
+; The compiler SWAPS BEEP's two parameters for every ZX target, so a
+; real database carries the TONE in arg1 and the DURATION in arg2 -
+; the reverse of what the DAAD manual, jDAAD and msx2daad all document
+; (drb.php:900-914 swaps Param1/Param2 for target 'ZX' after replacing
+; any BEEP whose tone falls outside 48..238 with a PAUSE). This handler
+; reads the COMPILED order and must not be "corrected" back to the
+; documented one: doing so plays the duration as a note. A ZX-target
+; DDB only ever reaches here with a tone in the 48..238 range.
 ;
 ; SP16 A4: the tone ceiling is 238, not 222. DRC emits tones up to 238
 ; (octave 8 runs 216..238) and aud_periods.inc carries all 108 entries
@@ -3279,21 +3119,17 @@ sfxSel:     db 0                ; h_sfx: the allocator's verdict - bit 0 =
 ; which stages it into the channel's 24K page window and flags the
 ; channel COMPLETE (whole file resident) or STREAMING. Finally it derives
 ; the CTC control word + time constant from the header rate and the live
-; video-timing mode.
+; video-timing mode. Nothing here allocates banks; no design element
+; caps effect length against RAM.
 ;
-; SP18 item 7 Task 5 replaced the old "claim a page list for the whole
-; payload" loop (aud_banks_claim over smpPageTab, up to AUD_SMP_MAX)
-; with that call: nothing here allocates banks any more, and no design
-; element caps effect length against RAM.
-;
-; Keep-last is NOT tested here any more (SP18 item 7 Task 12): with two
-; channels the question is which channel caches the number, and sfx_alloc
-; answers it before this routine is reached. A free rewind never gets
-; here at all - h_sfx files the start straight away.
+; Keep-last is not tested here: with two channels, sfx_alloc decides
+; which channel caches the number before this routine is reached. A
+; free rewind never gets here at all - h_sfx files the start straight
+; away.
 ;
 ; THE CHANNEL IS sfxSel BIT 0, the allocator's verdict. Everything below
-; that used to be channel 1 by construction - the stop bit filed and
-; waited on, and the block handed to sfx_stream_open - follows it.
+; - the stop bit filed and waited on, and the block handed to
+; sfx_stream_open - follows it.
 ;
 ; The chosen channel's active sample is stopped (its mailbox stop bit +
 ; consumed-wait) before the staging overwrites the window - a playing

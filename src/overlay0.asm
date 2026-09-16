@@ -177,24 +177,15 @@ h_restart:                      ; 117: wipe the process stack and the
     xor a                       ; DOALL state; eng_step re-pushes PRO 0
     ld (procSP), a              ; from an empty stack
     ld (doallLevel), a
-    ld (gfxDrawTarget), a       ; A=0: GFX 87/4 buffer mode is transient
-    ld (gfxRevealPend), a       ; and RESTART is one of the points it
-    ld (gfxRevealMode), a       ; ends at, so the three buffer-state
-                                ; bytes are cleared here, INLINE.
-                                ; DELIBERATELY NOT through
-                                ; gfx_drawtarget_clear and DELIBERATELY
-                                ; NOT touching gfxLayerOrder (owner
-                                ; ruling 2026-08-18): RESTART is the
-                                ; per-move render-loop re-entry in a
-                                ; template DAAD game - the movement path
-                                ; ends with it on every successful move -
-                                ; so the GFX 87/17 layer order must
-                                ; SURVIVE it. Resetting here would force
-                                ; an author to re-issue the flip every
-                                ; turn. The order still resets at game
-                                ; start, at a part switch and at a
-                                ; same-part LOAD/RAMLOAD, which are the
-                                ; sites that DO call the walker.
+    ld (gfxDrawTarget), a       ; A=0: clear transient GFX 87/4 buffer
+    ld (gfxRevealPend), a       ; state inline (not via
+    ld (gfxRevealMode), a       ; gfx_drawtarget_clear). gfxLayerOrder is
+                                ; NOT touched: RESTART re-runs process 0
+                                ; every move, so the GFX 87/17 layer
+                                ; order must survive it or an author
+                                ; would need to re-issue it each turn.
+                                ; It still resets at game start, part
+                                ; switch and same-part LOAD/RAMLOAD.
     ld a, $FF
     ld (doallObj), a
     ret
@@ -206,10 +197,9 @@ h_doall:                        ; 85: B = location (255 = here). Error
     ld a, 4
     jp err_raise
 .fresh:
-    ; SP16 T6, V3 flag 53 bit 0: SET on entry ("nothing found yet"),
-    ; CLEARED by eng_doall_next's .take on the first object. Two sites,
-    ; both references - see the note at .take (engine.asm). B is live
-    ; across this call and eng_v3f53 preserves it.
+    ; V3 flag 53 bit 0: SET on entry ("nothing found yet"), CLEARED by
+    ; eng_doall_next's .take on the first object. B is live across this
+    ; call and eng_v3f53 preserves it.
     ld de, F53_DOALLNONE<<8 | $FF
     call eng_v3f53
     ld a, b
@@ -419,18 +409,11 @@ h_hasnat:                       ; 59
 ; 8-15 -> flag 58, WEARABLE 23 -> flag 57 bit 7, MOUSE 240 -> flag 29
 ; bit 0 (manual 1062-1069). Corrupts AF, B, E, HL.
 ;
-; SP16 T6, V3: flag 53 bit 1 moves the whole bank to base 91 instead -
-; flags 60-91, exactly 32 bytes, the same 256 attributes (PRP013 V3-04,
-; PCDAAD condacts.pas:1207-1218). This is the ONE addressing helper for
-; HASAT (58), HASNAT (59) and the new SETAT (124), so SP16 A5's byte
-; order and this base selection are shared by all three by construction
-; rather than by three copies agreeing.
-;
-; PCDAAD applies the bit-1 test on any database version; msx2daad gates
-; it on ISV3. NextDAAD follows msx2daad: under V2 flag 53's low bits are
-; the game's own property (only bits 6 and 7 are specified), and moving
-; the attribute bank out from under a V2 game that happens to store
-; something in bit 1 would be a regression, not a feature.
+; Under V3, flag 53 bit 1 (F53_ALTFLAGS) moves the whole bank to base
+; 91 instead (flags 60-91, same 256 attributes). The bit-1 test is
+; gated on V3 only: under V2 flag 53's low bits are the game's own
+; property, so a V2 game is never affected. Shared by HASAT (58),
+; HASNAT (59) and SETAT (124).
 hasat_ptr:
     ld a, b
     and 7
@@ -525,38 +508,11 @@ h_chance:                       ; 10: true B% of the time
     ld a, b
     cp c                        ; B - rand: carry clear (true) when rand <= B
     ret
-; 16-bit xorshift, seeded at eng_init_game. Out A = 1..100.
-; Preserves BC.
-;
-; SP16 (parser-bugs entry 3). This used to rotate (rrca/rlca) where a
-; xorshift needs to SHIFT, which made the state transform a tiny-order
-; permutation: every seed landed on a cycle of at most 16 states, the
-; shipped seed produced only six distinct RANDOM values, and CHANCE 50
-; fired 62% of the time. Now the real thing:
-;
-;   x ^= x << 7;  x ^= x >> 9;  x ^= x << 8
-;
-; period 65535 (verified exhaustively: the orbit is every non-zero
-; state exactly once). The constants are the Z80-cheap triple - a
-; shift by 8 is a register move (doc 06a "Shift Left/Right 8", 3
-; bytes), and 7 and 9 are each one move plus one shift (doc 06a
-; "Shift Left 7" fastest form, "Shift Right 9").
-;
-; Byte-level identities used by rng_step (main.asm), with x = (H,L):
-;   x<<7 = ( (H&1)<<7 | L>>1 , (L&1)<<7 )   -> the SRL H/RR L/RRA form
-;   x>>9 = ( 0 , H>>1 )                     -> low byte only
-;   x<<8 = ( L , 0 )                        -> high byte only
-;
-; Output scaling is A = (x * 100) >> 16, +1. The old scaling folded the
-; state to one byte (H xor L) and reduced it mod 200 then mod 100,
-; which is NOT uniform over 1..100: 200..255 wrapped onto 1..56, so
-; those 56 values drew 3 tickets in 256 and the rest drew 2, and
-; CHANCE 50 would have fired 58.6% of the time even on a perfect
-; generator. Scaling the whole 16-bit state instead gives 655 or 656
-; states per outcome across the period - CHANCE 50 measures 50.00%
-; exactly - and matches what the references compute (jdaad _RANDOM:
-; floor(random()*100)+1). Two Z80N MUL D,E do the 16x8 product
-; (doc 11: MUL is the Next's one-instruction 8x8, 8T).
+; 16-bit xorshift (x ^= x<<7; x ^= x>>9; x ^= x<<8), seeded at
+; eng_init_game, period 65535 (every non-zero state exactly once).
+; Out A = (x*100)>>16 + 1 = 1..100, scaled over the full 16-bit state
+; so each outcome draws 655 or 656 states (uniform), matching jdaad's
+; floor(random()*100)+1. Preserves BC.
 rng_next:
     push bc
     push de
@@ -801,57 +757,34 @@ h_whato:                        ; 100: find by Noun1/Adj1
     djnz .zero
     ret
 
-; The "scan every location" sentinel for D, below. It CANNOT be $FE:
-; that is OBJ_CARRIED (nextdaad.inc:283), and every "carried" pass in
-; this file loads exactly that value - so `ld d, OBJ_CARRIED` was
-; landing on the anywhere branch and scanning the whole table instead
-; of the carried objects. obj_find_n1 read [anywhere, worn, here,
-; anywhere], auto_cwh read [anywhere, worn, here], and the search
-; PRIORITY the AUTO- family is built on did not exist. Found while
-; testing D1, whose partial/full rule is priority-sensitive by
-; construction (see check 90 in tests/condacts.dsf). $FF is the only
-; safe value left: 0-251 are real locations, 252/253/254 are the object
-; specials, and no object's location byte is ever 255 - obj_move raises
-; error 2 rather than store one, and 255 as a CONDACT parameter means
-; "the player's location" and is translated before it gets here
-; (h_place, h_puto, and now h_autot).
+; The "scan every location" sentinel for D, below. Must differ from
+; OBJ_CARRIED ($FE, nextdaad.inc:283) and every real/special location
+; byte (0-254); $FF is the only value never stored in an object's
+; location, so it is unambiguous with the object specials.
 OBJ_ANYLOC      equ $FF
 
 ; D = location to scan (OBJ_ANYLOC = anywhere). Matcher on Noun1/Adj1.
 ; Out: A = object CF clear, else CF set. Preserves D and E.
 ; Corrupts AF, B, C, HL, IY.
 ;
-; SP16 D1 - jDAAD's partial-match rule, best-so-far in a single scan
-; (jdaad.js:756-781, getObjectByVocabularyAtLocation):
-;   FULL match    = noun equal AND (the adjectives are equal, or the
-;                   object's adjective is 255 "takes any adjective").
-;                   Wins outright, returns immediately.
-;   PARTIAL match = noun equal AND flags[35] == 255, i.e. the player
-;                   named no adjective. The FIRST partial is remembered
-;                   in C and the scan CONTINUES, because a full match
-;                   further down the table still beats it; the partial
-;                   is returned only if the scan ends without one.
-; Before this, flags[35] == 255 against an object that HAS an adjective
-; was no match at all, so "GET LAMP" could not reach a "QUAINT LAMP".
-; Keeping the partial subordinate to a full match is what preserves
-; disambiguation: with a RUSTY and a SHINY SWORD in the table,
-; "GET RUSTY SWORD" still takes the rusty one whatever the table order.
+; Selection rule, one pass:
+;   FULL match    = noun equal AND (adjectives equal, or the object's
+;                   adjective is 255 "takes any adjective"). Wins
+;                   outright, returns immediately.
+;   PARTIAL match = noun equal AND flags[35] == 255 (player named no
+;                   adjective). The FIRST partial is remembered in C
+;                   and the scan continues, since a full match later
+;                   in the table still beats it; returned only if the
+;                   scan ends without a full match.
+; The AUTO- family and obj_find_n1 call this once per location in
+; priority order, so a partial at a higher-priority location beats a
+; full match at a lower one.
 ;
-; The partial/full decision is deliberately resolved INSIDE one pass.
-; The AUTO- family and obj_find_n1 call this once per location, in
-; priority order, so a partial found here beats any match at a LOWER
-; priority location and loses to a full match at THIS one - which is
-; exactly what the references do, they run the whole matcher per
-; location too. auto_probe's all-locations existence probe (SP16 B9)
-; uses the same routine and simply gets a truer answer now: an object
-; whose adjective the player omitted counts as existing.
-;
-; obj2_resolve (overlay1.asm) resolves Noun2/Adj2 and stays LENIENT by
+; obj2_resolve (overlay1.asm) resolves Noun2/Adj2 and stays lenient by
 ; design: it accepts object-adj 255, player-adj 255, or an exact pair,
-; and takes the first candidate in table order with no full-beats-
-; partial preference (msx2daad's getObjectId rule, daad_objects.c:22).
-; The two agree on every input that has a full match; they can differ
-; only in WHICH candidate a bare noun picks when several share it.
+; taking the first table-order candidate with no full-beats-partial
+; preference. The two agree whenever there is a full match; they can
+; differ only in which candidate a bare noun picks among several.
 obj_find_pass:
     ld c, $FF                   ; C = remembered partial, $FF = none
     ld b, 0
@@ -906,10 +839,9 @@ obj_find_pass:
     or a
     ret
 
-; WHATO's ordering: carried, worn, here, anywhere. Since SP16 B10 this
-; is WHATO's alone - the anywhere pass is correct there (both references
-; keep it, jDAAD with a comment saying the documentation is wrong about
-; it) and wrong for AUTOT, which now calls auto_cwh instead.
+; WHATO's ordering: carried, worn, here, anywhere. The anywhere pass is
+; correct for WHATO (documentation notwithstanding) but wrong for
+; AUTOT, which calls auto_cwh instead.
 obj_find_n1:
     ld d, OBJ_CARRIED
     call obj_find_pass
@@ -1794,20 +1726,11 @@ kwcChar: db 0
 ; --- interaction / movement / stub condacts ---
 h_inkey:                        ; 111: condition; key -> flag 60
     call key_scan
-    ; SP16 (docs/daad-compliance-report.md section 4, "Flag 61"):
-    ; flag 61 (fKey2, the IBM extended code) is cleared whenever flag
-    ; 60 is written. This handler used to write flag 60 alone and
-    ; leave a previous game's value in 61.
-    ; THE REFERENCES DISAGREE, so be precise about which one this
-    ; follows. jDAAD's _INKEY2 (jdaad.js:4111-4125) writes BOTH flags
-    ; on BOTH paths - hit: 60 = key, 61 = 0; miss: 60 = 0, 61 = 0.
-    ; msx2daad's do_INKEY (daad_condacts.c:644-651) writes flag 60
-    ; ONLY on a hit and never touches flag 61 at all; the one place it
-    ; clears fKey2 is the DAADV3 "PAUSE 0" GETKEY path (line 2100).
-    ; We follow jDAAD. key_scan returns 0 for "no key", so the code
-    ; below writes both flags unconditionally and lands on jDAAD's
-    ; behaviour for the hit and the miss alike.
-    ; This is the ONLY writer of flag 60 (grepped).
+    ; Flag 61 (fKey2, the IBM extended code) is cleared whenever flag
+    ; 60 is written, following jDAAD's _INKEY2 (writes both flags on
+    ; both the hit and miss path). key_scan returns 0 for "no key", so
+    ; the code below writes both flags unconditionally either way.
+    ; This is the ONLY writer of flag 60.
     ld hl, flags+FLAG_KEY1      ; doc 07 (a): flags is ALIGN 256, so
     ld (hl), a                  ; the pair is one INC L apart and the
     inc l                       ; store leaves A and F alone for the
@@ -1822,13 +1745,10 @@ h_anykey:                       ; 24
     call wait_key_timeout
     jp prn_reset_lines
 h_pause:                        ; 35: B frames, 0 = 256
-    ; SP16 A2 tail. Under V3, PAUSE 0 is GETKEY: block for a keypress
-    ; and store it in flags 60/61, exactly as msx2daad's do_PAUSE V3
-    ; branch does (PRP013 V3-09). DRB compiles the GETKEY keyword to
-    ; PAUSE 0 and rejects it outside -v3 (drb.php:947-955), and a fresh
-    ; -v3 compile emits 23 00 for it. No prn_reset_lines on this arm -
-    ; the reference returns straight out, and GETKEY is a value read,
-    ; not a pager pause like ANYKEY.
+    ; Under V3, PAUSE 0 is GETKEY: block for a keypress and store it
+    ; in flags 60/61. DRB compiles the GETKEY keyword to PAUSE 0 and
+    ; rejects it outside -v3. No prn_reset_lines on this arm: GETKEY
+    ; is a value read, not a pager pause like ANYKEY.
     ld a, b
     or a
     jr nz, .timed
@@ -1891,31 +1811,13 @@ sm_first_char:
 ; ENTER ends it, and the FIRST printable character is the answer.
 ; Out: A = that character, or 0 for an empty line. Corrupts all.
 ;
-; SP16 parser-bugs entry 4, SETTLED 2026-07-31 against the ORIGINAL ZX
-; interpreter. NextDAAD used to take a single keypress here, citing the
-; DAAD manual; jDAAD (_QUIT -> getPlayerOrders) and msx2daad (do_QUIT ->
-; prompt(false), whose doc comment says "the remainder of the entry is
-; discarded" - language that only makes sense for a line) both read a
-; line, leaving NextDAAD the outlier of three. The tie-breaker was run:
-; .superpowers/sdd/sp16-adjudications/zxadj.dsf on ASSETS/ZX/
-; ZXSPECTRUM/DS48IE3.BIN under ZEsarUX, driving QUIT to its SM12
-; prompt and then sending a bare Y with NO enter -
-;
-;     [after QUIT - SM12 prompt]      Are you sure?>_
-;     [after a bare Y with NO enter]  Are you sure?>Y_     (flag still 0)
-;     [after the following ENTER]     V=30 N=255 Q=1       (accepted)
-;
-; The Y is ECHOED into a line and nothing happens until ENTER. Full
-; transcript: sp16-adjudications/zxadj-transcript.txt. So NextDAAD was
-; wrong and now reads a line too.
-;
-; Scope of the reproduction: the original prompts through its full line
-; editor, this reads a line without in-line editing (no backspace, no
-; recall). inp_edit, which has all of that, lives in overlay1 and there
-; is no resident trampoline for overlay0 to reach it - ovl_map_page's
-; own contract is "call from resident code". What IS reproduced is the
-; part the divergence was about: the input is a LINE, nothing acts
-; until ENTER, and the first character decides.
+; The original ZX interpreter reads a full line at a confirmation
+; prompt (echoing each character, acting only on ENTER), not a single
+; keypress; jDAAD and msx2daad agree. This reproduces that: the input
+; is a LINE, nothing acts until ENTER, and the first character decides.
+; Unlike inp_edit (overlay1) this has no in-line editing (no backspace,
+; no recall) - there is no resident trampoline to reach inp_edit from
+; overlay0.
 confirm_read:
     xor a
     ld (cfmFirst), a
@@ -2005,12 +1907,8 @@ h_quit:                         ; 20: condition - Y (SM30) confirms quit
     ret
 h_end:                          ; 21: a reply starting with N (SM31) =
     ld e, 13                    ; exit to OS, anything else = restart.
-                                 ; The manual (2004-2010) describes this
-                                 ; as a keypress; SP16 measured the
-                                 ; original ZX interpreter reading a
-                                 ; LINE at the sibling QUIT prompt (see
-                                 ; confirm_read above), so END reads one
-                                 ; too - both go through confirm.
+                                 ; Reads a line via confirm (see
+                                 ; confirm_read), same as QUIT.
     ld c, 31
     call confirm
     jr z, .off
@@ -2023,23 +1921,14 @@ h_exit:                         ; 110: 0 = hard reset, else full restart
     ld a, b
     or a
     jr z, .hard
-    ; SP16 B18: a NON-ZERO EXIT restarts the whole game. It was routed
-    ; to h_unimpl (a no-op). The manual: "Any value other than 0 will
-    ; restart the whole game. Note that unlike RESTART which only
-    ; restarts processing, this will clear and reset windows etc."
-    ; Both references agree - msx2daad's do_EXIT runs initFlags();
-    ; do_RESET(); do_RESTART() (daad_condacts.c:2367), jDAAD's _EXIT
-    ; runs resetWindows(); resetFlags(); resetObjects(); _RESTART()
-    ; (jdaad.js:4081). eng_init_game IS that machinery here: it clears
-    ; all 256 flags, restores the SP16 C1/C2 defaults, rebuilds the
-    ; object table from the DDB (locations, attributes, names) and
-    ; recounts flag 1, then selects window 0 and empties the process
-    ; stack; windows_init re-establishes the eight windows' geometry,
-    ; which eng_init_game alone does not. h_restart's DOALL wipe
-    ; completes the RESTART half - eng_step then re-pushes PRO 0 from
-    ; the empty stack, exactly as h_end's restart branch above does.
-    ; On platforms with PARTS the value is a part number; that is
-    ; NextDAAD's separate XPART/EXTERN 4 mechanism and is untouched.
+    ; A non-zero EXIT restarts the whole game, unlike RESTART which
+    ; only restarts processing: it clears and resets windows too.
+    ; eng_init_game clears all 256 flags, restores their defaults,
+    ; rebuilds the object table from the DDB and recounts flag 1, then
+    ; selects window 0 and empties the process stack; windows_init
+    ; re-establishes the eight windows' geometry on top of that.
+    ; h_restart's DOALL wipe completes the RESTART half, same as
+    ; h_end's restart branch above.
     xor a
     ld (wrapLen), a             ; drop any half-buffered word BEFORE the
                                  ; window records are reset - win_select
@@ -2071,34 +1960,14 @@ h_move:                         ; 106: condition-like action. B = flag
                                  ; DE, so D is safe once reloaded after the
                                  ; last rd_seek.
                                  ;
-                                 ; MOVE MARKS THE TABLE DONE ON ALL THREE
-                                 ; EXITS (owner ruling 2026-08-04): the
-                                 ; verb bail below, .match and .nomatch.
-                                 ; msx2daad is the model - its row is
-                                 ; { do_MOVE, 1 } (daad_condacts.c:49) and
-                                 ; the dispatcher's "isDone |= ce->flag"
-                                 ; (:204) runs after do_MOVE returns down
-                                 ; ANY of its paths, including the
-                                 ; "if (flags[fVerb]<14)" guard (:1543)
-                                 ; falling straight through to
-                                 ; "checkEntry = false" (:1554). jdaad
-                                 ; marks on failure only - _MOVE's
-                                 ; success arm "return"s at jdaad.js:4048
-                                 ; before the trailing "done = true" at
-                                 ; :4053 - which reads as a jdaad bug,
-                                 ; hence msx2daad.
-                                 ;
-                                 ; Stamped at ENTRY rather than three
-                                 ; times: nothing between here and the
-                                 ; three exits can abort the handler (the
-                                 ; readers all return normally,
-                                 ; and no path pushes a process, which is
-                                 ; the only thing that CLEARS isDone), so
+                                 ; MOVE marks the table done on all three
+                                 ; exits (verb bail, .match, .nomatch),
+                                 ; following msx2daad. Stamped once at
+                                 ; entry instead of three times: nothing
+                                 ; between here and the exits can abort
+                                 ; the handler or clear isDone, so
                                  ; entry-once and exit-thrice are the same
-                                 ; set for 6 fewer bytes. eng_set_done
-                                 ; corrupts A only, so B - the flag
-                                 ; number - survives, and A is reloaded on
-                                 ; the next line anyway.
+                                 ; set for fewer bytes.
     call eng_set_done
     ld a, (flags+FLAG_VERB)
     cp 14
@@ -2143,25 +2012,14 @@ h_move:                         ; 106: condition-like action. B = flag
     pop hl
     scf
     ret
-; SYNONYM verb noun (36). SP16 T6 / PRP019 V3-12: the substitution is
-; version-independent, the done-marking is not. Z80 and 6502 DAAD V2
-; mark DONE; the 68k sources had already stopped, and V3 makes that
-; official ("In V3, SYNONYM no longer marks DONE"). NextDAAD is a Z80
-; interpreter, so V2 keeps the mark.
-;
-; This is why cprops row 36 is condition-typed (engine.asm): an action
-; row has the dispatcher stamp the table done before the handler runs,
-; and the handler cannot un-stamp it without also wiping a done that an
-; EARLIER condact in the same entry set. Marking it here instead is
-; exact. Both arms return CF clear, so the entry continues either way -
-; identical to the action row's post-dispatch path.
-;
-; ISDONE now reads the accumulating isDone cell, so the V2/V3 split is
-; visible WITHIN a single entry, exactly as it is in the references:
-; tests_condacts_v3.c's entry-level SYNONYM/ISDONE cases were written
-; against that model. (Until the SP18 fix NextDAAD read the last POPPED
-; process's flag instead - compliance report B20 - and those cases could
-; only show up on the PROCESS n / ISDONE idiom.)
+; SYNONYM verb noun (36). The substitution is version-independent, the
+; done-marking is not: under V2, SYNONYM marks DONE; under V3 it does
+; not. cprops row 36 is condition-typed (engine.asm) so the handler can
+; mark done itself rather than un-stamping an action row's dispatcher
+; stamp, which would also wipe an earlier condact's done in the same
+; entry. Both arms return CF clear, so the entry continues either way.
+; ISDONE reads the accumulating isDone cell, so the V2/V3 split is
+; visible within a single entry.
 h_synonym:                      ; 36
     ld a, b
     cp 255
@@ -2202,27 +2060,20 @@ ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
     ld (isDone), a              ; dispatching this action - the entry
     ret                         ; continues, the table reads notdone
 
-; EXTERN offset_lsb 3 offset_msb (XMESSAGE): print a message from
-; the DRC-emitted external text file 0.XMB. The engine has already
-; consumed the third byte into extArg3 (stream integrity). The
-; message bytes are staged into the XMES bank - claimed from the
-; pool once, kept for the session - and printed with the standard
-; DDB text machinery via rd_seek_page (identical encoding: XOR-$FF
-; bytes, $0A terminator, DRF bakes XMESSAGE's trailing newline into
-; the text itself, so no prn_newline call is needed here). All
+; EXTERN offset_lsb 3 offset_msb (XMESSAGE): print a message from the
+; DRC-emitted external text file 0.XMB. The engine has already
+; consumed the third byte into extArg3. Message bytes are staged into
+; the XMES bank (claimed once, kept for the session) and printed via
+; rd_seek_page (same XOR-$FF/$0A encoding as DDB text; DRF bakes the
+; trailing newline into the text, so no extra prn_newline). All
 ; failures are silent no-ops; the DEBUG marker shows on the missing-
-; file/read-fail paths. EXTERN is action-typed (cprops), so the
-; engine never consults the CF this leaves (true for the extVec
-; routes; the FORWARDED route now consults CF - see
-; ext_build_contract) - unlike a condition handler there is no
-; success/failure contract to honour on return.
-; XMES lsb msb (condact 120) - the V3-native spelling of the same
-; thing, and a thin wrapper over the primitive below (SP16 A2; the
-; sav-machinery convention: overlays extend by adding routines on top
-; of the resident/existing primitive, never by relocating it). DRB
-; rewrites the source keyword XMES into opcode 120 with the 16-bit
-; 0.XMB offset split across the two parameters (drb.php:842-855), so
-; the offset arrives in B (LSB) and C (MSB) instead of B and extArg3.
+; file/read-fail paths. EXTERN is action-typed, so the engine never
+; consults the CF this leaves.
+; XMES lsb msb (condact 120) is the V3-native spelling of the same
+; thing, a thin wrapper over the primitive below. DRB rewrites the
+; source keyword XMES into opcode 120 with the 16-bit 0.XMB offset
+; split across the two parameters, so the offset arrives in B (LSB)
+; and C (MSB) instead of B and extArg3.
 h_xmes:                         ; 120: B = offset LSB, C = offset MSB
     ld hl, ddbVer
     bit 0, (hl)
@@ -2293,12 +2144,8 @@ ext_xmes:
     ; NextZXOS F_SEEK: A=handle, BCDE=offset, IXL=mode (esxDOS API odt,
     ; F_SEEK entry: "IXL [L from dot command] = seek mode" - IXL is the
     ; register a raw rst $08 caller like this one must set; L is what a
-    ; NextZXOS dot command supplies through its own wrapper. The
-    ; previous comment's defrag.asm/fragmentation.asm citation was a
-    ; category error - those ARE dot commands, so they exercise the L
-    ; convention, not this one; main.asm's svc_fseek and video.asm's
-    ; vid_raw_seek0 set IX the same way (sav_append_part, once cited
-    ; here, is gone), as does tools/NextZXOS's bmp2spr.asm ("ld ix,0").
+    ; NextZXOS dot command supplies through its own wrapper. main.asm's
+    ; svc_fseek and video.asm's vid_raw_seek0 set IX the same way.
     ; IXL is the mode register for a raw rst $08 caller; L is not read.
     ld bc, 0
     ld de, (xmsOff)
@@ -2319,11 +2166,6 @@ ext_xmes:
     ld a, b                     ; zero bytes read = offset at/past EOF
     or c
     jr z, .failpost
-    ; (The XMB rider instrument - xmb-corruption-report.md "prescribed
-    ; next instrument" #1, xmsOff + first-decoded-byte print - lived
-    ; here until the SP17 T8 wave: its B1 question was ANSWERED on
-    ; silicon, hypothesis 4b cleared, and the rider was stripped as
-    ; promised.)
     ; Sentinel: terminate the freshly-read chunk at DATA_WINDOW+BC with
     ; an encoded $0A ($F5 = NOT $0A) so txt_next_decoded (driven by
     ; print_msg.loop below) cannot run past genuinely-read bytes into
@@ -2649,26 +2491,19 @@ xbn_boot_load:
 .hdrEnd:    dw 0
 .magic:     db "XBN", 2
 
-; --- SP11 Task 3: part switch primitive (EXTERN n 4 / XPART) ---
+; --- part switch primitive (EXTERN n 4 / XPART) ---
 
 ; h_xpart: EXTERN n 4 (XPART). h_extern's contract leaves A = B = the
 ; first EXTERN argument (n, the target part 1-9) on entry; C still
 ; holds the vector index (4, unused here). Validates n, then snapshots
 ; the LIVE 256 flags + object-location table into swapStage before
 ; handing off to switch_to_part. Both failure exits (n out of range,
-; or n == curPart) return with CF set: EXTERN is action-typed (cprops
-; $82 - engine.asm's cprops table), so eng_exec never consults the CF
-; this leaves (ext_xmes's header comment notes the same; true for the
-; extVec routes - the FORWARDED route now consults CF, see
-; ext_build_contract); the ret simply returns to h_extern's caller
-; (eng_exec's post-dispatch code)
-; via the same return address h_extern's own jp-tail-chain left on the
-; stack, exactly as if EXTERN had taken the ext_forward -> h_unimpl fallback. curPart is
-; not written until switch_to_part has a confirmed-successful probe,
-; so both failure exits here leave the current part fully untouched.
-; Out-of-range n gets a DEBUG marker (author diagnostics, same idiom
-; as h_sfx/h_mouse's unknown-sub-command markers); n == curPart stays
-; silent on purpose - see .noop below.
+; or n == curPart) return with CF set, which EXTERN being action-typed
+; means eng_exec never consults. curPart is not written until
+; switch_to_part has a confirmed-successful probe, so both failure
+; exits here leave the current part fully untouched. Out-of-range n
+; gets a DEBUG marker; n == curPart stays silent on purpose (a
+; same-part EXTERN is a benign author idiom, not an error).
 h_xpart:
     cp 1
     jr c, .range                ; n < 1
@@ -2676,11 +2511,7 @@ h_xpart:
     jr nc, .range                ; n > 9
     ld hl, curPart
     cp (hl)
-    jr z, .noop                  ; n == curPart: a same-part EXTERN is a
-                                 ; benign author idiom (e.g. a shared
-                                 ; process reached while already in part
-                                 ; n), not an error - stays silent, no
-                                 ; DEBUG marker, unlike the range check
+    jr z, .noop                  ; n == curPart: see header, no marker
     ld (xpartTarget), a         ; n survives the snapshot below (which
                                  ; clobbers AF/BC/DE/HL/IX freely)
     ld hl, flags
@@ -2722,50 +2553,21 @@ h_xpart:
 ; switch_to_part: A = target part number 1-9. Caller contract: swapStage
 ; (256 live flags + up to 256 object-location bytes) and swapObjCount
 ; (the OLD part's object count, for the install's min(old,new) rule)
-; are already populated - h_xpart does this from live state above;
-; Task 4's LOAD auto-switch is expected to populate them from a save
-; file's payload instead and reuse this exact entry point. On probe
-; failure: CF set, ret, current part untouched (DEBUG marker - the
-; author tests their own part graph, per the design doc's convention).
-; On success: NEVER RETURNS - resets SP and enters the new part fresh
-; at PRO 0.
+; are already populated - h_xpart does this from live state; LOAD's
+; auto-switch populates them from a save file's payload instead and
+; reuses this same entry point. On probe failure: CF set, ret, current
+; part untouched. On success: NEVER RETURNS - resets SP and enters the
+; new part fresh at PRO 0.
 ;
-; Step 1 ground truth (engine.asm, read-only): eng_init_game has no
-; label between its flag/object init and the rest (window select,
-; procSP/doallObj reset, RNG reseed) - the two are not separable, so
-; the "existing post-init entry label" shape is unavailable. This uses
-; the brief's approved alternative instead: run the FULL eng_init_game
-; against the newly-loaded DDB (rebuilds flags to defaults and objTable
-; to the new part's compiled initial state), then RE-INSTALL swapStage
-; over that fresh state before ever entering eng_run - double init,
-; zero engine.asm bytes, correct per the brief's Step 3(i) fallback.
+; eng_init_game has no label between its flag/object init and the
+; rest, so this runs the FULL eng_init_game against the newly-loaded
+; DDB (rebuilds flags to defaults and objTable to the new part's
+; compiled initial state), then RE-INSTALLS swapStage over that fresh
+; state before ever entering eng_run.
 ;
-; ddbName (errors.asm, resident - the buffer ddb_load unconditionally
-; reads via its own hardcoded "ld ix, ddbName" in file.asm, unmodified)
-; is a 10-byte buffer: "GAMEn.DDB",0 is 9 characters + NUL, fitting
-; exactly. xpart_build_name below writes the LITERAL target name for
-; every part, n=1 included - no wildcard.
-;
-; History (superseded - kept for the review trail): the first cut of
-; this routine wrote a wildcarded "GAMEn.D*" into file.asm's ORIGINAL
-; 9-byte ddbName (one byte short of the literal 10-byte name; ddbHandle,
-; the very next resident byte there with no gap, was clobbered by
-; ddb_load's own preamble before the name was ever read, so there was
-; no slack to borrow), relying on esxDOS F_OPEN's documented '*'/'?'
-; wildcard support for read-only opens of an existing file. That is
-; correct against the DOCUMENTED esxDOS contract, but the owner's
-; CSpect sweep found CSpect's esxDOS emulation does not implement
-; wildcard F_OPEN - the fixture failed on CSpect specifically (a real-
-; hardware run was confirming in parallel). Fix: ddbName moved to
-; errors.asm's post-flags region (file.asm's pre-flags region had no
-; room to grow by 1 byte without risking engine.asm's flags ALIGN 256
-; pad - a pre-flags SHRINK is safe there, per T7's precedent, but a
-; GROWTH is not) with 1 extra byte of capacity, eliminating the
-; wildcard and the ddbHandle-adjacency hazard together (ddbHandle stays
-; in file.asm, no longer adjacent to ddbName at all). Our own pre-load
-; probe below opens that SAME ddbName content (not a separate
-; exact-name buffer), so the probe and the load always resolve to the
-; identical file.
+; ddbName (errors.asm, resident) is a 10-byte buffer: "GAMEn.DDB",0 is
+; 9 characters + NUL, fitting exactly. xpart_build_name below writes
+; the LITERAL target name for every part, n=1 included - no wildcard.
 switch_to_part:
     ; The LOAD/RAMLOAD path hands an unvalidated SAV trailing part byte
     ; here (h_xpart's own 1-9 range check is EXTERN-only); route any
@@ -2851,27 +2653,18 @@ switch_to_part:
     ; the old stack matters past this line).
     ld sp, STACK_TOP
     ; One-way cross-overlay DOUBLE hop: font reload (overlay2), then the
-    ; SFB re-probe (overlay1, brief Step 3h) - SP12 T1 inserts the font
-    ; leg ahead of the pre-existing SFB one. aud_load_sfb (overlay1.asm)
-    ; has been PARTn\-prefix-aware since SP11 Task 5, and font_load
-    ; (overlay2.asm, SP12 T1) the same way; curPart is already committed
-    ; above (several lines up), before this call, so both prefixes
-    ; activate automatically on every switch - no extra wiring needed
-    ; here. Both targets live in overlays other than this one, reached
-    ; via the push-target/jp-ovl_map_page trampoline (banks.asm's
-    ; ovl_map_page contract; the title_chain precedent, overlay1.asm
-    ; ~2046). font_load_switch (overlay2) and aud_load_sfb (overlay1)
-    ; are both normal call/ret routines reached here via jp, not call -
-    ; so nothing of ours is on the stack for their rets to consume
-    ; except what we push. Pushing eng_run's (resident) address BELOW
-    ; font_load_switch's on the fresh stack means font_load_switch's own
-    ; tail-hop to aud_load_sfb, and THAT routine's own ret, land directly
-    ; on eng_run once the whole chain finishes - a second, automatic
-    ; one-way hop that needs no new resident landing pad (off-limits -
-    ; HARD RULES touch only overlay0.asm/overlay2.asm this task).
-    ; eng_run is resident, so MMU7 being left on OVL1_PAGE afterward is
-    ; harmless - the condact dispatcher remaps per-condact as it always
-    ; does.
+    ; SFB re-probe (overlay1). aud_load_sfb (overlay1.asm) and font_load
+    ; (overlay2.asm) are both PARTn\-prefix-aware; curPart is already
+    ; committed above, so both prefixes activate automatically. Both
+    ; targets are reached via the push-target/jp-ovl_map_page trampoline
+    ; and are normal call/ret routines reached here via jp, so nothing
+    ; of ours is on the stack for their rets to consume except what we
+    ; push. Pushing eng_run's (resident) address BELOW font_load_switch's
+    ; on the fresh stack means font_load_switch's own tail-hop to
+    ; aud_load_sfb, and that routine's own ret, land directly on eng_run
+    ; once the chain finishes. eng_run is resident, so MMU7 being left
+    ; on OVL1_PAGE afterward is harmless - the condact dispatcher remaps
+    ; per-condact as it always does.
     ld hl, eng_run
     push hl
     ld hl, font_load_switch
@@ -2913,52 +2706,37 @@ xpart_build_name:
 ; flags array, copied verbatim. [256..511] = one byte per object =
 ; objTable's location field ONLY (attribs/extattr/noun/adj are never
 ; carried - they always come from the new part's own compiled data),
-; sized to objTable's declared maximum of 256 entries (engine.asm:
-; "objTable: ds 256*OBJ_SIZE", OBJ_SIZE=6 - so 256 entries, matching
-; the fixed maximum here even though numObj, a byte, can only ever
-; reach 255 in practice). swapObjCount is the companion: the snapshot
-; source part's object count at capture time, needed at install time
-; to compute min(oldCount, newCount) (brief's OBJECT RULE). Both are
-; populated by h_xpart from live state today; Task 4's LOAD auto-switch
-; is expected to populate them from a save file's payload instead,
-; using the same switch_to_part entry point unchanged.
+; sized to objTable's declared maximum of 256 entries. swapObjCount is
+; the companion: the snapshot source part's object count at capture
+; time, needed at install time to compute min(oldCount, newCount).
+; Both are populated by h_xpart from live state, or by LOAD's
+; auto-switch from a save file's payload, via the same switch_to_part
+; entry point.
 swapStage:     ds 512
 swapObjCount:  db 0
 xpartTarget:   db 0
 
-; --- SP11 Task 4: cross-part LOAD/RAMLOAD trampoline entry ----------
+; --- cross-part LOAD/RAMLOAD trampoline entry ---
 ; Shared landing pad for BOTH sav_read_v2's cross-part SAV LOAD path
 ; and h_ramload's cross-part path (overlay1.asm) - swapStage/
 ; swapObjCount above live in this (OVL0) page and cannot be written
-; directly from overlay1 ("Calls RESIDENT services only - never
-; overlay0", overlay1.asm's own header comment), so both callers stage
-; their payload into a resident buffer first (savStage+savLocs for
-; LOAD, ramSaveBuf+ramSaveBuf+256 for RAMLOAD) and hop here via the
-; established trampoline idiom (push target, ld a,OVL0_PAGE, jp
-; ovl_map_page - precedented by switch_to_part's own SFB re-probe hop
-; into overlay1, above).
+; directly from overlay1, so both callers stage their payload into a
+; resident buffer first and hop here via the standard trampoline idiom
+; (push target, ld a,OVL0_PAGE, jp ovl_map_page).
 ;
-; Entry (ovl_map_page corrupts AF only - BC/DE/HL/IX all survive the
-; hop, per its own header comment in banks.asm): HL = flags source
-; (256 bytes, verbatim), IX = object-location source (packed one byte
-; per object), B = source part's object count 0-255, C = target part
-; 1-9.
+; Entry (ovl_map_page corrupts AF only): HL = flags source (256 bytes,
+; verbatim), IX = object-location source (packed one byte per object),
+; B = source part's object count 0-255, C = target part 1-9.
 ;
-; Calls switch_to_part (unmodified) via CALL, not a tail-jump: on
-; success switch_to_part never returns (resets SP, enters the new part
-; fresh), so the pushed return address is simply abandoned with the
-; rest of the old stack, same as every other switch_to_part caller. On
-; a probe failure switch_to_part does a bare scf/ret with no MMU7
-; remap - safe for h_xpart (same page, this file) but NOT safe here:
-; that ret would land on OUR caller's return address while MMU7 is
-; still mapped OVL0_PAGE, fetching this page's bytes at what is really
-; an OVL1_PAGE address - wrong code executed. So the failure is caught
-; here (CALL, not JP) and explicitly return-trampolined back to
-; overlay1's xpart_load_fail, which remaps MMU7 to OVL1_PAGE before its
-; own ret fires - landing correctly back on whichever of sav_read_v2/
-; h_ramload called us, with CF set, exactly mirroring a same-part LOAD
-; failure (brief's sanctioned "fail-silent abort of the whole LOAD -
-; current part continues unchanged" choice).
+; Calls switch_to_part via CALL, not a tail-jump: on success it never
+; returns, so the pushed return address is abandoned with the rest of
+; the old stack. On a probe failure switch_to_part does a bare scf/ret
+; with no MMU7 remap, which is not safe here (that ret would land on
+; our caller's return address while MMU7 is still mapped OVL0_PAGE).
+; So the failure is caught here (CALL, not JP) and explicitly
+; return-trampolined back to overlay1's xpart_load_fail, which remaps
+; MMU7 to OVL1_PAGE before its own ret fires, landing correctly back
+; on whichever of sav_read_v2/h_ramload called us, with CF set.
 xpart_load_entry:
     push bc                      ; ldir below clobbers BC as its counter
     ld de, swapStage
@@ -3006,18 +2784,12 @@ ext_forward:
 ; DEBUG EXTERN probe routes (vectors 6, 8-14): the trampoline bodies
 ; (KTEST, L2MOD/LHIDE/LSHOW, LSxxx, NXB) and the ring-2 probe verbs
 ; live in debug.asm's resident DEBUG tail, not on this page - this
-; overlay's DEBUG headroom hit exactly 0 while the resident tail had
-; ~1.2KB free, and h_extern dispatches with resident always mapped, so
-; the extVec rows below point straight at resident addresses.
-; ovl_map_page is itself resident (banks.asm) - each trampoline just
-; pushes an overlay target and remaps slot 7, which is if anything
-; safer executed from OUTSIDE the very window it remaps. Per-vector
-; history and contracts live with the bodies in debug.asm. extVec is
-; DATA, not code - the IFDEFs on the rows cost nothing in Release
-; (byte-identical). Per-variant contract: Release forwards vectors 6
-; and 8-14 to the XBN (same as 5), DEBUG reserves them for the probes
-; instead - so authors test forwarding against a Release build, not
-; DEBUG.
+; overlay's DEBUG headroom had none to spare. h_extern dispatches with
+; resident always mapped, so the extVec rows below point straight at
+; resident addresses. extVec is DATA, not code - the IFDEFs on the
+; rows cost nothing in Release (byte-identical). Release forwards
+; vectors 6 and 8-14 to the XBN (same as 5); DEBUG reserves them for
+; the probes instead.
 extVec:
     dw ext_forward, ext_forward, ext_forward, ext_xmes
     dw h_xpart, ext_forward
@@ -3044,12 +2816,11 @@ extVec:
  ELSE
     dw ext_forward                 ; vector 12, release: forwards to the XBN
  ENDIF
-; EXTERN vectors 13/14 (SP18 item 7 Tasks 9/10 ring-2 placement probe,
-; owner-ratified fallback 2026-08-09: the DeZog CALL-injection
-; mechanism is unavailable in the owner's DeZog build). Route
-; tests/sfxlong.dsf's R2FILL/R2CHK verbs straight to ring2_fill/
-; ring2_chk (debug.asm's resident DEBUG tail) - no trampoline needed:
-; resident is always mapped. DEBUG-only, vector 15 stays spare.
+; EXTERN vectors 13/14: ring-2 placement probe, fallback for when
+; DeZog CALL-injection is unavailable. Route tests/sfxlong.dsf's
+; R2FILL/R2CHK verbs straight to ring2_fill/ring2_chk (debug.asm's
+; resident DEBUG tail) - no trampoline needed: resident is always
+; mapped. DEBUG-only, vector 15 stays spare.
  IFDEF DEBUG
     dw ring2_fill                 ; vector 13
     dw ring2_chk                  ; vector 14
@@ -3062,7 +2833,7 @@ savedCurX: db 0
 savedCurY: db 0
 moveVerb:  db 0
 
-; --- SP10 Task 5: CALL closure + Kempston mouse ---
+; --- CALL closure + Kempston mouse ---
 
 h_call:                         ; 101: CALL lsb msb: run code at that
                                  ; address inside the loaded XBN's extent
@@ -3075,96 +2846,26 @@ h_call:                         ; 101: CALL lsb msb: run code at that
                                  ; and dispatch body is resident
                                  ; (call_dispatch, main.asm) - overlay0's
                                  ; own DEBUG headroom has no room to spare
-                                 ; for it (Task 3's same finding for
-                                 ; ext_build_contract).
+                                 ; for it.
     jp call_dispatch
 
-; MOUSE (86): B = P1 (flag base, sub 3 only), C = sub. Sub map per
-; jdaad's _MOUSE() (tools/DAAD-READY/ASSETS/HTML/jdaad.js ~3587-3615):
-;   0 = reset (centre position, zero buttons)
-;   1 = show the pointer (hardware sprite 0)
-;   2 = hide it
-;   3 = read into flags[P1..P1+3] = buttons, X/8, Y/8, X/6
-; Position model: mouseX (word, 0-319) / mouseY (byte, 0-255, screen-
-; downward) are accumulated resident positions, updated ONLY when sub 3
-; polls - no ISR involvement. Each poll reads the Kempston counters
-; (KMOUSE_X_PORT/KMOUSE_Y_PORT/KMOUSE_BTN_PORT, nextdaad.inc) and takes
-; a SIGNED 8-bit delta against the last raw reading (new-old; correct
-; under wraparound as long as true movement between two polls stays
-; within +-127 counts - CSpect itself caps/scales its emulated deltas
-; for exactly this kind of usability, per CSpectReadme.txt "Capped
-; Mouse deltas to help slow mouse down"). Y's raw delta is negated
-; (nextdaad.inc: the port counts UP on upward movement). The very
-; first poll of a session has no valid "last" reading yet - rather
-; than diff against a compile-time 0 (which would read as a large
-; bogus jump against whatever the host mouse already reads at that
-; point), mouseBaseSet gates a latch-only first call.
-; jdaad's own X/8 clamp is 0-39 (its 320-wide/40-column screen); ours
-; is clamped to tmCols-1 (39 in 40-col mode, where 0-319>>3 spans the
-; full grid) - the mouseX domain itself is still the standard 0-319
-; sprite/mouse plane (per the sprites chapter, matching jdaad and the
-; hardware sprite coordinate space). In 80-col mode the ceiling widens
-; to 79 - future-safe spec compliance, not a reachable case since X/8
-; never exceeds 39. X/6 (0-53) is unchanged jdaad parity (319/6 floors
-; to 53 exactly, so it never clamps either).
-; Pointer: hardware sprite 0, a 16x16 pattern - the built-in solid
-; arrow (mouseArrow, below) until a POINTER.SPR/POINTERn.SPR replaces
-; it in the live upload buffer (mousePattern, also below - a plain
-; ds 256, blank at assembly time; see ptr_arrow_install/pointer_load
-; for which of them writes it when). NR $15 bits 0-1 are read-modify-
-; written UNCONDITIONALLY on every sub-1 call, preserving every other
-; bit (layer priority etc):
-; bit 0 is sprite visibility; bit 1 is "sprites over border" - per
-; registers.txt (0x15) and the sprites chapter ("sprites can be made
-; visible or invisible when over the border... specified by port 15"),
-; a sprite positioned in the 32px border margin is invisible unless
-; bit 1 is set, and the pointer's domain is the whole 320x256 plane,
-; border included (mouse_sprite_body places it at mouseX/mouseY with
-; no inset, so the arrow reaches every part of the display). Bit 5
-; ("enable sprite clipping in over border mode", also soft-reset 0,
-; separate from bit 1) is left untouched, so port $19's clip window
-; (default 0,255,0,191) never engages - the pointer is not further
-; restricted to that sub-box. Sprites stay off (hw_init's cold
-; default) for games that never touch MOUSE. Neither bit is latched
-; behind mouseReady the way the (expensive, 256-byte OTIR) pattern
-; upload is: a CSpect warm nextreg-2,1 re-entry re-runs hw_init's
-; "nextreg NR_SPRITES,0" against otherwise-dirty overlay RAM (main.asm's
-; boot_data_init header), and a latched mouseReady=1 surviving that
-; would skip re-arming these bits while the register itself just got
-; zeroed - stuck-invisible until the next cold boot. The RMW itself is
-; one register read + write, cheap enough to just always do.
-; mouseReady/mouseBaseSet/mouseX/mouseY are NOT
-; reset at boot the way xmsBank is (no analogous mouse_boot_reset here)
-; - overlay0's resident CALLER (main.asm) has zero spare bytes before
-; engine.asm's own "ALIGN 256" for the flags array (confirmed by
-; build: the pre-align resident code already lands exactly on that
-; boundary, so any growth there - even a single 3-byte CALL, regardless
-; of target - costs a full extra 256-byte alignment cycle and blows
-; RESIDENT_LIMIT). The residual exposure is narrow and self-correcting:
-; only mouseX/mouseY/mouseBaseSet can carry a stale value across such a
-; warm re-entry, producing at most one over-large position jump on the
-; first post-restart sub-3 poll (which then immediately re-latches a
-; fresh baseline) - cosmetic, CSpect-dev-loop-only (real hardware's
-; nextreg 2,1 hands off to NextZXOS instead of silently re-running
-; dirty RAM), and no worse than the one-time jump every cold boot
-; already accepts before mouseBaseSet's first latch.
-; SP16 B23. The DRC symbol set defines EIGHT sub-commands (RESETMS 0,
-; SHOWMS 1, HIDEMS 2, GETMS 3, GETFINEMS 4, POINTERMS 5, DELTAXMS 6,
-; DELTAYMS 7 - doc_en.html, "Appendix D - Symbols"); only 0-3 existed
-; here, and jDAAD implements only 0-3 too, so 4-7 had no reference to
-; adjudicate against. Semantics below are taken from the DRC manual's
-; own MOUSE table (doc_en.html, condact MOUSE) and mapped onto this
-; interpreter's pointer model; each handler states its mapping and why.
-; NOTE ON THE SYMBOL NAMES: DELTAXMS/DELTAYMS do NOT report mouse
-; movement deltas. The manual defines them as "Changes hotspot coord X
-; value" / "...Y value" - they MOVE THE POINTER'S HOTSPOT within the
-; pointer bitmap ("originally the hotspot in the pointer is at x=0,
-; y=0 ... if the pointer is a cross, you may want to put it at 5,5").
-; That is what is implemented.
-; Sub-command dispatch is a word table over the dense 0-7 set (doc 07
-; section (a)) rather than a compare chain: the added handlers sit past
-; jr range from the top of the routine, so a chain would have cost four
-; 5-byte cp/jp pairs against the table's 2 bytes per entry.
+; MOUSE (86): B = P1 (flag base, sub 3 only), C = sub 0-7 (RESETMS,
+; SHOWMS, HIDEMS, GETMS, GETFINEMS, POINTERMS, DELTAXMS, DELTAYMS).
+; Sub 3 reads flags[P1..P1+3] = buttons, X/8 (clamped tmCols-1), Y/8,
+; X/6 (clamped 0-53). DELTAXMS/DELTAYMS do NOT report movement deltas:
+; per the DRC manual they move the pointer's hotspot within the
+; pointer bitmap (default 0,0).
+; mouseX (word, 0-319) / mouseY (byte, screen-downward) are resident
+; accumulated positions, updated only on a sub-3 poll by taking a
+; signed 8-bit delta against the last raw Kempston-mouse-port reading
+; (mouseBaseSet gates the first poll, which only latches a baseline).
+; Pointer is hardware sprite 0, a 16x16 pattern (built-in arrow until
+; a POINTER.SPR replaces it). NR $15 bits 0 (visibility) and 1
+; (sprites over border, needed since the pointer's range reaches the
+; border - per the sprites chapter) are read-modify-written
+; unconditionally on every sub-1 call, not latched behind mouseReady,
+; so a warm CSpect nextreg-2,1 re-entry cannot leave the sprite stuck
+; invisible. Dispatch is a word table over the dense 0-7 set.
 h_mouse:
     ld a, c
     cp 8
@@ -3703,25 +3404,19 @@ mouseArrow:
 ; it costs 256 bytes of this page rather than nothing.
 mousePattern: ds 256
 
-; --- SP12 Task 3: custom mouse pointer load ---
-; Three triggers, not two: boot, a part switch, and (SP18) MOUSE n 5 at
-; any point during play.
+; --- custom mouse pointer load ---
+; Three triggers: boot, a part switch, and MOUSE n 5 at any point
+; during play.
 ;
-; Step 1 ground truth: mouseArrow (above) is a plain `db` table
-; assembled into overlay0's code page, read-only in practice - nothing
-; ever writes it. mousePattern (also above) is the LIVE `ds 256`
-; buffer mouse_pattern_load actually uploads (its fixed
-; `ld hl, mousePattern` source address never changes); it has exactly
-; two writers: ptr_arrow_install's ldir (mouseArrow -> mousePattern,
-; the revert-to-built-in path, below) and this routine's own ldir
-; further down (a successfully validated POINTER.SPR/POINTERn.SPR).
-; mouseReady (above) is the "pattern already uploaded to hardware
-; sprite slot 0" latch h_mouse's sub-1 checks (.show, above): 0 =
-; mouse_pattern_load runs on the next MOUSE 1, then mouseReady is set
-; to 1 so it does not run again until something clears it - exactly the
-; hook both writers use: overwrite mousePattern, then clear mouseReady
-; so the NEXT MOUSE 1 (existing lazy-upload code, unmodified) re-OTIRs
-; the new bytes to hardware. Zero mouse-machinery changes needed.
+; mouseArrow (above) is a read-only `db` table. mousePattern (also
+; above) is the LIVE `ds 256` buffer mouse_pattern_load uploads; it
+; has exactly two writers: ptr_arrow_install's ldir (mouseArrow ->
+; mousePattern, the revert-to-built-in path, below) and this routine's
+; own ldir further down (a validated POINTER.SPR/POINTERn.SPR).
+; mouseReady is the "pattern already uploaded to hardware sprite slot
+; 0" latch h_mouse's sub-1 (.show) checks: both writers overwrite
+; mousePattern then clear mouseReady, so the next MOUSE 1 re-OTIRs the
+; new bytes to hardware.
 ;
 ; Restore the built-in arrow into the live buffer. Corrupts AF, BC, DE, HL.
 ptr_arrow_install:
@@ -3796,58 +3491,24 @@ ptr_name_build:
 ; A = shape number (0-9); ptr_name_build (above) turns it into
 ; POINTER.SPR (0) or POINTER<n>.SPR (1-9) in ptrNameBuf. Load:
 ; PARTn\<name> (curPart >= 2) then <name> at the root, a raw 256-byte
-; 16x16 8-bit hardware sprite pattern (see mouseArrow's own header
-; above for the format: $E3 transparent border/fill, hotspot at the
-; (0,0) corner). Absent = silent (the previously-installed pattern
-; stays); wrong size = silent + DEBUG marker. Never reads straight into
-; the live mousePattern: MOUSE 1 can fire at any time and re-OTIR
-; whatever is there the instant mouseReady reads 0, so a short/failed
-; read must never leave the live buffer half-overwritten - the file
-; lands in swapStage first (scratch-then-install) and is only ldir'd
-; into mousePattern once the exact size is confirmed. Exact-size
-; validation (BC checked, not CF alone - the F_READ/F_WRITE count
-; lesson) plus a 1-byte-overshoot probe mirror font_load's own FONT.CHR
-; check byte for byte (overlay2.asm, SP12 T1). THIS ROUTINE only ever
-; writes ptrCur after that final ldir, so a failed load (absent file,
-; wrong size, no drive) leaves it exactly as this routine found it.
-; Note that its CALLER h_mouse.pointer does write it beforehand, for
-; the n=0 path, and unlike the font mirror it legitimately writes 0
-; rather than $FF: shape 0 means "the built-in arrow, then POINTER.SPR
-; over it if one exists", and ptr_arrow_install has already put the
-; arrow in the live buffer by then, so every way THIS routine can then
-; fail still leaves shape 0 genuinely installed and ptrCur=0 honest.
-; That asymmetry with font_load is real and not an oversight: the font
-; path has a fourth failure mode (no free bank) that this one does not,
-; because it stages 2048 bytes through a bank_alloc'd scratch bank that
-; a warm picture cache can starve, whereas this routine stages through
-; the static swapStage below and cannot fail that way at all.
-; So the invariant holds on both sides: Cur NAMES A NUMBER only when
-; that number's data is genuinely live, and MOUSE sub 5's already-
-; installed check can never short-circuit a retry of a shape that
-; failed to install.
+; 16x16 8-bit hardware sprite pattern. Absent = silent (the previously
+; installed pattern stays); wrong size = silent + DEBUG marker.
+; Never reads straight into the live mousePattern: MOUSE 1 can fire at
+; any time and re-OTIR it, so the file lands in swapStage first and is
+; only ldir'd into mousePattern once the exact size is confirmed.
+; ptrCur is written only after that final ldir, so a failed load
+; leaves it exactly as found (the n=0 caller, h_mouse.pointer, writes
+; it beforehand since ptr_arrow_install has already installed the
+; built-in arrow by then).
 ;
-; Scratch buffer: swapStage (512 bytes, above) reused rather than a new
-; static buffer or a bank_alloc dance - it is directly addressable from
-; this page with no DATA_WINDOW mapping needed (unlike font_load's
-; 2048-byte FONT.CHR, which does not fit this page's margin as a static
-; buffer - see that routine's header), and 257 bytes fits its capacity
-; trivially. Safety of the reuse: swapStage only ever holds a LIVE,
-; not-yet-consumed payload strictly within a single h_xpart/
-; xpart_load_entry -> switch_to_part call chain (both producers hand
-; off to switch_to_part immediately, with no intervening ret to the
-; condact dispatcher), so it is idle at every OTHER entry to this
-; routine - including MOUSE n 5 (h_mouse.pointer, above), reachable at
-; any point during normal play with no part switch anywhere on the call
-; stack; the Z80 has one call stack and no condact pre-emption (im2_isr/
-; ctc_isr, interrupts.asm, only ever drive music/sample timing), so
-; that window and this one can never overlap. Within the part-switch
-; chain, this routine's own call site (switch_to_part's .noobjs, above)
-; runs AFTER swapStage's flags/object-location payload has already been
-; fully installed into flags/objTable - the install loop immediately
-; above .noobjs is the LAST reader of that payload, so by the time
-; control reaches here swapStage is free scratch, exactly the ordering
-; the original task brief required (verified directly against
-; switch_to_part's own instruction order, not assumed).
+; Scratch buffer: swapStage (512 bytes, above) is reused rather than a
+; new buffer - it is directly addressable from this page and 257 bytes
+; fits its capacity. It is safe to reuse because swapStage only holds
+; a live payload strictly within a single h_xpart/xpart_load_entry ->
+; switch_to_part call chain, and this routine's own call site within
+; that chain runs after the payload has already been installed into
+; flags/objTable, so swapStage is free scratch by the time control
+; reaches here.
 ;
 ; Corrupts AF, BC, DE, HL, IX.
 pointer_load:

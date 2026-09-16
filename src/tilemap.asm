@@ -131,13 +131,9 @@ tm_fill_rect:
 ; ORDINARY default attribute, so an untouched cell renders exactly like
 ; a printed one - black paper.
 ;
-; This was tm_clear_transparent and it never made anything transparent.
-; It wrote pair 127, whose paper is dadPalette[7], so it painted opaque
-; DAAD white; the 2026-08-06 green probe showed that white at boot, in
-; the parser and around the test card. Nothing needs tilemap
-; transparency: Layer 2 sits ABOVE the tilemap (NR $15 = %000, "S L U")
-; and punches DOWN to reveal text, so a transparent tilemap cell would
-; only expose the ULA, which this interpreter never draws.
+; No tilemap transparency needed: Layer 2 sits ABOVE the tilemap
+; (NR $15 = %000, "S L U") and punches DOWN to reveal text, so a
+; transparent cell would only expose the ULA, which is never drawn.
 ;
 ; Leaves tmAttr at the default - harmless, every print path sets its
 ; own. Corrupts all registers.
