@@ -577,10 +577,9 @@ TMODEL_COEFFS = {
 # 1/height).
 # ---------------------------------------------------------------------
 # HELD across the 2026-09-15 re-fit: R is a ratio against the model, so
-# both sides moved together. Not re-measured via DEBUG per-phase decode
-# rows (those went in v0.5.0); confirmed instead by whole-clip PLAY
-# against NOM on hardware (VGA-0, core 3.02.04) - faster on every
-# comparable clip: VPACE -3 fields, VSTR0 and VSTRU -3, VSTR2 -1, VPLY2 -1.
+# both sides moved together. Confirmed by whole-clip PLAY vs NOM on
+# hardware: 5/9 comparable clips faster, 3 equal, VPLY4 reproducibly 2
+# fields slower (read as pacing quantisation, not a regression).
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.19,   # worst dense-cluster measured R (silicon
@@ -671,6 +670,7 @@ def usable_budget_t(fps, width=None, height=None):
 # density does not separate a skip-heavy test card from a budget-scaled
 # real clip) - disclosed, not a hazard: the same sparseness that
 # inflates R also collapses the byte demand the wire term prices.
+# HELD status: see the 2026-09-15 re-fit note above TMODEL_COMPOSITION_FACTOR.
 TMODEL_SILICON_R = {
     "flat_256": ((0.416, 1.071), (0.574, 1.062)),
     "flat_320": ((0.342, 1.106), (0.919, 1.052)),
