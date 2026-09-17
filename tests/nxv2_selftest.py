@@ -1846,16 +1846,19 @@ def t10_path_events():
         # --- NXBE, flat $4000, D <= $5E throughout, thr 0 = 81 / 71 ---
         # C240: 32 thr bails x 1 DMA chunk of 240 (7680 B, ends $5E00)
         ("C240", row("C240"), {"thr_copy8": 32, "copy_dma_chunks8": 32, "copy_dma_b": 7680, "fend": 1}),
-        # C250: 31 x (240 DMA + 10 B LDI tail), 7750 B ends $5E46
+        # C250: 31 x (240 DMA + 10 B LDI tail), 7750 B ends $5E46; each 250 B first chunk
+        # falls through the cap test (B = 0, C = 250 > 240)
         ("C250", row("C250"), {"thr_copy8": 31, "copy_dma_chunks8": 31, "copy_ldi_chunks8": 31,
-                               "copy_tail8": 31, "copy_dma_b": 7440, "copy_ldi_b": 310, "fend": 1}),
+                               "copy_tail8": 31, "copy_dma_b": 7440, "copy_ldi_b": 310,
+                               "cap_arm_chunks": 31, "fend": 1}),
         # Q240: 32 COPY16 x 1 DMA chunk of 240
         ("Q240", row("Q240"), {"op_copy16": 32, "copy_dma_chunks16": 32, "copy_dma_b": 7680, "fend": 1}),
         # R240: 33 RUN8 240 >= 71 bail x 1 DMA chunk (7920 B, last op starts $5E00)
         ("R240", row("R240"), {"thr_run8": 33, "run_dma_chunks8": 33, "run_dma_b": 7920, "fend": 1}),
-        # R250: 31 x (240 DMA + 10 B CPU tail)
+        # R250: 31 x (240 DMA + 10 B CPU tail), the 250 B first chunks through the cap arm
         ("R250", row("R250"), {"thr_run8": 31, "run_dma_chunks8": 31, "run_cpu_chunks8": 31,
-                               "run_tail8": 31, "run_dma_b": 7440, "run_cpu_b": 310, "fend": 1}),
+                               "run_tail8": 31, "run_dma_b": 7440, "run_cpu_b": 310,
+                               "cap_arm_chunks": 31, "fend": 1}),
         # W240: 33 RUN16 x 1 DMA chunk of 240
         ("W240", row("W240"), {"op_run16": 33, "run_dma_chunks16": 33, "run_dma_b": 7920, "fend": 1}),
         # P071: 111 x 71 >= 71, one DMA chunk each (7881 B)
@@ -2085,6 +2088,16 @@ def t10_path_events():
         ("edge60", run([(C8, 16), (S8, 4)] + END, FLAT, 0, dst=(0, 0x5FF0), copy_thr=81),
          {"edge_copy8": 1, "copy_ldi_chunks8": 1, "copy_ldi_b": 16, "dst_exact_chunks": 1,
           "edge_skip8": 1, "skip_passes": 1, "dst_seams": 1, "fend": 1}),
+        # h250 from E = 5: COPY16 300 room 245 takes the cap arm (240 DMA), then LDI 5 to the
+        # column end, hop, LDI 55; every chunk on a height over 240
+        ("hiarm", run([(C16, 300)] + END, (320, 250, True), 0, dst=(0, 0x4005), copy_thr=81),
+         {"op_copy16": 1, "copy_dma_chunks16": 1, "copy_dma_b": 240, "copy_ldi_chunks16": 2,
+          "copy_ldi_b": 60, "copy_tail16": 2, "col_hops": 1, "gap_hi_chunks": 3, "cap_arm_chunks": 1,
+          "fend": 1}),
+        # h250 from E = 0: RUN8 250 >= 71, C = 250 <= room takes the cap arm (240 DMA), CPU 10
+        ("hirun", run([(R8, 250)] + END, (320, 250, True), 0, run_thr=71),
+         {"thr_run8": 1, "run_dma_chunks8": 1, "run_dma_b": 240, "run_cpu_chunks8": 1, "run_cpu_b": 10,
+          "run_tail8": 1, "gap_hi_chunks": 2, "cap_arm_chunks": 1, "fend": 1}),
         # KSTART, PAL at $C3E9, COPY16 1000 = 4x240 + 40 B LDI tail, KFLIP
         ("kframe", run([(0x28, 0), (0x18, 512), (C16, 1000), (0x20, 0)], FLAT, 1000, copy_thr=81),
          {"kstart": 1, "pal_ops": 1, "op_copy16": 1, "copy_dma_chunks16": 4, "copy_ldi_chunks16": 1,
@@ -2180,7 +2193,7 @@ def t10_path_events():
         raise AssertionError("price must refuse an unpriced nonzero event")
     c250 = bench.row_events("C250")
     unit = {k: 1.0 for k in c250.as_dict() if k not in ps.DIAGNOSTIC}
-    expect(c250.price(unit) == 31 + 31 + 31 + 7440 + 310 + 1, "tails are not priced")
+    expect(c250.price(unit) == 31 + 31 + 31 + 7440 + 310 + 31 + 1, "tails are not priced")
     try:
         c250.price(dict(unit, copy_tail8=100.0))
     except ValueError:
@@ -2264,11 +2277,152 @@ def t10_frame_model():
            f"direct span frames: {got}")
 
 
+# ---------------------------------------------------------------------------
+# Synthetic sitting 5 for t10_gap_rules, built and checked by hand-written
+# arithmetic over nxv2_path_sim events: nothing below prices through fit_gap_bench.
+# ---------------------------------------------------------------------------
+_GAP_ZERO = frozenset({"fast_hop0_run8", "fast_hop0_copy8", "pal_chunks", "kstart", "kflip", "fend", "fend_span"})
+_GAP_TAILS = frozenset({"run_tail8", "run_tail16", "copy_tail8", "copy_tail16"})
+
+
+def _gap_chunk(body):
+    return (body, None), ("gap_chunk_t", "lo")
+
+
+_GAP_MAP = {       # counter -> ((term, None | "gap" | "lo" (gapped, height <= 240) | "strm"), ...)
+    "fast_skip8": (("t_skip", None), ("gap_fast_t", "gap")),
+    "fast_run8": (("t_op_run", None), ("gap_fast_t", "gap")),
+    "fast_copy8": (("t_op_copy", None), ("gap_fast_t", "gap")),
+    "thr_run8": (("t_op_run", None), ("fill_dma_path_t", None)),
+    "thr_copy8": (("t_op_copy", None), ("copy_dma_path_t", None)),
+    "edge_skip8": (("edge_skip_t", None),),
+    "edge_run8": (("edge_run_t", None),),
+    "edge_copy8": (("edge_copy_t", None),),
+    "gap_skip8": (("edge_skip_t", None), ("gap_bail_skip_t", None)),
+    "gap_run8": (("edge_run_t", None), ("gap_bail_t", None)),
+    "gap_copy8": (("edge_copy_t", None), ("gap_bail_t", None)),
+    "src_copy8": (("edge_copy_t", None),),
+    "op_skip16": (("t_skip16", None),),
+    "op_run16": (("t_op_run", None), ("run16_entry_t", None)),
+    "op_copy16": (("t_op_copy", None), ("copy16_entry_t", None)),
+    "slow_skip8": (("t_skip", None),),
+    "slow_skip16": (("t_skip16", None), ("slow_fetch_t", None)),
+    "slow_run8": (("t_op_run", None), ("slow_fetch_t", None)),
+    "slow_run16": (("t_op_run", None), ("run16_entry_t", None), ("slow_fetch_t", None), ("slow_fetch_t", None)),
+    "slow_copy8": (("t_op_copy", None),),
+    "slow_copy16": (("t_op_copy", None), ("copy16_entry_t", None), ("slow_fetch_t", None), ("slow_cmp_t", None)),
+    "fast_hop_skip8": (("fast_hop_skip_t", None),),
+    "fast_hop_run8": (("fast_hop_run_t", None),),
+    "fast_hop_copy8": (("fast_hop_copy_t", None),),
+    "fast_dst_seams": (("dst_seam_t", None),),
+    "copy8_srcedge": (("srcedge_t", None),),
+    "run_fast_b": (("fill_cpu", None),),
+    "copy_fast_b": (("fetch", None),),
+    "skip_passes": (("t_skip_pass", None),),
+    "run_cpu_chunks8": _gap_chunk("fill_body_cpu_t"),
+    "run_cpu_chunks16": _gap_chunk("fill_body_cpu_t"),
+    "run_dma_chunks8": _gap_chunk("fill_dma_setup"),
+    "run_dma_chunks16": _gap_chunk("fill_dma_setup"),
+    "copy_ldi_chunks8": _gap_chunk("copy_body_ldi_t"),
+    "copy_ldi_chunks16": _gap_chunk("copy_body_ldi_t"),
+    "copy_dma_chunks8": _gap_chunk("copy_dma_setup"),
+    "copy_dma_chunks16": _gap_chunk("copy_dma_setup"),
+    "run_cpu_b": (("fill_cpu", None),),
+    "run_dma_b": (("fill_dma_per_b", None),),
+    "copy_ldi_b": (("fetch", None),),
+    "copy_dma_b": (("copy_dma_per_b", None),),
+    "dst_exact_chunks": (("dst_exact_t", None),),
+    "cap_arm_chunks": (("cap_arm_t", None),),
+    "gap_hi_chunks": (("gap_chunk_hi_t", None),),
+    "copy_src_chunks": (("src_exact_t", None),),
+    "col_hops": (("col_hop_t", None),),
+    "dst_seams": (("dst_seam_t", None),),
+    "src_parity_seams": (("src_parity_seam_t", None), ("src_seam_strm_t", "strm")),
+    "src_bank_seams": (("src_bank_seam_t", None), ("src_seam_strm_t", "strm")),
+    "src_edge_hdr": (("src_edge_t", None),),
+    "src_slow_hdr": (("src_slow_hdr_t", None),),
+    "src_wrap_hdr": (("src_edge_t", None), ("src_wrap_t", None)),
+    "pal_ops": (("t_palette", None),),
+    "pal_straddles": (("t_palette", None), ("pal_straddle_t", None)),
+}
+_GAP_FRAMES = {}
+
+
+def _gap_cost(ev, surface, streaming, long_b, rem, vals, split=()):
+    """Decode T of one set of events: counters x terms, LDI bytes at fetch_short or
+    (op L >= 64) fetch_long, and copy_dma_rem_t per remainder op."""
+    gapped = bool(surface[2])
+    low = gapped and surface[1] <= 240
+    total, fetch_b = 0.0, 0
+    for name, n in ev.as_dict().items():
+        if name in _GAP_ZERO or name in _GAP_TAILS:
+            continue
+        for term, when in _GAP_MAP[name]:
+            if (when == "gap" and not gapped) or (when == "lo" and not low) or (when == "strm" and not streaming):
+                continue
+            if term == "fetch":
+                fetch_b += n
+                continue
+            if term in split:
+                term = term[:-2] + ("16" if name.endswith("16") else "8") + "_t"
+            total += n * vals[term]
+    return (total + (fetch_b - long_b) * vals["fetch_short"] + long_b * vals["fetch_long"]
+            + rem * vals["copy_dma_rem_t"])
+
+
+def _gap_fixture(clip):
+    import re as _re
+    ps1 = (ROOT / "tests" / "build-tests.ps1").read_text(encoding="utf-8")
+    era = _re.search(r"\$vidLegSettlementTag = '([^']+)'", ps1).group(1)
+    found = sorted((ROOT / "tests" / "out").glob(f"{clip:03d}_*_{era}_*_cache.vid"))
+    return found[0] if found else None
+
+
+def _gap_frames(clip, copy_thr, run_thr):
+    """(header, surface, [(type, events, long LDI bytes, remainder ops)]) for every
+    frame of a fixture at the selects; the span cursor carries across chunk frames."""
+    import nxv2_frame_model as fm
+    import nxv2_path_sim as ps
+
+    class Player(ps._Player):
+        long_b = rem = 0
+
+        def _op(self, handler, op, n):
+            before = self.ev.copy_fast_b + self.ev.copy_ldi_b
+            handler(op, n)
+            if op in (ps.OP_COPY8, ps.OP_COPY16):
+                self.long_b += (self.ev.copy_fast_b + self.ev.copy_ldi_b - before) if n >= 64 else 0
+                self.rem += n >= 240 and n % 240 >= self.copy_thr
+
+        def fast_op(self, op, n):
+            self._op(super().fast_op, op, n)
+
+        def slow_op(self, op, n):
+            self._op(super().slow_op, op, n)
+
+    key = (clip, copy_thr, run_thr)
+    if key not in _GAP_FRAMES:
+        buf = _gap_fixture(clip).read_bytes()
+        hdr = enc.unpack_header(buf)
+        surface = (hdr["width"], hdr["height"], enc.is_gapped(hdr["width"], hdr["height"]))
+        out, in_span, dst = [], False, (0, 0x4000)
+        for _p, _s, _t, start, length in dec._iter_frames(buf, hdr):
+            ops = ps.parse_payload(buf[start:start + length])
+            p = Player(surface, start, dst, in_span, copy_thr, run_thr, None)
+            ftype = fm.frame_type(ops, in_span)
+            p.run(ops)
+            out.append((ftype, p.ev, p.long_b, int(p.rem)))
+            in_span = p.in_span
+            dst = (p.dpage, p.de) if in_span else (0, 0x4000)
+        _GAP_FRAMES[key] = (hdr, surface, out)
+    return _GAP_FRAMES[key]
+
+
 def _gap_hidden():
     """(terms, resident frame terms, streaming frame terms, extras) for a synthetic
-    sitting 5. Hand-countable terms sit 1 T over their counts; slopes are off the
-    0.1 T grid; the lowest armed ratio is 0.865."""
-    import fit_gap_bench as g
+    sitting 5, chosen so each rule's branches bind: pool 80 banks, a nonzero
+    remainder term, L064-L080 off one rate, S8's 1.12 binding flat and its audio
+    branch gapped (009's large audio stage), an S6 near-tie on the sweeps."""
     H = {"fetch_short": 19.785, "fetch_long": 19.885, "t_skip": 141.83, "t_skip16": 210.93,
          "t_op_run": 367.43, "t_op_copy": 303.73, "fill_cpu": 15.885, "copy_dma_per_b": 5.065,
          "fill_dma_per_b": 5.085, "copy_dma_setup": 881.3, "copy_dma_path_t": -18.4,
@@ -2276,20 +2430,24 @@ def _gap_hidden():
          "fill_body_cpu_t": 401.9, "copy16_entry_t": 70.3, "run16_entry_t": 68.6, "t_skip_pass": 121.4,
          "edge_skip_t": 181.2, "edge_run_t": 203.6, "edge_copy_t": 212.8, "dst_seam_t": 151.7,
          "col_hop_t": 41.3, "src_parity_seam_t": 231.6, "src_bank_seam_t": 331.2, "src_slow_hdr_t": 602.4,
-         "fast_hop_skip_t": 46.2, "fast_hop_run_t": 251.4, "fast_hop_copy_t": 241.7, g.REM_TERM: 0.0,
-         "t_palette": 16012.4, "pal_straddle_t": 903.6, "src_seam_strm_t": 61.2}
-    # hand-countable terms 1 T over their instruction counts
-    H.update({"gap_fast_t": 29.0, "gap_bail_skip_t": 51.0, "gap_bail_t": 74.0, "slow_fetch_t": 100.0,
-              "slow_cmp_t": 19.0, "srcedge_t": 39.0, "src_edge_t": 70.0, "src_wrap_t": 18.0,
-              "dst_exact_t": 147.0, "src_exact_t": 157.0, "gap_chunk_t": 48.0})
+         "fast_hop_skip_t": 46.2, "fast_hop_run_t": 251.4, "fast_hop_copy_t": 241.7, "copy_dma_rem_t": 10.0,
+         "t_palette": 16012.4, "pal_straddle_t": 903.6, "src_seam_strm_t": 61.2,
+         # hand-countable terms 1 T over their instruction counts
+         "gap_fast_t": 29.0, "gap_bail_skip_t": 51.0, "gap_bail_t": 74.0, "slow_fetch_t": 100.0,
+         "slow_cmp_t": 19.0, "srcedge_t": 39.0, "src_edge_t": 70.0, "src_wrap_t": 18.0, "dst_exact_t": 162.0,
+         "src_exact_t": 157.0, "gap_chunk_t": 48.0, "gap_chunk_hi_t": 48.0, "cap_arm_t": 19.0}
     res = {"frame_delta_t": 1101.2, "frame_middle_t": 1152.8, "frame_first_t": 1503.1,
            "frame_single_t": 1702.4, "frame_last_t": 1349.7}
     strm = {k: x + 150.0 for k, x in res.items()}
-    X = {"nul0": {"resident": 352.0, "streaming": 421.0}, "glue": {"resident": 15100.0, "streaming": 18200.0},
-         "pace": 301.0, "aud": {"resident": 35100.0, "streaming": 36300.0}, "h_frame": 480.0,
-         "prod": 10480.0, "comp": {"flat": 1.031, "gapped": 1.243}, "direct": (11.53, 60.4, 30120.0),
-         "dt": {"DTI0": 6010.0, "DTB0": 6400.0, "DTC0": 6230.0, "DTD0": 6620.0},
-         "pool": 96, "depth": 2400, "fill": 120, "remn": 3000, "m_strm": 40, "cal": 5003,
+    X = {"nul0": {"resident": 352.0, "streaming": 421.0}, "glue": {"resident": 40000.0, "streaming": 46000.0},
+         "pace": 301.0, "aud": {c: 140000.0 if c == 9 else 36000.0 for c in range(1, 10)}, "h_frame": 480.0,
+         "prod": {7: 10480.0, 8: 10150.0, 9: 10820.0}, "comp": {"flat": 1.031, "gapped": 1.243},
+         "direct": (11.53, 60.4, 30120.0), "dt": {"DTI0": 6010.0, "DTB0": 6400.0, "DTC0": 6230.0, "DTD0": 6620.0},
+         "pool": 80, "depth": 2400, "fill": 120, "remn": 3000, "m_strm": 40, "cal": 5003,
+         "row_extra": {"L064": -12.8, "L080": -12.0},                    # T per op off the model
+         "sweep_extra": {55: 3000.0, 60: 3000.0, 65: 0.0, 70: 2000.0, 75: 3000.0, 81: 4000.0},   # T per frame
+         "delivery": {**{c: "resident" for c in (1, 2, 3, 4, 5, 6)}, **{c: "streaming" for c in (7, 8, 9)},
+                      **{c: "direct" for c in (10, 12, 13, 14)}},
          "h": {"pace": 104, "stub": 144, "audrep": 591, "spin": 161,
                "skip": {"resident": 492, "streaming": 1174}},       # Task 12 hand counts
          "af": {"W065": 0.871, "FA65": 0.869, "FB65": 0.869, "FC65": 0.870, "WL16": 0.872, "AUD1": 0.865,
@@ -2298,83 +2456,97 @@ def _gap_hidden():
     return H, res, strm, X
 
 
+_GAP_SESSIONS = (("REAL", 1), ("SYN", 1), ("REAL", 2), ("SYN", 2), ("REAL", 3), ("SYN", 3), ("REAL", 4),
+                 ("SYN", 4), ("REAL", 5), ("REAL", 7), ("SYS", 7), ("REAL", 8), ("REAL", 9), ("DS1", 10),
+                 ("DS1", 12), ("DS1", 13), ("DS1", 14))
+_GAP_GRID = (55, 60, 65, 70, 75, 81)
+
+
 def _gap_runs(hidden, seed):
-    """Every Q run of a synthetic sitting 5 (Parts B-D), priced from the hidden
-    terms with +-1 raster line on every timed row, and the D-image NXBC rows.
-    -> ([{stamp, verb, clip, rows, log, err}], d_rows)."""
+    """Every Q run of a synthetic sitting 5 (Parts B-D) with +-1 raster line on
+    every timed row, and the D-image NXBC rows. -> ([{stamp, verb, clip, rows,
+    log, err}], d_rows)."""
     import random
-    import fit_gap_bench as g
     import nxv2_bench_log as blog
     H, res, strm, X = hidden
     rng = random.Random(seed)
     values = {"resident": {**H, **res}, "streaming": {**H, **strm}}
+    h = X["h"]
 
-    def fd(total_t, jitter=1):
-        return divmod(int(round(total_t / g.TPL)) + rng.choice((-jitter, 0, jitter)), g.LPF)
+    def fd(total_t):
+        return divmod(int(round(total_t / 1824.0)) + rng.choice((-1, 0, 1)), 311)
 
     def standalone(mode):
         rows = []
         for tag in bench.printed_tags(mode):
             if tag in ("CALL", "CALR"):
-                rows.append((tag, 0, 16, *divmod(X["cal"], g.LPF)))
+                rows.append((tag, 0, 16, *divmod(X["cal"], 311)))
                 continue
-            _t, _kind, _L, o, r, _thr, _geo = bench._row(tag)
-            rows.append((tag, o, r, *fd(g.price(g.standalone_counts(tag), values["resident"]) * o * r)))
+            _t, kind, L, o, r, _thr, _geo = bench._row(tag)
+            ev = bench.row_events(tag)
+            long_b = ev.copy_fast_b + ev.copy_ldi_b if L >= 64 else 0
+            rem = o if kind.startswith("copy") and L >= 240 and L % 240 >= bench.row_selects(tag)[0] else 0
+            t_rep = (_gap_cost(ev, bench.row_surface(tag), False, long_b, rem, values["resident"])
+                     + X["row_extra"].get(tag, 0.0) * o)
+            rows.append((tag, o, r, *fd(t_rep * r)))
         return rows
 
     def session(table, clip):
-        path = g.fixture_path(clip)
-        hdr = g.fixture_header(path)
-        surface = (hdr["width"], hdr["height"], enc.is_gapped(hdr["width"], hdr["height"]))
-        deliv = g.expected_delivery(hdr, path.stat().st_size, X["pool"])
+        deliv = X["delivery"][clip]
         key = "streaming" if deliv == "streaming" else "resident"
-        Hx, af, out, T = values[key], X["af"], {}, {}
+        vals, af, out, T = values[key], X["af"], {}, {}
+        buf = _gap_fixture(clip).read_bytes()
+        hdr = enc.unpack_header(buf)
+        surface = (hdr["width"], hdr["height"], enc.is_gapped(hdr["width"], hdr["height"]))
         out["IDEN"] = ({"resident": 0, "streaming": 1, "direct": 2}[deliv], hdr["frame_count"] & 0xFFFF,
                        0x140 if hdr["width"] == 320 else 0x100, hdr["height"] & 0xFF)
         if table != "DS1":
             out["RING"] = (0, X["depth"] if key == "streaming" else 0, X["fill"] if key == "streaming" else 0,
                            X["pool"])
         if table in ("SYN", "SYS"):
-            nul = X["nul0"][key]
             types = {"FE00": "frame_delta_t", "FE01": "frame_middle_t", "KS01": "frame_single_t",
                      "KS02": "frame_first_t", "KF01": "frame_last_t"}
             armed = {a for _u, a in bench.SESSION_ARMED_PAIRS[table]}
             for row in bench.SESSION_TABLES[table]:
-                tag = row[0]
-                if row[1] not in bench.SESSION_SYNTH or tag in armed:
+                tag, kind = row[0], row[1]
+                if kind not in bench.SESSION_SYNTH or tag in armed:
                     continue
-                if tag == "NUL0" or tag in types:
-                    T[tag] = nul + (Hx[types[tag]] if tag in types else 0.0)
-                else:
-                    ftype = "frame_delta_t" if row[4] == 0 else "frame_middle_t"
-                    T[tag] = nul + Hx[ftype] + g.price(g.synth_counts(table, tag, surface, key == "streaming"), Hx)
+                T[tag] = X["nul0"][key] + (vals[types[tag]] if tag in types else 0.0)
+                if tag != "NUL0" and tag not in types:
+                    _t, _k, _reps, frame, preset, *sites = row
+                    n = next((n for op, n in bench.synth_ops(frame, sites) if op in (0x10, 0x14)), 0)
+                    ev = bench.row_events(tag, surface, table)
+                    long_b = ev.copy_fast_b + ev.copy_ldi_b if n >= 64 else 0
+                    rem = 1 if n >= 240 and n % 240 >= 81 else 0
+                    T[tag] += (vals["frame_delta_t" if preset == 0 else "frame_middle_t"]
+                               + _gap_cost(ev, surface, key == "streaming", long_b, rem, vals))
             for u, a in bench.SESSION_ARMED_PAIRS[table]:
                 T[a] = T[u] / af[u]
-            reps = g._reps_of(table)
             for row in bench.SESSION_TABLES[table]:
                 if row[1] in bench.SESSION_SYNTH:
-                    out[row[0]] = (row[4], reps[row[0]], *fd(T[row[0]] * reps[row[0]]))
+                    out[row[0]] = (row[4], row[2], *fd(T[row[0]] * row[2]))
         elif table == "REAL":
             comp = X["comp"]["gapped" if surface[2] else "flat"]
-            dec = {}
-            for t in g.SWEEP_GRID:
-                _h, _s, frames = g.fixture_frames(path, t, bench.NXB_RUN_REF)
-                dec[t] = [g.frame_price(fr, surface, key == "streaming", Hx) * comp for fr in frames]
-            m = min(X["m_strm"], len(dec[65])) if key == "streaming" else len(dec[65])
-            hs, aud, hh = X["h"]["skip"][key], X["aud"][key], X["h"]
-            top = sorted(range(m), key=lambda k: (-dec[65][k], k))[:3]
-            out["SCAN"] = (m, 1, *fd(sum(dec[65][:m])))
-            for t in g.SWEEP_GRID:
-                out[f"W0{t:02d}"] = (m, 1, *fd(sum(x + hs for x in dec[t][:m])))
-            T["W065"] = sum(x + hs for x in dec[65][:m])
+            dect = {}
+            for t in _GAP_GRID:
+                _h, _s, frames = _gap_frames(clip, t, 71)
+                dect[t] = [(vals[f"frame_{ft}_t"] + _gap_cost(ev, surface, key == "streaming", lb, rm, vals)) * comp
+                          for ft, ev, lb, rm in frames]
+            m = min(X["m_strm"], len(dect[65])) if key == "streaming" else len(dect[65])
+            hs, aud = h["skip"][key], X["aud"][clip]
+            top = sorted(range(m), key=lambda k: (-dect[65][k], k))[:3]
+            out["SCAN"] = (m, 1, *fd(sum(dect[65][:m])))
+            for t in _GAP_GRID:
+                out[f"W0{t:02d}"] = (m, 1, *fd(sum(x + hs + X["sweep_extra"][t] for x in dect[t][:m])))
+            T["W065"] = sum(x + hs for x in dect[65][:m])
             for tag, k in zip(("FA65", "FB65", "FC65"), top):
-                T[tag] = dec[65][k] + X["h_frame"]
+                T[tag] = dect[65][k] + X["h_frame"]
                 out[tag] = (k & 0xFF, 8, *fd(T[tag] * 8))
-            T["WL16"] = sum(x + hs for x in dec[65][:16])
-            T["AUD1"] = aud + hh["audrep"]
-            T["LOOP"] = sum(x + aud + hh["stub"] + X["glue"][key] for x in dec[65][:16])
+            T["WL16"] = sum(x + hs for x in dect[65][:16])
+            T["AUD1"] = aud + h["audrep"]
+            T["LOOP"] = sum(x + aud + h["stub"] + X["glue"][key] for x in dect[65][:16])
             out["WL16"], out["AUD1"] = (16, 1, *fd(T["WL16"])), (0, 64, *fd(T["AUD1"] * 64))
-            out["PACE"] = (0, 1024, *fd((X["pace"] + hh["pace"]) * 1024))
+            out["PACE"] = (0, 1024, *fd((X["pace"] + h["pace"]) * 1024))
             out["LOOP"] = (16, 1, *fd(T["LOOP"]))
             out["A065"] = (m, 1, *fd(T["W065"] / af["W065"]))
             for u, a in (("FA65", "XA65"), ("FB65", "XB65"), ("FC65", "XC65")):
@@ -2384,17 +2556,16 @@ def _gap_runs(hidden, seed):
             out["ALOP"] = (16, 1, *fd(T["LOOP"] / af["LOOP"]))
             if key == "streaming":
                 out["REMN"] = (0, X["remn"] & 0xFFFF, X["remn"] >> 16, 0)
-                out["PROD"] = (0, 128, *fd((X["prod"] + hh["pace"]) * 128))
-                out["APRD"] = (0, 128, *fd((X["prod"] + hh["pace"]) / af["PROD"] * 128))
+                out["PROD"] = (0, 128, *fd((X["prod"][clip] + h["pace"]) * 128))
+                out["APRD"] = (0, 128, *fd((X["prod"][clip] + h["pace"]) / af["PROD"] * 128))
         else:
             tpb, colt, ft = X["direct"]
-            _h, _s, frames = g.fixture_frames(path, *bench.SITTING_SELECTS)
             apad = -(-hdr["audio_bytes_per_frame"] // 512) * 512
-            armed = [(apad + -(-fr.nbytes // 512) * 512) * tpb + (320 if surface[2] else 0) * colt + ft
-                     for fr in frames]
+            armed_t = [(apad + -(-length // 512) * 512) * tpb + (320 if surface[2] else 0) * colt + ft
+                       for *_x, length in dec._iter_frames(buf, hdr)]
             _read, swept, _blocks = bench.direct_frames("DS1")
-            out["DSWP"] = (16, 1, *fd(sum(armed[i] * af["DSWP"] for i in swept[0])))
-            out["ADSW"] = (16, 1, *fd(sum(armed[i] for i in swept[1])))
+            out["DSWP"] = (16, 1, *fd(sum(armed_t[i] * af["DSWP"] for i in swept[0])))
+            out["ADSW"] = (16, 1, *fd(sum(armed_t[i] for i in swept[1])))
             for tag in ("DTI0", "DTB0", "DTC0", "DTD0"):
                 out[tag] = (0, 128, *fd(X["dt"][tag] * 128))
             out["ADTI"] = (0, 128, *fd(X["dt"]["DTI0"] / af["DTI0"] * 128))
@@ -2403,14 +2574,14 @@ def _gap_runs(hidden, seed):
 
     verbs = {mode: verb for verb, mode in blog.STANDALONE_VERBS.items()}
     verbs.update({name: verb for verb, name in blog.SESSION_VERBS.items()})
-    order = ([("std", m) for m in g.STANDALONE] + [("sess", k) for k in g.SESSIONS]
-             + [("std", m) for m in (6, 8, 9, 10, 11, 12)] + [("sess", ("SYN", 1)), ("sess", ("REAL", 3)),
-                                                              ("std", 3)])
+    order = ([("std", m) for m in (3, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12)] + [("sess", k) for k in _GAP_SESSIONS]
+             + [("std", m) for m in (6, 8, 9, 10, 11, 12)]
+             + [("sess", ("SYN", 1)), ("sess", ("REAL", 3)), ("std", 3)])
     runs, first, stamp = [], {}, 0x0100
     for i, (kind, key) in enumerate(order):
         if key in first:
-            rows = [(t, o, r, *divmod(f * g.LPF + d + (0 if t in ("IDEN", "RING", "REMN", "CALL", "CALR")
-                                                        else rng.choice((-1, 0, 1))), g.LPF))
+            rows = [(t, o, r, *divmod(f * 311 + d + (0 if t in ("IDEN", "RING", "REMN", "CALL", "CALR")
+                                                     else rng.choice((-1, 0, 1))), 311))
                     for t, o, r, f, d in first[key]]
         else:
             rows = first[key] = standalone(key) if kind == "std" else session(*key)
@@ -2421,7 +2592,7 @@ def _gap_runs(hidden, seed):
     d_rows = []
     for tag in bench.printed_tags(3):
         o, r, f, d = bench.SITTING4[tag]
-        d_rows.append((tag, o, r, *divmod(f * g.LPF + d + rng.choice((-1, 0, 1)), g.LPF)))
+        d_rows.append((tag, o, r, *divmod(f * 311 + d + rng.choice((-1, 0, 1)), 311)))
     return runs, d_rows
 
 
@@ -2446,18 +2617,196 @@ def _gap_text(runs, d_rows):
     return "".join(out), _bench_capture(0x0200, _bench_screen(d_scr))
 
 
-@case(10, "sitting-5 rules - a synthetic sitting recovers its hidden terms, every S0 STOP fires")
+def _gap_expect(runs, v, X):
+    """Each S1-S16 output recomputed from the generated rows and the ruled upstream
+    values, by hand. -> {name: value} plus the branch facts the sitting must bind."""
+    import math
+    first, std = {}, {}
+    for run in runs:
+        rows = {t: (o, r, f, d) for t, o, r, f, d in run["rows"]}
+        if run["clip"] is None:
+            for t, row in rows.items():
+                std.setdefault(t, row)
+        else:
+            first.setdefault((run["verb"], run["clip"]), rows)
+    verb = {"REAL": "NXBR", "SYN": "NXBQ", "SYS": "NXBY", "DS1": "NXBD"}
+
+    def top(tag):
+        o, r, f, d = std[tag]
+        return (f * 311 + d) * 1824.0 / (r * o)
+
+    def tr(table, clip, tag):
+        _o, r, f, d = first[(verb[table], clip)][tag]
+        return (f * 311 + d) * 1824.0 / r
+
+    h, e, facts = X["h"], {}, {}
+    # S1
+    for icpt, slope, tags in (("t_op_run", "fill_cpu", ("RU01", "RU17", "F063", "F070")),
+                              ("t_op_copy", "fetch_short", ("C001", "C004", "C008", "C038"))):
+        xs, ys = [bench._row(t)[2] for t in tags], [top(t) for t in tags]
+        b, a = np.polyfit(xs, ys, 1)
+        lift = max(0.0, max(y - (a + b * x) - max(5.5, 1824.0 / (std[t][1] * std[t][0]))
+                            for x, y, t in zip(xs, ys, tags)))
+        e[icpt], e[slope] = a + lift, b
+    longs = [(top(t) - e["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")]
+    e["fetch_long"] = max(longs)
+    facts["fetch_long spread"] = max(longs) - min(longs)
+    e["t_skip"], e["t_skip16"] = top("SK00"), top("S160")
+    e["copy_dma_per_b"] = (top("C103") - top("C081")) / 22.0
+    e["fill_dma_per_b"] = (top("P200") - top("P071")) / 129.0
+    # S2 (the 250 B first chunk's cap arm is 18 T)
+    e["s2_ldi8"] = top("C250") - top("C240") - 10 * v["fetch_long"] - 18
+    e["s2_cpu8"] = top("R250") - top("R240") - 10 * v["fill_cpu"] - 18
+    # S3
+    synth = [("SYN", c) for c in (1, 2, 3, 4)] + [("SYS", 7)]
+    for term, tag in (("frame_delta_t", "FE00"), ("frame_middle_t", "FE01"), ("frame_first_t", "KS02"),
+                      ("frame_single_t", "KS01"), ("frame_last_t", "KF01")):
+        e[term] = max(tr(t, c, tag) - tr(t, c, "NUL0") for t, c in synth)
+    e["t_palette"] = max(tr("SYN", c, "PAL1") - tr("SYN", c, "FE00") for c in (1, 2, 3, 4))
+    e["pal_straddle_t"] = max(tr("SYN", c, "PAL2") - tr("SYN", c, "PAL1") for c in (1, 2, 3, 4))
+    for name, deliv, clips in (("glue_t", "resident", (1, 2, 3, 4, 5)), ("glue_strm_t", "streaming", (7, 8, 9))):
+        e[name] = max((tr("REAL", c, "LOOP") - tr("REAL", c, "WL16") - 16 * tr("REAL", c, "AUD1")) / 16
+                      + tr("REAL", c, "PACE") - h["pace"] - h["stub"] + h["audrep"] + h["skip"][deliv]
+                      for c in clips)
+    # S5
+    ratios = []
+    for table, clips in (("REAL", (1, 2, 3, 4, 5, 7, 8, 9)), ("SYN", (1, 2, 3, 4)), ("SYS", (7,)),
+                         ("DS1", (10, 12, 13, 14))):
+        for c in clips:
+            for u, a in bench.SESSION_ARMED_PAIRS[table]:
+                if u in first[(verb[table], c)]:
+                    ratios.append(tr(table, c, u) / tr(table, c, a))
+    e["audio_factor"] = math.floor(100.0 * min(ratios)) / 100.0
+    af = v["audio_factor"]
+    # S6 crossovers and the silicon choice of N
+    def cross(ldi, dma):
+        b, a = np.polyfit([bench._row(t)[2] for t in ldi], [top(t) for t in ldi], 1)
+        s, c = np.polyfit([bench._row(t)[2] for t in dma], [top(t) for t in dma], 1)
+        return (c - a) / (b - s)
+    e["crossovers"] = {
+        "flat": cross([f"L0{L}" for L in (48, 56, 60, 64, 72, 80)], [f"D0{L}" for L in (48, 56, 60, 64, 72, 80, 81)]),
+        "g192": cross([f"GL{L}" for L in (56, 60, 72, 80)], [f"GD{L}" for L in (56, 60, 72, 80)]),
+        "g144": cross([f"HL{L}" for L in (56, 60, 64, 68, 76, 80, 88, 96)],
+                      [f"HD{L}" for L in (56, 60, 64, 68, 76, 80, 88, 96)])}
+    S = {t: sum(tr("REAL", c, f"W0{t:02d}") for c in (1, 2, 3, 4, 5, 7, 8, 9)) for t in _GAP_GRID}
+    tstar = min(_GAP_GRID, key=lambda t: (S[t], -t))
+    near = min(_GAP_GRID, key=lambda t: (abs(t - v["N_m"]), -t))
+    e["N"] = v["N_m"] if S[near] <= S[tstar] * 1.0005 else tstar
+    facts["S6 near/t* ratio"] = S[near] / S[tstar]
+    e["gap"] = e["N"] - (v["copy_dma_setup"] + v["copy_dma_path_t"]) / (v["fetch_short"] - v["copy_dma_per_b"])
+    e["saving_pct"] = 100.0 * (S[81] - S[min(_GAP_GRID, key=lambda t: (abs(t - e["N"]), -t))]) / S[81]
+    run_l = (56, 60, 64, 68, 72, 76)
+    e["run_crossovers"] = [cross([f"FC{L}" for L in run_l], [f"FD{L}" for L in run_l]),
+                           cross([f"VC{L}" for L in (60, 68, 76)], [f"VD{L}" for L in (60, 68, 76)])]
+
+    # S8, S9 with the ruled terms through this file's own map
+    def model(clip, strm):
+        _hdr, surface, frames = _gap_frames(clip, 65, 71)
+        return [v[f"frame_{ft}_t"] + _gap_cost(ev, surface, strm, lb, rm, v, v["split"]) for ft, ev, lb, rm in frames]
+    period = 1000.0 / 25.0 * 28000.0
+    r_frame, aaud, raw = {"flat": [], "gapped": []}, {"flat": [], "gapped": []}, {}
+    for c in (1, 2, 3, 4, 5, 7, 8, 9):
+        strm = X["delivery"][c] == "streaming"
+        hdr, surface, _f = _gap_frames(c, 65, 71)
+        cls = "gapped" if surface[2] else "flat"
+        mt = model(c, strm)
+        for u in ("XA65", "XB65", "XC65"):
+            r_frame[cls].append(tr("REAL", c, u) / (mt[first[("NXBR", c)][u][0]] / af))
+        aaud[cls].append(tr("REAL", c, "AAUD"))
+        m = first[("NXBR", c)]["A065"][0]
+        raw.setdefault((cls, hdr["width"]), []).append((c, sum(mt[:m]), m, strm, tr("REAL", c, "A065")))
+    factors = {}
+    for cls in ("flat", "gapped"):
+        rmax = max(r_frame[cls])
+        a, b = 1.12 * rmax, rmax * period / (period - max(aaud[cls]))
+        factors[cls] = math.ceil(round(100.0 * max(a, b), 6)) / 100.0
+        facts[f"S8 {cls} audio branch over 1.12"] = b > a
+    e["composition_factor"] = factors
+    anchors = {}
+    for (cls, width), pts in raw.items():
+        key = "gapped" if cls == "gapped" else f"flat_{width}"
+        for c, total, m, strm, t_a065 in pts:
+            usable = (period * af - v["glue_strm_t" if strm else "glue_t"]) / v["composition_factor"][cls]
+            anchors.setdefault(key, []).append((total / m / usable, t_a065 / (total / af)))
+    e["silicon_r"] = {}
+    for key, pts in anchors.items():
+        merged = []
+        for d, r in sorted(pts):
+            if merged and d - merged[-1][0] <= 0.02:
+                merged[-1] = (max(d, merged[-1][0]), max(r, merged[-1][1]))
+            else:
+                merged.append((d, r))
+        e["silicon_r"][key] = tuple((round(float(d), 3), math.ceil(round(float(r) * 1000, 6)) / 1000)
+                                    for d, r in merged)
+    # S10, S11
+    e["AUDIO_COPY_T_PER_B"] = math.ceil(round(10.0 * max(tr("REAL", c, "AAUD") for c in (1, 2, 3, 4, 5, 7, 8, 9))
+                                              / 1536, 6)) / 10.0
+    e["SD_WIRE_BYTES_PER_MS"] = float(math.floor(min(
+        512.0 * 28000.0 / (tr("REAL", c, "PROD") + tr("REAL", c, "PACE") - h["pace"] + h["spin"]) for c in (7, 8, 9))))
+
+    # S12, S16
+    def silicon_r(key, density):
+        pts = sorted(v["silicon_r"][key])
+        if density <= pts[0][0]:
+            return pts[0][1]
+        for (d0, r0), (d1, r1) in zip(pts, pts[1:]):
+            if density <= d1:
+                return r0 + (r1 - r0) * (density - d0) / (d1 - d0)
+        return pts[-1][1]
+    e["supply_exchange"] = {f"{w}x{hh}": 28000.0 / (v["SD_WIRE_BYTES_PER_MS"] * silicon_r(key, 1.0))
+                            for (w, hh), key in (((320, 256), "flat_320"), ((256, 192), "flat_256"),
+                                                 ((320, 192), "gapped"), ((320, 144), "gapped"))}
+    pts = [(bench._row(t)[2], top(t)) for t in ("C001", "C004", "C008", "C016", "C038", "L048", "L056", "L060",
+                                                 "L064", "L072", "L080")]
+
+    def worst(p):
+        b, a = np.polyfit([x for x, _y in p], [y for _x, y in p], 1)
+        return max(abs(y - a - b * x) for x, y in p)
+    splits = [(max(worst([p for p in pts if p[0] < s]), worst([p for p in pts if p[0] >= s])), s)
+              for s in range(16, 81)
+              if len({x for x, _y in pts if x < s}) >= 2 and len({x for x, _y in pts if x >= s}) >= 2]
+    best = min(splits, key=lambda p: (p[0], p[1]))
+    e["fetch_selector"] = best[1] if worst(pts) - best[0] > 5.5 else None
+    lam = e["supply_exchange"]["320x256"]
+
+    def fillmin(k):
+        return next((L for L in range(1, 256) if v["t_op_run"] + L * v["fill_cpu"] + k * lam + v["t_op_copy"]
+                     <= L * v["fetch_short"] + L * lam), None)
+    e["FILLMIN"] = fillmin(5)
+    facts["FILLMIN moves with a lam"] = fillmin(4) != fillmin(5)
+    e["STREAM_RESIDENT_POOL_B"] = min(min(first[(verb[t], c)]["RING"][3] for t, c in
+                                          [("REAL", c) for c in (1, 2, 3, 4, 5)] + [("SYN", c) for c in (1, 2, 3, 4)])
+                                      + 1 - 1 - 5, 78) * 16384
+    # S15
+    rows = []
+    _read, swept, _blocks = bench.direct_frames("DS1")
+    for c in (10, 12, 13, 14):
+        buf = _gap_fixture(c).read_bytes()
+        hdr = enc.unpack_header(buf)
+        lengths = [length for *_x, length in dec._iter_frames(buf, hdr)]
+        apad = -(-hdr["audio_bytes_per_frame"] // 512) * 512
+        rows.append((apad + -(-lengths[swept[1][0]] // 512) * 512, 320 if enc.is_gapped(hdr["width"], hdr["height"])
+                     else 0, tr("DS1", c, "ADSW") / first[("NXBD", c)]["ADSW"][0]))
+    A = np.array([[b, cols, 1.0] for b, cols, _t in rows])
+    y = np.array([t for *_x, t in rows])
+    x = np.linalg.lstsq(A, y, rcond=None)[0]
+    lift = max(0.0, max(t - (b * x[0] + cols * x[1] + x[2]) - 0.005 * t for b, cols, t in rows))
+    e["DIRECT_T_PER_B"], e["DIRECT_COL_T"], e["DIRECT_FRAME_T"] = x[0], x[1], x[2] + lift
+    return e, facts
+
+
+@case(10, "sitting-5 rules - a synthetic sitting recovers its hidden terms, every rule's arithmetic, S0 STOPs")
 def t10_gap_rules():
     import copy
     import io
     import math
     import fit_gap_bench as g
     import nxv2_frame_model as fm
-    try:
-        for clip in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14):
-            g.fixture_path(clip)
-    except FileNotFoundError as exc:
-        skip(str(exc))
+    missing = [c for c in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14) if _gap_fixture(c) is None]
+    if missing:
+        skip(f"fixtures {missing} are not encoded at this era (build-tests.ps1 -Vid -VidLong)")
+    events = set(bench.row_events("C001").as_dict(nonzero=False))
+    expect(set(_GAP_MAP) | _GAP_ZERO | _GAP_TAILS == events, "the test's own map covers every Events counter")
     hidden = _gap_hidden()
     H, res, strm, X = hidden
     expect((g.H_PACE, g.H_STUB, g.H_AUDREP, g.H_SPIN, g.H_SKIP)
@@ -2465,32 +2814,107 @@ def t10_gap_rules():
            "the rules script's harness constants are the Task 12 hand counts")
     runs, d_rows = _gap_runs(hidden, seed=17)
     q_text, d_text = _gap_text(runs, d_rows)
+    notes = {("Q", runs[-1]["stamp"]): "OK", ("D", 0x0200): "OK"}
     printed = []
-    v, sit = g.apply_rules(q_text, d_text, out=printed, last_log="OK", anchor_log="OK")
+    v, sit = g.apply_rules(q_text, d_text, out=printed, launch_status=notes)
 
-    # T terms: within max(2 T, 2%, the +-1 line bound) under and that plus the rule's largest raise over
+    # every rule's arithmetic, recomputed from the generated rows
+    e, facts = _gap_expect(runs, v, X)
+    expect(facts["fetch_long spread"] > 0.1 and not facts["S8 flat audio branch over 1.12"]
+           and facts["S8 gapped audio branch over 1.12"] and facts["FILLMIN moves with a lam"]
+           and 1.0005 < facts["S6 near/t* ratio"] <= 1.05 and v["N"] != v["N_m"]
+           and e["STREAM_RESIDENT_POOL_B"] < 78 * 16384 and v["copy_dma_rem_t"] > 0,
+           f"the sitting must bind every branch: {facts}, N {v['N']} N_m {v['N_m']}, rem {v['copy_dma_rem_t']}")
+    bad = []
+    for name, want in e.items():
+        got = v[name]
+        if isinstance(want, dict):
+            same = got.keys() == want.keys() and all(
+                (got[k] == want[k]) if isinstance(want[k], tuple) else math.isclose(got[k], want[k], rel_tol=1e-9)
+                for k in want)
+        elif isinstance(want, list):
+            same = all(math.isclose(a, b, rel_tol=1e-9) for a, b in zip(got, want))
+        elif want is None or isinstance(want, int) and not isinstance(want, bool):
+            same = got == want
+        else:
+            same = math.isclose(got, want, rel_tol=1e-9, abs_tol=1e-9)
+        if not same:
+            bad.append(f"{name}: rules {got}, by hand {want}")
+    expect(not bad, "rulings differ from the hand arithmetic:\n  " + "\n  ".join(bad))
+
+    # the band is max(5.5 T, one line of the row), in S1's lift too
+    expect(g.op_band((5, 64, 0, 0)) == 1824.0 / 320 and g.op_band((255, 64, 0, 0)) == 5.5, "op_band")
+    xs = np.array([1.0, 17.0, 63.0, 70.0])
+    design = np.stack([np.ones(4), xs], axis=1)
+    lev = (design @ np.linalg.pinv(design))[1, 1]
+    for resid, want_lift in ((6.5, 0.0), (8.0, 8.0 - 1824.0 / 255)):
+        rows = dict(sit.rows)
+        ys = [g.t_op(rows[t]) for t in ("RU01", "RU17", "F063", "F070")]
+        b, a = np.polyfit(xs, ys, 1)
+        t17 = ys[1] + (resid - (ys[1] - a - b * 17)) / (1 - lev)
+        rows["RU17"] = (255, 1, 0, t17 * 255 / 1824.0)
+        lift = g.s1(g.Sitting(rows, {}), {})[0]["raises"].get("t_op_run", 0.0)
+        expect(math.isclose(lift, want_lift, abs_tol=1e-6), f"S1 lift at residual {resid} on a 7.15 T row: {lift}")
+
+    # the script prices high-height and cap-arm events as this file's map does
+    import nxv2_path_sim as ps
+    vals = dict(H, **res)
+    vals.update({t: 1000.0 + 37.0 * i for i, t in enumerate(("gap_chunk_t", "gap_chunk_hi_t", "cap_arm_t"))})
+    for ops, surf, dst in (([(0x14, 300), (0x00, 0)], (320, 250, True), (0, 0x4005)),
+                           ([(0x08, 250), (0x00, 0)], (320, 250, True), (0, 0x4000)),
+                           ([(0x10, 250), (0x00, 0)], (256, 192, False), (0, 0x4000)),
+                           ([(0x14, 300), (0x00, 0)], (320, 192, True), (0, 0x4005))):
+        ev = ps.events(ops, surf, 0, dst=dst, copy_thr=81, run_thr=71)
+        lb = ev.copy_fast_b + ev.copy_ldi_b if ops[0][0] in (0x10, 0x14) and ops[0][1] >= 64 else 0
+        mine = _gap_cost(ev, surf, False, lb, 0, vals)
+        theirs = g.price(g.term_counts(ev, surf, False, lb, 0), vals)
+        expect(math.isclose(mine, theirs), f"{ops[0]} on {surf}: script {theirs}, by hand {mine}")
+
+    # N_m is the modelled optimum against its neighbours (this file's own map)
+    def total(n):
+        t = 0.0
+        for c in range(1, 10):
+            _hdr, surface, frames = _gap_frames(c, n, 71)
+            strm = X["delivery"][c] == "streaming"
+            t += sum(v[f"frame_{ft}_t"] + _gap_cost(ev, surface, strm, lb, rm, v, v["split"])
+                     for ft, ev, lb, rm in frames)
+        return t
+    lo, hi = math.floor(min(e["crossovers"].values())), math.ceil(max(e["crossovers"].values()))
+    near = {n: total(n) for n in (v["N_m"] - 1, v["N_m"], v["N_m"] + 1) if lo <= n <= hi}
+    expect(all(near[v["N_m"]] < t for n, t in near.items() if n > v["N_m"])
+           and all(near[v["N_m"]] <= t for t in near.values()), f"N_m {v['N_m']} is not the optimum: {near}")
+    expect(v["M"] == 71 and not v["copy_split"] and not v["raises"]["S14"],
+           f"M {v['M']}, split {v['copy_split']}, S14 raises {v['raises']['S14']}")
+
+    # hidden terms: within max(2 T, 2%) under, that plus the rule's largest raise over; a term the
+    # rows cannot resolve that finely is held to its +-1 line bound instead
     want = {**H, **strm, "pal_straddle_t": H["pal_straddle_t"] + H["src_parity_seam_t"],
             "glue_t": X["glue"]["resident"] + X["pace"], "glue_strm_t": X["glue"]["streaming"] + X["pace"],
             "DIRECT_T_PER_B": X["direct"][0], "DIRECT_COL_T": X["direct"][1], "DIRECT_FRAME_T": X["direct"][2]}
-    rule_of = {**{t: "S1" for t in g.S1_TERMS}, **{t: "S3" for t in g.FRAME_TERMS},
-               "t_palette": "S3", "pal_straddle_t": "S3", "glue_t": "S3", "glue_strm_t": "S3",
-               "DIRECT_T_PER_B": "S15", "DIRECT_COL_T": "S15", "DIRECT_FRAME_T": "S15"}
-    checked, bad = 0, []
+    rule_of = {**{t: "S1" for t in ("fetch_short", "fetch_long", "t_skip", "t_skip16", "t_op_run", "t_op_copy",
+                                   "fill_cpu", "copy_dma_per_b", "fill_dma_per_b")},
+               **{t: "S3" for t in res}, "t_palette": "S3", "pal_straddle_t": "S3", "glue_t": "S3",
+               "glue_strm_t": "S3", "DIRECT_T_PER_B": "S15", "DIRECT_COL_T": "S15", "DIRECT_FRAME_T": "S15"}
+    bad, by_bound = [], []
     for term, hid in sorted(want.items()):
-        if term not in v:
-            continue
         rule = rule_of.get(term, "S4")
         lift = max([0.0] + list(v["raises"][rule].values())
                    + (list(v["raises"]["S14"].values()) if rule == "S4" else []))
-        band = max(2.0, 0.02 * abs(hid), v["bounds"].get(term, 0.0))
-        checked += 1
+        band = max(2.0, 0.02 * abs(hid))
+        if v["bounds"].get(term, 0.0) > band:
+            band = v["bounds"][term]
+            by_bound.append(f"{term} {band:.2f}")
         if not hid - band <= v[term] <= hid + band + lift:
             bad.append(f"{term}: {v[term]:.2f}, hidden {hid:.2f}, band {band:.2f} + raise {lift:.2f}")
-    expect(checked == len(want) and not bad, f"{checked}/{len(want)} terms checked, outside:\n  " + "\n  ".join(bad))
-    expect(not v["split"] and set(v["hand"]) >= {"slow_fetch_t", "slow_cmp_t", "src_wrap_t"},
+    print("    note: held to their +-1 line bound: " + (", ".join(by_bound) or "none"))
+    expect(not bad, f"{len(want)} terms, outside:\n  " + "\n  ".join(bad))
+    expect(v["audio_factor"] == 0.86 and v["STREAM_RESIDENT_POOL_B"] == 75 * 16384
+           and abs(v["SD_WIRE_BYTES_PER_MS"] - 512 * 28000 / (X["prod"][9] + 104 + X["pace"] + 161)) <= 3,
+           f"audio_factor {v['audio_factor']}, pool {v['STREAM_RESIDENT_POOL_B']}, wire {v['SD_WIRE_BYTES_PER_MS']}")
+    expect(not v["split"] and set(v["hand"]) >= {"slow_fetch_t", "slow_cmp_t", "src_wrap_t", "gap_chunk_hi_t"},
            f"split {v['split']}, hand counts {sorted(v['hand'])}")
-    countable = ("gap_fast_t", "gap_bail_skip_t", "gap_bail_t", "slow_fetch_t", "slow_cmp_t", "srcedge_t",
-                 "src_edge_t", "src_wrap_t", "dst_exact_t", "src_exact_t", "gap_chunk_t")
+    countable = ("gap_fast_t", "gap_bail_skip_t", "gap_bail_t", "slow_fetch_t", "slow_cmp_t", "srcedge_t", "src_edge_t",
+                 "src_wrap_t", "dst_exact_t", "src_exact_t", "gap_chunk_t", "gap_chunk_hi_t", "cap_arm_t")
     loose = [t for t in countable if t not in v["hand"] and v["bounds"][t] > max(2.0, 0.02 * abs(v[t]))]
     expect(not loose, f"fitted where a hand count exists and +-1 line moves them past their band: {loose}")
     for t in v["hand"]:
@@ -2500,66 +2924,27 @@ def t10_gap_rules():
     expect(sum(line.startswith("  ") and line.split()[0] in g.COUNTER_TERMS for line in printed)
            == len(g.COUNTER_TERMS), "the counter-to-term map prints every counter")
 
-    # after the raises no S1 or S4 row prices under its band
+    # after the raises no S4 row or tail prices under max(5.5 T, one line) or 0.5%, by this file's map
     under = []
-    for tag in ("C001", "C004", "C008", "C038", "RU01", "RU17", "F063", "F070"):
-        L = bench._row(tag)[2]
-        pair = ("t_op_copy", "fetch_short") if tag[0] == "C" else ("t_op_run", "fill_cpu")
-        if sit.T(tag) - (v[pair[0]] + L * v[pair[1]]) > g.BAND_OP_T + 1e-6:
-            under.append(tag)
-    for r in g._s4_rows(sit, v["split"]):
-        if r.T - g.price(r.counts, v) > r.band + 1e-6:
-            under.append(r.label)
+    first_std = {}
+    for run in runs:
+        if run["clip"] is None:
+            for t, o, r, f, d in run["rows"]:
+                first_std.setdefault(t, (o, r, f, d))
+    for mode in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
+        for tag, kind, L, o, r, _thr, _geo in bench.BENCH_TABLES[mode]:
+            if kind == "cal" or (mode == 9 and tag not in ("C240", "C250", "Q240", "R240", "R250", "W240")) or (
+                    mode == 8 and tag not in ("T298", "T299", "T300", "T320")):
+                continue
+            ev = bench.row_events(tag)
+            long_b = ev.copy_fast_b + ev.copy_ldi_b if L >= 64 else 0
+            rem = o if kind.startswith("copy") and L >= 240 and L % 240 >= bench.row_selects(tag)[0] else 0
+            _o, _r, f, d = first_std[tag]
+            meas = (f * 311 + d) * 1824.0 / (r * o)
+            model = _gap_cost(ev, bench.row_surface(tag), False, long_b, rem, v, v["split"]) / o
+            if meas - model > max(5.5, 1824.0 / (r * o)) + 1e-6:
+                under.append(f"{tag} {meas - model:+.1f}")
     expect(not under, f"rows priced under after the raises: {under}")
-
-    # the other rulings, from the hidden values
-    expect(v["audio_factor"] == math.floor(100 * min(X["af"].values())) / 100, f"audio_factor {v['audio_factor']}")
-    af = v["audio_factor"]
-    r_frame, r_clip = {"flat": [], "gapped": []}, []
-    for s in sit.of("REAL"):
-        key = "streaming" if s.streaming else "resident"
-        vals = {**H, **(strm if s.streaming else res)}
-        cls = "gapped" if s.surface[2] else "flat"
-        comp = X["comp"][cls]
-        _h, _surf, frames = g.fixture_frames(s.path, 65, bench.NXB_RUN_REF)
-        model = [g.frame_price(fr, s.surface, s.streaming, vals) for fr in frames]
-        for u in ("FA65", "FB65", "FC65"):
-            k = s.rows[u][0]
-            r_frame[cls].append((model[k] * comp + X["h_frame"]) / X["af"][u] / (model[k] / af))
-        m = s.rows["A065"][0]
-        r = sum(x * comp + X["h"]["skip"][key] for x in model[:m]) / X["af"]["W065"] / (sum(model[:m]) / af)
-        density = (sum(model[:m]) / m) / g.usable_budget_t(v, s.fps, s.hdr["width"], s.hdr["height"], s.streaming)
-        r_clip.append((s.label, r, g.silicon_r(v["silicon_r"], s.hdr["width"], s.hdr["height"], density)))
-    for cls, rs in r_frame.items():
-        f_want = math.ceil(100 * 1.12 * max(rs)) / 100
-        expect(abs(v["composition_factor"][cls] - f_want) <= 0.02 * f_want,
-               f"composition {cls} {v['composition_factor'][cls]}, hidden {f_want}")
-    expect(all(abs(got - r) <= 0.02 * r for _l, r, got in r_clip), f"silicon_r at each clip's density: {r_clip}")
-    aud_b = math.ceil(10 * (X["aud"]["streaming"] + X["h"]["audrep"]) / 1536 / X["af"]["AUD1"]) / 10
-    expect(abs(v["AUDIO_COPY_T_PER_B"] - aud_b) <= 0.1, f"AUDIO_COPY_T_PER_B {v['AUDIO_COPY_T_PER_B']}, {aud_b}")
-    wire = 512 * 28000 / (X["prod"] + X["pace"] + X["h"]["spin"])
-    expect(abs(v["SD_WIRE_BYTES_PER_MS"] - wire) <= 0.02 * wire, f"wire {v['SD_WIRE_BYTES_PER_MS']}, {wire:.1f}")
-    expect(v["STREAM_RESIDENT_POOL_B"] == min(X["pool"] - 5, 78) * 16384, "pool")
-    lam = v["supply_exchange"]["320x256"]
-    fill = next(L for L in range(1, 256) if H["t_op_run"] + L * H["fill_cpu"] + 5 * lam + H["t_op_copy"]
-                <= L * H["fetch_short"] + L * lam)
-    expect(abs(v["FILLMIN"] - fill) <= 1 and v["fetch_selector"] is None, f"FILLMIN {v['FILLMIN']} ({fill})")
-    dense = {k: max(a, key=lambda p: p[0])[1] for k, a in v["silicon_r"].items()}
-    expect(abs(lam - g.CLOCK_KHZ / (wire * dense["flat_320"])) <= 0.02 * lam, f"exchange {lam:.2f}")
-
-    # thresholds: crossovers from the hidden rows, N and M inside their ranges
-    rows_h = {tag: (o, r, *divmod(int(round(g.price(g.standalone_counts(tag), {**H, **res}) * o * r / g.TPL)),
-                                  g.LPF))
-              for mode in (5, 6, 10, 11) for tag, _k, _L, o, r, _t, _geo in bench.BENCH_TABLES[mode]}
-    xs = g.fct.fit(rows_h)
-    hid_x = {"flat": xs["crossover"], "g192": xs["gapped"]["crossover"],
-             "g144": g._h144_crossover(g.Sitting(rows_h, {}))}
-    expect(all(abs(v["crossovers"][k] - x) <= 0.5 for k, x in hid_x.items()),
-           f"crossovers {v['crossovers']} against hidden {hid_x}")
-    lo, hi = math.floor(min(hid_x.values())) - 1, math.ceil(max(hid_x.values())) + 1
-    expect(lo <= v["N_m"] <= hi and (v["N"] == v["N_m"] or v["N"] in g.SWEEP_GRID), f"N {v['N']}, N_m {v['N_m']}")
-    expect(v["M"] == bench.NXB_RUN_REF and not v["copy_split"] and not v["raises"]["S14"],
-           f"M {v['M']}, split {v['copy_split']}, S14 raises {v['raises']['S14']}")
 
     # decision reuse gives the simulator's own events at a moved select
     path = g.fixture_path(9)
@@ -2568,16 +2953,15 @@ def t10_gap_rules():
     expect([f.ev for f in reused] == [f.events for f in direct], "fixture 009 events at 60/66 differ from fm.frames")
 
     # S0 STOPs, each on one broken input
-    def s0_fails(mut_runs=None, mut_d=None, want="", anchor=True, **kw):
+    def s0_fails(mut_runs=None, mut_d=None, want="", anchor=True, launch=None):
         r2, d2 = copy.deepcopy(runs), list(d_rows)
         if mut_runs:
             mut_runs(r2)
         if mut_d:
             d2 = mut_d(d2)
         q2, dt2 = _gap_text(r2, d2)
-        opts = {"last_log": "OK", "anchor_log": "OK", **kw}
         try:
-            g.s0(q2, dt2 if anchor else None, **opts)
+            g.s0(q2, dt2 if anchor else None, launch_status=notes if launch is None else launch)
         except g.Stop as stop:
             text = "; ".join(stop.lines)
             expect(stop.rule == "S0" and want in text, f"S0 STOP without {want!r}: {text}")
@@ -2585,11 +2969,11 @@ def t10_gap_rules():
         raise AssertionError(f"no S0 STOP for {want!r}")
 
     def shift(rows, tag, lines):
-        return [(t, o, r, *divmod(f * g.LPF + d + (lines if t == tag else 0), g.LPF)) for t, o, r, f, d in rows]
+        return [(t, o, r, *divmod(f * 311 + d + (lines if t == tag else 0), 311)) for t, o, r, f, d in rows]
 
-    c004 = ("C004", *bench.SITTING4["C004"][:2], *divmod(g.row_lines(bench.SITTING4["C004"]) + 2, g.LPF))
-    s0_fails(mut_d=lambda rows: [c004 if grp[0] == "C004" else grp for grp in rows],
-             want="D-image NXBC C004: +2 lines")
+    c004 = ("C004", *bench.SITTING4["C004"][:2],
+            *divmod(bench.SITTING4["C004"][2] * 311 + bench.SITTING4["C004"][3] + 2, 311))
+    s0_fails(mut_d=lambda rows: [c004 if grp[0] == "C004" else grp for grp in rows], want="D-image NXBC C004: +2 lines")
     nxbe = next(i for i, run in enumerate(runs) if run["verb"] == "NXBE")
     s0_fails(lambda r2: r2[nxbe].update(rows=shift(r2[nxbe]["rows"], "CALR", 1)), want="CALR")
     real2 = next(i for i, run in enumerate(runs) if run["verb"] == "NXBR" and run["clip"] == 2)
@@ -2598,19 +2982,60 @@ def t10_gap_rules():
              want="IDEN does not name clip 002")
     s0_fails(lambda r2: r2[nxbe + 1].update(log="LOG ERR 60"), want="LOG ERR 60: untrusted")
     s0_fails(want="needs --anchor", anchor=False)
-    s0_fails(want="give the owner's note with --last-log", last_log=None)
-    s0_fails(lambda r2: r2[nxbe + 1].update(log=None), want="LOG status unknown")
+    s0_fails(want=f"--launch-status {runs[-1]['stamp']:04X}=OK", launch={("D", 0x0200): "OK"})
+    s0_fails(lambda r2: r2[nxbe + 1].update(log=None), want=f"--launch-status {runs[nxbe]['stamp']:04X}=OK")
+    s0_fails(lambda r2: r2[nxbe + 1].update(log=None), want="LOG ERR 60",
+             launch={**notes, ("Q", runs[nxbe]["stamp"]): "ERR 60"})
+    s0_fails(want="names no run", launch={**notes, ("Q", 0x1234): "OK"})
 
-    # not STOPs: a one-field clock slip on a repeat, a streaming fault after REMN
+    # not STOPs: a relaunch the owner noted OK, a one-field clock slip on a repeat, a SCAN repeat,
+    # a streaming fault after REMN
     r2 = copy.deepcopy(runs)
+    r2[nxbe + 1]["log"] = None
     nxbg = [i for i, run in enumerate(r2) if run["verb"] == "NXBG"]
     r2[nxbg[1]]["rows"] = shift(r2[nxbg[1]]["rows"], "GL60", 311)
+    real3 = [i for i, run in enumerate(r2) if run["verb"] == "NXBR" and run["clip"] == 3]
+    r2[real3[1]]["rows"] = shift(r2[real3[1]]["rows"], "SCAN", 50)
     real7 = next(i for i, run in enumerate(r2) if run["verb"] == "NXBR" and run["clip"] == 7)
     r2[real7].update(err=0xFA, rows=[grp for grp in r2[real7]["rows"] if grp[0] not in ("PROD", "APRD")])
-    sit2, lines2 = g.s0(*_gap_text(r2, d_rows), last_log="OK", anchor_log="OK")
+    sit2, lines2 = g.s0(*_gap_text(r2, d_rows), launch_status={**notes, ("Q", runs[nxbe]["stamp"]): "OK"})
     expect(sit2.rows["GL60"] == r2[nxbg[1]]["rows"][[t for t, *_x in r2[nxbg[1]]["rows"]].index("GL60")][1:]
            and any("GL60" in line and "clock slip" in line for line in lines2)
-           and sit2.sessions[("REAL", 7)].invalid == {"PROD", "APRD"}, "slip kept the repeat; ERR after REMN")
+           and any("launch note" in line for line in lines2)
+           and sit2.sessions[("REAL", 7)].invalid == {"PROD", "APRD"},
+           "a noted relaunch, a slip kept the repeat, a SCAN repeat, ERR after REMN")
+
+    # a STOP prints its rule's lines; S4 names the rows priced under before any raise
+    r2 = copy.deepcopy(runs)
+    r2[nxbe + 1]["log"] = "LOG ERR 60"
+    try:
+        g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
+    except g.Stop as stop:
+        expect(stop.printed[0] == "== S0 - integrity ==" and len(stop.printed) > 1, f"S0 notes {stop.printed}")
+    else:
+        raise AssertionError("no S0 STOP on LOG ERR 60")
+    r2 = copy.deepcopy(runs)
+    for i, run in enumerate(r2):
+        if run["verb"] == "NXBV":
+            run["rows"] = [(t, o, r, *divmod(int((f * 311 + d) * (1.05 if t == "JC72" else 1)), 311))
+                           for t, o, r, f, d in run["rows"]]
+    try:
+        g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
+    except g.Stop as stop:
+        fit_line = [line for line in stop.printed if line.startswith("fit 1:")]
+        expect(stop.rule == "S4" and fit_line and "JC72" in fit_line[0].split(";")[1],
+               f"S4 names JC72 first before any raise: {fit_line}")
+    else:
+        raise AssertionError("no S4 STOP on JC72 +5%")
+    for cpu, dma, want in (((0.0, 19.8), (880.0, 19.795), "near-parallel"),
+                           ((0.0, 19.8), (5000.0, 5.1), "outside 1..255")):
+        try:
+            g.crossover("S6", "L*", cpu, dma, [])
+        except g.Stop as stop:
+            expect(want in stop.lines[0], f"crossover guard: {stop.lines}")
+        else:
+            raise AssertionError(f"no crossover STOP for {want}")
+    expect(g.search_range([0.4, 58.2]) == (1, 59) and g.search_range([200.0, 300.0]) == (200, 255), "clamped ranges")
 
     # the CLI prints the STOP and exits 1
     with tempfile.TemporaryDirectory() as td:
@@ -2618,7 +3043,7 @@ def t10_gap_rules():
         qp.write_text(q_text, encoding="latin-1", newline="")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            rc = g.main([str(qp), "--last-log", "OK"])
+            rc = g.main([str(qp), "--launch-status", f"{runs[-1]['stamp']:04X}=OK"])
     expect(rc == 1 and "STOP S0:" in out.getvalue() and "needs --anchor" in out.getvalue(),
            f"CLI without --anchor: rc {rc}\n{out.getvalue()[-400:]}")
 

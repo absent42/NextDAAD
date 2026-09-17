@@ -290,12 +290,12 @@ BENCH_TABLES = {
     ),
     7: (   # NXBL - nxbTabLong: long COPY16 ops at 81 (LK43 not coverable)
         ("LF1K", "copy16", 1000, 7, 64, 81, 0),
-        ("LF4K", "copy16", 4000, 1, 64, 81, 0),
-        ("LF7K", "copy16", 7680, 1, 64, 81, 0),
-        ("LFDS", "copy16", 7680, 1, 64, 81, 0x10),
+        ("LF4K", "copy16", 4000, 1, 512, 81, 0),
+        ("LF7K", "copy16", 7680, 1, 512, 81, 0),
+        ("LFDS", "copy16", 7680, 1, 512, 81, 0x10),
         ("LG1K", "copy16", 1000, 5, 64, 81, 1),
-        ("LG4K", "copy16", 4000, 1, 64, 81, 1),
-        ("LGDS", "copy16", 4000, 1, 64, 81, 0x11),
+        ("LG4K", "copy16", 4000, 1, 512, 81, 1),
+        ("LGDS", "copy16", 4000, 1, 512, 81, 0x11),
     ),
     8: (   # NXBT - nxbTabNew: rows at a simulated NXV2_COPY_DMA_MIN of 59
         ("E058", "copy8", 58, 131, 64, 59, 0),

@@ -120,6 +120,8 @@ class Events:
     copy_ldi_b: int = 0
     copy_dma_b: int = 0
     dst_exact_chunks: int = 0  # RUN/COPY chunk sized by vid_chunk_dst_flat .exact
+    cap_arm_chunks: int = 0    # RUN/COPY chunk whose cap test falls through at 241-255 (not .exact)
+    gap_hi_chunks: int = 0     # RUN/COPY body chunk on a gapped surface of height 241-255
     copy_src_chunks: int = 0   # COPY chunk sized through vid_chunk_src
     col_hops: int = 0          # vid_dst_norm_gap column hop
     dst_seams: int = 0         # vid_dst_next from a body normalize
@@ -315,8 +317,14 @@ class _Player:
     def chunk_dst(self, remain):
         # RUN/COPY dest step with the DMA cap
         if self.gapped:
+            if self.h > DMA_CHUNK:
+                self.ev.gap_hi_chunks += 1                   # room can pass the cap
+            if DMA_CHUNK < min(remain, self.dst_room()) <= 255:
+                self.ev.cap_arm_chunks += 1                  # 973-975: ret c falls through
             return min(remain, self.dst_room(), DMA_CHUNK)   # 958-975
         if self.D <= 0x5E:
+            if DMA_CHUNK < remain <= 255:
+                self.ev.cap_arm_chunks += 1                  # 942-945: ret c falls through
             return min(remain, DMA_CHUNK)                    # 931-945
         self.ev.dst_exact_chunks += 1                        # 946-956
         return min(remain, self.dst_room(), DMA_CHUNK)

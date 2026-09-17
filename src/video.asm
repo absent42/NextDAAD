@@ -5222,12 +5222,12 @@ nxbTabGapEnd:
 ; code 1) and cross the dest seam into the bank's second page.
 nxbTabLong:
     NXBROW "LF1K", VOP_COPY16, 1000, 7, 64, 81, 0
-    NXBROW "LF4K", VOP_COPY16, 4000, 1, 64, 81, 0
-    NXBROW "LF7K", VOP_COPY16, 7680, 1, 64, 81, 0
-    NXBROW "LFDS", VOP_COPY16, 7680, 1, 64, 81, $10
+    NXBROW "LF4K", VOP_COPY16, 4000, 1, 512, 81, 0
+    NXBROW "LF7K", VOP_COPY16, 7680, 1, 512, 81, 0
+    NXBROW "LFDS", VOP_COPY16, 7680, 1, 512, 81, $10
     NXBROW "LG1K", VOP_COPY16, 1000, 5, 64, 81, 1
-    NXBROW "LG4K", VOP_COPY16, 4000, 1, 64, 81, 1
-    NXBROW "LGDS", VOP_COPY16, 4000, 1, 64, 81, $11
+    NXBROW "LG4K", VOP_COPY16, 4000, 1, 512, 81, 1
+    NXBROW "LGDS", VOP_COPY16, 4000, 1, 512, 81, $11
     db 0
 nxbTabLongEnd:
     ASSERT nxbTabLongEnd - nxbTabLong <= 20 * NXB_ROW_LEN + 1

@@ -16,7 +16,9 @@ exact through the rules; each ruling prints its coefficient rounded up to
 0.1 T, so rounding never moves another term's fit.
 
 Usage: python tests/fit_gap_bench.py NXBENCH-Q.TXT (--anchor NXBENCH-D.TXT |
-       --no-anchor) [--last-log OK] [--anchor-log OK]
+       --no-anchor) [--launch-status [D:]hhhh=OK ...]
+--launch-status is the owner's note for each launch's last run, whose LOG
+status the file cannot hold, keyed by its #NXB stamp (D: for the anchor log).
 """
 import argparse
 import contextlib
@@ -48,8 +50,9 @@ LPF = bench.LINES_PER_FRAME
 TPL = bench.T_PER_LINE
 CLOCK_KHZ = 28000.0                 # S17: 28 MHz is the slowest core 3.02.04 clock
 FIELD_HZ = 49.36                    # +3 timing: 311 lines x 1824 T per field
-BAND_OP_T = 5.5                     # prices under: > 5.5 T below an op row
+BAND_OP_T = 5.5                     # prices under: > max(5.5 T, one line) below an op row
 BAND_SESS = 0.005                   # ... or > 0.5% below a session row
+PARALLEL_T_PER_B = 0.01             # S6/S7: lines closer in slope than this do not cross
 RESID_STOP = 0.03                   # S4: a residual above 3% of its row
 S3_TYPE_AGREE_T = 30.0              # S3: KS01-KS02 against KF01-FE01
 S7_LINE_AGREE_T = 5.5               # S7: F070/F071 against the NXBF lines
@@ -70,6 +73,7 @@ H_SPIN = 161                        # per-block spin overhead around the produce
 
 REPEAT_LINES = {"sweep": 2, "loop": 2}          # S0 repeat tolerance by row kind, else 1
 UNTIMED_KINDS = ("id", "ring", "remn")
+UNCOMPARED_KINDS = UNTIMED_KINDS + ("scan",)    # SCAN sums per-frame windows: informational
 
 # Part B standalone modes and Part C sessions (table, clip).
 STANDALONE = (3, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -92,8 +96,8 @@ S4_TERMS = ("copy_dma_setup", "copy_dma_path_t", "copy_body_ldi_t", "fill_dma_se
             "t_skip_pass", "edge_skip_t", "edge_run_t", "edge_copy_t", "dst_seam_t",
             "col_hop_t", "src_parity_seam_t", "src_bank_seam_t", "src_edge_t", "src_slow_hdr_t")
 S4_EXTENDED = ("gap_fast_t", "gap_bail_skip_t", "gap_bail_t", "slow_fetch_t", "slow_cmp_t",
-               "srcedge_t", "dst_exact_t", "src_exact_t", "gap_chunk_t", "src_wrap_t",
-               "fast_hop_skip_t", "fast_hop_run_t", "fast_hop_copy_t")
+               "srcedge_t", "dst_exact_t", "src_exact_t", "gap_chunk_t", "gap_chunk_hi_t",
+               "cap_arm_t", "src_wrap_t", "fast_hop_skip_t", "fast_hop_run_t", "fast_hop_copy_t")
 S4_MODES = (2, 3, 4, 5, 7, 12, 6, 10, 11)       # 6, 10, 11 carry the fast-hop and gapped terms
 S4_NXBE = ("C240", "C250", "Q240", "R240", "R250", "W240")
 S4_SYN = ("C4K0", "C4KP", "C4KB", "K24K", "K43K", "SE00", "SE01", "SE02", "C4KS", "C4KD")
@@ -106,11 +110,12 @@ FRAME_TERMS = ("frame_delta_t", "frame_middle_t", "frame_first_t", "frame_single
 
 
 class Stop(Exception):
-    """A STOP condition: the rule and what fired."""
+    """A STOP condition: the rule, what fired, and the rule's lines so far."""
 
-    def __init__(self, rule, lines):
+    def __init__(self, rule, lines, notes=None):
         self.rule = rule
         self.lines = [lines] if isinstance(lines, str) else list(lines)
+        self.notes = list(notes or [])
         self.printed = []
         super().__init__(f"{rule} STOP: " + "; ".join(self.lines))
 
@@ -148,6 +153,11 @@ def sigma_rep(row):
     return TPL / float(row[1])
 
 
+def op_band(row):
+    """An op row prices under past max(5.5 T, its own one-line resolution)."""
+    return max(BAND_OP_T, sigma_op(row))
+
+
 def line_bounds(xs, sigmas):
     """(intercept, slope) worst-case moves of a least-squares line under +-1
     line on every point."""
@@ -177,7 +187,11 @@ HAND = {
                        "ld a,e 5, add a,c 5, jr c 9, cp 9, jr c 9, jr z 9, sub 9, cp 9, jr nc taken 14, "
                        "ld a,(hl) 9, inc hl 7, ld b,0 9, jp 13 = 155, less vf_op_run8 .slow at the edge: "
                        "ld c,(hl) 9, inc hl 7, ld a,d 5, cp 9, jr nc taken 14, ld a,(hl) 9, inc hl 7, "
-                       "ld b,0 9, jp 13 = 82 (copy8: 158 - 89 = 69)"),
+                       "ld b,0 9, jp 13 = 82; vg_op_copy8 over 2+ columns: ld c,(hl) 9, inc hl 7, ld b,0 9, "
+                       "ld a,h 5, cp $DF 9, jr nc 9, ld a,c 5, cp 9, jr nc 9, ld a,e 5, add a,c 5, jr c 9, "
+                       "cp 9, jr c 9, jr z 9, sub 9, cp 9, jr nc taken 14, jp 13 = 162, less vf_op_copy8 edge: "
+                       "ld c,(hl) 9, inc hl 7, ld b,0 9, ld a,h 5, cp 9, jr nc 9, ld a,d 5, cp 9, "
+                       "jr nc taken 14, jp 13 = 89, also 73"),
     "slow_fetch_t": (99, "vid_slow_op .c16's second operand: call vid_fetch 20, jp vid_fetch_ram 13, "
                          "ld a,h 5, cp $E0 9, call nc 13, ld a,(hl) 9, inc hl 7, ret 13, ld b,a 5, "
                          "jr .cj taken 14 = 108, less .c8's ld b,0 9"),
@@ -191,23 +205,33 @@ HAND = {
     "src_wrap_t": (17, "vid_op_edge at H = $E0 over the $DFxx detour: jr c 9 (not 14) -5, call "
                        "vid_src_next 20 less the 7 the seam term carries +13, jr vid_next 14, "
                        "ld a,h 5, cp $DF 9, jr nc 9, less ld a,l 5, cp $FC 9, jr c taken 14"),
-    "dst_exact_t": (146, "vid_chunk_dst_flat .exact over the cap arm: jr nc taken +5, call "
-                         "vid_chunk_dst_nocap_flat 20, push hl 12, ld hl,$6000 13, or a 5, sbc hl,de 17, "
-                         "sbc hl,bc 17, jr nc 9, add hl,bc 12, ld b,h 5, ld c,l 5, pop hl 13, ret 13"),
+    "dst_exact_t": (161, "vid_chunk_dst_flat .exact over the cap arm, worst at BC >= 257 entering D = $5F "
+                         "with room 241-255: jr nc,.exact taken over not taken +5, call "
+                         "vid_chunk_dst_nocap_flat 20, its clip path push hl 12, ld hl,$6000 13, or a 5, "
+                         "sbc hl,de 17, sbc hl,bc 17, jr nc 9, add hl,bc 12, ld b,h 5, ld c,l 5, pop hl 13, "
+                         "ret 13 = 121, then ld a,b 5, or a 5, jr nz 9, ld a,c 5, cp 9, ret c 6, ld bc,240 13, "
+                         "ret 13 = 65, less the cap arm ld a,b 5, or a 5, jr nz taken 14, ld bc,240 13, "
+                         "ret 13 = 50"),
     "src_exact_t": (156, "vid_chunk_all into vid_chunk_src over ret c taken 14: ret c 6, jp 13, push hl 12, "
                          "push de 12, ex de,hl 5, ld hl,$E000 13, or a 5, sbc hl,de 17, sbc hl,bc 17, "
                          "jr nc 9, add hl,bc 12, ld b,h 5, ld c,l 5, pop de 13, pop hl 13, ret 13 = 170"),
-    "gap_chunk_t": (47, "gapped RUN/COPY body chunk over flat: vid_dst_norm_gap ld a,height 9, cp e 5, "
-                        "jr nz taken 14 = +28; vid_chunk_dst_gap room < count: ld a,height 9, sub e 5, inc b 5, "
-                        "dec b 5, jr nz 9, cp c 5, jr nc 9, ld c,a 5, ld b,0 9, ld a,c 5, cp 9, ret c 14 = 89, "
-                        "less vid_chunk_dst_flat: ld a,d 5, cp 9, jr nc 9, ld a,b 5, or a 5, jr nz 9, "
-                        "ld a,c 5, cp 9, ret c 14 = 70, +19"),
+    "gap_chunk_t": (47, "gapped RUN/COPY body chunk over flat, height 1-240: vid_dst_norm_gap ld a,height 9, "
+                        "cp e 5, jr nz taken 14 = +28; vid_chunk_dst_gap room < count: ld a,height 9, sub e 5, "
+                        "inc b 5, dec b 5, jr nz 9, cp c 5, jr nc 9, ld c,a 5, ld b,0 9, ld a,c 5, cp 9, "
+                        "ret c 14 = 89, less vid_chunk_dst_flat: ld a,d 5, cp 9, jr nc 9, ld a,b 5, or a 5, "
+                        "jr nz 9, ld a,c 5, cp 9, ret c 14 = 70, +19 (room >= count 80 - 70, count >= 256 "
+                        "80 - 73)"),
+    "gap_chunk_hi_t": (47, "height 241-255: the same instructions as gap_chunk_t; a room of 241-255 adds only "
+                           "the cap arm, priced by cap_arm_t (count >= 256 98 = 80 + 18, room >= count "
+                           "98 = 80 + 18, room < count 107 = 89 + 18), so +28 + 19"),
+    "cap_arm_t": (18, "cap test falling through at C = 241-255 (vid_chunk_dst_flat 942-945, vid_chunk_dst_gap "
+                      "973-975): ret c not taken 6 over taken 14 = -8, ld bc,240 13, ret 13"),
 }
 
 # ---------------------------------------------------------------------------
-# Every Events counter maps to terms or is zero-cost. "gap:"/"strm:" apply on gapped
-# or streamed surfaces, "@8"/"@16" name the width S2/S4 may split, FETCH takes
-# fetch_short or fetch_long by the op's length.
+# Every Events counter maps to terms or is zero-cost. "gap:"/"strm:" apply on gapped or
+# streamed surfaces, "gaplo:" on gapped heights up to 240, "@8"/"@16" name the width S2/S4
+# may split, FETCH takes fetch_short or fetch_long by the op's length.
 # ---------------------------------------------------------------------------
 FETCH = "fetch"
 COUNTER_TERMS = {
@@ -242,19 +266,21 @@ COUNTER_TERMS = {
     "run_fast_b": ("fill_cpu",),
     "copy_fast_b": (FETCH,),
     "skip_passes": ("t_skip_pass",),
-    "run_cpu_chunks8": ("fill_body_cpu_t@8", "gap:gap_chunk_t"),
-    "run_cpu_chunks16": ("fill_body_cpu_t@16", "gap:gap_chunk_t"),
-    "run_dma_chunks8": ("fill_dma_setup", "gap:gap_chunk_t"),
-    "run_dma_chunks16": ("fill_dma_setup", "gap:gap_chunk_t"),
-    "copy_ldi_chunks8": ("copy_body_ldi_t@8", "gap:gap_chunk_t"),
-    "copy_ldi_chunks16": ("copy_body_ldi_t@16", "gap:gap_chunk_t"),
-    "copy_dma_chunks8": ("copy_dma_setup", "gap:gap_chunk_t"),
-    "copy_dma_chunks16": ("copy_dma_setup", "gap:gap_chunk_t"),
+    "run_cpu_chunks8": ("fill_body_cpu_t@8", "gaplo:gap_chunk_t"),
+    "run_cpu_chunks16": ("fill_body_cpu_t@16", "gaplo:gap_chunk_t"),
+    "run_dma_chunks8": ("fill_dma_setup", "gaplo:gap_chunk_t"),
+    "run_dma_chunks16": ("fill_dma_setup", "gaplo:gap_chunk_t"),
+    "copy_ldi_chunks8": ("copy_body_ldi_t@8", "gaplo:gap_chunk_t"),
+    "copy_ldi_chunks16": ("copy_body_ldi_t@16", "gaplo:gap_chunk_t"),
+    "copy_dma_chunks8": ("copy_dma_setup", "gaplo:gap_chunk_t"),
+    "copy_dma_chunks16": ("copy_dma_setup", "gaplo:gap_chunk_t"),
     "run_cpu_b": ("fill_cpu",),
     "run_dma_b": ("fill_dma_per_b",),
     "copy_ldi_b": (FETCH,),
     "copy_dma_b": ("copy_dma_per_b",),
     "dst_exact_chunks": ("dst_exact_t",),
+    "cap_arm_chunks": ("cap_arm_t",),
+    "gap_hi_chunks": ("gap_chunk_hi_t",),
     "copy_src_chunks": ("src_exact_t",),
     "col_hops": ("col_hop_t",),
     "dst_seams": ("dst_seam_t",),
@@ -288,9 +314,9 @@ assert {k for k, v in COUNTER_TERMS.items() if not v} == set(ZERO_COST)
 
 
 def _resolve(term, split):
-    """'x_t@8' -> x_t, or x8_t when x_t is split; a gap:/strm: prefix is kept."""
+    """'x_t@8' -> x_t, or x8_t when x_t is split; a gap:/gaplo:/strm: prefix is kept."""
     pre = ""
-    if term.startswith(("gap:", "strm:")):
+    if term.startswith(("gap:", "gaplo:", "strm:")):
         pre, term = term.split(":", 1)
         pre += ":"
     if "@" in term:
@@ -319,6 +345,7 @@ def counter_map_lines(split=()):
 def term_counts(ev, surface, streaming=False, long_b=0, rem_ops=0, split=()):
     """Events -> Counter {term: count}."""
     gapped = bool(surface[2])
+    low = gapped and int(surface[1]) <= sim.DMA_CHUNK
     out = Counter()
     fetch_b = 0
     for name, count in ev.as_dict().items():
@@ -330,6 +357,10 @@ def term_counts(ev, surface, streaming=False, long_b=0, rem_ops=0, split=()):
                 if not gapped:
                     continue
                 term = term[4:]
+            elif term.startswith("gaplo:"):
+                if not low:
+                    continue
+                term = term[6:]
             elif term.startswith("strm:"):
                 if not streaming:
                     continue
@@ -700,9 +731,28 @@ def _compare(label, tag, first, later, tol, slips, fail):
     return first
 
 
-def s0(q_text, d_text=None, *, no_anchor=False, last_log=None, anchor_log=None,
+def launch_key(text):
+    """'71A4=OK', 'D:0200=ERR 60' or '#12=OK' (typed text, run number) ->
+    ((log, stamp or '#n'), status)."""
+    key, _eq, status = text.partition("=")
+    log = "Q"
+    if key.upper().startswith("D:"):
+        log, key = "D", key[2:]
+    if not status or not re.fullmatch(r"#\d+|[0-9A-Fa-f]{1,4}", key):
+        raise ValueError(f"--launch-status {text!r}: want [D:]hhhh=OK, [D:]hhhh=ERR xx or [D:]#n=OK")
+    return (log, key if key.startswith("#") else int(key, 16)), status.strip().upper()
+
+
+def _launch_name(log, key):
+    return ("D:" if log == "D" else "") + (key if isinstance(key, str) else f"{key:04X}")
+
+
+def s0(q_text, d_text=None, *, no_anchor=False, launch_status=None,
        sessions=SESSIONS, standalone=STANDALONE):
-    """S0 - integrity. -> (Sitting, lines); Stop naming every failure."""
+    """S0 - integrity.
+    -> (Sitting, lines); a Stop names every failure. launch_status: {(log, stamp
+    or '#n'): status}, the owner's note for each run whose LOG status the file
+    cannot hold."""
     lines, fail, slips = [], [], []
     runs = blog.parse(q_text)
     if not runs:
@@ -717,14 +767,23 @@ def s0(q_text, d_text=None, *, no_anchor=False, last_log=None, anchor_log=None,
     else:
         lines.append("D-image NXBC anchor check skipped: no --anchor log")
         fail.append("S0's D-image check needs --anchor NXBENCH-D.TXT")
-    for group, note, name in ((runs, last_log, "--last-log"), (d_runs, anchor_log, "--anchor-log")):
-        if group and group[-1].log is None:
-            if note:
-                group[-1].log = note.upper()
-                lines.append(f"{_label(group[-1])}: LOG {group[-1].log} from the owner's note ({name})")
-            else:
-                fail.append(f"{_label(group[-1])}: the last run's LOG status is not in the file; "
-                            f"give the owner's note with {name}")
+    notes, used = dict(launch_status or {}), set()
+    for log, group in (("Q", runs), ("D", d_runs)):
+        for i, run in enumerate(group):
+            if run.log is not None:
+                continue
+            key = (log, run.stamp if run.stamp is not None else f"#{i + 1}")
+            name = _launch_name(*key)
+            if key not in notes:
+                fail.append(f"{_label(run)}: its LOG status is not in the file (a launch's last run); "
+                            f"give the owner's note with --launch-status {name}=OK")
+                continue
+            used.add(key)
+            run.log = notes[key]
+            lines.append(f"{_label(run)}: LOG {run.log} from the owner's launch note ({name})")
+    for key in sorted(set(notes) - used, key=str):
+        fail.append(f"--launch-status {_launch_name(*key)}: names no run whose LOG status the file "
+                    f"cannot hold")
 
     # per-run integrity
     trusted = []
@@ -736,9 +795,10 @@ def s0(q_text, d_text=None, *, no_anchor=False, last_log=None, anchor_log=None,
         bad += [f"parser warning: {w}" for w in run.warnings]
         if run.dropped:
             bad.append(f"rows of another table on screen: {[g[0] for g in run.dropped]}")
+        if run.log is None:
+            continue                       # no launch note: failed above
         if run.log != "OK":
-            bad.append("LOG status unknown (a relaunch followed it)" if run.log is None
-                       else f"LOG {run.log}: untrusted, excluded")
+            bad.append(f"LOG {run.log}: untrusted, excluded")
         if bad:
             fail += [f"{where}: {b}" for b in bad]
             continue
@@ -827,9 +887,7 @@ def s0(q_text, d_text=None, *, no_anchor=False, last_log=None, anchor_log=None,
 
     lines += [f"clock slip recorded: {s}" for s in slips]
     if fail:
-        stop = Stop("S0", fail)
-        stop.notes = lines
-        raise stop
+        raise Stop("S0", fail, lines)
     lines.append(f"{len(runs)} Q runs, {len(d_runs)} D runs: every LOG OK, ERR=00, identity and "
                  f"repeats within tolerance")
     return Sitting(rows, built, anchor), lines
@@ -904,7 +962,7 @@ def _s0_session_repeat(first, later, slips, fail):
     kinds = _row_kinds(first.table)
     where = f"{_label(later.run)} (repeat)"
     for tag, row in later.rows.items():
-        if tag not in first.rows or kinds[tag] in UNTIMED_KINDS or tag in first.invalid:
+        if tag not in first.rows or kinds[tag] in UNCOMPARED_KINDS or tag in first.invalid:
             continue
         if row[0] != first.rows[tag][0]:
             if kinds[tag] == "frame":
@@ -926,7 +984,8 @@ S1_FIT_TAGS = ("SK00", "S160", "RU01", "RU17", "CP01", "CP17", "R161", "C161", "
 
 def s1(sit, v):
     """S1 - envelopes and slopes.
-    fit_tmodel.fit on the Q rows; an intercept is raised until no row prices under."""
+    fit_tmodel.fit on the Q rows; an intercept is raised until none of its rows
+    prices under (by more than max(5.5 T, one line of the row))."""
     T = sit.T
     bench.ROWS["_sitting5q"] = {tag: sit.rows[tag] for tag in S1_FIT_TAGS}
     try:
@@ -941,11 +1000,7 @@ def s1(sit, v):
         a, b, worst = lsq(pts)
         if abs(a - fit[icpt]) > 1e-6 or abs(b - fit[slope]) > 1e-9:
             raise AssertionError(f"S1 {name} line differs from fit_tmodel.fit")
-        if worst > fit_tmodel.RESIDUAL_LIMIT:
-            raise Stop("S1", f"{name} line REFUSED: worst residual {worst:.1f} T over "
-                             f"{fit_tmodel.RESIDUAL_LIMIT} T {tags}")
-        short = max(y - (a + b * x) for x, y in pts)
-        lift = max(0.0, short - BAND_OP_T)
+        lift = max(0.0, max(y - (a + b * x) - op_band(sit.rows[t]) for (x, y), t in zip(pts, tags)))
         if lift:
             raises[icpt] = lift
         out[icpt], out[slope] = a + lift, b
@@ -987,13 +1042,16 @@ def s1(sit, v):
 def s2(sit, v):
     """S2 - the 8-bit body chunk-pass estimates S4 checks its values against."""
     T = sit.T
-    ldi = T("C250") - T("C240") - 10 * v["fetch_long"]
-    cpu = T("R250") - T("R240") - 10 * v["fill_cpu"]
+    arm = HAND["cap_arm_t"][0]            # C250/R250's 250 B first chunk takes the cap arm
+    ldi = T("C250") - T("C240") - 10 * v["fetch_long"] - arm
+    cpu = T("R250") - T("R240") - 10 * v["fill_cpu"] - arm
     lines = [ruling(f"8-bit copy_body_ldi_t estimate {ldi:.1f} T",
-                    f"T(C250) {T('C250'):.2f} - T(C240) {T('C240'):.2f} - 10 x fetch_long {v['fetch_long']:.4f}",
+                    f"T(C250) {T('C250'):.2f} - T(C240) {T('C240'):.2f} - 10 x fetch_long {v['fetch_long']:.4f} "
+                    f"- cap_arm_t {arm}",
                     "a check only: S4 splits 8/16-bit when its value differs by more than 5.5 T"),
              ruling(f"8-bit fill_body_cpu_t estimate {cpu:.1f} T",
-                    f"T(R250) {T('R250'):.2f} - T(R240) {T('R240'):.2f} - 10 x fill_cpu {v['fill_cpu']:.4f}",
+                    f"T(R250) {T('R250'):.2f} - T(R240) {T('R240'):.2f} - 10 x fill_cpu {v['fill_cpu']:.4f} "
+                    f"- cap_arm_t {arm}",
                     "a check only: S4 splits 8/16-bit when its value differs by more than 5.5 T")]
     return {"s2_ldi8": ldi, "s2_cpu8": cpu}, lines
 
@@ -1003,7 +1061,7 @@ def s3(sit, v):
     lines, out, fail, bounds = [], {}, [], {}
     synth = sit.of("SYN") + sit.of("SYS")
     if not synth:
-        raise Stop("S3", "no SYN or SYS session")
+        raise Stop("S3", "no SYN or SYS session", lines)
     diffs = {"frame_delta_t": "FE00", "frame_middle_t": "FE01", "frame_first_t": "KS02",
              "frame_single_t": "KS01", "frame_last_t": "KF01"}
     for s in synth:
@@ -1014,7 +1072,7 @@ def s3(sit, v):
             fail.append(f"{s.label}: KS01-KS02 {a:.1f} and KF01-FE01 {b:.1f} differ by {a - b:+.1f} T "
                         f"(over {S3_TYPE_AGREE_T:.0f})")
     if fail:
-        raise Stop("S3", fail)
+        raise Stop("S3", fail, lines)
     for term, tag in diffs.items():
         per = {s.label: s.T(tag) - s.T("NUL0") for s in synth}
         worst = max(per, key=per.get)
@@ -1040,7 +1098,7 @@ def s3(sit, v):
         for s in sit.of("REAL", delivery):
             n = s.rows["LOOP"][0]
             if s.rows["WL16"][0] != n:
-                raise Stop("S3", f"{s.label}: LOOP O={n} and WL16 O={s.rows['WL16'][0]} differ")
+                raise Stop("S3", f"{s.label}: LOOP O={n} and WL16 O={s.rows['WL16'][0]} differ", lines)
             g = ((s.T("LOOP") - s.T("WL16") - n * s.T("AUD1")) / n + (s.T("PACE") - H_PACE)
                  - H_STUB + H_AUDREP + H_SKIP[delivery])
             per[s.label] = g
@@ -1048,7 +1106,7 @@ def s3(sit, v):
                                (sigma_rep(s.rows["LOOP"]) + sigma_rep(s.rows["WL16"])) / n
                                + sigma_rep(s.rows["AUD1"]) + sigma_rep(s.rows["PACE"]))
         if not per:
-            raise Stop("S3", f"no {delivery} REAL session for {name}")
+            raise Stop("S3", f"no {delivery} REAL session for {name}", lines)
         out[name] = max(per.values())
         lines.append(ruling(f"{name} {ceil01(out[name])} T",
                             f"max over {delivery} REAL of (T(LOOP) - T(WL16) - n x T(AUD1)) / n + "
@@ -1081,7 +1139,7 @@ def _s4_rows(sit, split):
                 continue
             row = sit.rows[tag]
             rows.append(S4Row(tag, standalone_counts(tag, split), t_op(row), TPL / float(r * o),
-                              BAND_OP_T, t_op(row), mode in (6, 10) or tag in S4_COL_SCORED))
+                              op_band(row), t_op(row), mode in (6, 10) or tag in S4_COL_SCORED))
     for s in sit.of("SYN"):
         reps = _reps_of("SYN")
         for tag in S4_SYN:
@@ -1181,30 +1239,39 @@ def s4(sit, v):
     split = set(v.get("split", ()))
     held = {t: v[t] for t in S1_TERMS}
     held[REM_TERM] = 0.0
-    for _round in range(3):
-        unknowns = []
-        for t in S4_TERMS + S4_EXTENDED:
-            if t in split:
-                unknowns += [t[:-2] + "8_t", t[:-2] + "16_t"]
-            else:
-                unknowns.append(t)
-        rows = _s4_rows(sit, split)
-        fitted, bound, hand = _s4_solve(rows, held, unknowns, {t: v["bounds"][t] for t in S1_TERMS})
-        values = {**held, **fitted, **{t: HAND[t][0] for t in hand}}
-        raises = {}
-        _s4_raise(rows, values, set(fitted), raises)
-        new_split = set(split)
-        for term, est in SPLITTABLE.items():
-            if term in split:
-                continue
-            if abs(values[term] - v[est]) > BAND_OP_T:
-                new_split.add(term)
-        if new_split == split:
-            break
-        split = new_split
-    else:
-        raise Stop("S4", "the 8/16-bit split did not settle")
     lines = ["counter-to-term map:"] + counter_map_lines(split)
+    try:
+        for round_ in range(1, 4):
+            unknowns = []
+            for t in S4_TERMS + S4_EXTENDED:
+                if t in split:
+                    unknowns += [t[:-2] + "8_t", t[:-2] + "16_t"]
+                else:
+                    unknowns.append(t)
+            rows = _s4_rows(sit, split)
+            fitted, bound, hand = _s4_solve(rows, held, unknowns, {t: v["bounds"][t] for t in S1_TERMS})
+            values = {**held, **fitted, **{t: HAND[t][0] for t in hand}}
+            under = [(r.T - price(r.counts, values) - r.band, r) for r in rows]
+            under = sorted(((ex, r) for ex, r in under if ex > 1e-9), key=lambda p: -p[0])
+            lines.append(f"fit {round_}: {len(under)} rows price under before any raise"
+                         + "".join(f"; {r.label} {ex:+.1f} T over its {r.band:.1f} T band" for ex, r in under))
+            raises = {}
+            _s4_raise(rows, values, set(fitted), raises)
+            new_split = set(split)
+            for term, est in SPLITTABLE.items():
+                if term in split:
+                    continue
+                if abs(values[term] - v[est]) > BAND_OP_T:
+                    new_split.add(term)
+            if new_split == split:
+                break
+            split = new_split
+            lines += ["counter-to-term map after the split:"] + counter_map_lines(split)
+        else:
+            raise Stop("S4", "the 8/16-bit split did not settle")
+    except Stop as stop:
+        stop.notes = lines + stop.notes
+        raise
     for term in SPLITTABLE:
         if term in split:
             lines.append(f"S2 check: {term} 8-bit estimate {v[SPLITTABLE[term]]:.1f} T differs from the joint "
@@ -1218,12 +1285,13 @@ def s4(sit, v):
     for tag in S4_TAILS:
         c = standalone_counts(tag, split)
         tails[tag] = (sit.T(tag), c)
+    tband = {tag: op_band(sit.rows[tag]) for tag in S4_TAILS}
     short = {tag: T - price(c, values) for tag, (T, c) in tails.items()}
-    rem = [short[t] for t in ("T299", "T300", "T320") if short[t] > BAND_OP_T]
+    rem = [short[t] for t in ("T299", "T300", "T320") if short[t] > tband[t]]
     if rem:
         values[REM_TERM] = max(rem)
         lines.append(f"tail check: {REM_TERM} = {max(rem):.1f} T, the largest shortfall of T299/T300/T320")
-    if short["T298"] > BAND_OP_T:
+    if short["T298"] > tband["T298"]:
         ldi = "copy_body_ldi16_t" if "copy_body_ldi_t" in split else "copy_body_ldi_t"
         values[ldi] += short["T298"]
         raises[ldi] = raises.get(ldi, 0.0) + short["T298"]
@@ -1247,7 +1315,7 @@ def s4(sit, v):
     # residuals, after every raise
     lines.append("residuals (measured - model, T):")
     bad = []
-    for r in rows + [S4Row(t, c, T, 0, BAND_OP_T, T, False) for t, (T, c) in tails.items()]:
+    for r in rows + [S4Row(t, c, T, 0, tband[t], T, False) for t, (T, c) in tails.items()]:
         m = price(r.counts, values)
         pct = 100.0 * (r.T - m) / r.base
         lines.append(f"  {r.label:<14} measured {r.T:11.1f} model {m:11.1f} residual {r.T - m:+9.1f} "
@@ -1258,11 +1326,11 @@ def s4(sit, v):
     for t, amount in sorted(raises.items()):
         lines.append(f"raise: {t} +{amount:.2f} T")
     if bad:
-        raise Stop("S4", bad)
+        raise Stop("S4", bad, lines)
 
     sys_, syn = sit.of("SYS"), [s for s in sit.of("SYN") if s.clip == 1] or sit.of("SYN")
     if not sys_ or not syn:
-        raise Stop("S4", "src_seam_strm_t needs a SYS session and SYN 001")
+        raise Stop("S4", "src_seam_strm_t needs a SYS session and SYN 001", lines)
     a = sys_[0].T("C4KP") - sys_[0].T("C4K0")
     b = syn[0].T("C4KP") - syn[0].T("C4K0")
     values["src_seam_strm_t"] = max(0.0, a - b)
@@ -1293,7 +1361,7 @@ def s5(sit, v):
                     continue
                 ratios.append((s.T(u) / s.T(a), f"{s.label} {u}/{a}"))
     if not ratios:
-        raise Stop("S5", "no armed pairs")
+        raise Stop("S5", "no armed pairs", lines)
     low, where = min(ratios)
     af = math.floor(100.0 * low) / 100.0
     lines.append(ruling(f"audio_factor {af}", f"floor(100 x min over {len(ratios)} ratios) / 100; "
@@ -1301,14 +1369,30 @@ def s5(sit, v):
     return {"audio_factor": af}, lines
 
 
-def _h144_crossover(sit):
+def crossover(rule, name, cpu, dma, lines):
+    """L* where the CPU/LDI line a + bL meets the DMA line c + sL; a Stop when
+    the lines are near-parallel or meet outside 1..255."""
+    a, b = cpu[:2]
+    c, s = dma[:2]
+    if abs(b - s) < PARALLEL_T_PER_B:
+        raise Stop(rule, f"{name}: the lines are near-parallel ({b:.4f} and {s:.4f} T/B)", lines)
+    x = (c - a) / (b - s)
+    if not 1.0 <= x <= 255.0:
+        raise Stop(rule, f"{name}: the lines meet at {x:.1f} B, outside 1..255", lines)
+    return x
+
+
+def search_range(xs):
+    """[floor(min), ceil(max)] clamped to 1..255."""
+    return max(1, math.floor(min(xs))), min(255, math.ceil(max(xs)))
+
+
+def _h144_crossover(sit, lines=None):
     ldi = [(bench._row(t)[2], sit.T(t)) for t in (r[0] for r in bench.BENCH_TABLES[10]) if t.startswith("HL")]
     dma = [(bench._row(t)[2], sit.T(t)) for t in (r[0] for r in bench.BENCH_TABLES[10]) if t.startswith("HD")]
     ldi = [p for p in ldi if 144 % p[0]]
     dma = [p for p in dma if 144 % p[0]]
-    a, b, _w = lsq(ldi)
-    c, s, _w2 = lsq(dma)
-    return (c - a) / (b - s)
+    return crossover("S6", "L*_g144", lsq(ldi), lsq(dma), lines)
 
 
 def _nearest(grid, x):
@@ -1324,16 +1408,21 @@ def s6(sit, v):
     """S6 - the COPY threshold."""
     lines = []
     rows = {t: sit.rows[t] for t in fct.FLAT_TAGS | fct.GAPPED_TAGS}
-    res = fct.fit(rows)
+    try:
+        res = fct.fit(rows)
+    except ValueError as exc:
+        raise Stop("S6", f"NXBX fit: {exc}", lines)
     if "error" in res["gapped"]:
-        raise Stop("S6", f"NXBG fit: {res['gapped']['error']}")
-    cross = {"flat": res["crossover"], "g192": res["gapped"]["crossover"], "g144": _h144_crossover(sit)}
+        raise Stop("S6", f"NXBG fit: {res['gapped']['error']}", lines)
+    cross = {"flat": crossover("S6", "L*_flat", res["ldi"], res["dma"], lines),
+             "g192": crossover("S6", "L*_g192", res["gapped"]["ldi"], res["gapped"]["dma"], lines),
+             "g144": _h144_crossover(sit, lines)}
     lines.append(ruling("crossovers " + ", ".join(f"L*_{k} {x:.2f} B" for k, x in cross.items()),
                         "fit_copy_threshold lines on Q NXBX and NXBG; NXBH HL/HD lines (L dividing the "
                         "height excluded)", "the search range misses the optimum"))
 
     def model_n(xs, clips):
-        lo, hi = math.floor(min(xs)), math.ceil(max(xs))
+        lo, hi = search_range(xs)
         totals = {}
         for n in range(lo, hi + 1):
             totals[n] = model_total(v, clips, lambda surf, n=n: n, bench.NXB_RUN_REF, sit.streaming_of)
@@ -1400,25 +1489,27 @@ def s7(sit, v):
         d_pts = [(r[2], sit.T(r[0])) for r in rows11 if r[0].startswith(dma)]
         a, b, wc = lsq(c_pts)
         c, s, wd = lsq(d_pts)
-        lines_fit[name] = (a, b, c, s, (c - a) / (b - s))
+        x = crossover("S7", f"NXBF {name} L*", (a, b), (c, s), lines)
+        lines_fit[name] = (a, b, c, s, x)
         lines.append(f"NXBF {name}: CPU {a:.2f} + {b:.4f} L (worst {wc:.2f}), DMA {c:.2f} + {s:.4f} L "
-                     f"(worst {wd:.2f}), L* {(c - a) / (b - s):.2f} B")
+                     f"(worst {wd:.2f}), L* {x:.2f} B")
     a, b, c, s, _x = lines_fit["flat"]
     f70, f71 = sit.T("F070") - (a + 70 * b), sit.T("F071") - (c + 71 * s)
     lines.append(f"NXBK against the flat lines: F070 {f70:+.2f} T, F071 {f71:+.2f} T")
     if abs(f70) > S7_LINE_AGREE_T or abs(f71) > S7_LINE_AGREE_T:
         raise Stop("S7", f"NXBK F070 {f70:+.2f} T / F071 {f71:+.2f} T off the NXBF flat lines "
-                         f"(over {S7_LINE_AGREE_T} T)")
+                         f"(over {S7_LINE_AGREE_T} T)", lines)
     xs = [lines_fit["flat"][4], lines_fit["gapped"][4]]
+    lo, hi = search_range(xs)
     totals = {}
-    for m in range(math.floor(min(xs)), math.ceil(max(xs)) + 1):
+    for m in range(lo, hi + 1):
         totals[m] = model_total(v, MODEL_CLIPS, _copy_of(v), m, sit.streaming_of)
     low = min(totals.values())
     m = min((k for k, x in totals.items() if x == low), key=lambda k: (abs(k - bench.NXB_RUN_REF), -k))
     keep = abs(m - bench.NXB_RUN_REF) <= 1
     value = bench.NXB_RUN_REF if keep else m
     lines.append("model decode T over 001-009 at RUN M: " + ", ".join(f"{k} {x:.0f}" for k, x in totals.items()))
-    lines.append(ruling(f"NXV2_RUN_DMA_MIN {value}", f"M {m} over [{math.floor(min(xs))}, {math.ceil(max(xs))}], "
+    lines.append(ruling(f"NXV2_RUN_DMA_MIN {value}", f"M {m} over [{lo}, {hi}], "
                         f"a tie taking the minimiser nearest 71 "
                         f"(L*_rf {xs[0]:.2f}, L*_rg {xs[1]:.2f}); |M - 71| {abs(m - 71)} "
                         f"{'<= 1 keeps 71' if keep else '> 1 moves'}", "fills near the crossover take the dearer kernel"))
@@ -1446,7 +1537,7 @@ def s8(sit, v):
     for cls, clips in S8_CLASSES.items():
         got = [x for c in clips for x in per.get(c, [])]
         if not got:
-            raise Stop("S8", f"no REAL session in the {cls} class")
+            raise Stop("S8", f"no REAL session in the {cls} class", lines)
         rmax, where = max(got)
         sessions = [s for s in sit.of("REAL") if s.clip in clips]
         aaud = max(s.T("AAUD") for s in sessions)
@@ -1497,7 +1588,7 @@ def s9(sit, v):
                             "streamed clips' busy time misprices"))
     for key in ("flat_256", "flat_320", "gapped"):
         if key not in anchors:
-            raise Stop("S9", f"no REAL session anchors class {key}")
+            raise Stop("S9", f"no REAL session anchors class {key}", lines)
     return {"silicon_r": anchors}, lines
 
 
@@ -1596,7 +1687,7 @@ def s12(sit, v):
     pools = {s.label: s.rows["RING"][3] for key, s in sorted(sit.sessions.items())
              if s.delivery == "resident" and "RING" in s.rows}
     if not pools:
-        raise Stop("S12", "no resident session RING row")
+        raise Stop("S12", "no resident session RING row", lines)
     low = min(pools.values())
     banks = min(low + 1 - 1 - 5, POOL_CAP_BANKS)
     out["STREAM_RESIDENT_POOL_B"] = banks * BANK_B
@@ -1633,7 +1724,7 @@ def s14(sit, v):
         ex, s, tag, c = worst
         term = "col_hop_t" if s.surface[2] else "dst_seam_t"
         if not c.get(term):
-            raise Stop("S14", f"{s.label} {tag} prices {ex:.1f} T under with no {term} event to raise")
+            raise Stop("S14", f"{s.label} {tag} prices {ex:.1f} T under with no {term} event to raise", lines)
         step = ex / c[term]
         values[term] += step
         raises[term] = raises.get(term, 0.0) + step
@@ -1666,14 +1757,14 @@ def s15(sit, v):
         apad = -(-s.hdr["audio_bytes_per_frame"] // 512) * 512
         sizes = {apad + -(-frames[i].nbytes // 512) * 512 for i in armed_frames}
         if len(sizes) != 1:
-            raise Stop("S15", f"{s.label}: ADSW frames have section sizes {sorted(sizes)}")
+            raise Stop("S15", f"{s.label}: ADSW frames have section sizes {sorted(sizes)}", lines)
         n = s.rows["ADSW"][0]
         cols = 320 if s.surface[2] else 0
         t_frame = s.T("ADSW") / n
         pts.append((s, sizes.pop(), cols, t_frame))
         lines.append(f"{s.label}: T(ADSW) / {n} = {t_frame:.0f} T, {pts[-1][1]} B, {cols} columns")
     if len(pts) < 3:
-        raise Stop("S15", f"{len(pts)} DS1 sessions, three terms")
+        raise Stop("S15", f"{len(pts)} DS1 sessions, three terms", lines)
     A = np.array([[b, c, 1.0] for _s, b, c, _t in pts])
     y = np.array([t for *_x, t in pts])
     x, *_rest = np.linalg.lstsq(A, y, rcond=None)
@@ -1683,7 +1774,8 @@ def s15(sit, v):
     worst = max(abs(r) / t for r, t in zip(resid, y))
     lines.append("fit residuals: " + ", ".join(f"{s.label} {r:+.0f} T" for (s, *_x), r in zip(pts, resid)))
     if worst > S15_RESID_STOP:
-        raise Stop("S15", f"worst residual {100 * worst:.2f}% of its frame (over {100 * S15_RESID_STOP:.0f}%)")
+        raise Stop("S15", f"worst residual {100 * worst:.2f}% of its frame (over {100 * S15_RESID_STOP:.0f}%)",
+                   lines)
     names = ("DIRECT_T_PER_B", "DIRECT_COL_T", "DIRECT_FRAME_T")
     vals = dict(zip(names, x))
     lift = max(0.0, max(t - (b * vals[names[0]] + c * vals[names[1]] + vals[names[2]]) - BAND_SESS * t
@@ -1741,22 +1833,24 @@ def apply_rules(q_text, d_text=None, out=None, **s0_opts):
     they are ruled; a Stop carries them in .printed."""
     printed = out if out is not None else []
     v = {}
+
+    def heading(name, rule):
+        return f"== {name} - {rule.__doc__.split(' - ', 1)[1].split(chr(10))[0].rstrip('.')} =="
+
+    name, rule = "S0", s0
     try:
         sit, lines = s0(q_text, d_text, **s0_opts)
-        printed.append("== S0 - integrity ==")
-        printed += lines
+        printed += [heading(name, rule)] + lines
         for name, rule in RULES:
             new, lines = rule(sit, v)
             v.setdefault("bounds", {}).update(new.pop("bounds", {}))
             v.setdefault("raises", {})[name] = new.pop("raises", {})
-            printed.append(f"== {name} - {rule.__doc__.split(' - ', 1)[1].split(chr(10))[0].rstrip('.')} ==")
-            printed += lines
+            printed += [heading(name, rule)] + lines
             v.update(new)
         printed.append("== ruled coefficients, rounded up to 0.1 T ==")
         printed += [f"  {k} {x}" for k, x in ruled_coefficients(v).items()]
     except Stop as stop:
-        if stop.rule == "S0" and getattr(stop, "notes", None):
-            printed += ["== S0 - integrity =="] + stop.notes
+        printed += [heading(name, rule)] + stop.notes
         stop.printed = printed
         raise
     return v, sit
@@ -1767,15 +1861,18 @@ def main(argv=None):
     ap.add_argument("q_log")
     ap.add_argument("--anchor", help="NXBENCH-D.TXT, the standard DEBUG image's NXBC")
     ap.add_argument("--no-anchor", action="store_true", help="skip S0's D-image check (testing only)")
-    ap.add_argument("--last-log", help="the owner's Part E note of the last Q run's LOG status")
-    ap.add_argument("--anchor-log", help="the owner's note of the D run's LOG status")
+    ap.add_argument("--launch-status", action="append", default=[], metavar="[D:]hhhh=OK",
+                    help="the owner's note for a launch's last run, by its #NXB stamp (D: the anchor log)")
     args = ap.parse_args(argv)
+    try:
+        notes = dict(launch_key(item) for item in args.launch_status)
+    except ValueError as exc:
+        ap.error(str(exc))
     q_text = Path(args.q_log).read_text(encoding="latin-1")
     d_text = Path(args.anchor).read_text(encoding="latin-1") if args.anchor else None
     printed = []
     try:
-        apply_rules(q_text, d_text, out=printed, no_anchor=args.no_anchor,
-                    last_log=args.last_log, anchor_log=args.anchor_log)
+        apply_rules(q_text, d_text, out=printed, no_anchor=args.no_anchor, launch_status=notes)
     except Stop as stop:
         if printed:
             print("\n".join(printed))
