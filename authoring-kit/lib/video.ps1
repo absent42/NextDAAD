@@ -104,7 +104,7 @@ if (-not $sources) { exit 0 }
 # 4x4 local-mean PSNR (STALE_LM_DB 15.0, DRIFT_LM_T 1.5/3.0); NXBO/NXBC
 # dispatch costs t_op_run 487.2, t_op_copy 336.3, t_skip 141.6/210.7,
 # fill_cpu 16.70, fetch_short 19.80, copy_dma_per_b 5.08; composition
-# factors flat 1.19, gapped 1.46 (supersedes pal9h's factors).
+# factors re-derived (supersedes pal9h's factors).
 # pal9n: direct-serve wire gate: DIRECT_TRANSPORT_FACTOR=1.00
 # (per-byte), DIRECT_FRAME_OVERHEAD_MS=2.2 (fixed).
 # pal9o: cadence no longer forces a full keyframe span; it schedules a
@@ -142,7 +142,7 @@ if (-not $sources) { exit 0 }
 # fill_dma_setup, copy_dma_per_b and copy_dma_path_t move;
 # fill_dma_path_t and four DMA trailing-chunk terms are new;
 # copy_dma_setup, fetch_short and fill_dma_per_b are HELD.
-# TMODEL_COMPOSITION_FACTOR is HELD (flat 1.19, gapped 1.46) - R is a
+# TMODEL_COMPOSITION_FACTOR is HELD - R is a
 # ratio against the model; it kept its margin at pal9v density on
 # hardware (2026-09-16). Test fixture bytes
 # move both ways: streamed 007-009 grew, resident 001-006 shrank, as

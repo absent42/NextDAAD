@@ -3927,35 +3927,23 @@ if ($VidLong) {
         '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @(); tag = 'auto' }
         # SP15 3c: 010 = the DIRECT-SERVE leg (VDIR/VDIRL) - all-literal
         # raw-equivalent encode, header hint set; the player serves it
-        # SD-to-surface with no ring.
-        # SP15 Card #5 TIGHTEN RULING (2026-07-26, owner-decided): the
-        # recalibrated gate is UNCONDITIONAL - no accept-slow override
-        # exists. classic-wide 256x144@25 stereo scored 1.075 (~6%
-        # slow) and is refused outright by its own gate now, so 010 is
-        # re-encoded at 256x133@25 stereo - the recalibrated gate's
-        # largest at-rate classic surface (util 0.99, real content;
-        # direct demand is content-independent - see 011 below).
-        '010.VID' = @{ shape = '256x133'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct' }
+        # SD-to-surface with no ring. Shape = the kit's fullrate route,
+        # 256x153@25 stereo (direct gate util 0.92).
+        '010.VID' = @{ shape = '256x153'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct' }
         # 011 = the DIRECT-MODE PACING CARD (DPACE/DPACL, Card #5): the
         # SAME test-card source and the SAME 5.000 s / 125 frames as
-        # 006, encoded --direct at the shipped 010 shape (256x133@25
-        # stereo, util 0.99) - so the 1 Hz beep makes the direct rate
-        # OBJECTIVELY measurable by stopwatch exactly as VPACL does for
-        # the delta paths: TRUE at-rate playback now (12 loop passes =
-        # 60 s nominal should land at 60.0 s, not the ~63.6 s the
-        # refused 1.075 shape would have produced). The 11-line crop
-        # (144 -> 133) was checked via nxv2dec frame export: the pts
-        # banner (row 0) and the seconds-digit box (right edge) are
-        # both still fully inside the frame, not clipped.
-        '011.VID' = @{ shape = '256x133'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
-        # 012-014 = the kit's other direct-serve routes (010 covers
-        # 256x133@25 stereo only): 320-wide classic-derived shapes at
-        # the gate's own fps/shape limits. 013/014 need 12.5 fps to
-        # clear the direct gate at these surfaces, given as a SECOND
-        # --fps in extraArgs after the map loop's own --fps 25 -
-        # argparse keeps the last value for a plain store action, so
-        # the 12.5 wins.
-        '012.VID' = @{ shape = '320x123'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct123' }
+        # 006, encoded --direct at 010's shape - so the 1 Hz beep makes
+        # the direct rate measurable by stopwatch exactly as VPACL does
+        # for the delta paths (12 loop passes = 60 s nominal). The
+        # 256x153 side crop keeps the pts banner and the seconds-digit
+        # box inside the frame.
+        '011.VID' = @{ shape = '256x153'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
+        # 012-014 = the kit's other direct routes: 012 fullrate-wide
+        # 320x105@25 (util 0.99, the 25 fps 320-wide edge), 013 action
+        # 320x256@12.5 (0.94), 014 action-169 320x192@12.5 (0.81).
+        # 013/014's 12.5 fps is a SECOND --fps in extraArgs after the map
+        # loop's own --fps 25 - argparse keeps the last value.
+        '012.VID' = @{ shape = '320x105'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct105' }
         # 013/014 use the 011 test-card source/cut, not Sintel: direct-serve
         # cost is content-independent, and the static card keeps frames
         # 1-32 free of the palette re-declares real footage triggers.

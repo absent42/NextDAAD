@@ -263,7 +263,7 @@ full size and can accept less fluid motion.</p>
 <pre><code>SET VIDOPTS_001=--direct --shape full --fps 12.5
 </code></pre>
 <p>For a 16:9 source, use its own shape instead - the half-rate envelope
-has room for every shape:</p>
+has room for every named shape:</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 16:9 --fps 12.5
 </code></pre>
 <p><strong>You get:</strong> the full 320x256 screen with no banding whatsoever, every
@@ -286,17 +286,17 @@ matters more than picture size.</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 256x153
 </code></pre>
 <p>For a cinematic wide framing at full width instead:</p>
-<pre><code>SET VIDOPTS_001=--direct --shape 320x123
+<pre><code>SET VIDOPTS_001=--direct --shape 320x105
 </code></pre>
 <p><strong>You get:</strong> the full 25 fps, no banding, every frame pixel-exact.
 Motion looks the way it looked in the source.</p>
 <p><strong>You pay:</strong> the picture is smaller. <code>256x153</code> plays in the bordered
-256-wide frame; <code>320x123</code> uses the full width but is heavily
+256-wide frame; <code>320x105</code> uses the full width but is heavily
 letterboxed. There is no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.</p>
-<p>These two shapes are the practical maximum at 25 fps with stereo audio.
-If you ask for more, the encoder refuses and prints the exact sizes that
-do fit for your chosen width - use one of those.</p>
+<p>Both shapes fit at 25 fps with stereo audio; the encoder admits up to
+256x167 and 320x105. If you ask for more, the encoder refuses and prints
+the exact sizes that do fit for your chosen width - use one of those.</p>
 <h3 id="preset-4-grainy-or-noisy-source">Preset 4 - Grainy or noisy source</h3>
 <p><strong>For:</strong> film grain, sensor noise, heavy source compression, or any
 footage that looks busy even where nothing is moving. Grain is motion as
@@ -432,10 +432,9 @@ clearly. On a slow uncompressed shot try <code>--retime mci</code>; on a fast cu
 one try <code>--retime drop</code>.</p>
 <h2 id="6-space-on-the-card-and-how-long-a-clip-can-be">6. Space on the card, and how long a clip can be</h2>
 <p><strong>Uncompressed costs about 1 MB for every second of screen time -
-roughly 60 MB a minute</strong> at full screen. At 25 fps that is effectively a
-fixed rate whatever shape you choose, because every shape that fits at
-25 fps is already at the limit of what the card can carry. At 12.5 fps
-there is room below the limit, so a smaller shape genuinely costs less.</p>
+roughly 60 MB a minute</strong> at full screen. A smaller shape or a lower
+frame rate costs less, roughly in proportion to the pixels sent each
+second.</p>
 <table>
 <thead>
 <tr>
@@ -462,8 +461,8 @@ there is room below the limit, so a smaller shape genuinely costs less.</p>
 </tr>
 <tr>
 <td>3</td>
-<td>320x123 at 25 fps</td>
-<td>about 1.02 MB per second</td>
+<td>320x105 at 25 fps</td>
+<td>about 0.88 MB per second</td>
 </tr>
 </tbody>
 </table>

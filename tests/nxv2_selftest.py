@@ -4478,52 +4478,70 @@ def t11_direct_gate():
         else:
             raise AssertionError("320x256@25 direct must be refused "
                                  "(raw 81920 B/frame over the wire)")
-    # Direct transport is priced as the bare wire floor (per-byte
-    # factor) plus a fixed per-frame overhead; both constants are
-    # pinned against the silicon rows they reproduce.
+    # the DS1 terms (armed T), and no fixed-ms overhead beside them
+    expect((enc.DIRECT_T_PER_B, enc.DIRECT_COL_T, enc.DIRECT_FRAME_T) == (24.2, 674.6, 28061.3),
+           f"direct terms should be the sitting-5 DS1 fit, got "
+           f"{(enc.DIRECT_T_PER_B, enc.DIRECT_COL_T, enc.DIRECT_FRAME_T)}")
     expect(enc.DIRECT_TRANSPORT_FACTOR == 1.00,
-           f"direct transport byte factor should be the 2026-08-02 "
-           f"silicon 1.00, got {enc.DIRECT_TRANSPORT_FACTOR}")
-    expect(enc.DIRECT_FRAME_OVERHEAD_MS == 2.2,
-           f"direct frame overhead should be the 2026-08-02 silicon "
-           f"2.2 ms, got {enc.DIRECT_FRAME_OVERHEAD_MS}")
-    # probe 056's ordinary section (256x160@25 stereo, 43,008 B)
-    # measured 40.882 ms/frame on silicon; the gate must price it
-    # conservatively - above the measurement, but within ~1.5%
-    mean_frame = 1536 + 81 * 512
-    ds = enc.direct_supply_check(mean_frame, 25.0)
-    expect(40.88 <= ds["sd_ms"] <= 41.5,
-           f"the re-fitted model must cover 056's measured 40.882 "
-           f"ms/frame conservatively, got {ds['sd_ms']:.3f}")
-    # 256x160@25 stereo (probe 056's shape, silicon: 2.2% OVER period)
-    # is NOT at-rate and must be refused
-    worst = 1536 + 82 * 512               # + the scene-start PAL block
-    expect(1.02 < enc.direct_supply_check(worst, 25.0)["utilization"] < 1.06,
-           "256x160@25 direct scores ~1.044 under the re-fitted gate - "
-           "over 1.00, so it must be refused unconditionally")
-    # 320x256@12.5 stereo (probe 057's shape, silicon: at rate with
-    # pace slack) must be ADMITTED - the T10+T8 full-screen mode
-    worst125 = 2560 + 162 * 512
-    u125 = enc.direct_supply_check(worst125, 12.5)["utilization"]
-    expect(0.99 < u125 <= 1.0,
-           f"320x256@12.5 stereo direct must be admitted at the edge "
-           f"(silicon at-rate), got {u125:.4f}")
-    # the re-fitted at-rate envelope, and its monotonicity
-    raw25 = enc.direct_max_raw_bytes(25.0, 1.0)
-    expect(39000 < raw25 < 39500, f"25fps stereo direct tops out ~38.5 KB raw, got {raw25}")
-    expect(raw25 // 256 == 153,
-           f"25fps stereo 256-wide envelope is 256x153, got 256x{raw25 // 256}")
-    expect(enc.direct_supply_check(
-        1536 + ((raw25 + 518 + 511) // 512) * 512, 25.0)["utilization"] <= 1.0,
-        "direct_max_raw_bytes must actually pass its own gate")
-    expect(enc.direct_max_raw_bytes(18.22, 1.0) > raw25,
+           f"the per-byte expert multiplier defaults to 1.00, got {enc.DIRECT_TRANSPORT_FACTOR}")
+    expect(not hasattr(enc, "DIRECT_FRAME_OVERHEAD_MS"),
+           "DIRECT_FRAME_OVERHEAD_MS is retired - DIRECT_FRAME_T carries the per-frame cost")
+    tc = enc.TMODEL_COEFFS
+    clock = tc["clock_khz"]
+    glue = tc["glue_t"] / tc["audio_factor"]
+    # DS1 T(ADSW)/16 per fixture (section B, width, height, armed T): the
+    # armed terms price each at most 0.5% under and at most 1% over
+    for num, sec, w, h, meas in (("010", 35840, 256, 133, 888402), ("012", 40960, 320, 123, 1238952),
+                                 ("013", 84992, 320, 256, 2082210), ("014", 64512, 320, 192, 1792536)):
+        armed = enc.direct_frame_ms(sec, w, h) * clock - glue
+        expect(meas * 0.995 <= armed <= meas * 1.01,
+               f"DS1 {num}: armed model {armed:.0f} T against measured {meas} T")
+    expect(abs(enc.direct_frame_ms(40960, 320, 123) - enc.direct_frame_ms(40960, 256, 160)
+               - 320 * enc.DIRECT_COL_T / clock) < 1e-9,
+           "a gapped surface pays 320 columns; a 256-wide one pays none")
+    expect(enc.direct_frame_ms(84992, 320, 256) == enc.direct_frame_ms(84992, 256, 192),
+           "320x256 is flat - no column term")
+    # probes 056/057 (2026-08-02) were DEBUG-image TOT tick timelines, before
+    # 29be065's poll divider and 8c0cb61's chunk loop; DS1 supersedes them
+    s056 = enc.direct_worst_section_bytes(25.0, 256, 160)
+    expect(s056 == 1536 + 82 * 512, f"256x160@25 worst section is 43,520 B, got {s056}")
+    expect(abs(enc.direct_frame_ms(1536 + 81 * 512, 256, 160) - 38.214) < 0.001,
+           "056's 43,008 B ordinary section prices 38.214 ms")
+    u056 = enc.direct_supply_check(s056, 25.0, 256, 160)["utilization"]
+    expect(0.96 < u056 < 0.97, f"256x160@25 stereo is admitted at ~0.966, got {u056:.4f}")
+    s057 = enc.direct_worst_section_bytes(12.5, 320, 256)
+    expect(s057 == 2560 + 162 * 512, f"320x256@12.5 worst section is 85,504 B, got {s057}")
+    expect(enc.direct_frame_ms(84992, 320, 256) * clock - glue >= 2082210,
+           "057's 84,992 B section (DS1 013's) prices at or over its DS1 T")
+    u057 = enc.direct_supply_check(s057, 12.5, 320, 256)["utilization"]
+    expect(0.93 < u057 < 0.94, f"320x256@12.5 stereo is admitted at ~0.937, got {u057:.4f}")
+    # DS1 012 measured 320x123@25 at 44.25 ms/frame over its 40 ms period
+    s123 = enc.direct_worst_section_bytes(25.0, 320, 123)
+    u123 = enc.direct_supply_check(s123, 25.0, 320, 123)["utilization"]
+    expect(1.11 < u123 < 1.12, f"320x123@25 stereo must be refused at ~1.115, got {u123:.4f}")
+    # the at-rate envelope: tallest admitted height at or under the ask
+    raw25 = enc.direct_max_raw_bytes(25.0, 256, 192)
+    expect(raw25 // 256 == 167, f"25fps stereo 256-wide envelope is 256x167, got 256x{raw25 // 256}")
+    for h, ok in ((167, True), (168, False)):
+        u = enc.direct_supply_check(enc.direct_worst_section_bytes(25.0, 256, h), 25.0, 256, h)["utilization"]
+        expect((u <= 1.0) == ok, f"256x{h}@25 utilization {u:.4f} must {'pass' if ok else 'refuse'}")
+    expect(enc.direct_max_raw_bytes(25.0, 320, 256) // 320 == 105,
+           "25fps stereo 320-wide envelope is 320x105 (gapped; 320x256 flat is far over)")
+    expect(enc.direct_max_raw_bytes(25.0, 320, 104) == 320 * 104,
+           "an admitted ask returns itself")
+    expect(enc.direct_max_raw_bytes(12.5, 320, 256) // 320 == 256
+           and enc.direct_max_raw_bytes(12.5, 320, 255) // 320 == 247,
+           "12.5fps 320-wide: 256 flat admitted, gapped heights top out at 247")
+    expect(enc.direct_max_raw_bytes(18.22, 256, 192) > raw25,
            "a lower fps admits a bigger direct surface")
-    # 010/011's chosen re-encode point (256x133@25 stereo) must actually
-    # be at-rate under the gate - the positive-path complement to the
-    # 320x256 refusal above.
-    ok_worst = 1536 + ((256 * 133 + 518 + 511) // 512) * 512
-    expect(enc.direct_supply_check(ok_worst, 25.0)["utilization"] <= 1.0,
-           "256x133@25 stereo (the 010/011 TIGHTEN re-encode shape) must pass the gate")
+    # the section arithmetic is the writer's, at every legal shape (a PAL
+    # frame; 320x205 ends on a COPY8, 320x256 carries two COPY16)
+    pal = np.zeros((256, 3), dtype=np.uint8)
+    for w in (256, 320):
+        for h in range(1, enc.MAX_HEIGHT_BY_WIDTH[w] + 1):
+            payload = enc.emit_direct_frame_payload(np.zeros(w * h, dtype=np.uint8), pal)
+            expect(enc.direct_worst_section_bytes(12.5, w, h) == 2560 + -(-len(payload) // 512) * 512,
+                   f"{w}x{h}: section arithmetic must match the emitted PAL frame")
 
     # The accept-slow escape is removed, not just unused: it must not
     # exist anywhere in the encoder plumbing, and the wire gate must
@@ -4558,7 +4576,7 @@ def t11_direct_gate():
             # the encoder ever runs.
             out2 = Path(td) / "over_wire.vid"
             cmd = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out2),
-                   "--shape", "256x160", "--fps", "25", "--duration", "1",
+                   "--shape", "320x123", "--fps", "25", "--duration", "1",
                    "--direct", "--direct-accept-slow", "--ffmpeg", str(FFMPEG)]
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             expect(proc.returncode != 0,
@@ -4574,12 +4592,12 @@ def t11_direct_gate():
             # by argparse rejecting an unknown flag.
             out3 = Path(td) / "over_wire_plain.vid"
             cmd2 = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out3),
-                    "--shape", "256x160", "--fps", "25", "--duration", "1",
+                    "--shape", "320x123", "--fps", "25", "--duration", "1",
                     "--direct", "--ffmpeg", str(FFMPEG)]
             proc2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             expect(proc2.returncode != 0,
-                   "256x160@25 stereo --direct (util ~1.044, silicon "
-                   "2.2% over) must be refused with no other flags in play")
+                   "320x123@25 stereo --direct (util ~1.115, DS1 012 "
+                   "44.25 ms/frame) must be refused with no other flags in play")
             expect(not out3.exists(), "no file written on the plain-flag refusal")
             stderr2 = proc2.stderr.decode("utf-8", "replace")
             expect("utilization" in stderr2 and "direct-serve" in stderr2,
@@ -4711,43 +4729,46 @@ def t11_total_size_gate():
 
 
 @case(11, "direct-serve transport-factor expert override - scales the "
-          "BYTE term only (2026-08-02 two-term re-fit), threads "
-          "through the whole gate")
+          "per-byte term only, threads through the whole gate")
 def t11_direct_transport_override():
     import inspect
     import subprocess
-    # The governance contract: the SHIPPING defaults are untouched (the
-    # 1.00 + 2.2 ms pins live in t11_direct_gate); the override is a
-    # per-call parameter, never a mutation of the constant.
+    # the override is a per-call parameter, never a mutation of the
+    # constant; the shipping pins live in t11_direct_gate
+    for name in ("direct_supply_check", "direct_max_raw_bytes", "direct_frame_ms"):
+        params = list(inspect.signature(getattr(enc, name)).parameters)
+        expect("width" in params and "height" in params and "transport_factor" in params,
+               f"{name} must take the shape and the override, got {params}")
     frame = 1536 + 73 * 512
-    ds_def = enc.direct_supply_check(frame, 25.0)
-    ds_none = enc.direct_supply_check(frame, 25.0, transport_factor=None)
+    ds_def = enc.direct_supply_check(frame, 25.0, 320, 123)
+    ds_none = enc.direct_supply_check(frame, 25.0, 320, 123, transport_factor=None)
     expect(ds_def == ds_none,
            "transport_factor=None must be exactly the shipping default path")
-    # the override scales the BYTE term of sd_ms EXACTLY linearly and
-    # leaves the fixed frame overhead alone - nothing else moves
+    # the override scales the per-byte term EXACTLY linearly; the gapped
+    # column and per-frame terms do not move
     tf_probe = 0.96
-    ds_ovr = enc.direct_supply_check(frame, 25.0, transport_factor=tf_probe)
-    ovh = enc.DIRECT_FRAME_OVERHEAD_MS
-    expect(abs((ds_ovr["sd_ms"] - ovh) / (ds_def["sd_ms"] - ovh)
+    ds_ovr = enc.direct_supply_check(frame, 25.0, 320, 123, transport_factor=tf_probe)
+    expect(abs(ds_ovr["byte_ms"] / ds_def["byte_ms"]
                - tf_probe / enc.DIRECT_TRANSPORT_FACTOR) < 1e-9,
-           "the override must scale the byte term by factor/default "
-           "exactly, leaving the frame overhead fixed")
+           "the override must scale the byte term by factor/default exactly")
+    expect(ds_ovr["col_ms"] == ds_def["col_ms"] > 0 and ds_ovr["frame_ms"] == ds_def["frame_ms"] > 0,
+           "the column and frame terms are not scaled by the override")
+    expect(abs(ds_ovr["sd_ms"] - ds_ovr["byte_ms"] - ds_ovr["col_ms"] - ds_ovr["frame_ms"]) < 1e-9,
+           "sd_ms is the sum of the three terms")
     expect(ds_ovr["period_ms"] == ds_def["period_ms"]
            and ds_ovr["demand_kbs"] == ds_def["demand_kbs"],
            "the override touches the transport rate only - period and demand are factor-free")
-    # a smaller byte factor grows the envelope; at 0.96 (the historical
-    # probe rate) the 256-wide stereo @25 envelope reaches 256x159
-    # against 256x153 at the shipping 1.00
-    raw_def = enc.direct_max_raw_bytes(25.0, 1.0)
-    raw_ovr = enc.direct_max_raw_bytes(25.0, 1.0, transport_factor=tf_probe)
+    # a smaller byte factor grows the envelope: 256-wide stereo @25 is
+    # 256x173 at 0.96 against 256x167 at the shipping 1.00
+    raw_def = enc.direct_max_raw_bytes(25.0, 256, 192, 1.0)
+    raw_ovr = enc.direct_max_raw_bytes(25.0, 256, 192, 1.0, transport_factor=tf_probe)
     expect(raw_ovr > raw_def,
            "a smaller transport factor must grow the at-rate envelope")
-    expect(raw_ovr // 256 == 159,
-           f"at byte factor 0.96 the 256-wide envelope is 256x159, "
+    expect(raw_ovr // 256 == 173,
+           f"at byte factor 0.96 the 256-wide envelope is 256x173, "
            f"got 256x{raw_ovr // 256}")
-    expect(raw_def // 256 == 153,
-           f"at the shipping 1.00 the envelope is 256x153, "
+    expect(raw_def // 256 == 167,
+           f"at the shipping 1.00 the envelope is 256x167, "
            f"got 256x{raw_def // 256}")
     # plumbing: encode() and _encode_direct() carry the parameter, and
     # the CLI exposes it
@@ -4788,7 +4809,7 @@ def t11_direct_gate_fps_floor_menu():
     # AUD_FRAME_MAX) and direct_max_raw_bytes raises unguarded.
     unlucky = fps_floor - 1e-4
     try:
-        enc.direct_max_raw_bytes(unlucky, 1.0)
+        enc.direct_max_raw_bytes(unlucky, 320, 256, 1.0)
     except SystemExit:
         pass
     else:
@@ -4799,7 +4820,7 @@ def t11_direct_gate_fps_floor_menu():
     # the unlucky perturbation, must render without raising either way.
     for fps in (fps_floor, unlucky):
         safe = _m.ceil(fps * 100) / 100
-        floor_at = enc.direct_max_raw_bytes(safe, 1.0)
+        floor_at = enc.direct_max_raw_bytes(safe, 320, 256, 1.0)
         expect(floor_at > 0,
                f"direct_max_raw_bytes at the rounded fps floor "
                f"({safe}) must not raise, got {floor_at}")
@@ -4823,6 +4844,21 @@ def t11_direct_gate_fps_floor_menu():
             expect(not out.exists(), "no file written on refusal")
         else:
             raise AssertionError("320x256@25 direct must be refused")
+
+
+@case(11, "direct-serve kit routes - every vidtune preset route with --direct passes the gate")
+def t11_direct_routes():
+    from vidtune import presets
+    routes = [r for r in presets.all_routes() if r.values.get("direct")]
+    expect(len(routes) == 4, f"four direct routes ship, got {[r.key for r in routes]}")
+    for r in routes:
+        shape = r.values["shape"]
+        w, h = enc.PRESETS[shape] if shape in enc.PRESETS else map(int, shape.lower().split("x"))
+        fps = float(r.values.get("fps") or 25.0)
+        worst = enc.direct_worst_section_bytes(fps, w, h)
+        u = enc.direct_supply_check(worst, fps, w, h)["utilization"]
+        expect(u <= 1.0, f"route {r.key} ({w}x{h}@{fps:g}) scores {u:.4f} over 1.00")
+        print(f"    {r.key}: {w}x{h}@{fps:g} {worst} B util {u:.4f}")
 
 
 @case(12, "review fix: no-audio-source probe skips extraction (no raw "

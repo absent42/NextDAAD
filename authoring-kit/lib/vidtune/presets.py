@@ -80,7 +80,7 @@ ROUTES = (
           {"direct": True, "shape": "256x153"},
           Route("fullrate-wide", "Action at full rate, wide",
                 "a cinematic wide framing at full width",
-                {"direct": True, "shape": "320x123"})),
+                {"direct": True, "shape": "320x105"})),
     Route("cutscene", "Long cutscene",
           "anything over about 15 seconds - length forces the compressed "
           "route, so the decision moves to the shape",

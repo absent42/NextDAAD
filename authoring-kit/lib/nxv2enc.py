@@ -875,85 +875,79 @@ def supply_scale(stats, target):
 
 
 # ---------------------------------------------------------------------
-# DIRECT_TRANSPORT_FACTOR - direct-serve transport overhead beyond the
-# bare wire rate (block-open/re-arm/pad/copy-body costs scale with
-# BLOCKS, not picture content, so one per-byte factor plus one fixed
-# per-frame overhead covers every direct-serve frame). Silicon-fitted
-# from whole-frame playback timing (two-point solve isolating the
-# per-byte rate and the per-frame fixed term) against the current
-# player's direct transport; re-derive both constants together whenever
-# vid_ds_xfer/vid_ds_pad/vid_ds_copy_body's op costs change - they are
-# co-fitted to SD_WIRE_BYTES_PER_MS * audio_factor.
-#
-# The expert override videnc --direct-transport-factor scales only the
-# per-byte factor; the frame overhead is measured physics and always
-# applies.
+# DIRECT-SERVE TRANSPORT - armed T per frame section (audio pad + padded
+# payload), least squares over DS1 T(ADSW)/16 on 010/012/013/014 (S15).
+# Re-fit all three whenever vid_ds_xfer/vid_ds_pad/vid_ds_copy_body change.
 # ---------------------------------------------------------------------
-DIRECT_TRANSPORT_FACTOR = 1.00
+DIRECT_T_PER_B = 24.2       # per section byte, SD wire included
+DIRECT_COL_T = 674.6        # per column of a gapped surface
+DIRECT_FRAME_T = 28061.3    # per frame [raised 1307.3 T]
 
-# Per-frame direct transport overhead (ms), the fixed term of the same
-# whole-frame fit. Applies to every direct-serve frame regardless of
-# size or fps; the transport_factor override does NOT scale it.
-DIRECT_FRAME_OVERHEAD_MS = 2.2
+# expert multiplier on the per-byte term only (videnc --direct-transport-factor)
+DIRECT_TRANSPORT_FACTOR = 1.00
 
 # Policy (owner ruling): direct-serve is on-rate or refused, full stop
 # - there is no accept-slow override. A utilization > 1.0 always raises
 # SystemExit; see _encode_direct.
 
 
-def direct_supply_check(worst_frame_bytes, fps, transport_factor=None):
-    """Direct-serve wire feasibility (SP15 3c, RECALIBRATED Card #5). A
-    direct-serve session reads every byte of a frame section (audio
-    blocks + payload blocks, padding included) off the SD wire INSIDE
-    that frame's own period - the literal bytes are served straight to
-    the surface (the unrolled-ini transport, the whole point of the
-    mode), and there is NO ring to absorb bursts. The criterion is
-    therefore the WORST frame, not the clip mean (contrast
-    stream_supply_check's documented mean-rate limitation above).
-    audio_factor de-rates the wire exactly as the streaming gate does -
-    the ISR sample tax applies to the ini transport identically. The
-    cost model is TWO-TERM (2026-08-02 whole-frame silicon re-fit, see
-    the DIRECT_TRANSPORT_FACTOR block): a per-byte factor on the wire
-    rate (DIRECT_TRANSPORT_FACTOR - the T8 rebuild took the per-block
-    transport to the bare wire floor) plus a fixed per-frame overhead
-    (DIRECT_FRAME_OVERHEAD_MS - pad discard, audio-feed bookkeeping,
-    op parse, session glue; the term a flat factor could not express,
-    which is why 25 fps and 12.5 fps silicon disagreed under one).
-    transport_factor=None means the shipping DIRECT_TRANSPORT_FACTOR;
-    a number is the expert override, which scales the BYTE term only -
-    the frame overhead is measured physics and always applies."""
+def direct_frame_terms(section_bytes, width, height, transport_factor=None):
+    """(byte_ms, col_ms, frame_ms) to serve one direct frame section at
+    28 MHz: the armed DS1 terms, with the frame-loop glue the sweep does not
+    time (glue_t, unarmed) over audio_factor in frame_ms. transport_factor
+    scales byte_ms only; None = DIRECT_TRANSPORT_FACTOR."""
     tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
           else float(transport_factor))
-    af = TMODEL_COEFFS["audio_factor"]
+    tc = TMODEL_COEFFS
+    clock = tc["clock_khz"]
+    cols = 320 if is_gapped(width, height) else 0
+    return (section_bytes * DIRECT_T_PER_B * tf / clock,
+            cols * DIRECT_COL_T / clock,
+            (DIRECT_FRAME_T + tc["glue_t"] / tc["audio_factor"]) / clock)
+
+
+def direct_frame_ms(section_bytes, width, height, transport_factor=None):
+    """Wall ms to serve one direct frame section (see direct_frame_terms)."""
+    return sum(direct_frame_terms(section_bytes, width, height, transport_factor))
+
+
+def direct_supply_check(worst_frame_bytes, fps, width, height,
+                        transport_factor=None):
+    """Direct-serve wire feasibility. Every byte of a frame section (audio
+    blocks + payload blocks, padding included) crosses the SD wire inside
+    that frame's period with no ring to absorb a burst, so the criterion is
+    the WORST frame, not the clip mean. utilization = direct_frame_ms over
+    the period; > 1.0 refuses. transport_factor as in direct_frame_terms."""
     period_ms = 1000.0 / float(fps)
-    sd_ms = (worst_frame_bytes * tf
-             / (SD_WIRE_BYTES_PER_MS * af)) + DIRECT_FRAME_OVERHEAD_MS
+    byte_ms, col_ms, frame_ms = direct_frame_terms(
+        worst_frame_bytes, width, height, transport_factor)
+    sd_ms = byte_ms + col_ms + frame_ms
     return dict(utilization=sd_ms / period_ms, sd_ms=sd_ms,
+                byte_ms=byte_ms, col_ms=col_ms, frame_ms=frame_ms,
                 period_ms=period_ms,
                 demand_kbs=worst_frame_bytes * float(fps) / 1024.0)
 
 
-def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
-    """Largest RAW surface (width*height) a direct-serve encode can
-    carry at this fps and utilization target, under the recalibrated
-    gate. Inverse of direct_supply_check: the frame section is
-    audio_pad + 512-rounded(payload), and the payload is KSTART(1) +
-    PAL(1+512) + COPY16(3) + raw + terminal(1).
-    transport_factor as in direct_supply_check."""
-    tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
-          else float(transport_factor))
-    period_ms = 1000.0 / float(fps)
-    # the fixed per-frame overhead comes off the period BEFORE the
-    # byte budget is priced (inverse of direct_supply_check's two-term
-    # model; the override scales the byte term only, as there)
-    budget_b = ((period_ms * util - DIRECT_FRAME_OVERHEAD_MS)
-                * SD_WIRE_BYTES_PER_MS
-                * TMODEL_COEFFS["audio_factor"] / tf)
-    # the audio pad comes from audio_layout, NOT a local rate guess -
-    # one source of truth for the rate/rounding arithmetic
-    apad = audio_layout(fps)[3]
-    payload_blocks = int((budget_b - apad) // 512)
-    return max(0, payload_blocks * 512 - (1 + 1 + PAL_BLOCK_SIZE + 3 + 1))
+def direct_worst_section_bytes(fps, width, height):
+    """Section bytes of a direct frame carrying PAL, the dearest frame:
+    audio pad + 512-padded KSTART + PAL + COPY ops over width x height +
+    KFLIP (emit_direct_frame_payload's composition)."""
+    raw = int(width) * int(height)
+    payload = (1 + 1 + PAL_BLOCK_SIZE
+               + sum(L + (2 if L <= 255 else 3) for L in _chunk_lengths(raw)) + 1)
+    return audio_layout(fps)[3] + -(-payload // 512) * 512
+
+
+def direct_max_raw_bytes(fps, width, height, util=1.0, transport_factor=None):
+    """Largest width x h, h <= height, whose worst direct frame passes
+    direct_supply_check at util; 0 if none. Every height is priced: at 320
+    wide only 256 is flat, so admission is not monotone in height."""
+    for h in range(int(height), 0, -1):
+        worst = direct_worst_section_bytes(fps, width, h)
+        if direct_supply_check(worst, fps, width, h,
+                               transport_factor)["utilization"] <= util:
+            return int(width) * h
+    return 0
 
 
 # ---------------------------------------------------------------------
@@ -4658,21 +4652,22 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     worst_frame = abytes_pad + per_frame_cap_blocks * 512
     tf = direct_transport_factor  # None = shipping DIRECT_TRANSPORT_FACTOR
     if tf is not None:
-        # T8 expert override, said out loud on every use: probe encodes
-        # for the hardware round are DIAGNOSTIC (governance block at
-        # DIRECT_TRANSPORT_FACTOR).
+        # expert override, said out loud on every use: probe encodes
+        # are diagnostic
         print(f"  note: --direct-transport-factor {float(tf):g} overrides "
-              f"the silicon-settled {DIRECT_TRANSPORT_FACTOR:.2f} BYTE "
-              f"factor for this encode (the {DIRECT_FRAME_OVERHEAD_MS:g} "
-              f"ms/frame transport overhead still applies - 2026-08-02 "
-              f"whole-frame re-fit, see the governance block)")
-    ds = direct_supply_check(worst_frame, fps_val, transport_factor=tf)
+              f"the silicon-settled {DIRECT_TRANSPORT_FACTOR:.2f} factor on "
+              f"the per-byte term for this encode (the gapped column and "
+              f"per-frame terms still apply)")
+    ds = direct_supply_check(worst_frame, fps_val, width, height,
+                             transport_factor=tf)
     if ds["utilization"] > 1.0:
         # Full menu (at this fps AND at the audio floor fps) so an
         # expert sees every at-rate option in one refusal, not just
         # the shape they happened to try.
-        s_at = direct_max_raw_bytes(fps_val, 1.0, transport_factor=tf)
-        s_90 = direct_max_raw_bytes(fps_val, 0.90, transport_factor=tf)
+        s_at = direct_max_raw_bytes(fps_val, width, height, 1.0,
+                                    transport_factor=tf)
+        s_90 = direct_max_raw_bytes(fps_val, width, height, 0.90,
+                                    transport_factor=tf)
         fps_floor = min_fps_for()
         # menu-only hardening: fps_floor sits within a Fraction-
         # rounding tick of audio_layout's AUD_FRAME_MAX boundary by
@@ -4686,23 +4681,22 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
         # already shown to the user below) to land safely inside the
         # AUD_FRAME_MAX bucket instead of on its edge.
         fps_floor_safe = math.ceil(fps_floor * 100) / 100
-        floor_at = direct_max_raw_bytes(fps_floor_safe, 1.0,
+        floor_at = direct_max_raw_bytes(fps_floor_safe, width, height, 1.0,
                                         transport_factor=tf)
         eff_tf = DIRECT_TRANSPORT_FACTOR if tf is None else float(tf)
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
             f"worst-frame wire utilization {ds['utilization']:.2f} > "
-            f"1.00 ({worst_frame} B/frame needs {ds['sd_ms']:.1f} ms of "
-            f"SD wire per {ds['period_ms']:.0f} ms frame; "
-            f"{ds['demand_kbs']:.0f} KB/s vs the "
-            f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / (1024 * eff_tf):.0f} KB/s "
-            f"direct-transport rate at byte factor {eff_tf:g} plus the "
-            f"{DIRECT_FRAME_OVERHEAD_MS:g} ms/frame transport overhead). "
+            f"1.00 ({worst_frame} B/frame needs {ds['sd_ms']:.1f} ms per "
+            f"{ds['period_ms']:.0f} ms frame: {ds['byte_ms']:.1f} ms at "
+            f"{DIRECT_T_PER_B * eff_tf:.1f} T/B, {ds['col_ms']:.1f} ms of "
+            f"gapped columns, {ds['frame_ms']:.1f} ms per frame; "
+            f"{ds['demand_kbs']:.0f} KB/s). "
             f"Direct-serve has NO ring "
             f"to absorb bursts and NO slow-playback opt-out (TIGHTEN "
             f"policy, Card #5 2026-07-26 owner ruling: this gate is "
             f"unconditional above utilization 1.00). The envelope at "
-            f"{fps_val:g}fps, {width}-wide: it tops out at "
+            f"{fps_val:g}fps, {width}-wide, up to {height} lines: it tops out at "
             f"{width}x{s_at // width} at-rate ({width}x{s_90 // width} "
             f"with the 0.90 burst margin every other gate carries). "
             f"Dropping to the {fps_floor:.2f}fps audio floor opens the "

@@ -97,8 +97,8 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      strictly at-rate, see below
   --direct-transport-factor F
                      EXPERT override of the direct gate's per-byte
-                     transport factor (default 1.00; the gate's fixed
-                     2.2 ms/frame transport overhead is not scaled by
+                     transport factor (default 1.00; the gate's gapped
+                     column and per-frame terms are not scaled by
                      this flag). For probe encodes against a
                      hypothesised SD rate. Only meaningful with --direct
   --no-merge         disable the gap-merge optimization (a measurement
@@ -223,10 +223,11 @@ remedy in the error message:
   cannot supply: a smaller shape, a lower `--fps`, a shorter clip.
 - **Direct-serve wire (`--direct`).** Strictly at-rate, worst-frame
   checked, with no slow-playback opt-out. At 25 fps stereo the
-  envelope tops out around 256x153 (12.5 fps carries full-screen
-  320x256); the refusal message prints the live at-rate menu (the
-  at-rate height, its 0.90-margin variant, and the maximum at the
-  audio floor fps).
+  envelope tops out at 256x167 and 320x105 (12.5 fps carries
+  full-screen 320x256, and 320-wide letterbox heights up to 247); the
+  refusal message prints the live at-rate menu (the tallest at-rate
+  height up to the one asked for, its 0.90-margin variant, and the same
+  at the audio floor fps).
 - **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
   (just under 256 MiB) and 65535 frames, whichever binds first - the
   player's hot filemap and its 16-bit frame counters. Both bounds are

@@ -236,7 +236,7 @@ SET VIDOPTS_001=--direct --shape full --fps 12.5
 ```
 
 For a 16:9 source, use its own shape instead - the half-rate envelope
-has room for every shape:
+has room for every named shape:
 
 ```
 SET VIDOPTS_001=--direct --shape 16:9 --fps 12.5
@@ -271,20 +271,20 @@ SET VIDOPTS_001=--direct --shape 256x153
 For a cinematic wide framing at full width instead:
 
 ```
-SET VIDOPTS_001=--direct --shape 320x123
+SET VIDOPTS_001=--direct --shape 320x105
 ```
 
 **You get:** the full 25 fps, no banding, every frame pixel-exact.
 Motion looks the way it looked in the source.
 
 **You pay:** the picture is smaller. `256x153` plays in the bordered
-256-wide frame; `320x123` uses the full width but is heavily
+256-wide frame; `320x105` uses the full width but is heavily
 letterboxed. There is no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.
 
-These two shapes are the practical maximum at 25 fps with stereo audio.
-If you ask for more, the encoder refuses and prints the exact sizes that
-do fit for your chosen width - use one of those.
+Both shapes fit at 25 fps with stereo audio; the encoder admits up to
+256x167 and 320x105. If you ask for more, the encoder refuses and prints
+the exact sizes that do fit for your chosen width - use one of those.
 
 ### Preset 4 - Grainy or noisy source
 
@@ -425,17 +425,16 @@ one try `--retime drop`.
 ## 6. Space on the card, and how long a clip can be
 
 **Uncompressed costs about 1 MB for every second of screen time -
-roughly 60 MB a minute** at full screen. At 25 fps that is effectively a
-fixed rate whatever shape you choose, because every shape that fits at
-25 fps is already at the limit of what the card can carry. At 12.5 fps
-there is room below the limit, so a smaller shape genuinely costs less.
+roughly 60 MB a minute** at full screen. A smaller shape or a lower
+frame rate costs less, roughly in proportion to the pixels sent each
+second.
 
 | Preset | Shape and rate | Card space |
 | ------ | -------------- | ---------- |
 | 2 | 320x256 at 12.5 fps | about 1.06 MB per second |
 | 2 | 320x192 at 12.5 fps | about 0.81 MB per second |
 | 3 | 256x153 at 25 fps | about 1.02 MB per second |
-| 3 | 320x123 at 25 fps | about 1.02 MB per second |
+| 3 | 320x105 at 25 fps | about 0.88 MB per second |
 
 **Compressed clips are typically a third to a half the size of the same
 footage uncompressed**, and quiet material is far cheaper still - it

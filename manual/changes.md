@@ -3,6 +3,14 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## Unreleased
+
+- **Uncompressed routes re-measured.** The full-rate wide route is now
+  `320x105`; `320x123` at 25 fps is refused, as it plays slow on real
+  hardware. At 25 fps the bordered frame reaches `256x167`. At 12.5 fps
+  full-screen 320x256 still fits, and 320-wide letterbox heights go up
+  to 247. See [Video](video.md) section 4.
+
 ## 0.10.0 - 16 September 2026
 
 - **Loader intro.** A separate launcher, staged as `<GAME>.NEX`, plays a
