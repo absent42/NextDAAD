@@ -8,8 +8,8 @@ happened twice with nothing to catch it. This unmarshals each bundle's code
 objects and compares their instruction streams with the working tree's.
 Only __doc__ stores are masked: every other string literal, argparse help
 text included, is code. Exit 1 = stale. Exit 2 = not verified: an exe is
-missing, an LFS pointer or unreadable, nxv2enc was not compared, or the
-host Python minor version differs from the bundle's.
+missing, an LFS pointer or unreadable, nxv2enc or nxv2path was not compared,
+or the host Python minor version differs from the bundle's.
 """
 import dis
 import marshal
@@ -24,7 +24,7 @@ EXES = [ROOT / "authoring-kit" / "tools" / "videnc" / "videnc.exe",
         ROOT / "authoring-kit" / "tools" / "vidtune" / "vidtune.exe"]
 MAGIC = b"MEI\014\013\012\013\016"
 LFS_POINTER = b"version https://git-lfs"
-REQUIRED = {"nxv2enc"}
+REQUIRED = {"nxv2enc", "nxv2path"}   # nxv2path: the walk every frame price runs
 SIG = ("co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_flags",
        "co_varnames", "co_freevars", "co_cellvars", "co_name", "co_qualname")
 

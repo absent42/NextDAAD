@@ -30,7 +30,7 @@ def test_accept_then_video_ps1_finds_nothing_stale(tmp_path):
     # 1. Miniature kit: real scripts + one real demo source, tiny encode.
     (tmp_path / "lib").mkdir(); (tmp_path / "VIDEO").mkdir()
     (tmp_path / "tools").mkdir()
-    for f in ("video.ps1", "videnc.py", "nxv2enc.py", "nxv2dec.py"):
+    for f in ("video.ps1", "videnc.py", "nxv2enc.py", "nxv2path.py", "nxv2dec.py"):
         shutil.copy(KIT / "lib" / f, tmp_path / "lib" / f)
     shutil.copytree(KIT / "tools" / "ffmpeg", tmp_path / "tools" / "ffmpeg")
     src = KIT / "VIDEO" / "002.mp4"

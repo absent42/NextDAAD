@@ -34,7 +34,7 @@ pytestmark = [
 def temp_mini_kit(tmp_path):
     (tmp_path / "VIDEO").mkdir()
     (tmp_path / "lib").mkdir()
-    for name in ("video.ps1", "videnc.py", "nxv2enc.py", "nxv2dec.py"):
+    for name in ("video.ps1", "videnc.py", "nxv2enc.py", "nxv2path.py", "nxv2dec.py"):
         shutil.copyfile(KIT / "lib" / name, tmp_path / "lib" / name)
     shutil.copyfile(DEMO_CLIP, tmp_path / "VIDEO" / "001.mp4")
     (tmp_path / "CONFIG.BAT").write_text(
