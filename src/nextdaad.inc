@@ -650,10 +650,11 @@ NR_PERIPH2      equ $06     ; peripheral 2: bit 3 = Multiface enable - the raw
                             ; lock up)
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
-NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDMI;
+NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6); a write
+                            ; of 7 stores 0, so this reads back 0-6 only -
                             ; selects the FPGA system clock the CTC divides
 ; SP10 CTC per-sample DAC feed (replaces the SP8 DMA sample engine). The CTC
-; channel input clock IS the video-mode-dependent FPGA system clock (27-33 MHz,
+; channel input clock IS the video-mode-dependent FPGA system clock (28-33 MHz,
 ; nextreg $11), NOT a fixed reference - so the time constant is derived per
 ; video mode at load time AND on every rewind re-commit (aud_ctc_params and
 ; aud_clk16_tab, SFX_PAGE - moved from overlay1 by the 2026-08-10 fresh-TC
@@ -1205,9 +1206,9 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; block (one fixed number, <= 255).
 ;
 ;   bracket  B(chunk) = A + 5.082 * chunk
-;   deadline one ISR per L+R PAIR at 15625 Hz -> 1728..2112 T
+;   deadline one ISR per L+R PAIR at 15625 Hz -> 1792..2112 T
 ;            (16 x the per-video-mode CTC time constant, exactly;
-;            1728 T is HDMI, the tightest, and 2112 T is VGA6)
+;            1792 T is VGA0, the tightest reachable, and 2112 T is VGA6)
 ;
 ; A was measured 2026-08-02 by inverting the bench's own tick-
 ; shortfall table, four points on one free parameter, at
@@ -1216,9 +1217,9 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; session repoints the CTC vector at video_ctc_isr_stereo.
 ;
 ; THE DEFECT, AND WHAT FIXED IT (2026-08-03). At the old cap
-; B(256) = 1801 T, which is 4.2% OVER stereo HDMI's 1728 T - the
-; owner's own display - so every chunk spanning a tick boundary
-; suppressed that interrupt. The PLAY= instrument found five staged
+; B(256) = 1801 T, which is 0.50% OVER VGA0's 1792 T - the
+; tightest reachable stereo period - so every chunk spanning a tick
+; boundary suppressed that interrupt. The PLAY= instrument found five staged
 ; rows running long with TOT exactly nominal and zero ring underruns
 ; (039 +5.2%, 007 +2.4%, 019 +2.8%, 037 +2.9%, 038 +2.1%), which is
 ; this mechanism's signature.
@@ -1242,13 +1243,13 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; slow-and-flat playback question on this change alone.
 ;
 ; Two changes closed the DI exposure, and each alone would have been
-; too thin (margins against HDMI 1728 T, at nominal A and at the
+; too thin (margins against VGA0's 1792 T, at nominal A and at the
 ; pessimistic end of its +/-20 T band):
 ;
-;   as shipped     A = 500, cap 256   B = 1801.0   -4.22% / -5.38%
-;   code only      A = 402, cap 256   B = 1703.0   +1.45% / +0.29%
-;   cap only       A = 500, cap 240   B = 1719.7   +0.48% / -0.68%
-;   BOTH (shipped) A = 402, cap 240   B = 1621.7   +6.15% / +5.00%
+;   as shipped     A = 500, cap 256   B = 1801.0   -0.50% / -1.62%
+;   code only      A = 402, cap 256   B = 1703.0   +4.97% / +3.85%
+;   cap only       A = 500, cap 240   B = 1719.7   +4.04% / +2.92%
+;   BOTH (shipped) A = 402, cap 240   B = 1621.7   +9.50% / +8.39%
 ;
 ; A fell 98 T because the per-chunk copy arm lost the WR1 pair to the
 ; session init (descriptor split - fill is 0.003% of ops and restores

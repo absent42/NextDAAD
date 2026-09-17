@@ -874,8 +874,8 @@ sfx_stream_rewind:
 ; aud_ctc_params: DE = sample rate (validated AUD_RATE_MIN..MAX). Derives the
 ; CTC control word (audReqSmpCtrl) and time constant (audReqSmpTc) for the rate
 ; at the LIVE video-timing mode. The CTC input clock IS the FPGA system clock,
-; 27-33 MHz by video mode (nextreg $11 bits 2:0), so a fixed constant would
-; drift pitch across VGA/HDMI - aud_clk16_tab holds clock/16 per mode (like
+; 28-33 MHz (VGA0-6) by video mode (nextreg $11 bits 2:0), so a fixed constant
+; would drift pitch across VGA modes - aud_clk16_tab holds clock/16 per mode (like
 ; em00k CTCAudio's table). Prescaler /16 for rate >= clk16>>8 (the PER-MODE
 ; crossover where the /16 TC would reach 256); else /256 (TC = (clk16>>4)/rate).
 ; TC is floored and clamped to 255 (the boundary rate that divides to 256 lands
@@ -910,7 +910,7 @@ aud_ctc_params:
     ld l, a                     ; HL = clk16 low 16 bits; C:HL = clk16 (24-bit)
     pop de                      ; DE = rate
     ; per-mode crossover = clk16 >> 8 (the rate at which the /16 TC reaches 256).
-    ; A fixed constant only holds for VGA0; on faster clocks (up to VGA6 33 MHz)
+    ; A fixed constant only holds for VGA0; on faster clocks (28-33 MHz, VGA0-6)
     ; a 6836 crossover would leave a band where /16 TC overflows 255 and clamps
     ; sharply (+18% on VGA6). clk16 is in C:HL, so clk16 >> 8 = C:H.
     push hl                     ; protect clk16 low word (restored after the test)
@@ -965,7 +965,9 @@ aud_clk16_tab:
     db $8C,$90,$1D              ; VGA4 31000000/16 = 1937500
     db $80,$84,$1E              ; VGA5 32000000/16 = 2000000
     db $A4,$78,$1F              ; VGA6 33000000/16 = 2062500
-    db $CC,$BF,$19              ; HDMI 27000000/16 = 1687500
+    db $CC,$BF,$19              ; index 7: HDMI 27000000/16 = 1687500 - a write
+                                 ; of 7 to NR $11 stores 0 on core 3.02.04, so
+                                 ; this entry is unreachable
 
 ; ---------------------------------------------------------------------
 ; Channel allocator: serves every channel decision the SFX condact

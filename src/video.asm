@@ -1476,7 +1476,7 @@ vid_pos24:
 ; a DMA-port write (the WR1 restore otir) THREE instructions past its
 ; arm, so it would take three yields inside one bracket to touch the
 ; port mid-transfer - and the tightest CTC period the format can
-; select (HDMI stereo, 1728 T) admits at most two edges against a
+; select (VGA0 stereo, 1792 T) admits at most two edges against a
 ; fill bracket of 1664 T (1745.6 T even at a 256 cap). Anything that
 ; shortens either tail, or moves a DMA write earlier, must be
 ; re-checked against that bound. tests/dma_contract.py pins the
@@ -2614,7 +2614,7 @@ vid_key_any:
 ; Not one T-state moved; the only change is that the 88 T wrap arrives
 ; once per 8192 ticks instead of once per 2560, so the MEAN ISR is
 ; 0.01 T cheaper. Against the TIGHTEST period the format can select -
-; stereo HDMI 1728 T - the worst tick is 14.1%
+; stereo VGA0 1792 T - the worst tick is 13.6%
 ; of the period, margin 86%.
 ; WHY 8192 AND NOT 7680: 7680 ($1E00) is equally page-aligned and
 ; would have cost exactly the same compares, so the cheap-compare test
@@ -6602,6 +6602,8 @@ vidDmaInit_len equ $ - vidDmaInit
 ; that used to stand beside this one).
 vidCtcTcNxvStereo:
     db 112, 114, 117, 120, 124, 128, 132, 108
+    ; index 7 (108) is the mode-7 entry; a write of 7 to NR $11 stores 0
+    ; on core 3.02.04, so NR $11 never reads back 7 and this is unreachable
 
 ; ---------------------------------------------------------------------
 ; vid_run_restore_body - the teardown (reached from vid_run's

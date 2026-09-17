@@ -458,6 +458,8 @@ l2_flip_swap:
 ;     rate       VGA0  VGA1  VGA2  VGA3  VGA4  VGA5  VGA6  HDMI
 ;     16000 Hz   1744  1776  1840  1872  1936  2000  2048  1680
 ;     20000 Hz   1392  1424  1472  1488  1536  1600  1648  1344
+;     (HDMI column: a write of 7 to NR $11 stores 0 on core 3.02.04,
+;      so this mode is unreachable)
 ;
 ; 16000 Hz is the only rate this project has shipped; 20000 Hz =
 ; AUD_RATE_MAX is the published supported ceiling. The pre-emption
