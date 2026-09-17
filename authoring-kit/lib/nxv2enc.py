@@ -385,8 +385,8 @@ assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 # TMODEL_COEFFS - Z80N decode T-states per player event, unarmed, ruled
 # from sitting 5 (2026-09-17: quiet image, +3 timing, core 3.02.04, 28 MHz)
 # by tests/fit_gap_bench.py; audio_factor carries the armed tax. A frame
-# is priced by its frame-type term, its dest-side nxv2path events through
-# EVENT_TERMS, and its expected source-window events (src_expected_t).
+# is priced by its frame-type term and its nxv2path events at its payload's
+# file offset through EVENT_TERMS (frame_price).
 # Standalone rows are read less the bench's per-rep harness, 717.8 T / O.
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
@@ -1023,10 +1023,9 @@ def op_copy(payload):
 
 
 # ---------------------------------------------------------------------
-# Event pricing. nxv2path walks the player's dest geometry per op with the
-# source window clear; EVENT_TERMS maps each of its counters to terms (the
-# sitting-5 rules' S4 map). A frame adds its frame-type term and the
-# expected source-window events, since its file offset is not yet known.
+# Event pricing. nxv2path walks the player's path per op at the payload's
+# file offset; EVENT_TERMS maps each of its counters to terms (the sitting-5
+# rules' S4 map). A frame adds its frame-type term.
 # ---------------------------------------------------------------------
 assert (nxv2path.OP_FEND, nxv2path.OP_SKIP16, nxv2path.OP_RUN8, nxv2path.OP_RUN16,
         nxv2path.OP_COPY8, nxv2path.OP_COPY16, nxv2path.OP_PAL, nxv2path.OP_SKIP8,
@@ -1107,10 +1106,11 @@ EVENT_TERMS = {
 assert set(EVENT_TERMS) | nxv2path.DIAGNOSTIC == set(nxv2path.Events.__dataclass_fields__)
 
 FRAME_TYPES = ("delta", "first", "middle", "last", "single")
-SRC_WINDOW_B = 8192        # source window: one seam per window of payload
-SRC_EDGE_HDR_B = 256       # header positions per window at $DFxx (vid_op_edge)
-SRC_SLOW_HDR_B = 4         # ... at $DFFC-$DFFF (vid_slow_op)
-PAL_STRADDLE_B = 513       # PAL header positions per window that straddle its end
+BLOCK_B = 512               # the container's alignment: audio pad and payload blocks
+# payload starts with no known offset: the 16 512-aligned window phases on an
+# odd page, whose first seam is the dearer bank seam
+SRC_PHASES = tuple(nxv2path.WIN_BYTES + k * BLOCK_B
+                   for k in range(nxv2path.WIN_BYTES // BLOCK_B))
 _UNBOUNDED_PAGES = 1 << 16  # dest pages of an unknown-shape (flat) surface
 
 
@@ -1134,48 +1134,38 @@ def event_coeffs(width=None, height=None, streamed=True):
 
 
 def frame_events(ops, width=None, height=None, dst=None, in_span=False,
-                 copy_thr=None, run_thr=None):
+                 copy_thr=None, run_thr=None, src_offset=None):
     """(nxv2path.Events, nxv2path.State) of one payload's (opcode, n) ops with
-    the source window clear, at the model's kernel selects unless given. dst
-    (page, DE) defaults to the fresh cursor. Shape None walks a flat surface
-    with no page limit."""
+    the payload at file offset src_offset (None: the source window clear), at
+    the model's kernel selects unless given. dst (page, DE) defaults to the
+    fresh cursor. Shape None walks a flat surface with no page limit."""
     if width is None:
         surface, pages = (256, 192, False), _UNBOUNDED_PAGES
     else:
         surface, pages = (int(width), int(height), is_gapped(width, height)), None
     tc = TMODEL_COEFFS
     return nxv2path.simulate(
-        ops, surface, None, dst=(0, nxv2path.DST_WIN) if dst is None else tuple(dst),
+        ops, surface, src_offset, dst=(0, nxv2path.DST_WIN) if dst is None else tuple(dst),
         in_span=in_span, copy_thr=tc["copy_dma_min"] if copy_thr is None else copy_thr,
         run_thr=tc["run_dma_min"] if run_thr is None else run_thr, dst_pages=pages)
 
 
-def src_expected_t(nbytes, nops, npal=0, streamed=True):
-    """Expected source-window T of one frame of nbytes payload bytes, nops op
-    headers and npal PAL ops, at unknown file offset: a seam per 8192 B, a
-    detour or slow header per op, a straddle per PAL op."""
-    tc = TMODEL_COEFFS
-    seam = (max(tc["src_parity_seam_t"], tc["src_bank_seam_t"])
-            + (tc["src_seam_strm_t"] if streamed else 0.0))
-    return (nbytes / SRC_WINDOW_B * seam
-            + nops * (SRC_EDGE_HDR_B / SRC_WINDOW_B * tc["src_edge_t"]
-                      + SRC_SLOW_HDR_B / SRC_WINDOW_B * tc["src_slow_hdr_t"])
-            + npal * PAL_STRADDLE_B / SRC_WINDOW_B * tc["pal_straddle_t"])
-
-
 def frame_price(ops, ftype="delta", width=None, height=None, dst=None,
-                in_span=False, streamed=True):
+                in_span=False, streamed=True, src_offset=None):
     """(payload bytes, T, nxv2path.State) of one frame's ops through its
-    terminal: its frame-type term, its dest events and the expected
-    source-window events."""
+    terminal: its frame-type term and its events, source and dest, with the
+    payload at file offset src_offset. None prices the dearest of SRC_PHASES
+    (bytes and the dest end State do not depend on the offset)."""
     if ftype not in FRAME_TYPES:
         raise ValueError(f"frame type {ftype!r} is not one of {FRAME_TYPES}")
-    ev, state = frame_events(ops, width, height, dst, in_span)
+    coeffs = event_coeffs(width, height, streamed)
     nbytes = sum(nxv2path.op_bytes(op, n) for op, n in ops)
-    t = (TMODEL_COEFFS[f"frame_{ftype}_t"]
-         + ev.price(event_coeffs(width, height, streamed))
-         + src_expected_t(nbytes, len(ops), ev.pal_ops + ev.pal_straddles, streamed))
-    return nbytes, t, state
+    t = state = None
+    for offset in (SRC_PHASES if src_offset is None else (int(src_offset),)):
+        ev, state = frame_events(ops, width, height, dst, in_span, src_offset=offset)
+        priced = ev.price(coeffs)
+        t = priced if t is None else max(t, priced)
+    return nbytes, TMODEL_COEFFS[f"frame_{ftype}_t"] + t, state
 
 
 _SEG_OPS = ((OP_SKIP8, OP_SKIP16), (OP_COPY8, OP_COPY16), (OP_RUN8, OP_RUN16))
@@ -1236,16 +1226,18 @@ def op_cost(kind, length):
     return total_b, total_t
 
 
-def stream_cost(gcls, glens, width=None, height=None, streamed=True):
+def stream_cost(gcls, glens, width=None, height=None, streamed=True,
+                src_offset=None):
     """(bytes, T) of a delta frame's segment list as emit_delta_ops writes
-    it: bytes exclude the FEND byte, T is the whole frame (frame_delta_t,
-    its dest events and the expected source-window events)."""
+    it: bytes exclude the FEND byte, T is the whole frame priced at file
+    offset src_offset (frame_price)."""
     ops = []
     for c, L in zip(np.asarray(gcls).tolist(), np.asarray(glens).tolist()):
         if L > 0:
             _segment_ops(int(c), int(L), ops)
     ops.append((OP_FEND, 0))
-    nbytes, t, _state = frame_price(ops, "delta", width, height, streamed=streamed)
+    nbytes, t, _state = frame_price(ops, "delta", width, height, streamed=streamed,
+                                    src_offset=src_offset)
     return nbytes - 1, t
 
 
@@ -1739,7 +1731,8 @@ def merge_run_absorb_max():
 
 
 def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
-                        cap_bytes, width=None, height=None, streamed=True):
+                        cap_bytes, width=None, height=None, streamed=True,
+                        src_offset=None):
     """Gap-merge one delta frame's segment list into a re-expressed opcode
     payload whose DECODE is byte-identical to emit_delta_ops on the same
     segments. Returns (payload_bytes, modeled_bytes, modeled_T).
@@ -1756,8 +1749,8 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
     cap_bytes bounds the byte inflation a bridge/absorb may add (each
     bridged skip re-sends K literal bytes); a bridge that would push the
     stream past the cap is declined and the skip is kept. The frame is
-    priced as stream_cost prices it, on this shape (None: flat), and K*
-    reads the shape's supply exchange rate."""
+    priced as stream_cost prices it, on this shape (None: flat) at file
+    offset src_offset, and K* reads the shape's supply exchange rate."""
     kstar = merge_kstar(None if width is None else supply_exchange_t_per_byte(width, height))
 
     valbuf = np.array(surface_flat, dtype=np.uint8, copy=True)
@@ -1851,7 +1844,8 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
             _segment_ops(1, len(data), wire_ops)
     parts.append(bytes([OP_FEND]))
     wire_ops.append((OP_FEND, 0))
-    b_total, t_total, _state = frame_price(wire_ops, "delta", width, height, streamed=streamed)
+    b_total, t_total, _state = frame_price(wire_ops, "delta", width, height, streamed=streamed,
+                                           src_offset=src_offset)
     return b"".join(parts), b_total, t_total
 
 
@@ -1932,7 +1926,7 @@ def frame_supply_ms(nbytes, t, price):
 
 def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
                    cap_bytes, cap_t, merge_gaps, width=None, height=None,
-                   streamed=True):
+                   streamed=True, src_offset=None):
     """Cost a changed-segment list. Returns (bytes, T, payload, suffix) for
     the cheapest variant that fits BOTH caps (gap-merged preferred - it kills
     the dominant per-op dispatch), or None if neither variant fits. The
@@ -1940,10 +1934,10 @@ def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
     if merge_gaps and surface_flat is not None:
         payload_m, b_m, t_m = merge_delta_stream(
             gcls, gstarts, glens, target_flat, surface_flat, cap_bytes,
-            width, height, streamed)
+            width, height, streamed, src_offset)
         if b_m <= cap_bytes and (cap_t is None or t_m <= cap_t):
             return b_m, t_m, payload_m, "+merge"
-    b_un, t_un = stream_cost(gcls, glens, width, height, streamed)
+    b_un, t_un = stream_cost(gcls, glens, width, height, streamed, src_offset)
     b_un += 1  # FEND byte
     if b_un <= cap_bytes and (cap_t is None or t_un <= cap_t):
         return b_un, t_un, emit_delta_ops(target_flat, gcls, gstarts, glens), ""
@@ -1953,7 +1947,7 @@ def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
 def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                  surface_flat=None, merge_gaps=True, tile_px=None,
                  tile_ladder=None, supply_px=None, supply_slack=None,
-                 width=None, height=None, streamed=True):
+                 width=None, height=None, streamed=True, src_offset=None):
     """Region-coherent budget-bound delta encoder. Returns
     (gcls, gstarts, glens, bytes, T, mode, binding, payload).
 
@@ -2009,14 +2003,16 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
 
     The returned (gcls, gstarts, glens) is always the CHANGED-segment list
     (un-merged) the caller walks to track the surface; payload is the chosen
-    (possibly merged) stream. width/height/streamed: the surface and delivery
-    every candidate is priced on (width None: a flat surface)."""
+    (possibly merged) stream. width/height/streamed/src_offset: the surface,
+    delivery and payload file offset every candidate is priced at (width
+    None: a flat surface; src_offset None: the dearest phase)."""
     n = int(err2_flat.size)
     denoise = 3.0 * THRESHOLDS[0] * THRESHOLDS[0]
     mask_full = close_gaps(err2_flat > denoise)
     gcls, gstarts, glens = segment(target_flat, mask_full)
     res = _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
-                         cap_bytes, cap_t, merge_gaps, width, height, streamed)
+                         cap_bytes, cap_t, merge_gaps, width, height, streamed,
+                         src_offset)
     if res is not None:
         b, t, payload, sfx = res
         return gcls, gstarts, glens, b, t, "full" + sfx, "none", payload
@@ -2066,7 +2062,8 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
         cands = [(rung, encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                                      surface_flat=surface_flat,
                                      merge_gaps=merge_gaps, tile_px=rung,
-                                     width=width, height=height, streamed=streamed))
+                                     width=width, height=height, streamed=streamed,
+                                     src_offset=src_offset))
                  for rung in tile_ladder]
         best_b = max(r[3] for _, r in cands)
         coarse_b = cands[-1][1][3]
@@ -2142,7 +2139,8 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
         selmask = mask_full & (_rank_px < k)
         gc, gs, gl = segment(target_flat, selmask)
         r = _fit_candidate(gc, gs, gl, target_flat, surface_flat,
-                           cap_bytes, cap_t, merge_gaps, width, height, streamed)
+                           cap_bytes, cap_t, merge_gaps, width, height, streamed,
+                           src_offset)
         if r is None:
             return None
         return (gc, gs, gl) + r
@@ -3396,32 +3394,35 @@ def _kf_chunk_ops(length, first, is_last):
 
 
 def kf_chunk_price(length, first, is_last=False, width=None, height=None,
-                   dst=None, streamed=True):
+                   dst=None, streamed=True, src_offset=None):
     """(payload bytes, T, nxv2path.State) of one keyframe-span chunk frame
     painting length literal bytes: its frame type (first, middle, last or
-    single), its dest events from the chunk's start dst (the previous
-    chunk's end state; a first chunk's KSTART starts the fresh cursor) and
-    the expected source-window events."""
+    single) and its events from the chunk's start dst (the previous chunk's
+    end state; a first chunk's KSTART starts the fresh cursor), the payload
+    at file offset src_offset (None: the dearest phase)."""
     if first:
         ftype = "single" if is_last else "first"
     else:
         ftype = "last" if is_last else "middle"
     return frame_price(_kf_chunk_ops(length, first, is_last), ftype, width, height,
-                       dst=None if first else dst, in_span=not first, streamed=streamed)
+                       dst=None if first else dst, in_span=not first, streamed=streamed,
+                       src_offset=src_offset)
 
 
 def kf_chunk_cost(length, first, width=None, height=None, dst=None,
-                  is_last=False, streamed=True):
+                  is_last=False, streamed=True, src_offset=None):
     """(bytes, T) of kf_chunk_price."""
-    b, t, _state = kf_chunk_price(length, first, is_last, width, height, dst, streamed)
+    b, t, _state = kf_chunk_price(length, first, is_last, width, height, dst, streamed,
+                                  src_offset)
     return b, t
 
 
-def _kf_sizing_price(length, first, width, height, dst, streamed):
+def _kf_sizing_price(length, first, width, height, dst, streamed, src_offset):
     """(bytes, T) of a chunk being sized, at the dearer of the two frame
     types it can take (the ops differ only in the zero-cost terminal)."""
     tc = TMODEL_COEFFS
-    b, t, _state = kf_chunk_price(length, first, False, width, height, dst, streamed)
+    b, t, _state = kf_chunk_price(length, first, False, width, height, dst, streamed,
+                                  src_offset)
     own, other = (("frame_first_t", "frame_single_t") if first
                   else ("frame_middle_t", "frame_last_t"))
     return b, t + max(0.0, tc[other] - tc[own])
@@ -3460,14 +3461,15 @@ def _largest_fit(fn, limit, estimate, step, room=None):
 
 
 def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
-                            first=False, dst=None, streamed=True):
+                            first=False, dst=None, streamed=True, src_offset=None):
     """Max literal bytes a keyframe chunk frame may paint so its whole
     modeled supply time - decode busy (the chunk's price x R at the dense
     anchor / af), the per-frame audio copy, and SD wire for the audio pad
     and the 512-padded payload - stays within KF_SPAN_PEAK_UTIL of the
     frame period (the T2/E5 peak pacing bound; see the constant's block).
     The payload is counted exactly: KSTART and PAL on a first chunk, each
-    COPY header (3 B for COPY16) and the terminal."""
+    COPY header (3 B for COPY16) and the terminal; it is priced at file
+    offset src_offset (None: the dearest phase)."""
     tc = TMODEL_COEFFS
     af = tc["audio_factor"]
     clock = tc["clock_khz"]
@@ -3487,7 +3489,7 @@ def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
         return 1
 
     def supply_ms(L):
-        b, t = _kf_sizing_price(L, first, width, height, dst, streamed)
+        b, t = _kf_sizing_price(L, first, width, height, dst, streamed, src_offset)
         return t * r / af / clock + fixed_ms + ((b + 511) // 512) * 512 / wire_eff
 
     rate = ((tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"])
@@ -3517,7 +3519,7 @@ def frame_wire_cap_bytes(fps, abytes_pad=None):
 
 
 def kf_chunk_budget_bytes(fps, first, width=None, height=None,
-                          abytes_pad=None, dst=None, streamed=True):
+                          abytes_pad=None, dst=None, streamed=True, src_offset=None):
     """Max keyframe literal bytes this frame's chunk may hold - the
     tighter of two bounds:
 
@@ -3531,33 +3533,43 @@ def kf_chunk_budget_bytes(fps, first, width=None, height=None,
     event can never demand more wire than a frame buys.
 
     abytes_pad: the encode's padded audio bytes/frame (None = the
-    conservative stereo layout for this fps). Neither bound exceeds the
-    bytes the surface holds from the chunk's start."""
+    conservative stereo layout for this fps). src_offset: the chunk
+    payload's file offset (None: the dearest phase). Neither bound exceeds
+    the bytes the surface holds from the chunk's start."""
     tc = TMODEL_COEFFS
     budget_t = usable_budget_t(fps, width, height, streamed) * 0.98
     dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
-    L_t = _largest_fit(lambda L: _kf_sizing_price(L, first, width, height, dst, streamed)[1],
+    L_t = _largest_fit(lambda L: _kf_sizing_price(L, first, width, height, dst, streamed,
+                                                  src_offset)[1],
                        budget_t, budget_t / dma_rate, tc["copy_dma_chunk"],
                        _kf_room(width, height, None if first else dst))
     L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad, first=first,
-                                  dst=dst, streamed=streamed)
+                                  dst=dst, streamed=streamed, src_offset=src_offset)
     return max(min(L_t, L_w), 1)
 
 
 def plan_kf_chunks(raw_len, fps, width=None, height=None, abytes_pad=None,
-                   streamed=True):
+                   streamed=True, src_offset=None):
     """Returns a list of (start, length, first) chunks covering raw_len
     bytes, each sized to kf_chunk_budget_bytes from its own dest start (the
-    previous chunk's end state)."""
+    previous chunk's end state) and file offset: src_offset is the first
+    chunk payload's, and each next payload follows the previous one's
+    512-padded bytes and the audio pad (None: every chunk at the dearest
+    phase)."""
+    if abytes_pad is None:
+        abytes_pad = _default_abytes_pad(fps)
     chunks = []
-    remaining, pos, first, dst = raw_len, 0, True, None
+    remaining, pos, first, dst, offset = raw_len, 0, True, None, src_offset
     while remaining:
         c = min(remaining, kf_chunk_budget_bytes(fps, first, width, height,
                                                  abytes_pad, dst=dst,
-                                                 streamed=streamed))
+                                                 streamed=streamed, src_offset=offset))
         chunks.append((pos, c, first))
-        state = kf_chunk_price(c, first, c == remaining, width, height, dst, streamed)[2]
+        nbytes, _t, state = kf_chunk_price(c, first, c == remaining, width, height, dst,
+                                           streamed, offset)
         dst = (state.page, state.de)
+        if offset is not None:
+            offset += -(-nbytes // BLOCK_B) * BLOCK_B + abytes_pad
         pos += c
         remaining -= c
         first = False
@@ -4041,6 +4053,11 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         streamed = predicted_streamed(N, raw, cap_bytes, fps, abytes_pad)
     streamed = bool(streamed)
     usable = usable_budget_t(fps, width, height, streamed) * budget_scale
+    # payload file offsets as encode() packs them (header, then audio pad and
+    # 512-padded payload per frame); a streamed loop pass shifts the seam
+    # phase by an amount known only at run time, which is not priced
+    apad = _default_abytes_pad(fps) if abytes_pad is None else int(abytes_pad)
+    file_pos = HEADER_SIZE
     # keyframe cadence (W4 item 2): frames per window; 0/None disables
     kf_cadence_s = KF_CADENCE_S_DEFAULT if kf_cadence_s is None else float(kf_cadence_s)
     cadence_frames = int(round(kf_cadence_s * fps)) if kf_cadence_s > 0 else 0
@@ -4089,7 +4106,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     kf_span_ranges = []
     per_frame = {"bytes": [], "psnr": [], "mode": [], "binding": [], "drift": [],
                  "drift_lm": [], "deficit_lm": [],   # W4 lm trigger diagnostics
-                 "t": []}   # modeled decode T/frame (streaming supply check)
+                 "t": [],   # modeled decode T/frame (streaming supply check)
+                 "offset": []}   # payload file offset each frame was priced at
     decoded = []
     surfaces = []   # (return_surfaces) per-frame index surface the encoder
                      # believes is on screen - for the decode-vs-bookkeeping
@@ -4118,6 +4136,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
+        payload_at = file_pos + apad
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
@@ -4208,7 +4227,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             scene_end = next((c for c in scene_cuts if c > i), N)
             kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp,
                                    mode=dither_mode)
-            planned = plan_kf_chunks(raw, fps, width, height, abytes_pad, streamed)
+            planned = plan_kf_chunks(raw, fps, width, height, apad, streamed, payload_at)
             # Cut lookahead: if this span would take >1 chunk AND the
             # very next frame independently looks like a hard cut too,
             # defer starting the span to i+1 instead - avoids composing
@@ -4227,10 +4246,12 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                     surface_flat=prev_flat, merge_gaps=merge_gaps,
                     tile_px=tile_px, tile_ladder=tile_ladder,
                     supply_px=supply_px, supply_slack=tile_slack,
-                    width=width, height=height, streamed=streamed)
+                    width=width, height=height, streamed=streamed, src_offset=payload_at)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
+                per_frame["offset"].append(payload_at)
+                file_pos = payload_at + -(-len(payload) // BLOCK_B) * BLOCK_B
                 per_frame["bytes"].append(b)
                 per_frame["psnr"].append(psnr(orig[i], dec_img))
                 per_frame["mode"].append(mode + ":deferred_kf")
@@ -4290,13 +4311,15 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             is_last = not kf_chunks
             payload = emit_kf_chunk_payload(tflat, s, L, first, is_last, kf_pal=kf_pal)
             payloads.append(payload)
+            per_frame["offset"].append(payload_at)
+            file_pos = payload_at + -(-len(payload) // BLOCK_B) * BLOCK_B
             per_frame["bytes"].append(len(payload))   # actual, not kf_chunk_cost's modeled estimate
             per_frame["binding"].append("kf")
             per_frame["drift"].append(float("nan"))
             per_frame["drift_lm"].append(float("nan"))
             per_frame["deficit_lm"].append(float("nan"))
             _kb, kf_t, kf_state = kf_chunk_price(L, first, is_last, width, height,
-                                                 kf_dst, streamed)
+                                                 kf_dst, streamed, payload_at)
             kf_dst = (kf_state.page, kf_state.de)
             per_frame["t"].append(kf_t)
             if is_last:
@@ -4376,7 +4399,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                     surface_flat=prev_flat, merge_gaps=merge_gaps,
                     tile_px=tile_px, tile_ladder=tile_ladder,
                     supply_px=supply_px, supply_slack=tile_slack,
-                    width=width, height=height, streamed=streamed)
+                    width=width, height=height, streamed=streamed, src_offset=payload_at)
 
             err2, sched = _schedule(tflat, None)
             roll_idx = roll_clean = None
@@ -4429,6 +4452,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                     roll_windows.append((roll_start_frame, i))
                     last_roll_end = i
             payloads.append(payload)
+            per_frame["offset"].append(payload_at)
+            file_pos = payload_at + -(-len(payload) // BLOCK_B) * BLOCK_B
             per_frame["bytes"].append(b)
             per_frame["mode"].append(
                 mode + (":roll" if roll_idx is not None else ""))
@@ -5480,9 +5505,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 # order in both modes).
 # ---------------------------------------------------------------------
 BENCH_CLASSIC_RAW = 256 * 192       # 49152
-BENCH_KF_LITERALS = 28104           # one-COPY16 keyframe chunk: the 25 fps
-                                     # middle chunk, kf_chunk_budget_bytes(25.0,
-                                     # False, 256, 192) = 28104 (wire-bound)
+BENCH_KF_LITERALS = 28009           # one-COPY16 keyframe chunk: the 25 fps
+                                     # middle chunk at its dearest phase,
+                                     # kf_chunk_budget_bytes(25.0, False, 256, 192)
 BENCH_SEGMENT_CAP = 61440           # NXB8 cap: 60KB = 8 pool pages, and the
                                      # bench's 16-bit length cells stay clean
 

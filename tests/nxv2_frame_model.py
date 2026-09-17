@@ -6,9 +6,8 @@ Walks a .vid with nxv2dec's frame walker (as nxv2_copy_census.frames_of
 does, but keeping PAL, KSTART and the terminal), classifies each frame,
 runs nxv2_path_sim at the frame's true payload offset with the span cursor
 carried across chunk frames, and prices it the way nxv2enc charges it
-(nxv2enc.frame_price: clear-source dest events plus the expected
-source-window events). Events take the file offset: exact resident, and on a
-streamed clip's first pass (see nxv2_path_sim).
+(nxv2enc.frame_price at the same offset). Events take the file offset: exact
+resident, and on a streamed clip's first pass (see nxv2_path_sim).
 """
 import contextlib
 import sys
@@ -50,12 +49,13 @@ def frame_type(ops, in_span):
     return "delta"
 
 
-def model_t(ftype, ops, surface, dst=(0, sim.DST_WIN), in_span=False,
+def model_t(ftype, ops, surface, offset, dst=(0, sim.DST_WIN), in_span=False,
             streamed=True, enc=nxv2enc):
     """Current-model T for one frame, as nxv2enc charges it: frame_price of
-    its ops on the surface (width, height, gapped) from dst."""
+    its ops on the surface (width, height, gapped) from dst, the payload at
+    file offset offset."""
     return enc.frame_price(ops, ftype, surface[0], surface[1], dst=dst,
-                           in_span=in_span, streamed=streamed)[1]
+                           in_span=in_span, streamed=streamed, src_offset=offset)[1]
 
 
 @contextlib.contextmanager
@@ -108,7 +108,7 @@ def frames(vid_path, copy_thr=None, run_thr=None, streamed=None):
                 out.append(Frame(i, ftype, ops, None, None, start, nbytes, dst))
             else:
                 out.append(Frame(i, ftype, ops, ev,
-                                 model_t(ftype, ops, surface, dst, in_span, streamed),
+                                 model_t(ftype, ops, surface, start, dst, in_span, streamed),
                                  start, nbytes, dst))
             in_span = st.in_span
             dst = (st.page, st.de) if in_span else (0, sim.DST_WIN)

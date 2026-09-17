@@ -13,8 +13,8 @@ Source cursor: HL = $C000 + (position & $1FFF) on linear page position >> 13
 offset. Streaming, the ring holds the file at identity offsets on the first
 pass and wraps in whole banks; a loop pass restarts at the previous pass's
 end block, which shifts the seams. A source offset of None keeps the window
-clear of every edge (the encoder's pricing: a frame's offset is unknown when
-its ops are chosen). Dest cursor: (page, DE) inside the MMU2 window
+clear of every edge (the encoder's price of one op alone, which has no file
+position). Dest cursor: (page, DE) inside the MMU2 window
 $4000-$6000; gapped surfaces keep E = row within a 256-aligned column
 (E == height is the deferred-hop state).
 """

@@ -1173,7 +1173,8 @@ def t10_silicon_coeffs():
         expect(abs(got - want) < 0.1, f"usable_budget_t{args} = {got:.1f}, want {want}")
     # the keyframe chunk planner prices a gapped chunk's column events: its
     # first chunk is smaller than the flat one at the same budget and wire
-    # (26283 B against 27426 B at 25 fps), and it never needs fewer chunks
+    # (25828 B against 26955 B at 25 fps, both at their dearest source phase),
+    # and it never needs fewer chunks
     expect(enc.kf_chunk_budget_bytes(25.0, True, 320, 192)
            < enc.kf_chunk_budget_bytes(25.0, True, 320, 256),
            "gapped keyframe chunks must be smaller than flat ones")
@@ -1181,9 +1182,9 @@ def t10_silicon_coeffs():
     flat_plan = enc.plan_kf_chunks(320 * 192, 25.0, 320, 256)
     expect(len(gap_plan) >= len(flat_plan) and gap_plan[0][1] < flat_plan[0][1],
            f"gapped plan {gap_plan} against flat {flat_plan}")
-    # BENCH_KF_LITERALS is the 25 fps middle chunk: kf_chunk_budget_bytes(25.0,
-    # False, 256, 192) = 28104 B, wire-bound, one COPY16 under 49152
-    expect(enc.BENCH_KF_LITERALS == enc.kf_chunk_budget_bytes(25.0, False, 256, 192) == 28104,
+    # BENCH_KF_LITERALS is the 25 fps middle chunk at its dearest source phase:
+    # kf_chunk_budget_bytes(25.0, False, 256, 192) = 28009 B, one COPY16 under 49152
+    expect(enc.BENCH_KF_LITERALS == enc.kf_chunk_budget_bytes(25.0, False, 256, 192) == 28009,
            f"BENCH_KF_LITERALS {enc.BENCH_KF_LITERALS}")
     # S16 supply exchange rate: 28000 / (1314 x R at density 1.0): flat
     # 28000 / (1314 x 0.976) = 21.83 T/B, gapped 28000 / (1314 x 0.965) = 22.08.
@@ -2374,7 +2375,7 @@ def t10_frame_model():
            f"direct span frames: {got}")
 
 
-@case(10, "event parity - the encoder's event counts equal the simulator's on every fixture frame")
+@case(10, "event parity - the encoder's event counts equal the simulator's on every fixture frame at its offset")
 def t10_event_parity():
     import fit_gap_bench as g
     import nxv2_frame_model as fm
@@ -2398,97 +2399,51 @@ def t10_event_parity():
                        f"{surface} streamed={strm} {name}: encoder {coeffs[name]} against the rules' {rules}")
     expect(enc.event_coeffs() == enc.event_coeffs(256, 192), "shape None prices a flat surface")
 
-    def tracked(base):
-        class Tracked(base):
-            # the dest cursor after every op, as the simulator walks it
-            def __init__(self, *args):
-                super().__init__(*args)
-                self.trail = []
-
-            def _after(self, fn, *args):
-                fn(*args)
-                self.trail.append((self.dpage, self.de))
-
-            def fast_op(self, op, n):
-                self._after(super().fast_op, op, n)
-
-            def slow_op(self, op, n):
-                self._after(super().slow_op, op, n)
-
-            def pal(self):
-                self._after(super().pal)
-
-            def kstart(self):
-                self._after(super().kstart)
-        return Tracked
-
-    class ClearSource(ps._Player):
-        # the simulator's own dest geometry with the source window held clear
-        def H(self):
-            return 0xC0
-
-        def take(self, n):
-            pass
-
-        def fetch(self, n):
-            pass
-
-    TrackedClear, TrackedReal = tracked(ClearSource), tracked(ps._Player)
-
-    source = ("slow_skip8", "slow_skip16", "slow_run8", "slow_run16", "slow_copy8", "slow_copy16",
-              "src_copy8", "copy_src_chunks", "copy8_srcedge", "src_parity_seams", "src_bank_seams",
-              "src_edge_hdr", "src_slow_hdr", "src_wrap_hdr", "pal_ops", "pal_straddles", "pal_chunks")
-    # a slow header, a COPY8 source bail or a source-clipped chunk changes the
-    # dest-side path an op takes, never where it paints
-    reroute = ("slow_skip8", "slow_skip16", "slow_run8", "slow_run16", "slow_copy8", "slow_copy16",
-               "src_copy8", "copy_src_chunks")
     missing = [c for c in range(1, 10) if _gap_fixture(c) is None]
     if missing:
         skip(f"fixtures {missing} are not encoded at this era (build-tests.ps1 -Vid -VidLong)")
+    # every frame of 001-009 at its payload's file offset, span cursor carried:
+    # the encoder's events equal the simulator's on every counter, source and
+    # dest, with the same end state, and frame_price charges exactly them
     frames = rerouted = 0
     bad = []
+    reroute = ("slow_skip8", "slow_skip16", "slow_run8", "slow_run16", "slow_copy8", "slow_copy16",
+               "src_copy8", "copy_src_chunks")
     for clip in range(1, 10):
         buf = _gap_fixture(clip).read_bytes()
         hdr = enc.unpack_header(buf)
         w, h = hdr["width"], hdr["height"]
         surface = fm.surface_of(hdr)
+        strm = len(buf) > enc.STREAM_RESIDENT_POOL_B
+        coeffs = enc.event_coeffs(w, h, strm)
         in_span, dst = False, (0, ps.DST_WIN)
         for _p, _s, _t, start, length in dec._iter_frames(buf, hdr):
             ops = ps.parse_payload(buf[start:start + length])
+            ftype = fm.frame_type(ops, in_span)
             for sel in ((53, 71), (81, 71)):
-                ev, st = enc.frame_events(ops, w, h, dst, in_span, *sel)
-                clear = TrackedClear(surface, 0, dst, in_span, *sel, None)
-                clear.run(ops)
-                real = TrackedReal(surface, start, dst, in_span, *sel, None)
+                ev, st = enc.frame_events(ops, w, h, dst, in_span, *sel, src_offset=start)
+                real = ps._Player(surface, start, dst, in_span, *sel, None)
                 real.run(ops)
-                got, sim_clear = ev.as_dict(nonzero=False), clear.ev.as_dict(nonzero=False)
-                # (a) every counter, source window clear, and the end state
-                if got != sim_clear or (st.page, st.de, st.in_span) != (clear.dpage, clear.de, clear.in_span):
-                    bad.append(f"{clip:03d} @{start} {sel}: clear-source counts or end state differ")
-                # (b) at the frame's true file offset: the dest cursor after every
-                # op, and on every frame no source event reroutes, every dest counter
-                real_d = real.ev.as_dict(nonzero=False)
-                if clear.trail != real.trail or (real.dpage, real.de, real.in_span) != (st.page, st.de, st.in_span):
-                    bad.append(f"{clip:03d} @{start} {sel}: dest cursor differs at the file offset")
-                if any(real_d[k] for k in reroute):
-                    rerouted += sel == (53, 71)
-                else:
-                    diff = {k: (got[k], real_d[k]) for k in every - diag - set(source) if got[k] != real_d[k]}
-                    if diff or got["pal_ops"] != real_d["pal_ops"] + real_d["pal_straddles"]:
-                        bad.append(f"{clip:03d} @{start} {sel}: dest counters differ at the file offset {diff}")
+                if (ev.as_dict(nonzero=False) != real.ev.as_dict(nonzero=False)
+                        or (st.page, st.de, st.in_span) != (real.dpage, real.de, real.in_span)):
+                    bad.append(f"{clip:03d} @{start} {sel}: counts or end state differ at the file offset")
+                if sel == (53, 71):
+                    rerouted += any(getattr(real.ev, k) for k in reroute)
+                    _nb, t, _st = enc.frame_price(ops, ftype, w, h, dst, in_span, strm, src_offset=start)
+                    if abs(t - (tc[f"frame_{ftype}_t"] + real.ev.price(coeffs))) > 1e-6:
+                        bad.append(f"{clip:03d} @{start}: frame_price {t:.2f} off its events")
             frames += 1
             in_span = st.in_span
             dst = (st.page, st.de) if in_span else (0, ps.DST_WIN)
     expect(not bad, f"{len(bad)} frame mismatches:\n  " + "\n  ".join(bad[:10]))
     expect(frames > 600, f"only {frames} fixture frames walked")
     print(f"    note: {frames} fixture frames, {rerouted} with a source-window reroute at their offset")
-    # every standalone bench row's ops at its dest and selects: the encoder's
-    # clear-source walk equals row_events' dest counters (rows sit below $DF00)
+    # every standalone bench row's ops at its dest and selects: the clear-source
+    # walk op_cost uses equals row_events (rows sit below $DF00)
     for rows in bench.BENCH_TABLES.values():
         for tag, kind, L, o, _r, _thr, geo in rows:
             if kind == bench.CAL_KIND:
                 continue
-            w, h, _gapped = bench.row_surface(tag)
             ops = [(ps.OPCODE_BY_KIND[kind], L)] * o + [(ps.OP_FEND, 0)]
             ev, _st = enc.nxv2path.simulate(ops, bench.row_surface(tag), None,
                                             dst=(0, bench.GEO_DESTS[bench.geo_fields(geo)[2]]),
@@ -2496,24 +2451,83 @@ def t10_event_parity():
                                             run_thr=bench.row_selects(tag)[1],
                                             dst_pages=bench.NXB_DST_PAGES)
             expect(ev == bench.row_events(tag), f"{tag}: clear-source events differ from row_events")
-    # a frame's price: its frame-type term + its events through event_coeffs
-    # + the expected source-window events. A 320x192 middle chunk frame of
-    # COPY16 1000 + FEND from column 0, streamed:
+    # a frame's price: its frame-type term + its events at its offset. A
+    # 320x192 middle chunk frame of COPY16 1000 + FEND from column 0, payload
+    # at offset 7680 ($DE00), streamed: DMA 192, 192, then 126 clipped at the
+    # window end ($E000), a parity seam, DMA 66, 192, 192 and a 40 B LDI
+    # chunk; 5 column hops
     ops = [(ps.OP_COPY16, 1000), (ps.OP_FEND, 0)]
-    nb, t, _st = enc.frame_price(ops, "middle", 320, 192, in_span=True, streamed=True)
-    ev, _st = enc.frame_events(ops, 320, 192, in_span=True)
-    # 1000 B = 192 x 5 + 40 -> 5 DMA chunks + a 40 B LDI chunk, 5 column hops
-    expect(ev.as_dict() == {"op_copy16": 1, "copy_dma_chunks16": 5, "copy_ldi_chunks16": 1,
+    nb, t, _st = enc.frame_price(ops, "middle", 320, 192, in_span=True, streamed=True, src_offset=7680)
+    ev, _st = enc.frame_events(ops, 320, 192, in_span=True, src_offset=7680)
+    expect(ev.as_dict() == {"op_copy16": 1, "copy_dma_chunks16": 6, "copy_ldi_chunks16": 1,
                             "copy_tail16": 1, "copy_dma_b": 960, "copy_ldi_b": 40,
-                            "copy_ldi_passes": 3, "col_hops": 5, "fend_span": 1},
-           f"COPY16 1000 at h192: {ev.as_dict()}")
-    # 2158.9 + 291.2 - 86.2 + 5 x (818.3 + 22.2) + 498.1 + 22.2 + 960 x 5.1 + 40 x 19.1
-    # + 3 x 13.1 + 5 x 30.4 = 12938.0; source: 1004 / 8192 x (346.2 + 67.7) + 2 x
-    # (256 / 8192 x 55.7 + 4 / 8192 x 212.4) = 50.7 + 3.7 = 54.4
-    events_t = 2158.9 + 291.2 - 86.2 + 5 * (818.3 + 22.2) + 498.1 + 22.2 + 960 * 5.1 + 40 * 19.1 + 3 * 13.1 + 5 * 30.4
-    src_t = 1004 / 8192 * (346.2 + 67.7) + 2 * (256 / 8192 * 55.7 + 4 / 8192 * 212.4)
-    expect(nb == 1004 and abs(t - (events_t + src_t)) < 1e-6,
-           f"frame price {nb} B {t:.2f} T against {events_t:.2f} + {src_t:.2f}")
+                            "copy_ldi_passes": 3, "col_hops": 5, "copy_src_chunks": 1,
+                            "src_parity_seams": 1, "fend_span": 1},
+           f"COPY16 1000 at h192 from offset 7680: {ev.as_dict()}")
+    # 2158.9 + 291.2 - 86.2 + 6 x (818.3 + 22.2) + 498.1 + 22.2 + 960 x 5.1 + 40 x 19.1
+    # + 3 x 13.1 + 5 x 30.4 + 156 + 220.4 + 67.7 = 14222.6; no offset takes the
+    # dearest phase, a bank seam: 14222.6 - 220.4 + 346.2 = 14348.4
+    want = (2158.9 + 291.2 - 86.2 + 6 * (818.3 + 22.2) + 498.1 + 22.2 + 960 * 5.1 + 40 * 19.1
+            + 3 * 13.1 + 5 * 30.4 + 156 + 220.4 + 67.7)
+    expect(nb == 1004 and abs(t - want) < 1e-6 and abs(want - 14222.6) < 1e-6,
+           f"frame price {nb} B {t:.2f} T against {want:.2f}")
+    t_any = enc.frame_price(ops, "middle", 320, 192, in_span=True, streamed=True)[1]
+    expect(abs(t_any - 14348.4) < 1e-6, f"dearest-phase price {t_any:.2f} against 14348.4")
+
+
+@case(10, "offset probe - encode() prices every frame at the offset it packs, and the frame model agrees")
+def t10_offset_probe():
+    import nxv2_frame_model as fm
+    real_extract, real_clip = enc._extract_source, enc.encode_clip
+    for label, (w, h, n, budget, cut) in (("resident", (256, 192, 8, 1.0, 4)),
+                                           ("streamed", (256, 64, 130, 0.8, 70))):
+        # a rolling texture with a stable palette, a hard cut to a second one
+        rng = np.random.default_rng(71)
+        scenes = [rng.integers(0, 256, size=(h // 4, w // 4, 3), dtype=np.uint8) for _ in range(2)]
+        orig = np.empty((n, h, w, 3), dtype=np.uint8)
+        for i in range(n):
+            base = np.repeat(np.repeat(scenes[i >= cut], 4, axis=0), 4, axis=1)
+            orig[i] = np.roll(base, i, axis=1)
+        chg = np.zeros(n)
+        chg[cut] = 0.9
+        po = np.array([enc.display_ceiling(orig[i]) for i in range(n)])
+        ex = dict(orig=orig, chg=chg, po_ceil=po, audio_bytes=bytes(n * 1250), channels=2,
+                  rate=enc.RATE_STEREO, abytes_real=1250, abytes_pad=1536, nframes=n)
+        seen = {}
+
+        def fake_extract(*_a, **_k):
+            return ex
+
+        def spy(*a, **k):
+            seen["r"] = real_clip(*a, **k)
+            return seen["r"]
+
+        enc._extract_source, enc.encode_clip = fake_extract, spy
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                out = Path(td) / f"probe_{label}.vid"
+                enc.encode("dummy.mp4", str(out), shape=(w, h), fps=25.0, stream_budget=budget)
+                buf = out.read_bytes()
+                frames = fm.frames(out, streamed=seen["r"]["streamed"])
+        finally:
+            enc._extract_source, enc.encode_clip = real_extract, real_clip
+        r = seen["r"]
+        hdr = enc.unpack_header(buf)
+        starts = [start for _p, _s, _t, start, _l in dec._iter_frames(buf, hdr)]
+        expect(r["streamed"] is (label == "streamed")
+               and (len(buf) > enc.STREAM_RESIDENT_POOL_B) is (label == "streamed"),
+               f"{label}: predicted {r['streamed']}, file {len(buf)} B")
+        expect(r["per_frame"]["offset"] == starts == [f.offset for f in frames],
+               f"{label}: priced offsets differ from the packed starts")
+        off = [(f.index, f.type, round(f.model_t, 2), round(t, 2))
+               for f, t in zip(frames, r["per_frame"]["t"]) if abs(f.model_t - t) > 0.01]
+        expect(len(frames) == n and not off, f"{label}: frame model T differs from the charge {off[:5]}")
+        spans = [f for f in frames if f.type in ("first", "single")]
+        expect(len(spans) >= 2 and all(any(op == enc.OP_PAL for op, _k in f.ops) for f in spans),
+               f"{label}: keyframe spans with PAL {[(f.index, f.type) for f in spans]}")
+        if label == "resident":
+            expect({"middle", "last"} & {f.type for f in frames},
+                   f"resident: a multi-chunk span carries its offset {[f.type for f in frames]}")
 
 
 # ---------------------------------------------------------------------------
