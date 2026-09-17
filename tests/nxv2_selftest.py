@@ -3240,8 +3240,29 @@ def t10_gap_rules():
     near = {n: total(n) for n in (v["N_m"] - 1, v["N_m"], v["N_m"] + 1) if lo <= n <= hi}
     expect(all(near[v["N_m"]] < t for n, t in near.items() if n > v["N_m"])
            and all(near[v["N_m"]] <= t for t in near.values()), f"N_m {v['N_m']} is not the optimum: {near}")
-    expect(v["M"] == 71 and not v["copy_split"] and not v["raises"]["S14"],
-           f"M {v['M']}, split {v['copy_split']}, S14 raises {v['raises']['S14']}")
+    # M is the modelled optimum over the RUN crossover window (this file's own map,
+    # copy_thr fixed at v["N"] since copy_split is asserted False below), tie-broken
+    # toward 71 with the +-1 keep band, same shape as s7's own recovery
+    def run_total(m):
+        t = 0.0
+        for c in range(1, 10):
+            _hdr, surface, frames = _gap_frames(c, v["N"], m)
+            strm = X["delivery"][c] == "streaming"
+            t += sum(v[f"frame_{ft}_t"] + _gap_cost(ev, surface, strm, lb, rm, v, v["split"])
+                     for ft, ev, lb, rm in frames)
+        return t
+    m_lo, m_hi = math.floor(min(e["run_crossovers"])), math.ceil(max(e["run_crossovers"]))
+    m_totals = {m: run_total(m) for m in range(m_lo, m_hi + 1)}
+    m_low = min(m_totals.values())
+    m_hand = min((k for k, x in m_totals.items() if x == m_low), key=lambda k: (abs(k - bench.NXB_RUN_REF), -k))
+    m_want = bench.NXB_RUN_REF if abs(m_hand - bench.NXB_RUN_REF) <= 1 else m_hand
+    # the window must stay non-discriminating: total T spread over it under one
+    # raster line (1824 T), the bench's own read resolution; a wider spread means
+    # the corpus can actually tell RUN candidates apart and M needs a real pick
+    m_spread = max(m_totals.values()) - m_low
+    expect(m_spread < 1824.0, f"RUN window {m_lo}..{m_hi} spread {m_spread:.2f} T: {m_totals}")
+    expect(v["M"] == m_want and not v["copy_split"] and not v["raises"]["S14"],
+           f"M {v['M']}, by hand {m_want}, split {v['copy_split']}, S14 raises {v['raises']['S14']}")
 
     # hidden terms: within max(2 T, 2%) under, that plus the rule's largest raise over; a term the
     # rows cannot resolve that finely is held to its +-1 line bound instead
