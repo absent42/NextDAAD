@@ -1454,6 +1454,8 @@ def t10_session_tables():
                 bad.append(f"{name} {tag}: FRAME takes slot 0-2 after a SCAN row")
             if kind == "loop" and not 1 <= param <= 255:
                 bad.append(f"{name} {tag}: LOOP n {param} must be 1-255")
+            if kind == "loop" and not scanned:
+                bad.append(f"{name} {tag}: LOOP follows a SCAN row (SCAN's m bounds a streaming n)")
             if kind not in ("sweep", "frame", "loop") and param:
                 bad.append(f"{name} {tag}: {kind} rows carry param 0")
             scanned |= kind == "scan"

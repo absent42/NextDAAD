@@ -5037,7 +5037,7 @@ nxb_lp_pace:
     ret
 
 ; vid_run.loopj target: back to the frame loop until nxbLoopLeft reaches 0;
-; then close the clock, unpatch, re-anchor vidDecSp and print.
+; then close the clock, unpatch, re-anchor vidDecSp, restore the L2 roles, print.
 nxb_lp_next:
     ld hl, nxbLoopLeft
     dec (hl)
@@ -5046,7 +5046,7 @@ nxb_lp_next:
     call nxb_lp_unpatch
     ld hl, (nxbSessSp)
     ld (vidDecSp), hl
-    ld hl, nxb_sprint1
+    ld hl, nxb_loop_done
     jp nxb_hop6
 
 ; The frame loop's shipping pace call and loop-back jump. Corrupts HL.
@@ -5660,10 +5660,11 @@ nxb_walk_done:
     ld de, (nxbWLeft)
     or a
     sbc hl, de
+.so:
     ld a, l
     ld (nxbSO), a
     jp nxb_sprint1
-; End of SCAN: F/D = the per-frame decode windows summed.
+; End of SCAN: F/D = the per-frame decode windows summed; m kept for LOOP.
 nxb_scan_done:
     ld hl, (nxbScanF)
     ld (nxbLcF), hl
@@ -5671,11 +5672,16 @@ nxb_scan_done:
     ld (nxbL1), hl
     ld hl, 0
     ld (nxbL0), hl
-    jr nxb_walk_done
+    ld hl, (nxbWLim)
+    ld de, (nxbWLeft)
+    or a
+    sbc hl, de
+    ld (nxbScanM), hl
+    jr nxb_walk_done.so
 
 ; After one SCAN frame: lines = F*311 + D (a clock timeout reads $FFFF) into
-; the sums and slot 3, with the frame index and nxbCells. Frame 0 fills
-; every slot; later frames bubble up past shorter ones.
+; the sums and slot 3, with the frame index and nxbCells. Frame 0 fills slot 0
+; and gives slots 1-2 its cells at 0 lines; later frames bubble up past shorter.
 nxb_scan_keep:
     ld hl, (nxbL1)
     ld de, (nxbL0)
@@ -5736,6 +5742,9 @@ nxb_scan_keep:
     ld hl, nxbTop
     ld bc, 2 * NXB_SLOT          ; overlapping: slot 0 repeats forward
     ldir
+    ld hl, 0                     ; slots 1-2 keep frame 0's cells at 0 lines,
+    ld (nxbTop + NXB_SLOT), hl   ; so any timed frame can bubble past them
+    ld (nxbTop + 2 * NXB_SLOT), hl
     ret
 
 ; Bubble slot 3 up past every slot with fewer lines (ties stay below).
@@ -5812,15 +5821,22 @@ nxb_lrow_hl:
     ld (nxb_body + 1), hl
     jp nxb_lrow
 
-; LOOP: S0 and one audio skip (frame 0's audio behind the cursor, as the
-; preload leaves it); n = param, at most vidFrames - 1 (the last pass
-; stages frame n's audio) and at least 1; vidFramesLeft = n + 1.
+; LOOP: the L2 bank roles saved (its KFLIP presents swap them); S0 and one
+; audio skip, as the preload leaves it; n = param, at most frames - 1 (vidFrames,
+; or SCAN's m when streaming) and at least 1; vidFramesLeft = n + 1.
 nxb_kind_loop:
+    ld hl, (l2FrontBank)
+    ld (nxbSvL2), hl
     ld hl, nxbS0
     call nxb_cells_put
     call nxb_askip
     ld hl, (vidFrames)
-    dec hl
+    ld a, (vidStreaming)
+    or a
+    jr z, .cap
+    ld hl, (nxbScanM)            ; streaming: with m >= n + 1 the ring gate
+.cap:                            ; never produces over ring data later rows read
+    dec hl                       ; the last pass stages frame n's audio
     ld de, (nxbParam)
     push hl
     or a
@@ -5848,6 +5864,14 @@ nxb_kind_loop:
     ld hl, nxb_lp_next
     ld (vid_run.loopj), hl
     jp nxb_lp_go
+    ASSERT l2BackBank == l2FrontBank + 1
+
+; End of LOOP (after its clock): the L2 bank roles back, so later span frames
+; find the back bank the SCAN cells were taken on.
+nxb_loop_done:
+    ld hl, (nxbSvL2)
+    ld (l2FrontBank), hl
+    jp nxb_sprint1
 
 ; ARM: a silent ring, then vid_run's CTC start without the field-phase wait.
 nxb_kind_arm:
@@ -5885,6 +5909,8 @@ nxbTopCur:   ds NXB_SLOT        ; the frame just scanned
 nxbScanF:    dw 0               ; SCAN sums: F, and D kept below 311
 nxbScanD:    dw 0
 nxbWLim:     dw 0               ; frame walk: frames asked for
+nxbScanM:    dw 0               ; SCAN's m, frames walked
+nxbSvL2:     dw 0               ; LOOP: l2FrontBank, l2BackBank at entry
 
 ; Session modes from 1: db delivery mask (resident %001, streaming %010,
 ; direct %100), dw table, dw length (0 = no table).
