@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.0 - 16/09/2026
+## v0.10.0 - unreleased
 
 - Loader intro: `intro.nex`, a standalone launcher the kit stages as
   `<GAME>.NEX` when `INTRO.TXT` exists. It plays a scripted slideshow of
@@ -79,6 +79,14 @@ All notable changes to NextDAAD are recorded here.
 - The parser selftest suite passes again. Its known-address check
   still pinned `RNGSTATE` at `$A94A`; the map has since moved it to
   `$A948`, and the stale pin was failing that check on this tree.
+- Fixed: a `WHATO` that matched nothing leaves object number 255 in
+  flag 51, and a condact that then spent it indirectly - the
+  `WHATO` / `NOTEQ @51 255` / `PRESENT @51` idiom a game uses to answer
+  "examine anything else" - raised runtime error 0 and froze the
+  machine. Any object number a database does not declare now resolves
+  to a slot of its own and reads as not created, so the condact fails
+  its condition and the entry falls through to the game's own refusal. The undeclared slots
+  are filled at load and again on `RESET`. Error 0 is no longer raised.
 - Fixed: the audio tick's five interrupt-disable brackets could drop
   a sample. Their comments claimed the AY player entries they guarded
   moved the stack pointer, but only the player's `PLAY` routine does,
