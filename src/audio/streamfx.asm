@@ -895,7 +895,8 @@ aud_ctc_params:
     push de                     ; save the rate; nr_read takes the reg in E
     ld e, NR_VIDEO_TIMING
     call nr_read                ; A = nextreg $11 (IFF-preserving)
-    and $07                     ; video timing mode 0-7 (7 = HDMI)
+    and $07                     ; video timing mode 0-6 (7 unreachable - a write
+                                 ; of 7 to NR $11 stores 0 on core 3.02.04)
     ld l, a
     add a, a
     add a, l                    ; A = mode * 3 (3 bytes per clk16 entry)

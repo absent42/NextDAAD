@@ -1242,9 +1242,9 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; overrun; 039 has fewer and the highest). Do not close the
 ; slow-and-flat playback question on this change alone.
 ;
-; Two changes closed the DI exposure, and each alone would have been
-; too thin (margins against VGA0's 1792 T, at nominal A and at the
-; pessimistic end of its +/-20 T band):
+; Two changes closed the DI exposure. Against VGA0's 1792 T, at nominal
+; A and the pessimistic +20 T end, either change alone already clears
+; the period; together they roughly double the margin:
 ;
 ;   as shipped     A = 500, cap 256   B = 1801.0   -0.50% / -1.62%
 ;   code only      A = 402, cap 256   B = 1703.0   +4.97% / +3.85%
