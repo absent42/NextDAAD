@@ -1,35 +1,10 @@
 ; NextDAAD constants - single source of truth for the memory map
 ; and hardware registers. All later modules include this file.
 
-; --- Version (SP10 Task 10) ---
-; Single source of truth for the boot-time version stamp text: DEBUG's
-; msgTitle and RELEASE's boot_banner (both debug.asm) print this exact
-; string, so the two build variants cannot drift apart. v0.3.0 was the
-; SP15 milestone (NXV v2 delta video with resident/streamed/direct
-; delivery, L2 snapshot/restore - automatic picture return after a
-; cutscene). v0.3.1 is the DAAD compliance sweep plus DAAD V3 database
-; support, the SP17 video motion work (file ceiling 16 MB -> 256 MB,
-; mid-clip pause removed, half-rate clips at true rate, mono cutscene
-; audio dropped) and the sampled-sound fix - effects no longer distort
-; while a picture is drawn. v0.3.2 moves Layer 2 transparency to the
-; Next's standard scheme (reserved palette INDEX 255 stamped with the
-; global transparency COLOUR $E3, no dependence on tilemap transparency
-; attributes), fixes the white background that showed before a game's
-; first picture, and replaces the kit's stand-alone guides with a
-; generated HTML manual. v0.4.0 is the first release to add features
-; rather than correct them: runtime font and pointer switching (GFX
-; n 16 installs FONT1-9.CHR, MOUSE n 5 selects POINTER1-9.SPR, both
-; falling back to the base shape), a conventional arrow as the
-; built-in pointer, two-channel sampled sound (SFX n 1/2 pick a free
-; channel, subs 11-16 reserve one) and sample length no longer bounded
-; by memory - large files stream from the card. v0.5.0 opens INK, PAPER
-; and BORDER to the full 0-255 the database always carried (0-15 stay
-; the ULA colours, 16-255 are Next RRRGGGBB), and refuses a database
-; compiled for another computer at boot instead of loading it and
-; misbehaving. v0.6.0 reads NextDAAD-target databases only: pointers are
-; file offsets rather than $8400-based addresses, so the ceiling is 64K
-; instead of 31744 bytes, and a classic ZX database is refused at boot.
-; The "0.x" line runs until public testing earns v1.0 (see RELEASE.md).
+; --- Version ---
+; Boot-time version stamp: DEBUG's msgTitle and RELEASE's boot_banner
+; (both debug.asm) print this exact string, so update it here only -
+; the two build variants must never drift apart.
     DEFINE VERSION_STR "NEXTDAAD V0.10.0"
 
 ; --- Next registers ---
@@ -50,10 +25,8 @@ NR_INT_EN_1     equ $C4     ; int enables: bit 0 ULA, bit 1 line, bit 7 expansio
 NR_INT_EN_2     equ $C5     ; int enables: bit n = CTC channel n
 NR_INT_EN_3     equ $C6     ; int enables: UART Rx/Tx
 ; Which interrupters may interrupt a RUNNING zxnDMA (hardware IM2 only) -
-; the $C4/$C5/$C6 enable trio's exact mirror at +8. Dev guide
-; chapter-next-interrupts.tex:296-301 (the feature) and :512-564 (the bit
-; layouts). NO RESET VALUE IS DOCUMENTED for any of the three, so im2_init
-; writes all three explicitly - see the comment there.
+; the $C4/$C5/$C6 enable trio's exact mirror at +8. NO RESET VALUE IS
+; DOCUMENTED for any of the three, so im2_init writes all three explicitly.
 NR_DMA_INT_EN_1 equ $CC     ; DMA pre-emption: bit 0 ULA, bit 1 line
 NR_DMA_INT_EN_2 equ $CD     ; DMA pre-emption: bit n = CTC channel n
 NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
@@ -291,10 +264,9 @@ ESX_M_GETDATE   equ $8E     ; out BC=date DE=time H=secs L=hundredths;
 ; (file.asm), not here.
  DEFINE DBG_DDB_FALLBACK_DIR "/nextdaad/debug"
 ; --- raw SD SPI transport (video page, SP13 T1c). DISK_STRMSTART/END are
-;     NOT used - we drive the card directly, transcribed from playvid
-;     (tools/ZXNextOS/.../playvid/video_stream_postamble.asm, Garry
-;     Lancaster's inlined SD code; MIT-cleared). No OS streaming window is
-;     opened, so nothing needs ending beyond deselecting the card.
+;     NOT used - we drive the card directly, transcribed from Garry
+;     Lancaster's inlined playvid SD code (MIT-cleared). No OS streaming
+;     window is opened, so nothing needs ending beyond deselecting the card.
 PORT_SPI_CS     equ $E7     ; SD card-select port
 PORT_SPI_DAT    equ $EB     ; SD data port (read/write; 16T/byte via OUT (C))
 SD_CS0          equ $FE     ; select card 0
@@ -376,12 +348,11 @@ TM_ATTR_CURSOR  equ 4       ; reserved pair 2 = paper 7 (white), ink 0
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
 NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
                             ; an INDEX compare, applied before the
-                            ; palette offset (chapter-next-tilemap.tex
-                            ; :294-303). NOT what we use: text mode
+                            ; palette offset. NOT what we use: text mode
                             ; (TM_CTRL_ON bit 3) checks NR_L2_TRANSP
-                            ; ($14) as a COLOUR instead (:357). We rely
-                            ; on neither - the tilemap has no
-                            ; transparency at all now, see tm_clear_blank.
+                            ; ($14) as a COLOUR instead. We rely on
+                            ; neither - the tilemap has no transparency
+                            ; at all now, see tm_clear_blank.
 
 ; --- Layer 2 transparency: a COLOUR and an INDEX, deliberately separate ---
 ; These were one constant (TM_TRANSP_ATTR) doing both jobs plus a third,
@@ -399,10 +370,9 @@ NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
 ;     palcheck.ps1 $DODGE / tests/art/mkpalcard.py TRANSP_DODGE
 L2_TRANSP_COLOUR equ $E3    ; RGB332 COLOUR written to NR_L2_TRANSP, and
                             ; stamped into L2_TRANSP_INDEX. $E3 is the
-                            ; hardware reset value (chapter-next-layer2
-                            ; .tex:619) and 24-bit 0xE000C0 in a paint
-                            ; program. The compare is against the TOP 8
-                            ; BITS of the 9-bit entry, so TWO of the 512
+                            ; hardware reset value and 24-bit 0xE000C0
+                            ; in a paint program. The compare is against
+                            ; the TOP 8 BITS of the 9-bit entry, so TWO of the 512
                             ; RGB333 colours are transparent - the 9th bit
                             ; cannot rescue an entry, which is why
                             ; l2_palette_load must dodge colliding art.
@@ -483,9 +453,9 @@ NR_L2_BANK      equ $12     ; starting 16K bank of Layer 2 (bits 6-0)
 NR_L2_CTRL      equ $70     ; bits 5-4 resolution, bits 3-0 palette offset
 NR_L2_TRANSP    equ $14     ; transparent COLOUR (Layer 2/ULA/LoRes), compared
                             ; against the top 8 bits of the final colour, so
-                            ; 2 of 512 RGB333 colours match any value - the
-                            ; guide's register table (chapter-next-layer2
-                            ; .tex:619) calls this an "index" and is wrong
+                            ; 2 of 512 RGB333 colours match any value - NOT
+                            ; an index despite how some register tables
+                            ; label it
 NR_LAYERS       equ $15     ; bits 4-2 S/L/U layer priority (alias of
                             ; NR_SPRITES - same register, different role here)
 L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0
@@ -495,11 +465,11 @@ L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0
                             ; bank select etc) every time; NR_DISPLAY_CTRL
                             ; bit 7 is the alias actually used instead
 PAL_L2_FIRST    equ $10     ; NR_PAL_CTRL: auto-inc on, Layer 2 first palette
-                            ; (edit + active display), see chapter-next-palette
+                            ; (edit + active display)
 ; SP14a T2: true palette double-buffering. NR $43 bits 6-4 = edit target
 ; (which bank $44 writes land in), bit 2 = display select (which bank is
-; scanned out) - INDEPENDENT fields (sp13-task-4-report.md addendum). The
-; two "locked" constants below mirror PAL_L2_FIRST's shape (edit==display,
+; scanned out) - INDEPENDENT fields. The two "locked" constants below
+; mirror PAL_L2_FIRST's shape (edit==display,
 ; both pointed at the same bank) so vidPalCtrl (video.asm) always holds
 ; one of these two values between frames - "the bank currently on screen,
 ; also the edit target if nothing else is asked". EDIT_SECOND/EDIT_FIRST
@@ -519,16 +489,15 @@ NR_L2_CLIP      equ $18     ; Layer 2 clip window (X1,X2,Y1,Y2 - index-
 NR_CLIP_IDX     equ $1C     ; write bit0 = 1 resets the L2 clip index
 NR_L2_XOFS      equ $16     ; Layer 2 X pixel scroll offset (low 8 bits)
 NR_L2_YOFS      equ $17     ; Layer 2 Y pixel scroll offset
-; The 9th X bit. Guide chapter-next-layer2.tex 745-756: NR $71 bit 0 =
-; "MSB for X pixel offset", "only used for 320x256 and 640x256 modes.
-; Together with [$16] full 319 pixels offsets are available"; the port
-; table (chapter-next-ports.tex 192) marks it RW, so it reads back.
-; Bits 7-1 are reserved and must be 0. Mode-0 (256x192) ignores it.
+; The 9th X bit: NR $71 bit 0 = MSB for X pixel offset, used only for
+; 320x256 and 640x256 modes (together with $16, full 319-pixel offsets
+; are available); read-write. Bits 7-1 reserved, must be 0. Mode-0
+; (256x192) ignores it.
 NR_L2_XOFS_MSB  equ $71
-; Read-only raster position (chapter-next-ports.tex 128-129): $1E =
-; MSB, $1F = the eight LSBs of the line currently being drawn. Used by
-; the DEBUG scroll probes to place a register write at a known point
-; on the visible raster instead of a CPU-speed-dependent delay loop.
+; Read-only raster position: $1E = MSB, $1F = the eight LSBs of the
+; line currently being drawn. Used by the DEBUG scroll probes to place
+; a register write at a known point on the visible raster instead of a
+; CPU-speed-dependent delay loop.
 NR_RASTER_MSB   equ $1E
 NR_RASTER_LSB   equ $1F
 ; DEBUG PLAY= instrument (src/video.asm vid_rl_poll): how many decode
@@ -634,19 +603,9 @@ DAC2_PORT       equ $B3     ; DAC B+C combined - centered mono, the second
                             ; table lists it as valid. Channel 2's DAC port.
 ; DAC signedness: UNSIGNED everywhere on the CPU-OUT path. The DAC silence/park
 ; value is the unsigned midpoint $80, unconditionally - there is no build toggle.
-;
-; WHY unsigned is now empirically pinned (the -DacCSpect signed accommodation was
-; retired here, SP11): three independent lines of evidence agree the CPU
-; `out (n),a` DAC path is unsigned on BOTH real silicon and CSpect -
-;   1. FPGA source: soundrive.vhd resets the DACs to $80 and sums UNSIGNED.
-;   2. Hardware listens: the owner's two real-Next listens play clean unsigned,
-;      and em00k's CTCAudio + playwav32 feed raw unsigned WAV bytes (CTCAudio
-;      README "PCM unsigned" - em00k-audio-engines-analysis.md).
-;   3. CSpect CTC-path listen (this engine): the DEFAULT unsigned build plays the
-;      sample CLEAN on CSpect; the old XOR $80 build was the DISTORTED one.
-; The DMA-era observation that CSpect wanted SIGNED data was path-specific to the
-; retired zxnDMA write path, NOT the CPU-OUT path this engine uses - so it retired
-; with the DMA engine. One convention now, no IFDEF, no -DacCSpect.
+; Confirmed by FPGA source (soundrive.vhd resets the DACs to $80, sums unsigned),
+; real hardware listens, and CSpect (the old XOR $80 build was the distorted one).
+; The retired zxnDMA write path wanted signed data; that path is gone with it.
 DAC_SILENCE     equ $80
 NR_PERIPH2      equ $06     ; peripheral 2: bit 3 = Multiface enable - the raw
                             ; streaming path (video.asm) clears it for the
@@ -772,15 +731,11 @@ SMPB_KEEP     equ 33   ; db: effect number this channel's window holds
                        ;     that number costs no card traffic at all.
 SMPB_RATE     equ 34   ; dw: this effect's WAV sample rate, latched by
                        ;     aud_smp_start from audReqSmpRate. A rewind
-                       ;     re-commit (sfx_alloc's free/cached verdicts,
-                       ;     also reached by the video auto-resume) reads
-                       ;     this and calls aud_ctc_params again, so
-                       ;     audReqSmpCtrl/Tc are re-derived from the
-                       ;     LIVE video-timing mode instead of replaying
-                       ;     SMPB_CTCCTRL/CTCTC as they stood at the
-                       ;     effect's last start (owner ruling
-                       ;     2026-08-10: a mode change between triggers
-                       ;     must not replay the old pitch).
+                       ;     re-commit re-derives audReqSmpCtrl/Tc from
+                       ;     the LIVE video-timing mode instead of
+                       ;     replaying stale SMPB_CTCCTRL/CTCTC: a mode
+                       ;     change between triggers must not replay the
+                       ;     old pitch.
 SMPB_SIZE     equ 36   ; (was 34 before the 2026-08-10 fresh-TC ruling
                        ;     added SMPB_RATE; 14 before SP18 item 7
                        ;     Task 2's parameterisation)
@@ -930,10 +885,8 @@ WIN_SIZE        equ 12
 WINDOW_COUNT    equ 8
 
 ; --- Mouse (SP10 Task 5) ---
-; Kempston mouse ports (tools/NextZXOS/docs/extra-hw/io-port-system/
-; ports.txt 517-536; cross-checked against tools/CSpect/Mouse/
-; includes.asm's identical equs and against ReadMe.txt/CSpectReadme.txt
-; for CSpect's own emulation notes - see overlay0.asm's h_mouse header).
+; Kempston mouse ports, cross-checked against CSpect's own emulation
+; (see overlay0.asm's h_mouse header).
 KMOUSE_X_PORT   equ $FBDF   ; IN: 0-255, wraps; increases on RIGHTWARD
                             ; movement
 KMOUSE_Y_PORT   equ $FFDF   ; IN: 0-255, wraps; increases on UPWARD
@@ -951,8 +904,6 @@ KMOUSE_Y_PORT   equ $FFDF   ; IN: 0-255, wraps; increases on UPWARD
                             ; port only responds to IN reads.
 KMOUSE_BTN_PORT equ $FADF  ; IN: bit0 right, bit1 left, bit2 middle,
                             ; bits7-4 wheel 0-15 (unused here)
-; Sprite hardware (docs/zx-next-dev-guide-2022-07-15/chapter-next-
-; sprites.tex + chapter-next-tilemap.tex's NR $15 bit table).
 NR_SPRITE_SEL   equ $34    ; select sprite ATTRIBUTE index for $35-$39
                             ; (independent of port $303B unless port
                             ; $09 bit4 "lockstep" is set - never is here)
@@ -978,13 +929,10 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 
 ; --- Video (NXV v2, SP15 - v1 DELETED; stage 3c player: resident +
 ; ring streaming + direct-serve) ---
-; docs/superpowers/plans/2026-07-23-sp15-nxv2.md "Format reference" is
-; the frozen authority (FORMAT FROZEN 2026-07-25, second NXBEN silicon
-; settlement, core 3.02.04). This comment block and the constants below
-; are the byte-identical player-side transcription; the encoder-side
-; twin lives in authoring-kit/lib/nxv2enc.py (HDR_OFF_*), and
-; authoring-kit/lib/nxv2dec.py is the executable spec every hand-trace
-; cites.
+; This comment block and the constants below are the byte-identical
+; player-side transcription of the frozen NXV v2 format (core 3.02.04);
+; the encoder-side twin lives in authoring-kit/lib/nxv2enc.py
+; (HDR_OFF_*), and authoring-kit/lib/nxv2dec.py is the executable spec.
 ;
 ; --- NXV v2 header (block 0, 512 bytes; multi-byte fields LE) ---
 ;   offset  size  field
@@ -1049,25 +997,12 @@ NXV2_OFF_VERSION equ 5
 NXV2_OFF_WIDTH   equ 6      ; width CODE (0/1), not a pixel count
 NXV2_OFF_HEIGHT  equ 7
 NXV2_OFF_FPSX10  equ 8
-NXV2_OFF_ACHAN   equ 9      ; MONO IS WITHDRAWN (2026-08-03, owner
-                            ; ruling). This field is still READ and
-                            ; still VALIDATED - nxv2_open_body refuses
-                            ; anything but 2 with VID FMT?. That
-                            ; refusal is load-bearing, not tidiness: a
-                            ; channels = 1 file played through the
-                            ; surviving stereo ISR would interleave its
-                            ; single channel across both DACs at the
-                            ; wrong rate. The offset is FROZEN wire
-                            ; format and the value is only ever 2.
-                            ; Mono's one advantage was a higher sample
-                            ; rate (23325 vs 15625 Hz) for fewer bytes,
-                            ; but both are 8-bit so quantisation, not
-                            ; bandwidth, sets the floor - and it cost
-                            ; 49% more interrupts plus (since the
-                            ; tick-loss fix) a 128 B DMA burst cap
-                            ; worth +92% decode on the one mono clip
-                            ; ever built. Decode is the binding
-                            ; constraint for picture; mono spent it
+NXV2_OFF_ACHAN   equ 9      ; MONO IS WITHDRAWN (2026-08-03): refused at
+                            ; open with VID FMT? if not 2. Load-bearing,
+                            ; not tidiness - a mono file through the
+                            ; stereo ISR would interleave one channel
+                            ; across both DACs at the wrong rate. Offset
+                            ; is FROZEN wire format; value is always 2.
 NXV2_OFF_ARATE   equ 10
 NXV2_OFF_FLAGS   equ 12
 NXV2_OFF_KFPOL   equ 13
@@ -1081,16 +1016,12 @@ NXV2_FLAG_DIRECT equ 2      ; bit1 - direct-serve hint (3c: honoured -
                             ; the delivery decision routes the file
                             ; SD-to-surface, no ring)
 NXV2_FLAG_OCOPY  equ 8      ; bit3 - RETIRED offset-copy capability
-                            ; (SP17 T5a, withdrawn on owner ruling
-                            ; 2026-08-02: both silicon arms were judged
-                            ; worse than plain delta). The bit is kept
-                            ; NAMED and kept REFUSED: a file carrying
-                            ; OCOPY payload declares it, and the flags
-                            ; byte is validated whole, so such a file
-                            ; fails cleanly at OPEN with VID FMT? -
-                            ; never reaching a decoder that no longer
-                            ; implements the op. Do NOT re-use bit3 for
-                            ; anything else.
+                            ; (2026-08-02: both silicon arms measured
+                            ; worse than plain delta). Kept NAMED and
+                            ; REFUSED: a file declaring it fails cleanly
+                            ; at OPEN with VID FMT?, never reaching a
+                            ; decoder that no longer implements the op.
+                            ; Do NOT re-use bit3 for anything else.
 
 ; Opcode values (v2 frozen set, x4-scaled). Reserved: $24/$30 (the
 ; retired T5a OCOPY8/OCOPY16 - decode withdrawn; a file declaring them
@@ -1120,174 +1051,35 @@ NXV2_MAX_OPERANDS equ 4
 NXV_NATIVE_H_MODE1 equ 256  ; mode-1 column stride (hardware-fixed)
 NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 
-; Kernel crossovers - DERIVED, not guessed (2026-07-28). Both are the
-; break-even chunk length between the CPU body and the DMA body, from
-; the task-2 silicon settlement's decomposed coefficients
-; (.superpowers/sdd/task-2-final-settlement.md section 1, "Decomposed
-; silicon coefficients (joint solves, FE-subtracted)", core 3.02.04):
+; Kernel crossovers - DERIVED from silicon-measured CPU/DMA timing
+; coefficients (core 3.02.04), not guessed. A sub-256 chunk costs one
+; DMA setup, so break-even chunk length L = setup / (body - per_byte):
 ;
-;   CPU unrolled fill body  17.17 T/B   (R8U vs R6U joint solve)
-;   DMA fill setup         849.4 T/chunk (RD1/RD2/RD3 chunk solve)
-;   DMA fill per byte        5.11 T/B   (RD3 residual @ 249 T/op)
-;   LDI copy body           20.25 T/B   (C8 vs C16 joint solve)
-;   DMA copy setup        1091.8 T/chunk (CD1..CD4 chunk solve)
-;   DMA copy per byte        5.31 T/B   (KF-vs-CD3 cross-row, UNARMED)
-;
-; A sub-256 chunk costs one setup, so DMA(L) = setup + per_b*L and
-; CPU(L) = body*L. Break-even L = setup / (body - per_b):
-;
-;   RUN  fill: 849.4 / (17.17 - 5.11) = 849.4 / 12.06 = 70.43 B
-;              L=70: CPU 1201.9 vs DMA 1207.1 -> CPU wins
-;              L=71: CPU 1219.1 vs DMA 1212.2 -> DMA wins   => 71
-;   COPY LDI : 1091.8 / (20.25 - 5.31) = 1091.8 / 14.94 = 73.08 B
-;              (kernel-only - superseded for COPY, see below)
-;
-; COPY CORRECTION (SP17 NXBC silicon, C073/C074 rows): the kernel-only
-; 73.08 derivation above priced the KERNELS and missed the
-; fast-handler -> slow-body PATH DIFFERENCE - an at-threshold COPY8
-; bails out of the fast handler into the slow chunked body to reach
-; the DMA kernel, and that path measured dearer on silicon (C074
-; T_op markedly above C073's with the threshold at 74). The C073/
-; C074 pair measured the break-even at 81.4 B. => 81 (the measured
-; placement; the +-14 T/block row resolution makes 81 vs 82
-; indistinguishable, <= ~6 T/op either way).
-;
-; BOTH DENOMINATORS RE-DERIVED 2026-08-03 (REDERIVATION.md 6.2/6.3).
-; NEITHER VALUE MOVES; both derivations were quoting the wrong
-; quantity, which is the failure mode that drifts silently:
-;
-;   COPY: 14.94 is fetch_long 20.25 minus 5.31. fetch_long is the
-;   >= 64 B LDI body, but the ops that DECIDE this crossover are
-;   73-83 B and run fetch_short, so the honest denominator at
-;   sitting-3 coefficients is (19.797 - 5.082). HELD AT 81.
-;
-;   RUN: 17.17 and 5.11 are both superseded (DMA fill rate ~5.0).
-;   HELD AT 71: a class the delta-stream census shows barely executes
-;   (RUN = 0.003-6% of painted bytes, RUN16 never emitted, 0.00-0.08%
-;   of corpus decode-T).
-;
-; NXV2_RUN_DMA_MIN was derived from silicon NXBK rows against the earlier
-; fill kernel and is due for re-derivation from NXBK.
-;
-; Two invariances make these the right numbers to compare against:
-;  - AUDIO TAX. The armed-decode tax is a uniform 1.170-1.173 on the
-;    per-op AND per-byte terms alike (settlement section 1, CD armed vs
-;    unarmed at c64/c128/c256), and the CPU body is stolen from by the
-;    same ISR, so both sides scale together and the crossover is
-;    unchanged. The unarmed coefficients are therefore the correct ones.
-;  - WINDOW SEAMS. Every 49152-byte solve row carries the same
-;    seam term in BOTH its CPU
-;    and DMA per-byte figure, and it cancels in (body - per_b). Using
-;    the do-not-regress anchors 17.0 / 20.2 with seam-free DMA rates
-;    gives the same differences, hence the same crossovers.
-;
-; Previous values were 64 (RUN) and 90 (COPY) with no derivation
-; recorded anywhere: 64 took DMA ~6 B early (worst +77.5 T at L=64,
-; 7.1% of the body) and 90 took it 16 B late (worst +237.8 T at L=89,
-; 15.2% of the body). The 2026-07-28 kernel-only values were 71/74;
-; COPY's 74 took the DMA path 7 B early once the +128 T path
-; difference is charged (worst +~104 T at L=74). 81 sat on the measured
-; 81.4 B COPY break-even before the 2026-09-15 chunk-loop change; rows
-; since (C081 1580.4 T against C080 1884.3 T) put it at 58.8 B, so 81 is
-; now 22 B late and not yet re-derived. RUN is held at 71 as above.
+;   RUN  fill: break-even ~70.4 B -> held at 71 (RUN is 0.003-6% of
+;              painted bytes, RUN16 never emitted - low priority to
+;              re-derive further)
+;   COPY LDI : break-even measured at 81.4 B on silicon, not the
+;              ~73 B a kernel-only solve gives - an at-threshold COPY8
+;              falls through the fast handler into the slower chunked
+;              body to reach the DMA kernel, and that path costs more.
+;              HELD AT 81; a later chunk-loop change moved the true
+;              crossover to ~58.8 B, so 81 is now ~22 B late and due
+;              for re-derivation.
 ;
 ; The encoder's T model MIRRORS these two constants
 ; (authoring-kit/lib/nxv2enc.py TMODEL_COEFFS run_dma_min/copy_dma_min,
 ; consumed by _fill_t/_copy_t): change one, change the other in the
 ; same commit or the model stops predicting the player.
 ;
-; Every DMA burst is capped, because the transfer runs inside a DI
-; bracket and a bracket longer than the audio ISR's period loses a
-; tick per chunk (the Z80 CTC latches ONE pending interrupt; a second
-; zero-count while the first is unacknowledged is lost). The lost tick
-; does NOT skip a sample - the ISR simply does not run, the DAC holds,
-; IX does not advance, and since the frame loop paces off IX the whole
-; clip plays LONG AND FLAT with no click. That silence is why this
-; shipped for months as an "accepted ~1.2% shortfall".
-;
-; RETIRED (SP18 item 5): the video kernels' DI brackets are gone, so
-; this deadline mechanism is historical (silicon leg pending); the
-; cap stays for the structural reasons stated at the end of this
-; block (one fixed number, <= 255).
-;
-;   bracket  B(chunk) = A + 5.082 * chunk
-;   deadline one ISR per L+R PAIR at 15625 Hz -> 1792..2112 T
-;            (16 x the per-video-mode CTC time constant, exactly;
-;            1792 T is VGA0, the tightest reachable, and 2112 T is VGA6)
-;
-; A was measured 2026-08-02 by inverting the bench's own tick-
-; shortfall table, four points on one free parameter, at
-; A = 500 +/- 20 T (REDERIVATION.md 2.2b). AUD_RATE_MAX (20000) is the
-; SAMPLE engine's ceiling and has never governed video: a video
-; session repoints the CTC vector at video_ctc_isr_stereo.
-;
-; THE DEFECT, AND WHAT FIXED IT (2026-08-03). At the old cap
-; B(256) = 1801 T exceeds VGA0's 1792 T period by 9 T: a bracket
-; starting within 9 T of an edge loses one tick (about 0.5% of
-; brackets). The PLAY= rows recorded that date came from the DEBUG
-; edge-dropping instrument and do not measure this mechanism.
-;
-; SIZE HONESTY. Recomputed against the corrected 9 T overage
-; (B - P = 1801 - 1792), nchunks * 9 / wall_T predicts under 0.1% loss
-; for every row that instrument logged (039 0.08%, 007 0.07%,
-; 019 0.10%, 037 0.07%, 038 0.08%) - no residual is drawn against
-; those rows since their own numbers do not measure this mechanism.
-;
-; This cap change takes the mechanism to a structural zero on every
-; video timing mode: B(240) = 1621.7 T clears even VGA0's 1792 T. The
-; slow-and-flat playback those rows reported is not explained by this
-; mechanism and remains open.
-;
-; Two changes closed the DI exposure. Against VGA0's 1792 T, at nominal
-; A and the pessimistic +20 T end, either change alone already clears
-; the period; together they roughly double the margin:
-;
-;   as shipped     A = 500, cap 256   B = 1801.0   -0.50% / -1.62%
-;   code only      A = 402, cap 256   B = 1703.0   +4.97% / +3.85%
-;   cap only       A = 500, cap 240   B = 1719.7   +4.04% / +2.92%
-;   BOTH (shipped) A = 402, cap 240   B = 1621.7   +9.50% / +8.39%
-;
-; A fell 98 T because the per-chunk copy arm lost the WR1 pair to the
-; session init (descriptor split - fill is 0.003% of ops and restores
-; it) and now uploads with unrolled OUTINB at 19 T/B instead of OTIR
-; at 24 T/B. Both are hand-counted from the source bytes in
-; video.asm's zxnDMA kernel header; the arms are 11 B (copy) and 13 B
-; (fill), NOT the 15 the old comments and REDERIVATION.md 2.1 claimed.
-; The margin arithmetic lives HERE; that header now carries the
-; live-interrupts contract (its DI-era margin table retired with the
-; brackets).
-;
-; WHY 240 AND WHAT IT COSTS. 0.9% of worst-case margin is not enough
-; for a defect that ships silently, and A's uncertainty is entirely in
-; its LEVEL (inferred) not in the 98 T reduction (hand-counted), so
-; the remaining slack was bought from the cap. Cost, measured by an
-; exact op-walk of the shipped corpus wire bytes (not extrapolated
-; from histograms): +0.609% of corpus decode-T and +1.35% chunks.
-; Per clip it is +0.02..0.11% on every DECODE-bound clip (boat-048
-; +0.068%, church-050 +0.045%, boat-169 +0.055%, anchor-004 +0.106%,
-; fplane-full +0.375%); the only clips over 1% - snow-021 +1.97%,
-; snow-024 +1.81%, boat-classic +1.68% - are exactly the three
-; DECODE-COST.md classes as BYTE-bound (decode utilisation 0.79/0.81/
-; 0.51 against byte utilisation 0.96/0.96/0.98), where decode-T is not
-; the binding constraint. That is the mirror of REDERIVATION.md
-; section 5's own finding that a decode SAVING on those clips buys no
-; picture. Lowering is not the mirror of raising: the same walk prices
-; 256 -> 128 at +13.3% decode-T / +34.0% chunks.
-;
-; STILL NOT REACHABLE UPWARDS: 384's transfer ALONE is 1951 T and its
-; bracket 2453 T, over the LARGEST stereo period on any video mode
-; (VGA6 2112 T) by 16%, and zxnDMA burst mode cannot release the bus
-; on a memory-to-memory transfer (REDERIVATION.md 4.4). The prize was
-; never there either - 1.9%/3.6% of corpus decode-T, concentrated in
-; byte-bound clips that cannot spend it (REDERIVATION.md 5).
-;
-; ONE fixed number, not a per-video-mode derivation from the
-; programmed CTC TC: the encoder's supply gate has to PRICE the cap
-; and cannot know which timing mode the machine will run in, so a
-; mode-dependent cap could only ever be priced at its worst case
-; anyway - which is this. It must also be <= 255: the single-byte
+; NXV2_DMA_CHUNK: DMA burst cap per arm. The video kernels' DI brackets
+; that once bounded this are gone (SP18 item 5), so the cap is now a
+; byte-budget knob, not a deadline. Must stay <= 255: the single-byte
 ; compares in vid_chunk_dst_flat/_gap and both kernel selects depend on
-; it (ASSERTed in video.asm).
+; it (ASSERTed in video.asm). Held at 240 for margin against the retired
+; DI mechanism; raising it further buys under 2% of corpus decode-T,
+; concentrated in byte-bound clips that cannot spend it. Lowering costs
+; more than raising gains: 256->128 would cost +13.3% decode-T /
+; +34.0% chunks.
 NXV2_DMA_CHUNK   equ 240      ; vid_chunk_all / vid_chunk_dst_flat/_gap
 NXV2_RUN_DMA_MIN equ 71
 NXV2_COPY_DMA_MIN equ 81
@@ -1376,28 +1168,18 @@ NXV_RATE_STEREO  equ 15625  ; 28,000,000/16/112 = 15625 exactly (VGA0) -
 
 NXV_PAL_BYTES    equ 512    ; PAL opcode block size (NR $44 order)
 
-; SP17 T10 - CIRCULAR AUDIO FEED. ONE ring: the ISR's read pointer
-; (IX) free-runs around it (wrap at the fixed ring end - the only
-; boundary work the ISR does now), and the frame loop's writer chases
-; BEHIND the reader, so capacity per frame is the WHOLE buffer instead
-; of one half - the playvid differential (video_256x192_m_palette.asm
-; write pointer / interrupts-common.asm read pointer).
+; Circular audio feed: ONE ring. The ISR's read pointer (IX) free-runs
+; around it (wraps at the fixed ring end), and the frame loop's writer
+; chases BEHIND the reader, so capacity per frame is the WHOLE buffer
+; instead of one half.
 ;
-; RING SIZE = THE WHOLE AUDIO BANK (2026-08-02). The ring landed at
-; 2560 bytes because that is what the pre-T10 double buffer occupied,
-; but since SP15 3c vidAudBuf has owned a WHOLE 8 KB pool bank
-; (bank_alloc -> vidAudBankC, pinned at MMU3 for the session), so
-; 5632 of those bytes were allocated and idle. They are now the ring.
-; The defect that spent them: at the pace release the ring already
-; holds one whole frame, so the NEXT frame's feed fits the single
-; post-present pump only if 2*aBytes <= NXV_AUD_RING-NXV_AUD_GUARD.
-; At 25 fps stereo that is 2500 of 2544 and it fitted; at 12.5 fps it
-; is 5000 and 98% of the feed trickled out of the `.pace` spin - which
-; is the SD producer's only window - at the READER's byte rate. The
-; owner's 12.5 fps silicon rows spent 24-26 ms per frame in there
-; against 1.41 ms at 25 fps: ~8x pure waste, and the direct cause of
-; their ring underruns. With the whole bank the condition holds for
-; every legal file BY CONSTRUCTION (see NXV_AUD_FRAME_MAX).
+; RING SIZE = THE WHOLE AUDIO BANK: vidAudBuf owns a full 8 KB pool
+; bank (bank_alloc -> vidAudBankC, pinned at MMU3 for the session), so
+; the ring uses all of it. This keeps 2*aBytes <= NXV_AUD_RING-
+; NXV_AUD_GUARD true for every legal file BY CONSTRUCTION (see
+; NXV_AUD_FRAME_MAX) - a smaller ring left low-fps files room-limited,
+; spending most of a frame trickling audio through the pace-spin
+; instead of at the reader's own rate.
 NXV_AUD_RING     equ 8192   ; the circular audio buffer (vidAudBuf) -
                             ; the entire MMU3 window $6000-$7FFF, so
                             ; the ring ends flush at the page top and
@@ -1489,13 +1271,11 @@ GFX_SUB_SPR_START equ 19    ; GFX n 19: start set n at its baked X,Y
 GFX_SUB_SPR_FLAGS equ 20    ; GFX f 20: set = flag f, X = f+1 (lo) f+2 (hi), Y = f+3
 GFX_SUB_SPR_STOP  equ 21    ; GFX n 21: stop set n; 255 = all
 
-; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/
-; ports.txt lines 266-274: "four 8-bit dac channels... A,B are directed to
-; the left audio channel and C,D are directed to the right"; the
-; soundrive-2 column gives DAC B = $F3, DAC C = $F9 - the exact pair the
-; MakeVid reference ISR uses (tools/ZXNextOS/.../playvid/interrupts-
-; common.asm isr_ctc_stereo). NR_PERIPH3 bit 3 (already enabled elsewhere
-; for the mono DAC) covers these too - same "8-bit DACs on" gate.
+; DAC ports: four 8-bit DAC channels, A/B to the left audio channel and
+; C/D to the right (soundrive-2 pairing); DAC B = $F3, DAC C = $F9 is
+; the exact pair the MakeVid reference ISR uses. NR_PERIPH3 bit 3
+; (already enabled elsewhere for the mono DAC) covers these too - same
+; "8-bit DACs on" gate.
 VID_DAC_LEFT    equ $F3
 VID_DAC_RIGHT   equ $F9
 
