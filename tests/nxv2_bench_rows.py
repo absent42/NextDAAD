@@ -8,11 +8,12 @@ bench's own conversion is T = (F * 311 + D) * 1824 at 28 MHz. PRE_FIX is
 the player before the decode-loop change, kept as history; CURRENT is the
 player these coefficients describe, read 2026-09-15.
 
-BENCH_TABLES holds the standalone bench modes 2-8 (NXBO/NXBC/NXBK/NXBX/
-NXBG/NXBL/NXBT) exactly as src/video.asm's NXB_PAGE tables define them:
-each row carries its own explicit kernel-select value (thr) for its kind,
-so the bench measures a fixed select value directly instead of depending
-on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN currently ships.
+BENCH_TABLES holds the standalone bench modes 2-12 (NXBO/NXBC/NXBK/NXBX/
+NXBG/NXBL/NXBT/NXBE/NXBH/NXBF/NXBV) exactly as src/video.asm's NXB_PAGE
+tables define them: each row carries its own explicit kernel-select value
+(thr) for its kind, so the bench measures a fixed select value directly
+instead of depending on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN
+currently ships.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -207,10 +208,18 @@ def geo_fields(geo):
 
 
 # BENCH_TABLES: {mode: ((tag, kind, L, O, R, thr, geo), ...)} for the
-# standalone bench modes 2-8, in row order, the fields of the 12-byte row
+# standalone bench modes 2-12, in row order, the fields of the 12-byte row
 # (ds 4 tag, db opcode, dw count, db ops, dw reps, db thr, db geo). kind is
-# "skip8"/"skip16"/"run8"/"run16"/"copy8"/"copy16" (VOP_*). thr 0 = the
-# shipping select value for the row's kind (RUN or COPY); SKIP rows carry 0.
+# "skip8"/"skip16"/"run8"/"run16"/"copy8"/"copy16" (VOP_*), or "cal" for the
+# special CALL row (opcode NXB_OPC_CAL, only R used). thr 0 = the shipping
+# select value for the row's kind (RUN or COPY); SKIP rows carry 0.
+CAL_KIND = "cal"
+
+# Rows that print more than their own tag, in print order. CALL prints
+# CALL (O = NR $11, F = the long clock) then CALR (O = NR $64, F = the
+# body's own wrap count); the two F and D fields must match.
+PRINTED = {"CALL": ("CALL", "CALR")}
+
 BENCH_TABLES = {
     2: (   # NXBO - nxbTabOpd: op dispatch envelope
         ("SK00", "skip8", 0, 255, 64, 0, 0),
@@ -296,7 +305,81 @@ BENCH_TABLES = {
         ("V300", "copy16", 300, 19, 96, 81, 1),
         ("S300", "copy16", 300, 19, 96, 59, 1),
     ),
+    9: (   # NXBE - nxbTabTail: CAL row, DMA chunk tails, 16-bit entries
+        ("CALL", CAL_KIND, 0, 0, 16, 0, 0),
+        ("C240", "copy8", 240, 32, 64, 0, 0),
+        ("C250", "copy8", 250, 31, 64, 0, 0),
+        ("Q240", "copy16", 240, 32, 64, 0, 0),
+        ("R240", "run8", 240, 33, 64, 0, 0),
+        ("R250", "run8", 250, 31, 64, 0, 0),
+        ("W240", "run16", 240, 33, 64, 0, 0),
+        ("P071", "run8", 71, 111, 64, 0, 0),
+        ("P200", "run8", 200, 39, 64, 0, 0),
+    ),
+    10: (  # NXBH - nxbTabH144: COPY path pairs, gapped at height 144
+        ("HL56", "copy8", 56, 79, 64, 255, 0x05),
+        ("HD56", "copy8", 56, 79, 64, 1, 0x05),
+        ("HL60", "copy8", 60, 74, 64, 255, 0x05),
+        ("HD60", "copy8", 60, 74, 64, 1, 0x05),
+        ("HL64", "copy8", 64, 69, 64, 255, 0x05),
+        ("HD64", "copy8", 64, 69, 64, 1, 0x05),
+        ("HL68", "copy8", 68, 65, 64, 255, 0x05),
+        ("HD68", "copy8", 68, 65, 64, 1, 0x05),
+        ("HL76", "copy8", 76, 58, 64, 255, 0x05),
+        ("HD76", "copy8", 76, 58, 64, 1, 0x05),
+        ("HL80", "copy8", 80, 55, 64, 255, 0x05),
+        ("HD80", "copy8", 80, 55, 64, 1, 0x05),
+        ("HL88", "copy8", 88, 50, 64, 255, 0x05),
+        ("HD88", "copy8", 88, 50, 64, 1, 0x05),
+        ("HL96", "copy8", 96, 46, 64, 255, 0x05),
+        ("HD96", "copy8", 96, 46, 64, 1, 0x05),
+        ("HC03", "copy8", 103, 43, 64, 0, 0x05),
+        ("HK56", "copy16", 256, 17, 96, 0, 0x05),
+    ),
+    11: (  # NXBF - nxbTabFill: RUN path pairs (C thr 241 CPU, D thr 1 DMA)
+        ("FC56", "run8", 56, 141, 64, 241, 0),
+        ("FD56", "run8", 56, 141, 64, 1, 0),
+        ("FC60", "run8", 60, 132, 64, 241, 0),
+        ("FD60", "run8", 60, 132, 64, 1, 0),
+        ("FC64", "run8", 64, 124, 64, 241, 0),
+        ("FD64", "run8", 64, 124, 64, 1, 0),
+        ("FC68", "run8", 68, 116, 64, 241, 0),
+        ("FD68", "run8", 68, 116, 64, 1, 0),
+        ("FC72", "run8", 72, 110, 64, 241, 0),
+        ("FD72", "run8", 72, 110, 64, 1, 0),
+        ("FC76", "run8", 76, 104, 64, 241, 0),
+        ("FD76", "run8", 76, 104, 64, 1, 0),
+        ("VC60", "run8", 60, 99, 64, 241, 1),
+        ("VD60", "run8", 60, 99, 64, 1, 1),
+        ("VC68", "run8", 68, 87, 64, 241, 1),
+        ("VD68", "run8", 68, 87, 64, 1, 1),
+        ("VC76", "run8", 76, 78, 64, 241, 1),
+        ("VD76", "run8", 76, 78, 64, 1, 1),
+    ),
+    12: (  # NXBV - nxbTabEvt: edge bails, SKIP passes, a dest seam, columns
+        ("EC16", "copy8", 16, 15, 64, 0, 0x20),
+        ("NC16", "copy8", 16, 15, 64, 0, 0),
+        ("ER16", "run8", 16, 15, 64, 0, 0x20),
+        ("NR16", "run8", 16, 15, 64, 0, 0),
+        ("ES16", "skip8", 16, 15, 64, 0, 0x20),
+        ("NS16", "skip8", 16, 15, 64, 0, 0),
+        ("S256", "skip16", 256, 31, 64, 0, 0),
+        ("S2D0", "skip16", 256, 1, 1024, 0, 0),
+        ("SDS1", "skip16", 256, 1, 1024, 0, 0x30),
+        ("JC72", "copy16", 720, 3, 128, 81, 0x09),
+        ("JD72", "copy16", 720, 3, 128, 59, 0x09),
+        ("JR72", "run16", 720, 3, 128, 0, 0x09),
+        ("JS72", "skip16", 720, 3, 128, 0, 0x09),
+        ("JK72", "skip8", 200, 11, 128, 0, 0x09),
+        ("JN72", "skip8", 60, 37, 128, 0, 0x09),
+        ("GS3C", "skip16", 576, 10, 64, 0, 0x01),
+    ),
 }
+
+
+def printed_tags(mode):
+    """The tags one standalone mode prints, in print order (CALL adds CALR)."""
+    return tuple(t for row in BENCH_TABLES[mode] for t in PRINTED.get(row[0], (row[0],)))
 
 
 def _row(tag):
@@ -308,6 +391,8 @@ def _row(tag):
 
 
 _KIND_PRICE = {
+    "skip8": lambda e, L: e._cost_skip_chunk(L)[1],
+    "skip16": lambda e, L: e._cost_skip_chunk(L)[1],
     "copy8": lambda e, L: e._cost_copy_chunk(L)[1],
     "copy16": lambda e, L: e._cost_copy_chunk(L)[1],
     "run8": lambda e, L: e._cost_run_chunk(L)[1],
@@ -316,19 +401,25 @@ _KIND_PRICE = {
 
 
 def row_predicted(enc, tag):
-    """Flat-model T/op for one bench row at its own select value: a RUN
+    """Flat-model T/op for one bench op row at its own select value: a RUN
     row's thr sets run_dma_min, a COPY row's copy_dma_min (thr 0 = the
-    shipping value), as nxb_sel_row routes it. Gapped rows are priced flat
-    on purpose: measured minus this is the gapped surcharge."""
+    shipping value), as nxb_sel_row routes it. The model has no term for
+    gapped columns, dest-edge bails, dest seams or SKIP body passes, and it
+    picks the 8- or 16-bit envelope by L, not by the row's opcode: those
+    terms are omitted here, so measured minus this is the missing term."""
     return row_price(enc, _row(tag))
 
 
 def row_price(enc, row):
     """row_predicted for a (tag, kind, L, O, R, thr, geo) tuple; the
-    select coefficient is restored on every exit."""
+    select coefficient is restored on every exit. The CAL row has no
+    price (KeyError)."""
     _tag, kind, L, _o, _r, thr, _geo = row
     price = _KIND_PRICE[kind]
-    key = "run_dma_min" if kind.startswith("run") else "copy_dma_min"
+    key = ("run_dma_min" if kind.startswith("run")
+           else "copy_dma_min" if kind.startswith("copy") else None)
+    if key is None:
+        return price(enc, L)
     tc = enc.TMODEL_COEFFS
     saved = tc[key]
     try:

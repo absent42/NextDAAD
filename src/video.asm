@@ -3760,8 +3760,12 @@ vid_tl_report_ret:
 ;   6 group 5's pairs and the chunk rows on the gapped surface.
 ;   7 long multi-chunk COPY16 ops, in window and across one dest seam.
 ;   8 rows at a simulated NXV2_COPY_DMA_MIN of 59.
+;   9 the long-clock calibration row, DMA chunk tails and 16-bit entries.
+;  10 COPY path pairs on the gapped surface at height 144.
+;  11 RUN path pairs (CPU fill against DMA), flat and gapped.
+;  12 events: dest-edge bails, SKIP body passes, a dest seam, columns.
 ;
-; STANDALONE MODES (2-8) synthesize their op streams into a pool bank
+; STANDALONE MODES (2-12) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
 ; display state is disturbed and no session is needed. Streams are
 ; sized so the source cursor never reaches $DF00 (vid_src_next is never
@@ -3783,15 +3787,24 @@ NXB_SEAM_DST     equ $5F80   ; geo dest code 3, flat rows only
     ASSERT (low NXB_MID_DST) == 0 && (low VID_DST_WIN) == 0
     ASSERT (low NXB_EDGE_DST) == 0
 NXB_MODE_FIRST   equ 2       ; standalone modes, nxbTabDir order
-NXB_MODE_LAST    equ 8
+NXB_MODE_LAST    equ 12
 NXB_TAB_MAX      equ 560     ; nxbTabBuf: every table asserts it fits
 NXB_ROW_LEN      equ 12      ; ds 4 tag, db opc, dw count, db ops,
                              ; dw reps, db thr, db geo
+NXB_OPC_CAL      equ $FF     ; row opcode: the long-clock calibration row
+NXB_LINE_OFS     equ $64     ; NR $64 line offset (the clock basis needs 0)
+NXB_LC_LO        equ 8       ; long clock read window: lines 8-239, clear
+NXB_LC_HI        equ 239     ; of the frameCounter tick at line 248
+NXB_CAL_POLLS    equ 15      ; CAL body: raster polls per rep
+NXB_CAL_SPAN     equ 12      ; CAL body: 256-pass djnz loops per poll
+    ; one poll gap at 28 MHz (+1 wait per fetch/read): 3863 T a loop plus
+    ; about 400 T of poll; at least one poll every 1/8 field
+    ASSERT NXB_CAL_SPAN * 3863 + 400 < 311 * 1824 / 8
 
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
-; Modes 2-8 run standalone; mode 1 is NOT reachable here - the
+; Modes 2-12 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
 ; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
@@ -4025,6 +4038,13 @@ nxb_run_table:
     inc hl
     ld (nxbGeo), a
     push hl
+    ld a, (nxbOpc)
+    ASSERT NXB_OPC_CAL == $FF
+    inc a
+    jr nz, .oprow
+    call nxb_cal                 ; count/ops/thr/geo unused
+    jr .next
+.oprow:
     call nxb_sel_row
     call nxb_geo_setup
     jr c, .badgeo
@@ -4267,9 +4287,21 @@ nxb_row:
     call nxb_tm_in
     call nxb_at
     call nxb_puttag
+    ld a, (nxbOps)
+    ld hl, (nxbFrames)
+    call nxb_ofrd
+    jp nxb_tm_out
+nxb_body:
+    jp 0                         ; SMC: the row's per-rep body
+
+; Print " O=hh R=hhhh F=hhhh D=hhhh": A = O, HL = F, R = nxbReps -
+; nxbLeft, D = nxbL1 - nxbL0 (two's complement). Corrupts everything.
+nxb_ofrd:
+    push hl
+    push af
     ld hl, nxbMsgO
     call dbg_puts
-    ld a, (nxbOps)
+    pop af
     call dbg_hex8
     ld hl, nxbMsgR
     call dbg_puts
@@ -4280,7 +4312,7 @@ nxb_row:
     call dbg_hex16
     ld hl, nxbMsgF
     call dbg_puts
-    ld hl, (nxbFrames)
+    pop hl
     call dbg_hex16
     ld hl, nxbMsgD
     call dbg_puts
@@ -4288,10 +4320,131 @@ nxb_row:
     ld de, (nxbL0)
     or a
     sbc hl, de
-    call dbg_hex16               ; line delta, two's complement
-    jp nxb_tm_out
-nxb_body:
-    jp 0                         ; SMC: the row's per-rep body
+    jp dbg_hex16
+
+; Long clock (+3 timing, NR $64 = 0): line 0 is vc 64, stepping at hc 124;
+; frameCounter ticks at vc 1 hc 126, 8 T into line 248. Start: wait for
+; lines 8-239, then fc0, then line0 (nxbL0, HL). Corrupts AF, BC, DE, HL.
+nxb_lc_start:
+    xor a
+    ld (nxbLcBad), a
+    call nxb_lc_wait
+    ld hl, (frameCounter)
+    ld (nxbFc0), hl
+    call nxb_line
+    ld (nxbL0), hl
+    ret
+
+; End: line1 (nxbL1), then fc1 at once at lines 8-239, else after the wait.
+; nxbLcF = F = fc1 - fc0 - [line1 in 240-310], $FFFF after a wait timeout.
+; Corrupts AF, BC, DE, HL.
+nxb_lc_end:
+    call nxb_line
+    ld (nxbL1), hl
+    ld a, h
+    or a
+    jr nz, .late                 ; 256-310
+    ld a, l
+    cp NXB_LC_HI + 1
+    jr nc, .late                 ; 240-255
+    cp NXB_LC_LO
+    call c, nxb_lc_wait          ; 0-7
+    ld hl, (frameCounter)
+    jr .f
+.late:
+    call nxb_lc_wait
+    ld hl, (frameCounter)
+    dec hl
+.f:
+    ld de, (nxbFc0)
+    or a
+    sbc hl, de
+    ld a, (nxbLcBad)
+    or a
+    jr z, .ok
+    ld hl, $FFFF
+.ok:
+    ld (nxbLcF), hl
+    ret
+
+; Poll the raster until lines NXB_LC_LO-NXB_LC_HI, at most 65536 polls
+; (about 30 fields): a timeout sets nxbLcBad instead of hanging. Corrupts
+; AF, BC, DE, HL.
+nxb_lc_wait:
+    ld de, 0
+.poll:
+    push de
+    call nxb_line
+    pop de
+    ld a, h
+    or a
+    jr nz, .next
+    ld a, l
+    sub NXB_LC_LO
+    cp NXB_LC_HI - NXB_LC_LO + 1
+    ret c
+.next:
+    dec de
+    ld a, d
+    or e
+    jr nz, .poll
+    dec a
+    ld (nxbLcBad), a
+    ret
+
+; CAL row: nxbReps reps of nxb_cal_body on the long clock. The wrap count
+; (nxbFrames) is seeded with line0, spans every rep and closes on line1:
+; CALL (O = NR $11) and CALR (O = NR $64) print the same F and D.
+nxb_cal:
+    ld hl, (nxbReps)
+    ld (nxbLeft), hl
+    ld hl, 0
+    ld (nxbFrames), hl
+    call nxb_lc_start
+    ld (nxbPrev), hl             ; the wrap counter's seed: line0
+.rep:
+    call nxb_cal_body
+    ld hl, (nxbLeft)
+    dec hl
+    ld (nxbLeft), hl
+    ld a, h
+    or l
+    jr nz, .rep
+    call nxb_lc_end
+    ld hl, (nxbL1)
+    call nxb_tick.cmp            ; the final compare against line1
+    call nxb_at
+    call nxb_puttag
+    ld e, NR_VIDEO_TIMING
+    call nr_read
+    ld hl, (nxbLcF)
+    call nxb_ofrd
+    call nxb_at
+    ld hl, nxbTagCALR
+    call dbg_puts
+    ld e, NXB_LINE_OFS
+    call nr_read
+    ld hl, (nxbFrames)
+    jp nxb_ofrd
+
+; About 1.25 fields: NXB_CAL_POLLS x (NXB_CAL_SPAN 256-pass djnz loops,
+; then nxb_tick). Corrupts AF, BC, DE, HL.
+nxb_cal_body:
+    ld e, NXB_CAL_POLLS
+.poll:
+    ld c, NXB_CAL_SPAN
+.span:
+    ld b, 0
+.d:
+    djnz .d
+    dec c
+    jr nz, .span
+    push de
+    call nxb_tick                ; nxb_line takes D
+    pop de
+    dec e
+    jr nz, .poll
+    ret
 
 ; Cursor to the next bench row, column 0. Corrupts AF, BC.
 nxb_at:
@@ -4393,6 +4546,7 @@ nxb_line:
 ; Frame tick: a non-monotonic line reading means the raster wrapped.
 nxb_tick:
     call nxb_line
+.cmp:                            ; HL = a line read elsewhere (nxb_cal)
     ld de, (nxbPrev)
     ld (nxbPrev), hl
     or a
@@ -4655,6 +4809,7 @@ nxbTagDTB: db "DTB", 0
 nxbTagDTC: db "DTC", 0
 nxbTagDTD: db "DTD", 0
 nxbTagTOK: db "TOK", 0
+nxbTagCALR: db "CALR", 0
 
 nxbMode:     db 0
 nxbRow:      db 0
@@ -4669,6 +4824,9 @@ nxbFrames:   dw 0
 nxbPrev:     dw 0
 nxbL0:       dw 0
 nxbL1:       dw 0
+nxbFc0:      dw 0            ; long clock: frameCounter at the start
+nxbLcF:      dw 0            ; long clock: F
+nxbLcBad:    db 0            ; long clock: nonzero after a wait timeout
 nxbSrcBank:  db 0
 nxbDstBank:  db 0
 nxbDstP:     db 0
@@ -4726,6 +4884,10 @@ nxbTabDir:
     NXBDIR nxbTabGap, nxbTabGapEnd       ; mode 6
     NXBDIR nxbTabLong, nxbTabLongEnd     ; mode 7
     NXBDIR nxbTabNew, nxbTabNewEnd       ; mode 8
+    NXBDIR nxbTabTail, nxbTabTailEnd     ; mode 9
+    NXBDIR nxbTabH144, nxbTabH144End     ; mode 10
+    NXBDIR nxbTabFill, nxbTabFillEnd     ; mode 11
+    NXBDIR nxbTabEvt, nxbTabEvtEnd       ; mode 12
     ASSERT $ - nxbTabDir == (NXB_MODE_LAST - NXB_MODE_FIRST + 1) * 4
 
 ; ---------------------------------------------------------------------
@@ -4874,6 +5036,98 @@ nxbTabNew:
     db 0
 nxbTabNewEnd:
     ASSERT nxbTabNewEnd - nxbTabNew <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 9 - CALL first (prints CALL and CALR: long clock against the
+; body's own wraps). C250-C240 and R250-R240: one tail pass plus 10 B;
+; Q240-C240 and W240-R240: the 16-bit entries; P200-P071: DMA fill per B.
+nxbTabTail:
+    NXBROW "CALL", NXB_OPC_CAL, 0, 0, 16, 0, 0
+    NXBROW "C240", VOP_COPY8, 240, 32, 64, 0, 0
+    NXBROW "C250", VOP_COPY8, 250, 31, 64, 0, 0
+    NXBROW "Q240", VOP_COPY16, 240, 32, 64, 0, 0
+    NXBROW "R240", VOP_RUN8, 240, 33, 64, 0, 0
+    NXBROW "R250", VOP_RUN8, 250, 31, 64, 0, 0
+    NXBROW "W240", VOP_RUN16, 240, 33, 64, 0, 0
+    NXBROW "P071", VOP_RUN8, 71, 111, 64, 0, 0
+    NXBROW "P200", VOP_RUN8, 200, 39, 64, 0, 0
+    db 0
+nxbTabTailEnd:
+    ASSERT nxbTabTailEnd - nxbTabTail <= 19 * NXB_ROW_LEN + 1   ; CAL prints 2
+
+; GROUP 10 - COPY path pairs, gapped at height 144 (geo $05): HLnn thr 255
+; (fast-handler LDI), HDnn thr 1 (body + DMA); HC03/HK56 at the shipping 81.
+nxbTabH144:
+    NXBROW "HL56", VOP_COPY8, 56, 79, 64, 255, $05
+    NXBROW "HD56", VOP_COPY8, 56, 79, 64, 1, $05
+    NXBROW "HL60", VOP_COPY8, 60, 74, 64, 255, $05
+    NXBROW "HD60", VOP_COPY8, 60, 74, 64, 1, $05
+    NXBROW "HL64", VOP_COPY8, 64, 69, 64, 255, $05
+    NXBROW "HD64", VOP_COPY8, 64, 69, 64, 1, $05
+    NXBROW "HL68", VOP_COPY8, 68, 65, 64, 255, $05
+    NXBROW "HD68", VOP_COPY8, 68, 65, 64, 1, $05
+    NXBROW "HL76", VOP_COPY8, 76, 58, 64, 255, $05
+    NXBROW "HD76", VOP_COPY8, 76, 58, 64, 1, $05
+    NXBROW "HL80", VOP_COPY8, 80, 55, 64, 255, $05
+    NXBROW "HD80", VOP_COPY8, 80, 55, 64, 1, $05
+    NXBROW "HL88", VOP_COPY8, 88, 50, 64, 255, $05
+    NXBROW "HD88", VOP_COPY8, 88, 50, 64, 1, $05
+    NXBROW "HL96", VOP_COPY8, 96, 46, 64, 255, $05
+    NXBROW "HD96", VOP_COPY8, 96, 46, 64, 1, $05
+    NXBROW "HC03", VOP_COPY8, 103, 43, 64, 0, $05
+    NXBROW "HK56", VOP_COPY16, 256, 17, 96, 0, $05
+    db 0
+nxbTabH144End:
+    ASSERT nxbTabH144End - nxbTabH144 <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 11 - RUN path pairs: FCnn/VCnn thr 241 (vid_fill_cpu takes at most
+; 240 B, so 241 forces the CPU fill), FDnn/VDnn thr 1 (DMA). FC/FD flat,
+; the last op ending at or below $5F00; VC/VD gapped at height 192.
+nxbTabFill:
+    NXBROW "FC56", VOP_RUN8, 56, 141, 64, 241, 0
+    NXBROW "FD56", VOP_RUN8, 56, 141, 64, 1, 0
+    NXBROW "FC60", VOP_RUN8, 60, 132, 64, 241, 0
+    NXBROW "FD60", VOP_RUN8, 60, 132, 64, 1, 0
+    NXBROW "FC64", VOP_RUN8, 64, 124, 64, 241, 0
+    NXBROW "FD64", VOP_RUN8, 64, 124, 64, 1, 0
+    NXBROW "FC68", VOP_RUN8, 68, 116, 64, 241, 0
+    NXBROW "FD68", VOP_RUN8, 68, 116, 64, 1, 0
+    NXBROW "FC72", VOP_RUN8, 72, 110, 64, 241, 0
+    NXBROW "FD72", VOP_RUN8, 72, 110, 64, 1, 0
+    NXBROW "FC76", VOP_RUN8, 76, 104, 64, 241, 0
+    NXBROW "FD76", VOP_RUN8, 76, 104, 64, 1, 0
+    NXBROW "VC60", VOP_RUN8, 60, 99, 64, 241, 1
+    NXBROW "VD60", VOP_RUN8, 60, 99, 64, 1, 1
+    NXBROW "VC68", VOP_RUN8, 68, 87, 64, 241, 1
+    NXBROW "VD68", VOP_RUN8, 68, 87, 64, 1, 1
+    NXBROW "VC76", VOP_RUN8, 76, 78, 64, 241, 1
+    NXBROW "VD76", VOP_RUN8, 76, 78, 64, 1, 1
+    db 0
+nxbTabFillEnd:
+    ASSERT nxbTabFillEnd - nxbTabFill <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 12 - events: Exx at NXB_EDGE_DST against Nxx at $4000 (dest-edge
+; bails); S256 SKIP passes; SDS1 - S2D0 a dest seam; Jxx gapped at 72 per
+; column (JC72 LDI, JD72 DMA); GS3C gapped 192, three SKIP16 passes.
+nxbTabEvt:
+    NXBROW "EC16", VOP_COPY8, 16, 15, 64, 0, $20
+    NXBROW "NC16", VOP_COPY8, 16, 15, 64, 0, 0
+    NXBROW "ER16", VOP_RUN8, 16, 15, 64, 0, $20
+    NXBROW "NR16", VOP_RUN8, 16, 15, 64, 0, 0
+    NXBROW "ES16", VOP_SKIP8, 16, 15, 64, 0, $20
+    NXBROW "NS16", VOP_SKIP8, 16, 15, 64, 0, 0
+    NXBROW "S256", VOP_SKIP16, 256, 31, 64, 0, 0
+    NXBROW "S2D0", VOP_SKIP16, 256, 1, 1024, 0, 0
+    NXBROW "SDS1", VOP_SKIP16, 256, 1, 1024, 0, $30
+    NXBROW "JC72", VOP_COPY16, 720, 3, 128, 81, $09
+    NXBROW "JD72", VOP_COPY16, 720, 3, 128, 59, $09
+    NXBROW "JR72", VOP_RUN16, 720, 3, 128, 0, $09
+    NXBROW "JS72", VOP_SKIP16, 720, 3, 128, 0, $09
+    NXBROW "JK72", VOP_SKIP8, 200, 11, 128, 0, $09
+    NXBROW "JN72", VOP_SKIP8, 60, 37, 128, 0, $09
+    NXBROW "GS3C", VOP_SKIP16, 576, 10, 64, 0, $01
+    db 0
+nxbTabEvtEnd:
+    ASSERT nxbTabEvtEnd - nxbTabEvt <= 20 * NXB_ROW_LEN + 1
 
     DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
     ASSERT $ <= DATA_WINDOW + $2000

@@ -314,8 +314,9 @@ LS256 111     verb
 ; graduated into the production decoder. The revival measures the
 ; SHIPPING routines instead of prototypes, so the rows answer decode
 ; questions the player actually has. Four verbs on the last of the old
-; 102-116 block plus NXBX, NXBG, NXBL and NXBT at 119-122; the
-; standalone modes share EXTERN vector 12 (debug.asm's nxb_trampoline ->
+; 102-116 block plus NXBX, NXBG, NXBL and NXBT at 119-122 and NXBE,
+; NXBH, NXBF and NXBV at 123-126; the standalone modes share EXTERN
+; vector 12 (debug.asm's nxb_trampoline ->
 ; video.asm's nxb_entry) with the mode in flag 250, and NXBD rides the
 ; PLAYER because its rows need a live armed direct-serve session.
 ;   NXBO - mode 2, op dispatch envelope (8 rows)
@@ -325,6 +326,12 @@ LS256 111     verb
 ;   NXBG - mode 6, gapped path pairs and chunk rows (17 rows)
 ;   NXBL - mode 7, long copy rows (7 rows)
 ;   NXBT - mode 8, rows at a simulated threshold of 59 (11 rows)
+;   NXBE - mode 9, CALL/CALR long-clock check, DMA tails, 16-bit
+;          entries (10 rows)
+;   NXBH - mode 10, COPY path pairs gapped at height 144 (18 rows)
+;   NXBF - mode 11, RUN path pairs, flat and gapped (18 rows)
+;   NXBV - mode 12, edge bails, SKIP passes, a dest seam, columns
+;          (16 rows)
 ;   NXBD - flag 248 + GFX 10 13: the direct-serve transport
 ;          breakdown against 010.VID (6 rows). NEEDS -VidLong staged.
 ;          Playback is REPLACED by the bench - nothing plays.
@@ -339,6 +346,10 @@ NXBX  119     verb
 NXBG  120     verb
 NXBL  121     verb
 NXBT  122     verb
+NXBE  123     verb
+NXBH  124     verb
+NXBF  125     verb
+NXBV  126     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -1094,6 +1105,22 @@ $pictureOK
                 DONE
 
 > NXBT    _     LET     250 8
+                EXTERN  0 12
+                DONE
+
+> NXBE    _     LET     250 9
+                EXTERN  0 12
+                DONE
+
+> NXBH    _     LET     250 10
+                EXTERN  0 12
+                DONE
+
+> NXBF    _     LET     250 11
+                EXTERN  0 12
+                DONE
+
+> NXBV    _     LET     250 12
                 EXTERN  0 12
                 DONE
 

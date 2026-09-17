@@ -1326,6 +1326,7 @@ def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None
 
 @case(10, "bench tables - pricing anchors and the standalone table rules")
 def t10_bench_tables():
+    import math
     tc = enc.TMODEL_COEFFS
     ship = tc["copy_dma_min"]
     tc["copy_dma_min"] = 81
@@ -1358,22 +1359,40 @@ def t10_bench_tables():
     # Stream bytes per op: opcode + 8/16-bit count, then a RUN colour byte or
     # the COPY literal body. The source cursor must stay below $DF00.
     header = {"skip8": 2, "run8": 2, "copy8": 2, "skip16": 3, "run16": 3, "copy16": 3}
-    expect(sorted(bench.BENCH_TABLES) == list(range(2, 9)), "standalone modes are 2-8")
+    expect(sorted(bench.BENCH_TABLES) == list(range(2, 13)), "standalone modes are 2-12")
     bad, owner = [], {}
     for mode, rows in sorted(bench.BENCH_TABLES.items()):
-        if len(rows) > 20:
-            bad.append(f"mode {mode}: {len(rows)} rows, the screen holds 20")
-        for tag, kind, L, o, r, thr, geo in rows:
+        printed = bench.printed_tags(mode)
+        if len(printed) > 20:
+            bad.append(f"mode {mode}: {len(printed)} printed rows, the screen holds 20")
+        for tag in printed:
             if len(tag) != 4 or not all(0x21 <= ord(ch) <= 0x7E for ch in tag):
                 bad.append(f"{tag!r}: a tag is exactly 4 printable characters")
             if tag in owner:
                 bad.append(f"{tag}: repeated (modes {owner[tag]} and {mode})")
             owner.setdefault(tag, mode)
+        for i, (tag, kind, L, o, r, thr, geo) in enumerate(rows):
+            if kind == bench.CAL_KIND:
+                # NXB_OPC_CAL: only R is read; the CAL rows open NXBE.
+                if ((mode, i, tag, L, o, thr, geo) != (9, 0, "CALL", 0, 0, 0, 0)
+                        or not 1 <= r <= 0xFFFF):
+                    bad.append(f"{tag}: a CAL row is NXBE's first row, CALL, with only R set")
+                continue
+            if kind not in header:
+                bad.append(f"{tag}: unknown kind {kind!r}")
+                continue
+            if tag in bench.PRINTED:
+                bad.append(f"{tag}: only the CAL row prints extra tags")
             if not (1 <= o <= 255 and 1 <= r <= 0xFFFF and 0 <= thr <= 255
                     and 0 <= L <= (255 if kind.endswith("8") else 0xFFFF)):
                 bad.append(f"{tag}: O={o} R={r} thr={thr} L={L} do not fit their fields")
             if kind.startswith("run") and thr > 241:
                 bad.append(f"{tag}: RUN thr {thr} > 241 (vid_fill_cpu takes at most 240 B)")
+            if kind.startswith("skip") and thr:
+                bad.append(f"{tag}: SKIP rows carry thr 0 (nxb_sel_row ignores it)")
+            price = bench.row_price(enc, (tag, kind, L, o, r, thr, geo))
+            if not (math.isfinite(price) and price > 0):
+                bad.append(f"{tag}: row_price {price!r} is not a positive T/op")
             body = L if kind.startswith("copy") else 1 if kind.startswith("run") else 0
             if o * (header[kind] + body) >= 7900:
                 bad.append(f"{tag}: stream {o * (header[kind] + body)} B, must be < 7900")
