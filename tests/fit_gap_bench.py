@@ -543,9 +543,16 @@ class FrameEv:
 
 _WALKS = {}          # path -> (header, surface, [(start, ops, type, dst, in_span, end State)])
 _FRAME_CACHE = {}    # (path, COPY, RUN) -> [FrameEv]
+_ERA_PIN = None      # set by main()'s --era; a hardware log re-derives only
+                     # against the fixtures its own sitting measured, not
+                     # whatever the working tree currently encodes
 
 
-def fixture_era():
+def fixture_era(era=None):
+    if era is not None:
+        return era
+    if _ERA_PIN is not None:
+        return _ERA_PIN
     ps1 = (HERE / "build-tests.ps1").read_text(encoding="utf-8")
     m = re.search(r"\$vidLegSettlementTag = '([^']+)'", ps1)
     if not m:
@@ -553,10 +560,11 @@ def fixture_era():
     return m.group(1)
 
 
-def fixture_path(clip):
-    found = sorted((HERE / "out").glob(f"{int(clip):03d}_*_{fixture_era()}_*_cache.vid"))
+def fixture_path(clip, era=None):
+    e = fixture_era(era)
+    found = sorted((HERE / "out").glob(f"{int(clip):03d}_*_{e}_*_cache.vid"))
     if not found:
-        raise FileNotFoundError(f"{int(clip):03d}.VID is not encoded at era {fixture_era()} "
+        raise FileNotFoundError(f"{int(clip):03d}.VID is not encoded at era {e} "
                                 f"(tests\\build-tests.ps1 -Vid -VidLong)")
     return found[0]
 
@@ -2100,7 +2108,12 @@ def main(argv=None):
                     help="the owner's note for a launch's last run, by its #NXB stamp (D: the anchor log)")
     ap.add_argument("--lost", action="append", default=[], metavar="[D:]hhhh=VERB[:clip]",
                     help="the owner's note naming the capture lost just before the capture stamped hhhh")
+    ap.add_argument("--era", metavar="TAG", help="pin fixture resolution to this encoder era "
+                    "instead of the live $vidLegSettlementTag - a log re-derives only against "
+                    "the fixtures its own sitting measured")
     args = ap.parse_args(argv)
+    global _ERA_PIN
+    _ERA_PIN = args.era
     try:
         notes = dict(launch_key(item) for item in args.launch_status)
         lost = dict(lost_key(item) for item in args.lost)

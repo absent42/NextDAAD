@@ -1304,49 +1304,56 @@ def t10_sitting5_rows():
            and set(s5r["Q"]["sessions"]) <= set(s5["Q"]["sessions"]) and not s5r["D"]
            and set(s5r["Q"]["standalone"]) <= set(s5["Q"]["standalone"]), "session rows and repeats")
 
-    # the logs parse back to exactly these rows, and S0 chooses the same captures
-    q, d = ROOT / "docs" / "NXBENCH-Q.TXT", ROOT / "docs" / "NXBENCH-D.TXT"
-    if q.exists() and d.exists():
-        q_text, d_text = q.read_text(encoding="latin-1"), d.read_text(encoding="latin-1")
-        seen = {}
-        main, reps = {"standalone": {}, "sessions": {}}, {"standalone": {}, "sessions": {}}
-        for run in blog.parse(q_text):
-            n = seen[(run.command, run.clip)] = seen.get((run.command, run.clip), 0) + 1
-            rows = {grp[0]: tuple(grp[1:]) for grp in run.rows}
-            dest = main if n == 1 else reps
-            if run.command in blog.SESSION_VERBS:
-                dest["sessions"][(run.command, run.clip)] = rows
-            else:
-                dest["standalone"].update(rows)
-        d_runs = blog.parse(d_text)
-        expect(max(seen.values()) == 2 and len(d_runs) == 1
-               and s5 == {"D": {grp[0]: tuple(grp[1:]) for grp in d_runs[0].rows}, "Q": main}
-               and s5r == {"D": {}, "Q": reps}, "SITTING5 differs from the parsed logs")
-        sit, _lines = g.s0(q_text, d_text, launch_status={("Q", 0x6D71): "OK", ("D", 0x0184): "OK"}, lost={})
-        expect(sit.rows == s5["Q"]["standalone"] and sit.anchor == s5["D"]
-               and {k: s.rows for k, s in sit.sessions.items()} == sess, "SITTING5 differs from S0's captures")
-    else:
-        print("    note: the sitting-5 bench logs are not present; parse-back check skipped")
+    # the logs parse back to exactly these rows, and S0 chooses the same captures.
+    # SITTING5 is a frozen pal9v-era capture: pin fixture resolution to it so a
+    # later era bump does not silently re-point this reproduction at different
+    # fixture bytes (tests/fit_gap_bench.py's own --era does the same for its CLI).
+    g._ERA_PIN = 'pal9v'
+    try:
+        q, d = ROOT / "docs" / "NXBENCH-Q.TXT", ROOT / "docs" / "NXBENCH-D.TXT"
+        if q.exists() and d.exists():
+            q_text, d_text = q.read_text(encoding="latin-1"), d.read_text(encoding="latin-1")
+            seen = {}
+            main, reps = {"standalone": {}, "sessions": {}}, {"standalone": {}, "sessions": {}}
+            for run in blog.parse(q_text):
+                n = seen[(run.command, run.clip)] = seen.get((run.command, run.clip), 0) + 1
+                rows = {grp[0]: tuple(grp[1:]) for grp in run.rows}
+                dest = main if n == 1 else reps
+                if run.command in blog.SESSION_VERBS:
+                    dest["sessions"][(run.command, run.clip)] = rows
+                else:
+                    dest["standalone"].update(rows)
+            d_runs = blog.parse(d_text)
+            expect(max(seen.values()) == 2 and len(d_runs) == 1
+                   and s5 == {"D": {grp[0]: tuple(grp[1:]) for grp in d_runs[0].rows}, "Q": main}
+                   and s5r == {"D": {}, "Q": reps}, "SITTING5 differs from the parsed logs")
+            sit, _lines = g.s0(q_text, d_text, launch_status={("Q", 0x6D71): "OK", ("D", 0x0184): "OK"}, lost={})
+            expect(sit.rows == s5["Q"]["standalone"] and sit.anchor == s5["D"]
+                   and {k: s.rows for k, s in sit.sessions.items()} == sess, "SITTING5 differs from S0's captures")
+        else:
+            print("    note: the sitting-5 bench logs are not present; parse-back check skipped")
 
-    # the rules on SITTING5 itself reproduce the ruled headline values
-    missing = [c for c in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14) if _gap_fixture(c) is None]
-    if missing:
-        skip(f"fixtures {missing} are not encoded at this era (build-tests.ps1 -Vid -VidLong)")
-    sessions = {}
-    for (t, c), rows in sess.items():
-        path = g.fixture_path(c)
-        hdr = g.fixture_header(path)
-        sessions[(t, c)] = g.Sess(t, c, None, dict(rows), names[rows["IDEN"][0]], path, hdr, fm.surface_of(hdr))
-    sit, v = g.Sitting(dict(s5["Q"]["standalone"]), sessions, dict(s5["D"])), {}
-    for name, rule in g.RULES[:8]:
-        new, _lines = rule(sit, v)
-        v.setdefault("bounds", {}).update(new.pop("bounds", {}))
-        new.pop("raises", None)
-        v.update(new)
-    expect(v["N"] == 53 and v["audio_factor"] == 0.86 and v["composition_factor"] == {"flat": 1.10, "gapped": 1.09}
-           and abs(v["nxb_rep_t"] - 717.8) <= 1.0,
-           f"N {v['N']}, audio_factor {v['audio_factor']}, composition {v['composition_factor']}, "
-           f"nxb_rep_t {v['nxb_rep_t']:.2f}")
+        # the rules on SITTING5 itself reproduce the ruled headline values
+        missing = [c for c in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14) if _gap_fixture(c, era='pal9v') is None]
+        if missing:
+            skip(f"fixtures {missing} are not encoded at era pal9v (build-tests.ps1 -Vid -VidLong)")
+        sessions = {}
+        for (t, c), rows in sess.items():
+            path = g.fixture_path(c)
+            hdr = g.fixture_header(path)
+            sessions[(t, c)] = g.Sess(t, c, None, dict(rows), names[rows["IDEN"][0]], path, hdr, fm.surface_of(hdr))
+        sit, v = g.Sitting(dict(s5["Q"]["standalone"]), sessions, dict(s5["D"])), {}
+        for name, rule in g.RULES[:8]:
+            new, _lines = rule(sit, v)
+            v.setdefault("bounds", {}).update(new.pop("bounds", {}))
+            new.pop("raises", None)
+            v.update(new)
+        expect(v["N"] == 53 and v["audio_factor"] == 0.86 and v["composition_factor"] == {"flat": 1.10, "gapped": 1.09}
+               and abs(v["nxb_rep_t"] - 717.8) <= 1.0,
+               f"N {v['N']}, audio_factor {v['audio_factor']}, composition {v['composition_factor']}, "
+               f"nxb_rep_t {v['nxb_rep_t']:.2f}")
+    finally:
+        g._ERA_PIN = None
 
 
 def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None):
@@ -2643,10 +2650,11 @@ def _gap_cost(ev, surface, streaming, long_b, rem, vals, split=()):
             + rem * vals["copy_dma_rem_t"])
 
 
-def _gap_fixture(clip):
-    import re as _re
-    ps1 = (ROOT / "tests" / "build-tests.ps1").read_text(encoding="utf-8")
-    era = _re.search(r"\$vidLegSettlementTag = '([^']+)'", ps1).group(1)
+def _gap_fixture(clip, era=None):
+    if era is None:
+        import re as _re
+        ps1 = (ROOT / "tests" / "build-tests.ps1").read_text(encoding="utf-8")
+        era = _re.search(r"\$vidLegSettlementTag = '([^']+)'", ps1).group(1)
     found = sorted((ROOT / "tests" / "out").glob(f"{clip:03d}_*_{era}_*_cache.vid"))
     return found[0] if found else None
 
