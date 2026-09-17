@@ -6149,10 +6149,10 @@ nxbSesSysEnd:
 ; appended to NXBENCH.TXT, read back and compared, then LOG OK or LOG ERR xx
 ; on row 31. Untimed. Corrupts everything.
 ; ---------------------------------------------------------------------
-NXB_LOG_WMODE    equ $0A     ; F_OPEN: write, open existing or create
-; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0
-; for a short count, a file size other than offset + bytes written, or a mismatch.
-NXB_LOG_OPEN     equ $20     ; drive, open for write
+NXB_LOG_WMODE    equ $0B     ; F_OPEN open_creat + read/write: the API append (.extract -a)
+; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0 for
+; a short count, a seek or size off the offset (+ bytes written), or a mismatch.
+NXB_LOG_OPEN     equ $20     ; drive, open for append
 NXB_LOG_END      equ $40     ; FSTAT, seek to the end
 NXB_LOG_WR       equ $60     ; write
 NXB_LOG_CLW      equ $80     ; close after writing
@@ -6264,15 +6264,23 @@ nxb_log_show:
     pop af
     jp dbg_hex8
 
-; Seek the open handle to nxbLogOfs from the start (IXL = 0).
+; Seek the open handle to nxbLogOfs from the start (IXL = 0). F_SEEK returns
+; BCDE = the position; any other than nxbLogOfs fails before a byte moves.
 nxb_log_seek:
     ld de, (nxbLogOfs)
     ld bc, (nxbLogOfs + 2)
     ld a, (nxbLogH)
     ld ix, 0
     call esx_fseek
-    ret nc
-    jr nxb_log_fail
+    jr c, nxb_log_fail
+    ld hl, (nxbLogOfs)
+    or a
+    sbc hl, de
+    jr nz, nxb_log_short
+    ld hl, (nxbLogOfs + 2)
+    sbc hl, bc                   ; CF = 0: the low words matched
+    ret z
+    jr nxb_log_short
 
 ; F_FSTAT the open handle into nxbLogStat (+7: the size, 4 B).
 nxb_log_size:

@@ -1726,7 +1726,7 @@ def t10_bench_log():
     expect([r.stamp for r in runs] == [0x0100, 0x0B20, 0x1400, 0x2001, 0x2F00], "stamps")
     expect([r.command for r in runs] == ["NXBC", "NXBR", "NXBK", "NXBQ", "NXBE"], "commands")
     expect([r.table for r in runs] == [3, "REAL", 4, "SYN", 9], "tables")
-    expect([r.clip for r in runs] == [None, 7, None, None, None], "clips")
+    expect([r.clip for r in runs] == [None, 7, None, 7, None], "clips: a session verb takes the last PICK")
     for run, want_rows in zip(runs, (c_rows, r_rows, k_rows, q_rows, e_rows)):
         expect(run.rows == want_rows, f"{run.command} rows:\n  {run.rows}\n  {want_rows}")
         expect(not run.warnings, f"{run.command} warnings {run.warnings}")
@@ -1771,6 +1771,52 @@ def t10_bench_log():
     bad = blog.parse("NXBK\nF063 0=7D R=0040 F=0013 D=003D7\nF070 O=70 R=0040 F=0013\n")[0]
     expect(bad.rows == [("F063", 0x7D, 0x40, 0x13, 0x3D)] and len(bad.warnings) == 2,
            f"a 5-digit D keeps 4 and warns, a short row warns: {bad.rows} {bad.warnings}")
+    # Stale screens and lost captures. A: NXBR on PICK 7. B: PICK 12, NXBR fails
+    # to open (VID FILE? on row 23 over A's stale rows). C: NXBR on the carried
+    # clip 12 (no PICK on screen), row 31 LOG ERR 28 (a capture lost before it).
+    # D: NXBR whose rows equal C's, row 31 LOG ERR 60 (step 3 wrote: C's).
+    screen_b = dict(screen2)
+    screen_b.update({0: {0: "> pick 12"}, 1: {0: "> nxbr"}, 2: {}, 3: {}, 31: {0: "LOG OK"}})
+    s_b = _bench_screen(screen_b)
+    s_b[23] = "VID FILE?" + s_b[23][9:]
+    c_rows2 = vals(bench.session_printed("REAL", "resident"), 0x55)
+    screen_c = {0: {0: "> nxbr"}, 31: {0: "LOG ERR 28"}}
+    for i, g in enumerate(c_rows2):
+        screen_c.setdefault(8 + i % 16, {})[40 if i >= 16 else 0] = _bench_group(*g)
+    screen_d = dict(screen_c)
+    screen_d[31] = {0: "LOG ERR 60"}
+    s_a = list(s2)
+    s_a[31] = " " * 80
+    log2 = "".join(_bench_capture(st, s) for st, s in
+                   ((0x0100, s_a), (0x0200, s_b), (0x0300, _bench_screen(screen_c)),
+                    (0x0400, _bench_screen(screen_d))))
+    sruns = blog.parse(log2)
+    expect([r.clip for r in sruns] == [7, 12, 12, 12], f"carried clips {[r.clip for r in sruns]}")
+    expect(sruns[1].rows == r_rows[:15] + r_rows[16:]
+           and any("VID FILE?" in w for w in sruns[1].warnings) and len(sruns[1].warnings) == 1,
+           f"VID FILE? over stale rows warns: {sruns[1].warnings}")
+    expect(not sruns[0].warnings and not any("stale" in w for w in sruns[2].warnings),
+           "a fresh run does not warn")
+    expect([w for w in sruns[2].warnings] == ["LOG ERR 28: a capture was lost between #NXB 0200 and #NXB 0300"],
+           f"lost capture: {sruns[2].warnings}")
+    expect(any("rows equal the previous NXBR run's (#NXB 0300)" in w for w in sruns[3].warnings),
+           f"identical rows warn: {sruns[3].warnings}")
+    expect([r.log for r in sruns] == ["OK", None, "ERR 60", None], f"logs {[r.log for r in sruns]}")
+    one = blog.parse(_bench_capture(0x0500, _bench_screen({0: {0: "> nxbc"}, 31: {0: "LOG ERR 46"}})))[0]
+    expect(one.warnings == ["LOG ERR 46: a capture was lost before #NXB 0500"],
+           f"a lost capture before the first stamp: {one.warnings}")
+    fmt = blog.parse(_bench_capture(0x0600, _bench_screen({0: {0: "> nxbq"}, 23: {0: "VID NOBANK2"}})))[0]
+    expect(fmt.report == ["VID NOBANK2"] and len(fmt.warnings) == 1, f"VID NOBANK2 alone: {fmt.warnings}")
+    import io
+    with tempfile.TemporaryDirectory() as td:
+        for body, want in ((log2, "4 runs, 3 with a problem"), (_bench_capture(0x0100, s_a), "1 runs, 0 with a problem")):
+            path = Path(td) / "NXBENCH.TXT"
+            path.write_bytes(body.encode("latin-1"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = blog.main([str(path)])
+            expect(want in out.getvalue() and rc == (1 if want[8] != "0" else 0),
+                   f"CLI on {want!r}: rc {rc}: {out.getvalue()}")
 
 
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")

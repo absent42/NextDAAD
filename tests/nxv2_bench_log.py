@@ -13,7 +13,14 @@ as (tag, O, R, F, D) with D two's complement, and the report lines (every
 other non-empty line below the command). A two-column session screen prints
 rows 8-23 at column 0 and then at column 40, so every column-1 group follows
 every column-0 group. Row groups whose tag is not in the verb's table (stale
-rows) are dropped.
+rows) are dropped. A session verb's clip is the last PICK seen so far.
+
+A screen can be stale: a player open failure (VID FILE?, VID FMT?, VID
+NOBANK2, VID SIZE?, VID FRAG? on row 23) returns before the bench hook
+blanks rows 8-28, so the rows are the previous session's. That, and a
+session run whose rows equal the previous same-verb run's, warn. A LOG ERR
+from a step that ends before any write (steps 1-2) means that capture is
+not in the file: it warns as a lost capture instead of marking a run.
 
 Text with no #NXB line is read as typed screen text: a line starting with a
 bench verb opens a run (PICK lines just above it belong to it), "0=" reads
@@ -38,10 +45,11 @@ VERBS = {**STANDALONE_VERBS, **SESSION_VERBS}
 COL2 = 40                                   # NXB_SESS_COL2
 
 # LOG ERR xx: bits 7-5 the step (NXB_LOG_*), bits 4-0 the esxDOS code, or 0 for
-# a short count, a file size other than offset + bytes written, or a mismatch.
-LOG_STEPS = {1: "open for write", 2: "size, seek to the end", 3: "write",
+# a short count, a seek or size off the offset (+ bytes written), or a mismatch.
+LOG_STEPS = {1: "open for append", 2: "size, seek to the end", 3: "write",
              4: "close after writing", 5: "reopen, size check, seek back",
              6: "read back", 7: "compare, final close"}
+LOST_STEPS = (1, 2)                         # end before any byte is written
 
 HEADER_RE = re.compile(r"#NXB ([0-9A-F]{4})$")     # may follow a short write's partial line
 LOG_RE = re.compile(r"^LOG (OK|ERR [0-9A-F]{2})$", re.IGNORECASE)
@@ -52,13 +60,14 @@ START_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{4}\s+[O0]=")
 VERB_RE = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(VERBS) + r")(?![A-Za-z0-9])", re.IGNORECASE)
 PICK_RE = re.compile(r"(?<![A-Za-z0-9])PICK\s+(\d+)", re.IGNORECASE)
 ERR_RE = re.compile(r"(?<![A-Za-z])ERR=([0-9A-F]{2})")
+VIDFAIL_RE = re.compile(r"^VID (FILE\?|FMT\?|NOBANK2|SIZE\?|FRAG\?)")   # vid_fail_puts, row 23
 
 
 @dataclass
 class Run:
     stamp: int = None          # the #NXB frameCounter; None for typed text
     command: str = None        # the bench verb, upper case
-    clip: int = None           # PICK nn above a session verb, when on screen
+    clip: int = None           # a session verb's clip: the last PICK nn seen
     table: object = None       # BENCH_TABLES mode or SESSION_TABLES name
     rows: list = field(default_factory=list)      # (tag, O, R, F, D), print order
     report: list = field(default_factory=list)    # lines below the command
@@ -103,9 +112,10 @@ def _groups(line, warnings):
 
 
 def _run(lines, stamp):
-    """One capture -> (Run, the LOG status on it or None)."""
+    """One capture -> (Run, the LOG status on it or None, the last PICK above
+    the command or None)."""
     run = Run(stamp=stamp, lines=list(lines))
-    at, status = None, None
+    at, status, pick = None, None, None
     for i, line in enumerate(lines):
         if LOG_RE.match(line.strip()) or GROUP_RE.search(line):
             continue
@@ -117,8 +127,7 @@ def _run(lines, stamp):
     else:
         run.table = VERBS[run.command]
         picks = [p for line in lines[:at + 1] for p in PICK_RE.findall(line)]
-        if picks and run.command in SESSION_VERBS:
-            run.clip = int(picks[-1])
+        pick = int(picks[-1]) if picks else None
     tags = set(table_tags(run.command))
     cols = ([], [])
     for i, line in enumerate(lines):
@@ -130,10 +139,14 @@ def _run(lines, stamp):
             (cols[col] if g[0] in tags else run.dropped).append(g)
         if not groups and at is not None and i > at and line.strip():
             run.report.append(line.rstrip())
+        m = VIDFAIL_RE.match(line)
+        if m and at is not None and i > at:
+            run.warnings.append(f"{m.group(0)}: the player failed before the bench hook, "
+                                f"the rows are a previous screen")
     run.rows = cols[0] + cols[1]
     errs = [ERR_RE.search(line) for line in run.report]
     run.err = next((int(m.group(1), 16) for m in errs if m), None)
-    return run, status
+    return run, status, pick
 
 
 def parse(text):
@@ -161,11 +174,22 @@ def parse(text):
             pending.append(line)
         elif chunks and line.strip():
             chunks[-1][1].append(line)
-    runs = []
+    runs, clip = [], None
     for stamp, body in chunks:
-        run, status = _run(body, stamp)
+        run, status, pick = _run(body, stamp)
+        clip = pick if pick is not None else clip
+        if run.command in SESSION_VERBS:
+            run.clip = clip
+            prev = next((r for r in reversed(runs) if r.command == run.command), None)
+            if run.rows and prev and prev.rows == run.rows:
+                seen = "typed" if prev.stamp is None else f"#NXB {prev.stamp:04X}"
+                run.warnings.append(f"rows equal the previous {run.command} run's ({seen}): "
+                                    f"a stale screen")
         if typed:
             run.log = status
+        elif status and status != "OK" and int(status[4:], 16) >> 5 in LOST_STEPS:
+            where = f"between #NXB {runs[-1].stamp:04X} and" if runs else "before"
+            run.warnings.append(f"LOG {status}: a capture was lost {where} #NXB {stamp:04X}")
         elif status and runs:
             runs[-1].log = status               # printed after the previous capture
         runs.append(run)
