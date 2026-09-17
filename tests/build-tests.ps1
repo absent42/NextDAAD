@@ -3976,8 +3976,8 @@ if ($VidLong) {
         # settlement tag in the name for the same reason as -Vid: an
         # encoder-internal change re-shapes output with identical args
         $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_${vidLegSettlementTag}_long_cache.vid"
-        # optional cut (011 only - the pacing card is an exact 5.000 s
-        # slice of a 60 s source; everything else is a FULL-duration encode)
+        # optional cut (011, 013, 014 - exact 5.000 s slices of the 60 s test
+        # card; everything else is a FULL-duration encode)
         $cut = @()
         if ($vidLongMap[$dest].start)    { $cut += @('--start', $vidLongMap[$dest].start) }
         if ($vidLongMap[$dest].duration) { $cut += @('--duration', $vidLongMap[$dest].duration) }
