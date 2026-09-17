@@ -2429,7 +2429,8 @@ def _gap_hidden():
     """(terms, resident frame terms, streaming frame terms, extras) for a synthetic
     sitting 5, chosen so each rule's branches bind: pool 80 banks, a nonzero
     remainder term, L064-L080 off one rate, S8's 1.12 binding flat and its audio
-    branch gapped (009's large audio stage), an S6 near-tie on the sweeps."""
+    branch gapped (009's large audio stage), an S6 near-tie on the sweeps, and a
+    bench harness on every standalone rep (h_rep T, never a model term)."""
     H = {"fetch_short": 19.785, "fetch_long": 19.885, "t_skip": 141.83, "t_skip16": 210.93,
          "t_op_run": 367.43, "t_op_copy": 303.73, "fill_cpu": 15.885, "copy_dma_per_b": 5.065,
          "fill_dma_per_b": 5.085, "copy_dma_setup": 881.3, "copy_dma_path_t": -18.4,
@@ -2450,7 +2451,7 @@ def _gap_hidden():
          "pace": 301.0, "aud": {c: 140000.0 if c == 9 else 36000.0 for c in range(1, 10)}, "h_frame": 480.0,
          "prod": {7: 10480.0, 8: 10150.0, 9: 10820.0}, "comp": {"flat": 1.031, "gapped": 1.243},
          "direct": (11.53, 60.4, 30120.0), "dt": {"DTI0": 6010.0, "DTB0": 6400.0, "DTC0": 6230.0, "DTD0": 6620.0},
-         "pool": 80, "depth": 2400, "fill": 120, "remn": 3000, "m_strm": 40, "cal": 5003,
+         "pool": 80, "depth": 2400, "fill": 120, "remn": 3000, "m_strm": 40, "cal": 5003, "h_rep": 712.0,
          "row_extra": {"L064": -12.8, "L080": -12.0},                    # T per op off the model
          "sweep_extra": {55: 3000.0, 60: 3000.0, 65: 0.0, 70: 2000.0, 75: 3000.0, 81: 4000.0},   # T per frame
          "delivery": {**{c: "resident" for c in (1, 2, 3, 4, 5, 6)}, **{c: "streaming" for c in (7, 8, 9)},
@@ -2494,7 +2495,7 @@ def _gap_runs(hidden, seed):
             long_b = ev.copy_fast_b + ev.copy_ldi_b if L >= 64 else 0
             rem = o if kind.startswith("copy") and L >= 240 and L % 240 >= bench.row_selects(tag)[0] else 0
             t_rep = (_gap_cost(ev, bench.row_surface(tag), False, long_b, rem, values["resident"])
-                     + X["row_extra"].get(tag, 0.0) * o)
+                     + X["row_extra"].get(tag, 0.0) * o + X["h_rep"])
             rows.append((tag, o, r, *fd(t_rep * r)))
         return rows
 
@@ -2647,23 +2648,35 @@ def _gap_expect(runs, v, X):
         return (f * 311 + d) * 1824.0 / r
 
     h, e, facts = X["h"], {}, {}
-    # S1
+
+    def ops(tag):
+        return bench._row(tag)[3]
+    # S1: the harness from each same-L pair's difference (O 255 against 15), the pair
+    # weighted by 1 / (sum of both rows' squared line), then every row less h / O
+    k = 1.0 / 15 - 1.0 / 255
+    pairs = [(top(b) - top(a), sum((1824.0 / (std[t][1] * std[t][0])) ** 2 for t in (a, b)))
+             for a, b in (("SK00", "NS16"), ("C016", "NC16"))]
+    hrep = sum(dt * k / var for dt, var in pairs) / sum(k * k / var for _dt, var in pairs)
+    facts["S1 nxb_rep_t"] = hrep
+
+    def free(tag):
+        return top(tag) - hrep / ops(tag)
     for icpt, slope, tags in (("t_op_run", "fill_cpu", ("RU01", "RU17", "F063", "F070")),
                               ("t_op_copy", "fetch_short", ("C001", "C004", "C008", "C038"))):
-        xs, ys = [bench._row(t)[2] for t in tags], [top(t) for t in tags]
+        xs, ys = [bench._row(t)[2] for t in tags], [free(t) for t in tags]
         b, a = np.polyfit(xs, ys, 1)
         lift = max(0.0, max(y - (a + b * x) - max(5.5, 1824.0 / (std[t][1] * std[t][0]))
                             for x, y, t in zip(xs, ys, tags)))
         e[icpt], e[slope] = a + lift, b
-    longs = [(top(t) - e["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")]
+    longs = [(free(t) - e["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")]
     e["fetch_long"] = max(longs)
     facts["fetch_long spread"] = max(longs) - min(longs)
-    e["t_skip"], e["t_skip16"] = top("SK00"), top("S160")
-    e["copy_dma_per_b"] = (top("C103") - top("C081")) / 22.0
-    e["fill_dma_per_b"] = (top("P200") - top("P071")) / 129.0
-    # S2 (the 250 B first chunk's cap arm is 18 T)
-    e["s2_ldi8"] = top("C250") - top("C240") - 10 * v["fetch_long"] - 18
-    e["s2_cpu8"] = top("R250") - top("R240") - 10 * v["fill_cpu"] - 18
+    e["t_skip"], e["t_skip16"] = free("SK00"), free("S160")
+    e["copy_dma_per_b"] = (free("C103") - free("C081")) / 22.0
+    e["fill_dma_per_b"] = (free("P200") - free("P071")) / 129.0
+    # S2 (the 250 B first chunk's cap arm is 18 T), at S1's harness
+    e["s2_ldi8"] = free("C250") - free("C240") - 10 * v["fetch_long"] - 18
+    e["s2_cpu8"] = free("R250") - free("R240") - 10 * v["fill_cpu"] - 18
     # S3
     synth = [("SYN", c) for c in (1, 2, 3, 4)] + [("SYS", 7)]
     for term, tag in (("frame_delta_t", "FE00"), ("frame_middle_t", "FE01"), ("frame_first_t", "KS02"),
@@ -2763,8 +2776,8 @@ def _gap_expect(runs, v, X):
     e["supply_exchange"] = {f"{w}x{hh}": 28000.0 / (v["SD_WIRE_BYTES_PER_MS"] * silicon_r(key, 1.0))
                             for (w, hh), key in (((320, 256), "flat_320"), ((256, 192), "flat_256"),
                                                  ((320, 192), "gapped"), ((320, 144), "gapped"))}
-    pts = [(bench._row(t)[2], top(t)) for t in ("C001", "C004", "C008", "C016", "C038", "L048", "L056", "L060",
-                                                 "L064", "L072", "L080")]
+    pts = [(bench._row(t)[2], top(t) - v["nxb_rep_t"] / ops(t))
+           for t in ("C001", "C004", "C008", "C016", "C038", "L048", "L056", "L060", "L064", "L072", "L080")]
 
     def worst(p):
         b, a = np.polyfit([x for x, _y in p], [y for _x, y in p], 1)
@@ -2774,6 +2787,7 @@ def _gap_expect(runs, v, X):
               if len({x for x, _y in pts if x < s}) >= 2 and len({x for x, _y in pts if x >= s}) >= 2]
     best = min(splits, key=lambda p: (p[0], p[1]))
     e["fetch_selector"] = best[1] if worst(pts) - best[0] > 5.5 else None
+    facts["S12 one line"] = (worst(pts), np.polyfit([x for x, _y in pts], [y for _x, y in pts], 1)[0])
     lam = e["supply_exchange"]["320x256"]
 
     def fillmin(k):
@@ -2849,17 +2863,34 @@ def t10_gap_rules():
             bad.append(f"{name}: rules {got}, by hand {want}")
     expect(not bad, "rulings differ from the hand arithmetic:\n  " + "\n  ".join(bad))
 
+    # the bench harness: S1's twin estimate as printed, S4's joint value ruled beside its hand count, never exported
+    said = [line.split() for line in printed if line.startswith("S1 harness estimate: nxb_rep_t ")]
+    expect(len(said) == 1 and abs(float(said[0][4]) - facts["S1 nxb_rep_t"]) <= 0.05,
+           f"S1 harness estimate {said}, by hand {facts['S1 nxb_rep_t']:.2f}")
+    said = [line for line in printed if line.startswith("Ruling: nxb_rep_t ")]
+    expect(len(said) == 1 and g.HARNESS_HAND[1] in said[0]
+           and said[0].endswith(" - bench harness only, never exported to the encoder"),
+           f"one nxb_rep_t ruling with its hand count: {said}")
+    expect("nxb_rep_t" not in g.ruled_coefficients(v) and "nxb_rep_t" in v["s4_terms"],
+           "nxb_rep_t is fitted in S4 and never exported")
+    one_w, one_b = facts["S12 one line"]
+    said = [line for line in printed if line.startswith("Ruling: one fetch_long rate")]
+    expect(v["fetch_selector"] is None and len(said) == 1
+           and f"one line worst residual {one_w:.2f} T (slope {one_b:.4f})" in said[0],
+           f"S12's one line on harness-free rows, by hand {one_w:.2f} T slope {one_b:.4f}: {said}")
+
     # the band is max(5.5 T, one line of the row), in S1's lift too
     expect(g.op_band((5, 64, 0, 0)) == 1824.0 / 320 and g.op_band((255, 64, 0, 0)) == 5.5, "op_band")
     xs = np.array([1.0, 17.0, 63.0, 70.0])
     design = np.stack([np.ones(4), xs], axis=1)
     lev = (design @ np.linalg.pinv(design))[1, 1]
+    hr = facts["S1 nxb_rep_t"]
     for resid, want_lift in ((6.5, 0.0), (8.0, 8.0 - 1824.0 / 255)):
         rows = dict(sit.rows)
-        ys = [g.t_op(rows[t]) for t in ("RU01", "RU17", "F063", "F070")]
+        ys = [g.t_op(rows[t]) - hr / bench._row(t)[3] for t in ("RU01", "RU17", "F063", "F070")]
         b, a = np.polyfit(xs, ys, 1)
         t17 = ys[1] + (resid - (ys[1] - a - b * 17)) / (1 - lev)
-        rows["RU17"] = (255, 1, 0, t17 * 255 / 1824.0)
+        rows["RU17"] = (255, 1, 0, (t17 + hr / 255) * 255 / 1824.0)
         lift = g.s1(g.Sitting(rows, {}), {})[0]["raises"].get("t_op_run", 0.0)
         expect(math.isclose(lift, want_lift, abs_tol=1e-6), f"S1 lift at residual {resid} on a 7.15 T row: {lift}")
 
@@ -2895,7 +2926,7 @@ def t10_gap_rules():
 
     # hidden terms: within max(2 T, 2%) under, that plus the rule's largest raise over; a term the
     # rows cannot resolve that finely is held to its +-1 line bound instead
-    want = {**H, **strm, "pal_straddle_t": H["pal_straddle_t"] + H["src_parity_seam_t"],
+    want = {**H, **strm, "pal_straddle_t": H["pal_straddle_t"] + H["src_parity_seam_t"], "nxb_rep_t": X["h_rep"],
             "glue_t": X["glue"]["resident"] + X["pace"], "glue_strm_t": X["glue"]["streaming"] + X["pace"],
             "DIRECT_T_PER_B": X["direct"][0], "DIRECT_COL_T": X["direct"][1], "DIRECT_FRAME_T": X["direct"][2]}
     rule_of = {**{t: "S1" for t in ("fetch_short", "fetch_long", "t_skip", "t_skip16", "t_op_run", "t_op_copy",
@@ -2948,7 +2979,7 @@ def t10_gap_rules():
             rem = o if kind.startswith("copy") and L >= 240 and L % 240 >= bench.row_selects(tag)[0] else 0
             _o, _r, f, d = first_std[tag]
             meas = (f * 311 + d) * 1824.0 / (r * o)
-            model = _gap_cost(ev, bench.row_surface(tag), False, long_b, rem, v, v["split"]) / o
+            model = (_gap_cost(ev, bench.row_surface(tag), False, long_b, rem, v, v["split"]) + v["nxb_rep_t"]) / o
             if meas - model > max(5.5, 1824.0 / (r * o)) + 1e-6:
                 under.append(f"{tag} {meas - model:+.1f}")
     expect(not under, f"rows priced under after the raises: {under}")
@@ -3080,11 +3111,36 @@ def t10_gap_rules():
     try:
         g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
     except g.Stop as stop:
-        fit_line = [line for line in stop.printed if line.startswith("fit 1:")]
+        fit_line = [line for line in stop.printed if line.startswith("fit 1:") and "price under" in line]
         expect(stop.rule == "S4" and fit_line and "JC72" in fit_line[0].split(";")[1],
                f"S4 names JC72 first before any raise: {fit_line}")
     else:
         raise AssertionError("no S4 STOP on JC72 +5%")
+    # a harness 114 T over the generator's (R / 16 lines on every standalone row) STOPs S1, naming both values
+    r2 = copy.deepcopy(runs)
+    for run in r2:
+        if run["clip"] is None:
+            run["rows"] = [(t, o, r, *divmod(f * 311 + d + (0 if t in ("CALL", "CALR") else r // 16), 311))
+                           for t, o, r, f, d in run["rows"]]
+    try:
+        g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
+    except g.Stop as stop:
+        expect(stop.rule == "S1" and "is more than 50 T from its hand count 705 T" in stop.lines[0],
+               f"harness STOP: {stop.lines}")
+    else:
+        raise AssertionError("no S1 STOP on a harness 114 T over")
+    # a row priced only by held S1 terms and the harness STOPs S4; nxb_rep_t never rises to cover it
+    r2 = copy.deepcopy(runs)
+    for run in r2:
+        if run["verb"] == "NXBF":
+            run["rows"] = shift(run["rows"], "FC68", 40)
+    try:
+        g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
+    except g.Stop as stop:
+        expect(stop.rule == "S4" and stop.lines[0].startswith("FC68 prices ")
+               and stop.lines[0].endswith(" under its band with no fitted term to raise"), f"FC68 STOP: {stop.lines}")
+    else:
+        raise AssertionError("no S4 STOP on FC68 +40 lines")
     for cpu, dma, want in (((0.0, 19.8), (880.0, 19.795), "near-parallel"),
                            ((0.0, 19.8), (5000.0, 5.1), "outside 1..255")):
         try:

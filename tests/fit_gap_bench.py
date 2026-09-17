@@ -8,7 +8,9 @@ nothing. Exits 1 on any STOP condition, naming it.
 
 Row times: T per op for a standalone row, (F x 311 + D) x 1824 / (R x O); T per
 rep for a session row (O read as 1). Pricing: nxv2_path_sim events per row or
-fixture frame, mapped to terms by COUNTER_TERMS (S4 prints the map).
+fixture frame, mapped to terms by COUNTER_TERMS (S4 prints the map). A standalone
+row also carries the bench's per-rep harness, nxb_rep_t / O per op: S1 estimates
+it from same-L twins, S4 fits it jointly, and it is never exported.
 
 Each rule is one function s<n>(sit, v) -> (new values, printed lines); S0
 builds the Sitting from the parsed runs. A Stop names its rule. Values stay
@@ -23,8 +25,6 @@ status the file cannot hold, keyed by its #NXB stamp (D: for the anchor log).
 A faulted capture is superseded by a later clean capture of the same verb/clip.
 """
 import argparse
-import contextlib
-import io
 import math
 import re
 import sys
@@ -65,6 +65,8 @@ VID_RING_MAX = 80                   # src/nextdaad.inc: ring bank list capacity
 BANK_B = 16384
 POOL_CAP_BANKS = 78                 # S12: never above 78 banks
 REMN_MIN_BLOCKS = 256               # S11
+HARNESS = "nxb_rep_t"               # standalone bench per-rep harness: T per op = nxb_rep_t / O
+HARNESS_STOP_T = 50.0               # a fit this far from the hand count is a STOP
 
 # Task 12 hand counts (quiet image, 28 MHz: +1 T per opcode fetch and per memory read).
 H_PACE = 104                        # PACE rep-loop control
@@ -100,7 +102,7 @@ S4_TERMS = ("copy_dma_setup", "copy_dma_path_t", "copy_body_ldi_t", "fill_dma_se
 S4_EXTENDED = ("gap_fast_t", "gap_bail_skip_t", "gap_bail_t", "slow_fetch_t", "slow_cmp_t",
                "srcedge_t", "dst_exact_t", "src_exact_t", "gap_chunk_t", "gap_chunk_hi_t",
                "cap_arm_t", "src_wrap_t", "fast_hop_skip_t", "fast_hop_run_t", "fast_hop_copy_t",
-               "gap_skip_pass_t")
+               "gap_skip_pass_t", HARNESS)
 S4_MODES = (2, 3, 4, 5, 7, 12, 6, 10, 11)       # 6, 10, 11 carry the fast-hop and gapped terms
 S4_NXBE = ("C240", "C250", "Q240", "R240", "R250", "W240")
 S4_SYN = ("C4K0", "C4KP", "C4KB", "K24K", "K43K", "SE00", "SE01", "SE02", "C4KS", "C4KD")
@@ -159,14 +161,6 @@ def sigma_rep(row):
 def op_band(row):
     """An op row prices under past max(5.5 T, its own one-line resolution)."""
     return max(BAND_OP_T, sigma_op(row))
-
-
-def line_bounds(xs, sigmas):
-    """(intercept, slope) worst-case moves of a least-squares line under +-1
-    line on every point."""
-    P = np.linalg.pinv(np.array([[1.0, float(x)] for x in xs]))
-    sig = np.array(sigmas, dtype=float)
-    return float(np.abs(P[0]) @ sig), float(np.abs(P[1]) @ sig)
 
 
 def lsq(points):
@@ -472,6 +466,7 @@ def standalone_counts(tag, split=()):
     if ev != bench.row_events(tag):
         raise AssertionError(f"{tag}: rate-player events differ from row_events")
     counts = term_counts(ev, surface, False, long_b, rem, split)
+    counts[HARNESS] = 1                    # the bench rep loop, once per rep
     return Counter({k: c / float(o) for k, c in counts.items()})
 
 
@@ -1039,61 +1034,107 @@ def _s0_session_repeat(first, later, slips, fail):
 # ---------------------------------------------------------------------------
 # S1 - S3
 # ---------------------------------------------------------------------------
-S1_FIT_TAGS = ("SK00", "S160", "RU01", "RU17", "CP01", "CP17", "R161", "C161", "F063", "F070",
-               "F071", "F256", "K256", "C001", "C004", "C008", "C016", "C038", "C080", "C081",
-               "C103", "C256")
+S1_RUN_TAGS = ("RU01", "RU17", "F063", "F070")
+S1_COPY_TAGS = ("C001", "C004", "C008", "C038")
+S1_TWINS = (("SK00", "NS16"), ("C016", "NC16"))    # same op and L at O 255 and 15
+HARNESS_HAND = (705, "one rep of a standalone row, video.asm: nxb_row call nxb_body 20, jp (SMC) 13; "
+                     "nxb_ops_body ld a,(nxbDstP) 17, ld (vidDstPage),a 16, nextreg NR_MMU2,a 20, ld de,nn 13, "
+                     "ld hl,nn 13, ld iy,vid_stub 18, jp vid_next 13; the first dispatch ld a,h 5, cp $DF 9, "
+                     "jr nc 9, ld a,(hl) 9, inc hl 7, ld iyl,a 10, and $C3 9, jr nz 9, jp (iy) 10; FEND "
+                     "jp vid_op_fend 13, ld a,(vidInSpan) 17, or a 5, jr z,.plain 14, ld a,VOP_FEND 9, "
+                     "jp nxb_term (SMC) 13, ret 13; call nxb_tick 20, call nxb_line 20, nxb_line ld d,4 9, "
+                     "ld bc,$243B 13, 3 x (ld a,n 9, out (c),a 14, inc b 5, in r,(c) 14, dec b 5) less 5, "
+                     "cp h 5, jr z 14, ld a,h 5, and 1 9, ld h,a 5, ret 13 = 209, ld de,(nxbPrev) 26, "
+                     "ld (nxbPrev),hl 19, or a 5, sbc hl,de 17, ret nc 14; ld hl,(nxbLeft) 21, dec hl 7, "
+                     "ld (nxbLeft),hl 19, ld a,h 5, or l 5, jr nz,.rep 14")
+
+
+def harness_check(rule, value, what, lines):
+    """A fitted nxb_rep_t more than HARNESS_STOP_T from its hand count is a Stop."""
+    if abs(value - HARNESS_HAND[0]) > HARNESS_STOP_T:
+        raise Stop(rule, f"{what} nxb_rep_t {value:.1f} T is more than {HARNESS_STOP_T:.0f} T from its hand "
+                         f"count {HARNESS_HAND[0]} T", lines)
+
+
+def wlsq(design, ys, sigmas):
+    """Least squares weighted by one line. -> (x, worst-case move of each x under
+    +-1 line on every row, P with x = P @ ys)."""
+    A, sig = np.array(design, dtype=float), np.array(sigmas, dtype=float)
+    w = 1.0 / sig
+    if np.linalg.matrix_rank(A * w[:, None]) < A.shape[1]:
+        return None
+    P = np.linalg.pinv(A * w[:, None]) * w[None, :]
+    return P @ np.array(ys, dtype=float), np.abs(P) @ sig, P
 
 
 def s1(sit, v):
     """S1 - envelopes and slopes.
-    fit_tmodel.fit on the Q rows; an intercept is raised until none of its rows
-    prices under (by more than max(5.5 T, one line of the row))."""
-    T = sit.T
-    bench.ROWS["_sitting5q"] = {tag: sit.rows[tag] for tag in S1_FIT_TAGS}
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            fit = fit_tmodel.fit("_sitting5q")
-    finally:
-        del bench.ROWS["_sitting5q"]
-    lines, out, raises, bounds = [], {}, {}, {}
-    for name, tags, (icpt, slope) in (("run", ("RU01", "RU17", "F063", "F070"), ("t_op_run", "fill_cpu")),
-                                      ("copy", ("C001", "C004", "C008", "C038"), ("t_op_copy", "fetch_short"))):
-        pts = [(bench._row(t)[2], T(t)) for t in tags]
+    nxb_rep_t, the bench's per-rep harness (T per op = nxb_rep_t / O), from the
+    same-op, same-L twins at O 255 and 15, where every per-op cost cancels; the
+    envelope and slope fits then run on harness-free rows. An intercept is raised
+    until none of its rows prices under."""
+    T, rows = sit.T, sit.rows
+    lines, raises, out, bounds = [], {}, {}, {}
+
+    def o_of(tag):
+        return bench._row(tag)[3]
+    twin_tags = [t for pair in S1_TWINS for t in pair]
+    design = [[1.0 if t in pair else 0.0 for pair in S1_TWINS] + [1.0 / o_of(t)] for t in twin_tags]
+    fit = wlsq(design, [T(t) for t in twin_tags], [sigma_op(rows[t]) for t in twin_tags])
+    if fit is None:
+        raise Stop("S1", "the twin rows cannot separate nxb_rep_t", lines)
+    x, bound, _P = fit
+    h, h_bound = float(x[-1]), float(bound[-1])
+    out[HARNESS], bounds[HARNESS] = h, h_bound
+    lines.append(f"S1 harness estimate: nxb_rep_t {h:.1f} T per rep from "
+                 + ", ".join(f"{a} {T(a):.2f} / {b} {T(b):.2f}" for a, b in S1_TWINS)
+                 + f" (T = op + nxb_rep_t / O, O 255 and 15; +-1 line moves it up to {h_bound:.1f} T), "
+                 f"hand count {HARNESS_HAND[0]} T; S4 fits it jointly")
+    harness_check("S1", h, "the S1 twin estimate of", lines)
+
+    def free(tag):
+        return T(tag) - h / o_of(tag)
+
+    def free_sigma(tag):
+        return sigma_op(rows[tag]) + h_bound / o_of(tag)
+    for name, tags, (icpt, slope) in (("run", S1_RUN_TAGS, ("t_op_run", "fill_cpu")),
+                                      ("copy", S1_COPY_TAGS, ("t_op_copy", "fetch_short"))):
+        pts = [(bench._row(t)[2], free(t)) for t in tags]
         a, b, worst = lsq(pts)
-        if abs(a - fit[icpt]) > 1e-6 or abs(b - fit[slope]) > 1e-9:
-            raise AssertionError(f"S1 {name} line differs from fit_tmodel.fit")
-        lift = max(0.0, max(y - (a + b * x) - op_band(sit.rows[t]) for (x, y), t in zip(pts, tags)))
+        lift = max(0.0, max(y - (a + b * x_) - op_band(rows[t]) for (x_, y), t in zip(pts, tags)))
+        out[icpt], out[slope] = a + lift, b
         if lift:
             raises[icpt] = lift
-        out[icpt], out[slope] = a + lift, b
-        bounds[icpt], bounds[slope] = line_bounds([x for x, _y in pts], [sigma_op(sit.rows[t]) for t in tags])
-        lines.append(ruling(f"{icpt} {ceil01(out[icpt])} T", f"least squares {' '.join(tags)}: {a:.2f} + {b:.4f} L, "
+        line = wlsq([[1.0, float(x_)] for x_, _y in pts], [y for _x, y in pts], [1.0] * len(pts))
+        P = line[2]
+        base = np.array([sigma_op(rows[t]) for t in tags])
+        inv_o = np.array([1.0 / o_of(t) for t in tags])
+        bounds[icpt], bounds[slope] = (float(np.abs(P[i]) @ base + abs(P[i] @ inv_o) * h_bound) for i in (0, 1))
+        lines.append(ruling(f"{icpt} {ceil01(out[icpt])} T",
+                            f"least squares over {' '.join(tags)} less nxb_rep_t / O: {a:.2f} + {b:.4f} L, "
                             f"worst residual {worst:.2f} T, raised {lift:.2f} T, up to 0.1",
                             f"every {name.upper()} op's dispatch misprices by the error"))
-        lines.append(ruling(f"{slope} {ceil01(out[slope])} T/B", f"slope of the same fit {b:.4f}, up to 0.1",
+        lines.append(ruling(f"{slope} {ceil01(b)} T/B", f"slope of the same line {b:.4f}, up to 0.1",
                             f"every {name.upper()} byte misprices by the error"))
-    longs = {t: (T(t) - out["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")}
+    longs = {t: (free(t) - out["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")}
     out["fetch_long"] = max(longs.values())
-    bounds["fetch_long"] = max((sigma_op(sit.rows[t]) + bounds["t_op_copy"]) / bench._row(t)[2] for t in longs)
+    bounds["fetch_long"] = max((free_sigma(t) + bounds["t_op_copy"]) / bench._row(t)[2] for t in longs)
     lines.append(ruling(f"fetch_long {ceil01(out['fetch_long'])} T/B",
-                        "max (T - t_op_copy) / L over " + ", ".join(f"{t} {x:.4f}" for t, x in longs.items()),
-                        "every LDI byte of a long op misprices"))
-    out["t_skip"], out["t_skip16"] = T("SK00"), T("S160")
-    bounds["t_skip"], bounds["t_skip16"] = sigma_op(sit.rows["SK00"]), sigma_op(sit.rows["S160"])
-    bounds["copy_dma_per_b"] = (sigma_op(sit.rows["C103"]) + sigma_op(sit.rows["C081"])) / 22.0
-    bounds["fill_dma_per_b"] = (sigma_op(sit.rows["P200"]) + sigma_op(sit.rows["P071"])) / 129.0
-    lines.append(ruling(f"t_skip {ceil01(out['t_skip'])} T", f"T(SK00) {T('SK00'):.2f}", "every SKIP8 op"))
-    lines.append(ruling(f"t_skip16 {ceil01(out['t_skip16'])} T", f"T(S160) {T('S160'):.2f}", "every SKIP16 op"))
-    per_b = (T("C103") - T("C081")) / 22.0
-    out["copy_dma_per_b"] = fit["copy_dma_per_b"]
-    lines.append(ruling(f"copy_dma_per_b {ceil01(out['copy_dma_per_b'])} T/B",
-                        f"(T(C103) {T('C103'):.2f} - T(C081) {T('C081'):.2f}) / 22 = {per_b:.4f}",
-                        "every DMA COPY byte; S4's setups absorb the error"))
-    fd = (T("P200") - T("P071")) / 129.0
-    out["fill_dma_per_b"] = fd
-    lines.append(ruling(f"fill_dma_per_b {ceil01(out['fill_dma_per_b'])} T/B",
-                        f"(T(P200) {T('P200'):.2f} - T(P071) {T('P071'):.2f}) / 129 = {fd:.4f}",
-                        "every DMA fill byte; S4's setups absorb the error"))
+                        "max (T - nxb_rep_t / O - t_op_copy) / L over "
+                        + ", ".join(f"{t} {x_:.4f}" for t, x_ in longs.items()), "every LDI byte of a long op misprices"))
+    for term, tag in (("t_skip", "SK00"), ("t_skip16", "S160")):
+        out[term], bounds[term] = free(tag), free_sigma(tag)
+        lines.append(ruling(f"{term} {ceil01(out[term])} T", f"T({tag}) {T(tag):.2f} - nxb_rep_t / {o_of(tag)}",
+                            f"every {'SKIP8' if term == 't_skip' else 'SKIP16'} op"))
+    for term, hi, lo in (("copy_dma_per_b", "C103", "C081"), ("fill_dma_per_b", "P200", "P071")):
+        span = bench._row(hi)[2] - bench._row(lo)[2]
+        out[term] = (free(hi) - free(lo)) / span
+        bounds[term] = (sigma_op(rows[hi]) + sigma_op(rows[lo]) + h_bound * abs(1 / o_of(hi) - 1 / o_of(lo))) / span
+        lines.append(ruling(f"{term} {ceil01(out[term])} T/B",
+                            f"((T({hi}) {T(hi):.2f} - nxb_rep_t / {o_of(hi)}) - (T({lo}) {T(lo):.2f} - nxb_rep_t / "
+                            f"{o_of(lo)})) / {span} = {out[term]:.4f}",
+                            f"every DMA {'COPY' if term.startswith('copy') else 'fill'} byte; S4's setups absorb "
+                            f"the error"))
     for term, lift in raises.items():
         lines.append(f"raise: {term} +{lift:.2f} T (a row priced under)")
     out["raises"] = dict(raises)
@@ -1105,15 +1146,20 @@ def s2(sit, v):
     """S2 - the 8-bit body chunk-pass estimates S4 checks its values against."""
     T = sit.T
     arm = HAND["cap_arm_t"][0]            # C250/R250's 250 B first chunk takes the cap arm
-    ldi = T("C250") - T("C240") - 10 * v["fetch_long"] - arm
-    cpu = T("R250") - T("R240") - 10 * v["fill_cpu"] - arm
+    h = v[HARNESS]
+
+    def free(tag):
+        return T(tag) - h / bench._row(tag)[3]
+
+    def said(tag):
+        return f"(T({tag}) {T(tag):.2f} - nxb_rep_t / {bench._row(tag)[3]})"
+    ldi = free("C250") - free("C240") - 10 * v["fetch_long"] - arm
+    cpu = free("R250") - free("R240") - 10 * v["fill_cpu"] - arm
     lines = [ruling(f"8-bit copy_body_ldi_t estimate {ldi:.1f} T",
-                    f"T(C250) {T('C250'):.2f} - T(C240) {T('C240'):.2f} - 10 x fetch_long {v['fetch_long']:.4f} "
-                    f"- cap_arm_t {arm}",
+                    f"{said('C250')} - {said('C240')} - 10 x fetch_long {v['fetch_long']:.4f} - cap_arm_t {arm}",
                     "a check only: S4 splits 8/16-bit when its value differs by more than 5.5 T"),
              ruling(f"8-bit fill_body_cpu_t estimate {cpu:.1f} T",
-                    f"T(R250) {T('R250'):.2f} - T(R240) {T('R240'):.2f} - 10 x fill_cpu {v['fill_cpu']:.4f} "
-                    f"- cap_arm_t {arm}",
+                    f"{said('R250')} - {said('R240')} - 10 x fill_cpu {v['fill_cpu']:.4f} - cap_arm_t {arm}",
                     "a check only: S4 splits 8/16-bit when its value differs by more than 5.5 T")]
     return {"s2_ldi8": ldi, "s2_cpu8": cpu}, lines
 
@@ -1272,7 +1318,7 @@ def _s4_solve(rows, held, unknowns, held_bound):
 def _s4_raise(rows, values, fitted, raises):
     """Raise terms, largest shortfall first, until no row prices under. A gapped
     scored row raises col_hop_t; any other row raises the fitted term whose step
-    over-prices the other rows least, relative to each row."""
+    over-prices the other rows least, relative to each row. nxb_rep_t never rises."""
     for _ in range(10000):
         under = [(r.T - price(r.counts, values) - r.band, r) for r in rows]
         under = [(ex, r) for ex, r in under if ex > 1e-9]
@@ -1282,7 +1328,7 @@ def _s4_raise(rows, values, fitted, raises):
         if r.col_scored and r.counts.get("col_hop_t"):
             term = "col_hop_t"
         else:
-            cands = [t for t, c in r.counts.items() if c > 0 and t in fitted]
+            cands = [t for t, c in r.counts.items() if c > 0 and t in fitted and t != HARNESS]
             if not cands:
                 raise Stop("S4", f"{r.label} prices {ex:.1f} T under its band with no fitted term to raise")
 
@@ -1313,8 +1359,14 @@ def s4(sit, v):
             rows = _s4_rows(sit, split)
             fitted, bound, hand = _s4_solve(rows, held, unknowns, {t: v["bounds"][t] for t in S1_TERMS})
             values = {**held, **fitted, **{t: HAND[t][0] for t in hand}}
+            if HARNESS not in fitted or bound[HARNESS] > HARNESS_STOP_T:
+                raise Stop("S4", f"the S4 rows cannot isolate nxb_rep_t: +-1 line on every row moves it up to "
+                                 f"{bound.get(HARNESS, math.inf):.1f} T")
             under = [(r.T - price(r.counts, values) - r.band, r) for r in rows]
             under = sorted(((ex, r) for ex, r in under if ex > 1e-9), key=lambda p: -p[0])
+            lines.append(f"fit {round_}: nxb_rep_t {values[HARNESS]:.1f} T (+-1 line moves it up to "
+                         f"{bound[HARNESS]:.1f} T; S1 {v[HARNESS]:.1f} T, hand count {HARNESS_HAND[0]} T)")
+            harness_check("S4", values[HARNESS], "the joint fit of", [])
             lines.append(f"fit {round_}: {len(under)} rows price under before any raise"
                          + "".join(f"; {r.label} {ex:+.1f} T over its {r.band:.1f} T band" for ex, r in under))
             raises = {}
@@ -1361,7 +1413,12 @@ def s4(sit, v):
 
     out_terms = [t for t in unknowns] + [REM_TERM]
     for t in unknowns:
-        if t in hand:
+        if t == HARNESS:
+            lines.append(ruling(f"nxb_rep_t {values[t]:.1f} T", f"joint least squares over {len(rows)} rows (S1 "
+                                f"estimate {v[HARNESS]:.1f} T), +-1 line on every row moves it up to {bound[t]:.2f} T; "
+                                f"hand count {HARNESS_HAND[0]} T: {HARNESS_HAND[1]}",
+                                "bench harness only, never exported to the encoder"))
+        elif t in hand:
             lines.append(ruling(f"{t} {ceil01(values[t])} T HAND COUNT", f"{hand[t]}; {HAND[t][1]}",
                                 "every event on this path misprices by the count's error"))
         else:
@@ -1707,7 +1764,7 @@ def s12(sit, v):
     """S12 - fetch selector, FILLMIN, STREAM_RESIDENT_POOL_B."""
     lines, out = [], {}
     tags = ("C001", "C004", "C008", "C016", "C038", "L048", "L056", "L060", "L064", "L072", "L080")
-    pts = [(bench._row(t)[2], sit.T(t)) for t in tags]
+    pts = [(bench._row(t)[2], sit.T(t) - v[HARNESS] / bench._row(t)[3]) for t in tags]
     _a, one_b, one_w = lsq(pts)
     best = None
     for s in range(16, 81):
@@ -1885,8 +1942,8 @@ RULES = (("S1", s1), ("S2", s2), ("S3", s3), ("S4", s4), ("S5", s5), ("S6", s6),
 def ruled_coefficients(v):
     """Every fitted T coefficient as ruled: exact values rounded up to 0.1 T."""
     names = (S1_TERMS + FRAME_TERMS + ("t_palette", "pal_straddle_t", "glue_t", "glue_strm_t")
-             + tuple(t for t in v.get("s4_terms", ())) + (REM_TERM, "src_seam_strm_t",
-                                                          "DIRECT_T_PER_B", "DIRECT_COL_T", "DIRECT_FRAME_T"))
+             + tuple(t for t in v.get("s4_terms", ()) if t != HARNESS)
+             + (REM_TERM, "src_seam_strm_t", "DIRECT_T_PER_B", "DIRECT_COL_T", "DIRECT_FRAME_T"))
     return {k: ceil01(v[k]) for k in names if k in v}
 
 
