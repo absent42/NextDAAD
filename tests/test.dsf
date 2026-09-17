@@ -345,7 +345,9 @@ LS256 111     verb
 ;          Session verbs REPLACE playback; a clip of the wrong delivery
 ;          prints NXB SESSION.
 ; Rows print at tilemap rows 8+ and become visible when the timeline
-; report hides Layer 2 at teardown. Release's EXTERN 0 12 is ext_stub
+; report hides Layer 2 at teardown. Each verb ends with the log step
+; (mode 15): NXBENCH.TXT in the launch folder, LOG OK or LOG ERR xx on
+; row 31. Release's EXTERN 0 12 is ext_stub
 ; and flag 248 is inert, so all of them are silent no-ops there.
 NXBO  112     verb
 NXBC  113     verb
@@ -1091,48 +1093,71 @@ $pictureOK
 ; the bench hook diverts to the session rows once the session is staged
 ; and BEFORE the CTC starts. No PROCESS 10 on the standalone verbs -
 ; they never touch the display, so there is nothing for the game to
-; redraw.
+; redraw. Every verb then runs the log step (flag 250 = 15, EXTERN 0 12):
+; the screen is appended to NXBENCH.TXT before any PROCESS 10.
 > NXBO    _     LET     250 2
+                EXTERN  0 12
+                LET     250 15
                 EXTERN  0 12
                 DONE
 
 > NXBC    _     LET     250 3
                 EXTERN  0 12
+                LET     250 15
+                EXTERN  0 12
                 DONE
 
 > NXBK    _     LET     250 4
+                EXTERN  0 12
+                LET     250 15
                 EXTERN  0 12
                 DONE
 
 > NXBX    _     LET     250 5
                 EXTERN  0 12
+                LET     250 15
+                EXTERN  0 12
                 DONE
 
 > NXBG    _     LET     250 6
+                EXTERN  0 12
+                LET     250 15
                 EXTERN  0 12
                 DONE
 
 > NXBL    _     LET     250 7
                 EXTERN  0 12
+                LET     250 15
+                EXTERN  0 12
                 DONE
 
 > NXBT    _     LET     250 8
+                EXTERN  0 12
+                LET     250 15
                 EXTERN  0 12
                 DONE
 
 > NXBE    _     LET     250 9
                 EXTERN  0 12
+                LET     250 15
+                EXTERN  0 12
                 DONE
 
 > NXBH    _     LET     250 10
+                EXTERN  0 12
+                LET     250 15
                 EXTERN  0 12
                 DONE
 
 > NXBF    _     LET     250 11
                 EXTERN  0 12
+                LET     250 15
+                EXTERN  0 12
                 DONE
 
 > NXBV    _     LET     250 12
+                EXTERN  0 12
+                LET     250 15
                 EXTERN  0 12
                 DONE
 
@@ -1140,21 +1165,29 @@ $pictureOK
 ; PICK armed (flag 140).
 > NXBD    _     LET     248 1
                 GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 
 > NXBR    _     LET     248 2
                 GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 
 > NXBQ    _     LET     248 3
                 GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 
 > NXBY    _     LET     248 4
                 GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 

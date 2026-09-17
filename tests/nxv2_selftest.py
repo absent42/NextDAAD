@@ -1638,6 +1638,134 @@ def t10_direct_payloads():
         skip(f"no direct fixture encoded at era {m.group(1)} (build-tests.ps1 -Vid -VidLong)")
 
 
+def _bench_screen(rows):
+    """{row: {column: text}} -> 32 tilemap rows, 80 wide."""
+    screen = [[" "] * 80 for _ in range(32)]
+    for r, cells in rows.items():
+        for c, text in cells.items():
+            screen[r][c:c + len(text)] = list(text)
+    return ["".join(line) for line in screen]
+
+
+def _bench_capture(stamp, screen):
+    """The log step's bytes for one screen (nxb_log): the header, then each
+    non-empty row with trailing spaces trimmed, CRLF line ends."""
+    out = f"#NXB {stamp:04X}\r\n"
+    return out + "".join(line.rstrip(" ") + "\r\n" for line in screen if line.strip(" "))
+
+
+def _bench_group(tag, o, r, f, d):
+    return f"{tag} O={o:02X} R={r:04X} F={f:04X} D={d & 0xFFFF:04X}"
+
+
+@case(10, "bench log - NXBENCH.TXT and typed screens parse to runs, tables, reports, LOG")
+def t10_bench_log():
+    import re as _re
+    import nxv2_bench_log as blog
+    # The verb map and the log step in tests/test.dsf: every bench verb ends with
+    # LET 250 15 / EXTERN 0 12 before any PROCESS 10.
+    dsf = (ROOT / "tests" / "test.dsf").read_text(encoding="utf-8")
+    seen = {}
+    for m in _re.finditer(r"^> (NXB\w)\s+_\s+(.*?)^\s*DONE", dsf, _re.M | _re.S):
+        body = [" ".join(x.split(";")[0].split()) for x in m.group(2).splitlines()]
+        body = [x for x in body if x]
+        first = _re.match(r"LET (250|248) (\d+)$", body[0])
+        expect(first, f"{m.group(1)}: opens with {body[0]!r}")
+        seen[m.group(1)] = (int(first.group(1)), int(first.group(2)))
+        cut = body.index("PROCESS 10") if "PROCESS 10" in body else len(body)
+        expect(body[cut - 2:cut] == ["LET 250 15", "EXTERN 0 12"],
+               f"{m.group(1)}: the log step must end the rows, before PROCESS 10: {body}")
+    want = {v: (250, mode) for v, mode in blog.STANDALONE_VERBS.items()}
+    want.update({v: (248, bench.SESSION_MODES[name]) for v, name in blog.SESSION_VERBS.items()})
+    expect(seen == want, f"test.dsf bench verbs {seen}, the parser maps {want}")
+    asm = (ROOT / "src" / "video.asm").read_text(encoding="utf-8")
+    expect(_re.search(r"^NXB_MODE_LOG\s+equ 15\b", asm, _re.M)
+           and _re.search(rf"^NXB_SESS_COL2\s+equ {blog.COL2}\b", asm, _re.M),
+           "video.asm NXB_MODE_LOG 15 and NXB_SESS_COL2 must match the parser")
+    steps = _re.findall(r"^NXB_LOG_(?!WMODE)\w+\s+equ \$([0-9A-F]{2})\s", asm, _re.M)
+    expect(sorted(int(s, 16) for s in steps) == [k << 5 for k in sorted(blog.LOG_STEPS)],
+           f"LOG step codes {steps} against LOG_STEPS")
+
+    def vals(tags, seed):
+        return [(t, (seed + 3 * i) & 0xFF, 0x40 + i, 0x10 + i, (-150 + 97 * i) if i % 2 else 200 + i)
+                for i, t in enumerate(tags)]
+
+    # 1. standalone NXBC, first run after a launch (no LOG line yet)
+    c_rows = vals(bench.printed_tags(3), 0xF0)
+    s1 = _bench_screen({0: {0: "> nxbc"}, **{8 + i: {0: _bench_group(*g)} for i, g in enumerate(c_rows)}})
+    # 2. session NXBR on PICK 7, two columns, the teardown report with ERR=00
+    r_rows = vals(bench.session_printed("REAL", "resident"), 0x10)
+    screen2 = {0: {0: "> nxbc"}, 1: {0: "> pick 7"}, 2: {0: "Clip 7 armed."}, 3: {0: "> nxbr"},
+               24: {0: " FRM=00FA/00FA ERR=00 OP=00 POS=000000 PASS=01"},
+               25: {0: "RING   =0000/0000/00 FILL=0000 SNAP=00"},
+               26: {0: "PLAY   =0131 NOM=0131 CHK=1234ABCD"}, 31: {0: "LOG OK"}}
+    for i, g in enumerate(r_rows):
+        screen2.setdefault(8 + i % 16, {})[40 if i >= 16 else 0] = _bench_group(*g)
+    s2 = _bench_screen(screen2)
+    # 3. standalone NXBK with stale NXBX rows below its own (a longer previous verb)
+    k_rows = vals(bench.printed_tags(4), 0x7D)
+    x_rows = vals(bench.printed_tags(5), 0x9D)
+    screen3 = {2: {0: "> nxbx"}, 3: {0: "> nxbk"}, 31: {0: "LOG ERR 60"}}
+    for i, g in enumerate(x_rows):
+        screen3[8 + i] = {0: _bench_group(*g)}
+    for i, g in enumerate(k_rows):
+        screen3[8 + i] = {0: _bench_group(*g)}
+    s3 = _bench_screen(screen3)
+    # 4. session NXBQ that faulted after 5 rows: ERR=FA
+    q_rows = vals(bench.session_printed("SYN", "resident")[:5], 0x00)
+    screen4 = {7: {0: "> nxbq"}, 24: {0: " FRM=0003/0003 ERR=FA OP=00 POS=00123A PASS=01"},
+               31: {0: "LOG OK"}, **{8 + i: {0: _bench_group(*g)} for i, g in enumerate(q_rows)}}
+    s4 = _bench_screen(screen4)
+    # 5. NXBE: the CALL row prints CALL then CALR
+    e_rows = vals(bench.printed_tags(9), 0x03)
+    s5 = _bench_screen({0: {0: "> nxbe"}, 31: {0: "LOG OK"},
+                        **{8 + i: {0: _bench_group(*g)} for i, g in enumerate(e_rows)}})
+    text = "".join(_bench_capture(st, s) for st, s in
+                   ((0x0100, s1), (0x0B20, s2), (0x1400, s3), (0x2001, s4), (0x2F00, s5)))
+    runs = blog.parse(text)
+    expect([r.stamp for r in runs] == [0x0100, 0x0B20, 0x1400, 0x2001, 0x2F00], "stamps")
+    expect([r.command for r in runs] == ["NXBC", "NXBR", "NXBK", "NXBQ", "NXBE"], "commands")
+    expect([r.table for r in runs] == [3, "REAL", 4, "SYN", 9], "tables")
+    expect([r.clip for r in runs] == [None, 7, None, None, None], "clips")
+    for run, want_rows in zip(runs, (c_rows, r_rows, k_rows, q_rows, e_rows)):
+        expect(run.rows == want_rows, f"{run.command} rows:\n  {run.rows}\n  {want_rows}")
+        expect(not run.warnings, f"{run.command} warnings {run.warnings}")
+    expect(runs[1].rows[15][0] == "LOOP" and runs[1].rows[16][0] == "A065",
+           "the column-1 rows follow every column-0 row")
+    expect(any(d < 0 for *_x, d in runs[1].rows), "a negative D reads two's complement")
+    expect(runs[2].dropped == x_rows[len(k_rows):] and not runs[0].dropped,
+           f"NXBK must drop exactly the stale NXBX rows, got {runs[2].dropped}")
+    expect([r.err for r in runs] == [None, 0x00, None, 0xFA, None], f"ERR= {[r.err for r in runs]}")
+    expect(runs[1].report == [" FRM=00FA/00FA ERR=00 OP=00 POS=000000 PASS=01",
+                              "RING   =0000/0000/00 FILL=0000 SNAP=00",
+                              "PLAY   =0131 NOM=0131 CHK=1234ABCD"], f"report {runs[1].report}")
+    expect([r.log for r in runs] == ["OK", "ERR 60", "OK", "OK", None],
+           f"each LOG line is the previous run's status, got {[r.log for r in runs]}")
+    expect(blog.log_error_step(0x60) == ("write", 0) and blog.log_error_step(0xA5)[1] == 5,
+           "LOG ERR step decode")
+    expect(blog.parse(text.replace("\r\n", "\n"))[1].rows == r_rows, "LF-only text parses the same")
+    # A capture with no bench verb attributes no rows.
+    lost = blog.parse(_bench_capture(1, _bench_screen({8: {0: _bench_group(*k_rows[0])}})))[0]
+    expect(lost.command is None and not lost.rows and lost.dropped == [k_rows[0]] and lost.warnings,
+           "a capture with no verb keeps nothing")
+    # Typed fallback: verb lines split runs, PICK joins the next verb, 0= reads as
+    # O=, two groups per line with any spacing, LOG belongs to its own run.
+    typed = ["NXBK"] + [_bench_group(*g).replace(" O=", " 0=") for g in k_rows]
+    typed += ["", "PICK 7", "NXBR"]
+    for i in range(16):
+        right = f"   {_bench_group(*r_rows[16 + i])}" if 16 + i < len(r_rows) else ""
+        typed.append(_bench_group(*r_rows[i]) + right)
+    typed += [" FRM=00FA/00FA ERR=00 OP=00 POS=000000 PASS=01", "LOG ERR C0"]
+    truns = blog.parse("\n".join(typed) + "\n")
+    expect([(r.command, r.clip, r.stamp) for r in truns] == [("NXBK", None, None), ("NXBR", 7, None)],
+           f"typed runs {[(r.command, r.clip) for r in truns]}")
+    expect(truns[0].rows == k_rows and truns[1].rows == r_rows, "typed rows")
+    expect([r.log for r in truns] == [None, "ERR C0"] and truns[1].err == 0, "typed LOG and ERR=")
+    bad = blog.parse("NXBK\nF063 0=7D R=0040 F=0013 D=003D7\nF070 O=70 R=0040 F=0013\n")[0]
+    expect(bad.rows == [("F063", 0x7D, 0x40, 0x13, 0x3D)] and len(bad.warnings) == 2,
+           f"a 5-digit D keeps 4 and warns, a short row warns: {bad.rows} {bad.warnings}")
+
+
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")
 def t10_copy_threshold_fit():
     import io
@@ -1678,6 +1806,8 @@ def t10_copy_threshold_fit():
     expect(not warnings, f"variants must parse without warnings, got {warnings}")
     expect(rows == want, f"parsed rows differ:\n  {rows}\n  {want}")
     expect(rows["D048"][3] < 0, "D048's D must parse as signed 16-bit")
+    _, warnings = fct.parse_rows("CALR O=00 R=0010 F=0014 D=0012\n")
+    expect(not warnings, f"CALR is a printed bench tag, not unknown: {warnings}")
     # A pair whose measured order flips against the lines is flagged.
     text, _ = _nxbx_screen((303.7, 19.80), (1167.6, 5.10), shift={"L060": -40.0})
     res = fct.fit(fct.parse_rows(text)[0])

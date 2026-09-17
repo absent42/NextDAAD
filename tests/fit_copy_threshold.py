@@ -25,9 +25,9 @@ GAPPED_SKIP_L = (48, 64)   # L divides 192: excluded, alignment artifact
 GEOMETRY = {tag: (L, o, r, bench.row_path(tag))
             for tag, _kind, L, o, r, _thr, _geo in FLAT_ROWS + GAPPED_ROWS}
 
-# Every tag any bench mode defines - used only to tell a genuinely unknown
-# tag apart from a known row this script does not fit (GC03/GK56/GF71/GF56).
-ALL_BENCH_TAGS = {r[0] for rows in bench.BENCH_TABLES.values() for r in rows}
+# Every tag any bench mode prints (CALL adds CALR) - used only to tell a
+# genuinely unknown tag apart from a known row this script does not fit.
+ALL_BENCH_TAGS = {t for mode in bench.BENCH_TABLES for t in bench.printed_tags(mode)}
 
 ROW_RE = re.compile(r"^\s*([A-Z0-9]{4})\s+[O0]=([0-9A-F]{2})\s+R=([0-9A-F]{4})"
                     r"\s+F=([0-9A-F]{4})\s+D=([0-9A-F]{4,})", re.IGNORECASE)

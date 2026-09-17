@@ -3788,6 +3788,7 @@ NXB_SEAM_DST     equ $5F80   ; geo dest code 3, flat rows only
     ASSERT (low NXB_EDGE_DST) == 0
 NXB_MODE_FIRST   equ 2       ; standalone modes, nxbTabDir order
 NXB_MODE_LAST    equ 12
+NXB_MODE_LOG     equ 15      ; the log step (nxb_log, NXB_PAGE)
 NXB_TAB_MAX      equ 560     ; nxbTabBuf: every table asserts it fits
 NXB_ROW_LEN      equ 12      ; ds 4 tag, db opc, dw count, db ops,
                              ; dw reps, db thr, db geo
@@ -3840,18 +3841,21 @@ NXB_K_STRM       equ $80
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
 ; Modes 2-12 run standalone; direct-serve is session mode 1 (flags+248, nxb_sess).
+; Mode 15 (the log step) is tested first: no blank, bank or table.
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
 ; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
 nxb_entry:
+    ld hl, flags+250
+    ld a, (hl)
+    ld (hl), 0
+    ld (nxbMode), a
+    cp NXB_MODE_LOG
+    jr z, .log
     ld (vidDecSp), sp            ; abort anchor for the standalone
                                  ; modes (block header). The direct
                                  ; rows keep vid_run's own anchor -
                                  ; theirs is a live session's.
-    ld a, (flags+250)
-    ld (nxbMode), a
-    xor a
-    ld (flags+250), a
     call nxb_blank
     ld a, (nxbMode)
     sub NXB_MODE_FIRST
@@ -3871,6 +3875,9 @@ nxb_entry:
     ld hl, nxbMsgBank            ; setup may already hold one bank -
     call nxb_fail_row            ; the restore frees whatever it took
     jp nxb_ops_restore
+.log:
+    ld hl, nxb_log
+    jp nxb_hop6
 
 ; Blank text rows NXB_ROW0-28 across the tilemap. Corrupts everything.
 nxb_blank:
@@ -6136,6 +6143,288 @@ nxbSesSys:
     db 0
 nxbSesSysEnd:
     ASSERT nxbSesSysEnd - nxbSesSys == NXB_STAB_B + 1
+
+; ---------------------------------------------------------------------
+; LOG STEP (mode 15, via nxb_hop6): "#NXB <frameCounter>" and text rows 0-31
+; appended to NXBENCH.TXT, read back and compared, then LOG OK or LOG ERR xx
+; on row 31. Untimed. Corrupts everything.
+; ---------------------------------------------------------------------
+NXB_LOG_WMODE    equ $0A     ; F_OPEN: write, open existing or create
+; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0
+; for a short count, a file size other than offset + bytes written, or a mismatch.
+NXB_LOG_OPEN     equ $20     ; drive, open for write
+NXB_LOG_END      equ $40     ; FSTAT, seek to the end
+NXB_LOG_WR       equ $60     ; write
+NXB_LOG_CLW      equ $80     ; close after writing
+NXB_LOG_REOP     equ $A0     ; drive, reopen for read, size, seek back
+NXB_LOG_RD       equ $C0     ; read
+NXB_LOG_CMP      equ $E0     ; compare, final close
+
+nxb_log:
+    ld (nxbLogSp), sp            ; every failure unwinds to here
+    ld hl, (frameCounter)
+    ld (nxbLogFc), hl
+    ld hl, 0
+    ld (nxbLogLen), hl
+    ld a, $FF
+    ld (nxbLogH), a              ; no handle open
+    ld a, NXB_LOG_OPEN
+    ld (nxbLogStep), a
+    call esx_getsetdrv           ; A = the default drive
+    jp c, nxb_log_fail
+    ld ix, nxbLogName
+    ld b, NXB_LOG_WMODE
+    call esx_fopen
+    jp c, nxb_log_fail
+    ld (nxbLogH), a
+    ld hl, nxbLogStep
+    ld (hl), NXB_LOG_END
+    call nxb_log_size            ; nxbLogStat+7 = the size, the append offset
+    ld hl, nxbLogStat + 7
+    ld de, nxbLogOfs
+    ld bc, 4
+    ldir
+    call nxb_log_seek
+    ld hl, nxbLogStep
+    ld (hl), NXB_LOG_WR
+    ld hl, nxb_log_put
+    call nxb_log_pass
+    ld hl, nxbLogStep
+    ld (hl), NXB_LOG_CLW
+    call nxb_log_close           ; written data persists only once closed
+    jp c, nxb_log_fail
+    ld hl, nxbLogStep
+    ld (hl), NXB_LOG_REOP
+    call esx_getsetdrv
+    jp c, nxb_log_fail
+    ld ix, nxbLogName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jp c, nxb_log_fail
+    ld (nxbLogH), a
+    call nxb_log_size            ; the capture must end the file:
+    ld hl, (nxbLogStat + 7)      ; size - offset = nxbLogLen
+    ld de, (nxbLogOfs)
+    or a
+    sbc hl, de
+    ex de, hl
+    ld hl, (nxbLogStat + 9)
+    ld bc, (nxbLogOfs + 2)
+    sbc hl, bc
+    jp nz, nxb_log_short
+    ld hl, (nxbLogLen)
+    or a
+    sbc hl, de
+    jp nz, nxb_log_short
+    call nxb_log_seek
+    ld hl, nxbLogStep
+    ld (hl), NXB_LOG_RD
+    ld hl, nxb_log_get
+    call nxb_log_pass
+    ld hl, nxbLogStep
+    ld (hl), NXB_LOG_CMP
+    call nxb_log_close
+    jp c, nxb_log_fail
+    xor a
+    jr nxb_log_show
+
+; A short count or a mismatch at the current step.
+nxb_log_short:
+    xor a
+; A = the esxDOS code at the current step: close any open handle, then show.
+nxb_log_fail:
+    and $1F
+    ld hl, nxbLogStep
+    or (hl)
+    ld sp, (nxbLogSp)
+    ld (nxbLogErr), a
+    ld a, (nxbLogH)
+    inc a                        ; $FF: no handle
+    call nz, nxb_log_close       ; its result is not the one reported
+    ld a, (nxbLogErr)
+; A = 0 (LOG OK) or the code (LOG ERR xx), on a blanked row 31.
+nxb_log_show:
+    push af
+    ld bc, (TM_ROWS - 1) << 8
+    ld d, 1
+    ld a, (tmCols)
+    ld e, a
+    call tm_clear_blank
+    ld bc, (TM_ROWS - 1) << 8
+    call dbg_at
+    ld hl, nxbLogMsg
+    call dbg_puts
+    pop af
+    or a
+    ld hl, nxbLogOk
+    jp z, dbg_puts
+    push af
+    ld hl, nxbLogErrMsg
+    call dbg_puts
+    pop af
+    jp dbg_hex8
+
+; Seek the open handle to nxbLogOfs from the start (IXL = 0).
+nxb_log_seek:
+    ld de, (nxbLogOfs)
+    ld bc, (nxbLogOfs + 2)
+    ld a, (nxbLogH)
+    ld ix, 0
+    call esx_fseek
+    ret nc
+    jr nxb_log_fail
+
+; F_FSTAT the open handle into nxbLogStat (+7: the size, 4 B).
+nxb_log_size:
+    ld a, (nxbLogH)
+    ld ix, nxbLogStat
+    call esx_fstat
+    ret nc
+    jr nxb_log_fail
+
+; Close the handle and mark it closed. Out: F_CLOSE's CF and A.
+nxb_log_close:
+    ld hl, nxbLogH
+    ld a, (hl)
+    ld (hl), $FF
+    jp esx_fclose
+
+; One pass: the header, then every non-empty row, each line built in
+; nxbLogLine and handed to HL (nxb_log_put or nxb_log_get) with BC = its length.
+nxb_log_pass:
+    ld (.io + 1), hl
+    ld hl, nxbLogHdr
+    ld de, nxbLogLine
+    ld bc, NXB_LOG_HDR_LEN
+    ldir
+    ld hl, (nxbLogFc)
+    ld a, h
+    call nxb_log_hex
+    ld a, l
+    call nxb_log_hex
+    ld c, NXB_LOG_HDR_LEN + 4    ; B = 0
+    call .line
+    ld b, 0                      ; the row
+.row:
+    push bc
+    ld c, 0
+    call tm_cell_addr            ; HL = the row's first cell; BC, DE kept
+    ld a, (tmCols)
+    ld b, a
+    ld de, nxbLogLine
+    ld c, 0                      ; the trimmed length
+.ch:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    inc hl                       ; past the attribute
+    inc de
+    cp GLYPH_SPACE
+    jr z, .sp
+    ld a, (tmCols)
+    sub b
+    inc a
+    ld c, a                      ; the length through this character
+.sp:
+    djnz .ch
+    inc c
+    dec c
+    call nz, .line               ; an empty row writes nothing
+    pop bc
+    inc b
+    ld a, b
+    cp TM_ROWS
+    jr c, .row
+    ret
+; C = the content length (B = 0): CRLF after it, then the pass's routine.
+.line:
+    ld hl, nxbLogLine
+    add hl, bc
+    ld (hl), 13
+    inc hl
+    ld (hl), 10
+    inc bc
+    inc bc
+.io:
+    jp 0                         ; SMC: nxb_log_put or nxb_log_get
+
+; A -> two hex digits at DE. Corrupts AF.
+nxb_log_hex:
+    push af
+    swapnib
+    call .nib
+    pop af
+.nib:
+    and $0F
+    add a, '0'
+    cp '9' + 1
+    jr c, .put
+    add a, 7
+.put:
+    ld (de), a
+    inc de
+    ret
+
+; Write BC bytes of nxbLogLine: F_WRITE's Fc=0 can still return a short BC.
+nxb_log_put:
+    push bc
+    ld a, (nxbLogH)
+    ld ix, nxbLogLine
+    call esx_fwrite
+    pop hl
+    jp c, nxb_log_fail
+    or a
+    sbc hl, bc
+    jp nz, nxb_log_short
+    ld hl, (nxbLogLen)
+    add hl, bc
+    ld (nxbLogLen), hl           ; the bytes written this capture
+    ret
+
+; Read BC bytes into nxbLogRd and compare them with nxbLogLine.
+nxb_log_get:
+    push bc
+    ld a, (nxbLogH)
+    ld ix, nxbLogRd
+    call esx_fread
+    pop hl
+    jp c, nxb_log_fail
+    or a
+    sbc hl, bc
+    jp nz, nxb_log_short         ; EOF before the count
+    ld hl, nxbLogRd
+    ld de, nxbLogLine
+.cmp:
+    ld a, (de)
+    cp (hl)
+    jr nz, .bad
+    inc hl
+    inc de
+    dec c                        ; B = 0, C = 3 to TM_COLS + 2
+    jr nz, .cmp
+    ret
+.bad:
+    ld a, NXB_LOG_CMP
+    ld (nxbLogStep), a
+    jp nxb_log_short
+
+nxbLogName:   db "NXBENCH.TXT", 0
+nxbLogHdr:    db "#NXB "
+NXB_LOG_HDR_LEN equ $ - nxbLogHdr
+nxbLogMsg:    db "LOG ", 0
+nxbLogOk:     db "OK", 0
+nxbLogErrMsg: db "ERR ", 0
+nxbLogSp:     dw 0
+nxbLogFc:     dw 0
+nxbLogH:      db $FF
+nxbLogStep:   db 0
+nxbLogErr:    db 0
+nxbLogLen:    dw 0
+nxbLogOfs:    ds 4
+nxbLogStat:   ds 11
+nxbLogLine:   ds TM_COLS + 2
+nxbLogRd:     ds TM_COLS + 2
+    ASSERT TM_COLS + 2 < 256 && TM_ROWS == 32 && GLYPH_SPACE == ' '
 
     DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
     ASSERT $ <= DATA_WINDOW + $2000
