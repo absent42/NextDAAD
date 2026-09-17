@@ -455,15 +455,11 @@ TMODEL_COEFFS = {
                                 #   unrolled-CPU. The 2026-09-15 rows put the
                                 #   break-even at 72.6 B, so 71 commits to
                                 #   DMA 1.6 B early at up to +17 T/op
-    "copy_dma_min": 81,        # the PLAYER's copy kernel-select threshold
-                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
-                                #   The 2026-09-15 rows put the break-even at
-                                #   58.9 B AT fetch_long (58.77 at fetch_short,
-                                #   which is what t10_copy_dma_model asserts),
-                                #   so 81 is 22 B late - the player runs LDI on
-                                #   59-80 B copies at up to +309 T/op
-                                #   (+312 at fetch_short). Model follows the
-                                #   player
+    "copy_dma_min": 53,        # the PLAYER's copy kernel-select threshold
+                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc):
+                                #   sitting-5 crossovers 53.75 B flat, 67.88 /
+                                #   68.61 B gapped at height 192 / 144. Model
+                                #   follows the player
     "copy_dma_path_t": -227.9, # T/op an 8-bit COPY carries over t_op_copy
                                 #   on the DMA branch, beyond copy_dma_setup
                                 #   [silicon NXBC C081, 2026-09-15], placed
@@ -1214,9 +1210,9 @@ def _copy_t(L, rate):
 
     The player (src/video.asm vid_copy_body/.seg) clips every copy chunk
     to NXV2_DMA_CHUNK (240) via vid_chunk_all, then takes vid_copy_dma
-    when the chunk is >= NXV2_COPY_DMA_MIN (81) and vid_copy_ldi
+    when the chunk is >= NXV2_COPY_DMA_MIN (53) and vid_copy_ldi
     otherwise.
-    So a body under 81 B is priced as pure LDI, and a trailing sub-81
+    So a body under 53 B is priced as pure LDI, and a trailing sub-53
     remainder after the full 240B chunks is priced as LDI too - the model
     must predict what the player DOES. (The player also splits on
     src/dest window room, which the model cannot see; those splits only

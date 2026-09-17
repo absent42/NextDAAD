@@ -1188,7 +1188,7 @@ def t10_silicon_coeffs():
     # The two kernel-select thresholds mirror src/nextdaad.inc's
     # NXV2_RUN_DMA_MIN / NXV2_COPY_DMA_MIN. If these pins fail because
     # the player moved, the model must move with it.
-    expect(tc["copy_dma_min"] == 81, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (81)")
+    expect(tc["copy_dma_min"] == 53, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (53)")
     expect(tc["copy_dma_path_t"] == -227.9,
            "copy DMA path term must be the C081 -227.9 T/op (setup held)")
     expect(tc["run_dma_min"] == 71, "fill DMA threshold must be the PLAYER's NXV2_RUN_DMA_MIN (71)")
@@ -1295,9 +1295,14 @@ def t10_bench_rows():
     # pricing makes frames the player cannot decode in time: an ABSOLUTE
     # 5.5 T, since the least-squares fits leave rows up to 4.40 T under
     # (F070) - not a percentage, which would grow with the row.
+    # The rows ran on an image assembled at COPY 81 / RUN 71, so they price
+    # at those selects, not the shipping ones.
+    import nxv2_frame_model as fm
     OVER, FLOOR, UNDER_T = 0.05, 3.0, 5.5
     bad = []
-    for tag, (measured, modeled) in sorted(bench.priced(enc).items()):
+    with fm.selects(*bench.SITTING_SELECTS, enc=enc):
+        rows = bench.priced(enc)
+    for tag, (measured, modeled) in sorted(rows.items()):
         d = modeled - measured
         if not -UNDER_T <= d <= max(FLOOR, OVER * measured):
             bad.append(f"{tag}: model {modeled:.1f} vs silicon {measured:.1f} "
@@ -2349,7 +2354,8 @@ def t10_frame_model():
             path.write_bytes(hdr + body)
             frames = fm.frames(path)
             saved = dict(enc.TMODEL_COEFFS)
-            moved = fm.frames(path, copy_thr=59, run_thr=241)
+            # 81, not 59: at COPY 53 the 320x192 clip has no 53-58 B chunk to move
+            moved = fm.frames(path, copy_thr=81, run_thr=241)
             expect(enc.TMODEL_COEFFS == saved, "frames() must restore the selects")
         expect(len(frames) == len(payloads) == len(want_t), f"{w}x{h}: {len(frames)} frames")
         types = [f.type for f in frames]
@@ -2372,7 +2378,7 @@ def t10_frame_model():
             if f.type in ("first", "middle"):
                 span_at += sum(k for op, k in f.ops if op in (ps.OP_COPY8, ps.OP_COPY16))
         expect(any(f.events != g.events for f, g in zip(frames, moved)),
-               f"{w}x{h}: events at COPY 59 / RUN 241 must differ somewhere")
+               f"{w}x{h}: events at COPY 81 / RUN 241 must differ somewhere")
     # direct-serve: a three-chunk span then two single frames on 256x16; no
     # events or model T, but the span state and dest cursor carry
     raw = 256 * 16
@@ -3496,30 +3502,29 @@ def t10_copy_dma_model():
     # RULE 1 - below the player's threshold the copy body is pure LDI,
     # matching src/video.asm vid_copy_body (vid_copy_ldi under
     # NXV2_COPY_DMA_MIN).
-    for L in (1, 16, 64, 73, 74, 80):
+    for L in (1, 16, 52):
         expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
                f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
     # RULE 1b - the player's threshold against the coefficients' own
-    # break-even, as a SIGNED divergence, not an equality the player no
-    # longer satisfies: the 2026-09-15 loop change made the DMA branch
-    # cheaper and moved the break-even to 58.77 B while NXV2_COPY_DMA_MIN
-    # stays 81. fetch_short is the deciding rate here - the ops at the
-    # seam are 73-83 B and run the short body; copy_dma_min's own comment
-    # quotes the same break-even at fetch_long (58.9 B), not an error.
-    # Worst mispricing: at L=80 the player runs LDI for +312 T/op over
-    # what the DMA branch would cost (+309 at fetch_long).
+    # break-even, as a SIGNED gap: 53 - (1091.8 - 227.9) / (19.80 - 5.10)
+    # = -5.77 B at the 2026-09-15 coefficients. fetch_short is the deciding
+    # rate here - the ops at the seam are 53-58 B and run the short body.
+    # Worst mispricing: at L=53 the player runs DMA for +85 T/op over
+    # what the LDI branch would cost (+87 at fetch_long).
     short = tc["fetch_short"]
     breakeven = (setup + path) / (short - per_b)
     expect(abs(breakeven - 58.77) <= 1.0,
            f"copy break-even should be the 2026-09-15 58.77 B, got {breakeven:.2f}")
-    expect(0.0 <= thr - breakeven <= 25.0,
-           f"copy threshold {thr} must sit at or above the break-even "
-           f"{breakeven:.2f} B and within 25 B of it "
+    gap = -5.77
+    expect(abs((thr - breakeven) - gap) <= 1.0,
+           f"copy threshold {thr} must sit {gap:+.2f} B from the break-even "
+           f"{breakeven:.2f} B, got {thr - breakeven:+.2f} "
            "(re-derive NXV2_COPY_DMA_MIN and these coefficients together)")
-    lost = (thr - 1) * short - (setup + path + (thr - 1) * per_b)
-    expect(0.0 < lost <= 340.0,
-           f"the LDI band above the break-even costs the player {lost:.0f} T/op "
-           f"at {thr - 1} B - bounded at 340")
+    if thr - breakeven > 1.0:
+        lost = (thr - 1) * short - (setup + path + (thr - 1) * per_b)
+        expect(0.0 < lost <= 340.0,
+               f"the LDI band above the break-even costs the player {lost:.0f} T/op "
+               f"at {thr - 1} B - bounded at 340")
     for L in range(1, int(breakeven) + 1):
         expect(L * short <= setup + path + L * per_b + 1e-9,
                f"below the break-even LDI must be the CHEAPER path, fails at {L} B")
@@ -3562,20 +3567,19 @@ def t10_copy_dma_model():
            f"({100 * (k256 / 2775.90 - 1):+.2f}%)")
     # RULE 3 - the kernel switch must not be an UNBOUNDED cost
     # discontinuity. Two DISCLOSED seams, both asserted rather than
-    # wished away: (a) the step across the op threshold now FALLS,
-    # because the player's 81 sits 22 B above the break-even (RULE 1b);
-    # (b) a remainder crossing the threshold after full chunks falls by
-    # at most thr*(rate-per_b) - setup. Assert the bound rather than
-    # pretending monotonicity the player does not have.
+    # wished away: (a) the op-threshold step RISES, 53 sits below the break-even;
+    # (b) a remainder crossing the threshold after full chunks moves by
+    # thr*(rate-per_b) - setup. The bound is floored at 0: the price never
+    # falls across a seam.
     thr_seam = (thr - 1) * rate - (path + setup + thr * per_b)
-    # The tail bound WIDENS by the trailing-chunk term: a remainder that
+    # The tail seam moves by the trailing-chunk term: a remainder that
     # grows across the threshold drops that term as well as the LDI
-    # transfer, so an op with a DMA tail is cheaper than one with a CPU
-    # tail by more than the kernel difference alone.
+    # transfer.
     tail_seam = thr * (rate - per_b) - setup + tc["copy_dma_tail_t"]
-    expect(abs(thr_seam - 303.8) <= 5.0,
-           f"the op-threshold seam should be the 2026-09-15 303.8 T, got {thr_seam:.1f}")
-    seam_bound = max(thr_seam, tail_seam) + 1e-6
+    # 52 x 19.76 - (-227.9 + 1091.8 + 53 x 5.10) = -106.7 T
+    expect(abs(thr_seam - (-106.7)) <= 5.0,
+           f"the op-threshold seam should be the -106.7 T at 53, got {thr_seam:.1f}")
+    seam_bound = max(thr_seam, tail_seam, 0.0) + 1e-6
     prev = 0.0
     for L in range(1, 601):
         cur = enc._copy_t(L, rate)
@@ -3589,18 +3593,21 @@ def t10_copy_dma_model():
     # sub-threshold tail goes LDI (the player re-selects per chunk) AND
     # pays one chunk-loop iteration, copy_dma_tail_t - the charge silicon
     # C256/F256 showed the model owed before it had this term.
-    tail300 = 300 - chunk
-    expect(tail300 < thr, "the 300 B case must leave a sub-threshold tail")
+    tail280 = 280 - chunk
+    expect(tail280 < thr, "the 280 B case must leave a sub-threshold tail")
     # 8-bit ops take the LARGER tail (no path-term slack to net against):
     # a 250 B copy is one chunk + a 10 B tail at copy_dma_tail8_t.
     expect(abs(enc._copy_t(250, rate)
                - (path + (setup + chunk * per_b) + 10 * rate + tc["copy_dma_tail8_t"])) < 1e-6,
            f"a 250 B copy = the 8-bit path term + one DMA chunk + a 10 B LDI tail "
            f"+ the 8-bit trailing-chunk term, got {enc._copy_t(250, rate):.1f}")
-    expect(abs(enc._copy_t(300, rate)
-               - (entry16 + (setup + chunk * per_b) + tail300 * rate + tc["copy_dma_tail_t"])) < 1e-6,
-           f"a 300 B copy = the entry term + one DMA chunk + a {tail300} B LDI tail "
+    expect(abs(enc._copy_t(280, rate)
+               - (entry16 + (setup + chunk * per_b) + tail280 * rate + tc["copy_dma_tail_t"])) < 1e-6,
+           f"a 280 B copy = the entry term + one DMA chunk + a {tail280} B LDI tail "
            f"+ the trailing-chunk term")
+    # a 300 B copy's 60 B remainder is at/above 53: a second DMA setup, no tail term
+    expect(abs(enc._copy_t(300, rate) - (entry16 + 2 * setup + 300 * per_b)) < 1e-6,
+           f"a 300 B copy = the entry term + one DMA chunk + a {300 - chunk} B DMA remainder")
     expect(abs(enc._copy_t(2 * chunk, rate) - (entry16 + 2 * (setup + chunk * per_b))) < 1e-6,
            f"a {2 * chunk} B copy = the entry term + two DMA chunks")
     # RULE 5 - the restored term must never make copy MORE expensive than

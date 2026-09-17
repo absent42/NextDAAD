@@ -618,7 +618,7 @@ vid_fetch_ram:
 ; normalize the dest (hop a finished column / cross a window seam),
 ; size a chunk against every binding room, run the kernel sized by
 ; the derived crossovers (RUN >= NXV2_RUN_DMA_MIN 71B and COPY >=
-; NXV2_COPY_DMA_MIN 81B go DMA, chunks <= NXV2_DMA_CHUNK 240B, run
+; NXV2_COPY_DMA_MIN 53B go DMA, chunks <= NXV2_DMA_CHUNK 240B, run
 ; unbracketed - see the zxnDMA kernel header).
 ; ---------------------------------------------------------------------
 vid_skip_body:
@@ -1525,7 +1525,7 @@ vid_fill_dma:
 ; surface window (both pinned across the transfer - the custodian is
 ; $CC = 0 barring the frame ISR from a running DMA plus the permitted
 ; ISRs' MMU-free contract, not a DI). In: HL src, DE dest, BC chunk
-; (81..NXV2_DMA_CHUNK). Out: HL/DE advanced. 5.082 T/B + 1092T/chunk
+; (53..NXV2_DMA_CHUNK). Out: HL/DE advanced. 5.082 T/B + 1092T/chunk
 ; (settlement CD rows).
 vid_copy_dma:
     ld (vidDmaCpArm.asrc), hl
@@ -5133,9 +5133,9 @@ nxbTabOpdEnd:
 ; Delta-stream census (250/252-frame Sintel and Big Buck Bunny
 ; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
 ; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
-; C080/C081 straddle the COPY kernel select (NXV2_COPY_DMA_MIN = 81,
+; C080/C081 straddled the COPY kernel select through sitting 5 (81,
 ; placed at the 81.4 B break-even measured before the current
-; chunk-loop shape; these two rows now put the break-even at 58.8 B.
+; chunk-loop shape; these two rows put the break-even at 58.8 B.
 ; C073/C074 found the old 74's missing +128 T/op path difference and
 ; were retired with it); C256 is the COPY16 bulk-repaint path (40
 ; keyframe ops carry 16-21% of Sintel's copied bytes).
@@ -5269,7 +5269,8 @@ nxbTabTailEnd:
     ASSERT nxbTabTailEnd - nxbTabTail <= 19 * NXB_ROW_LEN + 1   ; CAL prints 2
 
 ; GROUP 10 - COPY path pairs, gapped at height 144 (geo $05): HLnn thr 255
-; (fast-handler LDI), HDnn thr 1 (body + DMA); HC03/HK56 at the shipping 81.
+; (fast-handler LDI), HDnn thr 1 (body + DMA); HC03/HK56 thr 0 (the
+; shipping select).
 nxbTabH144:
     NXBROW "HL56", VOP_COPY8, 56, 79, 64, 255, $05
     NXBROW "HD56", VOP_COPY8, 56, 79, 64, 1, $05

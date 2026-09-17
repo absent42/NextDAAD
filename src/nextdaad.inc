@@ -1058,13 +1058,9 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ;   RUN  fill: break-even ~70.4 B -> held at 71 (RUN is 0.003-6% of
 ;              painted bytes, RUN16 never emitted - low priority to
 ;              re-derive further)
-;   COPY LDI : break-even measured at 81.4 B on silicon, not the
-;              ~73 B a kernel-only solve gives - an at-threshold COPY8
-;              falls through the fast handler into the slower chunked
-;              body to reach the DMA kernel, and that path costs more.
-;              HELD AT 81; a later chunk-loop change moved the true
-;              crossover to ~58.8 B, so 81 is now ~22 B late and due
-;              for re-derivation.
+;   COPY LDI : 53, one constant - sitting-5 crossovers 53.75 B flat,
+;              67.88 / 68.61 B gapped at height 192 / 144; real-frame
+;              sweeps save 1.568% of decode T against 81.
 ;
 ; The encoder's T model MIRRORS these two constants
 ; (authoring-kit/lib/nxv2enc.py TMODEL_COEFFS run_dma_min/copy_dma_min,
@@ -1082,7 +1078,8 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; +34.0% chunks.
 NXV2_DMA_CHUNK   equ 240      ; vid_chunk_all / vid_chunk_dst_flat/_gap
 NXV2_RUN_DMA_MIN equ 71
-NXV2_COPY_DMA_MIN equ 81
+NXV2_COPY_DMA_MIN equ 53
+    ASSERT NXV2_COPY_DMA_MIN >= 1 && NXV2_COPY_DMA_MIN <= NXV2_DMA_CHUNK
 
 ; Ring (3a resident / 3b streaming): pool banks holding the whole
 ; file (resident) or the circular prefetch buffer (streaming). The
