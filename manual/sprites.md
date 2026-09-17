@@ -104,6 +104,30 @@ where the kit does the colour work itself.
 | `frames` | how many frames to take from the sheet | as many as the sheet holds |
 | `bits` | 8 or 4 | PNG: 4 when the colours partition into blocks of 15 or fewer, otherwise 8. `.spr`: must be 8 or absent |
 
+For example, `002.png` is a guttering torch: the sheet is **32 pixels
+wide and 16 tall**, two 16x16 frames side by side (frame 0 in the left
+half, frame 1 in the right half - the sheet must actually hold both, or
+`delay` below has more values than there are frames and the build
+refuses it). `002.txt` beside it reads:
+
+```
+; 002.txt - guttering torch, two frames
+w=16
+h=16
+x=24
+y=180
+delay=6,12
+loop=1
+bits=8
+```
+
+`w` and `h` are the frame size, 16x16, so a 32-wide sheet is read as two
+frames. `x` and `y` bake the position, so `GFX 2 19` alone is enough to
+start it there. `delay` gives frame 0 six ticks and frame 1 twelve, one
+number per frame - drop to a single number (`delay=6`) for a set whose
+sheet is only one frame wide. `loop=1` cycles forever, and `bits=8` fixes
+the set's depth instead of leaving it to the sheet's own colour count.
+
 The build prints one line per set, so you can see what you got without
 opening the file:
 
