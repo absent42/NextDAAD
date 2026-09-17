@@ -50,7 +50,7 @@
 # -Gfx256, -GfxZx0) have no folder of their own; they stage into
 # whichever leg folder the run resolved to.
 # -Vid and -VidLong share sd\VID\ - GIVE THEM TOGETHER
-# (`-Vid -VidLong`) for the full 001-011+099 card; encodes are cached in
+# (`-Vid -VidLong`) for the full 001-014+099 card; encodes are cached in
 # tests\out\ so the second switch costs file copies, not encodes.
 # build\nextdaad.nex is copied into the leg folder as NEXTDAAD.NEX
 # (skipped with a warning if not yet built) so the folder is genuinely
@@ -348,17 +348,18 @@
 #              it stays in sync with authoring-kit\lib\video.ps1's own
 #              stamp. CSpect-lock: see header.
 #   -VidLong   stage the streaming + direct leg fixtures into sd\VID\
-#              007-011.VID + 099.VID: full-duration research clips that
+#              007-014.VID + 099.VID: full-duration research clips that
 #              exceed the pool ring (007-009, exercising the prefetch
-#              producer across ring wraps) plus two --direct legs
-#              (010/011) and a deliberate-underrun copy (099 = a byte
-#              copy of 007). Operating points are auto-derived by
-#              videnc's streaming supply gate - see this switch's own
-#              code block for the per-file table and the 007 at-capacity
-#              ruling (007 is a deliberate stress fixture: visible
-#              banding there is the documented expected picture, not a
-#              bug). Shares sd\VID\ with -Vid - give both together for
-#              the full 001-011+099 card. Cached like -Vid. CSpect-lock:
+#              producer across ring wraps) plus five --direct legs
+#              (010-014, one per direct route the kit ships) and a
+#              deliberate-underrun copy (099 = a byte copy of 007).
+#              Operating points for 007-009 are auto-derived by videnc's
+#              streaming supply gate - see this switch's own code block
+#              for the per-file table and the 007 at-capacity ruling
+#              (007 is a deliberate stress fixture: visible banding
+#              there is the documented expected picture, not a bug).
+#              Shares sd\VID\ with -Vid - give both together for the
+#              full 001-014+099 card. Cached like -Vid. CSpect-lock:
 #              see header.
 #   -NxBench   stage the decode-kernel bench payloads into sd\NXBENCH\
 #              NXB0.BIN..NXB9.BIN (nxv2enc.py --bench-fixtures). NXB8
@@ -3833,7 +3834,7 @@ if ($Vid) {
     }
     # No stale-clean here: sd\VID\ is emptied once at the top of the
     # staging section and -Vid/-VidLong both fill it, which is why they
-    # must be given TOGETHER for the 001-011+099 card (section 40.5).
+    # must be given TOGETHER for the 001-014+099 card (section 40.5).
     # The SP15 T5 per-file scoping this used to carry was a workaround
     # for the shared root and has no job left.
     $vidOutDir = Join-Path $root 'tests\out'
@@ -3882,7 +3883,7 @@ if ($VidLong) {
     # SP15 3b STREAMING leg fixtures - full-duration research-clip
     # encodes bigger than the pool ring (see the -VidLong header
     # comment). Cached like -Vid, and shares sd\VID\ with it: give both
-    # switches in one invocation for the full 001-011+099 card.
+    # switches in one invocation for the full 001-014+099 card.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
@@ -3947,6 +3948,19 @@ if ($VidLong) {
         # banner (row 0) and the seconds-digit box (right edge) are
         # both still fully inside the frame, not clipped.
         '011.VID' = @{ shape = '256x133'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
+        # 012-014 = the kit's other direct-serve routes (010 covers
+        # 256x133@25 stereo only): 320-wide classic-derived shapes at
+        # the gate's own fps/shape limits. 013/014 need 12.5 fps to
+        # clear the direct gate at these surfaces, given as a SECOND
+        # --fps in extraArgs after the map loop's own --fps 25 -
+        # argparse keeps the last value for a plain store action, so
+        # the 12.5 wins.
+        '012.VID' = @{ shape = '320x123'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct123' }
+        # 013/014 use the 011 test-card source/cut, not Sintel: direct-serve
+        # cost is content-independent, and the static card keeps frames
+        # 1-32 free of the palette re-declares real footage triggers.
+        '013.VID' = @{ shape = '320x256'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--fps', '12.5'); tag = 'directfull'; start = '00:00:00'; duration = '5.0' }
+        '014.VID' = @{ shape = '320x192'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--fps', '12.5'); tag = 'direct169'; start = '00:00:00'; duration = '5.0' }
     }
     $vidLongStaged = 0
     foreach ($dest in $vidLongMap.Keys) {
@@ -3985,7 +3999,7 @@ if ($VidLong) {
         Copy-Item -LiteralPath "$leg\007.VID" -Destination "$leg\099.VID" -Force
         $vidLongStaged++
     }
-    "staged $vidLongStaged long fixture(s) -> sd\$legName\007-011.VID + 099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE)"
+    "staged $vidLongStaged long fixture(s) -> sd\$legName\007-014.VID + 099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE + 012-014 direct routes)"
 }
 
 if ($NxBench) {
