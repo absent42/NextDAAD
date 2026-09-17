@@ -7,9 +7,13 @@ its siblings in. A stale bundle silently emits old-encoder bytes, which has
 happened twice with nothing to catch it. This unmarshals each bundle's code
 objects and compares their instruction streams with the working tree's.
 Only __doc__ stores are masked: every other string literal, argparse help
-text included, is code. Exit 1 = stale. Exit 2 = not verified: an exe is
-missing, an LFS pointer or unreadable, nxv2enc or nxv2path was not compared,
-or the host Python minor version differs from the bundle's.
+text included, is code. set/frozenset LOAD_CONST constants compare by
+sorted value, not printed order: the compiler folds a literal set of
+constants into a frozenset at compile time, whose repr order depends on
+the process's PYTHONHASHSEED, so two honest compiles can print it two
+ways. Exit 1 = stale. Exit 2 = not verified: an exe is missing, an LFS
+pointer or unreadable, nxv2enc or nxv2path was not compared, or the host
+Python minor version differs from the bundle's.
 """
 import dis
 import marshal
@@ -79,6 +83,9 @@ def instrs(code):
         elif (i.opname == "LOAD_CONST" and nxt is not None
               and nxt.opname == "STORE_NAME" and nxt.argval == "__firstlineno__"):
             arg = "<firstlineno>"
+        elif i.opname == "LOAD_CONST" and isinstance(i.argval, (frozenset, set)):
+            # compile-time folded set/frozenset: order is PYTHONHASHSEED-dependent, value is not
+            arg = "<%s %r>" % (type(i.argval).__name__, sorted(i.argval, key=repr))
         elif "JUMP" in i.opname or i.opname in ("FOR_ITER", "SEND", "END_FOR"):
             arg = "<target>"
         out.append("%s %s" % (i.opname, arg))
