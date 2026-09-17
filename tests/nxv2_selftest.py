@@ -1744,6 +1744,13 @@ def t10_bench_log():
     expect(blog.log_error_step(0x60) == ("write", 0) and blog.log_error_step(0xA5)[1] == 5,
            "LOG ERR step decode")
     expect(blog.parse(text.replace("\r\n", "\n"))[1].rows == r_rows, "LF-only text parses the same")
+    # A short write leaves a partial line with no CRLF: the next header follows it.
+    cut = _bench_capture(0x0100, s1)
+    cut = cut[:cut.index("C008") + 10]
+    pruns = blog.parse(cut + _bench_capture(0x0B20, s2))
+    expect([r.command for r in pruns] == ["NXBC", "NXBR"] and pruns[0].rows == c_rows[:2]
+           and pruns[1].rows == r_rows and pruns[0].log == "OK" and pruns[0].warnings,
+           "a header glued to a partial line still opens the next run")
     # A capture with no bench verb attributes no rows.
     lost = blog.parse(_bench_capture(1, _bench_screen({8: {0: _bench_group(*k_rows[0])}})))[0]
     expect(lost.command is None and not lost.rows and lost.dropped == [k_rows[0]] and lost.warnings,

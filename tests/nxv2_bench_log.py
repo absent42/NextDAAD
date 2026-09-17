@@ -43,7 +43,7 @@ LOG_STEPS = {1: "open for write", 2: "size, seek to the end", 3: "write",
              4: "close after writing", 5: "reopen, size check, seek back",
              6: "read back", 7: "compare, final close"}
 
-HEADER_RE = re.compile(r"^#NXB ([0-9A-F]{4})$")
+HEADER_RE = re.compile(r"#NXB ([0-9A-F]{4})$")     # may follow a short write's partial line
 LOG_RE = re.compile(r"^LOG (OK|ERR [0-9A-F]{2})$", re.IGNORECASE)
 _H = "[0-9A-Fa-f]"
 GROUP_RE = re.compile(rf"(?<![A-Za-z0-9])([A-Za-z0-9]{{4}})\s+[O0]=({_H}{{2}})\s+R=({_H}{{4}})"
@@ -139,11 +139,13 @@ def _run(lines, stamp):
 def parse(text):
     """NXBENCH.TXT, or typed screen text, -> [Run] in order."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    typed = not any(HEADER_RE.match(line) for line in lines)
+    typed = not any(HEADER_RE.search(line) for line in lines)
     chunks, pending = [], []                    # [(stamp, lines)], typed PICK lines
     for line in lines:
-        h = HEADER_RE.match(line)
+        h = HEADER_RE.search(line)
         if h:
+            if h.start() and chunks:            # a failed step's unterminated line
+                chunks[-1][1].append(line[:h.start()])
             chunks.append((int(h.group(1), 16), []))
             continue
         if not typed:
