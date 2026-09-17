@@ -1305,6 +1305,73 @@ def t10_bench_rows():
     expect(not bad, "rows outside the band:\n  " + "\n  ".join(bad))
 
 
+@case(10, "sitting-5 rows - SITTING5 is the logs' first clean captures and reproduces the headline rulings")
+def t10_sitting5_rows():
+    import nxv2_bench_log as blog
+    import nxv2_frame_model as fm
+    import fit_gap_bench as g
+    s5, s5r = bench.SITTING5, bench.SITTING5_REPEATS
+    # shape: every standalone tag S0 needs at its table O/R (CALL/CALR O = 0), NXBC on the D image,
+    # every session S0 needs with the tags its delivery prints
+    table = {r[0]: r for rows in bench.BENCH_TABLES.values() for r in rows}
+    tags = [t for mode in g.STANDALONE for t in bench.printed_tags(mode)]
+    wrong = [t for t, (o, r, _f, _d) in s5["Q"]["standalone"].items()
+             if (o, r) != ((0, table["CALL"][4]) if t in ("CALL", "CALR") else table[t][3:5])]
+    expect(sorted(s5["Q"]["standalone"]) == sorted(tags) and list(s5["D"]) == list(bench.printed_tags(3))
+           and not wrong, f"standalone rows: O/R off the tables {wrong}")
+    names = {0: "resident", 1: "streaming", 2: "direct"}
+    sess = {(blog.SESSION_VERBS[v], c): rows for (v, c), rows in s5["Q"]["sessions"].items()}
+    expect(set(sess) == set(g.SESSIONS)
+           and all(list(rows) == list(bench.session_printed(t, names[rows["IDEN"][0]]))
+                   for (t, _c), rows in sess.items())
+           and set(s5r["Q"]["sessions"]) <= set(s5["Q"]["sessions"]) and not s5r["D"]
+           and set(s5r["Q"]["standalone"]) <= set(s5["Q"]["standalone"]), "session rows and repeats")
+
+    # the logs parse back to exactly these rows, and S0 chooses the same captures
+    q, d = ROOT / "docs" / "NXBENCH-Q.TXT", ROOT / "docs" / "NXBENCH-D.TXT"
+    if q.exists() and d.exists():
+        q_text, d_text = q.read_text(encoding="latin-1"), d.read_text(encoding="latin-1")
+        seen = {}
+        main, reps = {"standalone": {}, "sessions": {}}, {"standalone": {}, "sessions": {}}
+        for run in blog.parse(q_text):
+            n = seen[(run.command, run.clip)] = seen.get((run.command, run.clip), 0) + 1
+            rows = {grp[0]: tuple(grp[1:]) for grp in run.rows}
+            dest = main if n == 1 else reps
+            if run.command in blog.SESSION_VERBS:
+                dest["sessions"][(run.command, run.clip)] = rows
+            else:
+                dest["standalone"].update(rows)
+        d_runs = blog.parse(d_text)
+        expect(max(seen.values()) == 2 and len(d_runs) == 1
+               and s5 == {"D": {grp[0]: tuple(grp[1:]) for grp in d_runs[0].rows}, "Q": main}
+               and s5r == {"D": {}, "Q": reps}, "SITTING5 differs from the parsed logs")
+        sit, _lines = g.s0(q_text, d_text, launch_status={("Q", 0x6D71): "OK", ("D", 0x0184): "OK"}, lost={})
+        expect(sit.rows == s5["Q"]["standalone"] and sit.anchor == s5["D"]
+               and {k: s.rows for k, s in sit.sessions.items()} == sess, "SITTING5 differs from S0's captures")
+    else:
+        print("    note: the sitting-5 bench logs are not present; parse-back check skipped")
+
+    # the rules on SITTING5 itself reproduce the ruled headline values
+    missing = [c for c in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14) if _gap_fixture(c) is None]
+    if missing:
+        skip(f"fixtures {missing} are not encoded at this era (build-tests.ps1 -Vid -VidLong)")
+    sessions = {}
+    for (t, c), rows in sess.items():
+        path = g.fixture_path(c)
+        hdr = g.fixture_header(path)
+        sessions[(t, c)] = g.Sess(t, c, None, dict(rows), names[rows["IDEN"][0]], path, hdr, fm.surface_of(hdr))
+    sit, v = g.Sitting(dict(s5["Q"]["standalone"]), sessions, dict(s5["D"])), {}
+    for name, rule in g.RULES[:8]:
+        new, _lines = rule(sit, v)
+        v.setdefault("bounds", {}).update(new.pop("bounds", {}))
+        new.pop("raises", None)
+        v.update(new)
+    expect(v["N"] == 53 and v["audio_factor"] == 0.86 and v["composition_factor"] == {"flat": 1.10, "gapped": 1.09}
+           and abs(v["nxb_rep_t"] - 717.8) <= 1.0,
+           f"N {v['N']}, audio_factor {v['audio_factor']}, composition {v['composition_factor']}, "
+           f"nxb_rep_t {v['nxb_rep_t']:.2f}")
+
+
 def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None):
     """An NXBX screen from two exact T(L) lines, rounded to whole raster
     lines as the bench reads them; odd rows take the wrap early (negative
