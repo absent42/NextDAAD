@@ -1172,9 +1172,11 @@ def t10_silicon_coeffs():
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
     expect(tc["copy_dma_per_b"] == 5.10, f"copy_dma_per_b should be the NXBC (C103-C081)/22 slope 5.10, got {tc['copy_dma_per_b']}")
     # The audio-safety burst cap. 256 -> 240 on 2026-08-03: at 256 the
-    # player's DI bracket ran 1801 T against the VGA-0 1792 T audio
-    # period and suppressed one interrupt per boundary-spanning chunk
-    # (silicon PLAY= rows +2.1..+5.2% over nominal). COPY and FILL share
+    # player's DI bracket ran 1801 T, 9 T over the VGA-0 1792 T audio
+    # period - a bracket starting within 9 T of an edge loses one tick
+    # (about 0.5% of brackets). The PLAY= rows recorded that date
+    # (+2.1..+5.2% over nominal) came from the DEBUG edge-dropping
+    # instrument and do not measure this mechanism. COPY and FILL share
     # ONE cap because the player clips both through vid_chunk_dst_flat/
     # _gap, and it must be <= 255 because their compares and both kernel
     # selects are single-byte.

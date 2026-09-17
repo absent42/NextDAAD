@@ -1217,30 +1217,21 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; session repoints the CTC vector at video_ctc_isr_stereo.
 ;
 ; THE DEFECT, AND WHAT FIXED IT (2026-08-03). At the old cap
-; B(256) = 1801 T, which is 0.50% OVER VGA0's 1792 T - the
-; tightest reachable stereo period - so every chunk spanning a tick
-; boundary suppressed that interrupt. The PLAY= instrument found five staged
-; rows running long with TOT exactly nominal and zero ring underruns
-; (039 +5.2%, 007 +2.4%, 019 +2.8%, 037 +2.9%, 038 +2.1%), which is
-; this mechanism's signature.
+; B(256) = 1801 T exceeds VGA0's 1792 T period by 9 T: a bracket
+; starting within 9 T of an edge loses one tick (about 0.5% of
+; brackets). The PLAY= rows recorded that date came from the DEBUG
+; edge-dropping instrument and do not measure this mechanism.
 ;
-; SIZE HONESTY - it is NOT the whole of those rows. An exact op-walk
-; of those five shipped files counts their DMA chunks and prices the
-; loss at nchunks * (B - P) / wall_T:
+; SIZE HONESTY. Recomputed against the corrected 9 T overage
+; (B - P = 1801 - 1792), nchunks * 9 / wall_T predicts under 0.1% loss
+; for every row that instrument logged (039 0.08%, 007 0.07%,
+; 019 0.10%, 037 0.07%, 038 0.08%) - no residual is drawn against
+; those rows since their own numbers do not measure this mechanism.
 ;
-;   row  chunks@256  predicted  observed   residual
-;   039     24,012     0.65%     +5.20%     +4.55%
-;   007     21,581     0.58%     +2.40%     +1.82%
-;   019     29,280     0.79%     +2.80%     +2.01%
-;   037     17,470     0.53%     +2.93%     +2.40%
-;   038     20,815     0.66%     +2.10%     +1.44%
-;
-; So this cap change removes 0.5-0.8 percentage points and takes THIS
-; mechanism to a structural zero on every video timing mode. The
-; residual 1.4-4.6 pp has a different cause and does NOT rank with DMA
-; density (019 has the most chunks per unit time and the second-lowest
-; overrun; 039 has fewer and the highest). Do not close the
-; slow-and-flat playback question on this change alone.
+; This cap change takes the mechanism to a structural zero on every
+; video timing mode: B(240) = 1621.7 T clears even VGA0's 1792 T. The
+; slow-and-flat playback those rows reported is not explained by this
+; mechanism and remains open.
 ;
 ; Two changes closed the DI exposure. Against VGA0's 1792 T, at nominal
 ; A and the pessimistic +20 T end, either change alone already clears
