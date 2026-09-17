@@ -4542,6 +4542,24 @@ def t11_direct_gate():
             payload = enc.emit_direct_frame_payload(np.zeros(w * h, dtype=np.uint8), pal)
             expect(enc.direct_worst_section_bytes(12.5, w, h) == 2560 + -(-len(payload) // 512) * 512,
                    f"{w}x{h}: section arithmetic must match the emitted PAL frame")
+    # refusals at the 320-wide edges: the value reads over 1, and a letterbox
+    # refused where flat 320x256 fits is told so
+    for w, h, fps, util_txt, top, full in ((320, 106, 25.0, "1.004", "320x105", False),
+                                           (320, 248, 12.5, "1.01", "320x247", True)):
+        real, pad = enc.audio_layout(fps)[2:]
+        ex_e = _synthetic_ex(2, w, -(-h // 8) * 8)
+        ex_e.update(orig=ex_e["orig"][:, :h], abytes_real=real, abytes_pad=pad,
+                    audio_bytes=bytes(2 * real))
+        with tf.TemporaryDirectory() as td:
+            try:
+                enc._encode_direct(ex_e, w, h, fps, Path(td) / "edge.vid")
+            except SystemExit as e:
+                msg = str(e)
+                expect(f"utilization {util_txt} > 1.00" in msg, f"{w}x{h}@{fps:g} utilization text:\n{msg}")
+                expect(f"tops out at {top} at-rate" in msg, f"{w}x{h}@{fps:g} menu:\n{msg}")
+                expect(("Full-screen 320x256" in msg) == full, f"{w}x{h}@{fps:g} full-screen note:\n{msg}")
+            else:
+                raise AssertionError(f"{w}x{h}@{fps:g} direct must be refused")
 
     # The accept-slow escape is removed, not just unused: it must not
     # exist anywhere in the encoder plumbing, and the wire gate must
@@ -4846,19 +4864,57 @@ def t11_direct_gate_fps_floor_menu():
             raise AssertionError("320x256@25 direct must be refused")
 
 
-@case(11, "direct-serve kit routes - every vidtune preset route with --direct passes the gate")
+def _direct_util(w, h, fps):
+    return enc.direct_supply_check(enc.direct_worst_section_bytes(fps, w, h), fps, w, h)["utilization"]
+
+
+@case(11, "direct-serve kit routes - every --direct preset passes at its own fps, limit "
+          "routes sit at their edge, manual/video.md sections 4 and 6 quote them")
 def t11_direct_routes():
+    import re as _re
     from vidtune import presets
-    routes = [r for r in presets.all_routes() if r.values.get("direct")]
-    expect(len(routes) == 4, f"four direct routes ship, got {[r.key for r in routes]}")
-    for r in routes:
+    from vidtune.settingsmodel import KNOBS
+    kit_fps = float(next(k.default for k in KNOBS if k.name == "fps"))
+    limits = {"fullrate", "fullrate-wide"}      # the tallest height that plays at their width and fps
+    routes = {}
+    for r in presets.all_routes():
+        if not r.values.get("direct"):
+            continue
         shape = r.values["shape"]
-        w, h = enc.PRESETS[shape] if shape in enc.PRESETS else map(int, shape.lower().split("x"))
-        fps = float(r.values.get("fps") or 25.0)
-        worst = enc.direct_worst_section_bytes(fps, w, h)
-        u = enc.direct_supply_check(worst, fps, w, h)["utilization"]
+        w, h = enc.PRESETS[shape] if shape in enc.PRESETS else tuple(map(int, shape.lower().split("x")))
+        fps = float(r.values.get("fps") or kit_fps)
+        routes[r.key] = (shape, w, h, fps)
+        u = _direct_util(w, h, fps)
         expect(u <= 1.0, f"route {r.key} ({w}x{h}@{fps:g}) scores {u:.4f} over 1.00")
-        print(f"    {r.key}: {w}x{h}@{fps:g} {worst} B util {u:.4f}")
+        if r.key in limits:
+            expect(h < enc.MAX_HEIGHT_BY_WIDTH[w] and _direct_util(w, h + 1, fps) > 1.0,
+                   f"route {r.key} is under-sized: {w}x{h + 1}@{fps:g} also plays")
+            expect(enc.direct_max_raw_bytes(fps, w, enc.MAX_HEIGHT_BY_WIDTH[w]) == w * h,
+                   f"route {r.key} {w}x{h}@{fps:g} is not the tallest admitted height")
+        print(f"    {r.key}: {w}x{h}@{fps:g} util {u:.4f}")
+    expect(set(routes) == {"action", "action-169"} | limits, f"direct routes: {sorted(routes)}")
+    # section 4's CONFIG.BAT lines name exactly the presets' direct routes
+    doc = (ROOT / "manual" / "video.md").read_text(encoding="utf-8")
+    sec4 = doc[doc.index("## 4. The presets"):doc.index("## 5. ")]
+    quoted = set()
+    for line in _re.findall(r"^SET VIDOPTS_\d{3}=(.*--direct.*)$", sec4, _re.M):
+        shape = _re.search(r"--shape (\S+)", line).group(1)
+        fps = _re.search(r"--fps (\S+)", line)
+        quoted.add((shape, float(fps.group(1)) if fps else kit_fps))
+    expect(quoted == {(s, f) for s, _w, _h, f in routes.values()},
+           f"manual/video.md section 4 quotes {sorted(quoted)}, presets ship "
+           f"{sorted((s, f) for s, _w, _h, f in routes.values())}")
+    # section 6's card-space table: the same shapes, MB/s from the ordinary section
+    rows = _re.findall(r"^\| \d \| (\d+)x(\d+) at ([\d.]+) fps \| about ([\d.]+) MB per second \|$", doc, _re.M)
+    expect({(int(w), int(h), float(f)) for w, h, f, _mb in rows}
+           == {(w, h, f) for _s, w, h, f in routes.values()},
+           f"manual/video.md card-space rows {rows} do not match the direct routes")
+    for w, h, f, mb in rows:
+        w, h, f = int(w), int(h), float(f)
+        payload = enc.emit_direct_frame_payload(np.zeros(w * h, dtype=np.uint8))
+        section = enc.audio_layout(f)[3] + -(-len(payload) // 512) * 512
+        expect(f"{section * f / 1e6:.2f}" == mb,
+               f"{w}x{h}@{f:g}: {section} B x {f:g} = {section * f / 1e6:.3f} MB/s, doc says {mb}")
 
 
 @case(12, "review fix: no-audio-source probe skips extraction (no raw "

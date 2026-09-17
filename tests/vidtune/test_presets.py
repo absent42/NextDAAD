@@ -31,8 +31,8 @@ EXPECTED = {
     "quiet-motion":   {"tile_slack": "0.5"},
     "action":         {"direct": True, "shape": "full", "fps": "12.5"},
     "action-169":     {"direct": True, "shape": "16:9", "fps": "12.5"},
-    "fullrate":       {"direct": True, "shape": "256x153"},
-    "fullrate-wide":  {"direct": True, "shape": "320x123"},
+    "fullrate":       {"direct": True, "shape": "256x167"},
+    "fullrate-wide":  {"direct": True, "shape": "320x105"},
     "cutscene":       {"shape": "16:9", "tile_slack": "0.5"},
     "cutscene-43":    {"shape": "classic", "tile_slack": "0.5"},
 }

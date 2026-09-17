@@ -59,9 +59,10 @@ at 256x167, or 320x105 at full width (full-screen 320x256 fits at 12.5
 fps), and the gate
 refuses anything the SD wire cannot sustain - there is deliberately no
 slow-playback opt-out (every shipped mode plays at true rate). The
-refusal message prints the live envelope menu for your width: the
-at-rate height, the same height with a 0.90 margin, and how far
-dropping to the audio floor fps opens it (full-screen territory). For
+refusal message prints the live envelope menu for your width, up to the
+height you asked for: the tallest at-rate height, the same with a 0.90
+margin, and the tallest at the audio floor fps. A 320-wide letterbox
+refused at a rate where full-screen 320x256 fits is told so. For
 almost all content the normal delta encoder is the better tool;
 `--direct` exists for encodes that must be pixel-exact.
 

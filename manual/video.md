@@ -265,7 +265,7 @@ all. It plays at rate on a healthy, defragmented card.
 matters more than picture size.
 
 ```
-SET VIDOPTS_001=--direct --shape 256x153
+SET VIDOPTS_001=--direct --shape 256x167
 ```
 
 For a cinematic wide framing at full width instead:
@@ -277,14 +277,14 @@ SET VIDOPTS_001=--direct --shape 320x105
 **You get:** the full 25 fps, no banding, every frame pixel-exact.
 Motion looks the way it looked in the source.
 
-**You pay:** the picture is smaller. `256x153` plays in the bordered
+**You pay:** the picture is smaller. `256x167` plays in the bordered
 256-wide frame; `320x105` uses the full width but is heavily
 letterboxed. There is no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.
 
-Both shapes fit at 25 fps with stereo audio; the encoder admits up to
-256x167 and 320x105. If you ask for more, the encoder refuses and prints
-the exact sizes that do fit for your chosen width - use one of those.
+These two shapes are the most that fits at 25 fps with stereo audio. If
+you ask for more, the encoder refuses and prints the exact sizes that do
+fit for your chosen width - use one of those.
 
 ### Preset 4 - Grainy or noisy source
 
@@ -433,7 +433,7 @@ second.
 | ------ | -------------- | ---------- |
 | 2 | 320x256 at 12.5 fps | about 1.06 MB per second |
 | 2 | 320x192 at 12.5 fps | about 0.81 MB per second |
-| 3 | 256x153 at 25 fps | about 1.02 MB per second |
+| 3 | 256x167 at 25 fps | about 1.11 MB per second |
 | 3 | 320x105 at 25 fps | about 0.88 MB per second |
 
 **Compressed clips are typically a third to a half the size of the same

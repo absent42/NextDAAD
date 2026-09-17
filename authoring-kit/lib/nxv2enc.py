@@ -4684,9 +4684,20 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
         floor_at = direct_max_raw_bytes(fps_floor_safe, width, height, 1.0,
                                         transport_factor=tf)
         eff_tf = DIRECT_TRANSPORT_FACTOR if tf is None else float(tf)
+        # the menu is capped at the asked height; flat 320x256 can still fit
+        full_note = ""
+        if (is_gapped(width, height)
+                and direct_max_raw_bytes(fps_val, 320, 256, 1.0,
+                                         transport_factor=tf) == 320 * 256):
+            full_note = (f"Full-screen 320x256 has no gapped column cost "
+                         f"and plays at-rate at {fps_val:g}fps. ")
+        # enough decimals that a refused utilization reads over 1
+        u = ds["utilization"]
+        u_txt = next((f"{u:.{d}f}" for d in range(2, 7) if float(f"{u:.{d}f}") > 1.0),
+                     f"{math.ceil(u * 1e6) / 1e6:.6f}")
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
-            f"worst-frame wire utilization {ds['utilization']:.2f} > "
+            f"worst-frame wire utilization {u_txt} > "
             f"1.00 ({worst_frame} B/frame needs {ds['sd_ms']:.1f} ms per "
             f"{ds['period_ms']:.0f} ms frame: {ds['byte_ms']:.1f} ms at "
             f"{DIRECT_T_PER_B * eff_tf:.1f} T/B, {ds['col_ms']:.1f} ms of "
@@ -4700,7 +4711,7 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
             f"{width}x{s_at // width} at-rate ({width}x{s_90 // width} "
             f"with the 0.90 burst margin every other gate carries). "
             f"Dropping to the {fps_floor:.2f}fps audio floor opens the "
-            f"envelope to {width}x{floor_at // width}. Use a smaller "
+            f"envelope to {width}x{floor_at // width}. {full_note}Use a smaller "
             f"shape, lower --fps, or drop --direct and let the "
             f"delta encoder compress it.")
     elif ds["utilization"] > STREAM_WARN_UTIL:

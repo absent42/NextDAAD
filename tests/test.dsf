@@ -197,7 +197,7 @@ VPACL   93      verb
 ;           the long-clip seam-free-loop leg; any key exits)
 ;   VSTR2 - 009.VID 16:9 320x192 letterbox (Jellyfish 10s, ~7.3MB -
 ;           the GAPPED streaming path)
-;   DPACE/DPACL - 011.VID classic-wide 256x133 --direct (the test
+;   DPACE/DPACL - 011.VID 256x167 --direct (the test
 ;           card, 5.000 s / 125 frames) - the DIRECT PACING CARD
 ;   VSTRU - 099.VID (a copy of 007): plain streamed regression leg -
 ;           the DEBUG throttle that once drove a deliberate-underrun
@@ -210,7 +210,7 @@ VSTR2   96      verb
 VSTRU   97      verb
 
 ; SP15 3c DIRECT-SERVE legs (header hint, flags bit1): 010.VID =
-; 256x133 all-literal raw-equivalent encode (Sintel full 10s, --direct),
+; 256x167 all-literal raw-equivalent encode (Sintel full 10s, --direct),
 ; served straight from the SD wire to the surface - no ring, no RAM
 ; pass. VDIR plays once, VDIRL loops (the loop exercises the direct
 ; producer rewind + header-block consume). 98/99 reuse retired VSTG
@@ -222,16 +222,16 @@ VSTRU   97      verb
 ; direct-serve gate is UNCONDITIONAL (no accept-slow override). The
 ; originally-shipped classic-wide 256x144@25 stereo scored 1.075 (~6%
 ; slow) and is refused outright by its own gate now; 010/VDIR/VDIRL are
-; re-encoded at 256x133@25 stereo (util 0.99, TRUE at-rate).
+; encoded at the fullrate route, 256x167@25 stereo (util 0.9996).
 VDIR    98      verb
 VDIRL   99      verb
 ; SP15 Card #5: the DIRECT PACING CARD. 011.VID is the SAME test-card
 ; source and the SAME 5.000 s / 125 frames as 006.VID, encoded --direct
-; at 010's 256x133 shape - so DPACL is to the direct path exactly what
+; at 010's 256x167 shape - so DPACL is to the direct path exactly what
 ; VPACL is to the delta paths: stopwatch on a beep, count N beeps, and
 ; the beep-vs-stopwatch split measures the direct RATE while
 ; beep-vs-counter measures A/V sync. Direct playback now runs TRUE
-; at-rate (util 0.99, not the refused 1.075), so 12 loop passes (60 s
+; at-rate (util 0.9996), so 12 loop passes (60 s
 ; nominal) should land at 60.0 s - the beep count now verifies direct
 ; mode plays at rate, not ~6% slow. 88/89 reuse retired VSTG ladder
 ; numbers.
@@ -1063,7 +1063,7 @@ $pictureOK
                 DONE
 
 ; SP15 3c direct-serve legs (see the vocabulary block): 010.VID,
-; all-literal 256x133 encode (Card #5 TIGHTEN at-rate shape) with the
+; all-literal 256x167 encode (the fullrate route) with the
 ; header direct-serve hint - the player reads the SD stream straight
 ; to the surface.
 > VDIR    _     GFX 10 13
@@ -1075,7 +1075,7 @@ $pictureOK
                 DONE
 
 ; SP15 Card #5 direct pacing card (see the vocabulary block): 011.VID,
-; the 006 test card encoded --direct at the same 256x133 shape. DPACE
+; the 006 test card encoded --direct at the same 256x167 shape. DPACE
 ; plays the 5.000 s once, DPACL loops it for the stopwatch leg.
 > DPACE   _     GFX 11 13
                 PROCESS 10

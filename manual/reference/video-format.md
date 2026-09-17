@@ -226,8 +226,8 @@ remedy in the error message:
   envelope tops out at 256x167 and 320x105 (12.5 fps carries
   full-screen 320x256, and 320-wide letterbox heights up to 247); the
   refusal message prints the live at-rate menu (the tallest at-rate
-  height up to the one asked for, its 0.90-margin variant, and the same
-  at the audio floor fps).
+  height up to the one asked for, its 0.90-margin variant, the same at
+  the audio floor fps, and whether full-screen 320x256 fits instead).
 - **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
   (just under 256 MiB) and 65535 frames, whichever binds first - the
   player's hot filemap and its 16-bit frame counters. Both bounds are

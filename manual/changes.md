@@ -5,9 +5,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## Unreleased
 
-- **Uncompressed routes re-measured.** The full-rate wide route is now
-  `320x105`; `320x123` at 25 fps is refused, as it plays slow on real
-  hardware. At 25 fps the bordered frame reaches `256x167`. At 12.5 fps
+- **Uncompressed routes re-measured.** Action at full rate is now
+  `256x167` (was `256x153`), and its wide framing `320x105`; `320x123`
+  at 25 fps is refused, as it plays slow on real hardware. At 12.5 fps
   full-screen 320x256 still fits, and 320-wide letterbox heights go up
   to 247. See [Video](video.md) section 4.
 

@@ -283,20 +283,20 @@ all. It plays at rate on a healthy, defragmented card.</p>
 <h3 id="preset-3-action-at-full-rate">Preset 3 - Action at full rate</h3>
 <p><strong>For:</strong> the same detailed motion as Preset 2, when smooth movement
 matters more than picture size.</p>
-<pre><code>SET VIDOPTS_001=--direct --shape 256x153
+<pre><code>SET VIDOPTS_001=--direct --shape 256x167
 </code></pre>
 <p>For a cinematic wide framing at full width instead:</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 320x105
 </code></pre>
 <p><strong>You get:</strong> the full 25 fps, no banding, every frame pixel-exact.
 Motion looks the way it looked in the source.</p>
-<p><strong>You pay:</strong> the picture is smaller. <code>256x153</code> plays in the bordered
+<p><strong>You pay:</strong> the picture is smaller. <code>256x167</code> plays in the bordered
 256-wide frame; <code>320x105</code> uses the full width but is heavily
 letterboxed. There is no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.</p>
-<p>Both shapes fit at 25 fps with stereo audio; the encoder admits up to
-256x167 and 320x105. If you ask for more, the encoder refuses and prints
-the exact sizes that do fit for your chosen width - use one of those.</p>
+<p>These two shapes are the most that fits at 25 fps with stereo audio. If
+you ask for more, the encoder refuses and prints the exact sizes that do
+fit for your chosen width - use one of those.</p>
 <h3 id="preset-4-grainy-or-noisy-source">Preset 4 - Grainy or noisy source</h3>
 <p><strong>For:</strong> film grain, sensor noise, heavy source compression, or any
 footage that looks busy even where nothing is moving. Grain is motion as
@@ -456,8 +456,8 @@ second.</p>
 </tr>
 <tr>
 <td>3</td>
-<td>256x153 at 25 fps</td>
-<td>about 1.02 MB per second</td>
+<td>256x167 at 25 fps</td>
+<td>about 1.11 MB per second</td>
 </tr>
 <tr>
 <td>3</td>

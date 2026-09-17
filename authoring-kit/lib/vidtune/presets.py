@@ -77,7 +77,7 @@ ROUTES = (
     Route("fullrate", "Action at full rate",
           "the same detailed motion, when smooth movement matters more "
           "than picture size",
-          {"direct": True, "shape": "256x153"},
+          {"direct": True, "shape": "256x167"},
           Route("fullrate-wide", "Action at full rate, wide",
                 "a cinematic wide framing at full width",
                 {"direct": True, "shape": "320x105"})),
