@@ -1819,6 +1819,387 @@ def t10_bench_log():
                    f"CLI on {want!r}: rc {rc}: {out.getvalue()}")
 
 
+@case(10, "player-path events - hand-counted bench, synthetic and edge cases")
+def t10_path_events():
+    import nxv2_path_sim as ps
+    FLAT, G72, G144, G192 = (256, 192, False), (320, 72, True), (320, 144, True), (320, 192, True)
+    C8, C16, R8, R16, S8, S16 = 0x10, 0x14, 0x08, 0x0C, 0x1C, 0x04
+    END = [(0x00, 0)]
+
+    def row(tag):
+        return lambda: bench.row_events(tag)
+
+    def syn(tag, surface):
+        return lambda: bench.row_events(tag, surface)
+
+    def run(ops, surface, src, **kw):
+        return lambda: ps.events(ops, surface, src, **kw)
+
+    def gap_c8(n, o, hop0):
+        # HLnn / HDnn at h144: o ops of n B cross 30 column ends, hop0 of them at op starts
+        return ({"fast_copy8": o, "fast_hop_copy8": 30, "fast_hop0_copy8": hop0,
+                 "copy_fast_b": o * n, "fend": 1},
+                {"thr_copy8": o, "copy_dma_chunks8": o + 30 - hop0, "copy_dma_b": o * n,
+                 "col_hops": 30, "fend": 1})
+
+    cases = [
+        # --- NXBE, flat $4000, D <= $5E throughout, thr 0 = 81 / 71 ---
+        # C240: 32 thr bails x 1 DMA chunk of 240 (7680 B, ends $5E00)
+        ("C240", row("C240"), {"thr_copy8": 32, "copy_dma_chunks8": 32, "copy_dma_b": 7680, "fend": 1}),
+        # C250: 31 x (240 DMA + 10 B LDI tail), 7750 B ends $5E46
+        ("C250", row("C250"), {"thr_copy8": 31, "copy_dma_chunks8": 31, "copy_ldi_chunks8": 31,
+                               "copy_tail8": 31, "copy_dma_b": 7440, "copy_ldi_b": 310, "fend": 1}),
+        # Q240: 32 COPY16 x 1 DMA chunk of 240
+        ("Q240", row("Q240"), {"op_copy16": 32, "copy_dma_chunks16": 32, "copy_dma_b": 7680, "fend": 1}),
+        # R240: 33 RUN8 240 >= 71 bail x 1 DMA chunk (7920 B, last op starts $5E00)
+        ("R240", row("R240"), {"thr_run8": 33, "run_dma_chunks8": 33, "run_dma_b": 7920, "fend": 1}),
+        # R250: 31 x (240 DMA + 10 B CPU tail)
+        ("R250", row("R250"), {"thr_run8": 31, "run_dma_chunks8": 31, "run_cpu_chunks8": 31,
+                               "run_tail8": 31, "run_dma_b": 7440, "run_cpu_b": 310, "fend": 1}),
+        # W240: 33 RUN16 x 1 DMA chunk of 240
+        ("W240", row("W240"), {"op_run16": 33, "run_dma_chunks16": 33, "run_dma_b": 7920, "fend": 1}),
+        # P071: 111 x 71 >= 71, one DMA chunk each (7881 B)
+        ("P071", row("P071"), {"thr_run8": 111, "run_dma_chunks8": 111, "run_dma_b": 7881, "fend": 1}),
+        # P200: 39 x 200, one DMA chunk each (7800 B)
+        ("P200", row("P200"), {"thr_run8": 39, "run_dma_chunks8": 39, "run_dma_b": 7800, "fend": 1}),
+        # --- NXBH, h144 from E = 0: L rows thr 255 fast, D rows thr 1 body ---
+        # HL56/HD56: 79x56 = 4424 B, 144k < 4424 for k <= 30, lcm 1008 -> 4 at op starts; D chunks 79 + 26
+        ("HL56", row("HL56"), gap_c8(56, 79, 4)[0]), ("HD56", row("HD56"), gap_c8(56, 79, 4)[1]),
+        # HL60/HD60: 74x60 = 4440, lcm 720 -> 6 at op starts; D chunks 74 + 24
+        ("HL60", row("HL60"), gap_c8(60, 74, 6)[0]), ("HD60", row("HD60"), gap_c8(60, 74, 6)[1]),
+        # HL64/HD64: 69x64 = 4416, lcm 576 -> 7; D chunks 69 + 23
+        ("HL64", row("HL64"), gap_c8(64, 69, 7)[0]), ("HD64", row("HD64"), gap_c8(64, 69, 7)[1]),
+        # HL68/HD68: 65x68 = 4420, lcm 2448 -> 1; D chunks 65 + 29
+        ("HL68", row("HL68"), gap_c8(68, 65, 1)[0]), ("HD68", row("HD68"), gap_c8(68, 65, 1)[1]),
+        # HL76/HD76: 58x76 = 4408, lcm 2736 -> 1; D chunks 58 + 29
+        ("HL76", row("HL76"), gap_c8(76, 58, 1)[0]), ("HD76", row("HD76"), gap_c8(76, 58, 1)[1]),
+        # HL80/HD80: 55x80 = 4400, lcm 720 -> 6; D chunks 55 + 24
+        ("HL80", row("HL80"), gap_c8(80, 55, 6)[0]), ("HD80", row("HD80"), gap_c8(80, 55, 6)[1]),
+        # HL88/HD88: 50x88 = 4400, lcm 1584 -> 2; D chunks 50 + 28
+        ("HL88", row("HL88"), gap_c8(88, 50, 2)[0]), ("HD88", row("HD88"), gap_c8(88, 50, 2)[1]),
+        # HL96/HD96: 46x96 = 4416, lcm 288 -> 15; D chunks 46 + 15
+        ("HL96", row("HL96"), gap_c8(96, 46, 15)[0]), ("HD96", row("HD96"), gap_c8(96, 46, 15)[1]),
+        # HC03: 43x103 from E = 103j mod 144: 13 fit (E <= 41), 30 straddle; 14 halves >= 81 DMA, 8 tails after a DMA first half
+        ("HC03", row("HC03"), {"thr_copy8": 43, "copy_dma_chunks8": 27, "copy_ldi_chunks8": 46,
+                               "copy_tail8": 8, "copy_dma_b": 2612, "copy_ldi_b": 1817,
+                               "col_hops": 30, "fend": 1}),
+        # HK56: 17x256 COPY16 from E = 112j mod 144 (j = 9 deferred): 46 chunks, 26 DMA, 10 LDI tails, 30 hops
+        ("HK56", row("HK56"), {"op_copy16": 17, "copy_dma_chunks16": 26, "copy_ldi_chunks16": 20,
+                               "copy_tail16": 10, "copy_dma_b": 3392, "copy_ldi_b": 960,
+                               "col_hops": 30, "fend": 1}),
+        # --- NXBV ---
+        # EC16: 15x16 at $5F00, D = $5F every op: 15 edge bails, 15 exact-sized LDI chunks
+        ("EC16", row("EC16"), {"edge_copy8": 15, "copy_ldi_chunks8": 15, "copy_ldi_b": 240,
+                               "dst_exact_chunks": 15, "fend": 1}),
+        # NC16: 15 fast at $4000
+        ("NC16", row("NC16"), {"fast_copy8": 15, "copy_fast_b": 240, "fend": 1}),
+        # ER16: 15 edge bails, 15 exact CPU chunks of 16
+        ("ER16", row("ER16"), {"edge_run8": 15, "run_cpu_chunks8": 15, "run_cpu_b": 240,
+                               "dst_exact_chunks": 15, "fend": 1}),
+        # NR16: 15 fast fills
+        ("NR16", row("NR16"), {"fast_run8": 15, "run_fast_b": 240, "fend": 1}),
+        # ES16: 15 edge bails, 1 pass each
+        ("ES16", row("ES16"), {"edge_skip8": 15, "skip_passes": 15, "fend": 1}),
+        # NS16: 15 fast skips
+        ("NS16", row("NS16"), {"fast_skip8": 15, "fend": 1}),
+        # S256: 31 SKIP16 x 1 pass (room >= 256 up to $5E00)
+        ("S256", row("S256"), {"op_skip16": 31, "skip_passes": 31, "fend": 1}),
+        # S2D0: one op, one pass
+        ("S2D0", row("S2D0"), {"op_skip16": 1, "skip_passes": 1, "fend": 1}),
+        # SDS1: $5F80 room 128 pass, seam at $6000, 128 B pass
+        ("SDS1", row("SDS1"), {"op_skip16": 1, "skip_passes": 2, "dst_seams": 1, "fend": 1}),
+        # JC72: 3x720 at h72 thr 81: 10 LDI column chunks per op, hops 9 + (1 + 9) x 2
+        ("JC72", row("JC72"), {"op_copy16": 3, "copy_ldi_chunks16": 30, "copy_ldi_b": 2160,
+                               "col_hops": 29, "fend": 1}),
+        # JD72: as JC72 at thr 59: 72 >= 59, 30 DMA
+        ("JD72", row("JD72"), {"op_copy16": 3, "copy_dma_chunks16": 30, "copy_dma_b": 2160,
+                               "col_hops": 29, "fend": 1}),
+        # JR72: 30 fill chunks of 72 >= 71 DMA, 29 hops
+        ("JR72", row("JR72"), {"op_run16": 3, "run_dma_chunks16": 30, "run_dma_b": 2160,
+                               "col_hops": 29, "fend": 1}),
+        # JS72: 10 passes per op, 29 hops
+        ("JS72", row("JS72"), {"op_skip16": 3, "skip_passes": 30, "col_hops": 29, "fend": 1}),
+        # JK72: 11x200 > 2x72 all bail; 2200 B cross 30 ends, 1800 at an op start: passes 11 + 29
+        ("JK72", row("JK72"), {"gap_skip8": 11, "skip_passes": 40, "col_hops": 30, "fend": 1}),
+        # JN72: 37x60, E + 60 - 72 < 72 always: all fast, 30 ends crossed inline
+        ("JN72", row("JN72"), {"fast_skip8": 37, "fast_hop_skip8": 30, "fend": 1}),
+        # GS3C: 10x576 at h192: 3 passes per op, hops 2 + 9x3
+        ("GS3C", row("GS3C"), {"op_skip16": 10, "skip_passes": 30, "col_hops": 29, "fend": 1}),
+        # --- NXBL seam rows and twins ---
+        # LF1K: 7x1000 flat: 4 DMA + 40 B LDI tail each, ends $5B58
+        ("LF1K", row("LF1K"), {"op_copy16": 7, "copy_dma_chunks16": 28, "copy_ldi_chunks16": 7,
+                               "copy_tail16": 7, "copy_dma_b": 6720, "copy_ldi_b": 280, "fend": 1}),
+        # LF7K: 7680 = 32x240 DMA
+        ("LF7K", row("LF7K"), {"op_copy16": 1, "copy_dma_chunks16": 32, "copy_dma_b": 7680, "fend": 1}),
+        # LFDS: $5000: 16 DMA to $5F00, exact 240, exact 16 B LDI tail, seam, 3584 = 14x240 + 224 DMA
+        ("LFDS", row("LFDS"), {"op_copy16": 1, "copy_dma_chunks16": 32, "copy_ldi_chunks16": 1,
+                               "copy_tail16": 1, "copy_dma_b": 7664, "copy_ldi_b": 16,
+                               "dst_exact_chunks": 2, "dst_seams": 1, "fend": 1}),
+        # LG1K: 5x1000 h192, E0 = 0/40/80/120/160: 31 chunks, 26 DMA, LDI 40,80,72,32,8 (3 tails), 26 hops
+        ("LG1K", row("LG1K"), {"op_copy16": 5, "copy_dma_chunks16": 26, "copy_ldi_chunks16": 5,
+                               "copy_tail16": 3, "copy_dma_b": 4768, "copy_ldi_b": 232,
+                               "col_hops": 26, "fend": 1}),
+        # LG4K: 4000 = 20x192 + 160, all DMA, 20 hops
+        ("LG4K", row("LG4K"), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_dma_b": 4000,
+                               "col_hops": 20, "fend": 1}),
+        # LGDS: as LG4K from column $50: the hop $5F -> $60 takes one seam
+        ("LGDS", row("LGDS"), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_dma_b": 4000,
+                               "col_hops": 20, "dst_seams": 1, "fend": 1}),
+        # --- gapped COPY16 over k columns ---
+        # h192: 2x576 = 3 columns each, 6 DMA, hops 2 + 1 + 2
+        ("G192", run([(C16, 576)] * 2 + END, G192, 0, copy_thr=81),
+         {"op_copy16": 2, "copy_dma_chunks16": 6, "copy_dma_b": 1152, "col_hops": 5, "fend": 1}),
+        # h192 from E = 100: 92 DMA, 192, 192, 24 B LDI tail, 3 hops
+        ("G192E", run([(C16, 500)] + END, G192, 0, dst=(0, 0x4064), copy_thr=81),
+         {"op_copy16": 1, "copy_dma_chunks16": 3, "copy_ldi_chunks16": 1, "copy_tail16": 1,
+          "copy_dma_b": 476, "copy_ldi_b": 24, "col_hops": 3, "fend": 1}),
+        # --- SYN rows, flat 256x192 at 81/71 ---
+        ("NUL0", syn("NUL0", FLAT), {}),
+        # FE00: one plain FEND; FE01 the span FEND
+        ("FE00", syn("FE00", FLAT), {"fend": 1}),
+        ("FE01", syn("FE01", FLAT), {"fend_span": 1}),
+        # KS01: KSTART, KFLIP; KS02: KSTART, span FEND; KF01: KFLIP in a span
+        ("KS01", syn("KS01", FLAT), {"kstart": 1, "kflip": 1}),
+        ("KS02", syn("KS02", FLAT), {"kstart": 1, "fend_span": 1}),
+        ("KF01", syn("KF01", FLAT), {"kflip": 1}),
+        # PAL1: PAL at $C018, H <= $DD
+        ("PAL1", syn("PAL1", FLAT), {"pal_ops": 1, "fend": 1}),
+        # PAL2: PAL at $DEDC: H = $DE straddle, 291 B, parity seam, 221 B
+        ("PAL2", syn("PAL2", FLAT), {"pal_straddles": 1, "pal_chunks": 2, "src_parity_seams": 1, "fend": 1}),
+        # SE00: COPY8 1 at $DB58, all fast
+        ("SE00", syn("SE00", FLAT), {"fast_copy8": 1, "copy_fast_b": 1, "fend": 1}),
+        # SE01: COPY8 1 at $DF40: edge detour, L + 1 refine, FEND at $DF43 detours too
+        ("SE01", syn("SE01", FLAT), {"fast_copy8": 1, "copy8_srcedge": 1, "copy_fast_b": 1,
+                                     "src_edge_hdr": 2, "fend": 1}),
+        # SE02: COPY8 1 at $DFFE: slow header, count read to $E000, body walks (parity), 1 B LDI
+        ("SE02", syn("SE02", FLAT), {"slow_copy8": 1, "copy_ldi_chunks8": 1, "copy_ldi_b": 1,
+                                     "src_parity_seams": 1, "src_slow_hdr": 1, "fend": 1}),
+        # C4K0: 4096 = 17x240 + 16 B LDI tail from $4000
+        ("C4K0", syn("C4K0", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 17, "copy_ldi_chunks16": 1,
+                                     "copy_tail16": 1, "copy_dma_b": 4080, "copy_ldi_b": 16, "fend": 1}),
+        # C4KP: src $D803: 8x240 to $DF83, exact 125, parity seam, 2051 = 8x240 + 131
+        ("C4KP", syn("C4KP", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 18, "copy_dma_b": 4096,
+                                     "copy_src_chunks": 1, "src_parity_seams": 1, "fend": 1}),
+        # C4KB: C4KP one page on: the walk is a bank seam
+        ("C4KB", syn("C4KB", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 18, "copy_dma_b": 4096,
+                                     "copy_src_chunks": 1, "src_bank_seams": 1, "fend": 1}),
+        # C4KS: C4K0 in a span
+        ("C4KS", syn("C4KS", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 17, "copy_ldi_chunks16": 1,
+                                     "copy_tail16": 1, "copy_dma_b": 4080, "copy_ldi_b": 16, "fend_span": 1}),
+        # C4KD: dest $5800: 8x240 to $5F80, exact 128, seam, 2048 = 8x240 + 128
+        ("C4KD", syn("C4KD", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 18, "copy_dma_b": 4096,
+                                     "dst_exact_chunks": 1, "dst_seams": 1, "fend_span": 1}),
+        # K24K: src off 515 / dest 0 repeat each 8192 B: 34 DMA + 35 B LDI, src and dest exact, both seams; last 7616 B 32 DMA, 1 src exact; FEND at $DFC3
+        ("K24K", syn("K24K", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 100, "copy_ldi_chunks16": 2,
+                                     "copy_tail16": 2, "copy_dma_b": 23930, "copy_ldi_b": 70,
+                                     "dst_exact_chunks": 2, "copy_src_chunks": 3, "dst_seams": 2,
+                                     "src_parity_seams": 1, "src_bank_seams": 1, "src_edge_hdr": 1, "fend": 1}),
+        # K43K: five 8192 B periods as K24K (seams P B P B P), last 2048 = 8x240 + 128
+        ("K43K", syn("K43K", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 179, "copy_ldi_chunks16": 5,
+                                     "copy_tail16": 5, "copy_dma_b": 42833, "copy_ldi_b": 175,
+                                     "dst_exact_chunks": 5, "copy_src_chunks": 5, "dst_seams": 5,
+                                     "src_parity_seams": 3, "src_bank_seams": 2, "fend": 1}),
+        # --- SYN rows, gapped 320x192 ---
+        # C4K0: 21x192 DMA + 64 B LDI tail, 21 hops
+        ("gC4K0", syn("C4K0", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 1,
+                                      "copy_tail16": 1, "copy_dma_b": 4032, "copy_ldi_b": 64,
+                                      "col_hops": 21, "fend": 1}),
+        # C4KP: 10 columns to src off 8067, exact 125 DMA, parity seam, 67 B LDI, 10 columns, 64 B LDI
+        ("gC4KP", syn("C4KP", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 2,
+                                      "copy_tail16": 2, "copy_dma_b": 3965, "copy_ldi_b": 131,
+                                      "copy_src_chunks": 1, "col_hops": 21, "src_parity_seams": 1, "fend": 1}),
+        # C4KB: gC4KP one page on, a bank seam
+        ("gC4KB", syn("C4KB", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 2,
+                                      "copy_tail16": 2, "copy_dma_b": 3965, "copy_ldi_b": 131,
+                                      "copy_src_chunks": 1, "col_hops": 21, "src_bank_seams": 1, "fend": 1}),
+        # C4KD: gC4K0 from column $58: the hop into $60 seams
+        ("gC4KD", syn("C4KD", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 1,
+                                      "copy_tail16": 1, "copy_dma_b": 4032, "copy_ldi_b": 64,
+                                      "col_hops": 21, "dst_seams": 1, "fend_span": 1}),
+        # K24K: 125 columns, 124 hops, seams at columns 32/64/96; src ends at columns 39 (189+3) and 82 (125+67), column 124 src-exact; FEND at $DFC3
+        ("gK24K", syn("K24K", G192), {"op_copy16": 1, "copy_dma_chunks16": 125, "copy_ldi_chunks16": 2,
+                                      "copy_tail16": 2, "copy_dma_b": 23930, "copy_ldi_b": 70,
+                                      "copy_src_chunks": 3, "col_hops": 124, "dst_seams": 3,
+                                      "src_parity_seams": 1, "src_bank_seams": 1, "src_edge_hdr": 1, "fend": 1}),
+        # K43K: 224 columns, 223 hops, 6 dest seams; src splits 189+3, 125+67, 61+131 (col 124 also exact), 189+3, 125+67
+        ("gK43K", syn("K43K", G192), {"op_copy16": 1, "copy_dma_chunks16": 224, "copy_ldi_chunks16": 5,
+                                      "copy_tail16": 5, "copy_dma_b": 42807, "copy_ldi_b": 201,
+                                      "copy_src_chunks": 6, "col_hops": 223, "dst_seams": 6,
+                                      "src_parity_seams": 3, "src_bank_seams": 2, "fend": 1}),
+        # SYS FE00 at offset 0 reads one FEND
+        ("sFE00", lambda: bench.row_events("FE00", FLAT, table="SYS"), {"fend": 1}),
+        # --- edge cases ---
+        # COPY8 100 at $DF9A: edge detour, L $9C + 100 = 256 stays, thr bail, src-exact 100 DMA to $E000, FEND wraps (parity)
+        ("wrap", run([(C8, 100)] + END, FLAT, 8090, copy_thr=81),
+         {"src_edge_hdr": 1, "copy8_srcedge": 1, "thr_copy8": 1, "copy_src_chunks": 1,
+          "copy_dma_chunks8": 1, "copy_dma_b": 100, "src_wrap_hdr": 1, "src_parity_seams": 1, "fend": 1}),
+        # COPY8 100 at page 1 $DF9C: L $9E + 100 = 258 bails, src-exact 98 DMA, bank seam, 2 B LDI tail
+        ("srcbail", run([(C8, 100)] + END, FLAT, 16284, copy_thr=81),
+         {"src_edge_hdr": 1, "copy8_srcedge": 1, "src_copy8": 1, "copy_src_chunks": 1,
+          "copy_dma_chunks8": 1, "copy_ldi_chunks8": 1, "copy_tail8": 1, "copy_dma_b": 98,
+          "copy_ldi_b": 2, "src_bank_seams": 1, "fend": 1}),
+        # SKIP16 300 at $DFFE: slow, the high count byte walks (parity), 1 pass
+        ("slow16", run([(S16, 300)] + END, FLAT, 8190),
+         {"src_slow_hdr": 1, "slow_skip16": 1, "skip_passes": 1, "src_parity_seams": 1, "fend": 1}),
+        # SKIP8 10 at $DFFF: slow, the count byte walks, 1 pass
+        ("slow8", run([(S8, 10)] + END, FLAT, 8191),
+         {"src_slow_hdr": 1, "slow_skip8": 1, "skip_passes": 1, "src_parity_seams": 1, "fend": 1}),
+        # RUN16 300 at $DFFC: slow to $E000, 240 DMA + 60 CPU tail, FEND wraps
+        ("slowr16", run([(R16, 300)] + END, FLAT, 8188, run_thr=71),
+         {"src_slow_hdr": 1, "slow_run16": 1, "run_dma_chunks16": 1, "run_cpu_chunks16": 1,
+          "run_tail16": 1, "run_dma_b": 240, "run_cpu_b": 60, "src_wrap_hdr": 1,
+          "src_parity_seams": 1, "fend": 1}),
+        # RUN8 20 at $DFFD: slow to $E000, 20 B CPU, FEND wraps
+        ("slowr8", run([(R8, 20)] + END, FLAT, 8189, run_thr=71),
+         {"src_slow_hdr": 1, "slow_run8": 1, "run_cpu_chunks8": 1, "run_cpu_b": 20,
+          "src_wrap_hdr": 1, "src_parity_seams": 1, "fend": 1}),
+        # COPY16 90 at $DFFD: slow to $E000, the body walks (parity), 90 DMA
+        ("slowc16", run([(C16, 90)] + END, FLAT, 8189, copy_thr=81),
+         {"src_slow_hdr": 1, "slow_copy16": 1, "copy_dma_chunks16": 1, "copy_dma_b": 90,
+          "src_parity_seams": 1, "fend": 1}),
+        # h72 column $5F at E = 72: RUN8 30 hops with an empty first segment into $60 (seam)
+        ("hop0", run([(R8, 30)] + END, G72, 0, dst=(0, 0x5F48), run_thr=71),
+         {"fast_run8": 1, "fast_hop_run8": 1, "fast_hop0_run8": 1, "fast_dst_seams": 1,
+          "run_fast_b": 30, "fend": 1}),
+        # h72 SKIP8 72 from E = 0 lands E = 72 (no hop); SKIP16 10 hops in its normalize, 1 pass
+        ("defer", run([(S8, 72), (S16, 10)] + END, G72, 0),
+         {"fast_skip8": 1, "op_skip16": 1, "skip_passes": 1, "col_hops": 1, "fend": 1}),
+        # h72 RUN8 200 under thr 241: over 128 >= 72 bails, CPU 72 + 72 + 56, 2 hops
+        ("gaprun", run([(R8, 200)] + END, G72, 0, run_thr=241),
+         {"gap_run8": 1, "run_cpu_chunks8": 3, "run_cpu_b": 200, "col_hops": 2, "fend": 1}),
+        # h192 COPY8 250 at E = 100 under thr 255: 350 carries, LDI 92 + 158, 1 hop
+        ("gapcopy", run([(C8, 250)] + END, G192, 0, dst=(0, 0x4064), copy_thr=255),
+         {"gap_copy8": 1, "copy_ldi_chunks8": 2, "copy_ldi_b": 250, "col_hops": 1, "fend": 1}),
+        # flat $5FF0: COPY8 16 edge bail to $6000 exact; SKIP8 4 at D = $60 edge bail, seam, 1 pass
+        ("edge60", run([(C8, 16), (S8, 4)] + END, FLAT, 0, dst=(0, 0x5FF0), copy_thr=81),
+         {"edge_copy8": 1, "copy_ldi_chunks8": 1, "copy_ldi_b": 16, "dst_exact_chunks": 1,
+          "edge_skip8": 1, "skip_passes": 1, "dst_seams": 1, "fend": 1}),
+        # KSTART, PAL at $C3E9, COPY16 1000 = 4x240 + 40 B LDI tail, KFLIP
+        ("kframe", run([(0x28, 0), (0x18, 512), (C16, 1000), (0x20, 0)], FLAT, 1000, copy_thr=81),
+         {"kstart": 1, "pal_ops": 1, "op_copy16": 1, "copy_dma_chunks16": 4, "copy_ldi_chunks16": 1,
+          "copy_tail16": 1, "copy_dma_b": 960, "copy_ldi_b": 40, "kflip": 1}),
+    ]
+    bad, seen = [], set()
+    for label, fn, want in cases:
+        got = fn().as_dict()
+        seen |= set(got)
+        if got != want:
+            diff = {k: (got.get(k, 0), want.get(k, 0)) for k in set(got) | set(want)
+                    if got.get(k, 0) != want.get(k, 0)}
+            bad.append(f"{label}: (sim, hand) {diff}")
+    expect(not bad, "event counts:\n  " + "\n  ".join(bad))
+    every = set(ps.Events().as_dict(nonzero=False))
+    expect(seen == every, f"counters no case exercises: {sorted(every - seen)}")
+    # every standalone op row and SYNTH row simulates on its surfaces
+    for mode, rows in bench.BENCH_TABLES.items():
+        for r in rows:
+            if r[1] != bench.CAL_KIND:
+                bench.row_events(r[0])
+    for name in ("SYN", "SYS"):
+        for r in bench.SESSION_TABLES[name]:
+            if r[1] in bench.SESSION_SYNTH:
+                for surf in (FLAT, (256, 144, False), (320, 256, False), G192, G144):
+                    bench.row_events(r[0], surf, table=name)
+    expect(bench.session_row_selects("SYN", "C4K0") == (81, 71)
+           and bench.session_row_selects("REAL", "W055") == (55, 71)
+           and bench.session_row_selects("REAL", "AUD1") is None,
+           "SYNTH rows at 81/71, decode rows at their thr and 71")
+    # thr 0 rows follow copy_dma_min; SYNTH rows stay at 81
+    tc = enc.TMODEL_COEFFS
+    saved = tc["copy_dma_min"]
+    try:
+        tc["copy_dma_min"] = 16
+        moved = bench.row_events("NC16").as_dict()
+        tc["copy_dma_min"] = 10
+        pinned = bench.row_events("C4K0", FLAT).as_dict()
+    finally:
+        tc["copy_dma_min"] = saved
+    expect(moved == {"thr_copy8": 15, "copy_dma_chunks8": 15, "copy_dma_b": 240, "fend": 1},
+           f"NC16 at copy_dma_min 16: {moved}")
+    expect(pinned == dict(cases[[c[0] for c in cases].index("C4K0")][2]),
+           f"C4K0 must decode at 81 whatever copy_dma_min: {pinned}")
+    # player aborts and interface rules
+    for ops, surf, kw, what in (([(S16, 8192), (S16, 8192)] + END, FLAT, {"dst_pages": 1}, "DSTOVR"),
+                                ([(0x20, 0)], FLAT, {}, "KFLIP"),
+                                ([(0x24, 0)] + END, FLAT, {}, "reserved"),
+                                ([(0x28, 0), (0x28, 0)] + END, FLAT, {}, "KSTART")):
+        try:
+            ps.events(ops, surf, 0, **kw)
+        except ps.PathError as e:
+            expect(what in str(e), f"{what}: {e}")
+        else:
+            raise AssertionError(f"{what} must raise PathError")
+    for bad_call in (lambda: bench.row_events("C4K0"), lambda: bench.row_events("CALL"),
+                     lambda: bench.row_events("JC72", G144)):
+        try:
+            bad_call()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("row_events must refuse a missing or wrong surface and the CAL row")
+    ev = bench.row_events("SDS1")
+    expect(ev.price({"op_skip16": 200.0, "skip_passes": 10.0, "dst_seams": 50.0, "fend": 1.0}) == 271.0
+           and (ev + ev).skip_passes == 4 and ev.scale(0.5).dst_seams == 0.5, "price, add and scale")
+    try:
+        ev.price({"op_skip16": 200.0})
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("price must refuse an unpriced nonzero event")
+
+
+@case(10, "frame model - per-frame model T equals the encoder's, types, offsets, span cursor")
+def t10_frame_model():
+    import nxv2_frame_model as fm
+    import nxv2_path_sim as ps
+    apad, areal = 1536, 1250
+    for (w, h, n, want_types) in ((320, 192, 6, {"first", "middle", "last", "delta"}),
+                                  (256, 64, 4, {"single", "delta"})):
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        orig = np.empty((n, h, w, 3), dtype=np.uint8)
+        for i in range(n):
+            base = np.stack([128 + 110 * np.sin((xx + i * 5) * 0.05),
+                             128 + 110 * np.cos((yy - i * 3) * 0.07),
+                             128 + 110 * np.sin((xx + yy) * 0.03 + i * 0.3)], axis=2)
+            orig[i] = np.clip(base, 0, 255).astype(np.uint8)
+        chg, po = _synth_clip(orig)
+        result = enc.encode_clip(orig, chg, po, w, h, 25.0, abytes_pad=apad)
+        payloads, want_t = result["payloads"], result["per_frame"]["t"]
+        hdr = enc.pack_header(width=w, height=h, fps=25.0, channels=2, arate=enc.RATE_STEREO,
+                              frame_count=len(payloads), audio_bytes_per_frame=areal,
+                              ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+        body = b"".join(bytes(apad) + p + bytes((-len(p)) % 512) for p in payloads)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / f"fm_{w}x{h}.vid"
+            path.write_bytes(hdr + body)
+            frames = fm.frames(path)
+            saved = dict(enc.TMODEL_COEFFS)
+            moved = fm.frames(path, copy_thr=59, run_thr=241)
+            expect(enc.TMODEL_COEFFS == saved, "frames() must restore the selects")
+        expect(len(frames) == len(payloads) == len(want_t), f"{w}x{h}: {len(frames)} frames")
+        types = [f.type for f in frames]
+        expect(want_types <= set(types), f"{w}x{h}: frame types {types}")
+        offset = enc.HEADER_SIZE
+        span_at = 0
+        for f, p, t in zip(frames, payloads, want_t):
+            offset += apad
+            expect(f.offset == offset and f.nbytes == len(p),
+                   f"{w}x{h} frame {f.index}: offset {f.offset} / {offset}, bytes {f.nbytes} / {len(p)}")
+            offset += -(-len(p) // 512) * 512
+            expect(abs(f.model_t - t) <= 0.01,
+                   f"{w}x{h} frame {f.index} ({f.type}): model {f.model_t:.4f} vs encoder {t:.4f}")
+            surf = fm.surface_of(enc.unpack_header(hdr))
+            if f.type in ("middle", "last"):
+                expect(ps.dst_linear(*f.dst_start, surf) == span_at,
+                       f"{w}x{h} frame {f.index}: span cursor {f.dst_start} is not paint index {span_at}")
+            elif f.type != "delta":
+                span_at = 0
+            if f.type in ("first", "middle"):
+                span_at += sum(k for op, k in f.ops if op in (ps.OP_COPY8, ps.OP_COPY16))
+        expect(any(f.events != g.events for f, g in zip(frames, moved)),
+               f"{w}x{h}: events at COPY 59 / RUN 241 must differ somewhere")
+
+
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")
 def t10_copy_threshold_fit():
     import io

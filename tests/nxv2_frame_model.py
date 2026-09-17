@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""tests/nxv2_frame_model.py - per-frame player-path events and model T over
+an NXV v2 file.
+
+Walks a .vid with nxv2dec's frame walker (as nxv2_copy_census.frames_of
+does, but keeping PAL, KSTART and the terminal), classifies each frame,
+runs nxv2_path_sim at the frame's true payload offset with the span cursor
+carried across chunk frames, and prices it the way nxv2enc charges it.
+Source events take the file offset: exact resident, and on a streamed clip's
+first pass (see nxv2_path_sim).
+"""
+import contextlib
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+LIB = Path(__file__).resolve().parent.parent / "authoring-kit" / "lib"
+sys.path.insert(0, str(LIB))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import nxv2dec  # noqa: E402
+import nxv2enc  # noqa: E402
+import nxv2_path_sim as sim  # noqa: E402
+
+FRAME_TYPES = ("delta", "first", "middle", "last", "single")
+_KIND = {sim.OP_SKIP8: "skip", sim.OP_SKIP16: "skip", sim.OP_RUN8: "run",
+         sim.OP_RUN16: "run", sim.OP_COPY8: "copy", sim.OP_COPY16: "copy"}
+
+
+@dataclass
+class Frame:
+    index: int
+    type: str            # FRAME_TYPES
+    ops: list            # (opcode, n) through the terminal
+    events: object       # sim.Events; None for a direct-serve file
+    model_t: float       # nxv2enc charging; None for a direct-serve file
+    offset: int          # payload file offset
+    nbytes: int          # payload bytes through the terminal
+    dst_start: tuple     # (page, DE) at decode entry
+
+
+def frame_type(ops, in_span):
+    """delta / first / middle / last / single from the op list and the span
+    state at decode entry."""
+    term = ops[-1][0]
+    if in_span:
+        return "last" if term == sim.OP_KFLIP else "middle"
+    if any(op == sim.OP_KSTART for op, _n in ops):
+        return "single" if term == sim.OP_KFLIP else "first"
+    if term == sim.OP_KFLIP:
+        raise sim.PathError("KFLIP with no span")
+    return "delta"
+
+
+def model_t(ftype, ops, enc=nxv2enc):
+    """Current-model T for one frame. delta: stream_cost's t_frame_fixed plus
+    op_cost per op. Span frames: kf_chunk_cost's terms - op_cost per op,
+    t_op_misc for KSTART, t_palette for PAL, t_frame_fixed plus t_op_misc for
+    the terminal."""
+    tc = enc.TMODEL_COEFFS
+    body = 0.0
+    extra = 0.0
+    for op, n in ops:
+        if op in _KIND:
+            body += enc.op_cost(_KIND[op], n)[1]
+        elif op == sim.OP_KSTART:
+            extra += tc["t_op_misc"]
+        elif op == sim.OP_PAL:
+            extra += tc["t_palette"]
+    if ftype == "delta":
+        return tc["t_frame_fixed"] + body + extra
+    return body + extra + (tc["t_frame_fixed"] + tc["t_op_misc"])
+
+
+@contextlib.contextmanager
+def selects(copy_thr=None, run_thr=None, enc=nxv2enc):
+    """copy_dma_min/run_dma_min set for the block (None keeps), restored on exit."""
+    tc = enc.TMODEL_COEFFS
+    saved = tc["copy_dma_min"], tc["run_dma_min"]
+    try:
+        if copy_thr is not None:
+            tc["copy_dma_min"] = copy_thr
+        if run_thr is not None:
+            tc["run_dma_min"] = run_thr
+        yield
+    finally:
+        tc["copy_dma_min"], tc["run_dma_min"] = saved
+
+
+def surface_of(hdr):
+    """(width, height, gapped) of a header, as nxv2_open_body derives it."""
+    w, h = hdr["width"], hdr["height"]
+    return w, h, nxv2enc.is_gapped(w, h)
+
+
+def frames(vid_path, copy_thr=None, run_thr=None):
+    """Every frame of a .vid as a Frame, events and model T at the given
+    selects (None = the model's copy_dma_min/run_dma_min)."""
+    buf = Path(vid_path).read_bytes()
+    hdr = nxv2enc.unpack_header(buf)
+    issues = []
+    walked = list(nxv2dec._iter_frames(buf, hdr, issues=issues))
+    if issues:
+        raise ValueError(f"{vid_path}: {issues[0]}")
+    surface = surface_of(hdr)
+    direct = bool(hdr["flags"] & nxv2enc.FLAG_DIRECT_SERVE)
+    out = []
+    in_span, dst = False, (0, sim.DST_WIN)
+    with selects(copy_thr, run_thr):
+        for i, (_pal, _surf, _term, start, length) in enumerate(walked):
+            ops = sim.parse_payload(buf[start:start + length])
+            ftype = frame_type(ops, in_span)
+            nbytes = sum(sim.op_bytes(op, n) for op, n in ops)
+            if direct:
+                # vid_decode_frame_ds reads the wire, not the RAM ring
+                out.append(Frame(i, ftype, ops, None, None, start, nbytes, dst))
+                continue
+            ev, st = sim.simulate(ops, surface, start, dst=dst, in_span=in_span)
+            out.append(Frame(i, ftype, ops, ev, model_t(ftype, ops), start, nbytes, dst))
+            in_span = st.in_span
+            dst = (st.page, st.de) if in_span else (0, sim.DST_WIN)
+    return out
