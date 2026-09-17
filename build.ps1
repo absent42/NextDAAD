@@ -6,8 +6,11 @@
 #   -Leg <name>   mount sd\<name>\ (SUITE, VID, SFXDI, RAB, ...)
 #   (omitted)     mount the most recently staged sd\*\GAME.DDB's folder,
 #                 falling back to sd\ itself if nothing is staged
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [string]$Leg)
+#
+# -BenchQuiet builds DEBUG plus NXB_QUIET: timed video paths carry no instruments.
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [string]$Leg)
 $ErrorActionPreference = 'Stop'
+if ($BenchQuiet -and ($Release -or $Kit)) { throw "-BenchQuiet is a DEBUG image: not with -Release or -Kit" }
 $root = $PSScriptRoot
 Push-Location $root
 try {
@@ -21,6 +24,7 @@ try {
     # -Kit implies a release build (the kit ships the non-debug interpreter).
     if (-not ($Release -or $Kit)) { $defs += '-DDEBUG=1' }
     if ($Force1MB)                { $defs += '-DFORCE_1MB=1' }
+    if ($BenchQuiet)              { $defs += '-DNXB_QUIET=1' }
     # DMA-accelerated picture copies (SP11 Task 2) are unconditional - the
     # owner's -NoDmaGfx A/B lever closed 2026-07-21 (kit Release build,
     # real hardware: location-art DMA blit during sample playback, clean

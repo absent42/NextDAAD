@@ -723,6 +723,7 @@ vid_copy_body:
 ; ---------------------------------------------------------------------
 vid_dst_norm_gap:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ; PLAY= raster clock (see vid_rl_poll). Decode has no wait loop in
     ; it, so the clock has to be read from inside it or a long decode
     ; outlives a field and the wrap is missed. Divided by VID_RL_DIV:
@@ -734,6 +735,7 @@ vid_dst_norm_gap:
     dec a
     ld (vidRlDiv), a
     call z, vid_rl_poll
+  ENDIF
  ENDIF
 .h1:
     ld a, 0                      ; SMC: content height (1-255)
@@ -750,10 +752,12 @@ vid_dst_norm_gap:
 
 vid_dst_norm_flat:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ld a, (vidRlDiv)             ; PLAY= clock: the same arm and the
     dec a                        ; same VID_RL_DIV cadence as the
     ld (vidRlDiv), a             ; gapped entry - exactly one entry is
     call z, vid_rl_poll          ; live per session, so still per chunk
+  ENDIF
  ENDIF
     ld a, d
     cp $60
@@ -1821,6 +1825,7 @@ vid_aud_stage:
 ; Corrupts AF, DE, HL. Preserves BC, IX.
 vid_pace_poll:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ; Phase 2-POLL causation probe: divided 1-in-16 via vidRlSpinDiv
     ; (was every pass - see the safety-floor arithmetic there).
     ld a, (vidRlSpinDiv)
@@ -1830,6 +1835,7 @@ vid_pace_poll:
                                  ; from every wait loop the frame loop
                                  ; has, so the raster is read far more
                                  ; often than once a field there
+  ENDIF
  ENDIF
     push ix
     pop hl                       ; HL = read pointer (atomic snapshot)
@@ -1854,6 +1860,7 @@ vid_aud_pump:
     ld (vidAudBudget), bc
 .next:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ; Phase 2-POLL causation probe: divided 1-in-16 via vidRlSpinDiv,
     ; shared with vid_pace_poll's cell (was every pass).
     ld a, (vidRlSpinDiv)
@@ -1864,6 +1871,7 @@ vid_aud_pump:
                                  ; READER, so one call runs for tens of
                                  ; ms at low fps - the single biggest
                                  ; poll gap in the player (vid_rl_poll)
+  ENDIF
  ENDIF
     ld bc, (vidAudFeedRem)
     ld a, b
@@ -2355,11 +2363,13 @@ vid_run:
 ; ---------------------------------------------------------------------
 .frameloop:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     call vid_play_frame          ; PLAY= bracket arm (first frame),
                                  ; FRM++ and
                                  ; NOM += one frame's nominal fields -
                                  ; HERE, not at the present, so that
                                  ; held frames count (see its banner)
+  ENDIF
  ENDIF
     ld (vidDecSp), sp            ; abort anchor for this iteration
 .pace:
@@ -2701,6 +2711,7 @@ video_ctc_isr_stereo:
 ; ---------------------------------------------------------------------
 vid_ring_gate:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ld hl, (vidRingDepth)        ; RING= row: minimum frame-top depth
     ld de, (vidRingMin)
     or a
@@ -2709,13 +2720,16 @@ vid_ring_gate:
     ld hl, (vidRingDepth)
     ld (vidRingMin), hl
 .nomin:
+  ENDIF
  ENDIF
     call .served
     ret nc
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ld hl, (vidRingUnder)        ; one event per gated frame
     inc hl
     ld (vidRingUnder), hl
+  ENDIF
  ENDIF
 .fill:
     call vid_prod_step
@@ -3028,6 +3042,7 @@ vid_sd_tok_h:
     jr .bad
 .got:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ; SP17 TOKEN-POLL INSTRUMENT (bench row group 1a): the card's
     ; data-token wait is not timeable at raster resolution (~1824 T
     ; per line against a wait of a few hundred T), but it IS exactly
@@ -3058,6 +3073,7 @@ vid_sd_tok_h:
     pop hl
     pop de
     pop af
+  ENDIF
  ENDIF
     dec a
     cp $FE
@@ -3219,10 +3235,12 @@ vid_ds_byte:
 ; anchor; POS= is not meaningful in direct mode - card decode key).
 vid_ds_blkopen:
  IFDEF DEBUG
+  IFNDEF NXB_QUIET
     ld a, (vidRlDiv)             ; PLAY= clock, same divider as
     dec a                        ; vid_dst_norm_*: one blkopen per 512 B
     ld (vidRlDiv), a             ; of ds wire bounds the UNCAPPED ds
     call z, vid_rl_poll          ; chunk that vid_dst_norm_* cannot
+  ENDIF
  ENDIF
     push bc
     push de
@@ -3705,6 +3723,7 @@ vid_tl_report_ret:
 ; =====================================================================
 ; NXB - player-path silicon bench. DEBUG builds only; Release carries
 ; none of it (byte-identity is a commit-time gate).
+; NXB_QUIET image: FRM=, PLAY=, NOM=, TOK= and the RING= counters are not measured.
 ; Instrument (raster frame clock, raw-count rows, the F/D reporting
 ; convention, the flags+250 mode entry) points every measured loop at
 ; the PRODUCTION routines - vid_ds_blkopen / vid_ds_pad / vid_ds_xfer /
