@@ -97,7 +97,8 @@ S4_TERMS = ("copy_dma_setup", "copy_dma_path_t", "copy_body_ldi_t", "fill_dma_se
             "col_hop_t", "src_parity_seam_t", "src_bank_seam_t", "src_edge_t", "src_slow_hdr_t")
 S4_EXTENDED = ("gap_fast_t", "gap_bail_skip_t", "gap_bail_t", "slow_fetch_t", "slow_cmp_t",
                "srcedge_t", "dst_exact_t", "src_exact_t", "gap_chunk_t", "gap_chunk_hi_t",
-               "cap_arm_t", "src_wrap_t", "fast_hop_skip_t", "fast_hop_run_t", "fast_hop_copy_t")
+               "cap_arm_t", "src_wrap_t", "fast_hop_skip_t", "fast_hop_run_t", "fast_hop_copy_t",
+               "gap_skip_pass_t")
 S4_MODES = (2, 3, 4, 5, 7, 12, 6, 10, 11)       # 6, 10, 11 carry the fast-hop and gapped terms
 S4_NXBE = ("C240", "C250", "Q240", "R240", "R250", "W240")
 S4_SYN = ("C4K0", "C4KP", "C4KB", "K24K", "K43K", "SE00", "SE01", "SE02", "C4KS", "C4KD")
@@ -205,13 +206,13 @@ HAND = {
     "src_wrap_t": (17, "vid_op_edge at H = $E0 over the $DFxx detour: jr c 9 (not 14) -5, call "
                        "vid_src_next 20 less the 7 the seam term carries +13, jr vid_next 14, "
                        "ld a,h 5, cp $DF 9, jr nc 9, less ld a,l 5, cp $FC 9, jr c taken 14"),
-    "dst_exact_t": (161, "vid_chunk_dst_flat .exact over the cap arm, worst at BC >= 257 entering D = $5F "
-                         "with room 241-255: jr nc,.exact taken over not taken +5, call "
+    "dst_exact_t": (164, "vid_chunk_dst_flat .exact over the cap arm, worst at a count of 242-255 entering "
+                         "D = $5F with room 241-254: jr nc,.exact taken over not taken +5, call "
                          "vid_chunk_dst_nocap_flat 20, its clip path push hl 12, ld hl,$6000 13, or a 5, "
                          "sbc hl,de 17, sbc hl,bc 17, jr nc 9, add hl,bc 12, ld b,h 5, ld c,l 5, pop hl 13, "
                          "ret 13 = 121, then ld a,b 5, or a 5, jr nz 9, ld a,c 5, cp 9, ret c 6, ld bc,240 13, "
-                         "ret 13 = 65, less the cap arm ld a,b 5, or a 5, jr nz taken 14, ld bc,240 13, "
-                         "ret 13 = 50"),
+                         "ret 13 = 65, less the arm below 256 ld a,b 5, or a 5, jr nz 9, ld a,c 5, cp 9, "
+                         "ret c taken 14 = 47 (a count >= 256: 234 - 73 = 161)"),
     "src_exact_t": (156, "vid_chunk_all into vid_chunk_src over ret c taken 14: ret c 6, jp 13, push hl 12, "
                          "push de 12, ex de,hl 5, ld hl,$E000 13, or a 5, sbc hl,de 17, sbc hl,bc 17, "
                          "jr nc 9, add hl,bc 12, ld b,h 5, ld c,l 5, pop de 13, pop hl 13, ret 13 = 170"),
@@ -266,6 +267,7 @@ COUNTER_TERMS = {
     "run_fast_b": ("fill_cpu",),
     "copy_fast_b": (FETCH,),
     "skip_passes": ("t_skip_pass",),
+    "gap_skip_passes": ("gap_skip_pass_t",),
     "run_cpu_chunks8": ("fill_body_cpu_t@8", "gaplo:gap_chunk_t"),
     "run_cpu_chunks16": ("fill_body_cpu_t@16", "gaplo:gap_chunk_t"),
     "run_dma_chunks8": ("fill_dma_setup", "gaplo:gap_chunk_t"),

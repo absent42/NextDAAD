@@ -102,7 +102,8 @@ class Events:
     run_fast_b: int = 0
     copy_fast_b: int = 0
     # chunked bodies
-    skip_passes: int = 0
+    skip_passes: int = 0       # flat surface: vid_chunk_dst_nocap_flat
+    gap_skip_passes: int = 0   # gapped surface: vid_dst_norm_gap, vid_chunk_dst_nocap_gap
     run_cpu_chunks8: int = 0
     run_cpu_chunks16: int = 0
     run_dma_chunks8: int = 0
@@ -537,7 +538,10 @@ class _Player:
             chunk = min(remain, self.dst_room())             # .cd 637 (nocap)
             remain -= chunk
             self.de += chunk
-            self.ev.skip_passes += 1
+            if self.gapped:
+                self.ev.gap_skip_passes += 1
+            else:
+                self.ev.skip_passes += 1
 
     def run_body(self, remain, width):
         # vid_run_body 650-680

@@ -1921,13 +1921,13 @@ def t10_path_events():
         ("JR72", row("JR72"), {"op_run16": 3, "run_dma_chunks16": 30, "run_dma_b": 2160,
                                "col_hops": 29, "fend": 1}),
         # JS72: 10 passes per op, 29 hops
-        ("JS72", row("JS72"), {"op_skip16": 3, "skip_passes": 30, "col_hops": 29, "fend": 1}),
+        ("JS72", row("JS72"), {"op_skip16": 3, "gap_skip_passes": 30, "col_hops": 29, "fend": 1}),
         # JK72: 11x200 > 2x72 all bail; 2200 B cross 30 ends, 1800 at an op start: passes 11 + 29
-        ("JK72", row("JK72"), {"gap_skip8": 11, "skip_passes": 40, "col_hops": 30, "fend": 1}),
+        ("JK72", row("JK72"), {"gap_skip8": 11, "gap_skip_passes": 40, "col_hops": 30, "fend": 1}),
         # JN72: 37x60, E + 60 - 72 < 72 always: all fast, 30 ends crossed inline
         ("JN72", row("JN72"), {"fast_skip8": 37, "fast_hop_skip8": 30, "fend": 1}),
         # GS3C: 10x576 at h192: 3 passes per op, hops 2 + 9x3
-        ("GS3C", row("GS3C"), {"op_skip16": 10, "skip_passes": 30, "col_hops": 29, "fend": 1}),
+        ("GS3C", row("GS3C"), {"op_skip16": 10, "gap_skip_passes": 30, "col_hops": 29, "fend": 1}),
         # --- NXBL seam rows and twins ---
         # LF1K: 7x1000 flat: 4 DMA + 40 B LDI tail each, ends $5B58
         ("LF1K", row("LF1K"), {"op_copy16": 7, "copy_dma_chunks16": 28, "copy_ldi_chunks16": 7,
@@ -2077,7 +2077,13 @@ def t10_path_events():
          {"gap_copy8": 1, "copy_ldi_chunks8": 3, "copy_ldi_b": 200, "col_hops": 2, "fend": 1}),
         # h72 SKIP8 72 from E = 0 lands E = 72 (no hop); SKIP16 10 hops in its normalize, 1 pass
         ("defer", run([(S8, 72), (S16, 10)] + END, G72, 0),
-         {"fast_skip8": 1, "op_skip16": 1, "skip_passes": 1, "col_hops": 1, "fend": 1}),
+         {"fast_skip8": 1, "op_skip16": 1, "gap_skip_passes": 1, "col_hops": 1, "fend": 1}),
+        # h144 from E = 100: SKIP16 300 passes 44 to the column end, hop, 144, hop, 112; the same op flat
+        # from $4000 is one pass
+        ("gapskip", run([(S16, 300)] + END, G144, 0, dst=(0, 0x4064)),
+         {"op_skip16": 1, "gap_skip_passes": 3, "col_hops": 2, "fend": 1}),
+        ("flatskip", run([(S16, 300)] + END, FLAT, 0),
+         {"op_skip16": 1, "skip_passes": 1, "fend": 1}),
         # h72 RUN8 200 under thr 241: over 128 >= 72 bails, CPU 72 + 72 + 56, 2 hops
         ("gaprun", run([(R8, 200)] + END, G72, 0, run_thr=241),
          {"gap_run8": 1, "run_cpu_chunks8": 3, "run_cpu_b": 200, "col_hops": 2, "fend": 1}),
@@ -2319,6 +2325,7 @@ _GAP_MAP = {       # counter -> ((term, None | "gap" | "lo" (gapped, height <= 2
     "run_fast_b": (("fill_cpu", None),),
     "copy_fast_b": (("fetch", None),),
     "skip_passes": (("t_skip_pass", None),),
+    "gap_skip_passes": (("gap_skip_pass_t", None),),
     "run_cpu_chunks8": _gap_chunk("fill_body_cpu_t"),
     "run_cpu_chunks16": _gap_chunk("fill_body_cpu_t"),
     "run_dma_chunks8": _gap_chunk("fill_dma_setup"),
@@ -2428,13 +2435,13 @@ def _gap_hidden():
          "fill_dma_per_b": 5.085, "copy_dma_setup": 881.3, "copy_dma_path_t": -18.4,
          "copy_body_ldi_t": 421.7, "fill_dma_setup": 783.1, "fill_dma_path_t": -71.2,
          "fill_body_cpu_t": 401.9, "copy16_entry_t": 70.3, "run16_entry_t": 68.6, "t_skip_pass": 121.4,
-         "edge_skip_t": 181.2, "edge_run_t": 203.6, "edge_copy_t": 212.8, "dst_seam_t": 151.7,
+         "gap_skip_pass_t": 97.4, "edge_skip_t": 181.2, "edge_run_t": 203.6, "edge_copy_t": 212.8, "dst_seam_t": 151.7,
          "col_hop_t": 41.3, "src_parity_seam_t": 231.6, "src_bank_seam_t": 331.2, "src_slow_hdr_t": 602.4,
          "fast_hop_skip_t": 46.2, "fast_hop_run_t": 251.4, "fast_hop_copy_t": 241.7, "copy_dma_rem_t": 10.0,
          "t_palette": 16012.4, "pal_straddle_t": 903.6, "src_seam_strm_t": 61.2,
          # hand-countable terms 1 T over their instruction counts
          "gap_fast_t": 29.0, "gap_bail_skip_t": 51.0, "gap_bail_t": 74.0, "slow_fetch_t": 100.0,
-         "slow_cmp_t": 19.0, "srcedge_t": 39.0, "src_edge_t": 70.0, "src_wrap_t": 18.0, "dst_exact_t": 162.0,
+         "slow_cmp_t": 19.0, "srcedge_t": 39.0, "src_edge_t": 70.0, "src_wrap_t": 18.0, "dst_exact_t": 165.0,
          "src_exact_t": 157.0, "gap_chunk_t": 48.0, "gap_chunk_hi_t": 48.0, "cap_arm_t": 19.0}
     res = {"frame_delta_t": 1101.2, "frame_middle_t": 1152.8, "frame_first_t": 1503.1,
            "frame_single_t": 1702.4, "frame_last_t": 1349.7}
