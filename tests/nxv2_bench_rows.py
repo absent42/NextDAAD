@@ -1475,3 +1475,24 @@ def priced(enc, sitting="current"):
     rows = ROWS[sitting]
     return {tag: (t_per_op(*rows[tag]), price(enc))
             for tag, price in PRICERS.items() if tag in rows}
+
+
+# The standalone bench's per-rep harness (nxb_row loop, nxb_ops_body, FEND,
+# nxb_term, nxb_tick): sitting-5 rule S4's joint fit, never exported.
+NXB_REP_T = 717.8
+
+
+def priced_sitting5(enc, streamed=False):
+    """{tag: (measured T/op less NXB_REP_T / O, event-priced T/op)} over every
+    SITTING5 quiet-image standalone row row_events prices (not CALL/CALR), at
+    the rows' own selects: one rep's Events priced strictly through
+    enc.event_coeffs on the row's surface, over O."""
+    out = {}
+    for tag, row in SITTING5["Q"]["standalone"].items():
+        if tag in PRINTED["CALL"]:
+            continue
+        o = _row(tag)[3]
+        width, height, _gapped = row_surface(tag)
+        model = row_events(tag).price(enc.event_coeffs(width, height, streamed), strict=True) / o
+        out[tag] = (t_per_op(*row) - NXB_REP_T / o, model)
+    return out

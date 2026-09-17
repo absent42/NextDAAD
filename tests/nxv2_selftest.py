@@ -49,25 +49,6 @@ def expect(cond, msg="assertion failed"):
         raise AssertionError(msg)
 
 
-@contextlib.contextmanager
-def _at_chunk_cap(cap):
-    """Evaluate the T model at a historic NXV2_DMA_CHUNK.
-
-    A silicon row was taken under one burst-cap value; if the cap has
-    since moved, the same op costs differently on the current player,
-    so the row must be replayed under its own cap, not today's. Both
-    DMA caps move together - fill and copy share vid_chunk_dst_flat/_gap."""
-    saved = (enc.TMODEL_COEFFS["copy_dma_chunk"],
-             enc.TMODEL_COEFFS["fill_dma_min"])
-    enc.TMODEL_COEFFS["copy_dma_chunk"] = cap
-    enc.TMODEL_COEFFS["fill_dma_min"] = cap
-    try:
-        yield
-    finally:
-        (enc.TMODEL_COEFFS["copy_dma_chunk"],
-         enc.TMODEL_COEFFS["fill_dma_min"]) = saved
-
-
 class SkipCase(Exception):
     """Raised by a case to mark itself SKIPPED (not PASSED) in the
     summary line - e.g. a real-footage case whose demo source/ffmpeg
@@ -337,20 +318,24 @@ def t1_stream_supply_gate():
     expect(1.70 < s8["utilization"] < 1.80,
            f"008 anchor utilization {s8['utilization']:.2f} (silicon: collapsed)")
     expect(0.45 < s8["suggested_budget"] < 0.55, "008 suggestion ~0.51")
-    # Under the current op-walk model, fixture 008 must be REFUSED
-    # (silicon: most frames underran) and 009 ADMITTED, though the
-    # gate deliberately prices 009 only marginally inside the line.
-    s008 = enc.stream_supply_check(349307.5, 28460.7, 1536, 25.0, 320, 256)
+    # Fixture 008 must be REFUSED (silicon: most frames underran) and 009
+    # ADMITTED, the gate pricing 009 only marginally inside the line. These
+    # anchors are stated as the decode wall time the pre-sitting-5 gate read
+    # off their model T (the model T itself moved with the event terms):
+    # 008 349307.5 T x R 1.0971 / 0.85 / 28000 = 16.1025 ms; 009 sb0.54
+    # 302604.4 x 1.4298 / 0.85 / 28000 = 18.1795 ms; 009 auto 282340.9 x
+    # 1.438 / 0.85 / 28000 = 17.0591 ms.
+    s008 = enc.stream_supply_check(_mean_t_for(16.1025, 320, 256), 28460.7, 1536, 25.0, 320, 256)
     expect(s008["utilization"] > 1.0,
            f"008 (silicon: 71-76% of frames underran) scores "
            f"{s008['utilization']:.3f} - the gate must refuse it")
-    s009 = enc.stream_supply_check(302604.4, 23092.8, 1536, 25.0, 320, 192)
+    s009 = enc.stream_supply_check(_mean_t_for(18.1795, 320, 192), 23092.8, 1536, 25.0, 320, 192)
     expect(0.97 < s009["utilization"] < 1.05,
            f"009 sb0.54 (silicon clean) scores {s009['utilization']:.3f} - "
            f"the W4 gate may price it conservatively but only just")
     # The admit side uses 009's actual shipping auto-encode operating
     # point (mean padded payload + audio pad of the same file).
-    s009a = enc.stream_supply_check(282340.9, 21435.0, 1536, 25.0, 320, 192)
+    s009a = enc.stream_supply_check(_mean_t_for(17.0591, 320, 192), 21435.0, 1536, 25.0, 320, 192)
     expect(0.90 < s009a["utilization"] < 1.0,
            f"009 auto (silicon: zero underruns, min depth 39-42) scores "
            f"{s009a['utilization']:.3f} - the gate must admit it")
@@ -374,7 +359,7 @@ def t1_stream_supply_gate():
     expect(abs(scaled / s8["period_ms"] - enc.STREAM_TARGET_UTIL) < 0.01,
            "suggested budget lands the target utilization")
     # monotonicity: more demand can only raise utilization
-    expect(enc.stream_supply_check(302604.4, 30000.0, 1536, 25.0, 320, 192)["utilization"]
+    expect(enc.stream_supply_check(_mean_t_for(18.1795, 320, 192), 30000.0, 1536, 25.0, 320, 192)["utilization"]
            > s009["utilization"], "utilization monotonic in demand")
 
 
@@ -1104,204 +1089,186 @@ def _op_kinds(payload):
     return out
 
 
-@case(10, "silicon TMODEL adopted - two-key dispatch, K* self-retunes from coeffs")
+@case(10, "silicon TMODEL adopted - sitting-5 event terms, factors, anchors, K* self-retunes from coeffs")
 def t10_silicon_coeffs():
+    import math
     tc = enc.TMODEL_COEFFS
-    # Re-fit 2026-09-15 (NXBO/NXBC/NXBK rows, VGA-0, core 3.02.04) after
-    # the chunk-loop change. The TWO-KEY DISPATCH SPLIT stands; both
-    # fast-handler envelopes fell, RUN 487.2 -> 367.4 and COPY
-    # 336.3 -> 303.7, ratio 1.449 -> 1.210.
-    expect("t_op_parse" not in tc, "the single-key t_op_parse must be RETIRED")
-    expect(tc["t_op_run"] == 367.4, f"t_op_run should be the NXBO 367.4, got {tc['t_op_run']}")
-    expect(tc["t_op_copy"] == 303.7, f"t_op_copy should be the NXBC 303.7, got {tc['t_op_copy']}")
-    # >= not ==: t_op_misc is unmeasured and HELD at the dearest envelope
-    # ever measured, which no longer equals t_op_run.
-    expect(tc["t_op_misc"] >= tc["t_op_run"],
-           "unmeasured simple dispatches must be at or above the dearest measured envelope")
-    expect(tc["t_skip"] == 141.8, f"t_skip should be the NXBO SK00 141.8, got {tc['t_skip']}")
-    expect(tc["t_skip16"] == 210.9, f"t_skip16 should be the NXBO S160 210.9, got {tc['t_skip16']}")
-    # ... and the skip pricer actually uses the second key
-    expect(enc.op_cost("skip", 255)[1] < enc.op_cost("skip", 256)[1],
-           "a 16-bit skip must price at the dearer S160 envelope")
-    expect(tc["fetch_long"] == 19.76, f"fetch_long should be the C080 19.76, got {tc['fetch_long']}")
-    expect(tc["fetch_short"] == 19.80, f"fetch_short should be the NXBC fit 19.80, got {tc['fetch_short']}")
-    expect(tc["fill_cpu"] == 15.86, f"fill_cpu should be the NXBO fit 15.86, got {tc['fill_cpu']}")
-    # The fill DMA chunk cost and the 8-bit op's cheaper entry are now
-    # carried separately (F256 gives the chunk, F071 the entry); they
-    # sum to the 781.1 every break-even figure below reads.
-    expect(tc["fill_dma_setup"] == 852.8, f"fill_dma_setup should be the F256 852.8, got {tc['fill_dma_setup']}")
-    expect(tc["fill_dma_path_t"] == -71.7,
-           f"fill DMA path term should be the F071 -71.7 T/op, got {tc['fill_dma_path_t']}")
-    expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
-    # The 240 B cap makes every 256-aligned op a chunk plus a tail, and
-    # silicon charges a chunk-loop iteration on that tail. The 8-bit and
-    # 16-bit terms differ for OPPOSITE reasons: on copy because
-    # copy_dma_path_t already cancels the held setup's over-charge, so
-    # the 8-bit branch has no slack to net against; on fill because the
-    # 16-bit branch pays the t_skip16 - t_skip entry the 8-bit one does
-    # not, and R161 measures only their sum.
-    expect(tc["copy_dma_tail_t"] == 210.7, f"copy trailing-chunk term should be the C256/K256 210.7, got {tc['copy_dma_tail_t']}")
-    expect(tc["copy_dma_tail8_t"] == 489.9, f"8-bit copy trailing-chunk term should be the 489.9 envelope, got {tc['copy_dma_tail8_t']}")
-    expect(tc["fill_dma_tail_t"] == 399.0, f"fill trailing-chunk term should be the F256 399.0, got {tc['fill_dma_tail_t']}")
-    expect(tc["fill_dma_tail8_t"] == 468.1, f"8-bit fill trailing-chunk term should be 468.1, got {tc['fill_dma_tail8_t']}")
-    # Both 8-bit terms are ENVELOPES over the same unmeasured quantity:
-    # C161/R161 measure the 16-bit entry and one chunk-loop iteration
-    # only as a SUM, so each 8-bit tail takes the dearer end (entry
-    # delta zero). These two relations keep the halves from drifting
-    # apart; they are documentary, not independent - no scored row
-    # constrains the split at all.
-    expect(abs((tc["fill_dma_tail_t"] + tc["t_skip16"] - tc["t_skip"])
-               - tc["fill_dma_tail8_t"]) < 1e-9,
-           "the 16-bit fill entry plus its tail must equal the 8-bit tail - R161 measures that sum")
-    # The copy pair carries one extra term: copy_dma_tail_t nets off one
-    # chunk of the held setup's over-charge against the 2026-09-15
-    # one-chunk cost, and the 8-bit branch has no such slack.
-    copy_chunk_one = 881.65
-    expect(abs((tc["copy_dma_tail8_t"] - tc["copy_dma_tail_t"]
-                - (tc["t_skip16"] - tc["t_skip"]))
-               - (tc["copy_dma_setup"] - copy_chunk_one)) < 0.2,
-           "the 8-bit copy tail must exceed the 16-bit one by the 16-bit entry plus "
-           "the held setup's per-chunk over-charge - re-fit all three together")
-    # copy_dma_setup is HELD at its pre-change solve although the
-    # 2026-09-15 ONE-chunk rows measure 881.7 T: the per-chunk cost
-    # RISES with op length. The cap-256 rows, adjusted by the measured
-    # 283.8 T/chunk loop saving, imply 819 (K256, 256 B), 918 (CD3,
-    # 1024 B) and 1078 (KF, 43008 B); at 1091.8 the model prices the
-    # keyframe class +0.8% over its row, at 881.7 it would price it
-    # 8.0% UNDER. copy_dma_tail_t is fitted against this held value.
-    expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
-    expect(tc["copy_dma_per_b"] == 5.10, f"copy_dma_per_b should be the NXBC (C103-C081)/22 slope 5.10, got {tc['copy_dma_per_b']}")
-    # The audio-safety burst cap. 256 -> 240 on 2026-08-03: at 256 the
-    # player's DI bracket ran 1801 T, 9 T over the VGA-0 1792 T audio
-    # period - a bracket starting within 9 T of an edge loses one tick
-    # (about 0.5% of brackets). The PLAY= rows recorded that date
-    # (+2.1..+5.2% over nominal) came from the DEBUG edge-dropping
-    # instrument and do not measure this mechanism. COPY and FILL share
-    # ONE cap because the player clips both through vid_chunk_dst_flat/
-    # _gap, and it must be <= 255 because their compares and both kernel
-    # selects are single-byte.
-    expect(tc["copy_dma_chunk"] == 240, "copy DMA chunk must be the 240 B audio-safety cap (NXV2_DMA_CHUNK)")
-    expect(tc["fill_dma_min"] == tc["copy_dma_chunk"],
-           "fill and copy DMA chunk caps must be the SAME NXV2_DMA_CHUNK (vid_chunk_dst_flat/_gap clips both)")
-    expect(tc["copy_dma_chunk"] <= 255,
-           "the DMA chunk cap must fit one byte (vid_chunk_dst_flat/_gap / kernel selects are single-byte)")
-    # The two kernel-select thresholds mirror src/nextdaad.inc's
-    # NXV2_RUN_DMA_MIN / NXV2_COPY_DMA_MIN. If these pins fail because
-    # the player moved, the model must move with it.
-    expect(tc["copy_dma_min"] == 53, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (53)")
-    expect(tc["copy_dma_path_t"] == -227.9,
-           "copy DMA path term must be the C081 -227.9 T/op (setup held)")
-    expect(tc["run_dma_min"] == 71, "fill DMA threshold must be the PLAYER's NXV2_RUN_DMA_MIN (71)")
-    expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
-    # Shape given explicitly (320x256, flat): the no-shape default is
-    # the pessimistic gapped factor, so a bare call here would not
-    # read the flat cap.
-    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 800000.0) < 1.0,
-           f"silicon usable budget @25 (flat 320x256) should be 800000.0 T, got {enc.usable_budget_t(25.0, 320, 256)}")
-    # Composition factor = worst dense measured R x 1.12 (standing
-    # rule) - if R is re-fit, the factor must move with it or the
-    # cap silently loses its margin.
+    # Every ruled coefficient, sitting 5 (2026-09-17), rounded up to 0.1 T by
+    # tests/fit_gap_bench.py; the selects mirror src/nextdaad.inc.
+    ruled = {
+        "fetch_short": 19.1, "fetch_long": 19.1, "t_skip": 139.1, "t_skip16": 208.2,
+        "t_op_run": 350.2, "t_op_copy": 291.2, "fill_cpu": 15.1, "copy_dma_per_b": 5.1,
+        "fill_dma_per_b": 5.1, "copy_ldi_pass_t": 13.1, "fill_cpu_pass_t": 15.0,
+        "frame_delta_t": 1996.8, "frame_middle_t": 2158.9, "frame_first_t": 2353.1,
+        "frame_single_t": 2331.7, "frame_last_t": 2137.5, "t_palette": 11252.2,
+        "pal_straddle_t": 15717.8, "glue_t": 979.3, "glue_strm_t": 1034.3,
+        "copy_dma_setup": 818.3, "copy_dma_path_t": -19.7, "copy_body_ldi_t": 498.1,
+        "fill_dma_setup": 792.3, "fill_dma_path_t": -71.3, "fill_body_cpu_t": 505.8,
+        "copy16_entry_t": -86.2, "run16_entry_t": -114.2, "t_skip_pass": 345.9,
+        "edge_skip_t": 229.6, "edge_run_t": 221.7, "edge_copy_t": 206.3, "dst_seam_t": 145.7,
+        "col_hop_t": 30.4, "src_parity_seam_t": 220.4, "src_bank_seam_t": 346.2,
+        "src_edge_t": 55.7, "src_slow_hdr_t": 212.4, "gap_fast_t": 28.0, "gap_bail_skip_t": 50.0,
+        "gap_bail_t": 73.0, "slow_fetch_t": 99.0, "slow_cmp_t": 18.0, "srcedge_t": 38.0,
+        "dst_exact_t": 164.0, "src_exact_t": 156.0, "gap_chunk_t": 22.2, "gap_chunk_hi_t": 47.0,
+        "cap_arm_t": 18.0, "src_wrap_t": 17.0, "fast_hop_skip_t": 61.3, "fast_hop_run_t": 313.5,
+        "fast_hop_copy_t": 232.1, "gap_skip_pass_t": 312.6, "src_seam_strm_t": 67.7,
+        "audio_factor": 0.86, "copy_dma_min": 53, "run_dma_min": 71, "copy_dma_chunk": 240,
+        "fill_dma_min": 240, "clock_khz": 28000.0, "header_rate": 0.0,
+    }
+    wrong = {k: (tc.get(k), v) for k, v in ruled.items() if tc.get(k) != v}
+    expect(not wrong, f"coefficients off the sitting-5 rulings (got, ruled): {wrong}")
+    expect(set(tc) == set(ruled), f"terms outside the rulings: {sorted(set(tc) ^ set(ruled))}")
+    # Removed: the frame-fixed floor and misc dispatch (the five frame types
+    # replace them), the tail terms (every body LDI/CPU chunk pays its pass),
+    # copy_dma_rem_t (ruled 0.0, not charged) and the retired single-key parse.
+    for gone in ("t_frame_fixed", "t_op_misc", "copy_dma_tail_t", "copy_dma_tail8_t",
+                 "fill_dma_tail_t", "fill_dma_tail8_t", "copy_dma_rem_t", "t_op_parse"):
+        expect(gone not in tc, f"{gone} must be removed")
+    # A 16-bit skip prices at the dearer S160 envelope plus its body pass:
+    # 139.1 (SKIP8) against 208.2 + 345.9 = 554.1 (SKIP16).
+    expect(abs(enc.op_cost("skip", 255)[1] - 139.1) < 1e-9
+           and abs(enc.op_cost("skip", 256)[1] - 554.1) < 1e-9,
+           f"skip envelopes: {enc.op_cost('skip', 255)[1]:.1f} / {enc.op_cost('skip', 256)[1]:.1f}")
+    # The DMA cap: 240 on 2026-08-03 (the 256 B bracket ran 9 T over the
+    # VGA-0 audio period); COPY and FILL share it (vid_chunk_dst_flat/_gap),
+    # and it fits one byte.
+    expect(tc["copy_dma_chunk"] == tc["fill_dma_min"] == 240 <= 255,
+           "the copy and fill DMA chunk caps are the one 240 B NXV2_DMA_CHUNK")
+    expect(enc.nxv2path.DMA_CHUNK == 240, "the path simulator walks the same cap")
+    # Composition factors (S8): ceil(100 x 1.12 x R_max) / 100, R_max 0.9780
+    # flat (REAL 008 XB65) -> 1.0954 -> 1.10, 0.9701 gapped (REAL 009 XC65)
+    # -> 1.0865 -> 1.09.
     cf = enc.TMODEL_COMPOSITION_FACTOR
-    expect(cf["flat"] == 1.19, f"flat composition factor should be 1.19, got {cf['flat']}")
-    expect(cf["gapped"] == 1.46, f"gapped composition factor should be 1.46, got {cf['gapped']}")
-    # the de-rating must still BE a de-rating, and must still exceed
-    # every anchored R in its class (margin, not a coincidence). The
-    # gapped height ORDER is deliberately not asserted - Card #8
-    # inverted it, which is why silicon_r() keys on density, not height.
-    expect(cf["gapped"] > max(r for _, r in enc.TMODEL_SILICON_R["gapped"]),
-           "gapped factor must carry margin over every anchored gapped R")
-    expect(cf["flat"] > max(r for anchors in
-                            (enc.TMODEL_SILICON_R["flat_256"],
-                             enc.TMODEL_SILICON_R["flat_320"])
-                            for _, r in anchors),
-           "flat factor must carry margin over every anchored flat R")
+    expect(cf == {"flat": 1.10, "gapped": 1.09}, f"composition factors {cf}")
+    for cls, rmax in (("flat", 0.9780), ("gapped", 0.9701)):
+        expect(cf[cls] == math.ceil(round(100 * 1.12 * rmax, 6)) / 100, f"{cls} factor arithmetic")
+    expect(cf["gapped"] > max(r for _, r in enc.TMODEL_SILICON_R["gapped"])
+           and cf["flat"] > max(r for k in ("flat_256", "flat_320")
+                                for _, r in enc.TMODEL_SILICON_R[k]),
+           "each factor carries margin over every anchored R in its class")
+    expect(enc.TMODEL_SILICON_R == {
+        "flat_256": ((0.42, 0.976), (0.485, 0.979), (0.512, 0.976)),
+        "flat_320": ((0.309, 0.981), (0.807, 0.976)),
+        "gapped": ((0.4, 0.974), (0.696, 0.963), (0.867, 0.965))},
+        f"silicon R anchors {enc.TMODEL_SILICON_R}")
+    # S11: floor(min(1316.6, 1314.9, 1314.9)) B/ms, unarmed; S10: 24.938 T/B
+    # at REAL 008 rounds up to 25.0; S12: RING D= 80 + 1 - 1 - 5 = 75 banks.
+    expect(enc.SD_WIRE_BYTES_PER_MS == 1314.0 and enc.AUDIO_COPY_T_PER_B == 25.0
+           and enc.STREAM_RESIDENT_POOL_B == 75 * 16384 == 1228800,
+           "wire rate, audio copy and resident pool")
+    expect(enc.FILLMIN == 30, f"FILLMIN is S12's 30, got {enc.FILLMIN}")
     expect(enc.is_gapped(320, 192) and enc.is_gapped(320, 144),
            "mode-1 sub-256 heights are gapped")
     expect(not enc.is_gapped(320, 256) and not enc.is_gapped(256, 144)
            and not enc.is_gapped(256, 192),
            "mode-1 full height and ALL mode-0 heights are flat (row-linear)")
-    # The budget must actually de-rate for a gapped shape, and not for a
-    # flat one - the whole point of threading the shape through.
-    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 800000.0) < 1.0,
-           "flat 320x256 keeps the flat 800000.0 T budget")
-    expect(abs(enc.usable_budget_t(25.0, 256, 144) - 800000.0) < 1.0,
-           "flat 256x144 keeps the flat 800000.0 T budget")
-    gb = enc.usable_budget_t(25.0, 320, 192)
-    # Independent literal, not re-derived from the 1.46 constant above -
-    # a coefficient/factor typo that moved both numbers together would
-    # otherwise still pass this assertion. 1120000*0.85/1.46 = 652054.8
-    expect(abs(gb - 652054.8) < 1.0,
-           f"gapped 320x192 budget should be 652054.8 T, got {gb:.0f}")
-    # Fail-safe default (nxv2enc.composition_factor): an unset/unknown
-    # shape must resolve to the pessimistic gapped factor, not the
-    # optimistic flat one.
-    expect(abs(enc.usable_budget_t(25.0) - 652054.8) < 1.0,
-           f"unknown-shape budget should fail safe to the gapped 652054.8 T, got {enc.usable_budget_t(25.0):.0f}")
-    # ... and the keyframe chunk planner must shrink with it (a kf chunk
-    # is one long COPY straight down the paint order - it crosses every
-    # column boundary the gapped surface has).
+    # usable_budget_t = (period x af - glue) / factor, P = 1120000 T at 25 fps:
+    # flat streamed (963200 - 1034.3) / 1.10 = 874696.1, flat resident
+    # (963200 - 979.3) / 1.10 = 874746.1, gapped streamed 962165.7 / 1.09 =
+    # 882720.8. An unknown shape takes the larger factor (flat, 1.10).
+    for args, want in (((25.0, 320, 256), 874696.1), ((25.0, 320, 256, False), 874746.1),
+                       ((25.0, 256, 144), 874696.1), ((25.0, 320, 192), 882720.8),
+                       ((25.0, 320, 144, False), 882771.3), ((25.0,), 874696.1)):
+        got = enc.usable_budget_t(*args)
+        expect(abs(got - want) < 0.1, f"usable_budget_t{args} = {got:.1f}, want {want}")
+    # the keyframe chunk planner prices a gapped chunk's column events: its
+    # first chunk is smaller than the flat one at the same budget and wire
+    # (26283 B against 27426 B at 25 fps), and it never needs fewer chunks
     expect(enc.kf_chunk_budget_bytes(25.0, True, 320, 192)
            < enc.kf_chunk_budget_bytes(25.0, True, 320, 256),
            "gapped keyframe chunks must be smaller than flat ones")
-    # ... and that de-rating must propagate into the PLAN, not just the
-    # per-chunk budget. Asserted on the plan's shape rather than on its
-    # chunk COUNT: at the Card #5 factor (1.15) a 61,440 B span happens
-    # to need 2 chunks either way, so a count comparison would test
-    # where an integer boundary falls, not whether the de-rating
-    # applies. Chunk count must never DROP, and the first (budget-sized)
-    # chunk must be strictly smaller - that is the contract.
     gap_plan = enc.plan_kf_chunks(320 * 192, 25.0, 320, 192)
     flat_plan = enc.plan_kf_chunks(320 * 192, 25.0, 320, 256)
-    expect(len(gap_plan) >= len(flat_plan),
-           "a gapped keyframe span never needs FEWER chunks than a flat one")
-    expect(gap_plan[0][1] < flat_plan[0][1],
-           f"the gapped plan's first chunk must be smaller: "
-           f"{gap_plan[0][1]} !< {flat_plan[0][1]}")
-    # K* derives from the coefficients (self-retunes). A bridge saves a
-    # SKIP8 + a COPY dispatch, and the bytes it costs are priced at the
-    # SUPPLY EXCHANGE RATE - the opportunity cost of a wire byte - NOT
-    # at any kernel's execution rate: (141.8+303.7)/19.9 = 22.4 B
-    # (24.0 before the 2026-09-15 dispatch re-fit).
+    expect(len(gap_plan) >= len(flat_plan) and gap_plan[0][1] < flat_plan[0][1],
+           f"gapped plan {gap_plan} against flat {flat_plan}")
+    # BENCH_KF_LITERALS is the 25 fps middle chunk: kf_chunk_budget_bytes(25.0,
+    # False, 256, 192) = 28104 B, wire-bound, one COPY16 under 49152
+    expect(enc.BENCH_KF_LITERALS == enc.kf_chunk_budget_bytes(25.0, False, 256, 192) == 28104,
+           f"BENCH_KF_LITERALS {enc.BENCH_KF_LITERALS}")
+    # S16 supply exchange rate: 28000 / (1314 x R at density 1.0): flat
+    # 28000 / (1314 x 0.976) = 21.83 T/B, gapped 28000 / (1314 x 0.965) = 22.08.
+    for (w, h), want in (((320, 256), 21.83), ((256, 192), 21.83), ((320, 192), 22.08),
+                         ((320, 144), 22.08)):
+        got = enc.supply_exchange_t_per_byte(w, h)
+        expect(abs(got - want) < 0.005, f"supply exchange {w}x{h} {got:.3f}, ruled {want}")
+    expect(not hasattr(enc, "SUPPLY_EXCHANGE_T_PER_BYTE"), "the flat literal is retired")
+    # K* = (t_skip + t_op_copy) / lam: (139.1 + 291.2) / 21.833 = 19.71 B flat,
+    # / 22.082 = 19.49 B gapped - the dispatch saving over the exchange rate.
     ks = enc.merge_kstar()
-    expect(21.9 < ks < 22.9, f"silicon K* should be ~22.4 B, got {ks:.1f}")
-    expect(abs(ks - (141.8 + 303.7) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 1e-9,
-           "K* is the dispatch saving over the supply exchange rate")
+    expect(abs(ks - 430.3 / enc.supply_exchange_t_per_byte(320, 256)) < 1e-9
+           and abs(ks - 19.71) < 0.01, f"silicon K* should be 19.71 B, got {ks:.3f}")
+    expect(abs(enc.merge_kstar(enc.supply_exchange_t_per_byte(320, 192)) - 19.49) < 0.01,
+           "gapped K* 19.49 B")
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["t_op_copy"] = 150.0
         ks2 = enc.merge_kstar()
         expect(ks2 < ks, f"K* must fall when dispatch falls: {ks2:.1f} !< {ks:.1f}")
-        expect(abs(ks2 - (141.8 + 150) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 0.1,
+        expect(abs(ks2 - (139.1 + 150) / enc.supply_exchange_t_per_byte(320, 256)) < 1e-9,
                "K* recomputes from live coeffs")
-        # DECOUPLED FROM THE LDI KERNEL (the point of the re-derivation):
-        # moving the copy body rate must NOT move a merge threshold.
-        enc.TMODEL_COEFFS["fetch_long"] = 30.0
-        expect(abs(enc.merge_kstar() - ks2) < 1e-9,
-               "K* must not move when fetch_long moves - the coupling that "
-               "made 23.66 right for the wrong reason is gone")
+        # decoupled from the LDI kernel: moving the copy body rate must NOT
+        # move a merge threshold
+        enc.TMODEL_COEFFS["fetch_long"] = enc.TMODEL_COEFFS["fetch_short"] = 30.0
+        expect(abs(enc.merge_kstar() - ks2) < 1e-9, "K* must not move when the fetch rate moves")
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
-    # shape-awareness comes free with the lam argument: a gapped shape
-    # exchanges at 15.3-16.5 T/B, which RAISES K* there
-    expect(enc.merge_kstar(16.0) > ks,
-           "a gapped-shape lam must raise K*, not lower it")
+    expect(enc.merge_kstar(16.0) > ks, "a smaller lam must raise K*, not lower it")
+    # run-absorb crossover t_op_run / (fetch_long - fill_cpu) = 350.2 / (19.1 -
+    # 15.1) = 87.55 B
+    expect(abs(enc.merge_run_absorb_max() - 87.55) < 1e-6,
+           f"absorb_max 87.55 B, got {enc.merge_run_absorb_max():.3f}")
 
 
-@case(10, "silicon bench rows - the model prices every measured row inside its band")
+@case(10, "silicon_r - any number of density anchors: sorted, linear between neighbours, clamped, None = largest R")
+def t10_silicon_r():
+    saved = dict(enc.TMODEL_SILICON_R)
+    try:
+        # one anchor: every density reads it
+        enc.TMODEL_SILICON_R["flat_320"] = ((0.5, 0.97),)
+        expect(all(enc.silicon_r(320, 256, d) == 0.97 for d in (None, 0.0, 0.5, 2.0)),
+               "one anchor answers every density")
+        # two anchors, given out of order: sorted, linear, clamped
+        enc.TMODEL_SILICON_R["flat_256"] = ((0.8, 0.96), (0.4, 0.98))
+        expect(enc.silicon_r(256, 192, 0.1) == 0.98 and enc.silicon_r(256, 192, 0.9) == 0.96,
+               "two anchors clamp outside their range")
+        # 0.98 + (0.96 - 0.98) x (0.6 - 0.4) / (0.8 - 0.4) = 0.97
+        expect(abs(enc.silicon_r(256, 192, 0.6) - 0.97) < 1e-12, "two anchors interpolate")
+        expect(enc.silicon_r(256, 144) == 0.98, "density None returns the largest R")
+        # three anchors, not monotone: each segment interpolates on its own
+        enc.TMODEL_SILICON_R["gapped"] = ((0.867, 0.965), (0.4, 0.974), (0.696, 0.963))
+        # 0.974 + (0.963 - 0.974) x (0.548 - 0.4) / 0.296 = 0.9685
+        expect(abs(enc.silicon_r(320, 192, 0.548) - 0.9685) < 1e-12, "first segment")
+        # 0.963 + (0.965 - 0.963) x (0.7815 - 0.696) / 0.171 = 0.964
+        expect(abs(enc.silicon_r(320, 144, 0.7815) - 0.964) < 1e-12, "second segment")
+        expect(enc.silicon_r(320, 192, 0.696) == 0.963 and enc.silicon_r(320, 192, 0.867) == 0.965,
+               "anchors read exactly")
+        expect(enc.silicon_r(320, 100, 0.2) == 0.974 and enc.silicon_r(320, 100, 1.0) == 0.965,
+               "three anchors clamp at both ends")
+        expect(enc.silicon_r(320, 192) == 0.974, "density None returns the largest of three")
+    finally:
+        enc.TMODEL_SILICON_R.clear()
+        enc.TMODEL_SILICON_R.update(saved)
+    # the ruled anchors: flat_256 0.976 / 0.979 / 0.976, the dense end at density 1.0
+    expect(enc.silicon_r(256, 192) == 0.979 and enc.silicon_r(320, 256) == 0.981
+           and enc.silicon_r(320, 192) == 0.974, "largest ruled R per class")
+    expect(enc.silicon_r(256, 192, 1.0) == 0.976 and enc.silicon_r(320, 256, 1.0) == 0.976
+           and enc.silicon_r(320, 144, 1.0) == 0.965, "dense-end ruled R per class")
+
+
+@case(10, "silicon bench rows - the event model prices every sitting-5 standalone row inside its band")
 def t10_bench_rows():
-    # Band, not equality: a row reads to +-2 raster lines, at most 1.27 T/op
-    # here. Over-pricing is the safe direction: up to max(3 T, 5%). Under-
-    # pricing makes frames the player cannot decode in time: an ABSOLUTE
-    # 5.5 T, since the least-squares fits leave rows up to 4.40 T under
-    # (F070) - not a percentage, which would grow with the row.
-    # The rows ran on an image assembled at COPY 81 / RUN 71, so they price
-    # at those selects, not the shipping ones.
-    import nxv2_frame_model as fm
+    # Band, not equality. Over-pricing is the safe direction: up to max(3 T,
+    # 5%). Under-pricing makes frames the player cannot decode in time: an
+    # ABSOLUTE 5.5 T, the rules' band. Each row is priced from its own events
+    # (nxv2_path_sim at the row's dest, surface and selects - SITTING_SELECTS
+    # 81/71 for thr 0) through enc.event_coeffs, strictly, and read less the
+    # bench harness nxb_rep_t / O = 717.8 / O.
     OVER, FLOOR, UNDER_T = 0.05, 3.0, 5.5
+    rows = bench.priced_sitting5(enc)
+    want = {t for t in bench.SITTING5["Q"]["standalone"] if t not in ("CALL", "CALR")}
+    expect(set(rows) == want and len(rows) == 130, f"scored rows: {len(rows)}, missing {sorted(want - set(rows))}")
     bad = []
-    with fm.selects(*bench.SITTING_SELECTS, enc=enc):
-        rows = bench.priced(enc)
     for tag, (measured, modeled) in sorted(rows.items()):
         d = modeled - measured
         if not -UNDER_T <= d <= max(FLOOR, OVER * measured):
@@ -1420,8 +1387,9 @@ def t10_bench_tables():
     finally:
         tc["run_dma_min"] = run_ship
     got = bench.row_price(enc, ("X080", "run8", 80, 1, 1, 241, 0))
+    # 350.2 + 80 x 15.1 + ceil(80 / 16) x 15.0 = 1633.2 T: envelope, bytes, passes
     expect(abs(got - cpu80) < 1e-9
-           and abs(cpu80 - (tc["t_op_run"] + 2 * tc["header_rate"] + 80 * tc["fill_cpu"])) < 1e-9,
+           and abs(cpu80 - (tc["t_op_run"] + 80 * tc["fill_cpu"] + 5 * tc["fill_cpu_pass_t"])) < 1e-9,
            f"RUN8 80 at thr 241 must price on the CPU fill ({got:.1f} vs {cpu80:.1f})")
     expect(tc["run_dma_min"] == run_ship and tc["copy_dma_min"] == ship,
            "row_price must restore run_dma_min and copy_dma_min")
@@ -2352,10 +2320,12 @@ def t10_frame_model():
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / f"fm_{w}x{h}.vid"
             path.write_bytes(hdr + body)
-            frames = fm.frames(path)
+            # the encoder's own delivery pricing (resident: these clips provably fit the pool)
+            expect(result["streamed"] is False, f"{w}x{h}: predicted delivery {result['streamed']}")
+            frames = fm.frames(path, streamed=result["streamed"])
             saved = dict(enc.TMODEL_COEFFS)
             # 81, not 59: at COPY 53 the 320x192 clip has no 53-58 B chunk to move
-            moved = fm.frames(path, copy_thr=81, run_thr=241)
+            moved = fm.frames(path, copy_thr=81, run_thr=241, streamed=result["streamed"])
             expect(enc.TMODEL_COEFFS == saved, "frames() must restore the selects")
         expect(len(frames) == len(payloads) == len(want_t), f"{w}x{h}: {len(frames)} frames")
         types = [f.type for f in frames]
@@ -2402,6 +2372,148 @@ def t10_frame_model():
     expect(got == [("first", None, None, 0), ("middle", None, None, 1500), ("last", None, None, 3000),
                    ("single", None, None, 0), ("single", None, None, 0)],
            f"direct span frames: {got}")
+
+
+@case(10, "event parity - the encoder's event counts equal the simulator's on every fixture frame")
+def t10_event_parity():
+    import fit_gap_bench as g
+    import nxv2_frame_model as fm
+    import nxv2_path_sim as ps
+    diag = ps.DIAGNOSTIC
+    every = set(ps.Events().as_dict(nonzero=False))
+    # the encoder's term map covers every counter but the diagnostics, and
+    # prices each counter exactly as the sitting-5 rules' map does, on every
+    # surface class and delivery
+    expect(set(enc.EVENT_TERMS) | diag == every and not set(enc.EVENT_TERMS) & diag,
+           "EVENT_TERMS maps every Events counter but the diagnostics")
+    tc = enc.TMODEL_COEFFS
+    for surface in ((256, 192, False), (320, 256, False), (320, 192, True), (320, 144, True),
+                    (320, 72, True), (320, 250, True)):
+        for strm in (False, True):
+            coeffs = enc.event_coeffs(surface[0], surface[1], strm)
+            expect(set(coeffs) == every - diag, f"{surface}: event_coeffs keys")
+            for name in sorted(every - diag):
+                rules = g.price(g.term_counts(ps.Events(**{name: 1}), surface, strm), tc)
+                expect(abs(coeffs[name] - rules) < 1e-9,
+                       f"{surface} streamed={strm} {name}: encoder {coeffs[name]} against the rules' {rules}")
+    expect(enc.event_coeffs() == enc.event_coeffs(256, 192), "shape None prices a flat surface")
+
+    def tracked(base):
+        class Tracked(base):
+            # the dest cursor after every op, as the simulator walks it
+            def __init__(self, *args):
+                super().__init__(*args)
+                self.trail = []
+
+            def _after(self, fn, *args):
+                fn(*args)
+                self.trail.append((self.dpage, self.de))
+
+            def fast_op(self, op, n):
+                self._after(super().fast_op, op, n)
+
+            def slow_op(self, op, n):
+                self._after(super().slow_op, op, n)
+
+            def pal(self):
+                self._after(super().pal)
+
+            def kstart(self):
+                self._after(super().kstart)
+        return Tracked
+
+    class ClearSource(ps._Player):
+        # the simulator's own dest geometry with the source window held clear
+        def H(self):
+            return 0xC0
+
+        def take(self, n):
+            pass
+
+        def fetch(self, n):
+            pass
+
+    TrackedClear, TrackedReal = tracked(ClearSource), tracked(ps._Player)
+
+    source = ("slow_skip8", "slow_skip16", "slow_run8", "slow_run16", "slow_copy8", "slow_copy16",
+              "src_copy8", "copy_src_chunks", "copy8_srcedge", "src_parity_seams", "src_bank_seams",
+              "src_edge_hdr", "src_slow_hdr", "src_wrap_hdr", "pal_ops", "pal_straddles", "pal_chunks")
+    # a slow header, a COPY8 source bail or a source-clipped chunk changes the
+    # dest-side path an op takes, never where it paints
+    reroute = ("slow_skip8", "slow_skip16", "slow_run8", "slow_run16", "slow_copy8", "slow_copy16",
+               "src_copy8", "copy_src_chunks")
+    missing = [c for c in range(1, 10) if _gap_fixture(c) is None]
+    if missing:
+        skip(f"fixtures {missing} are not encoded at this era (build-tests.ps1 -Vid -VidLong)")
+    frames = rerouted = 0
+    bad = []
+    for clip in range(1, 10):
+        buf = _gap_fixture(clip).read_bytes()
+        hdr = enc.unpack_header(buf)
+        w, h = hdr["width"], hdr["height"]
+        surface = fm.surface_of(hdr)
+        in_span, dst = False, (0, ps.DST_WIN)
+        for _p, _s, _t, start, length in dec._iter_frames(buf, hdr):
+            ops = ps.parse_payload(buf[start:start + length])
+            for sel in ((53, 71), (81, 71)):
+                ev, st = enc.frame_events(ops, w, h, dst, in_span, *sel)
+                clear = TrackedClear(surface, 0, dst, in_span, *sel, None)
+                clear.run(ops)
+                real = TrackedReal(surface, start, dst, in_span, *sel, None)
+                real.run(ops)
+                got, sim_clear = ev.as_dict(nonzero=False), clear.ev.as_dict(nonzero=False)
+                # (a) every counter, source window clear, and the end state
+                if got != sim_clear or (st.page, st.de, st.in_span) != (clear.dpage, clear.de, clear.in_span):
+                    bad.append(f"{clip:03d} @{start} {sel}: clear-source counts or end state differ")
+                # (b) at the frame's true file offset: the dest cursor after every
+                # op, and on every frame no source event reroutes, every dest counter
+                real_d = real.ev.as_dict(nonzero=False)
+                if clear.trail != real.trail or (real.dpage, real.de, real.in_span) != (st.page, st.de, st.in_span):
+                    bad.append(f"{clip:03d} @{start} {sel}: dest cursor differs at the file offset")
+                if any(real_d[k] for k in reroute):
+                    rerouted += sel == (53, 71)
+                else:
+                    diff = {k: (got[k], real_d[k]) for k in every - diag - set(source) if got[k] != real_d[k]}
+                    if diff or got["pal_ops"] != real_d["pal_ops"] + real_d["pal_straddles"]:
+                        bad.append(f"{clip:03d} @{start} {sel}: dest counters differ at the file offset {diff}")
+            frames += 1
+            in_span = st.in_span
+            dst = (st.page, st.de) if in_span else (0, ps.DST_WIN)
+    expect(not bad, f"{len(bad)} frame mismatches:\n  " + "\n  ".join(bad[:10]))
+    expect(frames > 600, f"only {frames} fixture frames walked")
+    print(f"    note: {frames} fixture frames, {rerouted} with a source-window reroute at their offset")
+    # every standalone bench row's ops at its dest and selects: the encoder's
+    # clear-source walk equals row_events' dest counters (rows sit below $DF00)
+    for rows in bench.BENCH_TABLES.values():
+        for tag, kind, L, o, _r, _thr, geo in rows:
+            if kind == bench.CAL_KIND:
+                continue
+            w, h, _gapped = bench.row_surface(tag)
+            ops = [(ps.OPCODE_BY_KIND[kind], L)] * o + [(ps.OP_FEND, 0)]
+            ev, _st = enc.nxv2path.simulate(ops, bench.row_surface(tag), None,
+                                            dst=(0, bench.GEO_DESTS[bench.geo_fields(geo)[2]]),
+                                            copy_thr=bench.row_selects(tag)[0],
+                                            run_thr=bench.row_selects(tag)[1],
+                                            dst_pages=bench.NXB_DST_PAGES)
+            expect(ev == bench.row_events(tag), f"{tag}: clear-source events differ from row_events")
+    # a frame's price: its frame-type term + its events through event_coeffs
+    # + the expected source-window events. A 320x192 middle chunk frame of
+    # COPY16 1000 + FEND from column 0, streamed:
+    ops = [(ps.OP_COPY16, 1000), (ps.OP_FEND, 0)]
+    nb, t, _st = enc.frame_price(ops, "middle", 320, 192, in_span=True, streamed=True)
+    ev, _st = enc.frame_events(ops, 320, 192, in_span=True)
+    # 1000 B = 192 x 5 + 40 -> 5 DMA chunks + a 40 B LDI chunk, 5 column hops
+    expect(ev.as_dict() == {"op_copy16": 1, "copy_dma_chunks16": 5, "copy_ldi_chunks16": 1,
+                            "copy_tail16": 1, "copy_dma_b": 960, "copy_ldi_b": 40,
+                            "copy_ldi_passes": 3, "col_hops": 5, "fend_span": 1},
+           f"COPY16 1000 at h192: {ev.as_dict()}")
+    # 2158.9 + 291.2 - 86.2 + 5 x (818.3 + 22.2) + 498.1 + 22.2 + 960 x 5.1 + 40 x 19.1
+    # + 3 x 13.1 + 5 x 30.4 = 12938.0; source: 1004 / 8192 x (346.2 + 67.7) + 2 x
+    # (256 / 8192 x 55.7 + 4 / 8192 x 212.4) = 50.7 + 3.7 = 54.4
+    events_t = 2158.9 + 291.2 - 86.2 + 5 * (818.3 + 22.2) + 498.1 + 22.2 + 960 * 5.1 + 40 * 19.1 + 3 * 13.1 + 5 * 30.4
+    src_t = 1004 / 8192 * (346.2 + 67.7) + 2 * (256 / 8192 * 55.7 + 4 / 8192 * 212.4)
+    expect(nb == 1004 and abs(t - (events_t + src_t)) < 1e-6,
+           f"frame price {nb} B {t:.2f} T against {events_t:.2f} + {src_t:.2f}")
 
 
 # ---------------------------------------------------------------------------
@@ -3495,225 +3607,157 @@ def t10_copy_threshold_fit():
 @case(10, "copy/fill T model - DMA terms gated on the PLAYER's derived kernel thresholds")
 def t10_copy_dma_model():
     tc = enc.TMODEL_COEFFS
-    rate = tc["fetch_long"]
+    rate, pass_t = tc["fetch_short"], tc["copy_ldi_pass_t"]
     setup, per_b, chunk, thr = (tc["copy_dma_setup"], tc["copy_dma_per_b"],
                                 tc["copy_dma_chunk"], tc["copy_dma_min"])
-    path = tc["copy_dma_path_t"]
-    # RULE 1 - below the player's threshold the copy body is pure LDI,
-    # matching src/video.asm vid_copy_body (vid_copy_ldi under
-    # NXV2_COPY_DMA_MIN).
+    path, entry16, body_ldi, arm = (tc["copy_dma_path_t"], tc["copy16_entry_t"],
+                                    tc["copy_body_ldi_t"], tc["cap_arm_t"])
+
+    def blocks(n):
+        return -(-n // 16)
+
+    def ldi(n):
+        # an LDI kernel call of n B: bytes and 16-LDI blocks
+        return n * rate + blocks(n) * pass_t
+
+    # _copy_t is one op alone at a fresh flat cursor, less t_op_copy: every
+    # price below is its events (nxv2path) through event_coeffs.
+    # RULE 1 - below the player's threshold the copy body is the LDI fast
+    # handler (vid_copy_ldi under NXV2_COPY_DMA_MIN): bytes and blocks.
     for L in (1, 16, 52):
-        expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
-               f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
+        expect(abs(enc._copy_t(L) - ldi(L)) < 1e-6,
+               f"copy body of {L} B (< {thr}) must be priced as LDI, got {enc._copy_t(L):.1f}")
     # RULE 1b - the player's threshold against the coefficients' own
-    # break-even, as a SIGNED gap: 53 - (1091.8 - 227.9) / (19.80 - 5.10)
-    # = -5.77 B at the 2026-09-15 coefficients. fetch_short is the deciding
-    # rate here - the ops at the seam are 53-58 B and run the short body.
-    # Worst mispricing: at L=53 the player runs DMA for +85 T/op over
-    # what the LDI branch would cost (+87 at fetch_long).
-    short = tc["fetch_short"]
-    breakeven = (setup + path) / (short - per_b)
-    expect(abs(breakeven - 58.77) <= 1.0,
-           f"copy break-even should be the 2026-09-15 58.77 B, got {breakeven:.2f}")
-    gap = -5.77
+    # break-even, as a SIGNED gap, the LDI rate carrying its block cost on
+    # average: 53 - (818.3 - 19.7) / (19.1 + 13.1 / 16 - 5.1) = 53 - 53.89 =
+    # -0.89 B (sitting-5 rule S6 prints -0.88 B at the unrounded values).
+    breakeven = (setup + path) / (rate + pass_t / 16 - per_b)
+    expect(abs(breakeven - 53.89) <= 0.01,
+           f"copy break-even should be the sitting-5 53.89 B, got {breakeven:.2f}")
+    gap = -0.88
     expect(abs((thr - breakeven) - gap) <= 1.0,
            f"copy threshold {thr} must sit {gap:+.2f} B from the break-even "
            f"{breakeven:.2f} B, got {thr - breakeven:+.2f} "
            "(re-derive NXV2_COPY_DMA_MIN and these coefficients together)")
-    if thr - breakeven > 1.0:
-        lost = (thr - 1) * short - (setup + path + (thr - 1) * per_b)
-        expect(0.0 < lost <= 340.0,
-               f"the LDI band above the break-even costs the player {lost:.0f} T/op "
-               f"at {thr - 1} B - bounded at 340")
-    for L in range(1, int(breakeven) + 1):
-        expect(L * short <= setup + path + L * per_b + 1e-9,
-               f"below the break-even LDI must be the CHEAPER path, fails at {L} B")
-    # RULE 2 - at/above the threshold: the DMA price, which the player is
-    # committed to (no min() floor - see _copy_t), op-class entry cost
-    # included. The ENTRY COST is the fast-handler -> slow-body path
-    # difference for an 8-bit-operand op, and the measured slow-parser
-    # entry (t_skip16 - t_skip) for a 16-bit-operand one, which has no
-    # fast handler to bail out of (_copy_t).
-    entry16 = tc["t_skip16"] - tc["t_skip"]
-    expect(abs(entry16 - 69.1) < 1e-6, "the slow-parser entry is 69.1 T")
-    def entry(L):
-        return path if L <= 255 else entry16
-    for L in (81, 128, 200, chunk - 1, chunk):
-        dma = entry(L) + setup + L * per_b
-        expect(abs(enc._copy_t(L, rate) - dma) < 1e-6,
-               f"copy body of {L} B must be the DMA-path price, got {enc._copy_t(L, rate):.1f}")
-    expect(abs(enc._copy_t(chunk, rate) - (entry(chunk) + setup + chunk * per_b)) < 1e-6,
-           "a full chunk is priced at the op-class entry + one DMA setup + chunk B of transfer")
-    # K256 SILICON (2775.90 T/op, NXBK): the whole op - dispatch
-    # envelope + entry + body - must land inside 1% of it. Charging
-    # path_t here instead read +2.91% conservative; this is the 2.1 pp
-    # the correction bought on the class that carries every keyframe
-    # bulk repaint.
-    # PINNED TO THE CAP THE ROW WAS MEASURED AT. K256 is a 256 B COPY16
-    # run on a player whose NXV2_DMA_CHUNK was 256, so it was ONE DMA
-    # chunk. The cap moved to 240 on 2026-08-03 (audio DI bracket), so
-    # the same op on the shipping player is one 240 B DMA chunk plus a
-    # 16 B LDI tail and legitimately costs more. The silicon row still
-    # validates the COEFFICIENTS; it must be evaluated at the cap it was
-    # taken under, not at today's.
-    # The row also PREDATES the 2026-09-15 chunk-loop change (~279 T per
-    # chunk): the change-adjusted row is 2496.9 T and the model prices
-    # +10.9% over it - the safe side.
-    with _at_chunk_cap(256):
-        k256 = tc["t_op_copy"] + enc._copy_t(256, rate)
-    expect(abs(k256 / 2775.90 - 1.0) < 0.01,
-           f"a 256 B COPY16 at the cap K256 was measured under must model "
-           f"within 1% of the silicon row (2775.90 T), got {k256:.1f} "
-           f"({100 * (k256 / 2775.90 - 1):+.2f}%)")
-    # RULE 3 - the kernel switch must not be an UNBOUNDED cost
-    # discontinuity. Two DISCLOSED seams, both asserted rather than
-    # wished away: (a) the op-threshold step RISES, 53 sits below the break-even;
-    # (b) a remainder crossing the threshold after full chunks moves by
-    # thr*(rate-per_b) - setup. The bound is floored at 0: the price never
-    # falls across a seam.
-    thr_seam = (thr - 1) * rate - (path + setup + thr * per_b)
-    # The tail seam moves by the trailing-chunk term: a remainder that
-    # grows across the threshold drops that term as well as the LDI
-    # transfer.
-    tail_seam = thr * (rate - per_b) - setup + tc["copy_dma_tail_t"]
-    # 52 x 19.76 - (-227.9 + 1091.8 + 53 x 5.10) = -106.7 T
-    expect(abs(thr_seam - (-106.7)) <= 5.0,
-           f"the op-threshold seam should be the -106.7 T at 53, got {thr_seam:.1f}")
+    for L in range(1, thr + 1):
+        expect(ldi(L) <= setup + path + L * per_b + 1e-9,
+               f"up to the select LDI must be the CHEAPER path, fails at {L} B")
+    # RULE 2 - at/above the threshold an 8-bit op bails to the body: the path
+    # term plus one DMA chunk per 240 B.
+    for L in (thr, 81, 128, 200, chunk - 1, chunk):
+        expect(abs(enc._copy_t(L) - (path + setup + L * per_b)) < 1e-6,
+               f"copy body of {L} B must be the DMA-path price, got {enc._copy_t(L):.1f}")
+    # RULE 3 - the kernel switch is a bounded cost discontinuity, both seams
+    # asserted: (a) the op-threshold step RISES: 52 B LDI 52 x 19.1 + 4 x 13.1
+    # = 1045.6 against 53 B DMA -19.7 + 818.3 + 53 x 5.1 = 1068.9, -23.3 T;
+    # (b) a remainder crossing the select after full chunks FALLS by
+    # copy_body_ldi_t + LDI(52) - (setup + 53 x per_b) = 498.1 + 1045.6 - 1088.6
+    # = 455.1 T (532 -> 533 B). No other length falls by more.
+    thr_seam = ldi(thr - 1) - (path + setup + thr * per_b)
+    tail_seam = body_ldi + ldi(thr - 1) - (setup + thr * per_b)
+    expect(abs(thr_seam - (-23.3)) < 1e-6, f"the op-threshold seam should be -23.3 T, got {thr_seam:.1f}")
+    expect(abs(tail_seam - 455.1) < 1e-6, f"the tail seam should be 455.1 T, got {tail_seam:.1f}")
     seam_bound = max(thr_seam, tail_seam, 0.0) + 1e-6
-    prev = 0.0
+    prev, fell = 0.0, (0.0, 0)
     for L in range(1, 601):
-        cur = enc._copy_t(L, rate)
+        cur = enc._copy_t(L)
         expect(cur >= prev - seam_bound,
                f"copy body price fell by more than the disclosed seam bound "
                f"({seam_bound:.0f} T): {L - 1} B {prev:.1f} -> {L} B {cur:.1f}")
+        fell = max(fell, (prev - cur, L))
         prev = cur
-    expect(abs((enc._copy_t(thr - 1, rate) - enc._copy_t(thr, rate)) - thr_seam) < 1e-6,
+    expect(abs(fell[0] - tail_seam) < 1e-6 and fell[1] == 2 * chunk + thr,
+           f"the largest fall must be the tail seam at {2 * chunk + thr} B, got {fell}")
+    expect(abs((enc._copy_t(thr - 1) - enc._copy_t(thr)) - thr_seam) < 1e-6,
            "the step across the kernel threshold must be exactly the disclosed op seam")
-    # RULE 4 - multi-chunk: full chunks go DMA (one path term per op), a
-    # sub-threshold tail goes LDI (the player re-selects per chunk) AND
-    # pays one chunk-loop iteration, copy_dma_tail_t - the charge silicon
-    # C256/F256 showed the model owed before it had this term.
-    tail280 = 280 - chunk
-    expect(tail280 < thr, "the 280 B case must leave a sub-threshold tail")
-    # 8-bit ops take the LARGER tail (no path-term slack to net against):
-    # a 250 B copy is one chunk + a 10 B tail at copy_dma_tail8_t.
-    expect(abs(enc._copy_t(250, rate)
-               - (path + (setup + chunk * per_b) + 10 * rate + tc["copy_dma_tail8_t"])) < 1e-6,
-           f"a 250 B copy = the 8-bit path term + one DMA chunk + a 10 B LDI tail "
-           f"+ the 8-bit trailing-chunk term, got {enc._copy_t(250, rate):.1f}")
-    expect(abs(enc._copy_t(280, rate)
-               - (entry16 + (setup + chunk * per_b) + tail280 * rate + tc["copy_dma_tail_t"])) < 1e-6,
-           f"a 280 B copy = the entry term + one DMA chunk + a {tail280} B LDI tail "
-           f"+ the trailing-chunk term")
-    # a 300 B copy's 60 B remainder is at/above 53: a second DMA setup, no tail term
-    expect(abs(enc._copy_t(300, rate) - (entry16 + 2 * setup + 300 * per_b)) < 1e-6,
-           f"a 300 B copy = the entry term + one DMA chunk + a {300 - chunk} B DMA remainder")
-    expect(abs(enc._copy_t(2 * chunk, rate) - (entry16 + 2 * (setup + chunk * per_b))) < 1e-6,
-           f"a {2 * chunk} B copy = the entry term + two DMA chunks")
-    # RULE 5 - the restored term must never make copy MORE expensive than
-    # the old all-LDI model at any tested length (at exactly thr the
-    # DMA path can price a few T above LDI - the measured placement,
-    # deliberately excluded here), and must stay materially cheaper on
-    # the dominant large-copy class (256 B: 5171 T all-LDI vs ~2579 T
-    # with the DMA + path terms, ~2.0x - the over-price this test
-    # exists to prevent was ~2.1x before the path term).
-    for L in (1, 63, 89, 90, 256, 1024, 65535):
-        expect(enc._copy_t(L, rate) <= L * rate + 1e-6,
-               f"the DMA term may only ever LOWER the {L} B copy price")
-    # (240*19.76)/(-227.9 + 1091.8 + 240*5.10) = 2.27 at the 2026-09-15
-    # coefficients (1.99 before the chunk-loop change). A full chunk is
-    # the right length to price here because it is the DMA path at its
-    # most efficient - one setup amortised over the whole cap.
-    fullx = (chunk * rate) / enc._copy_t(chunk, rate)
-    expect(abs(fullx - 2.27) < 0.05,
-           f"a full-chunk copy body must price ~2.27x under all-LDI, got {fullx:.2f}x")
-    # RULE 6 - agreement with the silicon rows the coefficients came
-    # from, each EVALUATED AT THE CAP IT WAS MEASURED UNDER (256 - see
-    # the K256 note above; the shipping cap is 240 and legitimately
-    # prices these lengths dearer). CD3 (dma copy, 256 B chunks)
-    # measured 9.84 T/B over 1024 B ops; the KF row (43008 B COPY16,
-    # DMA256) measured 12.2 T/B ARMED, which de-rates to ~10.4 unarmed.
-    # Body-only rates, dispatch excluded.
-    with _at_chunk_cap(256):
-        cd3 = enc._copy_t(1024, rate) / 1024
-        kfr = enc._copy_t(43008, rate) / 43008
-    # CD3 PREDATES the 2026-09-15 chunk-loop change; at cap 256 that
-    # change is worth ~1.09 T/B, putting the adjusted row at 8.75 T/B.
-    # The model must not price below it.
-    expect(8.75 <= cd3 <= 10.34,
-           f"1024 B copy body should sit between CD3's change-adjusted 8.75 "
-           f"and its measured 9.84+0.5 T/B, got {cd3:.2f}")
-    expect(9.0 < kfr < 10.6,
-           f"43008 B copy body should sit near the KF row's unarmed rate, "
-           f"got {kfr:.2f}")
-    # RULE 7 - the gate is coefficient-driven, not hardcoded: move the
-    # player's threshold and the pricing must follow it.
+    # RULE 4 - multi-chunk worked copies: full chunks go DMA, a sub-select
+    # remainder goes LDI and pays its body chunk pass, a count of 241-255 pays
+    # the cap arm before its 240 B chunk.
+    # 250 B (8-bit): -19.7 + 18 + (818.3 + 240 x 5.1) + (498.1 + 10 x 19.1 + 13.1) = 2742.8
+    expect(abs(enc._copy_t(250) - (path + arm + setup + chunk * per_b + body_ldi + ldi(10))) < 1e-6
+           and abs(enc._copy_t(250) - 2742.8) < 1e-6,
+           f"a 250 B copy = path + cap arm + one DMA chunk + a 10 B LDI chunk, got {enc._copy_t(250):.1f}")
+    # 280 B (16-bit): -86.2 + 2042.3 + (498.1 + 40 x 19.1 + 3 x 13.1) = 3257.5
+    expect(abs(enc._copy_t(280) - (entry16 + setup + chunk * per_b + body_ldi + ldi(40))) < 1e-6
+           and abs(enc._copy_t(280) - 3257.5) < 1e-6,
+           f"a 280 B copy = entry + one DMA chunk + a 40 B LDI chunk, got {enc._copy_t(280):.1f}")
+    # 300 B: the 60 B remainder is at/above 53 - a second DMA chunk:
+    # -86.2 + 2 x 818.3 + 300 x 5.1 = 3080.4
+    expect(abs(enc._copy_t(300) - (entry16 + 2 * setup + 300 * per_b)) < 1e-6
+           and abs(enc._copy_t(300) - 3080.4) < 1e-6,
+           f"a 300 B copy = entry + one DMA chunk + a 60 B DMA chunk, got {enc._copy_t(300):.1f}")
+    # 480 B: -86.2 + 2 x (818.3 + 1224) = 3998.4; 481 B arms the cap at 241 B
+    # left and ends on a 1 B LDI chunk: 3998.4 + 18 + 498.1 + 19.1 + 13.1 = 4546.7
+    expect(abs(enc._copy_t(2 * chunk) - (entry16 + 2 * (setup + chunk * per_b))) < 1e-6
+           and abs(enc._copy_t(2 * chunk + 1) - (enc._copy_t(2 * chunk) + arm + body_ldi + ldi(1))) < 1e-6,
+           f"480 / 481 B copies: {enc._copy_t(480):.1f} / {enc._copy_t(481):.1f}")
+    # RULE 5 - the DMA path never prices a copy above the all-LDI price (bytes
+    # and blocks) at the tested lengths. At exactly the select it sits 4.2 T
+    # above LDI (53 B: 1068.9 against 1064.7) and below from 54 B (1074.0
+    # against 1083.8), the measured placement, so 53 is not tested here. At
+    # 240 B one DMA chunk is (240 x 19.1 + 15 x 13.1) / 2022.6 = 2.36x under.
+    for L in (1, 54, 63, 89, 90, 256, 1024, 65535):
+        expect(enc._copy_t(L) <= ldi(L) + 1e-6, f"the DMA term may only ever LOWER the {L} B copy price")
+    expect(abs(enc._copy_t(thr) - ldi(thr) - 4.2) < 1e-6, "53 B DMA sits 4.2 T above LDI")
+    fullx = ldi(chunk) / enc._copy_t(chunk)
+    expect(abs(fullx - 2.36) < 0.01, f"a full-chunk copy body must price ~2.36x under all-LDI, got {fullx:.2f}x")
+    # RULE 6 - the gate is coefficient-driven: at copy_dma_min 1024 a 256 B
+    # COPY16 runs two LDI chunks, -86.2 + 2 x 498.1 + 256 x 19.1 + 16 x 13.1 = 6009.2
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["copy_dma_min"] = 1024
-        expect(abs(enc._copy_t(256, rate) - 256 * rate) < 1e-6,
-               "raising copy_dma_min must push a 256 B copy back onto the CPU price")
+        expect(abs(enc._copy_t(256) - (entry16 + 2 * body_ldi + ldi(240) + ldi(16))) < 1e-6
+               and abs(enc._copy_t(256) - 6009.2) < 1e-6,
+               f"raising copy_dma_min must push a 256 B copy back onto LDI, got {enc._copy_t(256):.1f}")
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
-    expect(abs(enc._copy_t(chunk, rate) - (entry(chunk) + setup + chunk * per_b)) < 1e-6,
-           "coefficients restored")
-    # RULE 8 - the FILL model is gated the same way, on the player's own
-    # NXV2_RUN_DMA_MIN (src/video.asm vid_run_body re-selects per chunk),
-    # with the threshold checked against its own derived break-even.
-    # Before 2026-07-28 _fill_t took a bare min(cpu, dma) over the WHOLE
-    # length, which priced a 300 B fill as two DMA setups when the player
-    # really runs one DMA chunk and a CPU tail.
-    fcpu, fsetup, fper = tc["fill_cpu"], tc["fill_dma_setup"], tc["fill_dma_per_b"]
-    fchunk, fthr = tc["fill_dma_min"], tc["run_dma_min"]
-    fpath = tc["fill_dma_path_t"]
-    # 8-bit ops decide the threshold, so the break-even is read off the
-    # SUM of the chunk cost and that op class's cheaper entry (781.1) -
-    # the single number F071 measured before the two were separated.
-    fbreakeven = (fsetup + fpath) / (fcpu - fper)
-    # SIGNED divergence, same shape as RULE 1b. The 2026-09-15 fit puts
-    # the break-even at 72.58 B while the PLAYER's constant
-    # (NXV2_RUN_DMA_MIN) stays 71, so 71-72 B fills commit to DMA 1.6 B
-    # early at a worst mispricing of +17 T/op.
-    expect(abs(fbreakeven - 72.58) <= 1.0,
-           f"fill break-even should be the 2026-09-15 72.58 B, got {fbreakeven:.2f}")
-    expect(-2.5 <= fthr - fbreakeven <= 2.5,
-           f"fill threshold {fthr} must sit near the break-even {fbreakeven:.2f} B "
+    expect(abs(enc._copy_t(chunk) - (path + setup + chunk * per_b)) < 1e-6, "coefficients restored")
+    # RULE 7 - the FILL model is gated the same way, on NXV2_RUN_DMA_MIN.
+    fcpu, fpass, fsetup, fper = (tc["fill_cpu"], tc["fill_cpu_pass_t"], tc["fill_dma_setup"],
+                                 tc["fill_dma_per_b"])
+    fchunk, fthr, fpath = tc["fill_dma_min"], tc["run_dma_min"], tc["fill_dma_path_t"]
+    fentry16, fbody = tc["run16_entry_t"], tc["fill_body_cpu_t"]
+
+    def cpu(n):
+        return n * fcpu + blocks(n) * fpass
+
+    # SIGNED divergence, same shape as RULE 1b: (792.3 - 71.3) / (15.1 + 15.0 /
+    # 16 - 5.1) = 65.92 B against the player's 71 (+5.08 B). Sitting-5 rule S7
+    # kept 71: modelled decode T over fixtures 001-009 ties at every M in
+    # 65-78. The 66-70 B fills run CPU at most 54.0 T/op over DMA (70 B: 1132.0
+    # against 721 + 70 x 5.1 = 1078.0).
+    fbreakeven = (fsetup + fpath) / (fcpu + fpass / 16 - fper)
+    expect(abs(fbreakeven - 65.92) <= 0.01, f"fill break-even should be 65.92 B, got {fbreakeven:.2f}")
+    expect(abs((fthr - fbreakeven) - 5.08) <= 0.01,
+           f"fill threshold {fthr} must sit +5.08 B above the break-even {fbreakeven:.2f} B "
            "(re-derive NXV2_RUN_DMA_MIN and this coefficient together)")
-    flost = (fsetup + fpath + fthr * fper) - fthr * fcpu
-    expect(0.0 <= flost <= 40.0,
-           f"the early-DMA band must cost the player at most 40 T/op, got {flost:.0f}")
+    flost = max(cpu(L) - (fsetup + fpath + L * fper) for L in range(1, fthr))
+    expect(abs(flost - 54.0) < 1e-6, f"the late-DMA band costs at most 54.0 T/op, got {flost:.1f}")
     for L in (1, 16, 64, fthr - 1):
-        expect(abs(enc._fill_t(L) - L * fcpu) < 1e-6,
-               f"fill body of {L} B (< {fthr}) must be priced as unrolled CPU fill")
-        expect(L * fcpu <= fsetup + fpath + L * fper + 1e-9,
-               f"below the threshold CPU fill must be the CHEAPER kernel, fails at {L} B")
+        expect(abs(enc._fill_t(L) - cpu(L)) < 1e-6,
+               f"fill body of {L} B (< {fthr}) must be priced as the CPU fill fast handler")
     for L in (fthr, 128, fchunk - 1, fchunk):
         expect(abs(enc._fill_t(L) - (fpath + fsetup + L * fper)) < 1e-6,
-               f"fill body of {L} B must be the 8-bit entry + one DMA setup + transfer, "
-               f"got {enc._fill_t(L):.1f}")
-    # A 16-bit RUN pays the slow-parser entry its 8-bit twin does not -
-    # the same t_skip16 - t_skip the copy branch charges.
-    fentry16 = tc["t_skip16"] - tc["t_skip"]
-    ftail300 = 300 - fchunk
-    expect(ftail300 < fthr, "the 300 B fill case must leave a sub-threshold tail")
-    expect(abs(enc._fill_t(250)
-               - (fpath + (fsetup + fchunk * fper) + 10 * fcpu + tc["fill_dma_tail8_t"])) < 1e-6,
-           f"a 250 B fill = the 8-bit path term + one DMA chunk + a 10 B CPU tail "
-           f"+ the 8-bit trailing-chunk term, got {enc._fill_t(250):.1f}")
-    expect(abs(enc._fill_t(300)
-               - (fentry16 + (fsetup + fchunk * fper) + ftail300 * fcpu
-                  + tc["fill_dma_tail_t"])) < 1e-6,
-           f"a 300 B fill = the 16-bit entry + one DMA chunk + a {ftail300} B CPU tail "
-           f"+ the trailing-chunk term")
+               f"fill body of {L} B must be the 8-bit path + one DMA chunk, got {enc._fill_t(L):.1f}")
+    # 250 B (8-bit): -71.3 + 18 + (792.3 + 1224) + (505.8 + 10 x 15.1 + 15.0) = 2634.8
+    expect(abs(enc._fill_t(250) - (fpath + arm + fsetup + fchunk * fper + fbody + cpu(10))) < 1e-6
+           and abs(enc._fill_t(250) - 2634.8) < 1e-6,
+           f"a 250 B fill = path + cap arm + one DMA chunk + a 10 B CPU chunk, got {enc._fill_t(250):.1f}")
+    # 300 B (16-bit): -114.2 + 2016.3 + (505.8 + 60 x 15.1 + 4 x 15.0) = 3373.9
+    expect(abs(enc._fill_t(300) - (fentry16 + fsetup + fchunk * fper + fbody + cpu(60))) < 1e-6
+           and abs(enc._fill_t(300) - 3373.9) < 1e-6,
+           f"a 300 B fill = entry + one DMA chunk + a 60 B CPU chunk, got {enc._fill_t(300):.1f}")
+    # 480 B: -114.2 + 2 x 2016.3 = 3918.4
     expect(abs(enc._fill_t(2 * fchunk) - (fentry16 + 2 * (fsetup + fchunk * fper))) < 1e-6,
-           f"a {2 * fchunk} B fill = the 16-bit entry + two DMA chunks (no tail, so the "
-           f"entry is charged on its own - it was free before 2026-09-15)")
+           f"a {2 * fchunk} B fill = entry + two DMA chunks")
+    # at run_dma_min 1024 a 256 B RUN16 runs two CPU chunks:
+    # -114.2 + 2 x 505.8 + 256 x 15.1 + 16 x 15.0 = 5003.0
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["run_dma_min"] = 1024
-        expect(abs(enc._fill_t(256) - 256 * fcpu) < 1e-6,
-               "raising run_dma_min must push a 256 B fill back onto the CPU price")
+        expect(abs(enc._fill_t(256) - 5003.0) < 1e-6,
+               f"raising run_dma_min must push a 256 B fill back onto the CPU fill, got {enc._fill_t(256):.1f}")
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
@@ -3788,7 +3832,7 @@ def t10_copy_census():
     saved2 = tc["copy_dma_min"]
     tc["copy_dma_min"] = 59
     try:
-        want_modelled = tc["t_frame_fixed"] + enc.op_cost("copy", 70)[1]
+        want_modelled = tc["frame_delta_t"] + enc.op_cost("copy", 70)[1]
     finally:
         tc["copy_dma_min"] = saved2
     want_frac = surcharge["copy_dma"] / want_modelled
@@ -4112,9 +4156,9 @@ def t12_moving_edge_pixel_exact():
 def t13_run_absorb_threshold():
     tc = enc.TMODEL_COEFFS
     absorb_max = enc.merge_run_absorb_max()
-    # 94.2 B at the 2026-09-15 coefficients (139 before the re-fit): the
-    # denominator is a difference of two close terms, so it swings hard.
-    expect(80.0 < absorb_max < 160.0, f"sanity: silicon absorb_max ~94B, got {absorb_max:.1f}")
+    # 350.2 / (19.1 - 15.1) = 87.55 B at the sitting-5 coefficients (94.2 at
+    # 2026-09-15): the denominator is a difference of two close terms.
+    expect(80.0 < absorb_max < 160.0, f"sanity: silicon absorb_max ~88B, got {absorb_max:.1f}")
 
     rng = np.random.default_rng(51)
     n = 3000
@@ -4157,9 +4201,9 @@ def t13_run_absorb_threshold():
     # term, absorbing re-priced the run's body at the LDI rate then in
     # force and the guard SAVED decode T outright - the review finding's
     # original claim, and what this case used to assert. With copy bodies
-    # now priced at 1091.8 T/chunk + 5.10 T/B the arithmetic INVERTS at
-    # this length: absorbing is a few hundred T cheaper, so a pure-T
-    # reading would push the crossover from ~94 B out past 700 B.
+    # priced at 818.3 T/DMA chunk + 5.1 T/B the arithmetic INVERTS at this
+    # length: absorbing is cheaper, so a pure-T reading would push the
+    # crossover from ~88 B out past it.
     #
     # The guard is kept regardless, and this case now pins the reason:
     # what it costs is decode T (noise), what it buys is WIRE BYTES (the
@@ -4177,9 +4221,13 @@ def t13_run_absorb_threshold():
     # --- short run (well under 100B) directly touching copy segments -
     # absorption must still happen (folded into one COPY, no standalone
     # RUN op survives in the merged stream). ---
-    target2 = prev.copy()
     short_len = 40
     s2 = 700
+    # no surface byte under the run may already hold its colour: that byte
+    # would leave the change mask and split the run below FILLMIN (30)
+    under = prev[s2 + 5:s2 + 5 + short_len]
+    under[under == 77] = 78
+    target2 = prev.copy()
     target2[s2:s2 + 5] = rng.integers(0, 256, size=5, dtype=np.uint8)
     target2[s2 + 5:s2 + 5 + short_len] = 77
     target2[s2 + 5 + short_len:s2 + 10 + short_len] = rng.integers(0, 256, size=5, dtype=np.uint8)
@@ -4241,6 +4289,23 @@ def t11_pack_header_bound():
                           audio_bytes_per_frame=enc.AUD_FRAME_MAX,
                           ring_start_margin_blocks=0, per_frame_cap_blocks=1)
     expect(len(hdr) == 512, "the bound exactly is accepted")
+    # the per-frame payload cap: the player's open refuses a cap over
+    # NXV2_STRM_CAP_MAX (240 blocks) with VID FMT?
+    expect(enc.NXV2_STRM_CAP_MAX == 240, "NXV2_STRM_CAP_MAX mirror")
+    try:
+        enc.pack_header(width=320, height=256, fps=25, channels=2,
+                        arate=enc.RATE_STEREO, frame_count=1,
+                        audio_bytes_per_frame=1250,
+                        ring_start_margin_blocks=0, per_frame_cap_blocks=241)
+    except ValueError as e:
+        expect("240" in str(e) and "VID FMT" in str(e), f"cap error names the bound: {e}")
+    else:
+        raise AssertionError("pack_header must reject a 241-block frame cap")
+    hdr = enc.pack_header(width=320, height=256, fps=25, channels=2,
+                          arate=enc.RATE_STEREO, frame_count=1,
+                          audio_bytes_per_frame=1250,
+                          ring_start_margin_blocks=0, per_frame_cap_blocks=240)
+    expect(len(hdr) == 512, "a 240-block cap is accepted")
 
 
 def _walk_ops(payload):
@@ -7411,7 +7476,7 @@ def _kf_frame_supply_ms(L, first, width, height, abytes_pad, fps=25.0):
     af = tc["audio_factor"]
     clock = tc["clock_khz"]
     wire_eff = enc.SD_WIRE_BYTES_PER_MS * af
-    b, t = enc.kf_chunk_cost(L, first)
+    b, t = enc.kf_chunk_cost(L, first, width, height)
     try:
         # a keyframe chunk frame is dense by construction (one long
         # copy at the cap) - the density-keyed model prices it at the
@@ -7444,7 +7509,7 @@ def t21_kf_peak_bound():
             expect(wire_ms < period,
                    f"{w}x{h}: peak kf frame wire {wire_ms:.2f} ms >= period")
             # ... and the decode-T budget contract is still honoured
-            expect(enc.kf_chunk_cost(L, first)[1]
+            expect(enc.kf_chunk_cost(L, first, w, h)[1]
                    <= enc.usable_budget_t(fps, w, h) * 0.98 + 1.0,
                    f"{w}x{h} first={first}: chunk decode T over the usable budget")
         # the plan still covers the surface exactly, first chunk first
@@ -7610,52 +7675,37 @@ def t21_lm_trigger_rebase():
            f"a starved whole-frame drift must fire a re-based trigger, got {r['kf_triggers']}")
 
 
-@case(21, "W4 - silicon_r density re-key: recompute invariant, interpolation, clamps")
+@case(21, "W4 - silicon_r density key: the sitting-5 anchors never read below a measured R, clamps")
 def t21_silicon_r_rekey():
-    # THE RECOMPUTE INVARIANT. R_new = R_meas x model_T_old /
-    # model_T_new per calibration stream (silicon numerator untouched),
-    # so the gate's predicted decode time R x mean_T is UNCHANGED where
-    # it was calibrated. Literals from the W4 op-walk of the pal9l
-    # staged fixture bytes under both coefficient sets (w4 report;
-    # R_meas from Card #8 / the 2026-07-30 streamed rows).
-    anchors = [
-        # fixture, shape, T_old, T_new, R_meas
-        ("002", (256, 192), 477569.7, 459303.2, 1.021),
-        ("007", (256, 192), 344132.4, 333137.4, 1.037),
-        ("001", (320, 256), 766831.7, 735068.9, 1.008),
-        ("008", (320, 256), 280507.9, 273914.3, 1.080),
-        ("003", (320, 192), 641052.5, 619350.5, 1.258),
-        ("009", (320, 192), 289646.6, 282340.9, 1.402),
+    # Every REAL session's (density, R_clip) from sitting-5 rule S9: the
+    # anchors merge pairs within 0.02 density at the higher R and round R up
+    # to 0.001, so R at each session's own density never falls below its
+    # measured R_clip.
+    sessions = [
+        ("001", (320, 256), 0.8066, 0.9757), ("002", (256, 192), 0.5118, 0.9758),
+        ("003", (320, 192), 0.8668, 0.9645), ("004", (320, 144), 0.6956, 0.9628),
+        ("005", (256, 144), 0.4205, 0.9760), ("007", (256, 192), 0.4850, 0.9786),
+        ("008", (320, 256), 0.3086, 0.9805), ("009", (320, 192), 0.3995, 0.9732),
     ]
-    for name, (w, h), t_old, t_new, r_meas in anchors:
-        d = t_new / enc.usable_budget_t(25.0, w, h)
-        r_new = enc.silicon_r(w, h, density=d)
-        # predicted decode T at the anchor: unchanged within the 0.001
-        # rounding the table entries carry
-        pred_old = r_meas * t_old
-        pred_new = r_new * t_new
-        expect(abs(pred_new - pred_old) / pred_old < 0.002,
-               f"{name}: predicted decode moved {pred_old:.0f} -> {pred_new:.0f} "
-               f"({100 * (pred_new / pred_old - 1):+.2f}%) - the recompute must be pure")
-    # density key mechanics: monotone (R never rises with density),
-    # clamped at both ends, fail-safe (None) = the sparse-end worst
+    for name, (w, h), density, r_clip in sessions:
+        r = enc.silicon_r(w, h, density=density)
+        expect(r >= r_clip and r - r_clip < 0.002,
+               f"REAL {name}: R {r:.5f} at density {density} against the measured {r_clip}")
+    # key mechanics: clamped at both ends, fail-safe (None) = the class's
+    # largest R, every gapped height one class
     for w, h in [(256, 192), (320, 256), (320, 192)]:
-        rs = [enc.silicon_r(w, h, density=d) for d in
-              (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
-        expect(all(a >= b - 1e-12 for a, b in zip(rs, rs[1:])),
-               f"{w}x{h}: R must be non-increasing in density, got {rs}")
-        expect(enc.silicon_r(w, h) == max(rs),
-               f"{w}x{h}: density=None must fail safe to the sparse-end worst")
-        expect(enc.silicon_r(w, h, density=0.0) == rs[0]
-               and enc.silicon_r(w, h, density=2.0) == rs[-1],
+        pts = sorted(enc.TMODEL_SILICON_R["gapped" if enc.is_gapped(w, h)
+                                          else "flat_320" if w == 320 else "flat_256"])
+        expect(enc.silicon_r(w, h) == max(r for _d, r in pts),
+               f"{w}x{h}: density=None must fail safe to the largest R")
+        expect(enc.silicon_r(w, h, density=0.0) == pts[0][1]
+               and enc.silicon_r(w, h, density=2.0) == pts[-1][1],
                f"{w}x{h}: out-of-range densities must clamp, not extrapolate")
-    # every gapped height reads the one gapped class (no height key)
     expect(enc.silicon_r(320, 192, density=0.5) == enc.silicon_r(320, 144, density=0.5),
-           "gapped heights share the class (Card #8 refuted the height slope)")
+           "gapped heights share the class")
     # a keyframe chunk frame prices at the DENSE anchor
-    expect(enc.silicon_r(320, 256, density=1.0)
-           == min(r for _, r in enc.TMODEL_SILICON_R["flat_320"]),
-           "density 1.0 must clamp to the dense anchor")
+    expect(enc.silicon_r(320, 256, density=1.0) == 0.976 and enc.silicon_r(320, 192, density=1.0) == 0.965,
+           "density 1.0 must clamp to the densest anchor")
 
 
 @case(21, "low-fps pace contention - RESOLVED AT SOURCE: the whole-bank ring "

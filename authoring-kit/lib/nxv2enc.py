@@ -33,6 +33,8 @@ from pathlib import Path
 
 import numpy as np
 
+import nxv2path
+
 try:
     from PIL import Image
 except ImportError as exc:  # pragma: no cover - environment guard
@@ -143,6 +145,9 @@ PLAYER_MAX_BYTES = PLAYER_MAX_BLOCKS * 512      # 268,431,360 B
 # priced alongside the size.
 PLAYER_MAX_FRAMES = 65535
 
+# header per-frame payload cap bound, in 512 B blocks (NXV2_STRM_CAP_MAX)
+NXV2_STRM_CAP_MAX = 240
+
 
 def _clock(seconds):
     return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
@@ -249,6 +254,13 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
         raise ValueError("ring_start_margin_blocks out of 16-bit range")
     if not (0 <= per_frame_cap_blocks < (1 << 16)):
         raise ValueError("per_frame_cap_blocks out of 16-bit range")
+    if per_frame_cap_blocks > NXV2_STRM_CAP_MAX:
+        # the player's open validates the cap in 1..NXV2_STRM_CAP_MAX
+        # (src/nextdaad.inc) and refuses a larger one with VID FMT?
+        raise ValueError(
+            f"per_frame_cap_blocks {per_frame_cap_blocks} exceeds the NXV "
+            f"player bound of {NXV2_STRM_CAP_MAX} blocks (NXV2_STRM_CAP_MAX - "
+            f"the player refuses the file at open with VID FMT?)")
 
     fps_x10 = int(round(float(fps) * 10))
     if fps_x10 > 255:
@@ -370,216 +382,128 @@ L2_DODGE_BYTE0 = L2_TRANSPARENT_BYTE0 + 4
 assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 
 # ---------------------------------------------------------------------
-# TMODEL_COEFFS - Z80N decode+fetch T-state costs. Silicon-settled against
-# the optimized decode kernels; each entry cites its bench row. Re-fit
-# 2026-09-15 (NXBO/NXBC/NXBK rows, VGA-0, core 3.02.04) after the
-# chunk-loop change. A sub-threshold trailing chunk IS charged, per op:
-# copy_dma_tail_t/copy_dma_tail8_t and fill_dma_tail_t/fill_dma_tail8_t.
-#
-# Envelope convention: dispatch envelopes are measured on real ops that
-# already carry their count byte, so the count-byte parse is FOLDED INTO
-# them - header_rate stays 0 to avoid double-counting.
+# TMODEL_COEFFS - Z80N decode T-states per player event, unarmed, ruled
+# from sitting 5 (2026-09-17: quiet image, +3 timing, core 3.02.04, 28 MHz)
+# by tests/fit_gap_bench.py; audio_factor carries the armed tax. A frame
+# is priced by its frame-type term, its dest-side nxv2path events through
+# EVENT_TERMS, and its expected source-window events (src_expected_t).
+# Standalone rows are read less the bench's per-rep harness, 717.8 T / O.
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
-    "fetch_long": 19.76,       # T/byte LDI copy body [silicon C080 row less
-                                #   t_op_copy, 2026-09-15; single-row evidence]
-    "fetch_short": 19.80,      # T/byte short-copy LDI body [silicon NXBC
-                                #   C001/C004/C008/C038 CPU fit]. HELD: the
-                                #   2026-09-15 fit gives 19.784, inside its
-                                #   own 3.0 T residual
-    "t_skip": 141.8,           # SKIP8 op envelope [silicon NXBO SK00 row,
-                                #   2026-09-15, incl count byte]
-    "t_skip16": 210.9,         # SKIP16 op envelope [silicon NXBO S160 row,
-                                #   2026-09-15]; +69.1 T over SK00 - the
-                                #   slow-parser 16-bit path
-    "t_op_run": 367.4,         # RUN op dispatch envelope [silicon NXBO
-                                #   RU01/RU17/F063/F070 fit, worst residual
-                                #   5.2 T, 2026-09-15]. FAST-HANDLER
-                                #   intercept; body priced separately
-    "t_op_copy": 303.7,        # COPY op dispatch envelope [silicon NXBC
-                                #   C001/C004/C008/C038 fit, worst residual
-                                #   3.0 T, 2026-09-15]. FAST-HANDLER
-                                #   intercept; body priced separately
-    "t_op_misc": 487.2,        # KSTART/KFLIP/FEND/PAL dispatch - unmeasured
-                                #   simple handlers, HELD at the dearest
-                                #   envelope ever measured (>= t_op_run).
-                                #   Well under 0.5% of any frame
-    "fill_cpu": 15.86,         # T/byte unrolled CPU fill [silicon NXBO
-                                #   RU01/RU17/F063/F070 fit slope, 2026-09-15]
-    "fill_dma_per_b": 5.1,     # T/byte DMA fill body [silicon RD chunk
-                                #   solve, cross-checked against the DMA-copy
-                                #   KF/CD3 rows]. Hardware term
-    "fill_dma_setup": 852.8,   # T per DMA fill CHUNK [silicon NXBK F256 less
-                                #   R161's slow-body entry and its 16 B CPU
-                                #   tail, 2026-09-15]; persistent-descriptor
-                                #   re-arm. The 8-bit op's cheaper entry is
-                                #   carried separately by fill_dma_path_t -
-                                #   the two sum to the 781.1 the break-even
-                                #   reads, which is what F071 alone measured
-    "fill_dma_path_t": -71.7,  # T/op an 8-bit RUN carries over t_op_run on
-                                #   the DMA branch, beyond fill_dma_setup
-                                #   [silicon NXBO F071, 2026-09-15]. NEGATIVE
-                                #   because bailing out of the fast handler
-                                #   costs less than the fast handler's own
-                                #   intercept. fill_dma_setup is measured,
-                                #   not held, so unlike copy_dma_path_t this
-                                #   term nets nothing else. 8-bit-operand
-                                #   ops only
-    "fill_dma_tail_t": 399.0,  # T/op for a sub-threshold TAIL that follows at
-                                #   least one DMA chunk, 16-BIT-operand ops
-                                #   [silicon NXBK F256]: the 240 B cap makes a
-                                #   256-aligned op a chunk plus a tail, and
-                                #   the tail still pays a chunk-loop
-                                #   iteration. R161 measures the 16-bit entry
-                                #   and this iteration only as a SUM (468.1),
-                                #   so the split is a choice: the entry is
-                                #   charged the copy twin's t_skip16 - t_skip
-                                #   and this term carries the rest
-    "fill_dma_tail8_t": 468.1, # the same tail on an 8-BIT-operand RUN, which
-                                #   pays no 16-bit entry, so it carries the
-                                #   whole 468.1. Dearest of the two readings
-                                #   R161 admits, per the standing rule - the
-                                #   copy twin copy_dma_tail8_t takes the same
-                                #   envelope over the same unmeasured split
-    "fill_dma_min": 240,       # DMA fill CHUNK size (bytes); the SAME
-                                #   audio-safety cap as copy_dma_chunk - the
-                                #   player clips both through
-                                #   vid_chunk_dst_flat/_gap, so these two
-                                #   must move together. Historic
-                                #   name - it is a chunk size, not a
-                                #   threshold; the threshold is run_dma_min
-                                #   below
-    "run_dma_min": 71,         # the PLAYER's fill kernel-select threshold
-                                #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a
-                                #   fill chunk shorter than this goes
-                                #   unrolled-CPU. The 2026-09-15 rows put the
-                                #   break-even at 72.6 B, so 71 commits to
-                                #   DMA 1.6 B early at up to +17 T/op
-    "copy_dma_min": 53,        # the PLAYER's copy kernel-select threshold
-                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc):
-                                #   sitting-5 crossovers 53.75 B flat, 67.88 /
-                                #   68.61 B gapped at height 192 / 144. Model
-                                #   follows the player
-    "copy_dma_path_t": -227.9, # T/op an 8-bit COPY carries over t_op_copy
-                                #   on the DMA branch, beyond copy_dma_setup
-                                #   [silicon NXBC C081, 2026-09-15], placed
-                                #   against the HELD copy_dma_setup. NEGATIVE
-                                #   for two reasons: about -210 cancels the
-                                #   hold's over-charge (the one-chunk rows
-                                #   measure the setup at 881.7), and the
-                                #   other ~-18 is fill_dma_path_t's reason -
-                                #   bailing out of the fast handler costs
-                                #   less than its own intercept. Charged once
-                                #   per op in _copy_t's DMA branch, ONLY on
-                                #   8-bit-operand ops: a >= 256 B op has no
-                                #   fast handler to bail out of, so it pays
-                                #   the measured slow-parser entry
-                                #   (t_skip16 - t_skip) instead
-    "copy_dma_tail_t": 210.7,  # T/op for a sub-threshold TAIL that follows at
-                                #   least one DMA chunk, 16-BIT-operand ops
-                                #   [silicon NXBC C256 / NXBK K256]. FITTED
-                                #   AGAINST THE HELD copy_dma_setup below, so
-                                #   it carries one chunk of that hold's
-                                #   210.2 T over-charge with the opposite sign
-                                #   - re-fit it if the setup ever moves
-    "copy_dma_tail8_t": 489.9, # the same tail on an 8-BIT-operand COPY, where
-                                #   copy_dma_path_t already cancels the held
-                                #   setup's over-charge. An ENVELOPE, not a
-                                #   fit: C161 measures the 16-bit entry and
-                                #   this iteration only as a SUM (420.8 at an
-                                #   entry delta of t_skip16 - t_skip, 489.9 at
-                                #   zero); the dearer end is taken, as in
-                                #   fill_dma_tail8_t - at most +2.5% on
-                                #   241-255 B copies. Measuring the entry
-                                #   delta collapses it to 420.8
-    "copy_dma_per_b": 5.10,    # T/byte mem-to-mem DMA COPY body [silicon
-                                #   NXBC (C103-C081)/22, unarmed, 2026-09-15;
-                                #   the armed tax is carried globally by
-                                #   audio_factor]
-    "copy_dma_setup": 1091.8,  # T per DMA copy chunk [silicon CD1..CD4 chunk
-                                #   solve, 1091.6-1091.9]. HELD although the
-                                #   2026-09-15 one-chunk rows measure 881.7:
-                                #   per-chunk cost rises with op length
-                                #   (change-adjusted 819 / 918 / 1078 T at
-                                #   256 / 1024 / 43008 B); at 881.7 the
-                                #   43008 B keyframe class prices 8.0% UNDER,
-                                #   at 1091.8 +0.8% over. Re-solve only
-                                #   against a long-op DMA copy row on this
-                                #   player, and TOGETHER with
-                                #   copy_dma_path_t and copy_dma_tail_t,
-                                #   which are fitted against this value
-    "copy_dma_chunk": 240,     # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
-                                #   the audio-safety burst cap the player
-                                #   clips every copy chunk to (vid_chunk_all);
-                                #   the one cap the player always applies, so
-                                #   this value models the player exactly. See
-                                #   src/nextdaad.inc NXV2_DMA_CHUNK for the
-                                #   per-mode margin table
-    "header_rate": 0.0,        # count/colour byte parse - FOLDED into the
-                                #   dispatch envelopes above on silicon (see
-                                #   the envelope-convention note)
-    "t_frame_fixed": 1132.0,   # frame-fixed floor [silicon FE row: 1132.4 T].
-                                #   A conservative overestimate of the
-                                #   PLAYER's own fixed cost - the FE row
-                                #   carries bench harness overhead on top of
-                                #   it, leaving headroom for real per-frame
-                                #   work (ring bookkeeping, audio hand-off)
-                                #   the bench does not model
-    "t_palette": 512 * 22.1 + 256 * 20.0,  # 16435 T - model value kept: no
-                                #   silicon PAL row exists; the unrolled
-                                #   outinb path makes this an overestimate.
-                                #   PAL is <0.2% of any frame
-    "clock_khz": 28000.0,       # T per ms at 28MHz
-    "audio_factor": 0.85,       # usable budget after the armed-decode audio
-                                #   tax [silicon: CD armed/unarmed ratio
-                                #   1.170-1.173 at c64/c128/c256 -> 0.853,
-                                #   held at 0.85]. Fitted at the stereo tick
-                                #   rate - mono is withdrawn, there is one
-                                #   tick rate, and this coefficient is
-                                #   fitted at it
+    # kernels and fast-handler envelopes
+    "fetch_short": 19.1,       # T/B LDI copy [NXBC C001-C038, NXBV NC16, NXBX
+                                #   L048-L080 joint fit 19.0046]
+    "fetch_long": 19.1,        # = fetch_short: one rate, no L >= 64 selector
+                                #   [NXBX L064/L072/L080 max 19.0059]
+    "copy_ldi_pass_t": 13.1,   # per 16-LDI block (jp pe) of every LDI call
+                                #   [NXBC/NXBX joint fit 13.0884]
+    "fill_cpu": 15.1,          # T/B CPU fill [NXBO RU01/RU17, NXBK F063/F070,
+                                #   NXBV NR16, NXBF FC56-FC76 fit 15.0128]
+    "fill_cpu_pass_t": 15.0,   # per 16-store pass (djnz) of every CPU fill
+                                #   call [the same fit 14.9306]
+    "t_op_copy": 291.2,        # COPY8 fast-handler envelope [the fetch_short
+                                #   fit's intercept 291.15]
+    "t_op_run": 350.2,         # RUN8 fast-handler envelope [the fill_cpu fit's
+                                #   intercept 350.17]
+    "t_skip": 139.1,           # SKIP8 envelope [NXBO SK00]
+    "t_skip16": 208.2,         # SKIP16 envelope, no pass [NXBO S160]
+    "copy16_entry_t": -86.2,   # COPY16 entry over t_op_copy [NXBE Q240/C240,
+                                #   S4]
+    "run16_entry_t": -114.2,   # RUN16 entry over t_op_run [NXBE W240/R240, S4]
+    "header_rate": 0.0,        # the count byte parse is folded into every
+                                #   envelope
+    # chunked bodies
+    "copy_dma_min": 53,        # the PLAYER's copy kernel select
+                                #   (NXV2_COPY_DMA_MIN): sitting-5 crossovers
+                                #   53.75 B flat, 67.88 / 68.61 B gapped
+    "run_dma_min": 71,         # the PLAYER's fill kernel select
+                                #   (NXV2_RUN_DMA_MIN) [NXBF crossovers 65.41 flat,
+                                #   77.90 gapped; S7 modelled tie keeps 71]
+    "copy_dma_chunk": 240,     # NXV2_DMA_CHUNK, the burst cap on every copy
+                                #   and fill chunk (vid_chunk_dst_flat/_gap)
+    "fill_dma_min": 240,       # = copy_dma_chunk (historic name: a chunk size)
+    "copy_dma_setup": 818.3,   # per DMA copy chunk [NXBC C256, NXBK K256, NXBL,
+                                #   NXBT T298-T320, SYN C4K/K rows; S4]
+    "copy_dma_path_t": -19.7,  # COPY8 bail to the body over t_op_copy [NXBC
+                                #   C081/C103, NXBX D048-D081; S4]
+    "copy_dma_per_b": 5.1,     # T/B DMA copy [(NXBC C103 - C081) / 22]
+    "copy_body_ldi_t": 498.1,  # per LDI chunk of a chunked COPY body, any
+                                #   position [NXBE C250, NXBT T298, NXBH; S4]
+    "fill_dma_setup": 792.3,   # per DMA fill chunk [NXBK F256, NXBE R240/W240,
+                                #   NXBF FD56-FD76; S4]
+    "fill_dma_path_t": -71.3,  # RUN8 bail to the body over t_op_run [NXBK F071,
+                                #   NXBE P071/P200; S4]
+    "fill_dma_per_b": 5.1,     # T/B DMA fill [(NXBE P200 - P071) / 129]
+    "fill_body_cpu_t": 505.8,  # per CPU chunk of a chunked RUN body, any
+                                #   position [NXBE R250; S4]
+    "t_skip_pass": 345.9,      # flat SKIP body pass [NXBV S256/S2D0/SDS1, S4]
+    "gap_skip_pass_t": 312.6,  # gapped SKIP body pass [NXBV JS72/JK72/GS3C, S4]
+    "cap_arm_t": 18.0,         # chunk cap test falling through at 241-255
+                                #   (HAND COUNT: ret c, ld bc,240, ret)
+    "dst_exact_t": 164.0,      # flat chunk sized at D = $5F (HAND COUNT:
+                                #   .exact over the cap arm)
+    "src_exact_t": 156.0,      # COPY chunk clipped at the source window end
+                                #   (HAND COUNT: vid_chunk_src)
+    # dest edges, seams and gapped columns
+    "edge_skip_t": 229.6,      # SKIP8 bail at D >= $5F [NXBV ES16/NS16, S4]
+    "edge_run_t": 221.7,       # RUN8 bail at D >= $5F [NXBV ER16/NR16, S4]
+    "edge_copy_t": 206.3,      # COPY8 bail at D >= $5F [NXBV EC16/NC16, S4,
+                                #   raised 11.77 T for EC16]
+    "dst_seam_t": 145.7,       # vid_dst_next [NXBV SDS1, NXBL LFDS/LGDS, SYN
+                                #   C4KD; S4, raised 6.28 T for SDS1]
+    "col_hop_t": 30.4,         # body column hop [NXBV JC72/JD72/JR72/JS72,
+                                #   GS3C, NXBG, NXBH; S4]
+    "gap_chunk_t": 22.2,       # gapped body chunk surcharge, height <= 240
+                                #   [NXBH HK56; S4, raised 6.19 T for HK56]
+    "gap_chunk_hi_t": 47.0,    # gapped body chunk surcharge, height 241-255
+                                #   (HAND COUNT)
+    "gap_fast_t": 28.0,        # gapped fast-handler op (HAND COUNT: the 9-bit
+                                #   column compare)
+    "gap_bail_t": 73.0,        # gapped RUN8/COPY8 bail over 2+ columns (HAND
+                                #   COUNT)
+    "gap_bail_skip_t": 50.0,   # gapped SKIP8 bail over 2+ columns (HAND COUNT)
+    "fast_hop_skip_t": 61.3,   # gapped SKIP8 inline column hop [NXBV JN72, S4]
+    "fast_hop_run_t": 313.5,   # gapped RUN8 inline hop [NXBF VC60/VC68/VC76, S4]
+    "fast_hop_copy_t": 232.1,  # gapped COPY8 inline hop [NXBH HL56-HL96, NXBG;
+                                #   S4, raised 6.56 T for HL88]
+    # source window
+    "src_parity_seam_t": 220.4,  # vid_src_next into an odd page [SYN C4KP, S4]
+    "src_bank_seam_t": 346.2,    # vid_src_next into the next bank [SYN C4KB, S4]
+    "src_seam_strm_t": 67.7,     # streamed ring walk over a seam [SYS 007 C4KP
+                                  #   - C4K0 less SYN 001's]
+    "src_edge_t": 55.7,          # opcode at $DF00-$DFFB detour [SYN SE01, S4]
+    "src_slow_hdr_t": 212.4,     # opcode at $DFFC-$DFFF, vid_slow_op [SYN SE02, S4]
+    "src_wrap_t": 17.0,          # header walk at H = $E0 (HAND COUNT)
+    "srcedge_t": 38.0,           # COPY8 L + n refine at $DFxx (HAND COUNT)
+    "slow_fetch_t": 99.0,        # vid_slow_op operand fetch (HAND COUNT)
+    "slow_cmp_t": 18.0,          # COPY16 at the slow parser's 6th compare
+                                  #   (HAND COUNT)
+    # frame types, palette and frame-loop glue
+    "frame_delta_t": 1996.8,   # delta frame [SYS 007 FE00 - NUL0]
+    "frame_first_t": 2353.1,   # first keyframe chunk [SYS 007 KS02 - NUL0]
+    "frame_middle_t": 2158.9,  # middle keyframe chunk [SYS 007 FE01 - NUL0]
+    "frame_last_t": 2137.5,    # last keyframe chunk [SYS 007 KF01 - NUL0]
+    "frame_single_t": 2331.7,  # one-frame keyframe span [SYS 007 KS01 - NUL0]
+    "t_palette": 11252.2,      # PAL op [SYN 002 PAL1 - FE00]
+    "pal_straddle_t": 15717.8,  # PAL op straddling a window end, over t_palette
+                                 #   [SYN 001/003/004 PAL2 - PAL1]
+    "glue_t": 979.3,           # frame-loop work outside decode, resident
+                                #   [REAL 004 LOOP/WL16/AUD1/PACE]
+    "glue_strm_t": 1034.3,     # the same, streamed [REAL 008]
+    "clock_khz": 28000.0,      # T per ms at 28 MHz, the slowest core 3.02.04 clock
+    "audio_factor": 0.86,      # unarmed over armed T [min ratio 0.8631, REAL 008
+                                #   AUD1/AAUD; S5]
 }
 
 
 # ---------------------------------------------------------------------
-# TMODEL_COMPOSITION_FACTOR - the COMPOSED-PLAYER safety factor.
-#
-# TMODEL_COEFFS above are micro-bench truths: isolated kernels, isolated
-# dispatch, one op class at a time. The real player composes them - fast
-# handler vs chunked body selection, dest-cursor normalization, column
-# hops, window-seam walks, the audio-ring interleave and per-frame glue
-# the bench cannot see. Measured directly from real-footage silicon
-# fixtures as R = silicon DECODE T/frame / (model T/frame / audio_factor).
-#
-# Two clean clusters split on one discriminator: the mode-1 letterbox
-# column gap. FLAT surfaces (any width/mode) cluster near 1.0-1.02.
-# GAPPED surfaces (mode-1, height != 256) cost more because every op
-# whose length crosses a column boundary leaves the fast handler and
-# rides the chunked body; a sparse gapped test-card row measures far
-# above the dense gapped cluster (disclosed model weakness, not a cap
-# hazard - a sparse frame is cheap in absolute terms and self-bounds on
-# byte demand).
-#
-# Factor = worst DENSE-cluster measured R x ~1.12 margin, taken at-cap
-# (only frames actually bound by the cap can drive a cap de-rating).
-# Re-derive whenever TMODEL_COEFFS's op dispatch costs change - a
-# cheaper model makes a cap-full of work MORE silicon time, not less,
-# so the factor must move with it or the cap silently loses its margin.
-# Calibrated at gapped heights 144 and 192; a new gapped height below
-# 144 needs a fresh silicon check (crossing rate scales roughly with
-# 1/height).
-# ---------------------------------------------------------------------
-# HELD across the 2026-09-15 re-fit: R is a ratio against the model, so
-# both sides moved together. Player speed is measured by the bench rows,
-# not DEBUG PLAY: decode time saved goes into the polled pace spin and
-# each PLAY= poll loses a CTC edge ~7% of the time, so PLAY can rise as
-# decode gets faster. The hold kept its margin at pal9v density on
-# hardware (2026-09-16): every clip within NOM+1, no under-runs.
+# TMODEL_COMPOSITION_FACTOR - margin on the usable per-frame budget, per
+# class ceil(100 x max(1.12 x R_max, R_max x P / (P - T(AAUD)))) / 100 with
+# R = silicon frame T / (model T / audio_factor) (sitting 5, rule S8).
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
-    "flat":   1.19,   # worst dense-cluster measured R (silicon
-                       #   real-footage fixtures) x 1.12 margin
-    "gapped": 1.46,   # worst dense-cluster measured R (silicon
-                       #   real-footage fixtures) x 1.12 margin
+    "flat":   1.10,   # R_max 0.9780 [REAL 008 XB65 frame 6] x 1.12
+    "gapped": 1.09,   # R_max 0.9701 [REAL 009 XC65 frame 16] x 1.12
 }
 
 
@@ -593,13 +517,11 @@ def is_gapped(width, height):
 
 
 def composition_factor(width=None, height=None):
-    """Composed-player de-rating for this surface shape. Shape unknown
-    (the legacy one-argument call) -> the GAPPED (pessimistic) factor,
-    not the flat one: an unset shape must fail safe toward the de-rated
-    budget rather than silently handing back the optimistic 1.00 a
-    gapped surface would then blow through."""
+    """Composed-player de-rating for this surface shape. Shape unknown ->
+    the larger class factor: an unset shape fails safe toward the smaller
+    budget."""
     if width is None or height is None:
-        return TMODEL_COMPOSITION_FACTOR["gapped"]
+        return max(TMODEL_COMPOSITION_FACTOR.values())
     return TMODEL_COMPOSITION_FACTOR["gapped" if is_gapped(width, height) else "flat"]
 
 
@@ -607,11 +529,13 @@ def frame_period_t(fps):
     return 1000.0 / float(fps) * TMODEL_COEFFS["clock_khz"]
 
 
-def usable_budget_t(fps, width=None, height=None):
-    """Usable decode T per frame after the audio ISR tax AND the
-    composed-player safety factor for this surface shape."""
-    return (frame_period_t(fps) * TMODEL_COEFFS["audio_factor"]
-            / composition_factor(width, height))
+def usable_budget_t(fps, width=None, height=None, streamed=True):
+    """Usable decode T per frame: the armed period less the frame-loop glue
+    (glue_strm_t streamed, glue_t resident; glue is unarmed T), over the
+    composition factor for this shape. streamed defaults to the dearer glue."""
+    tc = TMODEL_COEFFS
+    glue = tc["glue_strm_t" if streamed else "glue_t"]
+    return (frame_period_t(fps) * tc["audio_factor"] - glue) / composition_factor(width, height)
 
 
 # ---------------------------------------------------------------------
@@ -631,7 +555,7 @@ def usable_budget_t(fps, width=None, height=None):
 # depth and an underrun most frames). This check catches that before
 # encode:
 #
-#   - wire floor: silicon-measured full-ring prefill rate.
+#   - wire: the measured unarmed producer rate (SD_WIRE_BYTES_PER_MS).
 #   - the ISR audio tax (audio_factor) applies to the pace-window
 #     reads as well - the producer's ini loops are CPU-driven.
 #   - busy uses TMODEL_SILICON_R, the MEASURED composed-player ratios
@@ -652,42 +576,22 @@ def usable_budget_t(fps, width=None, height=None):
 # machine and skip the check (smaller pools stream them too, and are
 # underrun-prone there).
 # ---------------------------------------------------------------------
-# TMODEL_SILICON_R - measured composed-player decode ratio R, keyed by
-# shape class and DENSITY (mean modeled decode-T utilization of the
-# shape's usable budget). Each class holds (density, R) anchors from
-# silicon fixtures at that density; silicon_r() interpolates linearly
-# between anchors and clamps outside them - no extrapolation. Density
-# keying replaced an earlier shape-only key that measured 1.6-10.1%
-# optimistic on budget-scaled streamed content (R rises as density
-# falls, on every shape class). A sparse skip-dominated test card can
-# still read well above the streamed anchor at the same density (mean-T
-# density does not separate a skip-heavy test card from a budget-scaled
-# real clip) - disclosed, not a hazard: the same sparseness that
-# inflates R also collapses the byte demand the wire term prices.
-# HELD status: see the 2026-09-15 re-fit note above TMODEL_COMPOSITION_FACTOR.
+# TMODEL_SILICON_R - measured composed-player decode ratio R = silicon
+# decode T / (model T / audio_factor), keyed by shape class and DENSITY
+# (mean model T over the usable budget), per REAL session's A065 sweep
+# (sitting 5, rule S9). Linear between anchors, clamped outside them.
 TMODEL_SILICON_R = {
-    "flat_256": ((0.416, 1.071), (0.574, 1.062)),
-    "flat_320": ((0.342, 1.106), (0.919, 1.052)),
-    "gapped":   ((0.433, 1.438), (0.950, 1.302)),
+    "flat_256": ((0.42, 0.976), (0.485, 0.979), (0.512, 0.976)),  # REAL 005, 007, 002
+    "flat_320": ((0.309, 0.981), (0.807, 0.976)),                 # REAL 008, 001
+    "gapped":   ((0.4, 0.974), (0.696, 0.963), (0.867, 0.965)),   # REAL 009, 004, 003
 }
 
-SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon-measured full-ring
-                                                # prefill floor; held
-                                                # deliberately conservative
-                                                # against the ring
-                                                # producer's true
-                                                # throughput - see the
-                                                # wire-term note in
-                                                # stream_supply_check
+# SD producer rate, UNARMED: every use multiplies by audio_factor
+# [floor of REAL 007/008/009 512 x 28000 / (PROD + PACE - 104 + 161), S11]
+SD_WIRE_BYTES_PER_MS = 1314.0
 
-# Per-frame AUDIO-COPY cost, in T per PADDED audio byte - the timeline's
-# own AUDIO phase (vid_aud_copy's seam-walked LDIR into the double
-# buffer, plus the hand-off), which is serial with DECODE and with the
-# pace window and is therefore time the SD producer does NOT have.
-# Silicon-fitted at the worst measured AUDIO-phase row for a 1536 B
-# padded stereo layout. Expressed per padded byte because that is the
-# quantity the gate is handed; the copy itself is one double-buffer
-# half per frame, so the term tracks the layout.
+# AUDIO phase T per padded audio byte, serial with decode and the pace
+# window [max T(AAUD) / 1536 over REAL sessions, 24.938 at REAL 008, S10]
 AUDIO_COPY_T_PER_B = 25.0
 
 # ---------------------------------------------------------------------
@@ -711,7 +615,9 @@ AUDIO_COPY_T_PER_B = 25.0
 # ---------------------------------------------------------------------
 AUD_PUMP_CALL_T = 1950.0
 
-STREAM_RESIDENT_POOL_B = 78 * 16384            # fresh-boot 2MB pool ring
+# RING D= 80 at open + the DEBUG bench bank - the audio bank - five
+# snapshot banks [every sitting-5 resident session, S12]
+STREAM_RESIDENT_POOL_B = 75 * 16384
 STREAM_WARN_UTIL = 0.90
 STREAM_TARGET_UTIL = 0.90                       # suggestion target
 
@@ -824,35 +730,31 @@ STARVE_BURST_WINDOW_S = 0.5
 
 
 def silicon_r(width, height, density=None):
-    """Measured composed-player decode ratio for this shape cluster at
-    this DENSITY (mean modeled decode-T utilization of the shape's
-    usable budget): R = silicon T/frame / (model T/frame / audio_factor),
-    so R x model_T is af x the true silicon decode T (a caller wanting
-    true decode time divides by af again).
+    """Measured composed-player decode ratio for this shape class at this
+    DENSITY (mean modeled decode T over the shape's usable budget): R =
+    silicon T/frame / (model T/frame / audio_factor), so R x model_T is af x
+    the true silicon decode T (a caller wanting true decode time divides by
+    af again).
 
-    density None fails safe to the SPARSE-end anchor (the largest R in
-    the class) - the conservative direction for every planning-time
-    caller that cannot know its stream's density yet. Callers with a
-    dense-by-construction frame (keyframe chunks) pass density=1.0 and
-    clamp to the dense anchor.
-
-    Linear between the class's measured anchors, clamped outside them -
-    see the TMODEL_SILICON_R block for the anchors and provenance. No
-    height interpolation on gapped shapes: every gapped height reads
-    the one gapped class, worst dense row anchored."""
+    Any number of anchors per class: sorted by density, linear between
+    neighbours, clamped outside them. density None returns the class's
+    largest R, the conservative value for a caller that cannot know its
+    stream's density; a dense-by-construction frame (a keyframe chunk)
+    passes density=1.0. Every gapped height reads the one gapped class."""
     if not is_gapped(width, height):
         key = "flat_320" if int(width) == 320 else "flat_256"
     else:
         key = "gapped"
-    (d_lo, r_lo), (d_hi, r_hi) = TMODEL_SILICON_R[key]
+    pts = sorted(TMODEL_SILICON_R[key])
     if density is None:
-        return max(r_lo, r_hi)
+        return max(r for _d, r in pts)
     d = float(density)
-    if d <= d_lo:
-        return r_lo
-    if d >= d_hi:
-        return r_hi
-    return r_lo + (r_hi - r_lo) * (d - d_lo) / (d_hi - d_lo)
+    if d <= pts[0][0]:
+        return pts[0][1]
+    for (d0, r0), (d1, r1) in zip(pts, pts[1:]):
+        if d <= d1:
+            return r0 + (r1 - r0) * (d - d0) / (d1 - d0)
+    return pts[-1][1]
 
 
 def pace_trickle_frac(audio_real_bytes):
@@ -893,20 +795,9 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     busy_ms recovers TRUE silicon decode wall time via silicon_r()/af
     (R already carries its own /af - see the silicon_r docstring); the
     naive mean_t * silicon_r / clock double-counts af and under-prices
-    busy. wire_eff (SD_WIRE_BYTES_PER_MS * af) is deliberately
-    conservative against the ring producer's measured silicon
-    throughput - the margin covers the per-block open/re-arm/token-wait
-    transport glue the direct path prices explicitly via
-    DIRECT_TRANSPORT_FACTOR, not a second audio tax.
-
-    KNOWN OPTIMISM: busy is under-priced on sparse/derived-budget
-    streams, because R rises as density falls (see TMODEL_SILICON_R) -
-    a stream at its auto-derived budget is sparser than the at-cap rows
-    the table anchors on. Silicon-clean in every case measured so far
-    (the margin consumed sits inside AUTO_BUDGET_TARGET_UTIL's p95
-    headroom), disclosed rather than corrected: a density-aware R is
-    the honest fix, a shape-keyed nudge would over-price dense
-    streams."""
+    busy. wire_eff (SD_WIRE_BYTES_PER_MS * af) is the measured producer
+    rate, armed. density is the stream's mean T over the streamed usable
+    budget, the key TMODEL_SILICON_R was measured at."""
     af = TMODEL_COEFFS["audio_factor"]
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
@@ -1070,16 +961,10 @@ def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
 # kind (matches _chunk_lengths below) - correctness never depends on
 # the 64-byte DMA threshold, only on the count-field width.
 #
-# Split-rule decision (silicon rows, VGA-0, core 3.02.04, 2026-09-15): an
-# op with a sub-threshold remainder after full DMA chunks is NOT split
-# into two ops, for copies or fills - decided on measured worth, not on
-# the tail terms. Copy: the 16-bit tail 210.7 is under t_op_copy 303.7,
-# but the 8-bit tail 489.9 exceeds it by 186 T (+185.8 T at L=250);
-# splitting's measured ceiling is +0.207% of decode net of wire on BBB,
-# -0.001% on Sintel. Fill: tail 468.1 exceeds t_op_run 367.4 by 100.7,
-# but zero splittable RUN ops occurred in 200 encoded frames across two
-# sources. Splitting is an EMISSION decision, so skipping it can never
-# under-price a frame - the only downside is forgone decode time.
+# Split rule: an op with a sub-threshold remainder after full DMA chunks is
+# NOT split into two ops. Splitting is an emission decision, so skipping it
+# never under-prices a frame (measured ceiling +0.207% of decode net of wire
+# on BBB, -0.001% on Sintel, 2026-09-15).
 # ---------------------------------------------------------------------
 
 def _chunk_lengths(n):
@@ -1137,174 +1022,231 @@ def op_copy(payload):
     return b"".join(parts)
 
 
+# ---------------------------------------------------------------------
+# Event pricing. nxv2path walks the player's dest geometry per op with the
+# source window clear; EVENT_TERMS maps each of its counters to terms (the
+# sitting-5 rules' S4 map). A frame adds its frame-type term and the
+# expected source-window events, since its file offset is not yet known.
+# ---------------------------------------------------------------------
+assert (nxv2path.OP_FEND, nxv2path.OP_SKIP16, nxv2path.OP_RUN8, nxv2path.OP_RUN16,
+        nxv2path.OP_COPY8, nxv2path.OP_COPY16, nxv2path.OP_PAL, nxv2path.OP_SKIP8,
+        nxv2path.OP_KFLIP, nxv2path.OP_KSTART) == (
+    OP_FEND, OP_SKIP16, OP_RUN8, OP_RUN16, OP_COPY8, OP_COPY16, OP_PAL, OP_SKIP8,
+    OP_KFLIP, OP_KSTART)
+assert nxv2path.DMA_CHUNK == TMODEL_COEFFS["copy_dma_chunk"] == TMODEL_COEFFS["fill_dma_min"]
+assert nxv2path.PAL_BYTES == PAL_BLOCK_SIZE
+
+# counter -> terms; "gap:" on a gapped surface, "gaplo:" on gapped heights up
+# to the DMA chunk, "strm:" on a streamed clip; () is zero-cost
+EVENT_TERMS = {
+    "fast_skip8": ("t_skip", "gap:gap_fast_t"),
+    "fast_run8": ("t_op_run", "gap:gap_fast_t"),
+    "fast_copy8": ("t_op_copy", "gap:gap_fast_t"),
+    "thr_run8": ("t_op_run", "fill_dma_path_t"),
+    "thr_copy8": ("t_op_copy", "copy_dma_path_t"),
+    "edge_skip8": ("edge_skip_t",),
+    "edge_run8": ("edge_run_t",),
+    "edge_copy8": ("edge_copy_t",),
+    "gap_skip8": ("edge_skip_t", "gap_bail_skip_t"),
+    "gap_run8": ("edge_run_t", "gap_bail_t"),
+    "gap_copy8": ("edge_copy_t", "gap_bail_t"),
+    "src_copy8": ("edge_copy_t",),
+    "op_skip16": ("t_skip16",),
+    "op_run16": ("t_op_run", "run16_entry_t"),
+    "op_copy16": ("t_op_copy", "copy16_entry_t"),
+    "slow_skip8": ("t_skip",),
+    "slow_skip16": ("t_skip16", "slow_fetch_t"),
+    "slow_run8": ("t_op_run", "slow_fetch_t"),
+    "slow_run16": ("t_op_run", "run16_entry_t", "slow_fetch_t", "slow_fetch_t"),
+    "slow_copy8": ("t_op_copy",),
+    "slow_copy16": ("t_op_copy", "copy16_entry_t", "slow_fetch_t", "slow_cmp_t"),
+    "fast_hop_skip8": ("fast_hop_skip_t",),
+    "fast_hop_run8": ("fast_hop_run_t",),
+    "fast_hop_copy8": ("fast_hop_copy_t",),
+    "fast_hop0_run8": (),              # a subset of fast_hop_run8, priced there
+    "fast_hop0_copy8": (),             # a subset of fast_hop_copy8, priced there
+    "fast_dst_seams": ("dst_seam_t",),
+    "copy8_srcedge": ("srcedge_t",),
+    "run_fast_b": ("fill_cpu",),
+    "copy_fast_b": ("fetch_short",),
+    "copy_ldi_passes": ("copy_ldi_pass_t",),
+    "run_cpu_passes": ("fill_cpu_pass_t",),
+    "skip_passes": ("t_skip_pass",),
+    "gap_skip_passes": ("gap_skip_pass_t",),
+    "run_cpu_chunks8": ("fill_body_cpu_t", "gaplo:gap_chunk_t"),
+    "run_cpu_chunks16": ("fill_body_cpu_t", "gaplo:gap_chunk_t"),
+    "run_dma_chunks8": ("fill_dma_setup", "gaplo:gap_chunk_t"),
+    "run_dma_chunks16": ("fill_dma_setup", "gaplo:gap_chunk_t"),
+    "copy_ldi_chunks8": ("copy_body_ldi_t", "gaplo:gap_chunk_t"),
+    "copy_ldi_chunks16": ("copy_body_ldi_t", "gaplo:gap_chunk_t"),
+    "copy_dma_chunks8": ("copy_dma_setup", "gaplo:gap_chunk_t"),
+    "copy_dma_chunks16": ("copy_dma_setup", "gaplo:gap_chunk_t"),
+    "run_cpu_b": ("fill_cpu",),
+    "run_dma_b": ("fill_dma_per_b",),
+    "copy_ldi_b": ("fetch_short",),
+    "copy_dma_b": ("copy_dma_per_b",),
+    "dst_exact_chunks": ("dst_exact_t",),
+    "cap_arm_chunks": ("cap_arm_t",),
+    "gap_hi_chunks": ("gap_chunk_hi_t",),
+    "copy_src_chunks": ("src_exact_t",),
+    "col_hops": ("col_hop_t",),
+    "dst_seams": ("dst_seam_t",),
+    "src_parity_seams": ("src_parity_seam_t", "strm:src_seam_strm_t"),
+    "src_bank_seams": ("src_bank_seam_t", "strm:src_seam_strm_t"),
+    "src_edge_hdr": ("src_edge_t",),
+    "src_slow_hdr": ("src_slow_hdr_t",),
+    "src_wrap_hdr": ("src_edge_t", "src_wrap_t"),
+    "pal_ops": ("t_palette",),
+    "pal_straddles": ("t_palette", "pal_straddle_t"),
+    "pal_chunks": (),                  # 1 or 2; pal_straddle_t measures 2
+    "kstart": (),                      # kstart..fend_span: in the frame-type terms
+    "kflip": (),
+    "fend": (),
+    "fend_span": (),
+}
+assert set(EVENT_TERMS) | nxv2path.DIAGNOSTIC == set(nxv2path.Events.__dataclass_fields__)
+
+FRAME_TYPES = ("delta", "first", "middle", "last", "single")
+SRC_WINDOW_B = 8192        # source window: one seam per window of payload
+SRC_EDGE_HDR_B = 256       # header positions per window at $DFxx (vid_op_edge)
+SRC_SLOW_HDR_B = 4         # ... at $DFFC-$DFFF (vid_slow_op)
+PAL_STRADDLE_B = 513       # PAL header positions per window that straddle its end
+_UNBOUNDED_PAGES = 1 << 16  # dest pages of an unknown-shape (flat) surface
+
+
+def event_coeffs(width=None, height=None, streamed=True):
+    """{counter: T} for nxv2path.Events.price on this surface, every counter
+    but the diagnostics. Shape None prices a flat surface."""
+    tc = TMODEL_COEFFS
+    gapped = width is not None and is_gapped(width, height)
+    low = gapped and int(height) <= tc["copy_dma_chunk"]
+    out = {}
+    for name, terms in EVENT_TERMS.items():
+        t = 0.0
+        for term in terms:
+            cond, _sep, key = term.rpartition(":")
+            if ((cond == "gap" and not gapped) or (cond == "gaplo" and not low)
+                    or (cond == "strm" and not streamed)):
+                continue
+            t += tc[key]
+        out[name] = t
+    return out
+
+
+def frame_events(ops, width=None, height=None, dst=None, in_span=False,
+                 copy_thr=None, run_thr=None):
+    """(nxv2path.Events, nxv2path.State) of one payload's (opcode, n) ops with
+    the source window clear, at the model's kernel selects unless given. dst
+    (page, DE) defaults to the fresh cursor. Shape None walks a flat surface
+    with no page limit."""
+    if width is None:
+        surface, pages = (256, 192, False), _UNBOUNDED_PAGES
+    else:
+        surface, pages = (int(width), int(height), is_gapped(width, height)), None
+    tc = TMODEL_COEFFS
+    return nxv2path.simulate(
+        ops, surface, None, dst=(0, nxv2path.DST_WIN) if dst is None else tuple(dst),
+        in_span=in_span, copy_thr=tc["copy_dma_min"] if copy_thr is None else copy_thr,
+        run_thr=tc["run_dma_min"] if run_thr is None else run_thr, dst_pages=pages)
+
+
+def src_expected_t(nbytes, nops, npal=0, streamed=True):
+    """Expected source-window T of one frame of nbytes payload bytes, nops op
+    headers and npal PAL ops, at unknown file offset: a seam per 8192 B, a
+    detour or slow header per op, a straddle per PAL op."""
+    tc = TMODEL_COEFFS
+    seam = (max(tc["src_parity_seam_t"], tc["src_bank_seam_t"])
+            + (tc["src_seam_strm_t"] if streamed else 0.0))
+    return (nbytes / SRC_WINDOW_B * seam
+            + nops * (SRC_EDGE_HDR_B / SRC_WINDOW_B * tc["src_edge_t"]
+                      + SRC_SLOW_HDR_B / SRC_WINDOW_B * tc["src_slow_hdr_t"])
+            + npal * PAL_STRADDLE_B / SRC_WINDOW_B * tc["pal_straddle_t"])
+
+
+def frame_price(ops, ftype="delta", width=None, height=None, dst=None,
+                in_span=False, streamed=True):
+    """(payload bytes, T, nxv2path.State) of one frame's ops through its
+    terminal: its frame-type term, its dest events and the expected
+    source-window events."""
+    if ftype not in FRAME_TYPES:
+        raise ValueError(f"frame type {ftype!r} is not one of {FRAME_TYPES}")
+    ev, state = frame_events(ops, width, height, dst, in_span)
+    nbytes = sum(nxv2path.op_bytes(op, n) for op, n in ops)
+    t = (TMODEL_COEFFS[f"frame_{ftype}_t"]
+         + ev.price(event_coeffs(width, height, streamed))
+         + src_expected_t(nbytes, len(ops), ev.pal_ops + ev.pal_straddles, streamed))
+    return nbytes, t, state
+
+
+_SEG_OPS = ((OP_SKIP8, OP_SKIP16), (OP_COPY8, OP_COPY16), (OP_RUN8, OP_RUN16))
+_KIND_BY_CLS = ("skip", "copy", "run")   # cls 0/1/2, matches segment below
+_CLS_BY_KIND = {k: c for c, k in enumerate(_KIND_BY_CLS)}
+
+
+def _segment_ops(cls, length, out):
+    """Append one segment's ops, as the emitters chunk it, to out."""
+    op8, op16 = _SEG_OPS[cls]
+    for L in _chunk_lengths(length):
+        out.append((op8 if L <= 255 else op16, L))
+
+
+def _op_alone(op, n):
+    """(bytes, T) of one op alone at a fresh flat cursor: its envelope,
+    entry, kernel passes and chunks; no frame-type or source-window term."""
+    ev, _state = frame_events([(op, n), (OP_FEND, 0)])
+    return nxv2path.op_bytes(op, n), ev.price(event_coeffs())
+
+
 def _cost_skip_chunk(L):
-    tc = TMODEL_COEFFS
-    if L <= 255:
-        return 2, tc["t_skip"] + 1 * tc["header_rate"]
-    return 3, tc["t_skip16"] + 2 * tc["header_rate"]
-
-
-def _fill_t(L):
-    """Modeled fill-body T for L bytes, gated on the PLAYER's own kernel-
-    select rule - the same shape as _copy_t.
-
-    The player (src/video.asm vid_run_body) clips every fill chunk to
-    NXV2_DMA_CHUNK (240) via vid_chunk_dst_flat/_gap, then takes
-    vid_fill_dma when the chunk is >= NXV2_RUN_DMA_MIN (71) and
-    vid_fill_cpu otherwise.
-    So the full 240 B chunks are DMA and only the trailing remainder is
-    re-selected - a 300 B fill is one DMA chunk plus a 60 B CPU tail,
-    NOT two DMA setups. The model must predict what the player DOES.
-
-    There is deliberately NO min(cpu, dma) floor: above run_dma_min the
-    player is COMMITTED to the DMA kernel, so a min() would model a
-    cheaper kernel than the player can select - optimism is the exact
-    failure mode this model exists to avoid. If a future re-fit made DMA
-    dearer above the threshold, the honest answer is to re-derive the
-    threshold (and the .inc constant with it), not to let the model
-    quietly price a kernel the player never runs.
-
-    A sub-threshold TAIL after at least one full chunk pays a chunk-loop
-    iteration of its own (fill_dma_tail_t): the 240 B cap turns every
-    256-aligned op into "chunk plus tail". The rows that validated this
-    model before the cap moved to 240 had no tail, which is why the term
-    is newer than the shape."""
-    tc = TMODEL_COEFFS
-    thr = tc["run_dma_min"]
-    if L < thr:
-        return L * tc["fill_cpu"]
-    chunk = tc["fill_dma_min"]
-    full, rem = divmod(L, chunk)
-    # OP-CLASS ENTRY COST, the same split _copy_t makes: an 8-bit-operand
-    # RUN bails out of the fast handler and pays fill_dma_path_t for it;
-    # a 16-bit one enters the slow parser and pays its wider entry, the
-    # measured t_skip16 - t_skip. R161 measures that entry and one
-    # chunk-loop iteration only as a SUM, so charging it here and 69.1
-    # less in fill_dma_tail_t is the dearer of the two readings on every
-    # class - a RUN16 with no sub-threshold tail paid nothing before.
-    dma = (tc["fill_dma_path_t"] if L <= 255
-           else tc["t_skip16"] - tc["t_skip"])
-    dma += full * (tc["fill_dma_setup"] + chunk * tc["fill_dma_per_b"])
-    if rem:
-        if rem >= thr:
-            dma += tc["fill_dma_setup"] + rem * tc["fill_dma_per_b"]
-        else:
-            tail = (tc["fill_dma_tail8_t"] if L <= 255
-                    else tc["fill_dma_tail_t"])
-            dma += rem * tc["fill_cpu"] + (tail if full else 0.0)
-    return dma
+    return _op_alone(OP_SKIP8 if L <= 255 else OP_SKIP16, L)
 
 
 def _cost_run_chunk(L):
-    tc = TMODEL_COEFFS
-    fill_t = _fill_t(L)
-    if L <= 255:
-        return 3, tc["t_op_run"] + 2 * tc["header_rate"] + fill_t
-    return 4, tc["t_op_run"] + 3 * tc["header_rate"] + fill_t
-
-
-def _copy_t(L, rate):
-    """Modeled copy-body T for L bytes: min of the LDI body and the
-    mem-to-mem DMA body, chunked at copy_dma_chunk (240B), gated on the
-    PLAYER's own kernel-select rule.
-
-    The player (src/video.asm vid_copy_body/.seg) clips every copy chunk
-    to NXV2_DMA_CHUNK (240) via vid_chunk_all, then takes vid_copy_dma
-    when the chunk is >= NXV2_COPY_DMA_MIN (53) and vid_copy_ldi
-    otherwise.
-    So a body under 53 B is priced as pure LDI, and a trailing sub-53
-    remainder after the full 240B chunks is priced as LDI too - the model
-    must predict what the player DOES. (The player also splits on
-    src/dest window room, which the model cannot see; those splits only
-    add setups, so this stays the optimistic-but-close side of the real
-    chunking.)
-
-    Mirrors _fill_t's chunk-and-gate shape - see copy_dma_min's own
-    comment in TMODEL_COEFFS for its measured break-even, and _fill_t
-    for why there is deliberately no min(cpu, dma) floor. The path-entry
-    cost (copy_dma_path_t vs the slow-parser entry for >=256B ops) is a
-    disclosed edge of the same threshold: a sub-threshold remainder
-    after full 240B chunks is priced as LDI even where DMA would be
-    cheaper, because the player's single threshold constant governs the
-    in-slow-body re-select too - the model follows the player, not the
-    unconstrained optimum.
-
-    That tail still pays a chunk-loop iteration of its own
-    (copy_dma_tail_t): the 240 B cap turns every 256-aligned op into
-    "chunk plus tail". The rows that validated this model before the cap
-    moved to 240 had no tail, which is why the term is newer than the
-    shape."""
-    tc = TMODEL_COEFFS
-    if L < tc["copy_dma_min"]:
-        return L * rate
-    chunk = tc["copy_dma_chunk"]
-    full, rem = divmod(L, chunk)
-    # OP-CLASS ENTRY COST. An 8-BIT-operand COPY reaches the DMA kernel
-    # by bailing out of the fast LDI handler into the slow chunked
-    # body, and pays the measured path difference copy_dma_path_t for
-    # doing so. A 16-BIT-operand COPY (L >= 256) has NO fast handler to
-    # bail out of - it enters the slow parser directly - so it never
-    # pays that difference; instead it pays the slow parser's own wider
-    # entry, measured as the SKIP16-vs-SKIP8 envelope delta (t_skip16 -
-    # t_skip). Silicon-confirmed against a 256B copy fixture (+0.80%
-    # against measured, vs +2.91% charging path_t there instead).
-    dma = (tc["copy_dma_path_t"] if L <= 255
-           else tc["t_skip16"] - tc["t_skip"])
-    dma += full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
-    if rem:
-        if rem >= tc["copy_dma_min"]:
-            dma += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]
-        else:
-            # 8-bit ops take the LARGER tail: copy_dma_path_t has already
-            # cancelled the held setup's over-charge on that branch, so
-            # there is no slack for the 16-bit term to net against.
-            tail = (tc["copy_dma_tail8_t"] if L <= 255
-                    else tc["copy_dma_tail_t"])
-            dma += rem * rate + (tail if full else 0.0)
-    return dma
+    return _op_alone(OP_RUN8 if L <= 255 else OP_RUN16, L)
 
 
 def _cost_copy_chunk(L):
-    tc = TMODEL_COEFFS
-    rate = tc["fetch_long"] if L >= 64 else tc["fetch_short"]
-    body = _copy_t(L, rate)
-    if L <= 255:
-        return 2 + L, tc["t_op_copy"] + 1 * tc["header_rate"] + body
-    return 3 + L, tc["t_op_copy"] + 2 * tc["header_rate"] + body
+    return _op_alone(OP_COPY8 if L <= 255 else OP_COPY16, L)
+
+
+def _fill_t(L):
+    """Fill body T of one L B op at a fresh flat cursor, its envelope
+    t_op_run excluded (entry, chunks, passes and cap arms included)."""
+    return _cost_run_chunk(L)[1] - TMODEL_COEFFS["t_op_run"]
+
+
+def _copy_t(L):
+    """Copy body T of one L B op at a fresh flat cursor, its envelope
+    t_op_copy excluded (entry, chunks, passes and cap arms included)."""
+    return _cost_copy_chunk(L)[1] - TMODEL_COEFFS["t_op_copy"]
 
 
 def op_cost(kind, length):
-    """kind: 'skip' | 'run' | 'copy'. Returns (bytes, T) summed across
-    however many count-field chunks `length` requires."""
+    """kind: 'skip' | 'run' | 'copy'. (bytes, T) of the op(s) one segment
+    of length emits, each alone at a fresh flat cursor (see _op_alone)."""
+    if kind not in _CLS_BY_KIND:
+        raise ValueError(f"unknown op kind {kind!r}")
+    ops = []
+    _segment_ops(_CLS_BY_KIND[kind], length, ops)
     total_b, total_t = 0, 0.0
-    for L in _chunk_lengths(length):
-        if kind == "skip":
-            b, t = _cost_skip_chunk(L)
-        elif kind == "run":
-            b, t = _cost_run_chunk(L)
-        elif kind == "copy":
-            b, t = _cost_copy_chunk(L)
-        else:
-            raise ValueError(f"unknown op kind {kind!r}")
+    for op, n in ops:
+        b, t = _op_alone(op, n)
         total_b += b
         total_t += t
     return total_b, total_t
 
 
-_KIND_BY_CLS = ("skip", "copy", "run")   # cls 0/1/2, matches _segment below
-
-
-def stream_cost(gcls, glens):
-    """Total (bytes, T) for a frame's segment list, including the
-    per-frame fixed cost once. Does NOT include FEND/KFLIP/KSTART/PAL -
-    callers that emit those add their own fixed costs."""
-    b_total = 0
-    t_total = TMODEL_COEFFS["t_frame_fixed"]
-    for c, L in zip(gcls, glens):
-        b, t = op_cost(_KIND_BY_CLS[int(c)], int(L))
-        b_total += b
-        t_total += t
-    return b_total, t_total
+def stream_cost(gcls, glens, width=None, height=None, streamed=True):
+    """(bytes, T) of a delta frame's segment list as emit_delta_ops writes
+    it: bytes exclude the FEND byte, T is the whole frame (frame_delta_t,
+    its dest events and the expected source-window events)."""
+    ops = []
+    for c, L in zip(np.asarray(gcls).tolist(), np.asarray(glens).tolist()):
+        if L > 0:
+            _segment_ops(int(c), int(L), ops)
+    ops.append((OP_FEND, 0))
+    nbytes, t, _state = frame_price(ops, "delta", width, height, streamed=streamed)
+    return nbytes - 1, t
 
 
 # ---------------------------------------------------------------------
@@ -1315,7 +1257,10 @@ def stream_cost(gcls, glens):
 # format needs NO skip=0 separators between adjacent non-skip ops, so
 # segmentation here is simpler than the prototype's own emission step.
 # ---------------------------------------------------------------------
-FILLMIN = 8   # minimum uniform-run length to prefer RUN over COPY
+# minimum uniform-run length emitted as RUN inside a changed span: the smallest L
+# where RUN plus two COPY splits beats one COPY at the merge exchange rate
+# [sitting 5, rule S12, lam = supply_exchange_t_per_byte(320, 256)]
+FILLMIN = 30
 
 # Content-triggered keyframe thresholds - ported VERBATIM from the
 # research prototype's tuned values (flic2.py / research-realfootage-
@@ -1728,22 +1673,14 @@ def emit_delta_ops(target_flat, gcls, gstarts, glens):
 # greedy pass approaches the DP upper bound measured against it.
 # ---------------------------------------------------------------------
 
-# THE SUPPLY EXCHANGE RATE - what one WIRE byte is worth in decode
-# T-states at the clip-level supply gate. Derived from the shipped
-# gate's own arithmetic:
-#
-#     1 wire byte = 1/(SD_WIRE x af) ms = 9.089e-4 ms
-#     1 decode T  = R/af/clock ms       = 4.48e-5 ms
-#     ---------------------------------------------------------------
-#     1 wire byte = 19.9 decode T-states   (19.6-20.2 on flat shapes,
-#                                           15.3-16.5 on gapped ones)
-#
-# This is an OPPORTUNITY COST, not an execution cost: it is what the
-# encoder gives up in decode budget when it spends a byte on the wire,
-# and both sides of that trade are priced against the same frame period
-# by stream_supply_check. It is deliberately NOT keyed to any kernel -
-# see merge_kstar for the error that made.
-SUPPLY_EXCHANGE_T_PER_BYTE = 19.9
+# THE SUPPLY EXCHANGE RATE - what one WIRE byte is worth in decode T at the
+# supply gate: 1 wire byte = 1 / (SD_WIRE x af) ms, 1 decode T = R / af /
+# clock ms, so T per byte = clock / (SD_WIRE x R), af cancelling. An
+# OPPORTUNITY COST, not an execution cost: deliberately keyed to no kernel.
+def supply_exchange_t_per_byte(width, height):
+    """clock_khz / (SD_WIRE_BYTES_PER_MS x silicon_r(width, height, 1.0)):
+    21.83 T/B flat and 22.08 T/B gapped at the sitting-5 values."""
+    return TMODEL_COEFFS["clock_khz"] / (SD_WIRE_BYTES_PER_MS * silicon_r(width, height, 1.0))
 
 
 def merge_kstar(lam=None):
@@ -1754,25 +1691,16 @@ def merge_kstar(lam=None):
 
         K* = (t_skip + header_rate + t_op_copy) / lam
 
-    The numerator is fixed: bridging removes one SKIP dispatch and one
-    COPY dispatch, 445.5 T of decode, exactly. The denominator prices a
-    bridged byte at its OPPORTUNITY COST - what the encoder gives up in
-    decode budget by spending a wire byte (the supply exchange rate lam
-    above) - not at fetch_long, the cost to EXECUTE a bridged byte:
-    those are unrelated quantities (an execution-rate denominator once
-    shipped here by coincidence of the two agreeing to within 1.5%),
-    and coupling the threshold to a kernel's execution rate would let
-    an unrelated kernel improvement silently move a merge threshold
-    that has nothing to do with it.
+    The denominator prices a bridged byte at its OPPORTUNITY COST, the
+    supply exchange rate lam, not at a kernel's execution rate: coupling
+    the threshold to a kernel would let an unrelated kernel change move a
+    merge threshold that has nothing to do with it.
 
-    lam=None means SUPPLY_EXCHANGE_T_PER_BYTE, the flat-shape default.
-    Passing a shape-specific lam makes the threshold shape-aware for
-    free: gapped (letterbox) shapes exchange at 15.3-16.5 T/B, which
-    raises K* to 27-29 B there - gapped clips measure the most merge
-    headroom."""
+    lam=None means supply_exchange_t_per_byte(320, 256), the flat rate;
+    merge_delta_stream passes its frame's shape."""
     tc = TMODEL_COEFFS
     if lam is None:
-        lam = SUPPLY_EXCHANGE_T_PER_BYTE
+        lam = supply_exchange_t_per_byte(320, 256)
     skip_disp = tc["t_skip"] + tc["header_rate"]      # SKIP8 op envelope
     copy_disp = tc["t_op_copy"]
     return (skip_disp + copy_disp) / lam
@@ -1795,8 +1723,7 @@ def merge_run_absorb_max():
     VALUE HELD, NOT RE-DERIVED - RUN is 0.00-0.08% of corpus decode-T,
     so moving this threshold churns encoder output on a class that
     cannot pay for the regression it would need. Known faults, kept as
-    a record: (1) it uses the >=64B copy rate (fetch_long) rather than
-    the fetch_short rate a <=94B region actually runs; (2) it assumes
+    a record: (1) it prices neither kernel's per-16-byte pass term; (2) it assumes
     the absorbing copy takes the CPU path - if it is already on the DMA
     path (marginal rate BELOW the fill rate) the denominator goes
     negative and absorption always wins, at any length, which this
@@ -1812,7 +1739,7 @@ def merge_run_absorb_max():
 
 
 def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
-                        cap_bytes):
+                        cap_bytes, width=None, height=None, streamed=True):
     """Gap-merge one delta frame's segment list into a re-expressed opcode
     payload whose DECODE is byte-identical to emit_delta_ops on the same
     segments. Returns (payload_bytes, modeled_bytes, modeled_T).
@@ -1828,8 +1755,10 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
 
     cap_bytes bounds the byte inflation a bridge/absorb may add (each
     bridged skip re-sends K literal bytes); a bridge that would push the
-    stream past the cap is declined and the skip is kept."""
-    kstar = merge_kstar()
+    stream past the cap is declined and the skip is kept. The frame is
+    priced as stream_cost prices it, on this shape (None: flat), and K*
+    reads the shape's supply exchange rate."""
+    kstar = merge_kstar(None if width is None else supply_exchange_t_per_byte(width, height))
 
     valbuf = np.array(surface_flat, dtype=np.uint8, copy=True)
     segs = []
@@ -1908,24 +1837,21 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
     flush()
 
     parts = []
-    b_total = 0
-    t_total = TMODEL_COEFFS["t_frame_fixed"]
+    wire_ops = []
     for op in ops:
         if op[0] == "skip":
             parts.append(op_skip(op[1]))
-            bb, tt = op_cost("skip", op[1])
+            _segment_ops(0, op[1], wire_ops)
         elif op[0] == "run":
             parts.append(op_run(op[1], op[2]))
-            bb, tt = op_cost("run", op[1])
+            _segment_ops(2, op[1], wire_ops)
         else:
             data = valbuf[op[1]:op[2]].tobytes()
             parts.append(op_copy(data))
-            bb, tt = op_cost("copy", len(data))
-        b_total += bb
-        t_total += tt
+            _segment_ops(1, len(data), wire_ops)
     parts.append(bytes([OP_FEND]))
-    b_total += 1                        # FEND byte (dispatch folded into
-                                         # t_frame_fixed, matching stream_cost)
+    wire_ops.append((OP_FEND, 0))
+    b_total, t_total, _state = frame_price(wire_ops, "delta", width, height, streamed=streamed)
     return b"".join(parts), b_total, t_total
 
 
@@ -2005,17 +1931,20 @@ def frame_supply_ms(nbytes, t, price):
 
 
 def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
-                   cap_bytes, cap_t, merge_gaps):
+                   cap_bytes, cap_t, merge_gaps, width=None, height=None,
+                   streamed=True):
     """Cost a changed-segment list. Returns (bytes, T, payload, suffix) for
     the cheapest variant that fits BOTH caps (gap-merged preferred - it kills
-    the dominant per-op dispatch), or None if neither variant fits."""
-    b_un, t_un = stream_cost(gcls, glens)
-    b_un += 1  # FEND byte
+    the dominant per-op dispatch), or None if neither variant fits. The
+    un-merged stream is priced only when the merged one does not fit."""
     if merge_gaps and surface_flat is not None:
         payload_m, b_m, t_m = merge_delta_stream(
-            gcls, gstarts, glens, target_flat, surface_flat, cap_bytes)
+            gcls, gstarts, glens, target_flat, surface_flat, cap_bytes,
+            width, height, streamed)
         if b_m <= cap_bytes and (cap_t is None or t_m <= cap_t):
             return b_m, t_m, payload_m, "+merge"
+    b_un, t_un = stream_cost(gcls, glens, width, height, streamed)
+    b_un += 1  # FEND byte
     if b_un <= cap_bytes and (cap_t is None or t_un <= cap_t):
         return b_un, t_un, emit_delta_ops(target_flat, gcls, gstarts, glens), ""
     return None
@@ -2023,7 +1952,8 @@ def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
 
 def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                  surface_flat=None, merge_gaps=True, tile_px=None,
-                 tile_ladder=None, supply_px=None, supply_slack=None):
+                 tile_ladder=None, supply_px=None, supply_slack=None,
+                 width=None, height=None, streamed=True):
     """Region-coherent budget-bound delta encoder. Returns
     (gcls, gstarts, glens, bytes, T, mode, binding, payload).
 
@@ -2079,13 +2009,14 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
 
     The returned (gcls, gstarts, glens) is always the CHANGED-segment list
     (un-merged) the caller walks to track the surface; payload is the chosen
-    (possibly merged) stream."""
+    (possibly merged) stream. width/height/streamed: the surface and delivery
+    every candidate is priced on (width None: a flat surface)."""
     n = int(err2_flat.size)
     denoise = 3.0 * THRESHOLDS[0] * THRESHOLDS[0]
     mask_full = close_gaps(err2_flat > denoise)
     gcls, gstarts, glens = segment(target_flat, mask_full)
     res = _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
-                         cap_bytes, cap_t, merge_gaps)
+                         cap_bytes, cap_t, merge_gaps, width, height, streamed)
     if res is not None:
         b, t, payload, sfx = res
         return gcls, gstarts, glens, b, t, "full" + sfx, "none", payload
@@ -2134,7 +2065,8 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
         slack = TILE_SUPPLY_SLACK if supply_slack is None else float(supply_slack)
         cands = [(rung, encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                                      surface_flat=surface_flat,
-                                     merge_gaps=merge_gaps, tile_px=rung))
+                                     merge_gaps=merge_gaps, tile_px=rung,
+                                     width=width, height=height, streamed=streamed))
                  for rung in tile_ladder]
         best_b = max(r[3] for _, r in cands)
         coarse_b = cands[-1][1][3]
@@ -2210,7 +2142,7 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
         selmask = mask_full & (_rank_px < k)
         gc, gs, gl = segment(target_flat, selmask)
         r = _fit_candidate(gc, gs, gl, target_flat, surface_flat,
-                           cap_bytes, cap_t, merge_gaps)
+                           cap_bytes, cap_t, merge_gaps, width, height, streamed)
         if r is None:
             return None
         return (gc, gs, gl) + r
@@ -3455,15 +3387,87 @@ def _default_abytes_pad(fps):
         return ((real + 511) // 512) * 512
 
 
+def _kf_chunk_ops(length, first, is_last):
+    """The (opcode, n) ops emit_kf_chunk_payload writes for one chunk."""
+    ops = [(OP_KSTART, 0), (OP_PAL, PAL_BLOCK_SIZE)] if first else []
+    _segment_ops(1, length, ops)
+    ops.append((OP_KFLIP if is_last else OP_FEND, 0))
+    return ops
+
+
+def kf_chunk_price(length, first, is_last=False, width=None, height=None,
+                   dst=None, streamed=True):
+    """(payload bytes, T, nxv2path.State) of one keyframe-span chunk frame
+    painting length literal bytes: its frame type (first, middle, last or
+    single), its dest events from the chunk's start dst (the previous
+    chunk's end state; a first chunk's KSTART starts the fresh cursor) and
+    the expected source-window events."""
+    if first:
+        ftype = "single" if is_last else "first"
+    else:
+        ftype = "last" if is_last else "middle"
+    return frame_price(_kf_chunk_ops(length, first, is_last), ftype, width, height,
+                       dst=None if first else dst, in_span=not first, streamed=streamed)
+
+
+def kf_chunk_cost(length, first, width=None, height=None, dst=None,
+                  is_last=False, streamed=True):
+    """(bytes, T) of kf_chunk_price."""
+    b, t, _state = kf_chunk_price(length, first, is_last, width, height, dst, streamed)
+    return b, t
+
+
+def _kf_sizing_price(length, first, width, height, dst, streamed):
+    """(bytes, T) of a chunk being sized, at the dearer of the two frame
+    types it can take (the ops differ only in the zero-cost terminal)."""
+    tc = TMODEL_COEFFS
+    b, t, _state = kf_chunk_price(length, first, False, width, height, dst, streamed)
+    own, other = (("frame_first_t", "frame_single_t") if first
+                  else ("frame_middle_t", "frame_last_t"))
+    return b, t + max(0.0, tc[other] - tc[own])
+
+
+def _kf_room(width, height, dst):
+    """Literal bytes the surface holds from dst ((0, $4000) for None); None
+    for an unknown shape, which walks with no page limit."""
+    if width is None:
+        return None
+    surface = (int(width), int(height), is_gapped(width, height))
+    per_page = 32 * surface[1] if surface[2] else nxv2path.WIN_BYTES
+    start = 0 if dst is None else nxv2path.dst_linear(dst[0], dst[1], surface)
+    return nxv2path.surface_pages(width) * per_page - start
+
+
+def _largest_fit(fn, limit, estimate, step, room=None):
+    """Largest length with fn(length) <= limit, searched on a step grid from
+    an estimate: down while over, up while the next step fits, the whole
+    room when it fits. 1 at least, room at most."""
+    L = max(1, int(estimate))
+    if room is not None:
+        L = max(1, min(L, room))
+    while L > 1:
+        over = fn(L)
+        if over <= limit:
+            break
+        L = max(1, min(L - step, int(L * limit / over)))
+    else:
+        return 1
+    while (room is None or L + step <= room) and fn(L + step) <= limit:
+        L += step
+    if room is not None and L < room and fn(room) <= limit:
+        L = room
+    return L
+
+
 def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
-                            overhead_b=0, fixed_t=0.0):
-    """Max 512-padded PAYLOAD bytes a single frame may carry so its
-    whole modeled supply time - decode busy + the per-frame audio copy
-    + SD wire for the audio pad and the padded payload, at the supply
-    gate's own prices - stays within KF_SPAN_PEAK_UTIL of the frame
-    period (the T2/E5 peak pacing bound; see the constant's block).
-    overhead_b/fixed_t: payload bytes and decode T the frame spends
-    beside the literal body (op headers, PAL block, KSTART/KFLIP)."""
+                            first=False, dst=None, streamed=True):
+    """Max literal bytes a keyframe chunk frame may paint so its whole
+    modeled supply time - decode busy (the chunk's price x R at the dense
+    anchor / af), the per-frame audio copy, and SD wire for the audio pad
+    and the 512-padded payload - stays within KF_SPAN_PEAK_UTIL of the
+    frame period (the T2/E5 peak pacing bound; see the constant's block).
+    The payload is counted exactly: KSTART and PAL on a first chunk, each
+    COPY header (3 B for COPY16) and the terminal."""
     tc = TMODEL_COEFFS
     af = tc["audio_factor"]
     clock = tc["clock_khz"]
@@ -3471,33 +3475,25 @@ def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
     wire_eff = SD_WIRE_BYTES_PER_MS * af
     if abytes_pad is None:
         abytes_pad = _default_abytes_pad(fps)
-    # a keyframe chunk frame is DENSE by construction (one long copy
-    # at the cap), so it reads the dense-end anchor (W4 density re-key)
-    r = silicon_r(width if width is not None else 320,
-                  height if height is not None else 192, density=1.0)
-    # ms per literal byte: chunked-DMA decode (a keyframe chunk is
-    # exactly the long DMA COPY the KF row measured) + SD wire
-    dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
-    busy_per_b = dma_rate * r / af / clock
-    wire_per_b = 1.0 / wire_eff
-    fixed_ms = ((fixed_t + tc["t_frame_fixed"]) * r / af / clock
-                + abytes_pad * AUDIO_COPY_T_PER_B / clock
-                + abytes_pad * wire_per_b)
-    avail_ms = KF_SPAN_PEAK_UTIL * period_ms - fixed_ms
-    if avail_ms <= 0:
+    # a keyframe chunk frame is DENSE by construction (one long copy at the
+    # cap); an unknown shape reads the dearest class
+    if width is None:
+        r = max(silicon_r(w, h, 1.0) for w, h in ((256, 192), (320, 256), (320, 192)))
+    else:
+        r = silicon_r(width, height, density=1.0)
+    limit = KF_SPAN_PEAK_UTIL * period_ms
+    fixed_ms = abytes_pad * AUDIO_COPY_T_PER_B / clock + abytes_pad / wire_eff
+    if limit <= fixed_ms:
         return 1
-    L = int(avail_ms / (busy_per_b + wire_per_b))
-    # refine against the exact padded-payload wire cost until it fits
-    while L > 1:
-        padded = ((L + overhead_b + 511) // 512) * 512
-        t_body = _copy_t(L, tc["fetch_long"])
-        ms = (fixed_ms - abytes_pad * wire_per_b
-              + (t_body * r / af / clock)
-              + (abytes_pad + padded) * wire_per_b)
-        if ms <= KF_SPAN_PEAK_UTIL * period_ms:
-            break
-        L -= 512
-    return max(L, 1)
+
+    def supply_ms(L):
+        b, t = _kf_sizing_price(L, first, width, height, dst, streamed)
+        return t * r / af / clock + fixed_ms + ((b + 511) // 512) * 512 / wire_eff
+
+    rate = ((tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"])
+            * r / af / clock + 1.0 / wire_eff)
+    return _largest_fit(supply_ms, limit, (limit - fixed_ms) / rate, 512,
+                        _kf_room(width, height, None if first else dst))
 
 
 def frame_wire_cap_bytes(fps, abytes_pad=None):
@@ -3521,53 +3517,47 @@ def frame_wire_cap_bytes(fps, abytes_pad=None):
 
 
 def kf_chunk_budget_bytes(fps, first, width=None, height=None,
-                          abytes_pad=None):
+                          abytes_pad=None, dst=None, streamed=True):
     """Max keyframe literal bytes this frame's chunk may hold - the
     tighter of two bounds:
 
-    DECODE-T: modeled decode stays inside the usable per-frame T budget
-    (2% reserve), priced at the chunked-DMA COPY rate (a keyframe chunk
-    is one long mem-to-mem DMA COPY).
+    DECODE-T: the chunk frame's price (kf_chunk_price from its dest start
+    dst, at the dearer of its two frame types) stays inside the usable
+    per-frame T budget less a 2% reserve. A keyframe chunk crosses every
+    column boundary a gapped surface has; its events price them.
 
-    WIRE/SUPPLY: the frame's whole modeled supply time (decode + audio
-    copy + SD wire) stays within KF_SPAN_PEAK_UTIL of the frame period,
-    so a keyframe event can never demand more wire than a frame buys.
+    WIRE/SUPPLY: kf_chunk_wire_cap_bytes - the frame's whole modeled supply
+    time stays within KF_SPAN_PEAK_UTIL of the frame period, so a keyframe
+    event can never demand more wire than a frame buys.
 
     abytes_pad: the encode's padded audio bytes/frame (None = the
-    conservative stereo layout for this fps). A keyframe chunk crosses
-    every column boundary a gapped surface has, so the composition
-    factor applies here too."""
+    conservative stereo layout for this fps). Neither bound exceeds the
+    bytes the surface holds from the chunk's start."""
     tc = TMODEL_COEFFS
-    budget_t = usable_budget_t(fps, width, height) * 0.98 - tc["t_frame_fixed"]
-    # the COPY op's own dispatch + the terminal FEND/KFLIP dispatch
-    fixed_t = tc["t_op_copy"] + tc["t_op_misc"]
-    overhead_b = 4 + 1                       # COPY16 header + FEND/KFLIP
-    if first:
-        fixed_t += tc["t_palette"] + 2 * tc["t_op_misc"]   # KSTART + PAL
-        overhead_b += 1 + 1 + PAL_BLOCK_SIZE
-    budget_t -= fixed_t
-    # decode-T bound at the chunked-DMA rate, refined with the exact
-    # kernel-select model (sub-chunk remainders re-price as LDI)
+    budget_t = usable_budget_t(fps, width, height, streamed) * 0.98
     dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
-    L_t = int(max(0.0, budget_t) / dma_rate)
-    # descend by ONE CHUNK per step - each step is exactly one DMA setup
-    # plus one chunk of transfer.
-    while L_t > 1 and _copy_t(L_t, tc["fetch_long"]) > budget_t:
-        L_t -= tc["copy_dma_chunk"]
-    L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad,
-                                  overhead_b=overhead_b, fixed_t=fixed_t)
+    L_t = _largest_fit(lambda L: _kf_sizing_price(L, first, width, height, dst, streamed)[1],
+                       budget_t, budget_t / dma_rate, tc["copy_dma_chunk"],
+                       _kf_room(width, height, None if first else dst))
+    L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad, first=first,
+                                  dst=dst, streamed=streamed)
     return max(min(L_t, L_w), 1)
 
 
-def plan_kf_chunks(raw_len, fps, width=None, height=None, abytes_pad=None):
-    """Returns a list of (start, length, first) chunks covering
-    raw_len bytes, each sized to kf_chunk_budget_bytes."""
+def plan_kf_chunks(raw_len, fps, width=None, height=None, abytes_pad=None,
+                   streamed=True):
+    """Returns a list of (start, length, first) chunks covering raw_len
+    bytes, each sized to kf_chunk_budget_bytes from its own dest start (the
+    previous chunk's end state)."""
     chunks = []
-    remaining, pos, first = raw_len, 0, True
+    remaining, pos, first, dst = raw_len, 0, True, None
     while remaining:
         c = min(remaining, kf_chunk_budget_bytes(fps, first, width, height,
-                                                 abytes_pad))
+                                                 abytes_pad, dst=dst,
+                                                 streamed=streamed))
         chunks.append((pos, c, first))
+        state = kf_chunk_price(c, first, c == remaining, width, height, dst, streamed)[2]
+        dst = (state.page, state.de)
         pos += c
         remaining -= c
         first = False
@@ -3595,18 +3585,6 @@ def _clamp_kf_chunks_to_frames(raw_len, n_chunks):
         chunks.append((pos, length, k == 0))
         pos += length
     return chunks
-
-
-def kf_chunk_cost(length, first):
-    """Modeled (bytes, T) for one keyframe-span chunk payload, incl.
-    the terminal FEND/KFLIP byte and (on the first chunk) KSTART+PAL."""
-    b, t = op_cost("copy", length)
-    if first:
-        b += 1 + 1 + PAL_BLOCK_SIZE   # KSTART op + PAL op + PAL block
-        t += TMODEL_COEFFS["t_op_misc"] + TMODEL_COEFFS["t_palette"]
-    b += 1   # terminal op byte (FEND/KFLIP)
-    t += TMODEL_COEFFS["t_frame_fixed"] + TMODEL_COEFFS["t_op_misc"]
-    return b, t
 
 
 def emit_kf_chunk_payload(target_flat, start, length, first, is_last, kf_pal=None):
@@ -3989,12 +3967,26 @@ def _shift_clamp2d(a, dy, dx):
     return a[ys][:, xs]
 
 
+def predicted_streamed(nframes, raw, cap_bytes, fps, abytes_pad=None):
+    """False only when the clip provably loads resident: every frame at its
+    largest payload (a delta frame at cap_bytes, or a keyframe chunk
+    painting the whole surface with KSTART and PAL) still fits
+    STREAM_RESIDENT_POOL_B. Pricing a resident clip as streamed over-prices
+    it by the glue difference and the streamed seam term."""
+    if abytes_pad is None:
+        abytes_pad = _default_abytes_pad(fps)
+    largest = max(int(cap_bytes) + 1, sum(nxv2path.op_bytes(op, n)
+                                          for op, n in _kf_chunk_ops(int(raw), True, True)))
+    total = HEADER_SIZE + int(nframes) * (int(abytes_pad) + (largest + 511) // 512 * 512)
+    return total > STREAM_RESIDENT_POOL_B
+
+
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 budget_scale=1.0, merge_gaps=True, hysteresis=True,
                 staleness_refresh=True, return_surfaces=False,
                 dither_amp=None, dither_mode=None, tile_slack=None,
                 po_ceil_lm=None, abytes_pad=None,
-                kf_cadence_s=None):
+                kf_cadence_s=None, streamed=None):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -4005,7 +3997,12 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
     This is the pure numpy/PIL pipeline stage (T1 steps 3-6) - no file
     I/O, no header. encode() below wraps this with header/container
-    writing and the BuildReport."""
+    writing and the BuildReport.
+
+    streamed: the delivery every frame is priced for (glue and the
+    streamed seam term). None derives it: streamed unless every frame at
+    its largest payload still fits STREAM_RESIDENT_POOL_B (a file's size is
+    unknown until it is encoded). The result carries the value used."""
     N, H, W, _ = orig.shape
     assert (H, W) == (height, width)
     raw = H * W
@@ -4029,7 +4026,6 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # just multiplies span length on encodes that never had a wire
     # problem) - instead every chunk frame is bounded by the T2 peak
     # pacing rule (KF_SPAN_PEAK_UTIL), which is budget-independent.
-    usable = usable_budget_t(fps, width, height) * budget_scale
     refract = max(1, int(round(fps / 2)))
     cap_bytes = int(cap_bytes_frac * budget_scale * raw)
     # The T2 peak WIRE bound applies to DELTA frames as well: a byte cap
@@ -4041,6 +4037,10 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # above carry the full supply bound instead because their decode is
     # not otherwise capped per frame.
     cap_bytes = min(cap_bytes, frame_wire_cap_bytes(fps, abytes_pad))
+    if streamed is None:
+        streamed = predicted_streamed(N, raw, cap_bytes, fps, abytes_pad)
+    streamed = bool(streamed)
+    usable = usable_budget_t(fps, width, height, streamed) * budget_scale
     # keyframe cadence (W4 item 2): frames per window; 0/None disables
     kf_cadence_s = KF_CADENCE_S_DEFAULT if kf_cadence_s is None else float(kf_cadence_s)
     cadence_frames = int(round(kf_cadence_s * fps)) if kf_cadence_s > 0 else 0
@@ -4208,7 +4208,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             scene_end = next((c for c in scene_cuts if c > i), N)
             kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp,
                                    mode=dither_mode)
-            planned = plan_kf_chunks(raw, fps, width, height, abytes_pad)
+            planned = plan_kf_chunks(raw, fps, width, height, abytes_pad, streamed)
             # Cut lookahead: if this span would take >1 chunk AND the
             # very next frame independently looks like a hard cut too,
             # defer starting the span to i+1 instead - avoids composing
@@ -4226,7 +4226,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                     tflat, err2, cap_bytes, usable,
                     surface_flat=prev_flat, merge_gaps=merge_gaps,
                     tile_px=tile_px, tile_ladder=tile_ladder,
-                    supply_px=supply_px, supply_slack=tile_slack)
+                    supply_px=supply_px, supply_slack=tile_slack,
+                    width=width, height=height, streamed=streamed)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
@@ -4279,6 +4280,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 prev_flat = np.zeros(raw, dtype=np.uint8)
                 held_pal = kf_pal
             staging = prev_flat.copy()
+            kf_dst = None        # a first chunk's KSTART starts the fresh cursor
 
         if kf_chunks:
             s, L, first = kf_chunks.pop(0)
@@ -4293,7 +4295,10 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["drift"].append(float("nan"))
             per_frame["drift_lm"].append(float("nan"))
             per_frame["deficit_lm"].append(float("nan"))
-            per_frame["t"].append(kf_chunk_cost(L, first)[1])
+            _kb, kf_t, kf_state = kf_chunk_price(L, first, is_last, width, height,
+                                                 kf_dst, streamed)
+            kf_dst = (kf_state.page, kf_state.de)
+            per_frame["t"].append(kf_t)
             if is_last:
                 prev_flat = staging
                 staging = None
@@ -4370,7 +4375,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                     tf, ee, cap_bytes, usable,
                     surface_flat=prev_flat, merge_gaps=merge_gaps,
                     tile_px=tile_px, tile_ladder=tile_ladder,
-                    supply_px=supply_px, supply_slack=tile_slack)
+                    supply_px=supply_px, supply_slack=tile_slack,
+                    width=width, height=height, streamed=streamed)
 
             err2, sched = _schedule(tflat, None)
             roll_idx = roll_clean = None
@@ -4447,7 +4453,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                  if roll_pending is not None else 0),
                 kf_roll_nominal_frames=roll_nominal,
                 surfaces=surfaces, starvation=starve,
-                held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
+                held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"],
+                streamed=streamed)
 
 
 def starvation_stats(per_frame, fps=25.0):
@@ -5458,7 +5465,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 #   NXB5.BIN | 6144 x SKIP8 8                              | SKIP8
 #   NXB6.BIN | 48 x SKIP16 1024                            | SKIP16
 #   NXB7.BIN | KSTART + one COPY16 of BENCH_KF_LITERALS    | KSTART/keyframe
-#            | literal bytes + KFLIP (~43KB, <= 49152 so   | chunk shape
+#            | literal bytes + KFLIP (~28KB, <= 49152 so   | chunk shape
 #            | the file serves both display modes)         |
 #   NXB8.BIN | consecutive whole-frame payloads from a     | real-stream mix
 #            | real classic 256x192@25 encode, cut at a    |
@@ -5473,9 +5480,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 # order in both modes).
 # ---------------------------------------------------------------------
 BENCH_CLASSIC_RAW = 256 * 192       # 49152
-BENCH_KF_LITERALS = 43008           # one-COPY16 keyframe chunk (~43KB, the
-                                     # 25fps chunk-budget shape - see
-                                     # kf_chunk_budget_bytes(25) ~ 44161)
+BENCH_KF_LITERALS = 28104           # one-COPY16 keyframe chunk: the 25 fps
+                                     # middle chunk, kf_chunk_budget_bytes(25.0,
+                                     # False, 256, 192) = 28104 (wire-bound)
 BENCH_SEGMENT_CAP = 61440           # NXB8 cap: 60KB = 8 pool pages, and the
                                      # bench's 16-bit length cells stay clean
 

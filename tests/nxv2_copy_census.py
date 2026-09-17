@@ -145,7 +145,7 @@ def worst_gapped_fraction(vid_paths, surcharge_t, copy_thr):
             if not is_gapped_file(p):
                 continue
             for ops in frames_of(p):
-                modelled = tc["t_frame_fixed"]
+                modelled = tc["frame_delta_t"]
                 added = 0.0
                 for op, n in ops:
                     modelled += nxv2enc.op_cost(_KIND[op], n)[1]
