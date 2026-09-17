@@ -388,15 +388,15 @@ BENCH_TABLES = {
 #     25 bytes (ds 4 tag, db kind, dw reps, d24 frame offset, db span preset,
 #     then per site d24 offset, db length 0-3, ds 3 bytes); a site is
 #     (offset, bytes).
-# ARM and DISARM rows print nothing.
+# ARM, DISARM and DSKIP rows print nothing.
 SESSION_KINDS = ("id", "ring", "remn", "scan", "sweep", "frame", "aud", "pace",
-                 "loop", "arm", "disarm", "prod", "dsweep", "dsblk", "synth",
-                 "synth_nocall")
-SESSION_SILENT = ("arm", "disarm")
+                 "loop", "arm", "disarm", "prod", "dsweep", "dsblk", "dskip",
+                 "synth", "synth_nocall")
+SESSION_SILENT = ("arm", "disarm", "dskip")
 SESSION_REPS = ("frame", "aud", "pace", "prod", "dsblk")   # reps >= 1
 SESSION_DECODE = ("scan", "sweep", "frame", "loop", "dsweep")  # thr = COPY select
 SESSION_SYNTH = ("synth", "synth_nocall")
-SESSION_DIRECT = ("dsweep", "dsblk")                 # direct-serve only
+SESSION_DIRECT = ("dsweep", "dsblk", "dskip")        # direct-serve only
 SESSION_ROW_LEN = 10
 SESSION_SYNTH_LEN = 25
 SESSION_MODES = {"DS1": 1, "REAL": 2, "SYN": 3, "SYS": 4}   # flags+248
@@ -408,8 +408,9 @@ NXB_DS_REPS = 128                                    # blocks per DT row
 NOSITE = (0, ())
 
 SESSION_TABLES = {
-    "DS1": (    # NXBD - nxbSesDs1: direct frame sweeps, then the transport rows
+    "DS1": (    # NXBD - nxbSesDs1: frame 0 untimed, sweeps of frames 1-32, transport
         ("IDEN", "id", 0, 0, 0, False),
+        ("DSKP", "dskip", 0, 0, 0, False),
         ("DSWP", "dsweep", 16, 0, 65, False),
         ("ARM1", "arm", 0, 0, 0, False),
         ("ADSW", "dsweep", 16, 0, 65, False),
@@ -537,6 +538,21 @@ def session_row_bytes(row):
 def session_table_bytes(name):
     """The table staged into nxbTabBuf: its rows, then the terminator."""
     return b"".join(session_row_bytes(r) for r in SESSION_TABLES[name]) + b"\0"
+
+
+def direct_frames(name):
+    """(frames read off the wire, the frame ranges DSWEEP rows time, blocks the
+    DSBLK rows read) for a direct table, in row order."""
+    pos, swept, blocks = 0, [], 0
+    for row in SESSION_TABLES[name]:
+        if row[1] == "dskip":
+            pos += 1
+        elif row[1] == "dsweep":
+            swept.append(range(pos, pos + row[2]))
+            pos += row[2]
+        elif row[1] == "dsblk":
+            blocks += row[3]
+    return pos, swept, blocks
 
 
 def session_rows(name, delivery):

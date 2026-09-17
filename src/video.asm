@@ -3746,9 +3746,7 @@ vid_tl_report_ret:
 ;
 ; ROW GROUPS (the card decodes each; every row is a DIFFERENCE that
 ; isolates ONE cost, or the row is not worth running):
-;   1 direct-serve transport breakdown - rides the LIVE armed direct
-;     session (see nxb_ds_rows); answers the open question of whether
-;     ~3,100 T/block is attributed rather than measured.
+;   1 direct-serve frames and transport - session mode 1, DS1 (nxb_ds_rows).
 ;   2 op dispatch envelope - the shipping vid_stub / NXVNEXT path.
 ;   3 COPY kernel across the size distribution real streams produce
 ;     (census: COPY p50 = 1-5 B, 61-99% of COPY ops are 1-8 B).
@@ -3829,9 +3827,10 @@ NXB_K_DISARM     equ 10
 NXB_K_PROD       equ 11
 NXB_K_DSWEEP     equ 12
 NXB_K_DSBLK      equ 13
-NXB_K_SYNTH      equ 14      ; the SYNTH kinds are the NXB_YROW_LEN rows
-NXB_K_SYNTH_NOCALL equ 15
-NXB_K_COUNT      equ 16
+NXB_K_DSKIP      equ 14
+NXB_K_SYNTH      equ 15      ; the SYNTH kinds are the NXB_YROW_LEN rows
+NXB_K_SYNTH_NOCALL equ 16
+NXB_K_COUNT      equ 17
 NXB_K_STRM       equ $80
     ASSERT NXB_K_SYNTH_NOCALL == NXB_K_COUNT - 1 && NXB_K_STRM == $80
     ; nxb_aud_body/nxb_lp_pace put the writer half a ring ahead of IX with xor
@@ -3840,9 +3839,7 @@ NXB_K_STRM       equ $80
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
-; Modes 2-12 run standalone; mode 1 is NOT reachable here - the
-; direct-serve rows need a live armed session and ride the player
-; instead (flags+248 + a GFX n 13 verb; see nxb_sess).
+; Modes 2-12 run standalone; direct-serve is session mode 1 (flags+248, nxb_sess).
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
 ; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
@@ -4613,8 +4610,9 @@ nxb_fail_row:
 ; ROW GROUP 1 - DIRECT-SERVE (session mode 1, table DS1).
 ; The hook fires after a good open and BEFORE the audio preload and CTC
 ; arm: the CMD18 window is open at frame 0's audio block, vidDsCrcDue is
-; 0 and the run/pass counters are live. DSWP/ADSW sweep real frames off
-; the wire; the DT rows then consume real blocks. Playback is REPLACED.
+; 0 and the run/pass counters are live. DSKP reads frame 0 untimed, DSWP/ADSW
+; sweep frames 1-32 off the wire; the DT rows then consume real blocks.
+; Playback is REPLACED.
 ;
 ; THE DECOMPOSITION (each transport row is one term):
 ;   DTI0 = vid_ds_blkopen + 512 raw ini  = crc + book + tok + 512*wire + ovh
@@ -4877,6 +4875,11 @@ nxb_dsw_run:
     call nxb_aud_body.feed
     call vid_decode_any
     jr .f
+
+; DSKIP (silent, from nxb_srow_go): one DSWEEP frame outside any clock.
+nxb_kind_dskip:
+    call nxb_aud_body.feed
+    jp vid_decode_any
 
 ; SCAN: each frame's decode alone on the long clock; nxb_scan_keep keeps
 ; the three longest (from nxb_kind_scan).
@@ -5497,7 +5500,8 @@ nxbKindTab:
     dw nxb_kind_id, nxb_kind_ring, nxb_kind_remn, nxb_kind_scan
     dw nxb_kind_sweep, nxb_kind_frame, nxb_kind_aud, nxb_kind_pace
     dw nxb_kind_loop, nxb_kind_arm, nxb_kind_disarm, nxb_kind_prod
-    dw nxb_kind_dsweep, nxb_kind_dsblk, nxb_kind_synth, nxb_kind_synth_nocall
+    dw nxb_kind_dsweep, nxb_kind_dsblk, nxb_kind_dskip, nxb_kind_synth
+    dw nxb_kind_synth_nocall
     ASSERT $ - nxbKindTab == NXB_K_COUNT * 2
 
 ; Field rows: nxbSO, nxbLcF (F) and nxbReps (R) set, HL = D.
@@ -6016,12 +6020,13 @@ NXB_ROW_AT defl $
 NXB_STAB_B defl NXB_STAB_B + NXB_YROW_LEN
     ENDM
 
-; DS1: direct-serve. DSWP and ADSW sweep 16 real frames each off the wire
-; (thr pins RUN 71; direct COPY has no select); the DT rows are the transport
-; breakdown (ROW GROUP 1), unarmed then armed.
+; DS1: direct-serve. DSKP reads frame 0 (and its PAL section) untimed; DSWP
+; and ADSW sweep frames 1-16 and 17-32 (thr pins RUN 71; direct COPY has no
+; select); the DT rows are the transport breakdown (ROW GROUP 1).
 nxbSesDs1:
     NXBSTAB 0
     NXBSROW "IDEN", NXB_K_ID, 0, 0, 0
+    NXBSROW "DSKP", NXB_K_DSKIP, 0, 0, 0
     NXBSROW "DSWP", NXB_K_DSWEEP, 16, 0, 65
     NXBSROW "ARM1", NXB_K_ARM, 0, 0, 0
     NXBSROW "ADSW", NXB_K_DSWEEP, 16, 0, 65

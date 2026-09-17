@@ -1412,6 +1412,49 @@ def t10_bench_tables():
     expect(not bad, "bench table rules:\n  " + "\n  ".join(bad))
 
 
+def _synth_frame(frame, preset, sites):
+    """None when a SYNTH row's frame is fully written: every op byte read from
+    the frame offset (opcodes, counts, fill values) is a written site byte, the
+    literal and palette bodies are skipped, KSTART/KFLIP match the span state,
+    and the walk ends on a terminal. A row with no writes must sit on the
+    header's reserved zero bytes, read as one FEND. Else the reason."""
+    written = {}
+    for offset, data in sites:
+        for i, b in enumerate(data):
+            written[offset + i] = b
+    if not written:
+        if enc.HDR_RESERVED_START <= frame < enc.HEADER_SIZE:
+            return None
+        return f"no writes, and offset {frame} is not a reserved header zero"
+    width = {enc.OP_SKIP8: 1, enc.OP_SKIP16: 2, enc.OP_RUN8: 1, enc.OP_RUN16: 2,
+             enc.OP_COPY8: 1, enc.OP_COPY16: 2}
+    in_span, pos = preset != 0, frame
+    for _ in range(64):
+        if pos not in written:
+            return f"op byte at {pos} is not a written site byte"
+        op = written[pos]
+        if op == enc.OP_KSTART:
+            if in_span:
+                return f"KSTART at {pos} inside a span"
+            in_span, pos = True, pos + 1
+        elif op in (enc.OP_FEND, enc.OP_KFLIP):
+            if op == enc.OP_KFLIP and not in_span:
+                return f"KFLIP at {pos} outside a span"
+            return None
+        elif op == enc.OP_PAL:
+            pos += 1 + enc.PAL_BLOCK_SIZE
+        elif op in width:
+            w = width[op]
+            fields = range(pos + 1, pos + 1 + w + (1 if op in (enc.OP_RUN8, enc.OP_RUN16) else 0))
+            if any(f not in written for f in fields):
+                return f"operand of op ${op:02X} at {pos} is not written"
+            n = int.from_bytes(bytes(written[f] for f in range(pos + 1, pos + 1 + w)), "little")
+            pos = fields[-1] + 1 + (n if op in (enc.OP_COPY8, enc.OP_COPY16) else 0)
+        else:
+            return f"opcode ${op:02X} at {pos}"
+    return "no terminal within 64 ops"
+
+
 @case(10, "session bench tables - layout by kind, tags, printed rows, armed rows, deliveries")
 def t10_session_tables():
     # Session rows (src/video.asm nxbSes* tables, nxb_srow_next/nxb_srow_go):
@@ -1486,6 +1529,10 @@ def t10_session_tables():
                     bad.append(f"{name} {tag}: the two sites overlap")
                 if kind == "synth_nocall" and (spans or preset):
                     bad.append(f"{name} {tag}: SYNTH-NOCALL writes nothing, preset 0")
+                if kind == "synth" and shape_ok:
+                    why = _synth_frame(frame, preset, sites)
+                    if why:
+                        bad.append(f"{name} {tag}: {why}")
                 continue
             if len(row) != 6:
                 bad.append(f"{name} {tag}: a {kind} row is (tag, kind, param, reps, thr, strm)")
@@ -1511,8 +1558,8 @@ def t10_session_tables():
                 bad.append(f"{name} {tag}: LOOP follows a SCAN row (SCAN's m bounds a streaming n)")
             if kind == "dsweep" and not 1 <= param <= 255:
                 bad.append(f"{name} {tag}: DSWEEP frames {param} must be 1-255")
-            if kind == "dsweep" and blocks_direct:
-                bad.append(f"{name} {tag}: DSWEEP after a DSBLK row (the frames are off the wire)")
+            if kind in ("dsweep", "dskip") and blocks_direct:
+                bad.append(f"{name} {tag}: {kind.upper()} after a DSBLK row (the frames are off the wire)")
             if kind == "dsblk" and param > 3:
                 bad.append(f"{name} {tag}: DSBLK body {param} must be 0-3")
             if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk") and param:
@@ -1556,38 +1603,39 @@ def t10_session_tables():
     expect(not bad, "session table rules:\n  " + "\n  ".join(bad))
 
 
-@case(10, "direct fixtures 010/011 - one payload size per clip (a DS1 sweep cannot repeat a frame)")
+@case(10, "direct fixtures - DS1's swept frames share one section size, the file holds DS1")
 def t10_direct_payloads():
     import re as _re
-    import nxv2_copy_census as census_mod
     ps1 = (ROOT / "tests" / "build-tests.ps1").read_text(encoding="utf-8")
     m = _re.search(r"\$vidLegSettlementTag = '([^']+)'", ps1)
     expect(m, "build-tests.ps1 must carry $vidLegSettlementTag")
-    out = ROOT / "tests" / "out"
-    paths = []
-    for num in ("010", "011"):
-        found = sorted(out.glob(f"{num}_*_{m.group(1)}_long_cache.vid"))
+    read, swept, dt_blocks = bench.direct_frames("DS1")
+    checked = 0
+    for num in ("010", "011", "012", "013", "014"):
+        found = sorted((ROOT / "tests" / "out").glob(f"{num}_*_{m.group(1)}_long_cache.vid"))
         if not found:
-            skip(f"{num}.VID not encoded at era {m.group(1)} (build-tests.ps1 -Vid -VidLong)")
-        paths.append(found[0])
-    head = {census_mod.nxv2enc.OP_SKIP8: 2, census_mod.nxv2enc.OP_SKIP16: 3,
-            census_mod.nxv2enc.OP_RUN8: 3, census_mod.nxv2enc.OP_RUN16: 4}
-    for path in paths:
-        sizes = set()
-        frames = 0
-        for ops in census_mod.frames_of(path):
-            frames += 1
-            size = 0
-            for op, n in ops:
-                if op == census_mod.nxv2enc.OP_COPY8:
-                    size += 2 + n
-                elif op == census_mod.nxv2enc.OP_COPY16:
-                    size += 3 + n
-                else:
-                    size += head[op]
-            sizes.add(size)
-        expect(len(sizes) == 1, f"{path.name}: {len(sizes)} payload sizes {sorted(sizes)[:6]}")
-        expect(frames >= 32, f"{path.name}: {frames} frames, DSWP and ADSW sweep 32")
+            print(f"    note: {num}.VID not encoded at era {m.group(1)}, not checked")
+            continue
+        path = found[0]
+        buf = path.read_bytes()
+        hdr = enc.unpack_header(buf)
+        expect(hdr["flags"] & enc.FLAG_DIRECT_SERVE, f"{path.name}: not a direct-serve clip")
+        issues = []
+        frames = list(dec._iter_frames(buf, hdr, issues=issues))
+        expect(not issues, f"{path.name}: {issues[:1]}")
+        expect(len(frames) >= read, f"{path.name}: {len(frames)} frames, DS1 reads {read}")
+        blocks = [-(-length // 512) for *_x, _start, length in frames]
+        timed = [i for r in swept for i in r]
+        sizes = sorted({blocks[i] for i in timed})
+        expect(len(sizes) == 1, f"{path.name}: swept frames {timed[0]}-{timed[-1]} "
+                                f"have section sizes {sizes} (blocks)")
+        apad = -(-hdr["audio_bytes_per_frame"] // 512)
+        need = 1 + sum(apad + blocks[i] for i in range(read)) + dt_blocks
+        have = len(buf) // 512
+        expect(need <= have, f"{path.name}: DS1 reads {need} blocks, the file has {have}")
+        checked += 1
+    if not checked:
+        skip(f"no direct fixture encoded at era {m.group(1)} (build-tests.ps1 -Vid -VidLong)")
 
 
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")
