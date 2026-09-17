@@ -652,10 +652,11 @@ def row_path(tag):
 # (O ops, then FEND) painted from the geometry dest into one pool bank.
 NXB_DST_PAGES = 2                  # nxb_ops_setup: vidDstEnd = page + 2
 NXB_RUN_REF = 71                   # video.asm NXB_RUN_REF, session decode rows
-SYN_COPY_SEL = 81                  # NXV2_COPY_DMA_MIN of the sitting-5 image
+# (COPY, RUN) selects assembled into the sitting-5 image (NXV2_COPY_DMA_MIN,
+# NXV2_RUN_DMA_MIN): thr 0 rows and SYNTH rows ran at these, whatever the
+# model's copy_dma_min/run_dma_min later become
+SITTING_SELECTS = (81, 71)
 SPAN_PRESET_DE = {0: 0x4000, 1: 0x4000, 2: 0x5800}   # nxb_kind_synth presets
-_ROW_OPCODE = {"skip8": 0x1C, "skip16": 0x04, "run8": 0x08, "run16": 0x0C,
-               "copy8": 0x10, "copy16": 0x14}
 
 
 def row_surface(tag):
@@ -666,15 +667,29 @@ def row_surface(tag):
     return (320, GEO_HEIGHTS[hcode], True) if gapped else (256, 192, False)
 
 
-def session_row_selects(name, tag):
-    """(COPY, RUN) selects one session row decodes at: SYNTH rows at the
-    sitting-5 shipping 81/71, SCAN/SWEEP/FRAME/LOOP/DSWEEP rows at their own
-    COPY thr and NXB_RUN_REF. None for rows that decode nothing."""
+def row_selects(tag, ship=SITTING_SELECTS):
+    """(COPY, RUN) selects one standalone row runs at (nxb_sel_row): its thr
+    goes to its kind's select, 0 and the other select take ship."""
+    _tag, kind, _L, _o, _r, thr, _geo = _row(tag)
+    copy, run = ship
+    if kind.startswith("copy") and thr:
+        copy = thr
+    elif kind.startswith("run") and thr:
+        run = thr
+    return copy, run
+
+
+def session_row_selects(name, tag, ship=SITTING_SELECTS):
+    """(COPY, RUN) selects one session row decodes at: SYNTH rows at ship,
+    SCAN/SWEEP/FRAME/LOOP/DSWEEP rows at their COPY thr and NXB_RUN_REF. thr
+    0 leaves nxb_srow_go's selects as they stand, the session-entry ship
+    values (table rules keep decode rows at thr >= 1). None for rows that
+    decode nothing."""
     for row in SESSION_TABLES[name]:
         if row[0] != tag:
             continue
-        if row[1] == "synth":
-            return SYN_COPY_SEL, NXB_RUN_REF
+        if row[1] == "synth" or (row[1] in SESSION_DECODE and not row[4]):
+            return ship
         if row[1] in SESSION_DECODE:
             return row[4], NXB_RUN_REF
         return None
@@ -685,59 +700,55 @@ def synth_ops(frame, sites):
     """A SYNTH frame's op list, read from its written site bytes (COPY and PAL
     bodies skipped). No writes: the frame sits on the header's reserved zero
     bytes and reads one FEND. ValueError when an op byte is not written."""
-    import nxv2_path_sim
-    nxv2enc = nxv2_path_sim.nxv2enc
+    import nxv2_path_sim as sim
     written = {}
     for offset, data in sites:
         for i, b in enumerate(data):
             written[offset + i] = b
     if not written:
-        if nxv2enc.HDR_RESERVED_START <= frame < nxv2enc.HEADER_SIZE:
-            return [(nxv2enc.OP_FEND, 0)]
+        if sim.nxv2enc.HDR_RESERVED_START <= frame < sim.nxv2enc.HEADER_SIZE:
+            return [(sim.OP_FEND, 0)]
         raise ValueError(f"no writes, and offset {frame} is not a reserved header zero")
-    operands = {0x1C: 1, 0x04: 2, 0x08: 2, 0x0C: 3, 0x10: 1, 0x14: 2}
     ops, pos = [], frame
     for _ in range(64):
         if pos not in written:
             raise ValueError(f"op byte at {pos} is not written")
         op = written[pos]
-        if op in (nxv2enc.OP_FEND, nxv2enc.OP_KFLIP, nxv2enc.OP_KSTART):
-            ops.append((op, 0))
-            if op != nxv2enc.OP_KSTART:
-                return ops
-            pos += 1
-        elif op == nxv2enc.OP_PAL:
-            ops.append((op, nxv2enc.PAL_BLOCK_SIZE))
-            pos += 1 + nxv2enc.PAL_BLOCK_SIZE
-        elif op in operands:
-            k = operands[op]
+        if op in sim.OPERANDS:
+            k = sim.OPERANDS[op]
             if any(pos + 1 + i not in written for i in range(k)):
                 raise ValueError(f"operand of op ${op:02X} at {pos} is not written")
-            width = 1 if op in (0x1C, 0x08, 0x10) else 2
+            width = 1 if op in sim.COUNT8 else 2
             n = int.from_bytes(bytes(written[pos + 1 + i] for i in range(width)), "little")
-            ops.append((op, n))
-            pos += 1 + k + (n if op in (0x10, 0x14) else 0)
+        elif op == sim.OP_PAL:
+            n = sim.PAL_BYTES
+        elif op in (sim.OP_FEND, sim.OP_KFLIP, sim.OP_KSTART):
+            n = 0
         else:
             raise ValueError(f"opcode ${op:02X} at {pos}")
+        ops.append((op, n))
+        if op in (sim.OP_FEND, sim.OP_KFLIP):
+            return ops
+        pos += sim.op_bytes(op, n)
     raise ValueError("no terminal within 64 ops")
 
 
-def row_events(tag, surface=None, table=None):
+def row_events(tag, surface=None, table=None, ship=SITTING_SELECTS):
     """nxv2_path_sim Events for ONE REP of a standalone or SYNTH row.
 
     Standalone: O ops then FEND at source offset 0, dest from the geometry
-    byte, two dest pages, the row's thr routed by kind (0 = the model's
-    select). surface None = row_surface(tag); a given surface must agree.
-    SYNTH (SYN/SYS): surface is the session's (width, height, gapped); the
-    frame offset, span preset and site ops at COPY 81 / RUN 71. table names
-    SYN or SYS when a tag's rows differ between them. NUL0 decodes nothing."""
+    byte, two dest pages, selects from row_selects (thr 0 = ship). surface
+    None = row_surface(tag); a given surface must agree. SYNTH (SYN/SYS):
+    surface is the session's (width, height, gapped); the frame offset, span
+    preset and site ops at ship. table names SYN or SYS when a tag's rows
+    differ between them. NUL0 decodes nothing."""
     import nxv2_path_sim as sim
     try:
         row = _row(tag)
     except KeyError:
         row = None
     if row is not None:
-        _tag, kind, L, o, _r, thr, geo = row
+        _tag, kind, L, o, _r, _thr, geo = row
         if kind == CAL_KIND:
             raise ValueError(f"{tag}: the CAL row runs no ops")
         own = row_surface(tag)
@@ -745,11 +756,10 @@ def row_events(tag, surface=None, table=None):
                                     or (own[2] and surface[1] != own[1])):
             raise ValueError(f"{tag}: surface {surface} is not the row's own {own}")
         _g, _h, dcode = geo_fields(geo)
-        ops = [(_ROW_OPCODE[kind], L)] * o + [(0x00, 0)]
-        sel = {"copy_thr": thr or None} if kind.startswith("copy") else (
-            {"run_thr": thr or None} if kind.startswith("run") else {})
+        copy, run = row_selects(tag, ship)
+        ops = [(sim.OPCODE_BY_KIND[kind], L)] * o + [(sim.OP_FEND, 0)]
         return sim.events(ops, own, 0, dst=(0, GEO_DESTS[dcode]),
-                          dst_pages=NXB_DST_PAGES, **sel)
+                          dst_pages=NXB_DST_PAGES, copy_thr=copy, run_thr=run)
     names = [table] if table else [n for n in ("SYN", "SYS")
                                    if any(r[0] == tag for r in SESSION_TABLES[n])]
     if not names:
@@ -767,7 +777,7 @@ def row_events(tag, surface=None, table=None):
             continue
         found.append(sim.events(synth_ops(frame, sites), surface, frame,
                                 dst=(0, SPAN_PRESET_DE[preset]), in_span=preset != 0,
-                                copy_thr=SYN_COPY_SEL, run_thr=NXB_RUN_REF))
+                                copy_thr=ship[0], run_thr=ship[1]))
     if any(ev != found[0] for ev in found[1:]):
         raise ValueError(f"{tag}: SYN and SYS rows differ, name the table")
     return found[0]

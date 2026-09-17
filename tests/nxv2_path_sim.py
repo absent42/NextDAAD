@@ -44,10 +44,15 @@ assert (OP_SKIP16, OP_RUN16, OP_COPY16, OP_KFLIP) == (
 assert DMA_CHUNK == nxv2enc.TMODEL_COEFFS["copy_dma_chunk"] == nxv2enc.TMODEL_COEFFS["fill_dma_min"]
 
 # operand bytes after the opcode (RUN carries the colour byte)
-_OPERANDS = {OP_SKIP8: 1, OP_SKIP16: 2, OP_RUN8: 2, OP_RUN16: 3,
-             OP_COPY8: 1, OP_COPY16: 2}
+OPERANDS = {OP_SKIP8: 1, OP_SKIP16: 2, OP_RUN8: 2, OP_RUN16: 3,
+            OP_COPY8: 1, OP_COPY16: 2}
+COUNT8 = frozenset({OP_SKIP8, OP_RUN8, OP_COPY8})      # 1-byte count field
+OPCODE_BY_KIND = {"skip8": OP_SKIP8, "skip16": OP_SKIP16, "run8": OP_RUN8,
+                  "run16": OP_RUN16, "copy8": OP_COPY8, "copy16": OP_COPY16}
 _TERMINAL = (OP_FEND, OP_KFLIP)
-_KNOWN = frozenset(_OPERANDS) | {OP_FEND, OP_KFLIP, OP_KSTART, OP_PAL}
+_KNOWN = frozenset(OPERANDS) | {OP_FEND, OP_KFLIP, OP_KSTART, OP_PAL}
+# a subset of the body LDI/CPU chunk counts by position; never priced
+DIAGNOSTIC = frozenset({"run_tail8", "run_tail16", "copy_tail8", "copy_tail16"})
 
 
 class PathError(ValueError):
@@ -57,7 +62,10 @@ class PathError(ValueError):
 @dataclass
 class Events:
     """Event counts for one decode. 8/16 = the op's count width; a chunk
-    or tail is keyed by the width of the op that entered the body."""
+    is keyed by the width of the op that entered the body. Every body
+    LDI/CPU chunk pays the same loop pass wherever it sits, so the
+    *_tail* counters (DIAGNOSTIC) are a diagnostic subset of the body
+    chunk counts and are never priced."""
     # ops completed in a fast handler (vf_op_*, vg_op_*)
     fast_skip8: int = 0
     fast_run8: int = 0
@@ -103,7 +111,7 @@ class Events:
     copy_ldi_chunks16: int = 0
     copy_dma_chunks8: int = 0
     copy_dma_chunks16: int = 0
-    run_tail8: int = 0         # sub-select chunk after a DMA chunk, same op
+    run_tail8: int = 0         # diagnostic: body CPU/LDI chunk after a DMA chunk
     run_tail16: int = 0
     copy_tail8: int = 0
     copy_tail16: int = 0
@@ -144,9 +152,15 @@ class Events:
 
     def price(self, coeffs, strict=True):
         """Sum of count x coeffs[name]. strict: a nonzero count with no
-        coefficient raises KeyError, so no event is priced free by omission."""
+        coefficient raises KeyError, so no event is priced free by omission.
+        A coefficient for a DIAGNOSTIC counter raises ValueError."""
+        named = DIAGNOSTIC & set(coeffs)
+        if named:
+            raise ValueError(f"diagnostic counters are never priced: {sorted(named)}")
         total = 0.0
         for name, count in self.as_dict().items():
+            if name in DIAGNOSTIC:
+                continue
             if name in coeffs:
                 total += count * coeffs[name]
             elif strict:
@@ -156,8 +170,8 @@ class Events:
 
 def op_bytes(op, n):
     """Wire bytes of one op: opcode, operands and a COPY/PAL body."""
-    if op in _OPERANDS:
-        return 1 + _OPERANDS[op] + (n if op in (OP_COPY8, OP_COPY16) else 0)
+    if op in OPERANDS:
+        return 1 + OPERANDS[op] + (n if op in (OP_COPY8, OP_COPY16) else 0)
     if op == OP_PAL:
         return 1 + PAL_BYTES
     if op in (OP_FEND, OP_KFLIP, OP_KSTART):
@@ -171,7 +185,7 @@ def parse_payload(buf):
     ops, pos = [], 0
     while pos < len(buf):
         op = buf[pos]
-        if op in (OP_SKIP8, OP_RUN8, OP_COPY8):
+        if op in COUNT8:
             n = buf[pos + 1] if pos + 1 < len(buf) else 0
         elif op in (OP_SKIP16, OP_RUN16, OP_COPY16):
             n = int.from_bytes(buf[pos + 1:pos + 3], "little")
@@ -330,7 +344,7 @@ class _Player:
             if op not in _KNOWN:
                 raise PathError(f"VID_ERR_OP: reserved opcode ${op:02X}")   # 294-299
             n = int(n)
-            if op in _OPERANDS and not 0 <= n <= (255 if op in (OP_SKIP8, OP_RUN8, OP_COPY8) else 0xFFFF):
+            if op in OPERANDS and not 0 <= n <= (255 if op in COUNT8 else 0xFFFF):
                 raise PathError(f"op ${op:02X} count {n} does not fit its field")
             slow = self.dispatch()
             if slow:
@@ -354,7 +368,7 @@ class _Player:
 
     def slow_op(self, op, n):
         # vid_slow_op 546-596: operands through vid_fetch, then the body
-        self.fetch(_OPERANDS[op])
+        self.fetch(OPERANDS[op])
         width = 16 if op in (OP_SKIP16, OP_RUN16, OP_COPY16) else 8
         kind = {OP_SKIP8: "skip", OP_SKIP16: "skip", OP_RUN8: "run",
                 OP_RUN16: "run", OP_COPY8: "copy", OP_COPY16: "copy"}[op]

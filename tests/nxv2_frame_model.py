@@ -110,12 +110,13 @@ def frames(vid_path, copy_thr=None, run_thr=None):
             ops = sim.parse_payload(buf[start:start + length])
             ftype = frame_type(ops, in_span)
             nbytes = sum(sim.op_bytes(op, n) for op, n in ops)
-            if direct:
-                # vid_decode_frame_ds reads the wire, not the RAM ring
-                out.append(Frame(i, ftype, ops, None, None, start, nbytes, dst))
-                continue
             ev, st = sim.simulate(ops, surface, start, dst=dst, in_span=in_span)
-            out.append(Frame(i, ftype, ops, ev, model_t(ftype, ops), start, nbytes, dst))
+            if direct:
+                # vid_decode_frame_ds reads the wire, not the RAM ring: span
+                # state and dest cursor only (the dest bodies are shared)
+                out.append(Frame(i, ftype, ops, None, None, start, nbytes, dst))
+            else:
+                out.append(Frame(i, ftype, ops, ev, model_t(ftype, ops), start, nbytes, dst))
             in_span = st.in_span
             dst = (st.page, st.de) if in_span else (0, sim.DST_WIN)
     return out
