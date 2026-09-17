@@ -8,11 +8,11 @@ bench's own conversion is T = (F * 311 + D) * 1824 at 28 MHz. PRE_FIX is
 the player before the decode-loop change, kept as history; CURRENT is the
 player these coefficients describe, read 2026-09-15.
 
-BENCH_TABLES holds the bench modes 5-8 row geometry (NXBX/NXBG/NXBL/NXBT)
-exactly as src/video.asm defines nxbTabThr/nxbTabGap/nxbTabLong/nxbTabNew:
-each row carries its own explicit COPY kernel-select value (thr), so the
-bench measures a fixed select value directly instead of depending on
-whatever NXV2_COPY_DMA_MIN currently ships.
+BENCH_TABLES holds the standalone bench modes 2-8 (NXBO/NXBC/NXBK/NXBX/
+NXBG/NXBL/NXBT) exactly as src/video.asm's NXB_PAGE tables define them:
+each row carries its own explicit kernel-select value (thr) for its kind,
+so the bench measures a fixed select value directly instead of depending
+on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN currently ships.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -192,12 +192,54 @@ PRICERS = {
 }
 
 
-# BENCH_TABLES: {mode: ((tag, kind, L, O, R, thr, geo), ...)} for bench
-# modes 5-8, exactly as src/video.asm defines nxbTabThr/nxbTabGap/
-# nxbTabLong/nxbTabNew. kind is "copy8"/"copy16"/"run8"/"run16"
-# (VOP_COPY8/VOP_COPY16/VOP_RUN8/VOP_RUN16). thr 0 = shipping select
-# value; geo bit 0 = gapped, bit 1 = mid-page dest.
+# The geometry byte (nxb_geo_setup): bit 0 gapped; bits 3:2 gapped height
+# code (3 faults the row as NXB GEO); bits 5:4 dest start code; bits 7:6
+# and bit 1 zero. A gapped row may not use dest code 3 (E must be 0).
+GEO_GAPPED = 0x01
+GEO_HEIGHTS = (192, 144, 72)
+GEO_DESTS = (0x4000, 0x5000, 0x5F00, 0x5F80)
+GEO_RESERVED = 0xC2
+
+
+def geo_fields(geo):
+    """-> (gapped, height code, dest code) of a geometry byte."""
+    return bool(geo & GEO_GAPPED), (geo >> 2) & 3, (geo >> 4) & 3
+
+
+# BENCH_TABLES: {mode: ((tag, kind, L, O, R, thr, geo), ...)} for the
+# standalone bench modes 2-8, in row order, the fields of the 12-byte row
+# (ds 4 tag, db opcode, dw count, db ops, dw reps, db thr, db geo). kind is
+# "skip8"/"skip16"/"run8"/"run16"/"copy8"/"copy16" (VOP_*). thr 0 = the
+# shipping select value for the row's kind (RUN or COPY); SKIP rows carry 0.
 BENCH_TABLES = {
+    2: (   # NXBO - nxbTabOpd: op dispatch envelope
+        ("SK00", "skip8", 0, 255, 64, 0, 0),
+        ("S160", "skip16", 0, 255, 64, 0, 0),
+        ("RU01", "run8", 1, 255, 32, 0, 0),
+        ("RU17", "run8", 17, 255, 32, 0, 0),
+        ("CP01", "copy8", 1, 255, 32, 0, 0),
+        ("CP17", "copy8", 17, 255, 32, 0, 0),
+        ("R161", "run16", 1, 255, 32, 0, 0),
+        ("C161", "copy16", 1, 255, 32, 0, 0),
+    ),
+    3: (   # NXBC - nxbTabCpy: COPY kernel size ladder
+        ("C001", "copy8", 1, 255, 64, 0, 0),
+        ("C004", "copy8", 4, 255, 64, 0, 0),
+        ("C008", "copy8", 8, 255, 48, 0, 0),
+        ("C016", "copy8", 16, 255, 48, 0, 0),
+        ("C038", "copy8", 38, 197, 48, 0, 0),
+        ("C080", "copy8", 80, 96, 64, 0, 0),
+        ("C081", "copy8", 81, 95, 64, 0, 0),
+        ("C103", "copy8", 103, 75, 64, 0, 0),
+        ("C256", "copy16", 256, 30, 96, 0, 0),
+    ),
+    4: (   # NXBK - nxbTabKrn: fill crossover + DMA DI window
+        ("F063", "run8", 63, 125, 64, 0, 0),
+        ("F070", "run8", 70, 112, 64, 0, 0),
+        ("F071", "run8", 71, 111, 64, 0, 0),
+        ("F256", "run16", 256, 30, 96, 0, 0),
+        ("K256", "copy16", 256, 30, 96, 0, 0),
+    ),
     5: (   # NXBX - nxbTabThr: COPY path pairs at an explicit select value
         ("L048", "copy8", 48, 157, 64, 81, 0),
         ("D048", "copy8", 48, 157, 64, 1, 0),
@@ -236,10 +278,10 @@ BENCH_TABLES = {
         ("LF1K", "copy16", 1000, 7, 64, 81, 0),
         ("LF4K", "copy16", 4000, 1, 64, 81, 0),
         ("LF7K", "copy16", 7680, 1, 64, 81, 0),
-        ("LFDS", "copy16", 7680, 1, 64, 81, 2),
+        ("LFDS", "copy16", 7680, 1, 64, 81, 0x10),
         ("LG1K", "copy16", 1000, 5, 64, 81, 1),
         ("LG4K", "copy16", 4000, 1, 64, 81, 1),
-        ("LGDS", "copy16", 4000, 1, 64, 81, 3),
+        ("LGDS", "copy16", 4000, 1, 64, 81, 0x11),
     ),
     8: (   # NXBT - nxbTabNew: rows at a simulated NXV2_COPY_DMA_MIN of 59
         ("E058", "copy8", 58, 131, 64, 59, 0),

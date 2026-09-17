@@ -96,8 +96,8 @@ NR_INT_C0_VAL   equ %00000001 ; hardware IM2 mode: vector base (bits 7:5) 0, bit
 ; SETTLED 2026-08-12. Every range below is either hardware-fixed or
 ; derived from a limit stated at its own constant - none is a guess with
 ; room to spare, so a range that looks generous is load-bearing. The
-; allocator pool is whatever is left: banks 14-15, 20-23, 36-47 and,
-; when the RAM is there, 48-111. bank_table_init (banks.asm) is the one
+; allocator pool is whatever is left: banks 14-15, 20-23, 37-47 (37-46
+; in DEBUG) and, when the RAM is there, 48-111. bank_table_init is the one
 ; place that decides what is free, and debug.asm's bank_selftest asserts
 ; both the count and the allocation ORDER - update those expectations
 ; whenever anything here moves, never loosen them.
@@ -124,7 +124,8 @@ BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
 BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
 ; 35-47 allocator pool (base model ends at 47); bank 28 withdrawn for
 ; overlay 0/1, bank 29 for overlay 2, banks 30-34 for the Layer 2 back
-; surface. Bank 35 is ALSO withdrawn, for VID_PAGE2 below - originally
+; surface, bank 47 in DEBUG builds only for the bench (BANK_NXB below).
+; Bank 35 is ALSO withdrawn, for VID_PAGE2 below - originally
 ; (SP14a T1) a DEBUG-only report-print page; SP14a T3 wave 1 makes the
 ; withdrawal UNCONDITIONAL in both build variants, since VID_PAGE2 now
 ; also carries Release-reachable COLD video code (vid_classify, the
@@ -155,6 +156,10 @@ SFX_PAGE        equ BANK_VID2*2+1    ; upper 8K of the SAME withdrawn
                             ; AUTO - same zero-resident-cost mechanism as
                             ; VID_PAGE/VID_PAGE2 above.
 BANK_BASE_LAST  equ 47
+BANK_NXB        equ 47      ; DEBUG only: the bench bank, reserved by
+                            ; bank_table_init after its pool B loop
+NXB_PAGE        equ BANK_NXB*2      ; lower 8K, slot 6: bench tables
+    ASSERT BANK_NXB == BANK_BASE_LAST
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
 BANK_TABLE_SIZE equ 112

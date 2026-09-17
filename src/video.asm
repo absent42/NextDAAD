@@ -211,6 +211,7 @@ vf_op_run8:
     cp $5F
     jr nc, .slow
     ld a, c
+.rthr equ $+1                    ; DEBUG writer: nxb_sel_set
     cp NXV2_RUN_DMA_MIN
     jr nc, .slow
     ld a, (hl)
@@ -239,7 +240,7 @@ vf_op_copy8:
     cp $5F
     jr nc, .slow
     ld a, c
-.thr equ $+1                     ; DEBUG writers: nxb_run_table, nxb_reclaim
+.thr equ $+1                     ; DEBUG writer: nxb_sel_set
     cp NXV2_COPY_DMA_MIN
     jr nc, .slow
     call vid_copy_ldi
@@ -390,6 +391,7 @@ vg_op_run8:
     ld c, (hl)
     inc hl
     ld a, c
+.rthr equ $+1                    ; DEBUG writer: nxb_sel_set
     cp NXV2_RUN_DMA_MIN
     jr nc, .slow                 ; at/over the crossover: the body, which
                                  ; selects the kernel per chunk
@@ -458,7 +460,7 @@ vg_op_copy8:
     jr nc, .srcedge
 .sok:
     ld a, c
-.thr equ $+1                     ; DEBUG writers: nxb_run_table, nxb_reclaim
+.thr equ $+1                     ; DEBUG writer: nxb_sel_set
     cp NXV2_COPY_DMA_MIN
     jr nc, .slow                 ; at/over the crossover: the body
     ld a, e
@@ -667,6 +669,7 @@ vid_run_body:
     ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA
     ; fill. B is 0 by vid_chunk_dst_*'s post-condition (cap <= 255).
     ld a, c
+.rthr equ $+1                    ; DEBUG writer: nxb_sel_set
     cp NXV2_RUN_DMA_MIN
     jr nc, .dma
     ld a, (vidRunColour)
@@ -697,7 +700,7 @@ vid_copy_body:
     pop hl
     ld a, c                      ; B is 0 by vid_chunk_all's post-
                                  ; condition (cap <= 255)
-.thr equ $+1                     ; DEBUG writers: nxb_run_table, nxb_reclaim
+.thr equ $+1                     ; DEBUG writer: nxb_sel_set
     cp NXV2_COPY_DMA_MIN
     jr nc, .dma
     call vid_copy_ldi
@@ -3731,6 +3734,9 @@ vid_tl_report_ret:
 ; vid_fill_dma are CALLED, never re-implemented. The bench lives HERE,
 ; on VID_PAGE, because those routines are MMU7-resident on this page
 ; and no other page can reach them.
+; NXB_PAGE (DEBUG bank 47, MMU6) holds the tables: data, and code that
+; never maps MMU6. Anything that decodes, pumps, produces, seeks, maps
+; MMU6 or runs inside a measured window stays on VID_PAGE.
 ;
 ; CLOCK (carried verbatim from NXBEN, so results stay on the settled
 ; scale): the raster line pair NR $1E/$1F. One wrap = one frame; rows
@@ -3759,19 +3765,28 @@ vid_tl_report_ret:
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
 ; display state is disturbed and no session is needed. Streams are
 ; sized so the source cursor never reaches $DF00 (vid_src_next is never
-; exercised) and the dest cursor stays in the 8K window, except geo bit
-; 1 rows: one vid_dst_next into the dest bank's second page.
+; exercised) and the dest cursor stays in the 8K window, except rows at
+; dest codes 1-3, which may take one vid_dst_next into the dest bank's
+; second page.
 ; vidDecSp is anchored at entry: a structural fault therefore unwinds
 ; into the ordinary abort path and prints ERR= rather than hanging.
 ; =====================================================================
 
 NXB_ROW0         equ 8       ; bench rows start here (the timeline
                              ; report owns 24-29)
+NXB_BLANK_ROWS   equ 21      ; entry blanks text rows 8-28
 NXB_LINE_MSB     equ $1E     ; active video line, bit 8
 NXB_LINE_LSB     equ $1F     ; active video line, bits 7:0
-NXB_GAP_H        equ 192     ; gapped rows' content height
-NXB_MID_DST      equ $5000   ; geo bit 1 dest start (gapped: column $50)
+NXB_MID_DST      equ $5000   ; geo dest code 1 (gapped: column $50)
+NXB_EDGE_DST     equ $5F00   ; geo dest code 2 (gapped: column $5F)
+NXB_SEAM_DST     equ $5F80   ; geo dest code 3, flat rows only
     ASSERT (low NXB_MID_DST) == 0 && (low VID_DST_WIN) == 0
+    ASSERT (low NXB_EDGE_DST) == 0
+NXB_MODE_FIRST   equ 2       ; standalone modes, nxbTabDir order
+NXB_MODE_LAST    equ 8
+NXB_TAB_MAX      equ 560     ; nxbTabBuf: every table asserts it fits
+NXB_ROW_LEN      equ 12      ; ds 4 tag, db opc, dw count, db ops,
+                             ; dw reps, db thr, db geo
 
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
@@ -3779,7 +3794,8 @@ NXB_MID_DST      equ $5000   ; geo bit 1 dest start (gapped: column $50)
 ; Modes 2-8 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
 ; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
-; Corrupts everything.
+; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
+; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
 nxb_entry:
     ld (vidDecSp), sp            ; abort anchor for the standalone
@@ -3790,40 +3806,61 @@ nxb_entry:
     ld (nxbMode), a
     xor a
     ld (flags+250), a
+    call nxb_blank
+    ld a, (nxbMode)
+    sub NXB_MODE_FIRST
+    cp NXB_MODE_LAST - NXB_MODE_FIRST + 1
+    jr c, .stage
+    xor a                        ; unknown mode: the dispatch table
+.stage:
+    call nxb_tab_stage
     ld a, NXB_ROW0
     ld (nxbRow), a
     call nxb_ops_setup
     jr c, .nobank
-    ld a, (nxbMode)
-    ld hl, nxbTabOpd
-    cp 2
-    jr z, .go
-    ld hl, nxbTabCpy
-    cp 3
-    jr z, .go
-    ld hl, nxbTabKrn
-    cp 4
-    jr z, .go
-    ld hl, nxbTabThr
-    cp 5
-    jr z, .go
-    ld hl, nxbTabGap
-    cp 6
-    jr z, .go
-    ld hl, nxbTabLong
-    cp 7
-    jr z, .go
-    ld hl, nxbTabNew
-    cp 8
-    jr z, .go
-    ld hl, nxbTabOpd            ; unknown mode: the dispatch table
-.go:
+    ld hl, nxbTabBuf
     call nxb_run_table
     jp nxb_ops_restore
 .nobank:
     ld hl, nxbMsgBank            ; setup may already hold one bank -
     call nxb_fail_row            ; the restore frees whatever it took
     jp nxb_ops_restore
+
+; Blank text rows NXB_ROW0-28 across the tilemap. Corrupts everything.
+nxb_blank:
+    ld a, (tmCols)
+    ld e, a
+    ld d, NXB_BLANK_ROWS
+    ld bc, NXB_ROW0 << 8         ; B = top row, C = column 0
+    jp tm_clear_blank
+
+; Copy table A (an nxbTabDir index) into nxbTabBuf. MMU6 holds NXB_PAGE
+; for the copy only and is put back before the return (rubric 3: the
+; directory and tables are NXB_PAGE labels). Corrupts AF, BC, DE, HL.
+nxb_tab_stage:
+    ld c, a                      ; nr_read preserves BC
+    ld e, NR_MMU6
+    call nr_read
+    push af                      ; the caller's MMU6
+    nextreg NR_MMU6, NXB_PAGE
+    ld a, c
+    add a, a
+    add a, a                     ; 4-byte directory entries
+    ld hl, nxbTabDir
+    add hl, a
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld c, (hl)
+    inc hl
+    ld b, (hl)                   ; BC = length, 1..NXB_TAB_MAX (asserted,
+    ex de, hl                    ; so never the BC = 0 LDIR - rubric 2)
+    ld de, nxbTabBuf
+    ldir
+    pop af
+    nextreg NR_MMU6, a
+    ret
 
 ; ---------------------------------------------------------------------
 ; Standalone setup: two pool banks (source stream / paint target), the
@@ -3910,19 +3947,17 @@ nxb_ops_restore:
 ; Shared standalone reclaim - called on the CLEAN exit above and from
 ; vid_dec_abort_pos on a structural fault (review fix). nxbBankCnt is
 ; the ownership flag and is zeroed here, so the routine is idempotent
-; and a plain video session's own abort runs it as a no-op (the COPY
-; select and nxb_ops_body.dst operands are rewritten ahead of the
-; ownership test, so every exit leaves their shipping values).
+; and a plain video session's own abort runs it as a no-op (the six
+; RUN/COPY select and nxb_ops_body.dst operands are rewritten ahead of
+; the ownership test, so every exit leaves their shipping values).
 ; The abort case ALSO has to stage vidSvMmu6/vidSvMmu7: the standalone
 ; modes never went through vid_run, so those cells hold a previous
 ; session's values (or none), and vid_run.restore_tail - which the
 ; abort chain reaches - would otherwise map two arbitrary pages and
 ; leave MMU7 off VID_PAGE for the ret that follows.
 nxb_reclaim:
-    ld a, NXV2_COPY_DMA_MIN
-    ld (vf_op_copy8.thr), a
-    ld (vg_op_copy8.thr), a
-    ld (vid_copy_body.thr), a
+    ld bc, (NXV2_RUN_DMA_MIN << 8) | NXV2_COPY_DMA_MIN
+    call nxb_sel_set
     ld hl, VID_DST_WIN
     ld (nxb_ops_body.dst), hl
     ld a, (nxbBankCnt)
@@ -3956,24 +3991,18 @@ nxb_term:
     ret
 
 ; ---------------------------------------------------------------------
-; Row table walker. HL = table; entries are 10 bytes:
-;   dw tag, db opcode, dw count, db ops-per-rep, dw reps, db thr, db geo
-; terminated by a zero tag pointer. thr: 0 = NXV2_COPY_DMA_MIN, 1-255 =
-; that value in all three COPY select operands. geo: nxb_geo_setup.
+; Row table walker. HL = a staged table (nxbTabBuf); NXB_ROW_LEN rows:
+;   ds 4 tag, db opcode, dw count, db ops-per-rep, dw reps, db thr, db geo
+; ended by a zero first tag byte. thr: nxb_sel_row. geo: nxb_geo_setup;
+; an invalid code prints the row as NXB GEO and runs nothing.
 ; Operands, geometry and stream are set per row, untimed.
 ; ---------------------------------------------------------------------
 nxb_run_table:
     ld a, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld e, a
-    or d
+    or a
     ret z                        ; end of table
-    push hl
-    ex de, hl
-    ld (nxbTag), hl              ; tag
-    pop hl
+    ld (nxbTag), hl              ; tag: 4 bytes in the buffer
+    add hl, 4
     ld a, (hl)
     inc hl
     ld (nxbOpc), a
@@ -3990,39 +4019,114 @@ nxb_run_table:
     ld d, (hl)
     inc hl
     ld (nxbReps), de
-    ld a, (hl)                   ; thr: 0 = NXV2_COPY_DMA_MIN
+    ld c, (hl)                   ; thr
     inc hl
-    or a
-    jr nz, .thr
-    ld a, NXV2_COPY_DMA_MIN
-.thr:
-    ld (vf_op_copy8.thr), a
-    ld (vg_op_copy8.thr), a
-    ld (vid_copy_body.thr), a
     ld a, (hl)                   ; geo
     inc hl
     ld (nxbGeo), a
     push hl
+    call nxb_sel_row
     call nxb_geo_setup
+    jr c, .badgeo
     call nxb_build
     ld hl, nxb_ops_body
     ld (nxb_body + 1), hl
     call nxb_row
+.next:
     pop hl
     jr nxb_run_table
+.badgeo:
+    call nxb_at
+    call nxb_puttag
+    ld hl, nxbMsgGeo
+    call dbg_puts
+    jr .next
 
-; Per-row surface geometry (untimed). nxbGeo bit 0 set = gapped at
-; NXB_GAP_H (vid_stage_common's gapped set), clear = flat. Bit 1 set = dest
-; start NXB_MID_DST, clear = VID_DST_WIN (nxb_ops_body.dst). Corrupts AF, HL.
+; Kernel select operands for one row (untimed). C = the row's thr, the
+; opcode in nxbOpc. RUN8/RUN16 rows put thr in the RUN select (0 =
+; NXV2_RUN_DMA_MIN), COPY8/COPY16 rows in the COPY select (0 =
+; NXV2_COPY_DMA_MIN); the other select, and both for any other opcode,
+; take the shipping value. Corrupts AF, BC.
+nxb_sel_row:
+    ld b, NXV2_RUN_DMA_MIN
+    ld a, (nxbOpc)
+    cp VOP_RUN8
+    jr z, .run
+    cp VOP_RUN16
+    jr z, .run
+    cp VOP_COPY8
+    jr z, .copy
+    cp VOP_COPY16
+    jr z, .copy
+    ld c, NXV2_COPY_DMA_MIN
+    jr nxb_sel_set
+.run:
+    ld a, c
+    or a
+    jr z, .runship
+    ld b, a
+.runship:
+    ld c, NXV2_COPY_DMA_MIN
+    jr nxb_sel_set
+.copy:
+    ld a, c
+    or a
+    jr nz, nxb_sel_set
+    ld c, NXV2_COPY_DMA_MIN
+    ; falls into nxb_sel_set
+
+; B = RUN select, C = COPY select, into all six operands. Corrupts A.
+nxb_sel_set:
+    ld a, b
+    ld (vf_op_run8.rthr), a
+    ld (vg_op_run8.rthr), a
+    ld (vid_run_body.rthr), a
+    ld a, c
+    ld (vf_op_copy8.thr), a
+    ld (vg_op_copy8.thr), a
+    ld (vid_copy_body.thr), a
+    ret
+
+; Per-row surface geometry (untimed), from nxbGeo:
+;   bit 0 gapped; bits 3:2 gapped height 192/144/72 (3 invalid);
+;   bits 5:4 dest start VID_DST_WIN/NXB_MID_DST/NXB_EDGE_DST/NXB_SEAM_DST;
+;   bits 7:6 and 1 zero; a gapped row may not use dest code 3 (E = 0).
+; CF set = invalid, nothing written. Corrupts AF, BC, HL.
 nxb_geo_setup:
     ld a, (nxbGeo)
-    ld hl, VID_DST_WIN
-    bit 1, a
-    jr z, .dst
-    ld hl, NXB_MID_DST
-.dst:
+    ld c, a
+    and $C2
+    scf
+    ret nz                       ; reserved bits
+    ld a, c
+    rrca
+    rrca
+    and 3                        ; height code
+    cp 3
+    ccf
+    ret c
+    ld hl, nxbGeoH
+    add hl, a
+    ld b, (hl)                   ; B = height
+    ld a, c
+    swapnib
+    and 3                        ; dest code
+    bit 0, c
+    jr z, .dcode
+    cp 3
+    ccf
+    ret c                        ; gapped at NXB_SEAM_DST
+.dcode:
+    add a, a
+    ld hl, nxbGeoDst
+    add hl, a
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
     ld (nxb_ops_body.dst), hl
-    bit 0, a
+    or a                         ; CF clear: valid (LD leaves F alone)
+    bit 0, c
     jr nz, .gap
     ld hl, vf_op_skip8
     ld (vid_stub + VOP_SKIP8 + 1), hl
@@ -4049,7 +4153,7 @@ nxb_geo_setup:
     ld (vid_stub + VOP_RUN8 + 1), hl
     ld hl, vg_op_copy8
     ld (vid_stub + VOP_COPY8 + 1), hl
-    ld a, NXB_GAP_H
+    ld a, b                      ; the row's height
     ld (vg_op_skip8.hcmp + 1), a
     ld (vg_op_skip8.hsub + 1), a
     ld (vg_op_skip8.hcmp2 + 1), a
@@ -4162,8 +4266,7 @@ nxb_row:
     ; measured window is closed before either half of it runs.
     call nxb_tm_in
     call nxb_at
-    ld hl, (nxbTag)
-    call dbg_puts
+    call nxb_puttag
     ld hl, nxbMsgO
     call dbg_puts
     ld a, (nxbOps)
@@ -4198,6 +4301,24 @@ nxb_at:
     ld (nxbRow), a
     ld c, 0
     jp dbg_at
+
+; Print the tag at (nxbTag): 4 bytes, or fewer when a NUL ends it (the
+; direct rows' 3-letter tags). Corrupts AF, BC, DE, HL.
+nxb_puttag:
+    ld hl, (nxbTag)
+    ld b, 4
+.ch:
+    ld a, (hl)
+    or a
+    ret z
+    inc hl
+    push bc
+    push hl
+    call dbg_putc
+    pop hl
+    pop bc
+    djnz .ch
+    ret
 
 ; ---------------------------------------------------------------------
 ; A2 - MMU3 PRINT BRACKET (direct-serve rows only).
@@ -4506,488 +4627,6 @@ nxb_ds_d:
     djnz .x
     ret
 
-; ---------------------------------------------------------------------
-; Row tables. Every entry: ops*(header+body) < 7900 (source cursor stays
-; below $DF00), ops*count <= 8192, gapped 5952 = 31 columns of 192 (dest
-; cursor stays in the window); geo bit 1 rows cross one dest seam instead.
-; ---------------------------------------------------------------------
-; GROUP 2 - op dispatch envelope. SK00 is the floor: SKIP8 with a zero
-; count runs the fast handler and NOTHING else, so it IS the dispatch
-; cost. The RU01/RU17 and CP01/CP17 pairs are the settlement's own
-; joint-solve shape - the 16-byte difference gives the kernel's T/B
-; and back-solves the per-op envelope. S160/R161/C161 price the
-; 16-bit-operand ops, which take the slow parser and the chunked bodies.
-nxbTabOpd:
-    dw nxbTagSK00
-    db VOP_SKIP8
-    dw 0
-    db 255
-    dw 64
-    db 0, 0
-    dw nxbTagS160
-    db VOP_SKIP16
-    dw 0
-    db 255
-    dw 64
-    db 0, 0
-    dw nxbTagRU01
-    db VOP_RUN8
-    dw 1
-    db 255
-    dw 32
-    db 0, 0
-    dw nxbTagRU17
-    db VOP_RUN8
-    dw 17
-    db 255
-    dw 32
-    db 0, 0
-    dw nxbTagCP01
-    db VOP_COPY8
-    dw 1
-    db 255
-    dw 32
-    db 0, 0
-    dw nxbTagCP17
-    db VOP_COPY8
-    dw 17
-    db 255
-    dw 32
-    db 0, 0
-    dw nxbTagR161
-    db VOP_RUN16
-    dw 1
-    db 255
-    dw 32
-    db 0, 0
-    dw nxbTagC161
-    db VOP_COPY16
-    dw 1
-    db 255
-    dw 32
-    db 0, 0
-    dw 0
-
-; GROUP 3 - the COPY size ladder, weighted where real content lives.
-; Delta-stream census (250/252-frame Sintel and Big Buck Bunny
-; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
-; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
-; C080/C081 straddle the COPY kernel select (NXV2_COPY_DMA_MIN = 81,
-; placed at the 81.4 B break-even measured before the current
-; chunk-loop shape; these two rows now put the break-even at 58.8 B.
-; C073/C074 found the old 74's missing +128 T/op path difference and
-; were retired with it); C256 is the COPY16 bulk-repaint path (40
-; keyframe ops carry 16-21% of Sintel's copied bytes).
-nxbTabCpy:
-    dw nxbTagC001
-    db VOP_COPY8
-    dw 1
-    db 255
-    dw 64
-    db 0, 0
-    dw nxbTagC004
-    db VOP_COPY8
-    dw 4
-    db 255
-    dw 64
-    db 0, 0
-    dw nxbTagC008
-    db VOP_COPY8
-    dw 8
-    db 255
-    dw 48
-    db 0, 0
-    dw nxbTagC016
-    db VOP_COPY8
-    dw 16
-    db 255
-    dw 48
-    db 0, 0
-    dw nxbTagC038
-    db VOP_COPY8
-    dw 38
-    db 197
-    dw 48
-    db 0, 0
-    dw nxbTagC080
-    db VOP_COPY8
-    dw 80
-    db 96
-    dw 64
-    db 0, 0
-    dw nxbTagC081
-    db VOP_COPY8
-    dw 81
-    db 95
-    dw 64
-    db 0, 0
-    dw nxbTagC103
-    db VOP_COPY8
-    dw 103
-    db 75
-    dw 64
-    db 0, 0
-    dw nxbTagC256
-    db VOP_COPY16
-    dw 256
-    db 30
-    dw 96
-    db 0, 0
-    dw 0
-
-; GROUP 4 - fill crossover + the DMA DI window. F070/F071 straddle
-; the derived RUN crossover (NXV2_RUN_DMA_MIN = 71); F063 is the CPU
-; fill at the census's RUN p99 neighbourhood (every observed RUN is
-; short - RUN carries 0.003-6% of painted bytes and RUN16 is never
-; emitted at all, so this group is a CONFIRMATION, not a lever).
-; F256/K256 are full 256-byte DMA chunks: one arm each, so the row's
-; per-op T IS the DI bracket the audio ISR has to survive - the
-; measured answer to the stale ~38% margin claim.
-nxbTabKrn:
-    dw nxbTagF063
-    db VOP_RUN8
-    dw 63
-    db 125
-    dw 64
-    db 0, 0
-    dw nxbTagF070
-    db VOP_RUN8
-    dw 70
-    db 112
-    dw 64
-    db 0, 0
-    dw nxbTagF071
-    db VOP_RUN8
-    dw 71
-    db 111
-    dw 64
-    db 0, 0
-    dw nxbTagF256
-    db VOP_RUN16
-    dw 256
-    db 30
-    dw 96
-    db 0, 0
-    dw nxbTagK256
-    db VOP_COPY16
-    dw 256
-    db 30
-    dw 96
-    db 0, 0
-    dw 0
-
-; GROUP 5 - COPY path pairs, run back to back, at explicit select values
-; wherever NXV2_COPY_DMA_MIN sits: Lnnn and D081 thr 81 (fast-handler LDI
-; below 81), Dnnn thr 1 (body + DMA for every nonzero count).
-nxbTabThr:
-    dw nxbTagL048
-    db VOP_COPY8
-    dw 48
-    db 157
-    dw 64
-    db 81, 0
-    dw nxbTagD048
-    db VOP_COPY8
-    dw 48
-    db 157
-    dw 64
-    db 1, 0
-    dw nxbTagL056
-    db VOP_COPY8
-    dw 56
-    db 136
-    dw 64
-    db 81, 0
-    dw nxbTagD056
-    db VOP_COPY8
-    dw 56
-    db 136
-    dw 64
-    db 1, 0
-    dw nxbTagL060
-    db VOP_COPY8
-    dw 60
-    db 127
-    dw 64
-    db 81, 0
-    dw nxbTagD060
-    db VOP_COPY8
-    dw 60
-    db 127
-    dw 64
-    db 1, 0
-    dw nxbTagL064
-    db VOP_COPY8
-    dw 64
-    db 119
-    dw 64
-    db 81, 0
-    dw nxbTagD064
-    db VOP_COPY8
-    dw 64
-    db 119
-    dw 64
-    db 1, 0
-    dw nxbTagL072
-    db VOP_COPY8
-    dw 72
-    db 106
-    dw 64
-    db 81, 0
-    dw nxbTagD072
-    db VOP_COPY8
-    dw 72
-    db 106
-    dw 64
-    db 1, 0
-    dw nxbTagL080
-    db VOP_COPY8
-    dw 80
-    db 96
-    dw 64
-    db 81, 0
-    dw nxbTagD080
-    db VOP_COPY8
-    dw 80
-    db 96
-    dw 64
-    db 1, 0
-    dw nxbTagD081
-    db VOP_COPY8
-    dw 81
-    db 95
-    dw 64
-    db 81, 0
-    dw 0
-
-; GROUP 6 - gapped surface, height 192 (the 320x192 fixtures). GLnn/GDnn
-; as group 5 but GDnn at thr = L; vg_op_copy8's fast path includes
-; single-crossing inline hops. GC03/GK56/GF71/GF56: C103/K256/F071/F256.
-nxbTabGap:
-    dw nxbTagGL48
-    db VOP_COPY8
-    dw 48
-    db 124
-    dw 64
-    db 81, 1
-    dw nxbTagGD48
-    db VOP_COPY8
-    dw 48
-    db 124
-    dw 64
-    db 48, 1
-    dw nxbTagGL56
-    db VOP_COPY8
-    dw 56
-    db 106
-    dw 64
-    db 81, 1
-    dw nxbTagGD56
-    db VOP_COPY8
-    dw 56
-    db 106
-    dw 64
-    db 56, 1
-    dw nxbTagGL60
-    db VOP_COPY8
-    dw 60
-    db 99
-    dw 64
-    db 81, 1
-    dw nxbTagGD60
-    db VOP_COPY8
-    dw 60
-    db 99
-    dw 64
-    db 60, 1
-    dw nxbTagGL64
-    db VOP_COPY8
-    dw 64
-    db 93
-    dw 64
-    db 81, 1
-    dw nxbTagGD64
-    db VOP_COPY8
-    dw 64
-    db 93
-    dw 64
-    db 64, 1
-    dw nxbTagGL72
-    db VOP_COPY8
-    dw 72
-    db 82
-    dw 64
-    db 81, 1
-    dw nxbTagGD72
-    db VOP_COPY8
-    dw 72
-    db 82
-    dw 64
-    db 72, 1
-    dw nxbTagGL80
-    db VOP_COPY8
-    dw 80
-    db 74
-    dw 64
-    db 81, 1
-    dw nxbTagGD80
-    db VOP_COPY8
-    dw 80
-    db 74
-    dw 64
-    db 80, 1
-    dw nxbTagGD81
-    db VOP_COPY8
-    dw 81
-    db 73
-    dw 64
-    db 81, 1
-    dw nxbTagGC03
-    db VOP_COPY8
-    dw 103
-    db 57
-    dw 64
-    db 81, 1
-    dw nxbTagGK56
-    db VOP_COPY16
-    dw 256
-    db 23
-    dw 96
-    db 81, 1
-    dw nxbTagGF71
-    db VOP_RUN8
-    dw 71
-    db 83
-    dw 64
-    db 0, 1
-    dw nxbTagGF56
-    db VOP_RUN16
-    dw 256
-    db 23
-    dw 96
-    db 0, 1
-    dw 0
-
-; GROUP 7 - long COPY16 ops at 81: LF1K/LF4K/LF7K flat and LG1K/LG4K gapped
-; in window; LFDS (flat) and LGDS (gapped) start at NXB_MID_DST and cross
-; the dest seam into the bank's second page.
-nxbTabLong:
-    dw nxbTagLF1K
-    db VOP_COPY16
-    dw 1000
-    db 7
-    dw 64
-    db 81, 0
-    dw nxbTagLF4K
-    db VOP_COPY16
-    dw 4000
-    db 1
-    dw 64
-    db 81, 0
-    dw nxbTagLF7K
-    db VOP_COPY16
-    dw 7680
-    db 1
-    dw 64
-    db 81, 0
-    dw nxbTagLFDS
-    db VOP_COPY16
-    dw 7680
-    db 1
-    dw 64
-    db 81, 2
-    dw nxbTagLG1K
-    db VOP_COPY16
-    dw 1000
-    db 5
-    dw 64
-    db 81, 1
-    dw nxbTagLG4K
-    db VOP_COPY16
-    dw 4000
-    db 1
-    dw 64
-    db 81, 1
-    dw nxbTagLGDS
-    db VOP_COPY16
-    dw 4000
-    db 1
-    dw 64
-    db 81, 3
-    dw 0
-
-; GROUP 8 - rows at a simulated NXV2_COPY_DMA_MIN of 59: E058/E059 the
-; 8-bit edge, Tnnn 16-bit ops whose tail after a 240 B chunk falls either
-; side of it, Unnn/V300 the same ops at 81; S299/V300/S300 gapped (192).
-nxbTabNew:
-    dw nxbTagE058
-    db VOP_COPY8
-    dw 58
-    db 131
-    dw 64
-    db 59, 0
-    dw nxbTagE059
-    db VOP_COPY8
-    dw 59
-    db 129
-    dw 64
-    db 59, 0
-    dw nxbTagT298
-    db VOP_COPY16
-    dw 298
-    db 26
-    dw 96
-    db 59, 0
-    dw nxbTagT299
-    db VOP_COPY16
-    dw 299
-    db 26
-    dw 96
-    db 59, 0
-    dw nxbTagU300
-    db VOP_COPY16
-    dw 300
-    db 26
-    dw 96
-    db 81, 0
-    dw nxbTagT300
-    db VOP_COPY16
-    dw 300
-    db 26
-    dw 96
-    db 59, 0
-    dw nxbTagU320
-    db VOP_COPY16
-    dw 320
-    db 24
-    dw 96
-    db 81, 0
-    dw nxbTagT320
-    db VOP_COPY16
-    dw 320
-    db 24
-    dw 96
-    db 59, 0
-    dw nxbTagS299
-    db VOP_COPY16
-    dw 299
-    db 19
-    dw 96
-    db 59, 1
-    dw nxbTagV300
-    db VOP_COPY16
-    dw 300
-    db 19
-    dw 96
-    db 81, 1
-    dw nxbTagS300
-    db VOP_COPY16
-    dw 300
-    db 19
-    dw 96
-    db 59, 1
-    dw 0
-
 ; zxnDMA WR1/WR2/WR5 one-time program - the VID_PAGE-local twin of
 ; vidDmaInit (VID_PAGE2, unreachable from here). Byte-for-byte the
 ; same six bytes; if that block ever changes, this one moves with it.
@@ -5009,82 +4648,13 @@ nxbMsgD:   db " D=", 0
 nxbMsgP:   db " P=", 0
 nxbMsgN:   db " N=", 0
 nxbMsgBank: db "NXB NO BANK", 0
+nxbMsgGeo:  db " NXB GEO", 0
 nxbTagDTA: db "DTA", 0
 nxbTagDTI: db "DTI", 0
 nxbTagDTB: db "DTB", 0
 nxbTagDTC: db "DTC", 0
 nxbTagDTD: db "DTD", 0
 nxbTagTOK: db "TOK", 0
-nxbTagSK00: db "SK00", 0
-nxbTagS160: db "S160", 0
-nxbTagRU01: db "RU01", 0
-nxbTagRU17: db "RU17", 0
-nxbTagCP01: db "CP01", 0
-nxbTagCP17: db "CP17", 0
-nxbTagR161: db "R161", 0
-nxbTagC161: db "C161", 0
-nxbTagC001: db "C001", 0
-nxbTagC004: db "C004", 0
-nxbTagC008: db "C008", 0
-nxbTagC016: db "C016", 0
-nxbTagC038: db "C038", 0
-nxbTagC080: db "C080", 0
-nxbTagC081: db "C081", 0
-nxbTagC103: db "C103", 0
-nxbTagC256: db "C256", 0
-nxbTagF063: db "F063", 0
-nxbTagF070: db "F070", 0
-nxbTagF071: db "F071", 0
-nxbTagF256: db "F256", 0
-nxbTagK256: db "K256", 0
-nxbTagL048: db "L048", 0
-nxbTagD048: db "D048", 0
-nxbTagL056: db "L056", 0
-nxbTagD056: db "D056", 0
-nxbTagL060: db "L060", 0
-nxbTagD060: db "D060", 0
-nxbTagL064: db "L064", 0
-nxbTagD064: db "D064", 0
-nxbTagL072: db "L072", 0
-nxbTagD072: db "D072", 0
-nxbTagL080: db "L080", 0
-nxbTagD080: db "D080", 0
-nxbTagD081: db "D081", 0
-nxbTagGL48: db "GL48", 0
-nxbTagGD48: db "GD48", 0
-nxbTagGL56: db "GL56", 0
-nxbTagGD56: db "GD56", 0
-nxbTagGL60: db "GL60", 0
-nxbTagGD60: db "GD60", 0
-nxbTagGL64: db "GL64", 0
-nxbTagGD64: db "GD64", 0
-nxbTagGL72: db "GL72", 0
-nxbTagGD72: db "GD72", 0
-nxbTagGL80: db "GL80", 0
-nxbTagGD80: db "GD80", 0
-nxbTagGD81: db "GD81", 0
-nxbTagGC03: db "GC03", 0
-nxbTagGK56: db "GK56", 0
-nxbTagGF71: db "GF71", 0
-nxbTagGF56: db "GF56", 0
-nxbTagLF1K: db "LF1K", 0
-nxbTagLF4K: db "LF4K", 0
-nxbTagLF7K: db "LF7K", 0
-nxbTagLFDS: db "LFDS", 0
-nxbTagLG1K: db "LG1K", 0
-nxbTagLG4K: db "LG4K", 0
-nxbTagLGDS: db "LGDS", 0
-nxbTagE058: db "E058", 0
-nxbTagE059: db "E059", 0
-nxbTagT298: db "T298", 0
-nxbTagT299: db "T299", 0
-nxbTagU300: db "U300", 0
-nxbTagT300: db "T300", 0
-nxbTagU320: db "U320", 0
-nxbTagT320: db "T320", 0
-nxbTagS299: db "S299", 0
-nxbTagV300: db "V300", 0
-nxbTagS300: db "S300", 0
 
 nxbMode:     db 0
 nxbRow:      db 0
@@ -5109,6 +4679,10 @@ nxbSvAudEn:  db 0
 nxbSvTm3:    db 0            ; A2: pre-borrow MMU3 (the real tilemap
                              ; page), captured hot in vid_run
 nxbSvAud3:   db 0            ; A2: the session's borrowed audio page
+; nxb_geo_setup lookups by code: gapped height, dest start.
+nxbGeoH:     db 192, 144, 72
+nxbGeoDst:   dw VID_DST_WIN, NXB_MID_DST, NXB_EDGE_DST, NXB_SEAM_DST
+nxbTabBuf:   ds NXB_TAB_MAX     ; the staged table (nxb_tab_stage)
 
 ; Token-poll instrument accumulators (vid_sd_tok_h, above).
 vidTokPolls: dw 0
@@ -5117,6 +4691,192 @@ vidTokCalls: dw 0
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
+
+ IFDEF DEBUG
+; ---------------------------------------------------------------------
+; NXB_PAGE - the DEBUG bench bank's lower 8K, at $C000. MMU6 holds it
+; only inside nxb_tab_stage; data only.
+; ---------------------------------------------------------------------
+    MMU 6, NXB_PAGE, DATA_WINDOW
+
+; One NXB_ROW_LEN row for nxb_run_table; the ASSERT holds tags to 4 bytes.
+    MACRO NXBROW tag, opc, cnt, ops, reps, thr, geo
+NXB_ROW_AT defl $
+      db tag
+      db opc
+      dw cnt
+      db ops
+      dw reps
+      db thr, geo
+      ASSERT $ - NXB_ROW_AT == NXB_ROW_LEN
+    ENDM
+
+; nxb_tab_stage index: dw table, dw length (terminator included); the
+; standalone modes NXB_MODE_FIRST-NXB_MODE_LAST first, in mode order.
+    MACRO NXBDIR tab, tabend
+      dw tab, tabend - tab
+      ASSERT tabend - tab >= 1 && tabend - tab <= NXB_TAB_MAX
+    ENDM
+nxbTabDir:
+    NXBDIR nxbTabOpd, nxbTabOpdEnd       ; mode 2
+    NXBDIR nxbTabCpy, nxbTabCpyEnd       ; mode 3
+    NXBDIR nxbTabKrn, nxbTabKrnEnd       ; mode 4
+    NXBDIR nxbTabThr, nxbTabThrEnd       ; mode 5
+    NXBDIR nxbTabGap, nxbTabGapEnd       ; mode 6
+    NXBDIR nxbTabLong, nxbTabLongEnd     ; mode 7
+    NXBDIR nxbTabNew, nxbTabNewEnd       ; mode 8
+    ASSERT $ - nxbTabDir == (NXB_MODE_LAST - NXB_MODE_FIRST + 1) * 4
+
+; ---------------------------------------------------------------------
+; Row tables, at most 20 rows each (rows 8-27). Every row: ops*(header+
+; body) < 7900 (source cursor stays below $DF00); flat at dest code 0,
+; ops*count <= 7936; gapped, ops*count <= 31*height with E = 0 (dest
+; cursor stays in the window); dest codes 1-3 may cross one dest seam.
+; ---------------------------------------------------------------------
+; GROUP 2 - op dispatch envelope. SK00 is the floor: SKIP8 with a zero
+; count runs the fast handler and NOTHING else, so it IS the dispatch
+; cost. The RU01/RU17 and CP01/CP17 pairs are the settlement's own
+; joint-solve shape - the 16-byte difference gives the kernel's T/B
+; and back-solves the per-op envelope. S160/R161/C161 price the
+; 16-bit-operand ops, which take the slow parser and the chunked bodies.
+nxbTabOpd:
+    NXBROW "SK00", VOP_SKIP8, 0, 255, 64, 0, 0
+    NXBROW "S160", VOP_SKIP16, 0, 255, 64, 0, 0
+    NXBROW "RU01", VOP_RUN8, 1, 255, 32, 0, 0
+    NXBROW "RU17", VOP_RUN8, 17, 255, 32, 0, 0
+    NXBROW "CP01", VOP_COPY8, 1, 255, 32, 0, 0
+    NXBROW "CP17", VOP_COPY8, 17, 255, 32, 0, 0
+    NXBROW "R161", VOP_RUN16, 1, 255, 32, 0, 0
+    NXBROW "C161", VOP_COPY16, 1, 255, 32, 0, 0
+    db 0
+nxbTabOpdEnd:
+    ASSERT nxbTabOpdEnd - nxbTabOpd <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 3 - the COPY size ladder, weighted where real content lives.
+; Delta-stream census (250/252-frame Sintel and Big Buck Bunny
+; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
+; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
+; C080/C081 straddle the COPY kernel select (NXV2_COPY_DMA_MIN = 81,
+; placed at the 81.4 B break-even measured before the current
+; chunk-loop shape; these two rows now put the break-even at 58.8 B.
+; C073/C074 found the old 74's missing +128 T/op path difference and
+; were retired with it); C256 is the COPY16 bulk-repaint path (40
+; keyframe ops carry 16-21% of Sintel's copied bytes).
+nxbTabCpy:
+    NXBROW "C001", VOP_COPY8, 1, 255, 64, 0, 0
+    NXBROW "C004", VOP_COPY8, 4, 255, 64, 0, 0
+    NXBROW "C008", VOP_COPY8, 8, 255, 48, 0, 0
+    NXBROW "C016", VOP_COPY8, 16, 255, 48, 0, 0
+    NXBROW "C038", VOP_COPY8, 38, 197, 48, 0, 0
+    NXBROW "C080", VOP_COPY8, 80, 96, 64, 0, 0
+    NXBROW "C081", VOP_COPY8, 81, 95, 64, 0, 0
+    NXBROW "C103", VOP_COPY8, 103, 75, 64, 0, 0
+    NXBROW "C256", VOP_COPY16, 256, 30, 96, 0, 0
+    db 0
+nxbTabCpyEnd:
+    ASSERT nxbTabCpyEnd - nxbTabCpy <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 4 - fill crossover + the DMA DI window. F070/F071 straddle
+; the derived RUN crossover (NXV2_RUN_DMA_MIN = 71); F063 is the CPU
+; fill at the census's RUN p99 neighbourhood (every observed RUN is
+; short - RUN carries 0.003-6% of painted bytes and RUN16 is never
+; emitted at all, so this group is a CONFIRMATION, not a lever).
+; F256/K256 are full 256-byte DMA chunks: one arm each, so the row's
+; per-op T IS the DI bracket the audio ISR has to survive - the
+; measured answer to the stale ~38% margin claim.
+nxbTabKrn:
+    NXBROW "F063", VOP_RUN8, 63, 125, 64, 0, 0
+    NXBROW "F070", VOP_RUN8, 70, 112, 64, 0, 0
+    NXBROW "F071", VOP_RUN8, 71, 111, 64, 0, 0
+    NXBROW "F256", VOP_RUN16, 256, 30, 96, 0, 0
+    NXBROW "K256", VOP_COPY16, 256, 30, 96, 0, 0
+    db 0
+nxbTabKrnEnd:
+    ASSERT nxbTabKrnEnd - nxbTabKrn <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 5 - COPY path pairs, run back to back, at explicit select values
+; wherever NXV2_COPY_DMA_MIN sits: Lnnn and D081 thr 81 (fast-handler LDI
+; below 81), Dnnn thr 1 (body + DMA for every nonzero count).
+nxbTabThr:
+    NXBROW "L048", VOP_COPY8, 48, 157, 64, 81, 0
+    NXBROW "D048", VOP_COPY8, 48, 157, 64, 1, 0
+    NXBROW "L056", VOP_COPY8, 56, 136, 64, 81, 0
+    NXBROW "D056", VOP_COPY8, 56, 136, 64, 1, 0
+    NXBROW "L060", VOP_COPY8, 60, 127, 64, 81, 0
+    NXBROW "D060", VOP_COPY8, 60, 127, 64, 1, 0
+    NXBROW "L064", VOP_COPY8, 64, 119, 64, 81, 0
+    NXBROW "D064", VOP_COPY8, 64, 119, 64, 1, 0
+    NXBROW "L072", VOP_COPY8, 72, 106, 64, 81, 0
+    NXBROW "D072", VOP_COPY8, 72, 106, 64, 1, 0
+    NXBROW "L080", VOP_COPY8, 80, 96, 64, 81, 0
+    NXBROW "D080", VOP_COPY8, 80, 96, 64, 1, 0
+    NXBROW "D081", VOP_COPY8, 81, 95, 64, 81, 0
+    db 0
+nxbTabThrEnd:
+    ASSERT nxbTabThrEnd - nxbTabThr <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 6 - gapped surface, height 192 (the 320x192 fixtures). GLnn/GDnn
+; as group 5 but GDnn at thr = L; vg_op_copy8's fast path includes
+; single-crossing inline hops. GC03/GK56/GF71/GF56: C103/K256/F071/F256.
+nxbTabGap:
+    NXBROW "GL48", VOP_COPY8, 48, 124, 64, 81, 1
+    NXBROW "GD48", VOP_COPY8, 48, 124, 64, 48, 1
+    NXBROW "GL56", VOP_COPY8, 56, 106, 64, 81, 1
+    NXBROW "GD56", VOP_COPY8, 56, 106, 64, 56, 1
+    NXBROW "GL60", VOP_COPY8, 60, 99, 64, 81, 1
+    NXBROW "GD60", VOP_COPY8, 60, 99, 64, 60, 1
+    NXBROW "GL64", VOP_COPY8, 64, 93, 64, 81, 1
+    NXBROW "GD64", VOP_COPY8, 64, 93, 64, 64, 1
+    NXBROW "GL72", VOP_COPY8, 72, 82, 64, 81, 1
+    NXBROW "GD72", VOP_COPY8, 72, 82, 64, 72, 1
+    NXBROW "GL80", VOP_COPY8, 80, 74, 64, 81, 1
+    NXBROW "GD80", VOP_COPY8, 80, 74, 64, 80, 1
+    NXBROW "GD81", VOP_COPY8, 81, 73, 64, 81, 1
+    NXBROW "GC03", VOP_COPY8, 103, 57, 64, 81, 1
+    NXBROW "GK56", VOP_COPY16, 256, 23, 96, 81, 1
+    NXBROW "GF71", VOP_RUN8, 71, 83, 64, 0, 1
+    NXBROW "GF56", VOP_RUN16, 256, 23, 96, 0, 1
+    db 0
+nxbTabGapEnd:
+    ASSERT nxbTabGapEnd - nxbTabGap <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 7 - long COPY16 ops at 81: LF1K/LF4K/LF7K flat and LG1K/LG4K gapped
+; in window; LFDS (flat) and LGDS (gapped) start at NXB_MID_DST (dest
+; code 1) and cross the dest seam into the bank's second page.
+nxbTabLong:
+    NXBROW "LF1K", VOP_COPY16, 1000, 7, 64, 81, 0
+    NXBROW "LF4K", VOP_COPY16, 4000, 1, 64, 81, 0
+    NXBROW "LF7K", VOP_COPY16, 7680, 1, 64, 81, 0
+    NXBROW "LFDS", VOP_COPY16, 7680, 1, 64, 81, $10
+    NXBROW "LG1K", VOP_COPY16, 1000, 5, 64, 81, 1
+    NXBROW "LG4K", VOP_COPY16, 4000, 1, 64, 81, 1
+    NXBROW "LGDS", VOP_COPY16, 4000, 1, 64, 81, $11
+    db 0
+nxbTabLongEnd:
+    ASSERT nxbTabLongEnd - nxbTabLong <= 20 * NXB_ROW_LEN + 1
+
+; GROUP 8 - rows at a simulated NXV2_COPY_DMA_MIN of 59: E058/E059 the
+; 8-bit edge, Tnnn 16-bit ops whose tail after a 240 B chunk falls either
+; side of it, Unnn/V300 the same ops at 81; S299/V300/S300 gapped (192).
+nxbTabNew:
+    NXBROW "E058", VOP_COPY8, 58, 131, 64, 59, 0
+    NXBROW "E059", VOP_COPY8, 59, 129, 64, 59, 0
+    NXBROW "T298", VOP_COPY16, 298, 26, 96, 59, 0
+    NXBROW "T299", VOP_COPY16, 299, 26, 96, 59, 0
+    NXBROW "U300", VOP_COPY16, 300, 26, 96, 81, 0
+    NXBROW "T300", VOP_COPY16, 300, 26, 96, 59, 0
+    NXBROW "U320", VOP_COPY16, 320, 24, 96, 81, 0
+    NXBROW "T320", VOP_COPY16, 320, 24, 96, 59, 0
+    NXBROW "S299", VOP_COPY16, 299, 19, 96, 59, 1
+    NXBROW "V300", VOP_COPY16, 300, 19, 96, 81, 1
+    NXBROW "S300", VOP_COPY16, 300, 19, 96, 59, 1
+    db 0
+nxbTabNewEnd:
+    ASSERT nxbTabNewEnd - nxbTabNew <= 20 * NXB_ROW_LEN + 1
+
+    DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
+    ASSERT $ <= DATA_WINDOW + $2000
+ ENDIF
 
 ; ---------------------------------------------------------------------
 ; VID_PAGE2 - second video page. COLD code only: everything here runs

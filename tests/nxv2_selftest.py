@@ -1324,7 +1324,7 @@ def _nxbx_screen(line_ldi, line_dma, shift=None, zero_tag=None, residue_tag=None
     return "\n".join(text) + "\n", want
 
 
-@case(10, "bench tables - explicit-threshold pricing reproduces the shipped anchors")
+@case(10, "bench tables - pricing anchors and the standalone table rules")
 def t10_bench_tables():
     tc = enc.TMODEL_COEFFS
     ship = tc["copy_dma_min"]
@@ -1338,9 +1338,43 @@ def t10_bench_tables():
     expect(abs(bench.row_predicted(enc, "D081") - c081) < 1e-9, "D081 must price as C081 at 81")
     expect(bench.row_predicted(enc, "D060") < bench.row_predicted(enc, "L060"),
            "a forced DMA row must price cheaper than the same L on LDI")
-    tags = [r[0] for rows in bench.BENCH_TABLES.values() for r in rows]
-    expect(len(tags) == len(set(tags)) and all(len(t) == 4 for t in tags),
-           "bench tags must be unique and exactly 4 characters")
+    # Table rules (src/video.asm NXB_PAGE tables, nxb_build's stream layout).
+    # Stream bytes per op: opcode + 8/16-bit count, then a RUN colour byte or
+    # the COPY literal body. The source cursor must stay below $DF00.
+    header = {"skip8": 2, "run8": 2, "copy8": 2, "skip16": 3, "run16": 3, "copy16": 3}
+    expect(sorted(bench.BENCH_TABLES) == list(range(2, 9)), "standalone modes are 2-8")
+    bad, owner = [], {}
+    for mode, rows in sorted(bench.BENCH_TABLES.items()):
+        if len(rows) > 20:
+            bad.append(f"mode {mode}: {len(rows)} rows, the screen holds 20")
+        for tag, kind, L, o, r, thr, geo in rows:
+            if len(tag) != 4 or not all(0x21 <= ord(ch) <= 0x7E for ch in tag):
+                bad.append(f"{tag!r}: a tag is exactly 4 printable characters")
+            if tag in owner:
+                bad.append(f"{tag}: repeated (modes {owner[tag]} and {mode})")
+            owner.setdefault(tag, mode)
+            if not (1 <= o <= 255 and 1 <= r <= 0xFFFF and 0 <= thr <= 255
+                    and 0 <= L <= (255 if kind.endswith("8") else 0xFFFF)):
+                bad.append(f"{tag}: O={o} R={r} thr={thr} L={L} do not fit their fields")
+            if kind.startswith("run") and thr > 241:
+                bad.append(f"{tag}: RUN thr {thr} > 241 (vid_fill_cpu takes at most 240 B)")
+            body = L if kind.startswith("copy") else 1 if kind.startswith("run") else 0
+            if o * (header[kind] + body) >= 7900:
+                bad.append(f"{tag}: stream {o * (header[kind] + body)} B, must be < 7900")
+            gapped, hcode, dcode = bench.geo_fields(geo)
+            if (geo & bench.GEO_RESERVED or hcode == 3 or (gapped and dcode == 3)
+                    or (not gapped and hcode)):
+                bad.append(f"{tag}: invalid geometry code ${geo:02X}")
+                continue
+            if gapped:
+                limit = 31 * bench.GEO_HEIGHTS[hcode]
+            elif dcode == 0:
+                limit = 7936                      # no op starts in the last 256 B
+            else:                                 # the window plus one seam page
+                limit = 0x4000 - (bench.GEO_DESTS[dcode] - 0x4000)
+            if o * L > limit:
+                bad.append(f"{tag}: ops*count {o * L} > {limit} (geometry ${geo:02X})")
+    expect(not bad, "bench table rules:\n  " + "\n  ".join(bad))
 
 
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")

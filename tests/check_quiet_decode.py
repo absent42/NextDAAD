@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""tests/check_quiet_decode.py - prove the NXB_QUIET DEBUG image executes
-Release's instructions on every timed video path. Rules and exit codes: --help.
-"""
+"""tests/check_quiet_decode.py - prove the NXB_QUIET DEBUG image (or, with
+--debug, standard DEBUG) executes Release's instructions on every timed video
+path. Rules and exit codes: --help."""
 import argparse
 import difflib
 import hashlib
@@ -18,15 +18,19 @@ SRC_ROOT = ROOT                       # --src-root: a copy holding src/
 OUT = ROOT / "tests" / "out" / "quiet-check"
 
 HELP = """\
-Assembles Release and quiet DEBUG (DEBUG + NXB_QUIET) with sjasmplus --lst into
-tests/out/quiet-check/. In the lines owned by the timed routines (TIMED,
-TIMED_SPANS), the sequence of lines that emit bytes (file, line) and their byte
-counts must be identical; operand values may differ. Nothing else is compared.
+Assembles Release and quiet DEBUG (DEBUG + NXB_QUIET), or with --debug Release
+and standard DEBUG, with sjasmplus --lst into tests/out/quiet-check/. In the
+lines owned by the timed routines (TIMED, TIMED_SPANS), the sequence of lines
+that emit bytes (file, line) and their byte counts must be identical; operand
+values may differ. Nothing else is compared.
 - A line belongs to the global label above it; a label inside a conditional
   owns lines only to the end of its branch.
 - Every global label inside REGIONS must be in TIMED, TIMED_SPANS or EXCLUDED.
 - COLD_PINNED blocks are skipped only when their statement list and the
   statement before their IFDEF match exactly; COLD entries are never skipped.
+- --debug also skips QUIET_PINNED blocks: each IFNDEF NXB_QUIET block must sit
+  directly inside IFDEF DEBUG and match its routine, the statement before
+  that IFDEF and its statement list exactly. No other difference is allowed.
 - ALIGN compares by presence after an unconditional jp/jr/ret, else by padding.
 - Macro and DUP rows also compare their text with numbers masked.
 Exit 0 = OK. Exit 1 = a difference, a classification failure or a build
@@ -36,6 +40,7 @@ failure. build/nextdaad.nex is saved first and restored on exit."""
 FLAVOURS = {
     "release": [],
     "quiet": ["-DDEBUG=1", "-DNXB_QUIET=1"],
+    "debug": ["-DDEBUG=1"],
 }
 
 # Routines on a sitting-5 timed path. Fault routines are EXCLUDED.
@@ -120,6 +125,46 @@ COLD_PINNED = [
      "audEnable != 0 path, never taken in a session"),
 ]
 
+# The timed-path instruments wrapped in IFNDEF NXB_QUIET, skipped by --debug
+# only: (file, routine, statement before the enclosing IFDEF DEBUG, exact
+# statement list, instrument). No match fails the check.
+QUIET_PINNED = [
+    ("src/video.asm", "vid_dst_norm_gap", "vid_dst_norm_gap:",
+     ("ld a, (vidRlDiv)", "dec a", "ld (vidRlDiv), a", "call z, vid_rl_poll"),
+     "PLAY= raster arm, per chunk (gapped)"),
+    ("src/video.asm", "vid_dst_norm_flat", "vid_dst_norm_flat:",
+     ("ld a, (vidRlDiv)", "dec a", "ld (vidRlDiv), a", "call z, vid_rl_poll"),
+     "PLAY= raster arm, per chunk (flat)"),
+    ("src/video.asm", "vid_pace_poll", "vid_pace_poll:",
+     ("ld a, (vidRlSpinDiv)", "dec a", "ld (vidRlSpinDiv), a",
+      "call z, vid_rl_poll"),
+     "PLAY= spin arm, wait loops"),
+    ("src/video.asm", "vid_aud_pump", ".next:",
+     ("ld a, (vidRlSpinDiv)", "dec a", "ld (vidRlSpinDiv), a",
+      "call z, vid_rl_poll"),
+     "PLAY= spin arm, per feed chunk"),
+    ("src/video.asm", "vid_run", ".frameloop:",
+     ("call vid_play_frame",),
+     "FRM=/PLAY=/NOM= per-frame hook"),
+    ("src/video.asm", "vid_ring_gate", "vid_ring_gate:",
+     ("ld hl, (vidRingDepth)", "ld de, (vidRingMin)", "or a", "sbc hl, de",
+      "jr nc, .nomin", "ld hl, (vidRingDepth)", "ld (vidRingMin), hl",
+      ".nomin:"),
+     "RING= minimum depth"),
+    ("src/video.asm", "vid_ring_gate", "ret nc",
+     ("ld hl, (vidRingUnder)", "inc hl", "ld (vidRingUnder), hl"),
+     "RING= underrun count"),
+    ("src/video.asm", "vid_sd_tok_h", ".got:",
+     ("push af", "push de", "push hl", "ld hl, 0", "or a", "sbc hl, bc",
+      "ex de, hl", "ld hl, (vidTokPolls)", "add hl, de",
+      "ld (vidTokPolls), hl", "ld hl, (vidTokCalls)", "inc hl",
+      "ld (vidTokCalls), hl", "pop hl", "pop de", "pop af"),
+     "TOK= accumulator"),
+    ("src/video.asm", "vid_ds_blkopen", "vid_ds_blkopen:",
+     ("ld a, (vidRlDiv)", "dec a", "ld (vidRlDiv), a", "call z, vid_rl_poll"),
+     "PLAY= raster arm, per direct-serve block"),
+]
+
 # The other COLD top-level IFDEF DEBUG blocks, for --list only - never
 # skipped. (file, owning label, anchor statements, reason); the anchor is
 # the whole statement list, else a contiguous run inside it.
@@ -149,6 +194,8 @@ COLD = [
      "report after teardown"),
     ("src/video.asm", "vidSvHook", ("vid_tl_report:",),
      "report cells, report hop and the NXB bench"),
+    ("src/video.asm", "vidSvHook", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
+     "NXB_PAGE: bench tables"),
     ("src/video.asm", "nxv2_open_body", ("ld (vidFillT0), hl",),
      "open: FILL= start stamp"),
     ("src/video.asm", "nxv2_open_body", ("ld (vidSnapCntL), a",),
@@ -242,6 +289,7 @@ def scan_source(relpath):
     stmts = [statement(line) for line in lines]
     labels, blocks, owner = [], [], [None] * (len(lines) + 1)
     depth, uncond, conds, cur = 0, None, [], None
+    opens, quiet = [], []
     for n, (line, st) in enumerate(zip(lines, stmts), 1):
         word = st.split(" ")[0].upper() if st else ""
         m = LABEL.match(line)
@@ -255,6 +303,7 @@ def scan_source(relpath):
         if word in COND_OPEN:
             if depth == 0 and st.upper() == "IFDEF DEBUG":
                 cur = {"start": n, "stmts": []}
+            opens.append((n, st.upper()))
             depth += 1
         elif word in ("ELSE", "ELSEIF"):
             conds = [c for c in conds if c[1] < depth]
@@ -262,6 +311,11 @@ def scan_source(relpath):
             depth -= 1
             if depth < 0:
                 raise Fail(f"{relpath}:{n}: unbalanced ENDIF")
+            start, kind = opens.pop()
+            if kind == "IFNDEF NXB_QUIET":
+                quiet.append({"start": start, "end": n,
+                              "parent": opens[-1] if opens else (0, ""),
+                              "stmts": [x for x in stmts[start:n - 1] if x]})
             conds = [c for c in conds if c[1] <= depth]
             closes = depth == 0 and cur is not None
         owner[n] = conds[-1][0] if conds else uncond
@@ -274,8 +328,11 @@ def scan_source(relpath):
     for b in blocks:
         b["owner"] = owner[b["start"]]
         b["prev"] = prev_statement(stmts, b["start"])
+    for b in quiet:
+        b["owner"] = owner[b["start"]]
+        b["prev"] = prev_statement(stmts, b["parent"][0])
     return {"lines": lines, "stmts": stmts, "labels": labels,
-            "owner": owner, "blocks": blocks}
+            "owner": owner, "blocks": blocks, "quiet": quiet}
 
 
 def label_line(relpath, scan, name):
@@ -288,11 +345,13 @@ def label_line(relpath, scan, name):
 class TimedSet:
     """Which source lines are timed, plus the source-side verdicts."""
 
-    def __init__(self):
+    def __init__(self, debug=False):
         self.scans, self.problems, self.notes = {}, [], []
         self.skip, self.align_ok, self.spans = {}, set(), {}
+        self.quiet_skip = {}
         files = set(TIMED) | set(REGIONS) | {f for f, *_ in TIMED_SPANS}
         files |= {f for f, *_ in COLD_PINNED} | {f for f, *_ in COLD}
+        files |= {f for f, *_ in QUIET_PINNED}
         for f in sorted(files):
             self.scans[f] = scan_source(f)
         for f, names in TIMED.items():
@@ -312,6 +371,8 @@ class TimedSet:
             self.spans.setdefault(f, []).append((name, s, e))
         self._regions()
         self._pinned()
+        if debug:
+            self._quiet_pinned()
         self._aligns()
 
     def timed(self, f, n):
@@ -325,7 +386,8 @@ class TimedSet:
                    for name, s, e in self.spans.get(f, ()))
 
     def skipped(self, f, n):
-        return any(a <= n <= b for a, b in self.skip.get(f, ()))
+        return any(a <= n <= b for a, b in
+                   self.skip.get(f, []) + self.quiet_skip.get(f, []))
 
     def _regions(self):
         for f, (first, after) in REGIONS.items():
@@ -355,6 +417,21 @@ class TimedSet:
             self.skip.setdefault(f, []).append((hits[0]["start"],
                                                 hits[0]["end"]))
 
+    def _quiet_pinned(self):
+        for f, routine, prev, exact, _ in QUIET_PINNED:
+            hits = [b for b in self.scans[f]["quiet"]
+                    if b["owner"] == routine and b["prev"] == prev
+                    and b["parent"][1] == "IFDEF DEBUG"
+                    and tuple(b["stmts"]) == exact]
+            if len(hits) != 1:
+                self.problems.append(
+                    f"{f}: pinned NXB_QUIET block in {routine} (before its "
+                    f"IFDEF DEBUG: '{prev}': {' / '.join(exact)}) matches "
+                    f"{len(hits)} blocks - reclassify it or update QUIET_PINNED")
+                continue
+            self.quiet_skip.setdefault(f, []).append((hits[0]["start"],
+                                                      hits[0]["end"]))
+
     def _aligns(self):
         for f, scan in self.scans.items():
             for n, st in enumerate(scan["stmts"], 1):
@@ -365,6 +442,13 @@ class TimedSet:
     def cold_listing(self):
         """(file, start, end, label, reason, pinned) for --list."""
         out = []
+        for f, routine, prev, exact, reason in QUIET_PINNED:
+            for b in self.scans[f]["quiet"]:
+                if ((b["start"], b["end"]) in self.quiet_skip.get(f, ())
+                        and b["owner"] == routine and b["prev"] == prev
+                        and tuple(b["stmts"]) == exact):
+                    out.append((f, b["start"], b["end"], routine,
+                                "NXB_QUIET: " + reason, True))
         for f, routine, prev, exact, reason in COLD_PINNED:
             for b in self.scans[f]["blocks"]:
                 if (b["owner"], b["prev"], tuple(b["stmts"])) == \
@@ -517,7 +601,8 @@ def sha(path):
 
 
 def run(args, built):
-    ts = TimedSet()
+    other = "debug" if args.debug else "quiet"
+    ts = TimedSet(debug=args.debug)
     cold = ts.cold_listing()
     if args.list:
         for f, a, b, name in ts.intervals():
@@ -526,7 +611,7 @@ def run(args, built):
             tag = " (pinned, skipped)" if pinned else ""
             print(f"COLD  {f}:{a}-{b} {owner}: {reason}{tag}")
     sel = {}
-    for flavour in ("release", "quiet"):
+    for flavour in ("release", other):
         lst, nex = build(flavour)
         built.add(sha(nex))
         sel[flavour] = select(parse_listing(lst), ts)
@@ -543,16 +628,22 @@ def run(args, built):
                         for r in rows_r)]
     for f, name in empty:
         print(f"FAIL {f}: timed routine {name} assembles no bytes in release")
-    ndiff = compare("release", rows_r, "quiet", sel["quiet"])
+    ndiff = compare("release", rows_r, other, sel[other])
     nbytes = sum(r[2] or 0 for r in rows_r)
+    nquiet = sum(len(v) for v in ts.quiet_skip.values())
     print(f"timed set: {len(names)} routines, {len(rows_r)} assembled lines, "
           f"{nbytes} B; {sum(len(v) for v in ts.skip.values())} pinned COLD "
-          f"blocks skipped")
+          f"blocks skipped" + (f", {nquiet} pinned NXB_QUIET blocks skipped"
+                               if args.debug else ""))
     if ndiff or empty or ts.problems:
         print(f"FAIL: {ndiff} line(s) differ, {len(ts.problems) + len(empty)} "
               f"classification failure(s)")
         return 1
-    print("OK: quiet timed paths are instruction-identical to release")
+    if args.debug:
+        print("OK: debug timed paths are instruction-identical to release "
+              "outside the NXB_QUIET instruments")
+    else:
+        print("OK: quiet timed paths are instruction-identical to release")
     return 0
 
 
@@ -563,6 +654,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--list", action="store_true",
                     help="print the timed line runs and the COLD blocks")
+    ap.add_argument("--debug", action="store_true",
+                    help="compare Release with standard DEBUG instead of quiet")
     ap.add_argument("--src-root", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.src_root:

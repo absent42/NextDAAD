@@ -229,6 +229,10 @@ bank_table_init:
     ld (hl), a
     inc hl
     djnz .pool
+ IFDEF DEBUG
+    ld a, BT_RESERVED            ; the bench bank (NXB_PAGE)
+    ld (bankTable+BANK_NXB), a
+ ENDIF
     ld a, (ramExpanded)
     or a
     jr z, .boot                 ; base model: no expansion pool to free

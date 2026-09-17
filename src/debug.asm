@@ -285,11 +285,11 @@ boot_banner:
 ; frees - they are the allocator's tripwire, and a stale value here
 ; disables it. Bank 35 is withdrawn for VID_PAGE2/SFX_PAGE in both
 ; build variants (see nextdaad.inc's bank map) and excluded here.
-SELFTEST_FREE_2MB equ 81    ; 14,15 + 20-23 + 37-47 + 48-111 (28,29 withdrawn
+SELFTEST_FREE_2MB equ 80    ; 14,15 + 20-23 + 37-46 + 48-111 (28,29 withdrawn
                             ; for the overlays, 30-34 for the Layer 2 back
                             ; surface, 35 for VID_PAGE2/SFX_PAGE, 36 for the
-                            ; sprite pages)
-SELFTEST_FREE_1MB equ 17    ; 14,15 + 20-23 + 37-47 (same withdrawals)
+                            ; sprite pages, 47 for the DEBUG bench bank)
+SELFTEST_FREE_1MB equ 16    ; 14,15 + 20-23 + 37-46 (same withdrawals)
 
 ram_diag:
     ld b, 2
