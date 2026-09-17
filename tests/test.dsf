@@ -332,12 +332,18 @@ LS256 111     verb
 ;   NXBF - mode 11, RUN path pairs, flat and gapped (18 rows)
 ;   NXBV - mode 12, edge bails, SKIP passes, a dest seam, columns
 ;          (16 rows)
-;   NXBD - flag 248 + GFX 10 13: the direct-serve transport
-;          breakdown against 010.VID (6 rows). NEEDS -VidLong staged.
-;          Playback is REPLACED by the bench - nothing plays.
+;   NXBD - flag 248 = 1 + GFX @140 13 after PICK nn: the DS1 direct
+;          session rows on a direct clip (9 rows: frame sweeps, then the
+;          transport breakdown). NEEDS -VidLong staged (010/011).
 ;   NXBR - verb 127, flag 248 = 2 + GFX @140 13 after PICK nn: the REAL
 ;          session rows on the armed clip (23 rows resident, 26
-;          streaming, two columns). Playback is REPLACED.
+;          streaming, two columns).
+;   NXBQ - verb 128, flag 248 = 3: the SYN synthetic-frame rows on a
+;          resident clip (23 rows, two columns).
+;   NXBY - verb 129, flag 248 = 4: the SYS synthetic-frame rows on a
+;          streaming clip (14 rows).
+;          Session verbs REPLACE playback; a clip of the wrong delivery
+;          prints NXB SESSION.
 ; Rows print at tilemap rows 8+ and become visible when the timeline
 ; report hides Layer 2 at teardown. Release's EXTERN 0 12 is ext_stub
 ; and flag 248 is inert, so all of them are silent no-ops there.
@@ -354,6 +360,8 @@ NXBH  124     verb
 NXBF  125     verb
 NXBV  126     verb
 NXBR  127     verb
+NXBQ  128     verb
+NXBY  129     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -1077,13 +1085,13 @@ $pictureOK
 
 ; SP17 player bench (see the vocabulary block). The standalone
 ; modes set flag 250 then share EXTERN 0 12; the mode cell self-clears
-; in the handler, so a stray EXTERN can never re-run a row set. NXBD
-; sets flag 248 and then plays 010.VID: the player opens the file
-; exactly as it ships, and the bench hook diverts to the transport
-; rows the instant the session is armed and BEFORE the CTC starts, so
-; the rows are taken on a quiet machine. No PROCESS 10 on the
-; standalone verbs - they never touch the display, so there is
-; nothing for the game to redraw.
+; in the handler, so a stray EXTERN can never re-run a row set. The
+; session verbs (NXBD/NXBR/NXBQ/NXBY) set flag 248 and then play the
+; clip PICK armed: the player opens the file exactly as it ships, and
+; the bench hook diverts to the session rows once the session is staged
+; and BEFORE the CTC starts. No PROCESS 10 on the standalone verbs -
+; they never touch the display, so there is nothing for the game to
+; redraw.
 > NXBO    _     LET     250 2
                 EXTERN  0 12
                 DONE
@@ -1128,13 +1136,24 @@ $pictureOK
                 EXTERN  0 12
                 DONE
 
+; NXBD/NXBR/NXBQ/NXBY: the DS1/REAL/SYN/SYS session bench on the clip
+; PICK armed (flag 140).
 > NXBD    _     LET     248 1
-                GFX     10 13
+                GFX     @140 13
                 PROCESS 10
                 DONE
 
-; NXBR: the REAL session bench on the clip PICK armed (flag 140).
 > NXBR    _     LET     248 2
+                GFX     @140 13
+                PROCESS 10
+                DONE
+
+> NXBQ    _     LET     248 3
+                GFX     @140 13
+                PROCESS 10
+                DONE
+
+> NXBY    _     LET     248 4
                 GFX     @140 13
                 PROCESS 10
                 DONE

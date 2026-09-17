@@ -1412,20 +1412,25 @@ def t10_bench_tables():
     expect(not bad, "bench table rules:\n  " + "\n  ".join(bad))
 
 
-@case(10, "session bench tables - tags, printed rows, armed rows, the streaming tail")
+@case(10, "session bench tables - layout by kind, tags, printed rows, armed rows, deliveries")
 def t10_session_tables():
-    # Session rows (src/video.asm nxbSes* tables, nxb_srow_go): 10 bytes each
-    # plus a terminator, staged into nxbTabBuf (560 B); 32 printed rows at most
-    # (rows 8-23, two columns).
-    expect(sorted(bench.SESSION_TABLES) == sorted(bench.SESSION_MODES),
-           "every session table has a flags+248 mode")
+    # Session rows (src/video.asm nxbSes* tables, nxb_srow_next/nxb_srow_go):
+    # 10 bytes, or 25 for a SYNTH kind, plus a terminator, staged into
+    # nxbTabBuf (560 B); 32 printed rows at most (rows 8-23, two columns).
+    expect(sorted(bench.SESSION_TABLES) == sorted(bench.SESSION_MODES)
+           == sorted(bench.SESSION_DELIVERY),
+           "every session table has a flags+248 mode and its deliveries")
     expect(len(set(bench.SESSION_MODES.values())) == len(bench.SESSION_MODES)
            and all(1 <= m <= 4 for m in bench.SESSION_MODES.values()),
            "session modes are distinct, 1-4")
     bad = []
     for name, rows in sorted(bench.SESSION_TABLES.items()):
-        if 10 * len(rows) + 1 > 560:
-            bad.append(f"{name}: {10 * len(rows) + 1} B, nxbTabBuf holds 560")
+        deliveries = bench.SESSION_DELIVERY[name]
+        if not deliveries or not set(deliveries) <= {"resident", "streaming", "direct"}:
+            bad.append(f"{name}: deliveries {deliveries!r}")
+        direct = "direct" in deliveries
+        if direct and len(deliveries) != 1:
+            bad.append(f"{name}: a direct table runs on no other delivery")
         tags = [r[0] for r in rows]
         for tag in tags:
             if len(tag) != 4 or not all(0x21 <= ord(ch) <= 0x7E for ch in tag):
@@ -1434,41 +1439,105 @@ def t10_session_tables():
             bad.append(f"{name} {tag}: repeated in the table")
         if not rows or rows[0][:2] != ("IDEN", "id"):
             bad.append(f"{name}: the first row is IDEN (kind id)")
-        tail = [r[5] for r in rows]
+        tail = [bench.session_strm(r) for r in rows if r[1] in bench.SESSION_KINDS]
         if True in tail and not all(tail[tail.index(True):]):
             bad.append(f"{name}: streaming-only rows must form the table's tail")
-        scanned = False
-        for tag, kind, param, reps, thr, strm in rows:
+        scanned = blocks_direct = False
+        shape_ok = True
+        for row in rows:
+            tag, kind = row[0], row[1]
             if kind not in bench.SESSION_KINDS:
                 bad.append(f"{name} {tag}: unknown kind {kind!r}")
+                shape_ok = False
                 continue
+            if kind in bench.SESSION_DIRECT and not direct:
+                bad.append(f"{name} {tag}: {kind} rows run only in a direct table")
+            if direct and kind not in bench.SESSION_DIRECT + ("id", "arm", "disarm"):
+                bad.append(f"{name} {tag}: a direct table has no ring, so no {kind} rows")
+            if kind in bench.SESSION_SYNTH:
+                if len(row) != 7:
+                    bad.append(f"{name} {tag}: a SYNTH row is (tag, kind, reps, frame, preset, site1, site2)")
+                    shape_ok = False
+                    continue
+                _t, _k, reps, frame, preset, *sites = row
+                if not 1 <= reps <= 0xFFFF:
+                    bad.append(f"{name} {tag}: reps {reps} must be 1-65535")
+                    shape_ok &= 0 <= reps <= 0xFFFF
+                if not 0 <= frame < 1 << 24:
+                    bad.append(f"{name} {tag}: frame offset {frame} does not fit 24 bits")
+                    shape_ok = False
+                if preset not in (0, 1, 2):
+                    bad.append(f"{name} {tag}: span preset {preset} must be 0-2")
+                    shape_ok &= 0 <= preset <= 255
+                if "streaming" in deliveries and frame % 512:
+                    bad.append(f"{name} {tag}: a streaming frame offset is a 512 multiple, got {frame}")
+                spans = []
+                for offset, data in sites:
+                    if not (0 <= offset < 1 << 24 and len(data) <= 3
+                            and all(0 <= b <= 255 for b in data)):
+                        bad.append(f"{name} {tag}: site ({offset}, {data}) does not fit")
+                        shape_ok = False
+                        continue
+                    if (offset & 0x1FFF) + len(data) > 0x2000:
+                        bad.append(f"{name} {tag}: site at {offset} straddles an 8K page")
+                    if data:
+                        spans.append((offset, offset + len(data)))
+                if len(spans) == 2 and spans[0][0] < spans[1][1] and spans[1][0] < spans[0][1]:
+                    bad.append(f"{name} {tag}: the two sites overlap")
+                if kind == "synth_nocall" and (spans or preset):
+                    bad.append(f"{name} {tag}: SYNTH-NOCALL writes nothing, preset 0")
+                continue
+            if len(row) != 6:
+                bad.append(f"{name} {tag}: a {kind} row is (tag, kind, param, reps, thr, strm)")
+                shape_ok = False
+                continue
+            _t, _k, param, reps, thr, strm = row
             if kind in ("prod", "remn") and not strm:
                 bad.append(f"{name} {tag}: {kind.upper()} rows run only in the streaming tail")
+            if strm and "streaming" not in deliveries:
+                bad.append(f"{name} {tag}: a strm row in a table no streaming session runs")
             if not (0 <= param <= 0xFFFF and 0 <= reps <= 0xFFFF and 0 <= thr <= 255):
                 bad.append(f"{name} {tag}: param={param} reps={reps} thr={thr} do not fit")
+                shape_ok = False
             if (kind in bench.SESSION_REPS) != (reps >= 1):
-                bad.append(f"{name} {tag}: reps {reps} (1+ for FRAME/AUD/PACE/PROD, else 0)")
+                bad.append(f"{name} {tag}: reps {reps} (1+ for FRAME/AUD/PACE/PROD/DSBLK, else 0)")
             if (kind in bench.SESSION_DECODE) != (thr >= 1):
-                bad.append(f"{name} {tag}: thr {thr} (1+ for SCAN/SWEEP/FRAME/LOOP, else 0)")
+                bad.append(f"{name} {tag}: thr {thr} (1+ for SCAN/SWEEP/FRAME/LOOP/DSWEEP, else 0)")
             if kind == "frame" and (param > 2 or not scanned):
                 bad.append(f"{name} {tag}: FRAME takes slot 0-2 after a SCAN row")
             if kind == "loop" and not 1 <= param <= 255:
                 bad.append(f"{name} {tag}: LOOP n {param} must be 1-255")
             if kind == "loop" and not scanned:
                 bad.append(f"{name} {tag}: LOOP follows a SCAN row (SCAN's m bounds a streaming n)")
-            if kind not in ("sweep", "frame", "loop") and param:
+            if kind == "dsweep" and not 1 <= param <= 255:
+                bad.append(f"{name} {tag}: DSWEEP frames {param} must be 1-255")
+            if kind == "dsweep" and blocks_direct:
+                bad.append(f"{name} {tag}: DSWEEP after a DSBLK row (the frames are off the wire)")
+            if kind == "dsblk" and param > 3:
+                bad.append(f"{name} {tag}: DSBLK body {param} must be 0-3")
+            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk") and param:
                 bad.append(f"{name} {tag}: {kind} rows carry param 0")
             scanned |= kind == "scan"
+            blocks_direct |= kind == "dsblk"
+        if shape_ok:
+            lengths = [len(bench.session_row_bytes(r)) for r in rows]
+            want = [bench.SESSION_SYNTH_LEN if r[1] in bench.SESSION_SYNTH
+                    else bench.SESSION_ROW_LEN for r in rows]
+            if lengths != want:
+                bad.append(f"{name}: row lengths {lengths}, the kinds want {want}")
+            size = len(bench.session_table_bytes(name))
+            if size > 560:
+                bad.append(f"{name}: {size} B, nxbTabBuf holds 560")
         pairs = bench.SESSION_ARMED_PAIRS.get(name, ())
         armed_tags = {a for _u, a in pairs}
-        for streaming in (False, True):
-            view = "streaming" if streaming else "resident"
-            printed = bench.session_printed(name, streaming)
+        for delivery in deliveries:
+            view = delivery
+            printed = bench.session_printed(name, delivery)
             if len(printed) > 32:
                 bad.append(f"{name} {view}: {len(printed)} printed rows, the screen holds 32")
-            state = bench.session_armed(name, streaming)
+            state = bench.session_armed(name, delivery)
             armed = False
-            for tag, kind, *_ in bench.session_rows(name, streaming):
+            for tag, kind, *_ in bench.session_rows(name, delivery):
                 if kind == "arm" and armed:
                     bad.append(f"{name} {view} {tag}: ARM while armed")
                 if kind == "disarm" and not armed:
@@ -1482,9 +1551,43 @@ def t10_session_tables():
         for u, a in pairs:
             if u not in by_tag or a not in by_tag:
                 bad.append(f"{name}: pair {u}/{a} names a missing row")
-            elif by_tag[u][1:5] != by_tag[a][1:5] or by_tag[u][5] != by_tag[a][5]:
+            elif by_tag[u][1:] != by_tag[a][1:]:
                 bad.append(f"{name}: pair {u}/{a} rows differ beyond the tag")
     expect(not bad, "session table rules:\n  " + "\n  ".join(bad))
+
+
+@case(10, "direct fixtures 010/011 - one payload size per clip (a DS1 sweep cannot repeat a frame)")
+def t10_direct_payloads():
+    import re as _re
+    import nxv2_copy_census as census_mod
+    ps1 = (ROOT / "tests" / "build-tests.ps1").read_text(encoding="utf-8")
+    m = _re.search(r"\$vidLegSettlementTag = '([^']+)'", ps1)
+    expect(m, "build-tests.ps1 must carry $vidLegSettlementTag")
+    out = ROOT / "tests" / "out"
+    paths = []
+    for num in ("010", "011"):
+        found = sorted(out.glob(f"{num}_*_{m.group(1)}_long_cache.vid"))
+        if not found:
+            skip(f"{num}.VID not encoded at era {m.group(1)} (build-tests.ps1 -Vid -VidLong)")
+        paths.append(found[0])
+    head = {census_mod.nxv2enc.OP_SKIP8: 2, census_mod.nxv2enc.OP_SKIP16: 3,
+            census_mod.nxv2enc.OP_RUN8: 3, census_mod.nxv2enc.OP_RUN16: 4}
+    for path in paths:
+        sizes = set()
+        frames = 0
+        for ops in census_mod.frames_of(path):
+            frames += 1
+            size = 0
+            for op, n in ops:
+                if op == census_mod.nxv2enc.OP_COPY8:
+                    size += 2 + n
+                elif op == census_mod.nxv2enc.OP_COPY16:
+                    size += 3 + n
+                else:
+                    size += head[op]
+            sizes.add(size)
+        expect(len(sizes) == 1, f"{path.name}: {len(sizes)} payload sizes {sorted(sizes)[:6]}")
+        expect(frames >= 32, f"{path.name}: {frames} frames, DSWP and ADSW sweep 32")
 
 
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")

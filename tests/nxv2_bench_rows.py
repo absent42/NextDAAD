@@ -14,7 +14,7 @@ tables define them: each row carries its own explicit kernel-select value
 (thr) for its kind, so the bench measures a fixed select value directly
 instead of depending on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN
 currently ships. SESSION_TABLES holds the session modes that ride a
-staged clip (REAL, verb NXBR) the same way.
+staged clip (DS1/REAL/SYN/SYS, verbs NXBD/NXBR/NXBQ/NXBY) the same way.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -378,19 +378,93 @@ BENCH_TABLES = {
 }
 
 
-# SESSION_TABLES: {name: ((tag, kind, param, reps, thr, strm), ...)} for the
-# session bench modes (flags+248), in row order, the fields of the 10-byte
-# session row on NXB_PAGE (ds 4 tag, db kind, dw param, dw reps, db thr).
-# kind is one of SESSION_KINDS (NXB_K_* order); strm marks NXB_K_STRM, a row
-# a resident session skips. ARM and DISARM rows print nothing.
+# SESSION_TABLES: {name: (row, ...)} for the session bench modes (flags+248),
+# in row order, as the NXB_PAGE tables define them. kind is one of
+# SESSION_KINDS (NXB_K_* order) and sets the row's layout and length:
+#   (tag, kind, param, reps, thr, strm): 10 bytes (ds 4 tag, db kind, dw param,
+#     dw reps, db thr); strm marks NXB_K_STRM, a row only a streaming session
+#     runs;
+#   (tag, kind, reps, frame, preset, site1, site2) for the SESSION_SYNTH kinds:
+#     25 bytes (ds 4 tag, db kind, dw reps, d24 frame offset, db span preset,
+#     then per site d24 offset, db length 0-3, ds 3 bytes); a site is
+#     (offset, bytes).
+# ARM and DISARM rows print nothing.
 SESSION_KINDS = ("id", "ring", "remn", "scan", "sweep", "frame", "aud", "pace",
-                 "loop", "arm", "disarm", "prod")
+                 "loop", "arm", "disarm", "prod", "dsweep", "dsblk", "synth",
+                 "synth_nocall")
 SESSION_SILENT = ("arm", "disarm")
-SESSION_REPS = ("frame", "aud", "pace", "prod")      # nxb_lrow kinds: reps >= 1
-SESSION_DECODE = ("scan", "sweep", "frame", "loop")  # thr = the COPY select
-SESSION_MODES = {"REAL": 2}                          # flags+248
+SESSION_REPS = ("frame", "aud", "pace", "prod", "dsblk")   # reps >= 1
+SESSION_DECODE = ("scan", "sweep", "frame", "loop", "dsweep")  # thr = COPY select
+SESSION_SYNTH = ("synth", "synth_nocall")
+SESSION_DIRECT = ("dsweep", "dsblk")                 # direct-serve only
+SESSION_ROW_LEN = 10
+SESSION_SYNTH_LEN = 25
+SESSION_MODES = {"DS1": 1, "REAL": 2, "SYN": 3, "SYS": 4}   # flags+248
+# The deliveries each mode runs on (nxbSessDir's mask); anything else prints
+# NXB SESSION.
+SESSION_DELIVERY = {"DS1": ("direct",), "REAL": ("resident", "streaming"),
+                    "SYN": ("resident",), "SYS": ("streaming",)}
+NXB_DS_REPS = 128                                    # blocks per DT row
+NOSITE = (0, ())
 
 SESSION_TABLES = {
+    "DS1": (    # NXBD - nxbSesDs1: direct frame sweeps, then the transport rows
+        ("IDEN", "id", 0, 0, 0, False),
+        ("DSWP", "dsweep", 16, 0, 65, False),
+        ("ARM1", "arm", 0, 0, 0, False),
+        ("ADSW", "dsweep", 16, 0, 65, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+        ("DTI0", "dsblk", 0, NXB_DS_REPS, 0, False),
+        ("DTB0", "dsblk", 1, NXB_DS_REPS, 0, False),
+        ("DTC0", "dsblk", 2, NXB_DS_REPS, 0, False),
+        ("DTD0", "dsblk", 3, NXB_DS_REPS, 0, False),
+        ("ARM2", "arm", 0, 0, 0, False),
+        ("ADTI", "dsblk", 0, NXB_DS_REPS, 0, False),
+        ("ADTC", "dsblk", 2, NXB_DS_REPS, 0, False),
+    ),
+    "SYN": (    # NXBQ - nxbSesSyn: synthetic frames in a resident clip
+        ("IDEN", "id", 0, 0, 0, False),
+        ("RING", "ring", 0, 0, 0, False),
+        ("NUL0", "synth_nocall", 1024, 24, 0, NOSITE, NOSITE),
+        ("FE00", "synth", 1024, 24, 0, NOSITE, NOSITE),
+        ("FE01", "synth", 1024, 24, 1, NOSITE, NOSITE),
+        ("KS01", "synth", 1024, 24, 0, (24, (0x28, 0x20)), NOSITE),
+        ("KS02", "synth", 1024, 24, 0, (24, (0x28, 0x00)), NOSITE),
+        ("KF01", "synth", 1024, 24, 1, (24, (0x20,)), NOSITE),
+        ("PAL1", "synth", 256, 24, 0, (24, (0x18,)), (537, (0x00,))),
+        ("PAL2", "synth", 256, 7900, 0, (7900, (0x18,)), (8413, (0x00,))),
+        ("SE00", "synth", 1024, 7000, 0, (7000, (0x10, 0x01)), (7003, (0x00,))),
+        ("SE01", "synth", 1024, 8000, 0, (8000, (0x10, 0x01)), (8003, (0x00,))),
+        ("SE02", "synth", 1024, 8190, 0, (8190, (0x10, 0x01)), (8193, (0x00,))),
+        ("C4K0", "synth", 1024, 512, 0, (512, (0x14, 0x00, 0x10)), (4611, (0x00,))),
+        ("C4KP", "synth", 1024, 6144, 0, (6144, (0x14, 0x00, 0x10)), (10243, (0x00,))),
+        ("C4KB", "synth", 1024, 14336, 0, (14336, (0x14, 0x00, 0x10)), (18435, (0x00,))),
+        ("C4KS", "synth", 1024, 512, 1, (512, (0x14, 0x00, 0x10)), (4611, (0x00,))),
+        ("C4KD", "synth", 1024, 512, 2, (512, (0x14, 0x00, 0x10)), (4611, (0x00,))),
+        ("K24K", "synth", 64, 512, 0, (512, (0x14, 0xC0, 0x5D)), (24515, (0x00,))),
+        ("K43K", "synth", 64, 512, 0, (512, (0x14, 0x00, 0xA8)), (43523, (0x00,))),
+        ("ARM1", "arm", 0, 0, 0, False),
+        ("AK43", "synth", 64, 512, 0, (512, (0x14, 0x00, 0xA8)), (43523, (0x00,))),
+        ("AFE0", "synth", 1024, 24, 0, NOSITE, NOSITE),
+        ("AC4K", "synth", 1024, 512, 0, (512, (0x14, 0x00, 0x10)), (4611, (0x00,))),
+    ),
+    "SYS": (    # NXBY - nxbSesSys: synthetic frames in a streaming clip
+        ("IDEN", "id", 0, 0, 0, False),
+        ("RING", "ring", 0, 0, 0, False),
+        ("NUL0", "synth_nocall", 1024, 512, 0, NOSITE, NOSITE),
+        ("FE00", "synth", 1024, 0, 0, (0, (0x00,)), NOSITE),
+        ("FE01", "synth", 1024, 0, 1, (0, (0x00,)), NOSITE),
+        ("KS01", "synth", 1024, 0, 0, (0, (0x28, 0x20)), NOSITE),
+        ("KS02", "synth", 1024, 0, 0, (0, (0x28, 0x00)), NOSITE),
+        ("KF01", "synth", 1024, 0, 1, (0, (0x20,)), NOSITE),
+        ("C4K0", "synth", 1024, 512, 0, (512, (0x14, 0x00, 0x10)), (4611, (0x00,))),
+        ("C4KP", "synth", 1024, 6144, 0, (6144, (0x14, 0x00, 0x10)), (10243, (0x00,))),
+        ("C4KB", "synth", 1024, 14336, 0, (14336, (0x14, 0x00, 0x10)), (18435, (0x00,))),
+        ("K24K", "synth", 64, 512, 0, (512, (0x14, 0xC0, 0x5D)), (24515, (0x00,))),
+        ("ARM1", "arm", 0, 0, 0, False),
+        ("AK24", "synth", 64, 512, 0, (512, (0x14, 0xC0, 0x5D)), (24515, (0x00,))),
+        ("AFE0", "synth", 1024, 0, 0, (0, (0x00,)), NOSITE),
+    ),
     "REAL": (   # NXBR - nxbSesReal: real frames, audio, loop, producer, armed
         ("IDEN", "id", 0, 0, 0, False),
         ("RING", "ring", 0, 0, 0, False),
@@ -427,27 +501,62 @@ SESSION_TABLES = {
 # (unarmed, armed) twins per session table: the same row, run before and
 # after ARM. Every other printed row runs unarmed.
 SESSION_ARMED_PAIRS = {
+    "DS1": (("DSWP", "ADSW"), ("DTI0", "ADTI"), ("DTC0", "ADTC")),
     "REAL": (("W065", "A065"), ("FA65", "XA65"), ("FB65", "XB65"),
              ("FC65", "XC65"), ("WL16", "AW16"), ("AUD1", "AAUD"),
              ("LOOP", "ALOP"), ("PROD", "APRD")),
+    "SYN": (("K43K", "AK43"), ("FE00", "AFE0"), ("C4K0", "AC4K")),
+    "SYS": (("K24K", "AK24"), ("FE00", "AFE0")),
 }
 
 
-def session_rows(name, streaming):
-    """The rows one session runs, in order: a resident session skips strm rows."""
-    return tuple(r for r in SESSION_TABLES[name] if streaming or not r[5])
+def session_strm(row):
+    """True for a 10-byte row marked NXB_K_STRM; SYNTH rows carry no mark."""
+    return row[1] not in SESSION_SYNTH and bool(row[5])
 
 
-def session_printed(name, streaming):
+def session_row_bytes(row):
+    """One session row as its NXB_PAGE table assembles it."""
+    tag, kind = row[0], row[1]
+    out = bytearray(tag.encode("ascii"))
+    code = SESSION_KINDS.index(kind)
+    if kind in SESSION_SYNTH:
+        _tag, _kind, reps, frame, preset, *sites = row
+        out += bytes([code]) + reps.to_bytes(2, "little")
+        out += frame.to_bytes(3, "little") + bytes([preset])
+        for offset, data in sites:
+            out += offset.to_bytes(3, "little") + bytes([len(data)])
+            out += bytes(data) + bytes(3 - len(data))
+    else:
+        _tag, _kind, param, reps, thr, strm = row
+        out += bytes([code | (0x80 if strm else 0)])
+        out += param.to_bytes(2, "little") + reps.to_bytes(2, "little") + bytes([thr])
+    return bytes(out)
+
+
+def session_table_bytes(name):
+    """The table staged into nxbTabBuf: its rows, then the terminator."""
+    return b"".join(session_row_bytes(r) for r in SESSION_TABLES[name]) + b"\0"
+
+
+def session_rows(name, delivery):
+    """The rows one session runs, in order. delivery is "resident",
+    "streaming" or "direct" (True/False read as streaming/resident): only a
+    streaming session runs strm rows."""
+    streaming = delivery is True or delivery == "streaming"
+    return tuple(r for r in SESSION_TABLES[name] if streaming or not session_strm(r))
+
+
+def session_printed(name, delivery):
     """The tags one session prints, in print order."""
-    return tuple(r[0] for r in session_rows(name, streaming)
+    return tuple(r[0] for r in session_rows(name, delivery)
                  if r[1] not in SESSION_SILENT)
 
 
-def session_armed(name, streaming):
+def session_armed(name, delivery):
     """{tag: True when the row runs after ARM with no DISARM since}."""
     armed, out = False, {}
-    for tag, kind, *_ in session_rows(name, streaming):
+    for tag, kind, *_ in session_rows(name, delivery):
         if kind == "arm":
             armed = True
         elif kind == "disarm":
