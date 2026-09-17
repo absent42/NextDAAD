@@ -2496,7 +2496,7 @@ def _gap_hidden():
     bench harness on every standalone rep (h_rep T, never a model term)."""
     H = {"fetch_short": 19.785, "fetch_long": 19.885, "t_skip": 141.83, "t_skip16": 210.93,
          "t_op_run": 367.43, "t_op_copy": 303.73, "fill_cpu": 15.885, "copy_dma_per_b": 5.065,
-         "fill_dma_per_b": 5.085, "copy_ldi_pass_t": 13.4, "fill_cpu_pass_t": 14.6,
+         "fill_dma_per_b": 5.085, "copy_ldi_pass_t": 9.4, "fill_cpu_pass_t": 18.6,
          "copy_dma_setup": 881.3, "copy_dma_path_t": -18.4,
          "copy_body_ldi_t": 421.7, "fill_dma_setup": 783.1, "fill_dma_path_t": -71.2,
          "fill_body_cpu_t": 401.9, "copy16_entry_t": 70.3, "run16_entry_t": 68.6, "t_skip_pass": 121.4,
@@ -2793,7 +2793,9 @@ def _gap_expect(runs, v, X):
     near = min(_GAP_GRID, key=lambda t: (abs(t - v["N_m"]), -t))
     e["N"] = v["N_m"] if S[near] <= S[tstar] * 1.0005 else tstar
     facts["S6 near/t* ratio"] = S[near] / S[tstar]
-    e["gap"] = e["N"] - (v["copy_dma_setup"] + v["copy_dma_path_t"]) / (v["fetch_short"] - v["copy_dma_per_b"])
+    # the per-byte LDI rate carries its block cost on average
+    e["gap"] = e["N"] - (v["copy_dma_setup"] + v["copy_dma_path_t"]) / (
+        v["fetch_short"] + v["copy_ldi_pass_t"] / 16.0 - v["copy_dma_per_b"])
     e["saving_pct"] = 100.0 * (S[81] - S[min(_GAP_GRID, key=lambda t: (abs(t - e["N"]), -t))]) / S[81]
     run_l = (56, 60, 64, 68, 72, 76)
     e["run_crossovers"] = [cross([f"FC{L}" for L in run_l], [f"FD{L}" for L in run_l]),
@@ -2870,11 +2872,15 @@ def _gap_expect(runs, v, X):
     facts["S12 one line"] = (worst(pts), np.polyfit([x for x, _y in pts], [y for _x, y in pts], 1)[0])
     lam = e["supply_exchange"]["320x256"]
 
-    def fillmin(k):
-        return next((L for L in range(1, 256) if v["t_op_run"] + L * v["fill_cpu"] + k * lam + v["t_op_copy"]
-                     <= L * v["fetch_short"] + L * lam), None)
+    def fillmin(k, passes=1):
+        # the RUN op's fill passes against the LDI blocks of the L bytes it replaces
+        return next((L for L in range(1, 256)
+                     if v["t_op_run"] + L * v["fill_cpu"] + passes * blocks(L) * v["fill_cpu_pass_t"] + k * lam
+                     + v["t_op_copy"] <= L * v["fetch_short"] + passes * blocks(L) * v["copy_ldi_pass_t"] + L * lam),
+                    None)
     e["FILLMIN"] = fillmin(5)
     facts["FILLMIN moves with a lam"] = fillmin(4) != fillmin(5)
+    facts["FILLMIN moves with the pass terms"] = fillmin(5, passes=0) != fillmin(5)
     e["STREAM_RESIDENT_POOL_B"] = min(min(first[(verb[t], c)]["RING"][3] for t, c in
                                           [("REAL", c) for c in (1, 2, 3, 4, 5)] + [("SYN", c) for c in (1, 2, 3, 4)])
                                       + 1 - 1 - 5, 78) * 16384
@@ -2923,6 +2929,7 @@ def t10_gap_rules():
     e, facts = _gap_expect(runs, v, X)
     expect(facts["fetch_long spread"] > 0.1 and not facts["S8 flat audio branch over 1.12"]
            and facts["S8 gapped audio branch over 1.12"] and facts["FILLMIN moves with a lam"]
+           and facts["FILLMIN moves with the pass terms"]
            and 1.0005 < facts["S6 near/t* ratio"] <= 1.05 and v["N"] != v["N_m"]
            and e["STREAM_RESIDENT_POOL_B"] < 78 * 16384 and v["copy_dma_rem_t"] > 0,
            f"the sitting must bind every branch: {facts}, N {v['N']} N_m {v['N_m']}, rem {v['copy_dma_rem_t']}")
@@ -3048,8 +3055,22 @@ def t10_gap_rules():
         said = [line for line in printed if line.startswith(f"Ruling: {t} ")]
         expect(len(said) == 1 and "HAND COUNT" in said[0] and g.HAND[t][1] in said[0],
                f"{t}: one HAND COUNT ruling with its instruction list, got {said}")
-    expect(sum(line.startswith("  ") and line.split()[0] in g.COUNTER_TERMS for line in printed)
-           == len(g.COUNTER_TERMS), "the counter-to-term map prints every counter")
+    at = printed.index("counter-to-term map:") + 1
+    block = printed[at:next(i for i in range(at, len(printed)) if not printed[i].startswith("  "))]
+    expect(sum(line.split()[0] in g.COUNTER_TERMS for line in block) == len(g.COUNTER_TERMS),
+           "the counter-to-term map prints every counter")
+
+    # HK56's per-op breakdown before and after the raises: every counter with its priced terms,
+    # summing to the model the residual tables print
+    for when, values in (("fit 1 before the raises", None), ("after the raises", v)):
+        at = printed.index(next(line for line in printed if line.startswith(f"HK56 per op, {when} ")))
+        block = printed[at + 1:next(i for i in range(at + 1, len(printed)) if not printed[i].startswith("  "))]
+        counters = [line.split()[0] for line in block[:-1] if not line.split()[0].startswith("(")]
+        expect(counters == list(bench.row_events("HK56").as_dict()) and block[-1].startswith("  model "),
+               f"HK56 breakdown {when}: {block}")
+        if values is not None:
+            model = sum(c * v[t] for t, c in g.standalone_counts("HK56", v["split"]).items())
+            expect(f"model {model:.1f} T" in block[-1], f"HK56 breakdown after the raises sums to {model:.1f}: {block[-1]}")
 
     # after the raises no S4 row or tail prices under max(5.5 T, one line) or 0.5%, by this file's map
     under = []
@@ -3200,11 +3221,56 @@ def t10_gap_rules():
     try:
         g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
     except g.Stop as stop:
-        fit_line = [line for line in stop.printed if line.startswith("fit 1:") and "price under" in line]
-        expect(stop.rule == "S4" and fit_line and "JC72" in fit_line[0].split(";")[1],
-               f"S4 names JC72 first before any raise: {fit_line}")
+        expect(stop.rule == "S4" and any(line.startswith("JC72: residual +") and "T before the raises is +" in line
+                                         and line.endswith("% of its row: the event model is missing a path")
+                                         for line in stop.lines)
+               and any(line.startswith("fit 1: residuals before the raises") for line in stop.printed),
+               f"S4 STOPs on JC72 before any raise: {stop.lines}")
     else:
         raise AssertionError("no S4 STOP on JC72 +5%")
+
+    # S4 scoring on constructed rows: the 3% test is on the residuals before the raises, a raise
+    # that over-prices another row past 3% is a warning, and a gapped row raises the gapped term
+    # that over-prices the other rows least
+    from collections import Counter
+
+    def s4row(label, counts, T, base, scored=False):
+        return g.S4Row(label, Counter(counts), T, 1.0, 5.5, base, scored)
+    vals = {"col_hop_t": 30.0, "gap_chunk_t": 16.0, "edge_copy_t": 200.0, "t_op_copy": 300.0}
+    # F prices 30 T past its band (1.78% of 2000 T); V carries one hop and is 2 T over before the raise
+    F = s4row("F", {"t_op_copy": 1, "col_hop_t": 1}, 330.0 + 5.5 + 30.0, 2000.0, scored=True)
+    V = s4row("V", {"t_op_copy": 2.2, "col_hop_t": 1}, 660.0 + 30.0 - 2.0, 700.0)
+    lines = []
+    g._s4_score_pre([F, V], dict(vals), "pre", lines)
+    post, raises = dict(vals), {}
+    g._s4_raise([F, V], post, {"col_hop_t"}, raises, lines)
+    warned = g._s4_score_post([F, V], post, lines)
+    expect(raises == {"col_hop_t": 30.0} and [r.label for r, _dt, _pct in warned] == ["V"]
+           and "warning: V is priced over by 32.0 T after the raises, 4.57% of its row (over 3%, the safe direction)"
+           in lines, f"a raise past 3% on another row warns: {raises} {lines[-2:]}")
+    try:
+        g._s4_score_pre([F, s4row("W", {"t_op_copy": 1}, 300.0 + 12.1, 300.0)], dict(vals), "pre", [])
+    except g.Stop as stop:
+        expect(stop.lines == ["W: residual +12.1 T before the raises is +4.03% of its row: the event model is "
+                              "missing a path"], f"pre-raise STOP: {stop.lines}")
+    else:
+        raise AssertionError("no STOP on a 4% residual before the raises")
+    # G carries two hops, one gapped chunk and an edge (spill 0): H carries 5 hops of 500 T, K one chunk of
+    # 2000 T. A hop raise of 10 T over-prices H 10%, a chunk raise of 20 T over-prices K 1%: gap_chunk_t
+    G = s4row("G", {"t_op_copy": 1, "col_hop_t": 2, "gap_chunk_t": 1, "edge_copy_t": 1},
+              300.0 + 60.0 + 16.0 + 200.0 + 5.5 + 20.0, 1000.0, scored=True)
+    H = s4row("H", {"t_op_copy": 1, "col_hop_t": 5}, 300.0 + 150.0, 500.0)
+    K = s4row("K", {"t_op_copy": 1, "gap_chunk_t": 1}, 300.0 + 16.0, 2000.0)
+    lines, post, raises = [], dict(vals), {}
+    g._s4_raise([G, H, K], post, {"col_hop_t", "gap_chunk_t", "edge_copy_t"}, raises, lines)
+    expect(raises == {"gap_chunk_t": 20.0} and lines == [
+        "raise step: G prices 20.00 T under its 5.5 T band -> gap_chunk_t +20.00 T (the gapped term it carries "
+        "over-pricing the other rows least: at most 1.000% of a row; col_hop_t 10.000%)"],
+           f"the gapped raise takes the least-damage gapped term: {raises} {lines}")
+    lines, post, raises = [], dict(vals), {}
+    g._s4_raise([g.S4Row("G", G.counts, G.T, 1.0, 5.5, 1000.0, False), H, K], post,
+                {"col_hop_t", "gap_chunk_t", "edge_copy_t"}, raises, lines)
+    expect(raises == {"edge_copy_t": 20.0}, f"an unscored row takes any fitted term: {raises} {lines}")
     # a harness 114 T over the generator's (R / 16 lines on every standalone row) STOPs S1, naming both values
     r2 = copy.deepcopy(runs)
     for run in r2:

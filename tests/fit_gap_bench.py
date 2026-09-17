@@ -110,6 +110,9 @@ S4_NXBE = ("C240", "C250", "Q240", "R240", "R250", "W240")
 S4_SYN = ("C4K0", "C4KP", "C4KB", "K24K", "K43K", "SE00", "SE01", "SE02", "C4KS", "C4KD")
 S4_SPAN_ROWS = ("C4KS", "C4KD")                 # baseline FE01, the rest FE00
 S4_COL_SCORED = ("JC72", "JD72", "JR72", "JS72")
+GAPPED_TERMS = ("col_hop_t", "gap_chunk_t", "gap_chunk_hi_t", "gap_fast_t", "gap_bail_t", "gap_bail_skip_t",
+                "gap_skip_pass_t", "fast_hop_skip_t", "fast_hop_run_t", "fast_hop_copy_t")   # paid on gapped only
+S4_BREAKDOWN = ("HK56",)            # per-op event breakdowns printed before and after the raises
 S4_TAILS = ("T298", "T299", "T300", "T320")
 SPLITTABLE = {"copy_body_ldi_t": "s2_ldi8", "fill_body_cpu_t": "s2_cpu8"}
 FRAME_TERMS = ("frame_delta_t", "frame_middle_t", "frame_first_t", "frame_single_t",
@@ -458,8 +461,8 @@ def simulate(ops, surface, src_offset, dst, in_span, copy_thr, run_thr, dst_page
     return p.ev, p.long_b, p.rem_ops, sim.State(p.dpage, p.de, p.in_span, p.page * sim.WIN_BYTES + p.w)
 
 
-def standalone_counts(tag, split=()):
-    """{term: count} PER OP for a standalone row at its sitting selects."""
+def _standalone_events(tag):
+    """-> (Events, long_b, rem_ops, surface) for one rep of a standalone row at its sitting selects."""
     _t, kind, L, o, _r, _thr, geo = bench._row(tag)
     surface = bench.row_surface(tag)
     _g, _h, dcode = bench.geo_fields(geo)
@@ -469,9 +472,42 @@ def standalone_counts(tag, split=()):
                                     copy, run, bench.NXB_DST_PAGES)
     if ev != bench.row_events(tag):
         raise AssertionError(f"{tag}: rate-player events differ from row_events")
+    return ev, long_b, rem, surface
+
+
+def standalone_counts(tag, split=()):
+    """{term: count} PER OP for a standalone row at its sitting selects."""
+    o = bench._row(tag)[3]
+    ev, long_b, rem, surface = _standalone_events(tag)
     counts = term_counts(ev, surface, False, long_b, rem, split)
     counts[HARNESS] = 1                    # the bench rep loop, once per rep
     return Counter({k: c / float(o) for k, c in counts.items()})
+
+
+def row_breakdown(sit, tag, values, split, when):
+    """A standalone row's per-op events: every counter with the terms it prices and their T."""
+    _t, _k, L, o, _r, _thr, _geo = bench._row(tag)
+    ev, long_b, rem, surface = _standalone_events(tag)
+    lines, total = [f"{tag} per op, {when} (O = {o}): counter count -> term count x value = T"], 0.0
+    for name, count in ev.as_dict().items():
+        if name in sim.DIAGNOSTIC:
+            lines.append(f"  {name:<18} {count / o:8.3f} -> diagnostic, never priced")
+            continue
+        lb = count if FETCH in COUNTER_TERMS[name] and L >= FETCH_SEL else 0
+        priced = term_counts(sim.Events(**{name: count}), surface, False, lb, 0, split)
+        parts = []
+        for term, c in priced.items():
+            total += c / o * values[term]
+            parts.append(f"{term} {c / o:.3f} x {values[term]:.3f} = {c / o * values[term]:.1f} T")
+        lines.append(f"  {name:<18} {count / o:8.3f} -> " + ("; ".join(parts) or f"zero-cost: {ZERO_COST[name]}"))
+    extra = [(REM_TERM, rem / o), (HARNESS, 1.0 / o)]
+    for term, c in extra:
+        if c:
+            total += c * values[term]
+            lines.append(f"  {'(' + term + ')':<18} {c:8.3f} -> {term} {c:.3f} x {values[term]:.3f} "
+                         f"= {c * values[term]:.1f} T")
+    lines.append(f"  model {total:.1f} T, measured {sit.T(tag):.1f} T, residual {sit.T(tag) - total:+.1f} T")
+    return lines
 
 
 def synth_counts(table, tag, surface, streaming, split=()):
@@ -1351,31 +1387,72 @@ def _s4_solve(rows, held, unknowns, held_bound):
         return dict(zip(terms, x)), dict(zip(terms, bound)), hand
 
 
-def _s4_raise(rows, values, fitted, raises):
-    """Raise terms, largest shortfall first, until no row prices under. A gapped
-    scored row raises col_hop_t; any other row raises the fitted term whose step
-    over-prices the other rows least, relative to each row. nxb_rep_t never rises."""
+def _s4_raise(rows, values, fitted, raises, log):
+    """Raise terms, largest shortfall first, until no row prices under. The raise goes to
+    the fitted term the row carries whose step over-prices the other rows least, relative
+    to each row; a gapped scored row chooses among the gapped terms it carries. Each step
+    is logged with its reason. nxb_rep_t never rises."""
     for _ in range(10000):
         under = [(r.T - price(r.counts, values) - r.band, r) for r in rows]
         under = [(ex, r) for ex, r in under if ex > 1e-9]
         if not under:
             return
         ex, r = max(under, key=lambda p: p[0])
-        if r.col_scored and r.counts.get("col_hop_t"):
-            term = "col_hop_t"
+        carried = [t for t, c in r.counts.items() if c > 0 and t in fitted and t != HARNESS]
+        gapped = [t for t in carried if t in GAPPED_TERMS]
+        if r.col_scored and gapped:
+            cands, why = gapped, "the gapped term it carries"
+        elif r.col_scored:
+            cands, why = carried, "no fitted gapped term: the fitted term it carries"
         else:
-            cands = [t for t, c in r.counts.items() if c > 0 and t in fitted and t != HARNESS]
-            if not cands:
-                raise Stop("S4", f"{r.label} prices {ex:.1f} T under its band with no fitted term to raise")
+            cands, why = carried, "the fitted term it carries"
+        if not cands:
+            raise Stop("S4", f"{r.label} prices {ex:.1f} T under its band with no fitted term to raise")
 
-            def spill(t):
-                step = ex / r.counts[t]
-                return max((step * o.counts.get(t, 0.0) / o.base for o in rows if o is not r), default=0.0)
-            term = min(cands, key=lambda t: (spill(t), t))
+        def spill(t):
+            step = ex / r.counts[t]
+            return max((step * o.counts.get(t, 0.0) / o.base for o in rows if o is not r), default=0.0)
+        ranked = sorted(cands, key=lambda t: (spill(t), t))
+        term = ranked[0]
         step = ex / r.counts[term]
         values[term] += step
         raises[term] = raises.get(term, 0.0) + step
+        log.append(f"raise step: {r.label} prices {ex:.2f} T under its {r.band:.1f} T band -> {term} +{step:.2f} T "
+                   f"({why} over-pricing the other rows least: at most {100 * spill(term):.3f}% of a row"
+                   + "".join(f"; {t} {100 * spill(t):.3f}%" for t in ranked[1:]) + ")")
     raise Stop("S4", "raises did not converge")
+
+
+def _residual_table(rows, values):
+    """-> (printed lines, [(row, residual T, % of its row)])."""
+    lines, res = [], []
+    for r in rows:
+        m = price(r.counts, values)
+        pct = 100.0 * (r.T - m) / r.base
+        lines.append(f"  {r.label:<14} measured {r.T:11.1f} model {m:11.1f} residual {r.T - m:+9.1f} "
+                     f"({pct:+.2f}% of {r.base:.0f})")
+        res.append((r, r.T - m, pct))
+    return lines, res
+
+
+def _s4_score_pre(rows, values, title, lines):
+    """The missing-path test: a residual above 3% of its row before any raise is a Stop."""
+    table, res = _residual_table(rows, values)
+    lines += [f"{title} (measured - model, T):"] + table
+    missing = [f"{r.label}: residual {dt:+.1f} T before the raises is {pct:+.2f}% of its row: the event "
+               f"model is missing a path" for r, dt, pct in res if abs(dt) > RESID_STOP * r.base]
+    if missing:
+        raise Stop("S4", missing)
+
+
+def _s4_score_post(rows, values, lines):
+    """After the raises a row priced over by more than 3% is a warning with its size, never a Stop."""
+    table, res = _residual_table(rows, values)
+    lines += ["residuals after the raises (measured - model, T):"] + table
+    warned = [(r, dt, pct) for r, dt, pct in res if -dt > RESID_STOP * r.base]
+    lines += [f"warning: {r.label} is priced over by {-dt:.1f} T after the raises, {-pct:.2f}% of its row "
+              f"(over {100 * RESID_STOP:.0f}%, the safe direction)" for r, dt, pct in warned]
+    return warned
 
 
 def s4(sit, v):
@@ -1403,10 +1480,16 @@ def s4(sit, v):
             lines.append(f"fit {round_}: nxb_rep_t {values[HARNESS]:.1f} T (+-1 line moves it up to "
                          f"{bound[HARNESS]:.1f} T; S1 {v[HARNESS]:.1f} T, hand count {HARNESS_HAND[0]} T)")
             harness_check("S4", values[HARNESS], "the joint fit of", [])
+            tail_rows = [S4Row(t, standalone_counts(t, split), sit.T(t), 0.0, op_band(sit.rows[t]), sit.T(t), False)
+                         for t in S4_TAILS]
+            for tag in S4_BREAKDOWN:
+                lines += row_breakdown(sit, tag, values, split, f"fit {round_} before the raises")
+            _s4_score_pre(rows + tail_rows, values, f"fit {round_}: residuals before the raises, tails at "
+                          f"{REM_TERM} 0", lines)
             lines.append(f"fit {round_}: {len(under)} rows price under before any raise"
                          + "".join(f"; {r.label} {ex:+.1f} T over its {r.band:.1f} T band" for ex, r in under))
             raises = {}
-            _s4_raise(rows, values, set(fitted), raises)
+            _s4_raise(rows, values, set(fitted), raises, lines)
             new_split = set(split)
             for term, est in SPLITTABLE.items():
                 if term in split:
@@ -1467,21 +1550,12 @@ def s4(sit, v):
                         + ", ".join(f"{t} {short[t]:+.1f}" for t in ("T299", "T300", "T320")),
                         "a DMA remainder chunk after full chunks misprices"))
 
-    # residuals, after every raise
-    lines.append("residuals (measured - model, T):")
-    bad = []
-    for r in rows + [S4Row(t, c, T, 0, tband[t], T, False) for t, (T, c) in tails.items()]:
-        m = price(r.counts, values)
-        pct = 100.0 * (r.T - m) / r.base
-        lines.append(f"  {r.label:<14} measured {r.T:11.1f} model {m:11.1f} residual {r.T - m:+9.1f} "
-                     f"({pct:+.2f}% of {r.base:.0f})")
-        if abs(r.T - m) > RESID_STOP * r.base:
-            bad.append(f"{r.label}: residual {r.T - m:+.1f} T is {pct:+.2f}% of its row: the event model "
-                       f"is missing a path")
+    # residuals after every raise: over-pricing past 3% is a warning (the safe direction)
+    for tag in S4_BREAKDOWN:
+        lines += row_breakdown(sit, tag, values, split, "after the raises")
     for t, amount in sorted(raises.items()):
         lines.append(f"raise: {t} +{amount:.2f} T")
-    if bad:
-        raise Stop("S4", bad, lines)
+    _s4_score_post(rows + [S4Row(t, c, T, 0, tband[t], T, False) for t, (T, c) in tails.items()], values, lines)
 
     sys_, syn = sit.of("SYS"), [s for s in sit.of("SYN") if s.clip == 1] or sit.of("SYN")
     if not sys_ or not syn:
@@ -1618,13 +1692,15 @@ def s6(sit, v):
                         f"(split at {100 * S6_SPLIT_SAVE:.1f}%)", "gapped clips decode at the flat select"))
     s81 = S[81]
     saving = 100.0 * (s81 - S[_nearest(SWEEP_GRID, n)]) / s81
-    gap = n - (v["copy_dma_setup"] + v["copy_dma_path_t"]) / (v["fetch_short"] - v["copy_dma_per_b"])
+    gap = n - (v["copy_dma_setup"] + v["copy_dma_path_t"]) / (v["fetch_short"] + v["copy_ldi_pass_t"] / 16.0
+                                                                - v["copy_dma_per_b"])
     out.update(saving_pct=saving, gap=gap)
     lines.append(ruling(f"saving against 81 {saving:.3f}%", f"(S(81) {s81:.0f} - S({_nearest(SWEEP_GRID, n)}) "
                         f"{S[_nearest(SWEEP_GRID, n)]:.0f}) / S(81)", "Task 20's evidence line"))
     lines.append(ruling(f"gap {gap:.2f} B", f"N - (copy_dma_setup {v['copy_dma_setup']:.2f} + copy_dma_path_t "
-                        f"{v['copy_dma_path_t']:.2f}) / (fetch_short {v['fetch_short']:.4f} - copy_dma_per_b "
-                        f"{v['copy_dma_per_b']:.4f})", "Task 20's RULE 1b restatement is off"))
+                        f"{v['copy_dma_path_t']:.2f}) / (fetch_short {v['fetch_short']:.4f} + copy_ldi_pass_t "
+                        f"{v['copy_ldi_pass_t']:.4f} / 16 - copy_dma_per_b {v['copy_dma_per_b']:.4f})",
+                        "Task 20's RULE 1b restatement is off"))
     return out, lines
 
 
@@ -1831,15 +1907,17 @@ def s12(sit, v):
     lam = ex["supply_exchange"]["320x256"]
     fillmin = None
     for L in range(1, 256):
-        if (v["t_op_run"] + L * v["fill_cpu"] + 3 * lam + v["t_op_copy"] + 2 * lam
-                <= L * v["fetch_short"] + L * lam):
+        k = sim.kernel_passes(L)
+        if (v["t_op_run"] + L * v["fill_cpu"] + k * v["fill_cpu_pass_t"] + 3 * lam + v["t_op_copy"] + 2 * lam
+                <= L * v["fetch_short"] + k * v["copy_ldi_pass_t"] + L * lam):
             fillmin = L
             break
     out["FILLMIN"] = fillmin
     lines.append(ruling(f"FILLMIN {fillmin}", f"smallest L with t_op_run {v['t_op_run']:.2f} + L x fill_cpu "
-                        f"{v['fill_cpu']:.4f} + 3 lam + t_op_copy {v['t_op_copy']:.2f} + 2 lam <= L x "
-                        f"fetch_short {v['fetch_short']:.4f} + L x lam, lam = supply_exchange_t_per_byte(320, 256) "
-                        f"{lam:.2f}",
+                        f"{v['fill_cpu']:.4f} + ceil(L/16) x fill_cpu_pass_t {v['fill_cpu_pass_t']:.4f} + 3 lam + "
+                        f"t_op_copy {v['t_op_copy']:.2f} + 2 lam <= L x fetch_short {v['fetch_short']:.4f} + "
+                        f"ceil(L/16) x copy_ldi_pass_t {v['copy_ldi_pass_t']:.4f} + L x lam, "
+                        f"lam = supply_exchange_t_per_byte(320, 256) {lam:.2f}",
                         "uniform runs inside a span emit the dearer op"))
     pools = {s.label: s.rows["RING"][3] for key, s in sorted(sit.sessions.items())
              if s.delivery == "resident" and "RING" in s.rows}
