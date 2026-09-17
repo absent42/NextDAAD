@@ -1,20 +1,6 @@
 #!/usr/bin/env python3
 """tests/check_quiet_decode.py - prove the NXB_QUIET DEBUG image executes
-Release's instructions on every timed video path.
-
-Assembles Release and quiet DEBUG (DEBUG + NXB_QUIET) with sjasmplus --lst
-into tests/out/quiet-check/. Inside the timed set (TIMED, TIMED_SPANS), with
-the COLD DEBUG blocks skipped, the sequence of assembled source lines that
-emit bytes (file, line) and their byte counts must be identical. Operand
-values may differ; ALIGN lines compare by presence (their padding follows the
-address). Nothing outside the timed set is compared.
-
-COLD entries are anchored by enclosing label and statements, and resolved to
-line ranges on every run (--list prints them), so line shifts need no edit.
-A stale entry only prints a note: its block is then compared, never skipped.
-
-Exit 0 = OK. Exit 1 = a difference (file, line, both byte counts) or a build
-or listing failure. build/nextdaad.nex is saved first and restored on exit.
+Release's instructions on every timed video path. Rules and exit codes: --help.
 """
 import argparse
 import difflib
@@ -27,8 +13,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SJASM = ROOT / "tools" / "sjasmplus" / "sjasmplus.exe"
-OUT = ROOT / "tests" / "out" / "quiet-check"
 NEX = ROOT / "build" / "nextdaad.nex"
+SRC_ROOT = ROOT                       # --src-root: a copy holding src/
+OUT = ROOT / "tests" / "out" / "quiet-check"
+
+HELP = """\
+Assembles Release and quiet DEBUG (DEBUG + NXB_QUIET) with sjasmplus --lst into
+tests/out/quiet-check/. In the lines owned by the timed routines (TIMED,
+TIMED_SPANS), the sequence of lines that emit bytes (file, line) and their byte
+counts must be identical; operand values may differ. Nothing else is compared.
+- A line belongs to the global label above it; a label inside a conditional
+  owns lines only to the end of its branch.
+- Every global label inside REGIONS must be in TIMED, TIMED_SPANS or EXCLUDED.
+- COLD_PINNED blocks are skipped only when their statement list and the
+  statement before their IFDEF match exactly; COLD entries are never skipped.
+- ALIGN compares by presence after an unconditional jp/jr/ret, else by padding.
+- Macro and DUP rows also compare their text with numbers masked.
+Exit 0 = OK. Exit 1 = a difference, a classification failure or a build
+failure. build/nextdaad.nex is saved first and restored on exit."""
 
 # Defines mirror build.ps1: Release none, -BenchQuiet = DEBUG + NXB_QUIET.
 FLAVOURS = {
@@ -36,8 +38,7 @@ FLAVOURS = {
     "quiet": ["-DDEBUG=1", "-DNXB_QUIET=1"],
 }
 
-# Routines on a sitting-5 timed path: global label to the next global label.
-# Fault routines vid_op_bad, vid_dec_abort and vid_dec_abort_pos are excluded.
+# Routines on a sitting-5 timed path. Fault routines are EXCLUDED.
 TIMED = {
     "src/video.asm": [
         # dispatch, kernels, fast handlers
@@ -87,9 +88,41 @@ TIMED_SPANS = [
     ("src/video.asm", "vid_run", ".frameloop", "jp nz, .frameloop"),
 ]
 
-# Every COLD top-level IFDEF DEBUG block: (file, enclosing global label,
-# anchor statements, reason). The anchor is the block's whole statement list,
-# else a contiguous run inside it; it must pick exactly one block.
+# Timed regions: first label to the label after the region (None = EOF).
+REGIONS = {
+    "src/video.asm": ("vid_stub", "vidLoopMode"),
+    "src/hardware.asm": ("nr_read", None),
+    "src/interrupts.asm": ("im2_isr", "ctc_isr"),
+}
+
+# Global labels inside a region that are not timed.
+EXCLUDED = {
+    "src/video.asm": [
+        "vid_hop2",                                          # cold page hop
+        "vid_op_bad", "vid_dec_abort", "vid_dec_abort_pos",  # fault routines
+        "vid_rl_poll", "vid_play_frame", "vid_play_close",   # DEBUG-only
+        "vid_play",                                          # open, pre-arm
+        "vid_run",                                           # TIMED_SPANS only
+    ],
+}
+
+# COLD blocks inside timed routines: (file, routine, statement before the
+# IFDEF, exact statement list, reason). No match fails the check.
+COLD_PINNED = [
+    ("src/video.asm", "vid_dec_done", "pop af",
+     ("ld (vidErrPos), hl", "ld a, b", "ld (vidErrPos+2), a"),
+     "fault: .ovr bound-trip breadcrumb"),
+    ("src/video.asm", "vid_depth_debit", "jr nc, .ok",
+     ("ld a, (vidDepthClip)", "inc a", "ld (vidDepthClip), a"),
+     "never taken: a depth clamp is a bookkeeping bug"),
+    ("src/interrupts.asm", "im2_isr", "nextreg NR_MMU7, AUD_PAGE_HI",
+     ("call aud_dbg_snap",),
+     "audEnable != 0 path, never taken in a session"),
+]
+
+# The other COLD top-level IFDEF DEBUG blocks, for --list only - never
+# skipped. (file, owning label, anchor statements, reason); the anchor is
+# the whole statement list, else a contiguous run inside it.
 COLD = [
     ("src/video.asm", "vid_op_bad", ("ld (vidErrOp), a",),
      "fault: reserved opcode, ERR=OP breadcrumb"),
@@ -100,10 +133,6 @@ COLD = [
     ("src/video.asm", "vid_dst_norm_flat", ("vid_rl_poll:",),
      "definitions of vid_rl_poll/vid_play_frame/vid_play_close; timed "
      "call sites are wrapped, teardown still calls vid_play_close"),
-    ("src/video.asm", "vid_dec_done", ("ld (vidErrPos), hl",),
-     "fault: .ovr bound-trip breadcrumb"),
-    ("src/video.asm", "vid_depth_debit", ("ld a, (vidDepthClip)",),
-     "never taken: a depth clamp is a bookkeeping bug"),
     ("src/video.asm", "vid_play", ("call nz, nxb_ds_unsel",),
      "open verdict, pre-arm"),
     ("src/video.asm", "vid_run", ("ld (nxbSvTm3), a",),
@@ -160,13 +189,13 @@ COLD = [
      "staging: callers are the pre-arm load, prefill and direct header read"),
     ("src/video.asm", "vidStrmBlkBuf", ("vid_tl_report_body:",),
      "report body"),
-    ("src/interrupts.asm", "im2_isr", ("call aud_dbg_snap",),
-     "audEnable != 0 path, never taken in a session"),
 ]
 
 LST_ROW = re.compile(r"^\s*(\d+)\+*\s*([0-9A-F]{4})(?: (.*))?$")
 LABEL = re.compile(r"^([A-Za-z_]\w*):")
 COND_OPEN = {"IF", "IFN", "IFDEF", "IFNDEF", "IFUSED", "IFNUSED"}
+UNCOND = re.compile(r"^(?:(?:jp|jr)\s+[^,]+|ret|reti|retn)$", re.IGNORECASE)
+NUMBER = re.compile(r"\$[0-9A-Fa-f]+|%[01]+|\b\d[0-9A-Fa-fxX]*[hH]?\b")
 
 
 class Fail(Exception):
@@ -174,8 +203,8 @@ class Fail(Exception):
 
 
 def rel(path):
-    """Listing or source path -> repo-relative posix path."""
-    p, r = os.path.abspath(path), str(ROOT) + os.sep
+    """Listing path -> path relative to SRC_ROOT, posix."""
+    p, r = os.path.abspath(path), str(SRC_ROOT) + os.sep
     if os.path.normcase(p).startswith(os.path.normcase(r)):
         return p[len(r):].replace(os.sep, "/")
     return p
@@ -196,92 +225,183 @@ def statement(line):
     return " ".join("".join(out).split())
 
 
+def prev_statement(stmts, n):
+    """The nearest non-empty statement above line n."""
+    k = n - 1
+    while k > 0 and not stmts[k - 1]:
+        k -= 1
+    return stmts[k - 1] if k > 0 else ""
+
+
 # ------------------------------------------------------------- source side
 
 def scan_source(relpath):
-    """Global labels outside conditionals and top-level IFDEF DEBUG blocks."""
-    lines = (ROOT / relpath).read_text(encoding="utf-8").split("\n")
-    labels, blocks, depth, owner, cur = [], [], 0, None, None
-    for n, line in enumerate(lines, 1):
-        st = statement(line)
+    """Statements, global labels, the owning label of every line, and the
+    top-level IFDEF DEBUG blocks."""
+    lines = (SRC_ROOT / relpath).read_text(encoding="utf-8").split("\n")
+    stmts = [statement(line) for line in lines]
+    labels, blocks, owner = [], [], [None] * (len(lines) + 1)
+    depth, uncond, conds, cur = 0, None, [], None
+    for n, (line, st) in enumerate(zip(lines, stmts), 1):
         word = st.split(" ")[0].upper() if st else ""
         m = LABEL.match(line)
-        if m and depth == 0:
-            labels.append((m.group(1), n))
-            owner = m.group(1)
+        if m:
+            labels.append((m.group(1), n, depth > 0))
+            if depth == 0:
+                uncond, conds = m.group(1), []
+            else:
+                conds.append((m.group(1), depth))
+        closes = False
         if word in COND_OPEN:
             if depth == 0 and st.upper() == "IFDEF DEBUG":
-                cur = {"start": n, "owner": owner, "stmts": []}
+                cur = {"start": n, "stmts": []}
             depth += 1
-            continue
-        if word == "ENDIF":
+        elif word in ("ELSE", "ELSEIF"):
+            conds = [c for c in conds if c[1] < depth]
+        elif word == "ENDIF":
             depth -= 1
             if depth < 0:
                 raise Fail(f"{relpath}:{n}: unbalanced ENDIF")
-            if depth == 0 and cur:
-                cur["end"] = n
-                blocks.append(cur)
-                cur = None
-            continue
-        if cur is not None and st and word not in ("ELSE", "ELSEIF"):
+            conds = [c for c in conds if c[1] <= depth]
+            closes = depth == 0 and cur is not None
+        owner[n] = conds[-1][0] if conds else uncond
+        if closes:
+            cur["end"] = n
+            blocks.append(cur)
+            cur = None
+        elif cur is not None and st and n != cur["start"]:
             cur["stmts"].append(st)
-    return lines, labels, blocks
+    for b in blocks:
+        b["owner"] = owner[b["start"]]
+        b["prev"] = prev_statement(stmts, b["start"])
+    return {"lines": lines, "stmts": stmts, "labels": labels,
+            "owner": owner, "blocks": blocks}
 
 
-def label_range(relpath, scan, name):
-    """Global label line to the line before the next global label."""
-    lines, labels, _ = scan
-    hits = [i for i, (lab, _) in enumerate(labels) if lab == name]
+def label_line(relpath, scan, name):
+    hits = [n for lab, n, _ in scan["labels"] if lab == name]
     if len(hits) != 1:
-        raise Fail(f"{relpath}: timed label {name} found {len(hits)} times")
-    i = hits[0]
-    end = labels[i + 1][1] - 1 if i + 1 < len(labels) else len(lines)
-    return labels[i][1], end
+        raise Fail(f"{relpath}: label {name} found {len(hits)} times")
+    return hits[0]
 
 
-def timed_ranges():
-    """{file: [(start, end, name)]} for TIMED and TIMED_SPANS."""
-    out, scans = {}, {}
-    files = set(TIMED) | {f for f, *_ in TIMED_SPANS}
-    for f in files:
-        scans[f] = scan_source(f)
-    for f, names in TIMED.items():
-        for name in names:
-            a, b = label_range(f, scans[f], name)
-            out.setdefault(f, []).append((a, b, name))
-    for f, name, start, stop in TIMED_SPANS:
-        lines = scans[f][0]
-        a, b = label_range(f, scans[f], name)
-        s = next((n for n in range(a, b + 1)
-                  if re.match(re.escape(start) + r"\b", lines[n - 1])), None)
-        e = next((n for n in range(s or a, b + 1)
-                  if statement(lines[n - 1]) == stop), None)
-        if s is None or e is None:
-            raise Fail(f"{f}: span {name}{start} .. '{stop}' not found")
-        out.setdefault(f, []).append((s, e, f"{name}{start}"))
-    return out, scans
+class TimedSet:
+    """Which source lines are timed, plus the source-side verdicts."""
 
+    def __init__(self):
+        self.scans, self.problems, self.notes = {}, [], []
+        self.skip, self.align_ok, self.spans = {}, set(), {}
+        files = set(TIMED) | set(REGIONS) | {f for f, *_ in TIMED_SPANS}
+        files |= {f for f, *_ in COLD_PINNED} | {f for f, *_ in COLD}
+        for f in sorted(files):
+            self.scans[f] = scan_source(f)
+        for f, names in TIMED.items():
+            for name in names:
+                label_line(f, self.scans[f], name)
+        for f, name, start, stop in TIMED_SPANS:
+            scan = self.scans[f]
+            label_line(f, scan, name)
+            own = [n for n in range(1, len(scan["lines"]) + 1)
+                   if scan["owner"][n] == name]
+            s = next((n for n in own if re.match(re.escape(start) + r"\b",
+                                                 scan["lines"][n - 1])), None)
+            e = next((n for n in own if s and n >= s
+                      and scan["stmts"][n - 1] == stop), None)
+            if s is None or e is None:
+                raise Fail(f"{f}: span {name}{start} .. '{stop}' not found")
+            self.spans.setdefault(f, []).append((name, s, e))
+        self._regions()
+        self._pinned()
+        self._aligns()
 
-def cold_ranges(scans, notes):
-    """{file: [(start, end, label, reason)]} for the COLD entries that resolve."""
-    out = {}
-    for f, owner, anchor, reason in COLD:
-        if f not in scans:
-            scans[f] = scan_source(f)
-        blocks = [b for b in scans[f][2] if b["owner"] == owner]
-        hits = [b for b in blocks if tuple(b["stmts"]) == anchor]
-        if not hits:
-            k = len(anchor)
-            hits = [b for b in blocks
-                    if any(tuple(b["stmts"][i:i + k]) == anchor
-                           for i in range(len(b["stmts"]) - k + 1))]
-        if len(hits) != 1:
-            notes.append(f"note: COLD entry {f} {owner} {anchor[0]!r} matches "
-                         f"{len(hits)} blocks - not skipped")
-            continue
-        out.setdefault(f, []).append((hits[0]["start"], hits[0]["end"],
-                                      owner, reason))
-    return out
+    def timed(self, f, n):
+        scan = self.scans.get(f)
+        if scan is None or n >= len(scan["owner"]):
+            return False
+        own = scan["owner"][n]
+        if own in TIMED.get(f, ()):
+            return True
+        return any(own == name and s <= n <= e
+                   for name, s, e in self.spans.get(f, ()))
+
+    def skipped(self, f, n):
+        return any(a <= n <= b for a, b in self.skip.get(f, ()))
+
+    def _regions(self):
+        for f, (first, after) in REGIONS.items():
+            scan = self.scans[f]
+            a = label_line(f, scan, first)
+            b = (label_line(f, scan, after) - 1 if after
+                 else len(scan["lines"]))
+            known = (set(TIMED.get(f, ())) | set(EXCLUDED.get(f, ()))
+                     | {r for g, r, *_ in TIMED_SPANS if g == f})
+            for name, n, _ in scan["labels"]:
+                if a <= n <= b and name not in known:
+                    self.problems.append(
+                        f"{f}:{n}: global label {name} in the timed region is "
+                        f"not classified - add it to TIMED or EXCLUDED")
+
+    def _pinned(self):
+        for f, routine, prev, exact, _ in COLD_PINNED:
+            hits = [b for b in self.scans[f]["blocks"]
+                    if b["owner"] == routine and b["prev"] == prev
+                    and tuple(b["stmts"]) == exact]
+            if len(hits) != 1:
+                self.problems.append(
+                    f"{f}: pinned COLD block in {routine} (after '{prev}': "
+                    f"{' / '.join(exact)}) matches {len(hits)} blocks - "
+                    f"reclassify it or update COLD_PINNED")
+                continue
+            self.skip.setdefault(f, []).append((hits[0]["start"],
+                                                hits[0]["end"]))
+
+    def _aligns(self):
+        for f, scan in self.scans.items():
+            for n, st in enumerate(scan["stmts"], 1):
+                if (st.split(" ")[0].upper() == "ALIGN" and self.timed(f, n)
+                        and UNCOND.match(prev_statement(scan["stmts"], n))):
+                    self.align_ok.add((f, n))
+
+    def cold_listing(self):
+        """(file, start, end, label, reason, pinned) for --list."""
+        out = []
+        for f, routine, prev, exact, reason in COLD_PINNED:
+            for b in self.scans[f]["blocks"]:
+                if (b["owner"], b["prev"], tuple(b["stmts"])) == \
+                        (routine, prev, exact):
+                    out.append((f, b["start"], b["end"], routine, reason, True))
+        for f, owner, anchor, reason in COLD:
+            blocks = [b for b in self.scans[f]["blocks"] if b["owner"] == owner]
+            hits = [b for b in blocks if tuple(b["stmts"]) == anchor]
+            if not hits:
+                k = len(anchor)
+                hits = [b for b in blocks
+                        if any(tuple(b["stmts"][i:i + k]) == anchor
+                               for i in range(len(b["stmts"]) - k + 1))]
+            if len(hits) != 1:
+                self.notes.append(f"note: COLD entry {f} {owner} {anchor[0]!r} "
+                                  f"matches {len(hits)} blocks")
+                continue
+            out.append((f, hits[0]["start"], hits[0]["end"], owner, reason,
+                        False))
+        return out
+
+    def intervals(self):
+        """(file, start, end, name) runs of timed lines for --list."""
+        out = []
+        for f, scan in self.scans.items():
+            run = None
+            for n in range(1, len(scan["lines"]) + 1):
+                name = scan["owner"][n] if self.timed(f, n) else None
+                if run and run[3] == name:
+                    run[2] = n
+                    continue
+                if run and run[3]:
+                    out.append(tuple(run))
+                run = [f, n, n, name]
+            if run and run[3]:
+                out.append(tuple(run))
+        return out
 
 
 # ------------------------------------------------------------ listing side
@@ -292,10 +412,12 @@ def build(flavour):
     lst = d / "nextdaad.lst"
     if lst.exists():
         lst.unlink()
-    prefix = d.relative_to(ROOT).as_posix() + "/"
+
+    def arg(p):
+        return os.path.relpath(p, ROOT).replace(os.sep, "/")
     cmd = [str(SJASM), "--zxnext=cspect", "--msg=war", "--fullpath",
-           f"--outprefix={prefix}", f"--lst={lst.relative_to(ROOT).as_posix()}",
-           *FLAVOURS[flavour], "src/main.asm"]
+           f"--outprefix={arg(d)}/", f"--lst={arg(lst)}",
+           *FLAVOURS[flavour], arg(SRC_ROOT / "src" / "main.asm")]
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0 or not lst.exists():
         tail = (r.stdout + r.stderr).strip().splitlines()[-15:]
@@ -304,7 +426,7 @@ def build(flavour):
 
 
 def parse_listing(lst):
-    """Rows (file, line, count, src). count is None on ALIGN lines."""
+    """Rows (file, line, count, src, key text, is ALIGN)."""
     raw, files = [], []
     for text in lst.read_text(encoding="utf-8", errors="replace").splitlines():
         if text.startswith("# file opened: "):
@@ -319,36 +441,42 @@ def parse_listing(lst):
                 raise Fail(f"{lst.name}: unrecognised listing row: {text[:60]}")
             continue
         rest = m.group(3) or ""
-        raw.append([files[-1], int(m.group(1)), int(m.group(2), 16),
-                    rest[:12], rest[12:13], rest[13:]])
+        raw.append((files[-1], int(m.group(1)), int(m.group(2), 16),
+                    rest[:12], rest[12:13], rest[13:]))
     rows = []
     for i, (f, n, addr, field, flag, src) in enumerate(raw):
         if field.startswith("~"):
-            continue
-        if statement(src).split(" ")[0].upper() == "ALIGN":
-            rows.append((f, n, None, src))
             continue
         if "..." in field:
             nxt = raw[i + 1][2] if i + 1 < len(raw) else addr
             count = (nxt - addr) & 0xFFFF
         else:
             count = len(re.findall(r"\b[0-9A-F]{2}\b", field))
-        if not count:
+        st = statement(src)
+        align = st.split(" ")[0].upper() == "ALIGN"
+        if not count and not align:
             continue
         # a data line over 4 bytes continues on rows with no source text
         if not src.strip() and flag != ">" and rows and rows[-1][:2] == (f, n) \
-                and rows[-1][2] is not None:
-            rows[-1] = (f, n, rows[-1][2] + count, rows[-1][3])
+                and not rows[-1][5]:
+            prev = rows[-1]
+            rows[-1] = (f, n, prev[2] + count) + prev[3:]
             continue
-        rows.append((f, n, count, src))
+        # expanded macro/DUP rows share line numbers: key on masked text too
+        key = NUMBER.sub("#", st) if flag == ">" else ""
+        rows.append((f, n, count, src, key, align))
     return rows
 
 
-def select(rows, timed, cold):
-    def inside(f, n, spans):
-        return any(a <= n <= b for a, b, *_ in spans.get(f, ()))
-    return [r for r in rows if inside(r[0], r[1], timed)
-            and not inside(r[0], r[1], cold)]
+def select(rows, ts):
+    out = []
+    for f, n, count, src, key, align in rows:
+        if not ts.timed(f, n) or ts.skipped(f, n):
+            continue
+        if align and (f, n) in ts.align_ok:
+            count = None                 # padding after a jump never runs
+        out.append((f, n, count, src, key))
+    return out
 
 
 # ------------------------------------------------------------------ compare
@@ -357,7 +485,8 @@ def compare(a_name, a, b_name, b):
     """Print each differing line with both byte counts; return the count."""
     def show(c):
         return "ALIGN" if c is None else f"{c} B"
-    ka, kb = [r[:2] for r in a], [r[:2] for r in b]
+    ka = [(r[0], r[1], r[4]) for r in a]
+    kb = [(r[0], r[1], r[4]) for r in b]
     diffs = []
     sm = difflib.SequenceMatcher(None, ka, kb, autojunk=False)
     for op, i1, i2, j1, j2 in sm.get_opcodes():
@@ -369,13 +498,13 @@ def compare(a_name, a, b_name, b):
         # a line missing on one side assembled 0 bytes there
         agg = {}
         for side, part in ((0, a[i1:i2]), (1, b[j1:j2])):
-            for f, n, c, src in part:
-                e = agg.setdefault((f, n), [0, 0, src])
+            for f, n, c, src, key in part:
+                e = agg.setdefault((f, n, key), [0, 0, src])
                 e[side] = None if c is None else (e[side] or 0) + c
         region = [(f, n, show(ca), show(cb), src)
-                  for (f, n), (ca, cb, src) in agg.items() if ca != cb]
+                  for (f, n, _), (ca, cb, src) in agg.items() if ca != cb]
         if not region:
-            f, n = (ka[i1:i2] or kb[j1:j2])[0]
+            f, n, _ = (ka[i1:i2] or kb[j1:j2])[0]
             region = [(f, n, "-", "-", "line order differs")]
         diffs += region
     for f, n, ca, cb, src in diffs:
@@ -388,50 +517,57 @@ def sha(path):
 
 
 def run(args, built):
-    notes = []
-    timed, scans = timed_ranges()
-    cold = cold_ranges(scans, notes)
+    ts = TimedSet()
+    cold = ts.cold_listing()
     if args.list:
-        for f, spans in timed.items():
-            for a, b, name in spans:
-                print(f"TIMED {f}:{a}-{b} {name}")
-        for f, spans in cold.items():
-            for a, b, owner, reason in spans:
-                used = any(x <= b and a <= y for x, y, _ in timed.get(f, ()))
-                tag = " (inside the timed set)" if used else ""
-                print(f"COLD  {f}:{a}-{b} {owner}: {reason}{tag}")
+        for f, a, b, name in ts.intervals():
+            print(f"TIMED {f}:{a}-{b} {name}")
+        for f, a, b, owner, reason, pinned in cold:
+            tag = " (pinned, skipped)" if pinned else ""
+            print(f"COLD  {f}:{a}-{b} {owner}: {reason}{tag}")
     sel = {}
     for flavour in ("release", "quiet"):
         lst, nex = build(flavour)
         built.add(sha(nex))
-        sel[flavour] = select(parse_listing(lst), timed, cold)
-        print(f"{flavour:8} {nex.relative_to(ROOT).as_posix()} sha256 {sha(nex)}")
-    for note in notes:
+        sel[flavour] = select(parse_listing(lst), ts)
+        print(f"{flavour:8} {os.path.relpath(nex, ROOT)} sha256 {sha(nex)}")
+    for note in ts.notes:
         print(note)
+    for problem in ts.problems:
+        print(f"FAIL {problem}")
     rows_r = sel["release"]
-    empty = [(f, name) for f, spans in timed.items() for a, b, name in spans
-             if not any(r[0] == f and a <= r[1] <= b for r in rows_r)]
+    names = [(f, name) for f, names in TIMED.items() for name in names]
+    names += [(f, name) for f, name, *_ in TIMED_SPANS]
+    empty = [(f, name) for f, name in names
+             if not any(r[0] == f and ts.scans[f]["owner"][r[1]] == name
+                        for r in rows_r)]
     for f, name in empty:
-        print(f"FAIL {f}: timed range {name} assembles no bytes in release")
+        print(f"FAIL {f}: timed routine {name} assembles no bytes in release")
     ndiff = compare("release", rows_r, "quiet", sel["quiet"])
     nbytes = sum(r[2] or 0 for r in rows_r)
-    skipped = sum(1 for f, spans in cold.items() for a, b, *_ in spans
-                  if any(x <= b and a <= y for x, y, _ in timed.get(f, ())))
-    print(f"timed set: {sum(len(s) for s in timed.values())} ranges, "
-          f"{len(rows_r)} assembled lines, {nbytes} B; "
-          f"{skipped} COLD ranges skipped inside it")
-    if ndiff or empty:
-        print(f"FAIL: {ndiff} line(s) differ between release and quiet")
+    print(f"timed set: {len(names)} routines, {len(rows_r)} assembled lines, "
+          f"{nbytes} B; {sum(len(v) for v in ts.skip.values())} pinned COLD "
+          f"blocks skipped")
+    if ndiff or empty or ts.problems:
+        print(f"FAIL: {ndiff} line(s) differ, {len(ts.problems) + len(empty)} "
+              f"classification failure(s)")
         return 1
     print("OK: quiet timed paths are instruction-identical to release")
     return 0
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    global SRC_ROOT, OUT
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0], epilog=HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--list", action="store_true",
-                    help="print the resolved timed and COLD line ranges")
+                    help="print the timed line runs and the COLD blocks")
+    ap.add_argument("--src-root", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.src_root:
+        SRC_ROOT = Path(args.src_root).resolve()
+        OUT = SRC_ROOT / "out"
     OUT.mkdir(parents=True, exist_ok=True)
     saved = NEX.read_bytes() if NEX.exists() else None
     if saved is not None:
