@@ -16,9 +16,11 @@ exact through the rules; each ruling prints its coefficient rounded up to
 0.1 T, so rounding never moves another term's fit.
 
 Usage: python tests/fit_gap_bench.py NXBENCH-Q.TXT (--anchor NXBENCH-D.TXT |
-       --no-anchor) [--launch-status [D:]hhhh=OK ...]
+       --no-anchor) [--launch-status [D:]hhhh=OK ...] [--lost [D:]hhhh=VERB[:clip] ...]
 --launch-status is the owner's note for each launch's last run, whose LOG
 status the file cannot hold, keyed by its #NXB stamp (D: for the anchor log).
+--lost names the verb whose capture a step 1-2 LOG ERR lost just before hhhh.
+A faulted capture is superseded by a later clean capture of the same verb/clip.
 """
 import argparse
 import contextlib
@@ -749,12 +751,66 @@ def _launch_name(log, key):
     return ("D:" if log == "D" else "") + (key if isinstance(key, str) else f"{key:04X}")
 
 
-def s0(q_text, d_text=None, *, no_anchor=False, launch_status=None,
+def lost_key(text):
+    """'1400=NXBR:5' or 'D:0200=NXBC' -> ((log, stamp), (verb, clip or None)): the verb
+    whose capture was lost just before the capture stamped hhhh."""
+    key, _eq, what = text.partition("=")
+    log = "Q"
+    if key.upper().startswith("D:"):
+        log, key = "D", key[2:]
+    verb, _c, clip = what.strip().upper().partition(":")
+    if (not re.fullmatch(r"[0-9A-Fa-f]{1,4}", key) or verb not in blog.VERBS
+            or (clip and not clip.isdigit()) or (verb in blog.SESSION_VERBS) != bool(clip)):
+        raise ValueError(f"--lost {text!r}: want [D:]hhhh=VERB, or [D:]hhhh=VERB:clip for a session verb")
+    return (log, int(key, 16)), (verb, int(clip) if clip else None)
+
+
+LOST_RE = re.compile(r"LOG (ERR [0-9A-F]{2}): a capture was lost")
+
+
+def _verb_name(verb, clip):
+    return verb if clip is None else f"{verb} clip {clip:03d}"
+
+
+def _stamp(run):
+    return "typed" if run.stamp is None else f"#NXB {run.stamp:04X}"
+
+
+def _s0_faults(run, lines):
+    """Faults of one capture a later clean capture can replace. -> (reasons,
+    Sess or None). A streaming REAL session faulting after REMN is not a fault."""
+    reasons = [f"parser warning: {w}" for w in run.warnings if not LOST_RE.match(w)]
+    if run.dropped:
+        reasons.append(f"rows of another table on screen: {[g[0] for g in run.dropped]}")
+    if run.log is not None and run.log != "OK":
+        reasons.append(f"LOG {run.log}: untrusted")
+    if run.command in blog.SESSION_VERBS:
+        sess = _s0_session(run, run.table, run.clip, reasons, lines)
+        return reasons, (sess if not reasons else None)
+    table = {r[0]: r for r in bench.BENCH_TABLES[run.table]}
+    got = {g[0]: g[1:] for g in run.rows}
+    missing = [t for t in bench.printed_tags(run.table) if t not in got]
+    if missing:
+        reasons.append(f"rows missing {missing}")
+    for tag, (o, r, _f, _d) in got.items():
+        want = table.get(tag, table.get("CALL"))
+        want_o = 0 if tag in ("CALL", "CALR") else want[3]
+        if (o, r) != (want_o, want[4]):
+            reasons.append(f"{tag}: O={o:02X} R={r:04X}, the table runs O={want_o:02X} R={want[4]:04X}")
+    if "CALL" in got and "CALR" in got and got["CALL"][2:] != got["CALR"][2:]:
+        reasons.append(f"CALL F={got['CALL'][2]:04X} D={got['CALL'][3]} and CALR F={got['CALR'][2]:04X} "
+                       f"D={got['CALR'][3]} disagree: the long clock slipped")
+    return reasons, None
+
+
+def s0(q_text, d_text=None, *, no_anchor=False, launch_status=None, lost=None,
        sessions=SESSIONS, standalone=STANDALONE):
     """S0 - integrity.
     -> (Sitting, lines); a Stop names every failure. launch_status: {(log, stamp
     or '#n'): status}, the owner's note for each run whose LOG status the file
-    cannot hold."""
+    cannot hold. lost: {(log, stamp): (verb, clip)}, the owner's note naming the
+    capture lost just before a stamp. A faulted capture is superseded by a later
+    clean capture of the same verb and clip."""
     lines, fail, slips = [], [], []
     runs = blog.parse(q_text)
     if not runs:
@@ -769,89 +825,95 @@ def s0(q_text, d_text=None, *, no_anchor=False, launch_status=None,
     else:
         lines.append("D-image NXBC anchor check skipped: no --anchor log")
         fail.append("S0's D-image check needs --anchor NXBENCH-D.TXT")
+
+    # every capture's faults; launch notes stand in for a status the file cannot hold
     notes, used = dict(launch_status or {}), set()
+    lost_notes, lost_used = dict(lost or {}), set()
+    clean, faults, sess_of = {"Q": [], "D": []}, {}, {}
     for log, group in (("Q", runs), ("D", d_runs)):
         for i, run in enumerate(group):
-            if run.log is not None:
+            reasons = []
+            if run.log is None:
+                key = (log, run.stamp if run.stamp is not None else f"#{i + 1}")
+                if key in notes:
+                    used.add(key)
+                    run.log = notes[key]
+                    lines.append(f"{_label(run)}: LOG {run.log} from the owner's launch note ({_launch_name(*key)})")
+                else:
+                    reasons.append(f"its LOG status is not in the file (a launch's last run); give the owner's "
+                                   f"note with --launch-status {_launch_name(*key)}=OK")
+            if run.command is None:
+                fail.append(f"{_label(run)}: no bench verb in the capture")
                 continue
-            key = (log, run.stamp if run.stamp is not None else f"#{i + 1}")
-            name = _launch_name(*key)
-            if key not in notes:
-                fail.append(f"{_label(run)}: its LOG status is not in the file (a launch's last run); "
-                            f"give the owner's note with --launch-status {name}=OK")
-                continue
-            used.add(key)
-            run.log = notes[key]
-            lines.append(f"{_label(run)}: LOG {run.log} from the owner's launch note ({name})")
+            more, sess = _s0_faults(run, lines)
+            reasons += more
+            if reasons:
+                faults[id(run)] = reasons
+            else:
+                clean[log].append((i, run))
+                if sess is not None:
+                    sess_of[id(run)] = sess
     for key in sorted(set(notes) - used, key=str):
         fail.append(f"--launch-status {_launch_name(*key)}: names no run whose LOG status the file "
                     f"cannot hold")
 
-    # per-run integrity
-    trusted = []
-    for run in runs + d_runs:
-        where = _label(run)
-        bad = []
-        if run.command is None:
-            bad.append("no bench verb in the capture")
-        bad += [f"parser warning: {w}" for w in run.warnings]
-        if run.dropped:
-            bad.append(f"rows of another table on screen: {[g[0] for g in run.dropped]}")
-        if run.log is None:
-            continue                       # no launch note: failed above
-        if run.log != "OK":
-            bad.append(f"LOG {run.log}: untrusted, excluded")
-        if bad:
-            fail += [f"{where}: {b}" for b in bad]
-            continue
-        trusted.append(run)
+    def replacement(log, after, verb, clip):
+        return next((run for i, run in clean[log] if i > after and run.command == verb and run.clip == clip), None)
 
-    # sessions: identity, rows, teardown
+    # superseded faults and lost captures
+    for log, group in (("Q", runs), ("D", d_runs)):
+        for i, run in enumerate(group):
+            name = _verb_name(run.command, run.clip) if run.command else None
+            if id(run) in faults:
+                new = replacement(log, i, run.command, run.clip)
+                why = "; ".join(faults[id(run)])
+                if new is None:
+                    fail.append(f"{_label(run)}: {why}; no later clean capture of {name} replaces it")
+                else:
+                    lines.append(f"superseded: {name} at {_stamp(run)} - {why} - replaced by {_stamp(new)}")
+            for w in run.warnings:
+                m = LOST_RE.match(w)
+                if not m:
+                    continue
+                key = (log, run.stamp)
+                if key not in lost_notes:
+                    fail.append(f"{w}: name the lost verb with --lost {_launch_name(*key)}=VERB[:clip]")
+                    continue
+                lost_used.add(key)
+                verb, clip = lost_notes[key]
+                new = replacement(log, i - 1, verb, clip)
+                if new is None:
+                    fail.append(f"{w} ({_verb_name(verb, clip)}, owner's note): no later clean capture replaces it")
+                else:
+                    lines.append(f"superseded: {_verb_name(verb, clip)} lost before {_stamp(run)} - "
+                                 f"capture lost ({m.group(1)}) - replaced by {_stamp(new)}")
+    for key in sorted(set(lost_notes) - lost_used, key=str):
+        fail.append(f"--lost {_launch_name(*key)}: names no capture lost before that stamp")
+
+    # sessions: first clean capture, clean repeats compared
+    trusted = [run for _i, run in clean["Q"]]
     by_sess, by_mode = {}, {}
     for run in trusted:
-        if run in d_runs:
-            continue
         if run.command in blog.SESSION_VERBS:
-            by_sess.setdefault((run.table, run.clip), []).append(run)
+            by_sess.setdefault((run.table, run.clip), []).append(sess_of[id(run)])
         else:
             by_mode.setdefault(run.table, []).append(run)
     built = {}
-    for (table, clip), sruns in sorted(by_sess.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
-        first = None
-        for run in sruns:
-            sess = _s0_session(run, table, clip, fail, lines)
-            if sess is not None and first is None:
-                first = sess
-            elif sess is not None:
-                _s0_session_repeat(first, sess, slips, fail)
-        if first is not None:
-            built[(table, clip)] = first
+    for key, sessions_run in sorted(by_sess.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
+        built[key] = sessions_run[0]
+        for later in sessions_run[1:]:
+            _s0_session_repeat(sessions_run[0], later, slips, fail)
     for key in sessions:
         if key not in by_sess:
-            fail.append(f"{key[0]} {key[1]:03d}: no trusted session run")
+            fail.append(f"{key[0]} {key[1]:03d}: no clean session capture")
 
-    # standalone: rows, CALL/CALR, repeats
+    # standalone: first clean capture, clean repeats compared
     rows = {}
     for mode in standalone:
         mruns = by_mode.get(mode, [])
         if not mruns:
-            fail.append(f"mode {mode} ({bench.printed_tags(mode)[0]}...): no trusted run")
+            fail.append(f"mode {mode} ({bench.printed_tags(mode)[0]}...): no clean capture")
             continue
-        table = {r[0]: r for r in bench.BENCH_TABLES[mode]}
-        for run in mruns:
-            got = {g[0]: g[1:] for g in run.rows}
-            missing = [t for t in bench.printed_tags(mode) if t not in got]
-            if missing:
-                fail.append(f"{_label(run)}: rows missing {missing}")
-            for tag, (o, r, f, d) in got.items():
-                want = table.get(tag, table.get("CALL"))
-                want_o = 0 if tag in ("CALL", "CALR") else want[3]
-                if (o, r) != (want_o, want[4]):
-                    fail.append(f"{_label(run)} {tag}: O={o:02X} R={r:04X}, the table runs "
-                                f"O={want_o:02X} R={want[4]:04X}")
-            if "CALL" in got and "CALR" in got and got["CALL"][2:] != got["CALR"][2:]:
-                fail.append(f"{_label(run)}: CALL F={got['CALL'][2]:04X} D={got['CALL'][3]} and CALR "
-                            f"F={got['CALR'][2]:04X} D={got['CALR'][3]} disagree: the long clock slipped")
         base = {g[0]: g[1:] for g in mruns[0].rows}
         keep = dict(base)
         for run in mruns[1:]:
@@ -865,9 +927,9 @@ def s0(q_text, d_text=None, *, no_anchor=False, launch_status=None,
     # the D-image anchor
     anchor = None
     if d_runs:
-        dc = [r for r in trusted if r in d_runs and r.command == "NXBC"]
+        dc = [run for _i, run in clean["D"] if run.command == "NXBC"]
         if not dc:
-            fail.append("the D log holds no trusted NXBC run")
+            fail.append("the D log holds no clean NXBC capture")
         else:
             anchor = {g[0]: g[1:] for g in dc[0].rows}
             for tag in bench.printed_tags(3):
@@ -890,26 +952,27 @@ def s0(q_text, d_text=None, *, no_anchor=False, launch_status=None,
     lines += [f"clock slip recorded: {s}" for s in slips]
     if fail:
         raise Stop("S0", fail, lines)
-    lines.append(f"{len(runs)} Q runs, {len(d_runs)} D runs: every LOG OK, ERR=00, identity and "
-                 f"repeats within tolerance")
+    lines.append(f"{len(runs)} Q runs, {len(d_runs)} D runs: every clean capture LOG OK, ERR=00, identity "
+                 f"and repeats within tolerance")
     return Sitting(rows, built, anchor), lines
 
 
-def _s0_session(run, table, clip, fail, lines):
-    where = _label(run)
+def _s0_session(run, table, clip, faults, lines):
+    """Identity, teardown and row checks of one session capture; problems go to
+    faults. -> Sess, or None when it cannot be identified."""
     if clip is None:
-        fail.append(f"{where}: no PICK before the session verb")
+        faults.append("no PICK before the session verb")
         return None
     try:
         path = fixture_path(clip)
     except FileNotFoundError as exc:
-        fail.append(f"{where}: {exc}")
+        faults.append(str(exc))
         return None
     hdr = fixture_header(path)
     rows = {g[0]: g[1:] for g in run.rows}
     iden, ring = rows.get("IDEN"), rows.get("RING")
     if iden is None:
-        fail.append(f"{where}: no IDEN row")
+        faults.append("no IDEN row")
         return None
     names = {0: "resident", 1: "streaming", 2: "direct"}
     delivery = names.get(iden[0])
@@ -926,38 +989,35 @@ def _s0_session(run, table, clip, fail, lines):
     if table != "DS1" and ring is not None and (ring[1] == 0) != (delivery == "resident"):
         wrong.append(f"RING R={ring[1]:04X} is not the {delivery} depth")
     if wrong:
-        fail.append(f"{where}: IDEN does not name clip {clip:03d} ({w}x{h}, {frames} frames): "
-                    + ", ".join(wrong))
+        faults.append(f"IDEN does not name clip {clip:03d} ({w}x{h}, {frames} frames): " + ", ".join(wrong))
         return None
     sess = Sess(table, clip, run, rows, delivery, path, hdr, fm.surface_of(hdr))
     want_tags = bench.session_printed(table, delivery)
     missing = [t for t in want_tags if t not in rows]
-    err_ok = run.err == 0
     if run.err is None:
-        fail.append(f"{where}: no teardown ERR= line")
+        faults.append("no teardown ERR= line")
     elif run.err != 0:
         through = want_tags[:want_tags.index("REMN") + 1] if "REMN" in want_tags else None
         if (table == "REAL" and delivery == "streaming" and through
                 and all(t in rows for t in through)):
             sess.invalid = {"PROD", "APRD"}
             missing = [t for t in missing if t not in sess.invalid]
-            lines.append(f"{where}: ERR={run.err:02X} after REMN invalidates PROD and APRD only")
-            err_ok = True
+            lines.append(f"{_label(run)}: ERR={run.err:02X} after REMN invalidates PROD and APRD only")
         else:
-            fail.append(f"{where}: teardown ERR={run.err:02X}")
+            faults.append(f"teardown ERR={run.err:02X}")
     if missing:
-        fail.append(f"{where}: rows missing {missing}")
+        faults.append(f"rows missing {missing}")
     reps, kinds = _reps_of(table), _row_kinds(table)
     for tag, (o, r, _f, _d) in rows.items():
         if tag in sess.invalid or kinds[tag] in UNTIMED_KINDS:
             continue
         if r != reps[tag]:
-            fail.append(f"{where} {tag}: R={r:04X}, the table runs {reps[tag]:04X}")
+            faults.append(f"{tag}: R={r:04X}, the table runs {reps[tag]:04X}")
         if kinds[tag] in bench.SESSION_SYNTH:
             preset = next(x for x in bench.SESSION_TABLES[table] if x[0] == tag)[4]
             if o != preset:
-                fail.append(f"{where} {tag}: O={o:02X}, the row's span preset is {preset:02X}")
-    return sess if err_ok and not missing else None
+                faults.append(f"{tag}: O={o:02X}, the row's span preset is {preset:02X}")
+    return sess
 
 
 def _s0_session_repeat(first, later, slips, fail):
@@ -1865,16 +1925,19 @@ def main(argv=None):
     ap.add_argument("--no-anchor", action="store_true", help="skip S0's D-image check (testing only)")
     ap.add_argument("--launch-status", action="append", default=[], metavar="[D:]hhhh=OK",
                     help="the owner's note for a launch's last run, by its #NXB stamp (D: the anchor log)")
+    ap.add_argument("--lost", action="append", default=[], metavar="[D:]hhhh=VERB[:clip]",
+                    help="the owner's note naming the capture lost just before the capture stamped hhhh")
     args = ap.parse_args(argv)
     try:
         notes = dict(launch_key(item) for item in args.launch_status)
+        lost = dict(lost_key(item) for item in args.lost)
     except ValueError as exc:
         ap.error(str(exc))
     q_text = Path(args.q_log).read_text(encoding="latin-1")
     d_text = Path(args.anchor).read_text(encoding="latin-1") if args.anchor else None
     printed = []
     try:
-        apply_rules(q_text, d_text, out=printed, no_anchor=args.no_anchor, launch_status=notes)
+        apply_rules(q_text, d_text, out=printed, no_anchor=args.no_anchor, launch_status=notes, lost=lost)
     except Stop as stop:
         if printed:
             print("\n".join(printed))

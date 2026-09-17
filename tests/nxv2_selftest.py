@@ -2959,8 +2959,8 @@ def t10_gap_rules():
     direct = fm.frames(path, copy_thr=60, run_thr=66)
     expect([f.ev for f in reused] == [f.events for f in direct], "fixture 009 events at 60/66 differ from fm.frames")
 
-    # S0 STOPs, each on one broken input
-    def s0_fails(mut_runs=None, mut_d=None, want="", anchor=True, launch=None):
+    # S0 STOPs, each on one broken input with no later clean capture of its verb
+    def s0_fails(mut_runs=None, mut_d=None, want="", anchor=True, launch=None, lost=None):
         r2, d2 = copy.deepcopy(runs), list(d_rows)
         if mut_runs:
             mut_runs(r2)
@@ -2968,10 +2968,11 @@ def t10_gap_rules():
             d2 = mut_d(d2)
         q2, dt2 = _gap_text(r2, d2)
         try:
-            g.s0(q2, dt2 if anchor else None, launch_status=notes if launch is None else launch)
+            g.s0(q2, dt2 if anchor else None, launch_status=notes if launch is None else launch, lost=lost)
         except g.Stop as stop:
             text = "; ".join(stop.lines)
-            expect(stop.rule == "S0" and want in text, f"S0 STOP without {want!r}: {text}")
+            expect(stop.rule == "S0" and all(w in text for w in (want if isinstance(want, tuple) else (want,))),
+                   f"S0 STOP without {want!r}: {text}")
             return
         raise AssertionError(f"no S0 STOP for {want!r}")
 
@@ -2982,18 +2983,68 @@ def t10_gap_rules():
             *divmod(bench.SITTING4["C004"][2] * 311 + bench.SITTING4["C004"][3] + 2, 311))
     s0_fails(mut_d=lambda rows: [c004 if grp[0] == "C004" else grp for grp in rows], want="D-image NXBC C004: +2 lines")
     nxbe = next(i for i, run in enumerate(runs) if run["verb"] == "NXBE")
-    s0_fails(lambda r2: r2[nxbe].update(rows=shift(r2[nxbe]["rows"], "CALR", 1)), want="CALR")
+    last_e = max(i for i, run in enumerate(runs) if run["verb"] == "NXBE")
+    s0_fails(lambda r2: r2[last_e].update(rows=shift(r2[last_e]["rows"], "CALR", 1)),
+             want=("CALR", "no later clean capture of NXBE replaces it"))
     real2 = next(i for i, run in enumerate(runs) if run["verb"] == "NXBR" and run["clip"] == 2)
     s0_fails(lambda r2: r2[real2].update(rows=[(t, o, 34 if t == "IDEN" else r, f, d)
                                               for t, o, r, f, d in r2[real2]["rows"]]),
              want="IDEN does not name clip 002")
-    s0_fails(lambda r2: r2[nxbe + 1].update(log="LOG ERR 60"), want="LOG ERR 60: untrusted")
+    s0_fails(lambda r2: r2[last_e + 1].update(log="LOG ERR 60"), want="LOG ERR 60: untrusted")
     s0_fails(want="needs --anchor", anchor=False)
     s0_fails(want=f"--launch-status {runs[-1]['stamp']:04X}=OK", launch={("D", 0x0200): "OK"})
-    s0_fails(lambda r2: r2[nxbe + 1].update(log=None), want=f"--launch-status {runs[nxbe]['stamp']:04X}=OK")
-    s0_fails(lambda r2: r2[nxbe + 1].update(log=None), want="LOG ERR 60",
-             launch={**notes, ("Q", runs[nxbe]["stamp"]): "ERR 60"})
+    s0_fails(lambda r2: r2[last_e + 1].update(log=None), want=f"--launch-status {runs[last_e]['stamp']:04X}=OK")
+    s0_fails(lambda r2: r2[last_e + 1].update(log=None), want="LOG ERR 60",
+             launch={**notes, ("Q", runs[last_e]["stamp"]): "ERR 60"})
     s0_fails(want="names no run", launch={**notes, ("Q", 0x1234): "OK"})
+    # a faulted capture with no clean follow-up
+    s0_fails(lambda r2: r2[real2].update(err=0xFA),
+             want=(f"#NXB {runs[real2]['stamp']:04X} NXBR clip 002: teardown ERR=FA",
+                   "no later clean capture of NXBR clip 002 replaces it"))
+
+    # superseded: a faulted NXBR clip 3 (ERR=FA after W065) ahead of its clean capture
+    real3 = [i for i, run in enumerate(runs) if run["verb"] == "NXBR" and run["clip"] == 3]
+
+    def faulted_real3(r2):
+        bad = copy.deepcopy(r2[real3[0]])
+        cut = [t for t, *_x in bad["rows"]].index("W065") + 1
+        bad.update(stamp=bad["stamp"] - 0x80, err=0xFA, rows=bad["rows"][:cut])
+        r2.insert(real3[0], bad)
+
+    r2 = copy.deepcopy(runs)
+    faulted_real3(r2)
+    sit2, lines2 = g.s0(*_gap_text(r2, d_rows), launch_status=notes)
+    sup = [line for line in lines2 if line.startswith("superseded:")]
+    expect(len(sup) == 1 and sup[0].startswith(f"superseded: NXBR clip 003 at #NXB {runs[real3[0]]['stamp'] - 0x80:04X} - ")
+           and "teardown ERR=FA" in sup[0] and sup[0].endswith(f"replaced by #NXB {runs[real3[0]]['stamp']:04X}")
+           and sit2.sessions[("REAL", 3)].run.stamp == runs[real3[0]]["stamp"], f"one superseded line: {sup}")
+    # the deliberate clean repeat of 003 is still compared
+    s0_fails(lambda r2: (faulted_real3(r2), r2[real3[1] + 1].update(rows=shift(r2[real3[1] + 1]["rows"], "W065", 5))),
+             want=("NXBR clip 003 (repeat) W065: repeat differs by", "(tolerance 2)"))
+
+    # a step-2 LOG ERR lost NXBR clip 5's capture; the owner names it and it is run again
+    real5 = next(i for i, run in enumerate(runs) if run["verb"] == "NXBR" and run["clip"] == 5)
+
+    def lose_real5(r2):
+        rerun = copy.deepcopy(r2[real5])
+        del r2[real5]
+        r2[real5]["log"] = "LOG ERR 45"
+        rerun.update(stamp=r2[real5]["stamp"] + 0x80, log="LOG OK")
+        r2.insert(real5 + 1, rerun)
+
+    after = runs[real5 + 1]["stamp"]
+    lost_notes = {**notes, ("Q", runs[real5 - 1]["stamp"]): "OK"}
+    r2 = copy.deepcopy(runs)
+    lose_real5(r2)
+    sit3, lines3 = g.s0(*_gap_text(r2, d_rows), launch_status=lost_notes, lost={("Q", after): ("NXBR", 5)})
+    expect(any(line == f"superseded: NXBR clip 005 lost before #NXB {after:04X} - capture lost (ERR 45) - "
+                       f"replaced by #NXB {after + 0x80:04X}" for line in lines3)
+           and sit3.sessions[("REAL", 5)].run.stamp == after + 0x80, f"lost capture replaced: {lines3}")
+    s0_fails(lose_real5, want=f"name the lost verb with --lost {after:04X}=VERB[:clip]", launch=lost_notes)
+    s0_fails(lose_real5, want="no later clean capture replaces it", launch=lost_notes,
+             lost={("Q", after): ("NXBR", 4)})
+    expect(g.lost_key("1400=nxbr:5") == (("Q", 0x1400), ("NXBR", 5)) and g.lost_key("D:0200=NXBC")[1] == ("NXBC", None),
+           "--lost notes parse")
 
     # not STOPs: a relaunch the owner noted OK, a one-field clock slip on a repeat, a SCAN repeat,
     # a streaming fault after REMN
@@ -3014,7 +3065,7 @@ def t10_gap_rules():
 
     # a STOP prints its rule's lines; S4 names the rows priced under before any raise
     r2 = copy.deepcopy(runs)
-    r2[nxbe + 1]["log"] = "LOG ERR 60"
+    r2[last_e + 1]["log"] = "LOG ERR 60"
     try:
         g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
     except g.Stop as stop:
