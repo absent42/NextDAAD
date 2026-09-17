@@ -1412,6 +1412,79 @@ def t10_bench_tables():
     expect(not bad, "bench table rules:\n  " + "\n  ".join(bad))
 
 
+@case(10, "session bench tables - tags, printed rows, armed rows, the streaming tail")
+def t10_session_tables():
+    # Session rows (src/video.asm nxbSes* tables, nxb_srow_go): 10 bytes each
+    # plus a terminator, staged into nxbTabBuf (560 B); 32 printed rows at most
+    # (rows 8-23, two columns).
+    expect(sorted(bench.SESSION_TABLES) == sorted(bench.SESSION_MODES),
+           "every session table has a flags+248 mode")
+    expect(len(set(bench.SESSION_MODES.values())) == len(bench.SESSION_MODES)
+           and all(1 <= m <= 4 for m in bench.SESSION_MODES.values()),
+           "session modes are distinct, 1-4")
+    bad = []
+    for name, rows in sorted(bench.SESSION_TABLES.items()):
+        if 10 * len(rows) + 1 > 560:
+            bad.append(f"{name}: {10 * len(rows) + 1} B, nxbTabBuf holds 560")
+        tags = [r[0] for r in rows]
+        for tag in tags:
+            if len(tag) != 4 or not all(0x21 <= ord(ch) <= 0x7E for ch in tag):
+                bad.append(f"{name} {tag!r}: a tag is exactly 4 printable characters")
+        for tag in sorted({t for t in tags if tags.count(t) > 1}):
+            bad.append(f"{name} {tag}: repeated in the table")
+        if not rows or rows[0][:2] != ("IDEN", "id"):
+            bad.append(f"{name}: the first row is IDEN (kind id)")
+        tail = [r[5] for r in rows]
+        if True in tail and not all(tail[tail.index(True):]):
+            bad.append(f"{name}: streaming-only rows must form the table's tail")
+        scanned = False
+        for tag, kind, param, reps, thr, strm in rows:
+            if kind not in bench.SESSION_KINDS:
+                bad.append(f"{name} {tag}: unknown kind {kind!r}")
+                continue
+            if kind in ("prod", "remn") and not strm:
+                bad.append(f"{name} {tag}: {kind.upper()} rows run only in the streaming tail")
+            if not (0 <= param <= 0xFFFF and 0 <= reps <= 0xFFFF and 0 <= thr <= 255):
+                bad.append(f"{name} {tag}: param={param} reps={reps} thr={thr} do not fit")
+            if (kind in bench.SESSION_REPS) != (reps >= 1):
+                bad.append(f"{name} {tag}: reps {reps} (1+ for FRAME/AUD/PACE/PROD, else 0)")
+            if (kind in bench.SESSION_DECODE) != (thr >= 1):
+                bad.append(f"{name} {tag}: thr {thr} (1+ for SCAN/SWEEP/FRAME/LOOP, else 0)")
+            if kind == "frame" and (param > 2 or not scanned):
+                bad.append(f"{name} {tag}: FRAME takes slot 0-2 after a SCAN row")
+            if kind == "loop" and not 1 <= param <= 255:
+                bad.append(f"{name} {tag}: LOOP n {param} must be 1-255")
+            if kind not in ("sweep", "frame", "loop") and param:
+                bad.append(f"{name} {tag}: {kind} rows carry param 0")
+            scanned |= kind == "scan"
+        pairs = bench.SESSION_ARMED_PAIRS.get(name, ())
+        armed_tags = {a for _u, a in pairs}
+        for streaming in (False, True):
+            view = "streaming" if streaming else "resident"
+            printed = bench.session_printed(name, streaming)
+            if len(printed) > 32:
+                bad.append(f"{name} {view}: {len(printed)} printed rows, the screen holds 32")
+            state = bench.session_armed(name, streaming)
+            armed = False
+            for tag, kind, *_ in bench.session_rows(name, streaming):
+                if kind == "arm" and armed:
+                    bad.append(f"{name} {view} {tag}: ARM while armed")
+                if kind == "disarm" and not armed:
+                    bad.append(f"{name} {view} {tag}: DISARM while unarmed")
+                armed = kind == "arm" or (armed and kind != "disarm")
+            for tag in printed:
+                if state[tag] != (tag in armed_tags):
+                    bad.append(f"{name} {view} {tag}: runs {'armed' if state[tag] else 'unarmed'}"
+                               f", the pairs say {'armed' if tag in armed_tags else 'unarmed'}")
+        by_tag = {r[0]: r for r in rows}
+        for u, a in pairs:
+            if u not in by_tag or a not in by_tag:
+                bad.append(f"{name}: pair {u}/{a} names a missing row")
+            elif by_tag[u][1:5] != by_tag[a][1:5] or by_tag[u][5] != by_tag[a][5]:
+                bad.append(f"{name}: pair {u}/{a} rows differ beyond the tag")
+    expect(not bad, "session table rules:\n  " + "\n  ".join(bad))
+
+
 @case(10, "NXBX copy-path fit - crossover, implied threshold, row parser, pricing anchors")
 def t10_copy_threshold_fit():
     import io

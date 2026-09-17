@@ -13,7 +13,8 @@ NXBG/NXBL/NXBT/NXBE/NXBH/NXBF/NXBV) exactly as src/video.asm's NXB_PAGE
 tables define them: each row carries its own explicit kernel-select value
 (thr) for its kind, so the bench measures a fixed select value directly
 instead of depending on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN
-currently ships.
+currently ships. SESSION_TABLES holds the session modes that ride a
+staged clip (REAL, verb NXBR) the same way.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -375,6 +376,84 @@ BENCH_TABLES = {
         ("GS3C", "skip16", 576, 10, 64, 0, 0x01),
     ),
 }
+
+
+# SESSION_TABLES: {name: ((tag, kind, param, reps, thr, strm), ...)} for the
+# session bench modes (flags+248), in row order, the fields of the 10-byte
+# session row on NXB_PAGE (ds 4 tag, db kind, dw param, dw reps, db thr).
+# kind is one of SESSION_KINDS (NXB_K_* order); strm marks NXB_K_STRM, a row
+# a resident session skips. ARM and DISARM rows print nothing.
+SESSION_KINDS = ("id", "ring", "remn", "scan", "sweep", "frame", "aud", "pace",
+                 "loop", "arm", "disarm", "prod")
+SESSION_SILENT = ("arm", "disarm")
+SESSION_REPS = ("frame", "aud", "pace", "prod")      # nxb_lrow kinds: reps >= 1
+SESSION_DECODE = ("scan", "sweep", "frame", "loop")  # thr = the COPY select
+SESSION_MODES = {"REAL": 2}                          # flags+248
+
+SESSION_TABLES = {
+    "REAL": (   # NXBR - nxbSesReal: real frames, audio, loop, producer, armed
+        ("IDEN", "id", 0, 0, 0, False),
+        ("RING", "ring", 0, 0, 0, False),
+        ("SCAN", "scan", 0, 0, 65, False),
+        ("W055", "sweep", 0, 0, 55, False),
+        ("W060", "sweep", 0, 0, 60, False),
+        ("W065", "sweep", 0, 0, 65, False),
+        ("W070", "sweep", 0, 0, 70, False),
+        ("W075", "sweep", 0, 0, 75, False),
+        ("W081", "sweep", 0, 0, 81, False),
+        ("FA65", "frame", 0, 8, 65, False),
+        ("FB65", "frame", 1, 8, 65, False),
+        ("FC65", "frame", 2, 8, 65, False),
+        ("WL16", "sweep", 16, 0, 65, False),
+        ("AUD1", "aud", 0, 64, 0, False),
+        ("PACE", "pace", 0, 1024, 0, False),
+        ("LOOP", "loop", 16, 0, 65, False),
+        ("ARM1", "arm", 0, 0, 0, False),
+        ("A065", "sweep", 0, 0, 65, False),
+        ("XA65", "frame", 0, 8, 65, False),
+        ("XB65", "frame", 1, 8, 65, False),
+        ("XC65", "frame", 2, 8, 65, False),
+        ("AW16", "sweep", 16, 0, 65, False),
+        ("AAUD", "aud", 0, 64, 0, False),
+        ("ALOP", "loop", 16, 0, 65, False),
+        ("DSRM", "disarm", 0, 0, 0, True),
+        ("REMN", "remn", 0, 0, 0, True),
+        ("PROD", "prod", 0, 128, 0, True),
+        ("ARM2", "arm", 0, 0, 0, True),
+        ("APRD", "prod", 0, 128, 0, True),
+    ),
+}
+
+# (unarmed, armed) twins per session table: the same row, run before and
+# after ARM. Every other printed row runs unarmed.
+SESSION_ARMED_PAIRS = {
+    "REAL": (("W065", "A065"), ("FA65", "XA65"), ("FB65", "XB65"),
+             ("FC65", "XC65"), ("WL16", "AW16"), ("AUD1", "AAUD"),
+             ("LOOP", "ALOP"), ("PROD", "APRD")),
+}
+
+
+def session_rows(name, streaming):
+    """The rows one session runs, in order: a resident session skips strm rows."""
+    return tuple(r for r in SESSION_TABLES[name] if streaming or not r[5])
+
+
+def session_printed(name, streaming):
+    """The tags one session prints, in print order."""
+    return tuple(r[0] for r in session_rows(name, streaming)
+                 if r[1] not in SESSION_SILENT)
+
+
+def session_armed(name, streaming):
+    """{tag: True when the row runs after ARM with no DISARM since}."""
+    armed, out = False, {}
+    for tag, kind, *_ in session_rows(name, streaming):
+        if kind == "arm":
+            armed = True
+        elif kind == "disarm":
+            armed = False
+        out[tag] = armed
+    return out
 
 
 def printed_tags(mode):

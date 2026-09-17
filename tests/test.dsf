@@ -335,6 +335,9 @@ LS256 111     verb
 ;   NXBD - flag 248 + GFX 10 13: the direct-serve transport
 ;          breakdown against 010.VID (6 rows). NEEDS -VidLong staged.
 ;          Playback is REPLACED by the bench - nothing plays.
+;   NXBR - verb 127, flag 248 = 2 + GFX @140 13 after PICK nn: the REAL
+;          session rows on the armed clip (23 rows resident, 26
+;          streaming, two columns). Playback is REPLACED.
 ; Rows print at tilemap rows 8+ and become visible when the timeline
 ; report hides Layer 2 at teardown. Release's EXTERN 0 12 is ext_stub
 ; and flag 248 is inert, so all of them are silent no-ops there.
@@ -350,6 +353,7 @@ NXBE  123     verb
 NXBH  124     verb
 NXBF  125     verb
 NXBV  126     verb
+NXBR  127     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -1126,6 +1130,12 @@ $pictureOK
 
 > NXBD    _     LET     248 1
                 GFX     10 13
+                PROCESS 10
+                DONE
+
+; NXBR: the REAL session bench on the clip PICK armed (flag 140).
+> NXBR    _     LET     248 2
+                GFX     @140 13
                 PROCESS 10
                 DONE
 

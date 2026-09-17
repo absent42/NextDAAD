@@ -2242,26 +2242,16 @@ vid_run:
     and $FF-(HOOK_XBN+HOOK_CYC)
     ld (xbnIntOn), a
  IFDEF DEBUG
-    ; SP17 BENCH HOOK (row group 1, direct-serve transport breakdown).
-    ; flags+248 selects it; a DIRECT session only (the rows measure the
-    ; ds routines and would consume a resident/streamed session's ring
-    ; without meaning). Placed HERE deliberately: the session is fully
-    ; armed (window open one block into run 0, counters live) but the
-    ; CTC is NOT - no ISR, no DI windows, the quiet machine the
-    ; settlement's unarmed rows were taken on. Playback is REPLACED:
-    ; the rows run, then the ordinary teardown + timeline report.
+    ; Session bench hook: flags+248 = session mode (nxb_sess). The session is
+    ; staged and the CTC is not armed; playback is replaced by the rows.
     ld a, (flags+248)
     or a
     jr z, .nobench
-    ld a, (vidDirect)
-    or a
-    jr nz, .dsbench
-    call nxb_ds_unsel            ; D1: not direct - fall through and
-    jr .nobench                  ; play, but do not leave the selector
-                                 ; set for the next video verb
-.dsbench:
-    ld (vidDecSp), sp            ; abort anchor for the bench rows
+    ld (vidDecSp), sp            ; abort anchor = the session anchor
+    call nxb_sess                ; NC: a direct session
+    jr c, .benchend
     call nxb_ds_rows
+.benchend:
     jp .restore
 .nobench:
  ENDIF
@@ -2376,6 +2366,7 @@ vid_run:
  ENDIF
     ld (vidDecSp), sp            ; abort anchor for this iteration
 .pace:
+.pacecall equ $+1                ; DEBUG bench LOOP row: nxb_lp_pace
     call vid_pace_poll           ; integrate consumption; CF = this
     jr c, .paced                 ; frame's audio consumed (or past)
     ; not yet: chase the reader with the staged feed, and (streaming)
@@ -2474,6 +2465,7 @@ vid_run:
     ld (vidFramesLeft), hl
     ld a, h
     or l
+.loopj equ $+1                   ; DEBUG bench LOOP row: nxb_lp_next
     jp nz, .frameloop
     ; --- EOF (loop mode already rewound + queued at .qnext) ---
     ld a, (vidLoopMode)
@@ -2501,6 +2493,12 @@ vid_run:
     ; VID_ERR_*, stored to vidErrCode in DEBUG for the report)
 .restore:
  IFDEF DEBUG
+    ld a, (nxbSessLive)
+    or a
+    jr z, .nosess
+    ld sp, (nxbSessSp)           ; a session exit tears down at the hook's depth
+    call nxb_reclaim
+.nosess:
     call vid_play_close          ; PLAY= bracket close, before the CTC
                                  ; is parked (every exit lands here)
  ENDIF
@@ -3734,9 +3732,9 @@ vid_tl_report_ret:
 ; vid_fill_dma are CALLED, never re-implemented. The bench lives HERE,
 ; on VID_PAGE, because those routines are MMU7-resident on this page
 ; and no other page can reach them.
-; NXB_PAGE (DEBUG bank 47, MMU6) holds the tables: data, and code that
-; never maps MMU6. Anything that decodes, pumps, produces, seeks, maps
-; MMU6 or runs inside a measured window stays on VID_PAGE.
+; NXB_PAGE (DEBUG bank 47, MMU6) holds the tables and untimed session code
+; entered through nxb_hop6. Anything that decodes, pumps, produces, seeks,
+; maps MMU6 or runs inside a measured window stays on VID_PAGE.
 ;
 ; CLOCK (carried verbatim from NXBEN, so results stay on the settled
 ; scale): the raster line pair NR $1E/$1F. One wrap = one frame; rows
@@ -3764,6 +3762,9 @@ vid_tl_report_ret:
 ;  10 COPY path pairs on the gapped surface at height 144.
 ;  11 RUN path pairs (CPU fill against DMA), flat and gapped.
 ;  12 events: dest-edge bails, SKIP body passes, a dest seam, columns.
+; SESSION MODES (flags+248, nxb_sess) ride a staged clip at vid_run's hook:
+;   1 direct-serve transport rows, 2 REAL (real frames, audio, the frame
+;   loop, the producer, an armed pass).
 ;
 ; STANDALONE MODES (2-12) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
@@ -3800,13 +3801,38 @@ NXB_CAL_SPAN     equ 12      ; CAL body: 256-pass djnz loops per poll
     ; one poll gap at 28 MHz (+1 wait per fetch/read): 3863 T a loop plus
     ; about 400 T of poll; at least one poll every 1/8 field
     ASSERT NXB_CAL_SPAN * 3863 + 400 < 311 * 1824 / 8
+NXB_SROW_LEN     equ 10      ; session row: ds 4 tag, db kind, dw param,
+                             ; dw reps, db thr
+NXB_SESS_LAST    equ 2       ; session modes 1..NXB_SESS_LAST (nxbSessDir)
+NXB_SESS_ROWS    equ 16      ; session rows per column (rows 8-23)
+NXB_SESS_COL2    equ 40      ; the second column
+NXB_RUN_REF      equ 71      ; RUN select for the session decode rows
+NXB_CELLS_LEN    equ 12      ; the decode start cells (nxb_cells_get)
+NXB_SLOT         equ 3 + NXB_CELLS_LEN   ; top-3 slot: dw lines, db index, cells
+; Session row kinds; NXB_K_STRM marks a streaming-only row.
+NXB_K_ID         equ 0
+NXB_K_RING       equ 1
+NXB_K_REMN       equ 2
+NXB_K_SCAN       equ 3
+NXB_K_SWEEP      equ 4
+NXB_K_FRAME      equ 5
+NXB_K_AUD        equ 6
+NXB_K_PACE       equ 7
+NXB_K_LOOP       equ 8
+NXB_K_ARM        equ 9
+NXB_K_DISARM     equ 10
+NXB_K_PROD       equ 11
+NXB_K_COUNT      equ 12
+NXB_K_STRM       equ $80
+    ; nxb_aud_body/nxb_lp_pace put the writer half a ring ahead of IX with xor
+    ASSERT vidAudBuf == $6000 && NXV_AUD_RING == $2000
 
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
 ; Modes 2-12 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
-; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
+; instead (flags+248 + a GFX n 13 verb; see nxb_sess).
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
 ; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
@@ -3931,6 +3957,7 @@ nxb_ops_setup:
     ld (vidStreaming), a
     ld (vidInSpan), a
     ld (vidDirect), a
+    ld (nxbSessLive), a
     ; per-session SMC: RAM fetch, RAM bodies
     ld hl, vid_fetch_ram
     ld (vid_fetch.vec + 1), hl
@@ -3968,7 +3995,18 @@ nxb_ops_restore:
 ; session's values (or none), and vid_run.restore_tail - which the
 ; abort chain reaches - would otherwise map two arbitrary pages and
 ; leave MMU7 off VID_PAGE for the ret that follows.
+; A live session is ended here too: the LOOP row's frame-loop operands go
+; back, and vidDecSp takes the session anchor so an abort unwinds to the hook.
 nxb_reclaim:
+    call nxb_lp_unpatch
+    ld a, (nxbSessLive)
+    or a
+    jr z, .nosess
+    xor a
+    ld (nxbSessLive), a
+    ld hl, (nxbSessSp)
+    ld (vidDecSp), hl
+.nosess:
     ld bc, (NXV2_RUN_DMA_MIN << 8) | NXV2_COPY_DMA_MIN
     call nxb_sel_set
     ld hl, VID_DST_WIN
@@ -4474,30 +4512,30 @@ nxb_puttag:
     ret
 
 ; ---------------------------------------------------------------------
-; A2 - MMU3 PRINT BRACKET (direct-serve rows only).
+; A2 - MMU3 PRINT BRACKET (session rows only).
 ; vid_run_l2setup_body borrows MMU3 ($6000-$7FFF) for the session audio
 ; window and only restores it at teardown, and VID_AUD_WIN IS TM_MAP -
-; so every cell tm_putc_at writes during a direct-serve row lands in the
+; so every cell tm_putc_at writes during a session row lands in the
 ; audio bank and is thrown away with it. Put the real tilemap page back
 ; for the PRINT and take it away again immediately after.
-; Both halves run OUTSIDE every measured window (nxb_row opens the
-; bracket only after nxbL1 has been read; the TOK tail times nothing),
+; Both halves run OUTSIDE every measured window (every row opens the
+; bracket only after its clock has closed; the TOK tail times nothing),
 ; so no row's raster delta can see either of them. Mapping a different
 ; page into the SAME slot is timing-neutral in any case.
 ; The standalone rows never borrowed MMU3 -
-; nxb_ops_setup zeroes vidDirect, which gates both halves to a no-op.
-; nxbSvTm3 is captured hot in vid_run; nxbSvAud3 in nxb_ds_rows.
+; nxb_ops_setup zeroes nxbSessLive, which gates both halves to a no-op.
+; nxbSvTm3 is captured hot in vid_run; nxbSvAud3 in nxb_sess_setup.
 ; Corrupts AF; preserves BC, DE, HL.
 ; ---------------------------------------------------------------------
 nxb_tm_in:
-    ld a, (vidDirect)
+    ld a, (nxbSessLive)
     or a
     ret z
     ld a, (nxbSvTm3)
     nextreg NR_MMU3, a
     ret
 nxb_tm_out:
-    ld a, (vidDirect)
+    ld a, (nxbSessLive)
     or a
     ret z
     ld a, (nxbSvAud3)
@@ -4506,7 +4544,7 @@ nxb_tm_out:
 
 ; D1 - the direct-serve bench selector must never outlive the run that
 ; set it: a stuck flags+248 diverts the NEXT VDIR/VDIRL/DPACE/DPACL into
-; the bench instead of playing. nxb_ds_rows self-clears on the taken
+; the bench instead of playing. nxb_sess_setup self-clears on the taken
 ; path; this is what the bails call. Corrupts AF.
 nxb_ds_unsel:
     xor a
@@ -4619,14 +4657,8 @@ nxb_fail_row:
 NXB_DS_REPS      equ 128     ; blocks per direct row
 
 nxb_ds_rows:
-    xor a
-    ld (flags+248), a            ; self-clearing
-    ld (nxbOps), a               ; no ops on these rows: O prints 00
-    ld e, NR_MMU3                ; A2: the session's borrowed audio page
-    call nr_read                 ; - put back after every print bracket
-    ld (nxbSvAud3), a
-    ld a, NXB_ROW0
-    ld (nxbRow), a
+    xor a                        ; nxb_sess_setup has cleared the selector,
+    ld (nxbOps), a               ; captured MMU3 and blanked; O prints 00
     ld hl, 0
     ld (vidTokPolls), hl
     ld (vidTokCalls), hl
@@ -4781,6 +4813,250 @@ nxb_ds_d:
     djnz .x
     ret
 
+; =====================================================================
+; SESSION BENCH (flags+248). vid_run's hook anchors vidDecSp and calls
+; nxb_sess. nxb_sess_setup (NXB_PAGE) sets the entry state and stages the
+; mode's table; each row hops to nxb_srow_go, whose kinds jump to the
+; timed loops below. Every exit reaches vid_run.restore and nxb_reclaim.
+; =====================================================================
+
+; Out: NC = a direct session (the hook runs nxb_ds_rows); CF = done.
+nxb_sess:
+    ld hl, nxb_sess_setup
+    call nxb_hop6                ; NC direct; C and Z mismatch; C and NZ table
+    ret nc
+    ret z
+    ld hl, nxbTabBuf
+    call nxb_sess_walk
+    scf
+    ret
+
+; Call HL on NXB_PAGE: MMU6 maps NXB_PAGE, then gets the caller's page back.
+; Out: the callee's F, BC, DE, HL. Corrupts A and E on entry.
+nxb_hop6:
+    ld e, NR_MMU6
+    call nr_read                 ; preserves HL
+    push af
+    nextreg NR_MMU6, NXB_PAGE
+    call .go
+    ex (sp), hl                  ; H = the saved MMU6
+    ld a, h
+    nextreg NR_MMU6, a           ; F kept: NEXTREG has no ALU save in the core
+    pop hl
+    ret
+.go:
+    jp (hl)
+
+; Walk the session table at HL: tag, then kind/param/reps/thr into
+; nxbKind..nxbGeo, then nxb_srow_go. Corrupts everything.
+nxb_sess_walk:
+    ld a, (hl)
+    or a
+    ret z                        ; end of table
+    ld (nxbTag), hl
+    ld bc, 4
+    add hl, bc
+    ld de, nxbKind
+    ld c, NXB_SROW_LEN - 4       ; B = 0
+    ldir
+    push hl
+    ld hl, nxb_srow_go
+    call nxb_hop6
+    pop hl
+    jr nxb_sess_walk
+    ASSERT nxbReps == nxbKind + 3 && nxbGeo == nxbKind + NXB_SROW_LEN - 5
+
+; nxbReps reps of nxb_body on the long clock, then the row print. Entered by
+; jp from a kind that set nxb_body and nxbSO.
+nxb_lrow:
+    ld hl, (nxbReps)
+    ld (nxbLeft), hl
+    call nxb_lc_start
+.rep:
+    call nxb_body
+    ld hl, (nxbLeft)
+    dec hl
+    ld (nxbLeft), hl
+    ld a, h
+    or l
+    jr nz, .rep
+    call nxb_lc_end
+    ld hl, nxb_sprint
+    jp nxb_hop6
+
+; AUD rep: S0 cursors, the writer half a ring ahead of the reader (an armed
+; reader moves on before the pump reads it), then .qnext's stage and pump.
+nxb_aud_body:
+    ld hl, nxbS0
+    call nxb_cells_put
+    push ix
+    pop hl
+    ld a, h
+    xor high (NXV_AUD_RING / 2)
+    ld h, a
+    ld (vidAudWr), hl
+    call vid_aud_stage
+    ld bc, $FFFF
+    call vid_aud_pump
+    ret
+
+; FRAME rep: the chosen frame's start cells, then its decode.
+nxb_frame_body:
+    ld hl, nxbCells
+    call nxb_cells_put
+    jp vid_decode_any
+
+; The decode start cells: vidFramePos, the span cells, vidRingRl and
+; vidRingDepth. nxb_cells_put: HL = 12-byte buffer -> the cells.
+; nxb_cells_get: the cells -> DE. Corrupts F, BC, DE, HL.
+nxb_cells_put:
+    ld de, vidFramePos
+    ld bc, 3
+    ldir
+    ld de, vidInSpan
+    ld c, 4
+    ldir
+    ld de, vidRingRl
+    ld c, 3
+    ldir
+    ld de, vidRingDepth
+    ld c, 2
+    ldir
+    ret
+nxb_cells_get:
+    ld hl, vidFramePos
+    ld bc, 3
+    ldir
+    ld hl, vidInSpan
+    ld c, 4
+    ldir
+    ld hl, vidRingRl
+    ld c, 3
+    ldir
+    ld hl, vidRingDepth
+    ld c, 2
+    ldir
+    ret
+    ASSERT vidSpanDE + 2 - vidInSpan == 4 && 3 + 4 + 3 + 2 == NXB_CELLS_LEN
+
+; Frame walk stop test. CF = stop: nxbWLeft is 0, or a streaming ring holds
+; less than FRAMECAP plus the audio blocks. Else nxbWLeft -= 1.
+; Corrupts AF, DE, HL.
+nxb_wstop:
+    ld hl, (nxbWLeft)
+    ld a, h
+    or l
+    scf
+    ret z
+    ld a, (vidStreaming)
+    or a
+    jr z, .go
+    ld hl, (vidRingDepth)
+    inc hl
+    ld de, (vidNeedBlk)          ; cap + apad + 1
+    sbc hl, de                   ; CF clear from or a
+    ret c
+    ld hl, (nxbWLeft)
+.go:
+    dec hl
+    ld (nxbWLeft), hl
+    ret
+
+; Audio skip: the cursors vid_aud_pump's completion leaves - the real bytes
+; as its chunks add them, then its own .ramdone. Corrupts AF, BC, DE, HL.
+nxb_askip:
+    ld bc, (vidABytes)
+    ld a, (vidStreaming)
+    or a
+    jr nz, .strm
+    ld hl, (vidFramePos)
+    add hl, bc
+    ld (vidFramePos), hl
+    jr nc, .done
+    ld hl, vidFramePos+2
+    inc (hl)
+    jr .done
+.strm:
+    ld hl, (vidRingRl)
+    add hl, bc
+    ld a, (vidRingRl+2)
+    adc a, 0
+    call vid_rl_mod
+.done:
+    jp vid_aud_pump.ramdone
+
+; SWEEP: the frame walk under one long clock (from nxb_kind_sweep).
+nxb_sweep_run:
+    call nxb_lc_start
+.f:
+    call nxb_wstop
+    jr c, .end
+    call nxb_askip
+    call vid_decode_any
+    jr .f
+.end:
+    call nxb_lc_end
+    ld hl, nxb_walk_done
+    jp nxb_hop6
+
+; SCAN: each frame's decode alone on the long clock; nxb_scan_keep keeps
+; the three longest (from nxb_kind_scan).
+nxb_scan_run:
+    call nxb_wstop
+    jr c, .end
+    call nxb_askip
+    ld de, nxbCells
+    call nxb_cells_get
+    call nxb_lc_start
+    call vid_decode_any
+    call nxb_lc_end
+    ld hl, nxb_scan_keep
+    call nxb_hop6
+    jr nxb_scan_run
+.end:
+    ld hl, nxb_scan_done
+    jp nxb_hop6
+
+; LOOP: open the clock and run the shipping frame loop, its pace call and
+; loop-back jump patched by nxb_kind_loop.
+nxb_lp_go:
+    call nxb_lc_start
+    jp vid_run.frameloop
+
+; vid_run.pacecall target: IX into vidAudRdPrev, the writer half a ring
+; ahead, released at once.
+nxb_lp_pace:
+    push ix
+    pop hl
+    ld (vidAudRdPrev), hl
+    ld a, h
+    xor high (NXV_AUD_RING / 2)
+    ld h, a
+    ld (vidAudWr), hl
+    scf
+    ret
+
+; vid_run.loopj target: back to the frame loop until nxbLoopLeft reaches 0;
+; then close the clock, unpatch, re-anchor vidDecSp and print.
+nxb_lp_next:
+    ld hl, nxbLoopLeft
+    dec (hl)
+    jp nz, vid_run.frameloop
+    call nxb_lc_end
+    call nxb_lp_unpatch
+    ld hl, (nxbSessSp)
+    ld (vidDecSp), hl
+    ld hl, nxb_sprint1
+    jp nxb_hop6
+
+; The frame loop's shipping pace call and loop-back jump. Corrupts HL.
+nxb_lp_unpatch:
+    ld hl, vid_pace_poll
+    ld (vid_run.pacecall), hl
+    ld hl, vid_run.frameloop
+    ld (vid_run.loopj), hl
+    ret
+
 ; zxnDMA WR1/WR2/WR5 one-time program - the VID_PAGE-local twin of
 ; vidDmaInit (VID_PAGE2, unreachable from here). Byte-for-byte the
 ; same six bytes; if that block ever changes, this one moves with it.
@@ -4817,6 +5093,8 @@ nxbTag:      dw 0
 nxbOpc:      db 0
 nxbCnt:      dw 0
 nxbOps:      db 0
+nxbKind:     db 0            ; session row: kind, param, reps, thr (nxbGeo)
+nxbParam:    dw 0
 nxbReps:     dw 0
 nxbGeo:      db 0
 nxbLeft:     dw 0
@@ -4837,6 +5115,14 @@ nxbSvAudEn:  db 0
 nxbSvTm3:    db 0            ; A2: pre-borrow MMU3 (the real tilemap
                              ; page), captured hot in vid_run
 nxbSvAud3:   db 0            ; A2: the session's borrowed audio page
+nxbSessLive: db 0            ; a session is running (print bracket, exits)
+nxbSessSp:   dw 0            ; the hook's SP: vid_run.restore reloads it
+nxbSO:       db 0            ; session row O value
+nxbWLeft:    dw 0            ; frame walk: frames still to run
+nxbLoopLeft: db 0            ; LOOP row: frame loop passes still to run
+nxbS0:       ds NXB_CELLS_LEN   ; decode start cells at session entry
+nxbCells:    ds NXB_CELLS_LEN   ; SCAN's current frame, FRAME's chosen frame
+vidPoolAtOpen: db 0          ; free pool banks before nxv2_open_body allocates
 ; nxb_geo_setup lookups by code: gapped height, dest start.
 nxbGeoH:     db 192, 144, 72
 nxbGeoDst:   dw VID_DST_WIN, NXB_MID_DST, NXB_EDGE_DST, NXB_SEAM_DST
@@ -4853,7 +5139,7 @@ vidTokCalls: dw 0
  IFDEF DEBUG
 ; ---------------------------------------------------------------------
 ; NXB_PAGE - the DEBUG bench bank's lower 8K, at $C000. MMU6 holds it
-; only inside nxb_tab_stage; data only.
+; only inside nxb_tab_stage and nxb_hop6: tables and untimed session steps.
 ; ---------------------------------------------------------------------
     MMU 6, NXB_PAGE, DATA_WINDOW
 
@@ -5129,6 +5415,537 @@ nxbTabEvt:
 nxbTabEvtEnd:
     ASSERT nxbTabEvtEnd - nxbTabEvt <= 20 * NXB_ROW_LEN + 1
 
+; ---------------------------------------------------------------------
+; SESSION STEPS - untimed, entered through nxb_hop6 (MMU6 = NXB_PAGE).
+; Nothing here decodes, pumps, produces, seeks or maps MMU6: every timed
+; loop is a VID_PAGE routine this code jumps to.
+; ---------------------------------------------------------------------
+
+; Session entry: the selector cleared, the entry state, S0, the mode's
+; delivery check and table. Out: NC = direct, no table; C with Z = a
+; mismatch, printed; C with NZ = the table is staged in nxbTabBuf.
+nxb_sess_setup:
+    ld hl, (vidDecSp)
+    ld (nxbSessSp), hl
+    ld a, (flags+248)
+    ld (nxbMode), a
+    xor a
+    ld (flags+248), a            ; self-clearing
+    inc a
+    ld (nxbSessLive), a
+    ld e, NR_MMU3
+    call nr_read
+    ld (nxbSvAud3), a            ; the session's audio page (print bracket)
+    ld a, NXB_ROW0
+    ld (nxbRow), a
+    call nxb_tm_in
+    call nxb_blank
+    call nxb_tm_out
+    ld ix, vidAudBuf             ; as the preload: the open leaves IX stale
+    ld hl, vidAudBuf
+    ld (vidAudWr), hl
+    ld (vidAudRdPrev), hl
+    ld hl, 0
+    ld (vidAudFeedRem), hl
+    ld (vidPaceRem), hl
+    ld de, nxbS0
+    call nxb_cells_get
+    ld a, (nxbMode)
+    dec a
+    cp NXB_SESS_LAST
+    jr nc, .bad
+    ld b, a
+    add a, a
+    add a, a
+    add a, b                     ; 5-byte directory entries
+    ld hl, nxbSessDir
+    add hl, a
+    push hl
+    call nxb_deliv
+    ld hl, nxbDelivBit
+    add hl, a
+    ld a, (hl)
+    pop hl
+    and (hl)
+    jr z, .bad
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    ld a, b
+    or c
+    ret z                        ; NC: no table
+    ex de, hl
+    ld de, nxbTabBuf
+    ldir                         ; BC = 1..NXB_TAB_MAX (NXBSDIR)
+    or a                         ; NZ
+    scf
+    ret
+.bad:
+    call nxb_tm_in
+    ld bc, NXB_ROW0 << 8
+    call dbg_at
+    ld hl, nxbMsgSess
+    call dbg_puts
+    call nxb_tm_out
+    xor a                        ; Z
+    scf
+    ret
+
+; A = 0 resident, 1 streaming, 2 direct. Corrupts F, HL.
+nxb_deliv:
+    ld a, (vidDirect)
+    add a, a
+    ld hl, vidStreaming
+    add a, (hl)
+    ret
+nxbDelivBit: db %001, %010, %100
+
+; One row, nxbKind..nxbGeo loaded: a streaming-only row is skipped by a
+; resident session; a nonzero thr goes to the COPY selects, NXB_RUN_REF
+; to the RUN selects.
+nxb_srow_go:
+    ld a, (nxbKind)
+    rlca                         ; CF = NXB_K_STRM
+    jr nc, .run
+    ld b, a
+    ld a, (vidStreaming)
+    or a
+    ret z
+    ld a, b
+.run:
+    and $FE                      ; kind * 2
+    ld hl, nxbKindTab
+    add hl, a
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    ld a, (nxbGeo)               ; thr
+    or a
+    jr z, .go
+    ld c, a
+    ld b, NXB_RUN_REF
+    call nxb_sel_set
+.go:
+    jp (hl)
+nxbKindTab:
+    dw nxb_kind_id, nxb_kind_ring, nxb_kind_remn, nxb_kind_scan
+    dw nxb_kind_sweep, nxb_kind_frame, nxb_kind_aud, nxb_kind_pace
+    dw nxb_kind_loop, nxb_kind_arm, nxb_kind_disarm, nxb_kind_prod
+    ASSERT $ - nxbKindTab == NXB_K_COUNT * 2
+
+; Field rows: nxbSO, nxbLcF (F) and nxbReps (R) set, HL = D.
+nxb_fprint:
+    ld (nxbL1), hl
+    ld hl, 0
+    ld (nxbL0), hl
+    jr nxb_sprint0
+; One-shot rows: R = 0001.
+nxb_sprint1:
+    ld hl, 1
+    ld (nxbReps), hl
+nxb_sprint0:
+    ld hl, 0
+    ld (nxbLeft), hl
+; TAG O=(nxbSO) R=nxbReps-nxbLeft F=(nxbLcF) D=nxbL1-nxbL0 on the next
+; session row: rows 8-23 at column 0, then at column NXB_SESS_COL2.
+nxb_sprint:
+    call nxb_tm_in
+    ld a, (nxbRow)
+    ld b, a
+    inc a
+    ld (nxbRow), a
+    ld c, 0
+    ld a, b
+    sub NXB_ROW0 + NXB_SESS_ROWS
+    jr c, .at
+    add a, NXB_ROW0
+    ld b, a
+    ld c, NXB_SESS_COL2
+.at:
+    call dbg_at
+    call nxb_puttag
+    ld a, (nxbSO)
+    ld hl, (nxbLcF)
+    call nxb_ofrd
+    jp nxb_tm_out
+
+; ID: O = delivery, R = vidFrames, F = width, D = the height byte.
+nxb_kind_id:
+    call nxb_deliv
+    ld (nxbSO), a
+    ld hl, (vidFrames)
+    ld (nxbReps), hl
+    ld hl, $0100
+    ld a, (vidDstPages)
+    cp 10                        ; mode-1 dest span: 320 wide
+    jr nz, .w
+    ld l, $40
+.w:
+    ld (nxbLcF), hl
+    ld a, (vidHeightB)
+    ld l, a
+    ld h, 0
+    jr nxb_fprint
+
+; RING: O = 00, R = vidRingDepth at entry (0 resident), F = vidTlFillFrames,
+; D = vidPoolAtOpen.
+nxb_kind_ring:
+    xor a
+    ld (nxbSO), a
+    ld hl, (nxbS0 + NXB_CELLS_LEN - 2)   ; S0's vidRingDepth
+    ld a, (vidStreaming)
+    or a
+    jr nz, .s
+    ld h, a
+    ld l, a
+.s:
+    ld (nxbReps), hl
+    ld hl, (vidTlFillFrames)
+    ld (nxbLcF), hl
+    ld a, (vidPoolAtOpen)
+    ld l, a
+    ld h, 0
+    jp nxb_fprint
+
+; REMN: O = 00, R = vidStrmRemainBlk's low word, F = its high byte, D = 0.
+nxb_kind_remn:
+    xor a
+    ld (nxbSO), a
+    ld hl, (vidStrmRemainBlk)
+    ld (nxbReps), hl
+    ld a, (vidStrmRemainBlk+2)
+    ld l, a
+    ld h, 0
+    ld (nxbLcF), hl
+    ld l, h
+    jp nxb_fprint
+
+; SCAN and SWEEP: S0, then nxbWLeft = param frames, or every frame when
+; param is 0 or over vidFrames; the ret enters the walk loop.
+nxb_kind_scan:
+    ld hl, 0
+    ld (nxbScanF), hl
+    ld (nxbScanD), hl
+    ld hl, nxb_scan_run
+    jr nxb_walk0
+nxb_kind_sweep:
+    ld hl, nxb_sweep_run
+nxb_walk0:
+    push hl
+    ld hl, nxbS0
+    call nxb_cells_put
+    ld hl, (vidFrames)
+    ld de, (nxbParam)
+    ld a, d
+    or e
+    jr z, .set
+    sbc hl, de                   ; CF clear from or e
+    ld hl, (vidFrames)
+    jr c, .set
+    ex de, hl
+.set:
+    ld (nxbWLeft), hl
+    ld (nxbWLim), hl
+    ret
+
+; End of a walk: O = frames walked, R = 0001.
+nxb_walk_done:
+    ld hl, (nxbWLim)
+    ld de, (nxbWLeft)
+    or a
+    sbc hl, de
+    ld a, l
+    ld (nxbSO), a
+    jp nxb_sprint1
+; End of SCAN: F/D = the per-frame decode windows summed.
+nxb_scan_done:
+    ld hl, (nxbScanF)
+    ld (nxbLcF), hl
+    ld hl, (nxbScanD)
+    ld (nxbL1), hl
+    ld hl, 0
+    ld (nxbL0), hl
+    jr nxb_walk_done
+
+; After one SCAN frame: lines = F*311 + D (a clock timeout reads $FFFF) into
+; the sums and slot 3, with the frame index and nxbCells. Frame 0 fills
+; every slot; later frames bubble up past shorter ones.
+nxb_scan_keep:
+    ld hl, (nxbL1)
+    ld de, (nxbL0)
+    or a
+    sbc hl, de                   ; HL = D
+    ld a, (nxbLcF+1)
+    or a
+    jr nz, .max
+    ld a, (nxbLcF)
+    ld d, a
+    ld e, 311 - 256
+    mul d, e                     ; Z80N: DE = F * 55
+    add hl, de
+    add a, h                     ; + F * 256
+    ld h, a
+    jr .lines
+.max:
+    ld hl, $FFFF
+.lines:
+    ld (nxbTopCur), hl
+    ex de, hl
+    ld hl, (nxbScanD)
+    add hl, de
+    ld de, 311
+.div:
+    or a
+    sbc hl, de
+    jr c, .rem
+    push hl
+    ld hl, (nxbScanF)
+    inc hl
+    ld (nxbScanF), hl
+    pop hl
+    jr .div
+.rem:
+    add hl, de
+    ld (nxbScanD), hl            ; 0-310
+    ld hl, (nxbWLim)
+    ld de, (nxbWLeft)
+    or a
+    sbc hl, de
+    dec hl                       ; this frame's index
+    ld a, l
+    ld (nxbTopCur + 2), a
+    push hl
+    ld hl, nxbCells
+    ld de, nxbTopCur + 3
+    ld bc, NXB_CELLS_LEN
+    ldir
+    pop hl
+    ld a, h
+    or l
+    jr nz, nxb_top_ins
+    ld hl, nxbTopCur             ; frame 0 fills every slot
+    ld de, nxbTop
+    ld bc, NXB_SLOT
+    ldir
+    ld hl, nxbTop
+    ld bc, 2 * NXB_SLOT          ; overlapping: slot 0 repeats forward
+    ldir
+    ret
+
+; Bubble slot 3 up past every slot with fewer lines (ties stay below).
+nxb_top_ins:
+    ld de, nxbTopCur
+.up:
+    ld hl, nxbTop
+    or a
+    sbc hl, de
+    ret z                        ; reached slot 0
+    ld hl, -NXB_SLOT
+    add hl, de                   ; the slot above
+    push hl
+    ld a, (de)
+    ld c, a
+    inc de
+    ld a, (de)
+    ld b, a                      ; BC = this frame's lines
+    dec de
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    or a
+    sbc hl, bc                   ; CF = the slot above is shorter
+    pop hl
+    ret nc
+    push hl
+    ld b, NXB_SLOT
+.sw:
+    ld a, (de)
+    ld c, (hl)
+    ld (hl), a
+    ld a, c
+    ld (de), a
+    inc hl
+    inc de
+    djnz .sw
+    pop de                       ; the frame now sits in the slot above
+    jr .up
+
+; FRAME: slot nxbParam (0 = the longest) into nxbCells, O = its index.
+nxb_kind_frame:
+    ld a, (nxbParam)
+    ld d, a
+    ld e, NXB_SLOT
+    mul d, e
+    ld hl, nxbTop + 2
+    add hl, de
+    ld a, (hl)
+    ld (nxbSO), a
+    inc hl
+    ld de, nxbCells
+    ld bc, NXB_CELLS_LEN
+    ldir
+    ld hl, nxb_frame_body
+    jr nxb_lrow_hl
+
+; AUD, PACE and PROD: O = 00, nxbReps reps of the body on nxb_lrow.
+nxb_kind_prod:
+    ld hl, 0
+    ld (vidRingDepth), hl        ; the whole ring is room for the producer
+    ld hl, vid_prod_step
+    jr nxb_lrow0
+nxb_kind_pace:
+    ld hl, vid_pace_poll
+    jr nxb_lrow0
+nxb_kind_aud:
+    ld hl, nxb_aud_body
+nxb_lrow0:
+    xor a
+    ld (nxbSO), a
+nxb_lrow_hl:
+    ld (nxb_body + 1), hl
+    jp nxb_lrow
+
+; LOOP: S0 and one audio skip (frame 0's audio behind the cursor, as the
+; preload leaves it); n = param, at most vidFrames - 1 (the last pass
+; stages frame n's audio) and at least 1; vidFramesLeft = n + 1.
+nxb_kind_loop:
+    ld hl, nxbS0
+    call nxb_cells_put
+    call nxb_askip
+    ld hl, (vidFrames)
+    dec hl
+    ld de, (nxbParam)
+    push hl
+    or a
+    sbc hl, de
+    pop hl
+    jr c, .n
+    ex de, hl
+.n:
+    ld a, l
+    or a
+    jr nz, .n1
+    inc a
+.n1:
+    ld (nxbLoopLeft), a
+    ld (nxbSO), a
+    ld l, a
+    ld h, 0
+    inc hl
+    ld (vidFramesLeft), hl
+    ld hl, 0
+    ld (vidAudFeedRem), hl
+    ld (vidPaceRem), hl          ; .paced sums from 0, as after a release
+    ld hl, nxb_lp_pace
+    ld (vid_run.pacecall), hl
+    ld hl, nxb_lp_next
+    ld (vid_run.loopj), hl
+    jp nxb_lp_go
+
+; ARM: a silent ring, then vid_run's CTC start without the field-phase wait.
+nxb_kind_arm:
+    ld hl, vidAudBuf
+    ld de, vidAudBuf + 1
+    ld bc, NXV_AUD_RING - 1
+    ld (hl), DAC_SILENCE
+    ldir
+    call nxb_ctc_rst             ; BC = AUD_CTC_PORT
+    ld a, AUD_CTC_CW16
+    out (c), a
+    ld ix, vidAudBuf             ; before the time constant starts the timer
+    ld a, (vidCtcTc)
+    out (c), a
+    ret
+; DISARM: vid_run.restore's CTC stop and DAC park.
+nxb_kind_disarm:
+    call nxb_ctc_rst
+    ld a, DAC_SILENCE
+    out (DAC_PORT), a
+    out (VID_DAC_LEFT), a
+    out (VID_DAC_RIGHT), a
+    out (DAC2_PORT), a
+    ret
+nxb_ctc_rst:
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_RESET
+    out (c), a
+    out (c), a
+    ret
+
+nxbMsgSess:  db "NXB SESSION", 0
+nxbTop:      ds 3 * NXB_SLOT    ; the three longest SCAN frames, longest first
+nxbTopCur:   ds NXB_SLOT        ; the frame just scanned
+nxbScanF:    dw 0               ; SCAN sums: F, and D kept below 311
+nxbScanD:    dw 0
+nxbWLim:     dw 0               ; frame walk: frames asked for
+
+; Session modes from 1: db delivery mask (resident %001, streaming %010,
+; direct %100), dw table, dw length (0 = no table).
+    MACRO NXBSDIR mask, tab, tabend
+      db mask
+      dw tab, tabend - tab
+      ASSERT tabend - tab <= NXB_TAB_MAX
+      ASSERT tabend == tab || (tabend - tab) % NXB_SROW_LEN == 1   ; rows + terminator
+    ENDM
+nxbSessDir:
+    NXBSDIR %100, 0, 0                          ; mode 1: direct (nxb_ds_rows)
+    NXBSDIR %011, nxbSesReal, nxbSesRealEnd     ; mode 2: REAL
+    ASSERT $ - nxbSessDir == NXB_SESS_LAST * 5
+
+; One NXB_SROW_LEN session row; kind may carry NXB_K_STRM.
+    MACRO NXBSROW tag, kind, param, reps, thr
+NXB_ROW_AT defl $
+      db tag
+      db kind
+      dw param, reps
+      db thr
+      ASSERT $ - NXB_ROW_AT == NXB_SROW_LEN
+      ASSERT (kind & ~NXB_K_STRM) < NXB_K_COUNT
+    ENDM
+
+; REAL: real frames of the staged clip. SCAN keeps the three longest for the
+; FRAME rows; W0tt sweep every frame at COPY select tt; the A and X rows
+; repeat after ARM with the audio ISR live. Resident sessions stop at ALOP.
+nxbSesReal:
+    NXBSROW "IDEN", NXB_K_ID, 0, 0, 0
+    NXBSROW "RING", NXB_K_RING, 0, 0, 0
+    NXBSROW "SCAN", NXB_K_SCAN, 0, 0, 65
+    NXBSROW "W055", NXB_K_SWEEP, 0, 0, 55
+    NXBSROW "W060", NXB_K_SWEEP, 0, 0, 60
+    NXBSROW "W065", NXB_K_SWEEP, 0, 0, 65
+    NXBSROW "W070", NXB_K_SWEEP, 0, 0, 70
+    NXBSROW "W075", NXB_K_SWEEP, 0, 0, 75
+    NXBSROW "W081", NXB_K_SWEEP, 0, 0, 81
+    NXBSROW "FA65", NXB_K_FRAME, 0, 8, 65
+    NXBSROW "FB65", NXB_K_FRAME, 1, 8, 65
+    NXBSROW "FC65", NXB_K_FRAME, 2, 8, 65
+    NXBSROW "WL16", NXB_K_SWEEP, 16, 0, 65
+    NXBSROW "AUD1", NXB_K_AUD, 0, 64, 0
+    NXBSROW "PACE", NXB_K_PACE, 0, 1024, 0
+    NXBSROW "LOOP", NXB_K_LOOP, 16, 0, 65
+    NXBSROW "ARM1", NXB_K_ARM, 0, 0, 0
+    NXBSROW "A065", NXB_K_SWEEP, 0, 0, 65
+    NXBSROW "XA65", NXB_K_FRAME, 0, 8, 65
+    NXBSROW "XB65", NXB_K_FRAME, 1, 8, 65
+    NXBSROW "XC65", NXB_K_FRAME, 2, 8, 65
+    NXBSROW "AW16", NXB_K_SWEEP, 16, 0, 65
+    NXBSROW "AAUD", NXB_K_AUD, 0, 64, 0
+    NXBSROW "ALOP", NXB_K_LOOP, 16, 0, 65
+    NXBSROW "DSRM", NXB_K_DISARM | NXB_K_STRM, 0, 0, 0
+    NXBSROW "REMN", NXB_K_REMN | NXB_K_STRM, 0, 0, 0
+    NXBSROW "PROD", NXB_K_PROD | NXB_K_STRM, 0, 128, 0
+    NXBSROW "ARM2", NXB_K_ARM | NXB_K_STRM, 0, 0, 0
+    NXBSROW "APRD", NXB_K_PROD | NXB_K_STRM, 0, 128, 0
+    db 0
+nxbSesRealEnd:
+
     DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
     ASSERT $ <= DATA_WINDOW + $2000
  ENDIF
@@ -5178,6 +5995,12 @@ nxv2_open_body:
  IFDEF DEBUG
     ld hl, (frameCounter)        ; resident cell - ring-fill timing
     ld (vidFillT0), hl
+    call data_save               ; bench RING row: the pool before any bank
+    ld a, VID_PAGE               ; this session allocates
+    call data_map_page
+    call bank_count_free
+    ld (vidPoolAtOpen + DATA_WINDOW - OVL_ORG), a
+    call data_restore
  ENDIF
     ; --- ring bank 0 + the first 8K chunk (header rides in it) ---
     call bank_alloc
