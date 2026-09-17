@@ -148,7 +148,15 @@ if (-not $sources) { exit 0 }
 # move both ways: streamed 007-009 grew, resident 001-006 shrank, as
 # T-derived emission thresholds move even where no frame is budget-bound
 # (006): merge K* 24.0 -> 22.4 B, absorb_max 139 -> 94 B.
-$encoderGeneration = 'pal9v'
+# pal9w: sitting-5 model. COPY threshold 81->53 B (crossovers 53.75
+# flat / 67.88-68.61 gapped; RUN stays 71). Event-term model prices
+# every op via EVENT_TERMS/TMODEL_COEFFS at the frame's file offset
+# (factors flat 1.10/gapped 1.09, audio_factor 0.86, pool 75 banks,
+# FILLMIN 30). Direct model: DIRECT_FRAME_OVERHEAD_MS retired for a
+# per-byte + gapped-column + fixed direct_frame_ms (routes 256x167@25,
+# 320x105@25, 320x256/192@12.5). Bytes: resident shrank <=47616 B,
+# streamed grew <=400896 B, direct reshaped/unchanged, no gate refusal.
+$encoderGeneration = 'pal9w'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

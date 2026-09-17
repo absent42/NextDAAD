@@ -3794,7 +3794,15 @@ if ($Font) {
 # of their constants moved; not immune in general - a change to
 # audio_factor, DIRECT_TRANSPORT_FACTOR or DIRECT_FRAME_OVERHEAD_MS moves
 # them.
-$vidLegSettlementTag = 'pal9v'
+# BUMP pal9v -> pal9w (sitting-5 model: COPY threshold 53, event-term
+# pricing at file offset, re-fit terms, gapped-column direct model) -
+# default-path, so this switch's rule fires. See $encoderGeneration
+# 'pal9w' in authoring-kit/lib/video.ps1 for the full account.
+# Bytes at the bump (pal9v cache -> pal9w re-encode, no gate refusal):
+# resident 001-006 shrank 19456-47616 B, streamed 007-009 grew
+# 83968-400896 B, direct 010-012 reshaped (Task 22, not model-
+# isolated), 013/014 byte-identical.
+$vidLegSettlementTag = 'pal9w'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the
