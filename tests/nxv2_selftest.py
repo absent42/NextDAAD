@@ -318,23 +318,21 @@ def t1_stream_supply_gate():
     expect(1.70 < s8["utilization"] < 1.80,
            f"008 anchor utilization {s8['utilization']:.2f} (silicon: collapsed)")
     expect(0.45 < s8["suggested_budget"] < 0.55, "008 suggestion ~0.51")
-    # Fixture 008 must be REFUSED (silicon: most frames underran) and 009
-    # ADMITTED, the gate pricing 009 only marginally inside the line. These
-    # anchors are stated as the decode wall time the pre-sitting-5 gate read
-    # off their model T (the model T itself moved with the event terms):
-    # 008 349307.5 T x R 1.0971 / 0.85 / 28000 = 16.1025 ms; 009 sb0.54
-    # 302604.4 x 1.4298 / 0.85 / 28000 = 18.1795 ms; 009 auto 282340.9 x
-    # 1.438 / 0.85 / 28000 = 17.0591 ms.
+    # Anchors in the decode ms the pre-sitting-5 gate read off each file; the
+    # current model admits the 008 file itself at util 0.9999 (margin 0.0001).
+    # 008: 349307.5 T x R 1.097143 / 0.85 / 28000 = 16.1025 ms
     s008 = enc.stream_supply_check(_mean_t_for(16.1025, 320, 256), 28460.7, 1536, 25.0, 320, 256)
     expect(s008["utilization"] > 1.0,
            f"008 (silicon: 71-76% of frames underran) scores "
            f"{s008['utilization']:.3f} - the gate must refuse it")
+    # 009 sb0.54: 302604.4 T x R 1.429825 / 0.85 / 28000 = 18.1795 ms
     s009 = enc.stream_supply_check(_mean_t_for(18.1795, 320, 192), 23092.8, 1536, 25.0, 320, 192)
     expect(0.97 < s009["utilization"] < 1.05,
            f"009 sb0.54 (silicon clean) scores {s009['utilization']:.3f} - "
            f"the W4 gate may price it conservatively but only just")
     # The admit side uses 009's actual shipping auto-encode operating
     # point (mean padded payload + audio pad of the same file).
+    # 009 auto: 282340.9 T x R 1.438 / 0.85 / 28000 = 17.0591 ms
     s009a = enc.stream_supply_check(_mean_t_for(17.0591, 320, 192), 21435.0, 1536, 25.0, 320, 192)
     expect(0.90 < s009a["utilization"] < 1.0,
            f"009 auto (silicon: zero underruns, min depth 39-42) scores "
@@ -1173,7 +1171,7 @@ def t10_silicon_coeffs():
         expect(abs(got - want) < 0.1, f"usable_budget_t{args} = {got:.1f}, want {want}")
     # the keyframe chunk planner prices a gapped chunk's column events: its
     # first chunk is smaller than the flat one at the same budget and wire
-    # (25828 B against 26955 B at 25 fps, both at their dearest source phase),
+    # (26106 B against 26976 B at 25 fps, both at their dearest source phase),
     # and it never needs fewer chunks
     expect(enc.kf_chunk_budget_bytes(25.0, True, 320, 192)
            < enc.kf_chunk_budget_bytes(25.0, True, 320, 256),
@@ -1183,8 +1181,8 @@ def t10_silicon_coeffs():
     expect(len(gap_plan) >= len(flat_plan) and gap_plan[0][1] < flat_plan[0][1],
            f"gapped plan {gap_plan} against flat {flat_plan}")
     # BENCH_KF_LITERALS is the 25 fps middle chunk at its dearest source phase:
-    # kf_chunk_budget_bytes(25.0, False, 256, 192) = 28009 B, one COPY16 under 49152
-    expect(enc.BENCH_KF_LITERALS == enc.kf_chunk_budget_bytes(25.0, False, 256, 192) == 28009,
+    # kf_chunk_budget_bytes(25.0, False, 256, 192) = 28156 B, one COPY16 under 49152
+    expect(enc.BENCH_KF_LITERALS == enc.kf_chunk_budget_bytes(25.0, False, 256, 192) == 28156,
            f"BENCH_KF_LITERALS {enc.BENCH_KF_LITERALS}")
     # S16 supply exchange rate: 28000 / (1314 x R at density 1.0): flat
     # 28000 / (1314 x 0.976) = 21.83 T/B, gapped 28000 / (1314 x 0.965) = 22.08.
@@ -1211,6 +1209,12 @@ def t10_silicon_coeffs():
         # move a merge threshold
         enc.TMODEL_COEFFS["fetch_long"] = enc.TMODEL_COEFFS["fetch_short"] = 30.0
         expect(abs(enc.merge_kstar() - ks2) < 1e-9, "K* must not move when the fetch rate moves")
+        # one fetch rate (S12): fetch_long alone moves no price and no threshold
+        enc.TMODEL_COEFFS["fetch_short"] = 19.1
+        absorb, copy16 = enc.merge_run_absorb_max(), enc.op_cost("copy", 16)[1]
+        enc.TMODEL_COEFFS["fetch_long"] = 50.0
+        expect(enc.merge_run_absorb_max() == absorb and enc.op_cost("copy", 16)[1] == copy16,
+               "fetch_long is not read: fetch_short is the one rate")
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
@@ -2389,7 +2393,7 @@ def t10_event_parity():
            "EVENT_TERMS maps every Events counter but the diagnostics")
     tc = enc.TMODEL_COEFFS
     for surface in ((256, 192, False), (320, 256, False), (320, 192, True), (320, 144, True),
-                    (320, 72, True), (320, 250, True)):
+                    (320, 72, True), (320, 240, True), (320, 241, True), (320, 250, True)):
         for strm in (False, True):
             coeffs = enc.event_coeffs(surface[0], surface[1], strm)
             expect(set(coeffs) == every - diag, f"{surface}: event_coeffs keys")
@@ -2453,8 +2457,8 @@ def t10_event_parity():
             expect(ev == bench.row_events(tag), f"{tag}: clear-source events differ from row_events")
     # a frame's price: its frame-type term + its events at its offset. A
     # 320x192 middle chunk frame of COPY16 1000 + FEND from column 0, payload
-    # at offset 7680 ($DE00), streamed: DMA 192, 192, then 126 clipped at the
-    # window end ($E000), a parity seam, DMA 66, 192, 192 and a 40 B LDI
+    # at offset 7680 ($DE00), streamed: DMA 192, 192, then 125 clipped at the
+    # window end ($E000), a parity seam, DMA 67, 192, 192 and a 40 B LDI
     # chunk; 5 column hops
     ops = [(ps.OP_COPY16, 1000), (ps.OP_FEND, 0)]
     nb, t, _st = enc.frame_price(ops, "middle", 320, 192, in_span=True, streamed=True, src_offset=7680)
@@ -2479,7 +2483,7 @@ def t10_event_parity():
 def t10_offset_probe():
     import nxv2_frame_model as fm
     real_extract, real_clip = enc._extract_source, enc.encode_clip
-    for label, (w, h, n, budget, cut) in (("resident", (256, 192, 8, 1.0, 4)),
+    for label, (w, h, n, budget, cut) in (("resident", (320, 192, 8, 1.0, 4)),
                                            ("streamed", (256, 64, 130, 0.8, 70))):
         # a rolling texture with a stable palette, a hard cut to a second one
         rng = np.random.default_rng(71)
@@ -2525,9 +2529,22 @@ def t10_offset_probe():
         spans = [f for f in frames if f.type in ("first", "single")]
         expect(len(spans) >= 2 and all(any(op == enc.OP_PAL for op, _k in f.ops) for f in spans),
                f"{label}: keyframe spans with PAL {[(f.index, f.type) for f in spans]}")
+        # every keyframe chunk was sized at its own offset and dest start: a full
+        # chunk is exactly the budget there, a span's last chunk fits inside it
+        sized = []
+        for f in frames:
+            if f.type == "delta":
+                continue
+            first = f.type in ("first", "single")
+            length = sum(k for op, k in f.ops if op in (enc.OP_COPY8, enc.OP_COPY16))
+            fit = enc.kf_chunk_budget_bytes(25.0, first, w, h, 1536, dst=None if first else f.dst_start,
+                                            streamed=r["streamed"], src_offset=f.offset)
+            if (length > fit) if f.type in ("last", "single") else (length != fit):
+                sized.append((f.index, f.type, length, fit))
+        expect(not sized, f"{label}: keyframe chunks not sized at their offset (index, type, B, budget) {sized}")
         if label == "resident":
-            expect({"middle", "last"} & {f.type for f in frames},
-                   f"resident: a multi-chunk span carries its offset {[f.type for f in frames]}")
+            expect([f.type for f in frames].count("middle") == 2,
+                   f"resident: two 3-chunk spans chain their offsets {[f.type for f in frames]}")
 
 
 # ---------------------------------------------------------------------------
@@ -4201,11 +4218,11 @@ def t13_run_absorb_threshold():
     expect(np.array_equal(surf, target), "long-run guard preserves decode byte-identity")
 
     # Force the OLD (unconditional-absorb) behaviour by making
-    # merge_run_absorb_max() return +inf (fetch_long == fill_cpu -> denom
+    # merge_run_absorb_max() return +inf (fetch_short == fill_cpu -> denom
     # <= 0) and re-merge the same segments.
     saved = dict(tc)
     try:
-        tc["fill_cpu"] = tc["fetch_long"]
+        tc["fill_cpu"] = tc["fetch_short"]
         expect(enc.merge_run_absorb_max() == float("inf"), "test setup: forced absorb_max should be +inf")
         _, b_forced, t_forced = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
     finally:
@@ -7490,7 +7507,7 @@ def _kf_frame_supply_ms(L, first, width, height, abytes_pad, fps=25.0):
     af = tc["audio_factor"]
     clock = tc["clock_khz"]
     wire_eff = enc.SD_WIRE_BYTES_PER_MS * af
-    b, t = enc.kf_chunk_cost(L, first, width, height)
+    b, t = enc.kf_chunk_cost(L, first, width=width, height=height)
     try:
         # a keyframe chunk frame is dense by construction (one long
         # copy at the cap) - the density-keyed model prices it at the
@@ -7523,7 +7540,7 @@ def t21_kf_peak_bound():
             expect(wire_ms < period,
                    f"{w}x{h}: peak kf frame wire {wire_ms:.2f} ms >= period")
             # ... and the decode-T budget contract is still honoured
-            expect(enc.kf_chunk_cost(L, first, w, h)[1]
+            expect(enc.kf_chunk_cost(L, first, width=w, height=h)[1]
                    <= enc.usable_budget_t(fps, w, h) * 0.98 + 1.0,
                    f"{w}x{h} first={first}: chunk decode T over the usable budget")
         # the plan still covers the surface exactly, first chunk first

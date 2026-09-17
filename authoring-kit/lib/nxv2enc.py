@@ -382,12 +382,9 @@ L2_DODGE_BYTE0 = L2_TRANSPARENT_BYTE0 + 4
 assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 
 # ---------------------------------------------------------------------
-# TMODEL_COEFFS - Z80N decode T-states per player event, unarmed, ruled
-# from sitting 5 (2026-09-17: quiet image, +3 timing, core 3.02.04, 28 MHz)
-# by tests/fit_gap_bench.py; audio_factor carries the armed tax. A frame
-# is priced by its frame-type term and its nxv2path events at its payload's
-# file offset through EVENT_TERMS (frame_price).
-# Standalone rows are read less the bench's per-rep harness, 717.8 T / O.
+# TMODEL_COEFFS - unarmed Z80N T-states per player event, sitting 5 (core
+# 3.02.04, +3 timing, 28 MHz), ruled by tests/fit_gap_bench.py; standalone
+# rows are read less the bench's per-rep harness, 717.8 T / O.
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
     # kernels and fast-handler envelopes
@@ -576,10 +573,9 @@ def usable_budget_t(fps, width=None, height=None, streamed=True):
 # machine and skip the check (smaller pools stream them too, and are
 # underrun-prone there).
 # ---------------------------------------------------------------------
-# TMODEL_SILICON_R - measured composed-player decode ratio R = silicon
-# decode T / (model T / audio_factor), keyed by shape class and DENSITY
-# (mean model T over the usable budget), per REAL session's A065 sweep
-# (sitting 5, rule S9). Linear between anchors, clamped outside them.
+# TMODEL_SILICON_R - silicon decode T / (model T / audio_factor) per shape
+# class, keyed by DENSITY (mean model T over the usable budget), from each
+# REAL session's A065 sweep (sitting 5, rule S9).
 TMODEL_SILICON_R = {
     "flat_256": ((0.42, 0.976), (0.485, 0.979), (0.512, 0.976)),  # REAL 005, 007, 002
     "flat_320": ((0.309, 0.981), (0.807, 0.976)),                 # REAL 008, 001
@@ -966,10 +962,9 @@ def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
 # kind (matches _chunk_lengths below) - correctness never depends on
 # the 64-byte DMA threshold, only on the count-field width.
 #
-# Split rule: an op with a sub-threshold remainder after full DMA chunks is
-# NOT split into two ops. Splitting is an emission decision, so skipping it
-# never under-prices a frame (measured ceiling +0.207% of decode net of wire
-# on BBB, -0.001% on Sintel, 2026-09-15).
+# Split rule: a sub-threshold remainder after full DMA chunks is NOT split
+# into its own op - an emission choice that never under-prices a frame
+# (measured ceiling +0.207% of decode net of wire, 2026-09-15).
 # ---------------------------------------------------------------------
 
 def _chunk_lengths(n):
@@ -1028,9 +1023,8 @@ def op_copy(payload):
 
 
 # ---------------------------------------------------------------------
-# Event pricing. nxv2path walks the player's path per op at the payload's
-# file offset; EVENT_TERMS maps each of its counters to terms (the sitting-5
-# rules' S4 map). A frame adds its frame-type term.
+# Event pricing: nxv2path walks each op at the payload's file offset, and
+# EVENT_TERMS maps its counters to terms (the sitting-5 rules' S4 map).
 # ---------------------------------------------------------------------
 assert (nxv2path.OP_FEND, nxv2path.OP_SKIP16, nxv2path.OP_RUN8, nxv2path.OP_RUN16,
         nxv2path.OP_COPY8, nxv2path.OP_COPY16, nxv2path.OP_PAL, nxv2path.OP_SKIP8,
@@ -1670,10 +1664,9 @@ def emit_delta_ops(target_flat, gcls, gstarts, glens):
 # greedy pass approaches the DP upper bound measured against it.
 # ---------------------------------------------------------------------
 
-# THE SUPPLY EXCHANGE RATE - what one WIRE byte is worth in decode T at the
-# supply gate: 1 wire byte = 1 / (SD_WIRE x af) ms, 1 decode T = R / af /
-# clock ms, so T per byte = clock / (SD_WIRE x R), af cancelling. An
-# OPPORTUNITY COST, not an execution cost: deliberately keyed to no kernel.
+# THE SUPPLY EXCHANGE RATE - decode T one wire byte is worth at the gate:
+# 1 B = 1 / (SD_WIRE x af) ms and 1 T = R / af / clock ms. An opportunity
+# cost, deliberately keyed to no kernel.
 def supply_exchange_t_per_byte(width, height):
     """clock_khz / (SD_WIRE_BYTES_PER_MS x silicon_r(width, height, 1.0)):
     21.83 T/B flat and 22.08 T/B gapped at the sitting-5 values."""
@@ -1729,7 +1722,7 @@ def merge_run_absorb_max():
     A proper fix is regime-aware (it has to know which kernel the
     absorbing copy will run), not a coefficient swap."""
     tc = TMODEL_COEFFS
-    denom = tc["fetch_long"] - tc["fill_cpu"]
+    denom = tc["fetch_short"] - tc["fill_cpu"]
     if denom <= 0:
         return float("inf")
     return tc["t_op_run"] / denom
@@ -3414,8 +3407,8 @@ def kf_chunk_price(length, first, is_last=False, width=None, height=None,
                        src_offset=src_offset)
 
 
-def kf_chunk_cost(length, first, width=None, height=None, dst=None,
-                  is_last=False, streamed=True, src_offset=None):
+def kf_chunk_cost(length, first, is_last=False, width=None, height=None,
+                  dst=None, streamed=True, src_offset=None):
     """(bytes, T) of kf_chunk_price."""
     b, t, _state = kf_chunk_price(length, first, is_last, width, height, dst, streamed,
                                   src_offset)
@@ -3444,25 +3437,56 @@ def _kf_room(width, height, dst):
     return nxv2path.surface_pages(width) * per_page - start
 
 
-def _largest_fit(fn, limit, estimate, step, room=None):
-    """Largest length with fn(length) <= limit, searched on a step grid from
-    an estimate: down while over, up while the next step fits, the whole
-    room when it fits. 1 at least, room at most."""
+def _largest_fit(measure, estimate, step, room=None):
+    """Largest length whose measure (priced load over its limit) is at most
+    1: a step grid from the estimate, then every length up to two steps past
+    the last fitting grid point priced exactly. 1 at least, room at most."""
     L = max(1, int(estimate))
     if room is not None:
         L = max(1, min(L, room))
     while L > 1:
-        over = fn(L)
-        if over <= limit:
+        over = measure(L)
+        if over <= 1.0:
             break
-        L = max(1, min(L - step, int(L * limit / over)))
+        L = max(1, min(L - step, int(L / over)))
     else:
         return 1
-    while (room is None or L + step <= room) and fn(L + step) <= limit:
+    while (room is None or L + step <= room) and measure(L + step) <= 1.0:
         L += step
-    if room is not None and L < room and fn(room) <= limit:
-        L = room
-    return L
+    best, top = L, L + 2 * step - 1
+    for c in range(L + 1, top + 1 if room is None else min(top, room) + 1):
+        if measure(c) <= 1.0:
+            best = c
+    return best
+
+
+def _kf_supply(fps, width, height, abytes_pad):
+    """(limit ms, ms(bytes, T), bytes estimate rate) of the T2 peak bound for
+    a keyframe chunk frame: decode busy at the dense R, the audio copy and SD
+    wire for the audio pad and the 512-padded payload; None if the fixed
+    part alone is over the limit."""
+    tc = TMODEL_COEFFS
+    af = tc["audio_factor"]
+    clock = tc["clock_khz"]
+    wire_eff = SD_WIRE_BYTES_PER_MS * af
+    if abytes_pad is None:
+        abytes_pad = _default_abytes_pad(fps)
+    # an unknown shape reads the dearest class
+    if width is None:
+        r = max(silicon_r(w, h, 1.0) for w, h in ((256, 192), (320, 256), (320, 192)))
+    else:
+        r = silicon_r(width, height, density=1.0)
+    limit = KF_SPAN_PEAK_UTIL * 1000.0 / float(fps)
+    fixed_ms = abytes_pad * AUDIO_COPY_T_PER_B / clock + abytes_pad / wire_eff
+    if limit <= fixed_ms:
+        return None
+
+    def supply_ms(nbytes, t):
+        return t * r / af / clock + fixed_ms + ((nbytes + 511) // 512) * 512 / wire_eff
+
+    rate = ((tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"])
+            * r / af / clock + 1.0 / wire_eff)
+    return limit, supply_ms, (limit - fixed_ms) / rate
 
 
 def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
@@ -3475,32 +3499,16 @@ def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
     The payload is counted exactly: KSTART and PAL on a first chunk, each
     COPY header (3 B for COPY16) and the terminal; it is priced at file
     offset src_offset (None: the dearest phase)."""
-    tc = TMODEL_COEFFS
-    af = tc["audio_factor"]
-    clock = tc["clock_khz"]
-    period_ms = 1000.0 / float(fps)
-    wire_eff = SD_WIRE_BYTES_PER_MS * af
-    if abytes_pad is None:
-        abytes_pad = _default_abytes_pad(fps)
-    # a keyframe chunk frame is DENSE by construction (one long copy at the
-    # cap); an unknown shape reads the dearest class
-    if width is None:
-        r = max(silicon_r(w, h, 1.0) for w, h in ((256, 192), (320, 256), (320, 192)))
-    else:
-        r = silicon_r(width, height, density=1.0)
-    limit = KF_SPAN_PEAK_UTIL * period_ms
-    fixed_ms = abytes_pad * AUDIO_COPY_T_PER_B / clock + abytes_pad / wire_eff
-    if limit <= fixed_ms:
+    supply = _kf_supply(fps, width, height, abytes_pad)
+    if supply is None:
         return 1
+    limit, supply_ms, estimate = supply
 
-    def supply_ms(L):
-        b, t = _kf_sizing_price(L, first, width, height, dst, streamed, src_offset)
-        return t * r / af / clock + fixed_ms + ((b + 511) // 512) * 512 / wire_eff
+    def measure(L):
+        return supply_ms(*_kf_sizing_price(L, first, width, height, dst, streamed,
+                                           src_offset)) / limit
 
-    rate = ((tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"])
-            * r / af / clock + 1.0 / wire_eff)
-    return _largest_fit(supply_ms, limit, (limit - fixed_ms) / rate, 512,
-                        _kf_room(width, height, None if first else dst))
+    return _largest_fit(measure, estimate, 512, _kf_room(width, height, None if first else dst))
 
 
 def frame_wire_cap_bytes(fps, abytes_pad=None):
@@ -3533,9 +3541,10 @@ def kf_chunk_budget_bytes(fps, first, width=None, height=None,
     per-frame T budget less a 2% reserve. A keyframe chunk crosses every
     column boundary a gapped surface has; its events price them.
 
-    WIRE/SUPPLY: kf_chunk_wire_cap_bytes - the frame's whole modeled supply
-    time stays within KF_SPAN_PEAK_UTIL of the frame period, so a keyframe
-    event can never demand more wire than a frame buys.
+    WIRE/SUPPLY: kf_chunk_wire_cap_bytes' bound - the frame's whole modeled
+    supply time stays within KF_SPAN_PEAK_UTIL of the frame period, so a
+    keyframe event can never demand more wire than a frame buys. The
+    result is the largest length meeting both at once.
 
     abytes_pad: the encode's padded audio bytes/frame (None = the
     conservative stereo layout for this fps). src_offset: the chunk
@@ -3543,14 +3552,18 @@ def kf_chunk_budget_bytes(fps, first, width=None, height=None,
     the bytes the surface holds from the chunk's start."""
     tc = TMODEL_COEFFS
     budget_t = usable_budget_t(fps, width, height, streamed) * 0.98
+    supply = _kf_supply(fps, width, height, abytes_pad)
+    if supply is None or budget_t <= 0:
+        return 1
+    limit, supply_ms, wire_estimate = supply
+
+    def measure(L):
+        nbytes, t = _kf_sizing_price(L, first, width, height, dst, streamed, src_offset)
+        return max(t / budget_t, supply_ms(nbytes, t) / limit)
+
     dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
-    L_t = _largest_fit(lambda L: _kf_sizing_price(L, first, width, height, dst, streamed,
-                                                  src_offset)[1],
-                       budget_t, budget_t / dma_rate, tc["copy_dma_chunk"],
-                       _kf_room(width, height, None if first else dst))
-    L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad, first=first,
-                                  dst=dst, streamed=streamed, src_offset=src_offset)
-    return max(min(L_t, L_w), 1)
+    return _largest_fit(measure, min(budget_t / dma_rate, wire_estimate), tc["copy_dma_chunk"],
+                        _kf_room(width, height, None if first else dst))
 
 
 def plan_kf_chunks(raw_len, fps, width=None, height=None, abytes_pad=None,
@@ -5508,7 +5521,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 # order in both modes).
 # ---------------------------------------------------------------------
 BENCH_CLASSIC_RAW = 256 * 192       # 49152
-BENCH_KF_LITERALS = 28009           # one-COPY16 keyframe chunk: the 25 fps
+BENCH_KF_LITERALS = 28156           # one-COPY16 keyframe chunk: the 25 fps
                                      # middle chunk at its dearest phase,
                                      # kf_chunk_budget_bytes(25.0, False, 256, 192)
 BENCH_SEGMENT_CAP = 61440           # NXB8 cap: 60KB = 8 pool pages, and the
