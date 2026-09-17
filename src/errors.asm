@@ -7,10 +7,11 @@
 ; "NextDAAD: RUNTIME ERROR - E<n>" into that same row-0 bar (via
 ; fatal_puts, file.asm) - previously that text was DEBUG-only, so a
 ; release build showed nothing but the bar. Never returns.
-; Codes raised in SP3: 0 (obj_ptr), 2 (obj_move to 255), 3 (PROCESS
-; depth), 4 (nested DOALL), 5 (illegal opcode), 6 (bad process),
-; 7 (bad message/location number). Codes 1 and 8 are defined for
-; parity and first raised by later sub-projects.
+; Codes raised: 2 (obj_move to 255), 3 (PROCESS depth), 4 (nested
+; DOALL), 5 (illegal opcode), 6 (bad process), 7 (bad message/location
+; number). Codes 1 and 8 are defined for parity. Code 0 (invalid
+; object) is no longer raised: every object number 0-255 addresses a
+; slot, which is what the references do - see obj_ptr (engine.asm).
 ; Bar: tm_fill_rect row 0, full width, space glyph, TM_ATTR_ERROR
 ; (reserved pair 1: paper 3 magenta, ink 7 white) = attr 2 via tmAttr.
 err_raise:

@@ -67,7 +67,8 @@ eng_load_objects:
     call data_save
     xor a
     ld (flags+FLAG_CARRIED_CT), a
-    ld a, (numObj)
+    call obj_fill_null          ; undeclared slots first, real ones over
+    ld a, (numObj)              ; the top - the references' own order
     or a
     jp z, .doneall
     ld b, a                     ; object counter
@@ -142,15 +143,14 @@ eng_load_objects:
 .doneall:
     jp data_restore
 
-; A = object number -> HL = objTable entry. Error 0 if out of range.
-; Corrupts AF, DE. Preserves BC.
+; A = object number -> HL = objTable entry. All 256 numbers are legal:
+; objTable has a slot for each and eng_load_objects pre-fills the ones
+; the DDB does not declare, as both references do (jdaad.js:719-725,
+; PCDAAD objects.pas:149). Object 255 is NULLWORD and reaches here
+; whenever WHATO missed. Corrupts AF, DE. Preserves BC.
 obj_ptr:
     push bc
     ld c, a
-    ld a, (numObj)
-    dec a
-    cp c
-    jr c, .bad
     ld d, 6                      ; SP14c E4: DE = 6*c (OBJ_SIZE) via
     ld e, c                      ; Z80N MUL (was shift-add *2/*4/+de)
     mul d, e
@@ -159,10 +159,6 @@ obj_ptr:
     ld a, c
     pop bc
     ret
-.bad:
-    pop bc
-    xor a                       ; error 0: invalid object
-    jp err_raise
 
 ; Push process A and run the game loop forever (eng_step restarts
 ; PRO 0 whenever the process stack fully unwinds - see its stack-empty
@@ -973,3 +969,44 @@ doallResC:  dw 0
 rngState:   dw $A5C3            ; xorshift seed (resident: overlay page
                                 ; contents are only valid while page 56
                                 ; is mapped in SP7)
+
+; --- post-anchor resident code ---
+; Everything above flags: is capped by the ALIGN pad, so this routine
+; lives here, on the RESIDENT_LIMIT budget, as its own note explains.
+
+; Give every objTable slot the "not created" shape. The DDB declares
+; only numObj objects but all 256 numbers are reachable - WHATO leaves
+; 255 (NULLWORD) in flag 51 on a miss and an indirected condact spends
+; it - so the undeclared slots must read as a nowhere object rather
+; than fault (jdaad.js:719-725, PCDAAD objects.pas:149).
+; In: C = 0 full build (all six bytes), C = 1 RESET (location only -
+; the DDB-derived fields cannot have changed). Corrupts AF, B, DE, HL.
+obj_fill_null:
+    ld hl, objTable
+    ld b, 0                     ; 256 slots: djnz wraps
+    ld a, c
+    or a
+    jr nz, .locsonly
+.full:
+    ld (hl), OBJ_NOT_CREATED
+    inc hl
+    xor a
+    ld (hl), a                  ; +1 attributes
+    inc hl
+    ld (hl), a                  ; +2 ext attrs 8-15
+    inc hl
+    ld (hl), a                  ; +3 ext attrs 0-7
+    inc hl
+    dec a                       ; $FF
+    ld (hl), a                  ; +4 noun  = no word
+    inc hl
+    ld (hl), a                  ; +5 adjective
+    inc hl
+    djnz .full
+    ret
+.locsonly:
+    ld (hl), OBJ_NOT_CREATED
+    ld de, OBJ_SIZE
+    add hl, de
+    djnz .locsonly
+    ret
