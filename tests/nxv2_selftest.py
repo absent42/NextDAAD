@@ -1338,6 +1338,22 @@ def t10_bench_tables():
     expect(abs(bench.row_predicted(enc, "D081") - c081) < 1e-9, "D081 must price as C081 at 81")
     expect(bench.row_predicted(enc, "D060") < bench.row_predicted(enc, "L060"),
            "a forced DMA row must price cheaper than the same L on LDI")
+    # A RUN row's thr routes to run_dma_min: RUN8 of 80 at thr 241 is the CPU
+    # fill, and both select coefficients come back unchanged.
+    run_ship = tc["run_dma_min"]
+    tc["run_dma_min"] = 241
+    try:
+        cpu80 = enc._cost_run_chunk(80)[1]
+    finally:
+        tc["run_dma_min"] = run_ship
+    got = bench.row_price(enc, ("X080", "run8", 80, 1, 1, 241, 0))
+    expect(abs(got - cpu80) < 1e-9
+           and abs(cpu80 - (tc["t_op_run"] + 2 * tc["header_rate"] + 80 * tc["fill_cpu"])) < 1e-9,
+           f"RUN8 80 at thr 241 must price on the CPU fill ({got:.1f} vs {cpu80:.1f})")
+    expect(tc["run_dma_min"] == run_ship and tc["copy_dma_min"] == ship,
+           "row_price must restore run_dma_min and copy_dma_min")
+    expect(abs(bench.row_price(enc, ("X080", "run8", 80, 1, 1, 0, 0)) - cpu80) > 1.0,
+           "the same row at thr 0 must price at the shipping run_dma_min (DMA at 80)")
     # Table rules (src/video.asm NXB_PAGE tables, nxb_build's stream layout).
     # Stream bytes per op: opcode + 8/16-bit count, then a RUN colour byte or
     # the COPY literal body. The source cursor must stay below $DF00.

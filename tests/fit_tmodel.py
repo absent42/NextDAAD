@@ -195,7 +195,8 @@ def long_copy(sitting):
             k = bench.row_predicted(enc, tag) - model
             tc["copy_dma_setup"] = held
             out[tag] = held + (m - model) / k
-            surface = ("gapped" if geo & 1 else "flat") + ("+seam" if geo & 2 else "")
+            gapped, _hcode, dcode = bench.geo_fields(geo)
+            surface = ("gapped" if gapped else "flat") + ("+seam" if dcode else "")
             print(f"  {tag} {L:>5} {o:>2}  {surface:<11} {m:>9.1f} {model:>10.1f} "
                   f"{m - model:>+9.1f} {k:>6.0f} {out[tag]:>8.1f}")
     finally:

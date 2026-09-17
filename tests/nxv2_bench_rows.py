@@ -316,18 +316,27 @@ _KIND_PRICE = {
 
 
 def row_predicted(enc, tag):
-    """Flat-model T/op for one bench row at its own COPY select value
-    (thr 0 = the shipping copy_dma_min). Gapped rows are priced flat on
-    purpose: measured minus this is the gapped surcharge."""
-    _tag, kind, L, _o, _r, thr, _geo = _row(tag)
+    """Flat-model T/op for one bench row at its own select value: a RUN
+    row's thr sets run_dma_min, a COPY row's copy_dma_min (thr 0 = the
+    shipping value), as nxb_sel_row routes it. Gapped rows are priced flat
+    on purpose: measured minus this is the gapped surcharge."""
+    return row_price(enc, _row(tag))
+
+
+def row_price(enc, row):
+    """row_predicted for a (tag, kind, L, O, R, thr, geo) tuple; the
+    select coefficient is restored on every exit."""
+    _tag, kind, L, _o, _r, thr, _geo = row
+    price = _KIND_PRICE[kind]
+    key = "run_dma_min" if kind.startswith("run") else "copy_dma_min"
     tc = enc.TMODEL_COEFFS
-    saved = tc["copy_dma_min"]
+    saved = tc[key]
     try:
         if thr:
-            tc["copy_dma_min"] = thr
-        return _KIND_PRICE[kind](enc, L)
+            tc[key] = thr
+        return price(enc, L)
     finally:
-        tc["copy_dma_min"] = saved
+        tc[key] = saved
 
 
 def row_path(tag):

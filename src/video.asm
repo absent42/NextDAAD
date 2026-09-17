@@ -4716,6 +4716,7 @@ NXB_ROW_AT defl $
     MACRO NXBDIR tab, tabend
       dw tab, tabend - tab
       ASSERT tabend - tab >= 1 && tabend - tab <= NXB_TAB_MAX
+      ASSERT (tabend - tab) % NXB_ROW_LEN == 1   ; rows plus one terminator
     ENDM
 nxbTabDir:
     NXBDIR nxbTabOpd, nxbTabOpdEnd       ; mode 2
