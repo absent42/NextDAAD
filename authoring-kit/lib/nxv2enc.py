@@ -820,17 +820,22 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     # demand; the audio pad and its copy cost are invariant. pump_ms is
     # proportional to produced blocks, so it scales too - which is what
     # makes a contended clip RE-BUDGET rather than merely fail
-    audio_sd_ms = audio_pad_bytes / wire_eff
-    payload_sd_ms = sd_ms - audio_sd_ms
-    fixed = audio_sd_ms + audio_ms
-    scalable = busy_ms + payload_sd_ms + pump_ms
-    suggested = ((period_ms * STREAM_TARGET_UTIL - fixed) / scalable
-                 if scalable > 0 else 1.0)
-    return dict(utilization=util, busy_ms=busy_ms, audio_ms=audio_ms,
-                sd_ms=sd_ms, pump_ms=pump_ms,
-                period_ms=period_ms, audio_sd_ms=audio_sd_ms,
-                demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
-                suggested_budget=max(0.05, min(1.0, suggested)))
+    stats = dict(utilization=util, busy_ms=busy_ms, audio_ms=audio_ms,
+                 sd_ms=sd_ms, pump_ms=pump_ms,
+                 period_ms=period_ms, audio_sd_ms=audio_pad_bytes / wire_eff,
+                 demand_kbs=mean_demand_bytes * float(fps) / 1024.0)
+    suggested = supply_scale(stats, STREAM_TARGET_UTIL)
+    stats["suggested_budget"] = max(0.05, min(1.0, 1.0 if suggested is None else suggested))
+    return stats
+
+
+def supply_scale(stats, target):
+    """Operating-point scale (from stream_supply_check stats) that lands mean
+    utilization at target: busy, the payload part of the SD fetch and the pump
+    scale; the audio pad's fetch and its copy do not. None if nothing scales."""
+    fixed = stats["audio_sd_ms"] + stats["audio_ms"]
+    scalable = stats["busy_ms"] + (stats["sd_ms"] - stats["audio_sd_ms"]) + stats["pump_ms"]
+    return (stats["period_ms"] * target - fixed) / scalable if scalable > 0 else None
 # ---------------------------------------------------------------------
 # LIMITATION (documented, not implemented - review closure Important 3;
 # future work, SP15 3c/T4 candidate): stream_supply_check() above is a
@@ -4966,10 +4971,8 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
             if len(measured) == 1:
                 # E3-admissible model step (see the docstring): the gate's
                 # own audio-invariant linear solve, used exactly once.
-                audio_sd = stats["audio_sd_ms"]
-                scalable = stats["busy_ms"] + stats["sd_ms"] - audio_sd
-                nxt = (budget * (stats["period_ms"] * target - audio_sd)
-                       / scalable) if scalable > 0 else budget * 0.9
+                scale = supply_scale(stats, target)
+                nxt = budget * scale if scale is not None else budget * 0.9
             else:
                 (b0, u0), (b1, u1) = measured[-2], measured[-1]
                 nxt = (b1 - AUTO_BUDGET_STEP if u1 == u0 else
