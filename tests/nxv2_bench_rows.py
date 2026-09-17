@@ -164,6 +164,10 @@ SITTING4 = {
     "S300": (19, 96, 14, -231),
 }
 
+# Sitting 5: {run key: {tag: (O, R, F, D)}} from fit_gap_bench's parsed logs,
+# empty until the sitting. Keyed by run, so not in ROWS.
+SITTING5 = {}
+
 ROWS = {"pre_fix": PRE_FIX, "current": CURRENT,
         "sitting3": SITTING3, "sitting4": SITTING4}
 
