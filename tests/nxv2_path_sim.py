@@ -101,6 +101,10 @@ class Events:
     copy8_srcedge: int = 0     # COPY8 fast handler's L + count refine at $DFxx
     run_fast_b: int = 0
     copy_fast_b: int = 0
+    # kernel passes, fast and body calls: (n + 15) >> 4 per call. jp pe is 13 T taken or not;
+    # djnz is 15 T taken and 10 T on the last pass, so the call's term carries -5 T
+    copy_ldi_passes: int = 0   # vid_copy_ldi 16-LDI blocks (138-155)
+    run_cpu_passes: int = 0    # vid_fill_cpu 16-store passes (99-122)
     # chunked bodies
     skip_passes: int = 0       # flat surface: vid_chunk_dst_nocap_flat
     gap_skip_passes: int = 0   # gapped surface: vid_dst_norm_gap, vid_chunk_dst_nocap_gap
@@ -169,6 +173,11 @@ class Events:
             elif strict:
                 raise KeyError(f"no coefficient for event {name!r} ({count})")
         return total
+
+
+def kernel_passes(n):
+    """Blocks/passes of one vid_copy_ldi or vid_fill_cpu call of n bytes (0 for 0)."""
+    return (n + 15) >> 4
 
 
 def op_bytes(op, n):
@@ -426,6 +435,7 @@ class _Player:
         self.de += n
         self.ev.fast_run8 += 1
         self.ev.run_fast_b += n
+        self.ev.run_cpu_passes += kernel_passes(n)
 
     def vf_copy8(self, n):
         self.take(1)                                         # 232-234
@@ -444,6 +454,7 @@ class _Player:
         self.de += n
         self.ev.fast_copy8 += 1
         self.ev.copy_fast_b += n
+        self.ev.copy_ldi_passes += kernel_passes(n)
 
     # ---- gapped fast handlers ----
     def _gap_split(self, n):
@@ -498,8 +509,10 @@ class _Player:
                 self.ev.fast_hop0_run8 += 1
             self._inline_hop()
             self.de |= seg2
+            self.ev.run_cpu_passes += kernel_passes(seg1) + kernel_passes(seg2)
         else:
             self.de += n                                     # .in 433-437
+            self.ev.run_cpu_passes += kernel_passes(n)
         self.ev.fast_run8 += 1
         self.ev.run_fast_b += n
 
@@ -525,8 +538,10 @@ class _Player:
                 self.ev.fast_hop0_copy8 += 1
             self._inline_hop()
             self.de |= seg2
+            self.ev.copy_ldi_passes += kernel_passes(seg1) + kernel_passes(seg2)
         else:
             self.de += n                                     # .in 495-496
+            self.ev.copy_ldi_passes += kernel_passes(n)
         self.ev.fast_copy8 += 1
         self.ev.copy_fast_b += n
 
@@ -557,6 +572,7 @@ class _Player:
             else:
                 self._bump("run_cpu_chunks", width)
                 self.ev.run_cpu_b += chunk
+                self.ev.run_cpu_passes += kernel_passes(chunk)
                 if dma_seen:
                     self._bump("run_tail", width)
             self.de += chunk
@@ -580,6 +596,7 @@ class _Player:
             else:
                 self._bump("copy_ldi_chunks", width)
                 self.ev.copy_ldi_b += chunk
+                self.ev.copy_ldi_passes += kernel_passes(chunk)
                 if dma_seen:
                     self._bump("copy_tail", width)
             self.take(chunk)

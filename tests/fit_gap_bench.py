@@ -10,7 +10,9 @@ Row times: T per op for a standalone row, (F x 311 + D) x 1824 / (R x O); T per
 rep for a session row (O read as 1). Pricing: nxv2_path_sim events per row or
 fixture frame, mapped to terms by COUNTER_TERMS (S4 prints the map). A standalone
 row also carries the bench's per-rep harness, nxb_rep_t / O per op: S1 estimates
-it from same-L twins, S4 fits it jointly, and it is never exported.
+it from same-L twins, S4 fits it jointly, and it is never exported. Every LDI copy
+and CPU fill kernel call also pays copy_ldi_pass_t / fill_cpu_pass_t per 16-byte
+block, fitted in S1 with the envelopes and exported.
 
 Each rule is one function s<n>(sit, v) -> (new values, printed lines); S0
 builds the Sitting from the parsed runs. A Stop names its rule. Values stay
@@ -94,7 +96,7 @@ S6_SPLIT_SAVE = 0.002
 S16_SHAPES = ((320, 256), (256, 192), (320, 192), (320, 144))
 
 S1_TERMS = ("fetch_short", "fetch_long", "t_skip", "t_skip16", "t_op_run", "t_op_copy",
-            "fill_cpu", "copy_dma_per_b", "fill_dma_per_b")
+            "fill_cpu", "copy_dma_per_b", "fill_dma_per_b", "copy_ldi_pass_t", "fill_cpu_pass_t")
 S4_TERMS = ("copy_dma_setup", "copy_dma_path_t", "copy_body_ldi_t", "fill_dma_setup",
             "fill_dma_path_t", "fill_body_cpu_t", "copy16_entry_t", "run16_entry_t",
             "t_skip_pass", "edge_skip_t", "edge_run_t", "edge_copy_t", "dst_seam_t",
@@ -262,6 +264,8 @@ COUNTER_TERMS = {
     "copy8_srcedge": ("srcedge_t",),
     "run_fast_b": ("fill_cpu",),
     "copy_fast_b": (FETCH,),
+    "copy_ldi_passes": ("copy_ldi_pass_t",),
+    "run_cpu_passes": ("fill_cpu_pass_t",),
     "skip_passes": ("t_skip_pass",),
     "gap_skip_passes": ("gap_skip_pass_t",),
     "run_cpu_chunks8": ("fill_body_cpu_t@8", "gaplo:gap_chunk_t"),
@@ -1034,8 +1038,14 @@ def _s0_session_repeat(first, later, slips, fail):
 # ---------------------------------------------------------------------------
 # S1 - S3
 # ---------------------------------------------------------------------------
-S1_RUN_TAGS = ("RU01", "RU17", "F063", "F070")
-S1_COPY_TAGS = ("C001", "C004", "C008", "C038")
+S1_RUN_TAGS = ("RU01", "RU17", "F063", "F070", "NR16", "FC56", "FC60", "FC64", "FC68", "FC72", "FC76")
+S1_COPY_TAGS = ("C001", "C004", "C008", "C016", "C038", "NC16", "L048", "L056", "L060", "L064", "L072", "L080")
+S1_LONG_TAGS = ("L064", "L072", "L080")
+S1_GROUPS = (("RUN", S1_RUN_TAGS, ("t_op_run", "fill_cpu", "fill_cpu_pass_t")),
+             ("COPY", S1_COPY_TAGS, ("t_op_copy", "fetch_short", "fetch_long", "copy_ldi_pass_t")))
+KERNEL_HAND = {   # instruction counts beside the fitted pass terms (video.asm 99-155)
+    "fill_cpu_pass_t": "djnz 15 T taken per 16-store pass, the last pass's 10 T in the call; ld (hl),e + inc hl 15 T/B",
+    "copy_ldi_pass_t": "jp pe 13 T per 16-LDI block, taken or not; ldi 19 T/B"}
 S1_TWINS = (("SK00", "NS16"), ("C016", "NC16"))    # same op and L at O 255 and 15
 HARNESS_HAND = (705, "one rep of a standalone row, video.asm: nxb_row call nxb_body 20, jp (SMC) 13; "
                      "nxb_ops_body ld a,(nxbDstP) 17, ld (vidDstPage),a 16, nextreg NR_MMU2,a 20, ld de,nn 13, "
@@ -1070,9 +1080,10 @@ def wlsq(design, ys, sigmas):
 def s1(sit, v):
     """S1 - envelopes and slopes.
     nxb_rep_t, the bench's per-rep harness (T per op = nxb_rep_t / O), from the
-    same-op, same-L twins at O 255 and 15, where every per-op cost cancels; the
-    envelope and slope fits then run on harness-free rows. An intercept is raised
-    until none of its rows prices under."""
+    same-op, same-L twins at O 255 and 15, where every per-op cost cancels. The
+    envelope, per-byte and kernel pass terms then fit jointly on harness-free fast
+    rows, each weighted by one line; an intercept is raised until none of its rows
+    prices under."""
     T, rows = sit.T, sit.rows
     lines, raises, out, bounds = [], {}, {}, {}
 
@@ -1097,31 +1108,53 @@ def s1(sit, v):
 
     def free_sigma(tag):
         return sigma_op(rows[tag]) + h_bound / o_of(tag)
-    for name, tags, (icpt, slope) in (("run", S1_RUN_TAGS, ("t_op_run", "fill_cpu")),
-                                      ("copy", S1_COPY_TAGS, ("t_op_copy", "fetch_short"))):
-        pts = [(bench._row(t)[2], free(t)) for t in tags]
-        a, b, worst = lsq(pts)
-        lift = max(0.0, max(y - (a + b * x_) - op_band(rows[t]) for (x_, y), t in zip(pts, tags)))
-        out[icpt], out[slope] = a + lift, b
+    counts = {}
+    for name, tags, terms in S1_GROUPS:
+        for t in tags:
+            counts[t] = Counter({k: c for k, c in standalone_counts(t).items() if k != HARNESS})
+            if set(counts[t]) - set(terms):
+                raise AssertionError(f"S1 {t} carries {sorted(set(counts[t]) - set(terms))}")
+        fit = wlsq([[counts[t][k] for k in terms] for t in tags], [free(t) for t in tags],
+                   [sigma_op(rows[t]) for t in tags])
+        if fit is None:
+            raise Stop("S1", f"the {name} fast rows cannot separate {', '.join(terms)}", lines)
+        x, base, P = fit
+        fitted = dict(zip(terms, map(float, x)))
+        resid = {t: free(t) - price(counts[t], fitted) for t in tags}
+        icpt = terms[0]
+        lift = max(0.0, max(resid[t] - op_band(rows[t]) for t in tags))
+        out.update(fitted)
+        out[icpt] += lift
         if lift:
             raises[icpt] = lift
-        line = wlsq([[1.0, float(x_)] for x_, _y in pts], [y for _x, y in pts], [1.0] * len(pts))
-        P = line[2]
-        base = np.array([sigma_op(rows[t]) for t in tags])
         inv_o = np.array([1.0 / o_of(t) for t in tags])
-        bounds[icpt], bounds[slope] = (float(np.abs(P[i]) @ base + abs(P[i] @ inv_o) * h_bound) for i in (0, 1))
+        for k, (term, b) in enumerate(zip(terms, base)):
+            bounds[term] = float(b + abs(P[k] @ inv_o) * h_bound)
+        worst = max(tags, key=lambda t: abs(resid[t]))
+        form = " + ".join(f"{fitted[k]:.4f} x {k}" for k in terms[1:])
         lines.append(ruling(f"{icpt} {ceil01(out[icpt])} T",
-                            f"least squares over {' '.join(tags)} less nxb_rep_t / O: {a:.2f} + {b:.4f} L, "
-                            f"worst residual {worst:.2f} T, raised {lift:.2f} T, up to 0.1",
-                            f"every {name.upper()} op's dispatch misprices by the error"))
-        lines.append(ruling(f"{slope} {ceil01(b)} T/B", f"slope of the same line {b:.4f}, up to 0.1",
-                            f"every {name.upper()} byte misprices by the error"))
-    longs = {t: (free(t) - out["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")}
+                            f"least squares over {' '.join(tags)} less nxb_rep_t / O, weighted by one line: "
+                            f"{fitted[icpt]:.2f} + {form}; worst residual {resid[worst]:+.2f} T ({worst}), "
+                            f"raised {lift:.2f} T, up to 0.1", f"every {name} op's dispatch misprices by the error"))
+        for term in terms[1:]:
+            if term == "fetch_long":
+                continue
+            unit = "T" if term in KERNEL_HAND else "T/B"
+            said = f" (by instruction count: {KERNEL_HAND[term]})" if term in KERNEL_HAND else ""
+            lines.append(ruling(f"{term} {ceil01(fitted[term])} {unit}",
+                                f"the same fit {fitted[term]:.4f}, +-1 line moves it up to {bounds[term]:.4f}{said}, "
+                                f"up to 0.1",
+                                f"every {name} {'kernel pass' if term in KERNEL_HAND else 'byte'} misprices"))
+    longs = {t: (free(t) - out["t_op_copy"] - out["copy_ldi_pass_t"] * counts[t]["copy_ldi_pass_t"])
+             / counts[t]["fetch_long"] for t in S1_LONG_TAGS}
+    joint_long = out["fetch_long"]
     out["fetch_long"] = max(longs.values())
-    bounds["fetch_long"] = max((free_sigma(t) + bounds["t_op_copy"]) / bench._row(t)[2] for t in longs)
+    bounds["fetch_long"] = max((free_sigma(t) + bounds["t_op_copy"] + bounds["copy_ldi_pass_t"]
+                                * counts[t]["copy_ldi_pass_t"]) / counts[t]["fetch_long"] for t in longs)
     lines.append(ruling(f"fetch_long {ceil01(out['fetch_long'])} T/B",
-                        "max (T - nxb_rep_t / O - t_op_copy) / L over "
-                        + ", ".join(f"{t} {x_:.4f}" for t, x_ in longs.items()), "every LDI byte of a long op misprices"))
+                        "max (T - nxb_rep_t / O - t_op_copy - copy_ldi_pass_t x blocks) / L over "
+                        + ", ".join(f"{t} {x_:.4f}" for t, x_ in longs.items())
+                        + f" (the joint fit's {joint_long:.4f})", "every LDI byte of a long op misprices"))
     for term, tag in (("t_skip", "SK00"), ("t_skip16", "S160")):
         out[term], bounds[term] = free(tag), free_sigma(tag)
         lines.append(ruling(f"{term} {ceil01(out[term])} T", f"T({tag}) {T(tag):.2f} - nxb_rep_t / {o_of(tag)}",
@@ -1153,13 +1186,16 @@ def s2(sit, v):
 
     def said(tag):
         return f"(T({tag}) {T(tag):.2f} - nxb_rep_t / {bench._row(tag)[3]})"
-    ldi = free("C250") - free("C240") - 10 * v["fetch_long"] - arm
-    cpu = free("R250") - free("R240") - 10 * v["fill_cpu"] - arm
+    k = sim.kernel_passes(10)                # the 10 B chunk's one block / pass
+    ldi = free("C250") - free("C240") - 10 * v["fetch_long"] - k * v["copy_ldi_pass_t"] - arm
+    cpu = free("R250") - free("R240") - 10 * v["fill_cpu"] - k * v["fill_cpu_pass_t"] - arm
     lines = [ruling(f"8-bit copy_body_ldi_t estimate {ldi:.1f} T",
-                    f"{said('C250')} - {said('C240')} - 10 x fetch_long {v['fetch_long']:.4f} - cap_arm_t {arm}",
+                    f"{said('C250')} - {said('C240')} - 10 x fetch_long {v['fetch_long']:.4f} - {k} x "
+                    f"copy_ldi_pass_t {v['copy_ldi_pass_t']:.4f} - cap_arm_t {arm}",
                     "a check only: S4 splits 8/16-bit when its value differs by more than 5.5 T"),
              ruling(f"8-bit fill_body_cpu_t estimate {cpu:.1f} T",
-                    f"{said('R250')} - {said('R240')} - 10 x fill_cpu {v['fill_cpu']:.4f} - cap_arm_t {arm}",
+                    f"{said('R250')} - {said('R240')} - 10 x fill_cpu {v['fill_cpu']:.4f} - {k} x "
+                    f"fill_cpu_pass_t {v['fill_cpu_pass_t']:.4f} - cap_arm_t {arm}",
                     "a check only: S4 splits 8/16-bit when its value differs by more than 5.5 T")]
     return {"s2_ldi8": ldi, "s2_cpu8": cpu}, lines
 
@@ -1764,7 +1800,9 @@ def s12(sit, v):
     """S12 - fetch selector, FILLMIN, STREAM_RESIDENT_POOL_B."""
     lines, out = [], {}
     tags = ("C001", "C004", "C008", "C016", "C038", "L048", "L056", "L060", "L064", "L072", "L080")
-    pts = [(bench._row(t)[2], sit.T(t) - v[HARNESS] / bench._row(t)[3]) for t in tags]
+    # per-byte lines on rows less the harness and the LDI kernel's blocks (held from S1)
+    pts = [(bench._row(t)[2], sit.T(t) - v[HARNESS] / bench._row(t)[3]
+            - v["copy_ldi_pass_t"] * standalone_counts(t)["copy_ldi_pass_t"]) for t in tags]
     _a, one_b, one_w = lsq(pts)
     best = None
     for s in range(16, 81):

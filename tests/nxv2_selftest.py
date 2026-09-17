@@ -1835,10 +1835,24 @@ def t10_path_events():
     def run(ops, surface, src, **kw):
         return lambda: ps.events(ops, surface, src, **kw)
 
+    def passes(*lens):
+        # vid_copy_ldi blocks / vid_fill_cpu passes: ceil(n / 16) per kernel call, none for 0
+        return sum(-(-n // 16) for n in lens)
+
+    def col_segs(n, o, h):
+        # o ops of n B from E = 0, each split at the h-row column ends inside it
+        segs = []
+        for i in range(o):
+            a, b = i * n, (i + 1) * n
+            cuts = [a] + [k * h for k in range(a // h + 1, (b - 1) // h + 1)] + [b]
+            segs += [y - x for x, y in zip(cuts, cuts[1:])]
+        return segs
+
     def gap_c8(n, o, hop0):
         # HLnn / HDnn at h144: o ops of n B cross 30 column ends, hop0 of them at op starts
+        # (an empty first segment's call counts no block)
         return ({"fast_copy8": o, "fast_hop_copy8": 30, "fast_hop0_copy8": hop0,
-                 "copy_fast_b": o * n, "fend": 1},
+                 "copy_fast_b": o * n, "copy_ldi_passes": passes(*col_segs(n, o, 144)), "fend": 1},
                 {"thr_copy8": o, "copy_dma_chunks8": o + 30 - hop0, "copy_dma_b": o * n,
                  "col_hops": 30, "fend": 1})
 
@@ -1850,7 +1864,7 @@ def t10_path_events():
         # falls through the cap test (B = 0, C = 250 > 240)
         ("C250", row("C250"), {"thr_copy8": 31, "copy_dma_chunks8": 31, "copy_ldi_chunks8": 31,
                                "copy_tail8": 31, "copy_dma_b": 7440, "copy_ldi_b": 310,
-                               "cap_arm_chunks": 31, "fend": 1}),
+                               "copy_ldi_passes": 31, "cap_arm_chunks": 31, "fend": 1}),
         # Q240: 32 COPY16 x 1 DMA chunk of 240
         ("Q240", row("Q240"), {"op_copy16": 32, "copy_dma_chunks16": 32, "copy_dma_b": 7680, "fend": 1}),
         # R240: 33 RUN8 240 >= 71 bail x 1 DMA chunk (7920 B, last op starts $5E00)
@@ -1858,7 +1872,7 @@ def t10_path_events():
         # R250: 31 x (240 DMA + 10 B CPU tail), the 250 B first chunks through the cap arm
         ("R250", row("R250"), {"thr_run8": 31, "run_dma_chunks8": 31, "run_cpu_chunks8": 31,
                                "run_tail8": 31, "run_dma_b": 7440, "run_cpu_b": 310,
-                               "cap_arm_chunks": 31, "fend": 1}),
+                               "run_cpu_passes": 31, "cap_arm_chunks": 31, "fend": 1}),
         # W240: 33 RUN16 x 1 DMA chunk of 240
         ("W240", row("W240"), {"op_run16": 33, "run_dma_chunks16": 33, "run_dma_b": 7920, "fend": 1}),
         # P071: 111 x 71 >= 71, one DMA chunk each (7881 B)
@@ -1883,24 +1897,27 @@ def t10_path_events():
         # HL96/HD96: 46x96 = 4416, lcm 288 -> 15; D chunks 46 + 15
         ("HL96", row("HL96"), gap_c8(96, 46, 15)[0]), ("HD96", row("HD96"), gap_c8(96, 46, 15)[1]),
         # HC03: 4429 B from E = 103j mod 144: 13 fit (E <= 41) DMA 1339 B; 30 straddle, first halves 144-E >= 81 at E 42-47,62,63 (8 tails) 760 B, second halves E-41 at E 124-129 513 B: DMA 2612, LDI 1817
+        # (LDI chunks are the column segments under 81 B)
         ("HC03", row("HC03"), {"thr_copy8": 43, "copy_dma_chunks8": 27, "copy_ldi_chunks8": 46,
                                "copy_tail8": 8, "copy_dma_b": 2612, "copy_ldi_b": 1817,
+                               "copy_ldi_passes": passes(*[x for x in col_segs(103, 43, 144) if x < 81]),
                                "col_hops": 30, "fend": 1}),
         # HK56: 4352 B from E = 112j mod 144 (j 9 deferred): E 112/80/96/64 x2 put 112 B LDI in 2 chunks (tail after DMA), E 48 x2 a 16 B tail, E 128 x2 a 16 B lead: LDI 20 chunks 960 B, 10 tails, DMA 26 chunks 3392 B, 30 hops
         ("HK56", row("HK56"), {"op_copy16": 17, "copy_dma_chunks16": 26, "copy_ldi_chunks16": 20,
                                "copy_tail16": 10, "copy_dma_b": 3392, "copy_ldi_b": 960,
+                               "copy_ldi_passes": passes(*[x for x in col_segs(256, 17, 144) if x < 81]),
                                "col_hops": 30, "fend": 1}),
         # --- NXBV ---
         # EC16: 15x16 at $5F00, D = $5F every op: 15 edge bails, 15 exact-sized LDI chunks
         ("EC16", row("EC16"), {"edge_copy8": 15, "copy_ldi_chunks8": 15, "copy_ldi_b": 240,
-                               "dst_exact_chunks": 15, "fend": 1}),
+                               "copy_ldi_passes": 15, "dst_exact_chunks": 15, "fend": 1}),
         # NC16: 15 fast at $4000
-        ("NC16", row("NC16"), {"fast_copy8": 15, "copy_fast_b": 240, "fend": 1}),
+        ("NC16", row("NC16"), {"fast_copy8": 15, "copy_fast_b": 240, "copy_ldi_passes": 15, "fend": 1}),
         # ER16: 15 edge bails, 15 exact CPU chunks of 16
         ("ER16", row("ER16"), {"edge_run8": 15, "run_cpu_chunks8": 15, "run_cpu_b": 240,
-                               "dst_exact_chunks": 15, "fend": 1}),
+                               "run_cpu_passes": 15, "dst_exact_chunks": 15, "fend": 1}),
         # NR16: 15 fast fills
-        ("NR16", row("NR16"), {"fast_run8": 15, "run_fast_b": 240, "fend": 1}),
+        ("NR16", row("NR16"), {"fast_run8": 15, "run_fast_b": 240, "run_cpu_passes": 15, "fend": 1}),
         # ES16: 15 edge bails, 1 pass each
         ("ES16", row("ES16"), {"edge_skip8": 15, "skip_passes": 15, "fend": 1}),
         # NS16: 15 fast skips
@@ -1911,9 +1928,9 @@ def t10_path_events():
         ("S2D0", row("S2D0"), {"op_skip16": 1, "skip_passes": 1, "fend": 1}),
         # SDS1: $5F80 room 128 pass, seam at $6000, 128 B pass
         ("SDS1", row("SDS1"), {"op_skip16": 1, "skip_passes": 2, "dst_seams": 1, "fend": 1}),
-        # JC72: 3x720 at h72 thr 81: 10 LDI column chunks per op, hops 9 + (1 + 9) x 2
+        # JC72: 3x720 at h72 thr 81: 10 LDI column chunks per op (5 blocks each), hops 9 + (1 + 9) x 2
         ("JC72", row("JC72"), {"op_copy16": 3, "copy_ldi_chunks16": 30, "copy_ldi_b": 2160,
-                               "col_hops": 29, "fend": 1}),
+                               "copy_ldi_passes": 150, "col_hops": 29, "fend": 1}),
         # JD72: as JC72 at thr 59: 72 >= 59, 30 DMA
         ("JD72", row("JD72"), {"op_copy16": 3, "copy_dma_chunks16": 30, "copy_dma_b": 2160,
                                "col_hops": 29, "fend": 1}),
@@ -1931,17 +1948,18 @@ def t10_path_events():
         # --- NXBL seam rows and twins ---
         # LF1K: 7x1000 flat: 4 DMA + 40 B LDI tail each, ends $5B58
         ("LF1K", row("LF1K"), {"op_copy16": 7, "copy_dma_chunks16": 28, "copy_ldi_chunks16": 7,
-                               "copy_tail16": 7, "copy_dma_b": 6720, "copy_ldi_b": 280, "fend": 1}),
+                               "copy_tail16": 7, "copy_dma_b": 6720, "copy_ldi_b": 280,
+                               "copy_ldi_passes": 21, "fend": 1}),
         # LF7K: 7680 = 32x240 DMA
         ("LF7K", row("LF7K"), {"op_copy16": 1, "copy_dma_chunks16": 32, "copy_dma_b": 7680, "fend": 1}),
         # LFDS: $5000: 16 DMA to $5F00, exact 240, exact 16 B LDI tail, seam, 3584 = 14x240 + 224 DMA
         ("LFDS", row("LFDS"), {"op_copy16": 1, "copy_dma_chunks16": 32, "copy_ldi_chunks16": 1,
-                               "copy_tail16": 1, "copy_dma_b": 7664, "copy_ldi_b": 16,
+                               "copy_tail16": 1, "copy_dma_b": 7664, "copy_ldi_b": 16, "copy_ldi_passes": 1,
                                "dst_exact_chunks": 2, "dst_seams": 1, "fend": 1}),
         # LG1K: 5x1000 h192, E0 = 0/40/80/120/160: 31 chunks, 26 DMA, LDI 40,80,72,32,8 (3 tails), 26 hops
         ("LG1K", row("LG1K"), {"op_copy16": 5, "copy_dma_chunks16": 26, "copy_ldi_chunks16": 5,
                                "copy_tail16": 3, "copy_dma_b": 4768, "copy_ldi_b": 232,
-                               "col_hops": 26, "fend": 1}),
+                               "copy_ldi_passes": passes(40, 80, 72, 32, 8), "col_hops": 26, "fend": 1}),
         # LG4K: 4000 = 20x192 + 160, all DMA, 20 hops
         ("LG4K", row("LG4K"), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_dma_b": 4000,
                                "col_hops": 20, "fend": 1}),
@@ -1955,7 +1973,7 @@ def t10_path_events():
         # h192 from E = 100: 92 DMA, 192, 192, 24 B LDI tail, 3 hops
         ("G192E", run([(C16, 500)] + END, G192, 0, dst=(0, 0x4064), copy_thr=81),
          {"op_copy16": 1, "copy_dma_chunks16": 3, "copy_ldi_chunks16": 1, "copy_tail16": 1,
-          "copy_dma_b": 476, "copy_ldi_b": 24, "col_hops": 3, "fend": 1}),
+          "copy_dma_b": 476, "copy_ldi_b": 24, "copy_ldi_passes": 2, "col_hops": 3, "fend": 1}),
         # --- SYN rows, flat 256x192 at 81/71 ---
         ("NUL0", syn("NUL0", FLAT), {}),
         # FE00: one plain FEND; FE01 the span FEND
@@ -1970,16 +1988,17 @@ def t10_path_events():
         # PAL2: PAL at $DEDC: H = $DE straddle, 291 B, parity seam, 221 B
         ("PAL2", syn("PAL2", FLAT), {"pal_straddles": 1, "pal_chunks": 2, "src_parity_seams": 1, "fend": 1}),
         # SE00: COPY8 1 at $DB58, all fast
-        ("SE00", syn("SE00", FLAT), {"fast_copy8": 1, "copy_fast_b": 1, "fend": 1}),
+        ("SE00", syn("SE00", FLAT), {"fast_copy8": 1, "copy_fast_b": 1, "copy_ldi_passes": 1, "fend": 1}),
         # SE01: COPY8 1 at $DF40: edge detour, L + 1 refine, FEND at $DF43 detours too
         ("SE01", syn("SE01", FLAT), {"fast_copy8": 1, "copy8_srcedge": 1, "copy_fast_b": 1,
-                                     "src_edge_hdr": 2, "fend": 1}),
+                                     "copy_ldi_passes": 1, "src_edge_hdr": 2, "fend": 1}),
         # SE02: COPY8 1 at $DFFE: slow header, count read to $E000, body walks (parity), 1 B LDI
         ("SE02", syn("SE02", FLAT), {"slow_copy8": 1, "copy_ldi_chunks8": 1, "copy_ldi_b": 1,
-                                     "src_parity_seams": 1, "src_slow_hdr": 1, "fend": 1}),
+                                     "copy_ldi_passes": 1, "src_parity_seams": 1, "src_slow_hdr": 1, "fend": 1}),
         # C4K0: 4096 = 17x240 + 16 B LDI tail from $4000
         ("C4K0", syn("C4K0", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 17, "copy_ldi_chunks16": 1,
-                                     "copy_tail16": 1, "copy_dma_b": 4080, "copy_ldi_b": 16, "fend": 1}),
+                                     "copy_tail16": 1, "copy_dma_b": 4080, "copy_ldi_b": 16,
+                                     "copy_ldi_passes": 1, "fend": 1}),
         # C4KP: src $D803: 8x240 to $DF83, exact 125, parity seam, 2051 = 8x240 + 131
         ("C4KP", syn("C4KP", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 18, "copy_dma_b": 4096,
                                      "copy_src_chunks": 1, "src_parity_seams": 1, "fend": 1}),
@@ -1988,45 +2007,52 @@ def t10_path_events():
                                      "copy_src_chunks": 1, "src_bank_seams": 1, "fend": 1}),
         # C4KS: C4K0 in a span
         ("C4KS", syn("C4KS", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 17, "copy_ldi_chunks16": 1,
-                                     "copy_tail16": 1, "copy_dma_b": 4080, "copy_ldi_b": 16, "fend_span": 1}),
+                                     "copy_tail16": 1, "copy_dma_b": 4080, "copy_ldi_b": 16,
+                                     "copy_ldi_passes": 1, "fend_span": 1}),
         # C4KD: dest $5800: 8x240 to $5F80, exact 128, seam, 2048 = 8x240 + 128
         ("C4KD", syn("C4KD", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 18, "copy_dma_b": 4096,
                                      "dst_exact_chunks": 1, "dst_seams": 1, "fend_span": 1}),
         # K24K: src off 515 + c, dest c; per 8192 B: 31x240, src-exact 237, walk, 240, 240, dest-exact 35 LDI, seam = 34 DMA; x2 (P, B) + 7616 = 31x240 + src-exact 176: DMA 100 = 24000 - 70; FEND 24515 at $DFC3
         ("K24K", syn("K24K", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 100, "copy_ldi_chunks16": 2,
                                      "copy_tail16": 2, "copy_dma_b": 23930, "copy_ldi_b": 70,
+                                     "copy_ldi_passes": passes(35, 35),
                                      "dst_exact_chunks": 2, "copy_src_chunks": 3, "dst_seams": 2,
                                      "src_parity_seams": 1, "src_bank_seams": 1, "src_edge_hdr": 1, "fend": 1}),
         # K43K: five K24K periods (seams P B P B P; 5x34 DMA, 5x35 LDI) + 2048 = 8x240 + 128: DMA 179 = 43008 - 175
         ("K43K", syn("K43K", FLAT), {"op_copy16": 1, "copy_dma_chunks16": 179, "copy_ldi_chunks16": 5,
                                      "copy_tail16": 5, "copy_dma_b": 42833, "copy_ldi_b": 175,
+                                     "copy_ldi_passes": passes(35, 35, 35, 35, 35),
                                      "dst_exact_chunks": 5, "copy_src_chunks": 5, "dst_seams": 5,
                                      "src_parity_seams": 3, "src_bank_seams": 2, "fend": 1}),
         # --- SYN rows, gapped 320x192 ---
         # C4K0: 21x192 DMA + 64 B LDI tail, 21 hops
         ("gC4K0", syn("C4K0", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 1,
                                       "copy_tail16": 1, "copy_dma_b": 4032, "copy_ldi_b": 64,
-                                      "col_hops": 21, "fend": 1}),
+                                      "copy_ldi_passes": 4, "col_hops": 21, "fend": 1}),
         # C4KP: 10 columns to src off 8067, exact 125 DMA, parity seam, 67 B LDI, 10 columns, 64 B LDI
         ("gC4KP", syn("C4KP", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 2,
                                       "copy_tail16": 2, "copy_dma_b": 3965, "copy_ldi_b": 131,
+                                      "copy_ldi_passes": passes(67, 64),
                                       "copy_src_chunks": 1, "col_hops": 21, "src_parity_seams": 1, "fend": 1}),
         # C4KB: gC4KP one page on, a bank seam
         ("gC4KB", syn("C4KB", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 2,
                                       "copy_tail16": 2, "copy_dma_b": 3965, "copy_ldi_b": 131,
+                                      "copy_ldi_passes": passes(67, 64),
                                       "copy_src_chunks": 1, "col_hops": 21, "src_bank_seams": 1, "fend": 1}),
         # C4KD: gC4K0 from column $58: the hop into $60 seams
         ("gC4KD", syn("C4KD", G192), {"op_copy16": 1, "copy_dma_chunks16": 21, "copy_ldi_chunks16": 1,
                                       "copy_tail16": 1, "copy_dma_b": 4032, "copy_ldi_b": 64,
-                                      "col_hops": 21, "dst_seams": 1, "fend_span": 1}),
+                                      "copy_ldi_passes": 4, "col_hops": 21, "dst_seams": 1, "fend_span": 1}),
         # K24K: 125x192, 124 hops, seams at columns 32/64/96; src ends split column 39 (src off 8003: 189 DMA + 3) and 82 (8067: 125 + 67), column 124 (7939) exact 192: LDI 70, DMA 23930; FEND at $DFC3
         ("gK24K", syn("K24K", G192), {"op_copy16": 1, "copy_dma_chunks16": 125, "copy_ldi_chunks16": 2,
                                       "copy_tail16": 2, "copy_dma_b": 23930, "copy_ldi_b": 70,
+                                      "copy_ldi_passes": passes(3, 67),
                                       "copy_src_chunks": 3, "col_hops": 124, "dst_seams": 3,
                                       "src_parity_seams": 1, "src_bank_seams": 1, "src_edge_hdr": 1, "fend": 1}),
         # K43K: 224x192, 223 hops, 6 seams; src ends split columns 39 (189+3), 82 (125+67), 125 (61 LDI + 131; column 124 exact 192), 167 (189+3), 210 (125+67): LDI 201, DMA 42807
         ("gK43K", syn("K43K", G192), {"op_copy16": 1, "copy_dma_chunks16": 224, "copy_ldi_chunks16": 5,
                                       "copy_tail16": 5, "copy_dma_b": 42807, "copy_ldi_b": 201,
+                                      "copy_ldi_passes": passes(3, 67, 61, 3, 67),
                                       "copy_src_chunks": 6, "col_hops": 223, "dst_seams": 6,
                                       "src_parity_seams": 3, "src_bank_seams": 2, "fend": 1}),
         # SYS FE00 at offset 0 reads one FEND
@@ -2040,7 +2066,7 @@ def t10_path_events():
         ("srcbail", run([(C8, 100)] + END, FLAT, 16284, copy_thr=81),
          {"src_edge_hdr": 1, "copy8_srcedge": 1, "src_copy8": 1, "copy_src_chunks": 1,
           "copy_dma_chunks8": 1, "copy_ldi_chunks8": 1, "copy_tail8": 1, "copy_dma_b": 98,
-          "copy_ldi_b": 2, "src_bank_seams": 1, "fend": 1}),
+          "copy_ldi_b": 2, "copy_ldi_passes": 1, "src_bank_seams": 1, "fend": 1}),
         # SKIP16 300 at $DFFE: slow, the high count byte walks (parity), 1 pass
         ("slow16", run([(S16, 300)] + END, FLAT, 8190),
          {"src_slow_hdr": 1, "slow_skip16": 1, "skip_passes": 1, "src_parity_seams": 1, "fend": 1}),
@@ -2050,31 +2076,33 @@ def t10_path_events():
         # RUN16 300 at $DFFC: slow to $E000, 240 DMA + 60 CPU tail, FEND wraps
         ("slowr16", run([(R16, 300)] + END, FLAT, 8188, run_thr=71),
          {"src_slow_hdr": 1, "slow_run16": 1, "run_dma_chunks16": 1, "run_cpu_chunks16": 1,
-          "run_tail16": 1, "run_dma_b": 240, "run_cpu_b": 60, "src_wrap_hdr": 1,
+          "run_tail16": 1, "run_dma_b": 240, "run_cpu_b": 60, "run_cpu_passes": 4, "src_wrap_hdr": 1,
           "src_parity_seams": 1, "fend": 1}),
         # RUN8 20 at $DFFD: slow to $E000, 20 B CPU, FEND wraps
         ("slowr8", run([(R8, 20)] + END, FLAT, 8189, run_thr=71),
-         {"src_slow_hdr": 1, "slow_run8": 1, "run_cpu_chunks8": 1, "run_cpu_b": 20,
+         {"src_slow_hdr": 1, "slow_run8": 1, "run_cpu_chunks8": 1, "run_cpu_b": 20, "run_cpu_passes": 2,
           "src_wrap_hdr": 1, "src_parity_seams": 1, "fend": 1}),
         # COPY16 90 at $DFFD: slow to $E000, the body walks (parity), 90 DMA
         ("slowc16", run([(C16, 90)] + END, FLAT, 8189, copy_thr=81),
          {"src_slow_hdr": 1, "slow_copy16": 1, "copy_dma_chunks16": 1, "copy_dma_b": 90,
           "src_parity_seams": 1, "fend": 1}),
-        # h72 column $5F at E = 72: RUN8 30 hops with an empty first segment into $60 (seam)
+        # h72 column $5F at E = 72: RUN8 30 hops with an empty first segment into $60 (seam);
+        # the zero-count seg1 call runs no pass, seg2 30 runs 2
         ("hop0", run([(R8, 30)] + END, G72, 0, dst=(0, 0x5F48), run_thr=71),
          {"fast_run8": 1, "fast_hop_run8": 1, "fast_hop0_run8": 1, "fast_dst_seams": 1,
-          "run_fast_b": 30, "fend": 1}),
+          "run_fast_b": 30, "run_cpu_passes": 2, "fend": 1}),
         # h192 COPY16 300 from E = 150: 42 LDI before any DMA, hop, 192 DMA, hop, 66 LDI after it
         ("ldifirst", run([(C16, 300)] + END, G192, 0, dst=(0, 0x4096), copy_thr=81),
          {"op_copy16": 1, "copy_ldi_chunks16": 2, "copy_dma_chunks16": 1, "copy_tail16": 1,
-          "copy_ldi_b": 108, "copy_dma_b": 192, "col_hops": 2, "fend": 1}),
+          "copy_ldi_b": 108, "copy_dma_b": 192, "copy_ldi_passes": passes(42, 66), "col_hops": 2, "fend": 1}),
         # h192 RUN16 300 from E = 150: 42 CPU, hop, 192 DMA, hop, 66 CPU
         ("cpufirst", run([(R16, 300)] + END, G192, 0, dst=(0, 0x4096), run_thr=71),
          {"op_run16": 1, "run_cpu_chunks16": 2, "run_dma_chunks16": 1, "run_tail16": 1,
-          "run_cpu_b": 108, "run_dma_b": 192, "col_hops": 2, "fend": 1}),
+          "run_cpu_b": 108, "run_dma_b": 192, "run_cpu_passes": passes(42, 66), "col_hops": 2, "fend": 1}),
         # h72 COPY8 200 under thr 255: gap bail, a DMA-free body of LDI 72 + 72 + 56
         ("nodma", run([(C8, 200)] + END, G72, 0, copy_thr=255),
-         {"gap_copy8": 1, "copy_ldi_chunks8": 3, "copy_ldi_b": 200, "col_hops": 2, "fend": 1}),
+         {"gap_copy8": 1, "copy_ldi_chunks8": 3, "copy_ldi_b": 200, "copy_ldi_passes": passes(72, 72, 56),
+          "col_hops": 2, "fend": 1}),
         # h72 SKIP8 72 from E = 0 lands E = 72 (no hop); SKIP16 10 hops in its normalize, 1 pass
         ("defer", run([(S8, 72), (S16, 10)] + END, G72, 0),
          {"fast_skip8": 1, "op_skip16": 1, "gap_skip_passes": 1, "col_hops": 1, "fend": 1}),
@@ -2086,29 +2114,49 @@ def t10_path_events():
          {"op_skip16": 1, "skip_passes": 1, "fend": 1}),
         # h72 RUN8 200 under thr 241: over 128 >= 72 bails, CPU 72 + 72 + 56, 2 hops
         ("gaprun", run([(R8, 200)] + END, G72, 0, run_thr=241),
-         {"gap_run8": 1, "run_cpu_chunks8": 3, "run_cpu_b": 200, "col_hops": 2, "fend": 1}),
+         {"gap_run8": 1, "run_cpu_chunks8": 3, "run_cpu_b": 200, "run_cpu_passes": passes(72, 72, 56),
+          "col_hops": 2, "fend": 1}),
         # h192 COPY8 250 at E = 100 under thr 255: 350 carries, LDI 92 + 158, 1 hop
         ("gapcopy", run([(C8, 250)] + END, G192, 0, dst=(0, 0x4064), copy_thr=255),
-         {"gap_copy8": 1, "copy_ldi_chunks8": 2, "copy_ldi_b": 250, "col_hops": 1, "fend": 1}),
+         {"gap_copy8": 1, "copy_ldi_chunks8": 2, "copy_ldi_b": 250, "copy_ldi_passes": passes(92, 158),
+          "col_hops": 1, "fend": 1}),
         # flat $5FF0: COPY8 16 edge bail to $6000 exact; SKIP8 4 at D = $60 edge bail, seam, 1 pass
         ("edge60", run([(C8, 16), (S8, 4)] + END, FLAT, 0, dst=(0, 0x5FF0), copy_thr=81),
-         {"edge_copy8": 1, "copy_ldi_chunks8": 1, "copy_ldi_b": 16, "dst_exact_chunks": 1,
+         {"edge_copy8": 1, "copy_ldi_chunks8": 1, "copy_ldi_b": 16, "copy_ldi_passes": 1, "dst_exact_chunks": 1,
           "edge_skip8": 1, "skip_passes": 1, "dst_seams": 1, "fend": 1}),
         # h250 from E = 5: COPY16 300 room 245 takes the cap arm (240 DMA), then LDI 5 to the
         # column end, hop, LDI 55; every chunk on a height over 240
         ("hiarm", run([(C16, 300)] + END, (320, 250, True), 0, dst=(0, 0x4005), copy_thr=81),
          {"op_copy16": 1, "copy_dma_chunks16": 1, "copy_dma_b": 240, "copy_ldi_chunks16": 2,
-          "copy_ldi_b": 60, "copy_tail16": 2, "col_hops": 1, "gap_hi_chunks": 3, "cap_arm_chunks": 1,
-          "fend": 1}),
+          "copy_ldi_b": 60, "copy_ldi_passes": passes(5, 55), "copy_tail16": 2, "col_hops": 1,
+          "gap_hi_chunks": 3, "cap_arm_chunks": 1, "fend": 1}),
         # h250 from E = 0: RUN8 250 >= 71, C = 250 <= room takes the cap arm (240 DMA), CPU 10
         ("hirun", run([(R8, 250)] + END, (320, 250, True), 0, run_thr=71),
          {"thr_run8": 1, "run_dma_chunks8": 1, "run_dma_b": 240, "run_cpu_chunks8": 1, "run_cpu_b": 10,
-          "run_tail8": 1, "gap_hi_chunks": 2, "cap_arm_chunks": 1, "fend": 1}),
+          "run_cpu_passes": 1, "run_tail8": 1, "gap_hi_chunks": 2, "cap_arm_chunks": 1, "fend": 1}),
         # KSTART, PAL at $C3E9, COPY16 1000 = 4x240 + 40 B LDI tail, KFLIP
         ("kframe", run([(0x28, 0), (0x18, 512), (C16, 1000), (0x20, 0)], FLAT, 1000, copy_thr=81),
          {"kstart": 1, "pal_ops": 1, "op_copy16": 1, "copy_dma_chunks16": 4, "copy_ldi_chunks16": 1,
-          "copy_tail16": 1, "copy_dma_b": 960, "copy_ldi_b": 40, "kflip": 1}),
+          "copy_tail16": 1, "copy_dma_b": 960, "copy_ldi_b": 40, "copy_ldi_passes": 3, "kflip": 1}),
     ]
+    # kernel blocks and passes, fast handler and body, at n = 15, 16, 17, 32, 33 (flat $4000, 81/71):
+    # vid_copy_ldi 87 + 19n + 13 ceil(n/16) T per call (jp pe 13 T taken or not); vid_fill_cpu
+    # 153 + 15n + 15 ceil(n/16) T (djnz 15 T; the last pass's 10 T leaves -5 T in the 153)
+    # h72 from E = 64: a 16 B op crosses the column end as 8 + 8, two kernel calls of one block/pass each
+    cases += [("gapldi16", run([(C8, 16)] + END, G72, 0, dst=(0, 0x4040), copy_thr=81),
+               {"fast_copy8": 1, "fast_hop_copy8": 1, "copy_fast_b": 16, "copy_ldi_passes": passes(8, 8), "fend": 1}),
+              ("gapcpu16", run([(R8, 16)] + END, G72, 0, dst=(0, 0x4040), run_thr=71),
+               {"fast_run8": 1, "fast_hop_run8": 1, "run_fast_b": 16, "run_cpu_passes": passes(8, 8), "fend": 1})]
+    for n, blocks in ((15, 1), (16, 1), (17, 2), (32, 2), (33, 3)):
+        cases += [
+            (f"ldi{n}", run([(C8, n)] + END, FLAT, 0, copy_thr=81),
+             {"fast_copy8": 1, "copy_fast_b": n, "copy_ldi_passes": blocks, "fend": 1}),
+            (f"cpu{n}", run([(R8, n)] + END, FLAT, 0, run_thr=71),
+             {"fast_run8": 1, "run_fast_b": n, "run_cpu_passes": blocks, "fend": 1}),
+            (f"ldib{n}", run([(C16, n)] + END, FLAT, 0, copy_thr=81),
+             {"op_copy16": 1, "copy_ldi_chunks16": 1, "copy_ldi_b": n, "copy_ldi_passes": blocks, "fend": 1}),
+            (f"cpub{n}", run([(R16, n)] + END, FLAT, 0, run_thr=71),
+             {"op_run16": 1, "run_cpu_chunks16": 1, "run_cpu_b": n, "run_cpu_passes": blocks, "fend": 1})]
     bad, seen, got_by = [], set(), {}
     for label, fn, want in cases:
         got = got_by[label] = fn().as_dict()
@@ -2199,7 +2247,7 @@ def t10_path_events():
         raise AssertionError("price must refuse an unpriced nonzero event")
     c250 = bench.row_events("C250")
     unit = {k: 1.0 for k in c250.as_dict() if k not in ps.DIAGNOSTIC}
-    expect(c250.price(unit) == 31 + 31 + 31 + 7440 + 310 + 31 + 1, "tails are not priced")
+    expect(c250.price(unit) == 31 + 31 + 31 + 7440 + 310 + 31 + 31 + 1, "tails are not priced")
     try:
         c250.price(dict(unit, copy_tail8=100.0))
     except ValueError:
@@ -2324,6 +2372,8 @@ _GAP_MAP = {       # counter -> ((term, None | "gap" | "lo" (gapped, height <= 2
     "copy8_srcedge": (("srcedge_t", None),),
     "run_fast_b": (("fill_cpu", None),),
     "copy_fast_b": (("fetch", None),),
+    "copy_ldi_passes": (("copy_ldi_pass_t", None),),
+    "run_cpu_passes": (("fill_cpu_pass_t", None),),
     "skip_passes": (("t_skip_pass", None),),
     "gap_skip_passes": (("gap_skip_pass_t", None),),
     "run_cpu_chunks8": _gap_chunk("fill_body_cpu_t"),
@@ -2425,6 +2475,19 @@ def _gap_frames(clip, copy_thr, run_thr):
     return _GAP_FRAMES[key]
 
 
+def _gap_row_extra():
+    """T per op off the model on the COPY fast rows: -16 on L080 less its weighted projection
+    onto S1's copy design (1, short L, long L, blocks), so the long rates spread for S1's max
+    without moving the joint fit or lifting t_op_copy; the twins C016/NC16 carry none."""
+    tags = ("C001", "C004", "C008", "C038", "L048", "L056", "L060", "L064", "L072", "L080")
+    rows = [bench._row(t) for t in tags]
+    A = np.array([[1.0, L if L < 64 else 0.0, L if L >= 64 else 0.0, -(-L // 16)] for _t, _k, L, *_x in rows])
+    w2 = np.array([(r * o / 1824.0) ** 2 for _t, _k, _L, o, r, *_x in rows])
+    u = np.array([-16.0 if t == "L080" else 0.0 for t in tags])
+    d = u - A @ np.linalg.solve(A.T @ (w2[:, None] * A), A.T @ (w2 * u))
+    return dict(zip(tags, map(float, d)))
+
+
 def _gap_hidden():
     """(terms, resident frame terms, streaming frame terms, extras) for a synthetic
     sitting 5, chosen so each rule's branches bind: pool 80 banks, a nonzero
@@ -2433,7 +2496,8 @@ def _gap_hidden():
     bench harness on every standalone rep (h_rep T, never a model term)."""
     H = {"fetch_short": 19.785, "fetch_long": 19.885, "t_skip": 141.83, "t_skip16": 210.93,
          "t_op_run": 367.43, "t_op_copy": 303.73, "fill_cpu": 15.885, "copy_dma_per_b": 5.065,
-         "fill_dma_per_b": 5.085, "copy_dma_setup": 881.3, "copy_dma_path_t": -18.4,
+         "fill_dma_per_b": 5.085, "copy_ldi_pass_t": 13.4, "fill_cpu_pass_t": 14.6,
+         "copy_dma_setup": 881.3, "copy_dma_path_t": -18.4,
          "copy_body_ldi_t": 421.7, "fill_dma_setup": 783.1, "fill_dma_path_t": -71.2,
          "fill_body_cpu_t": 401.9, "copy16_entry_t": 70.3, "run16_entry_t": 68.6, "t_skip_pass": 121.4,
          "gap_skip_pass_t": 97.4, "edge_skip_t": 181.2, "edge_run_t": 203.6, "edge_copy_t": 212.8, "dst_seam_t": 151.7,
@@ -2452,7 +2516,7 @@ def _gap_hidden():
          "prod": {7: 10480.0, 8: 10150.0, 9: 10820.0}, "comp": {"flat": 1.031, "gapped": 1.243},
          "direct": (11.53, 60.4, 30120.0), "dt": {"DTI0": 6010.0, "DTB0": 6400.0, "DTC0": 6230.0, "DTD0": 6620.0},
          "pool": 80, "depth": 2400, "fill": 120, "remn": 3000, "m_strm": 40, "cal": 5003, "h_rep": 712.0,
-         "row_extra": {"L064": -12.8, "L080": -12.0},                    # T per op off the model
+         "row_extra": _gap_row_extra(),                                  # T per op off the model
          "sweep_extra": {55: 3000.0, 60: 3000.0, 65: 0.0, 70: 2000.0, 75: 3000.0, 81: 4000.0},   # T per frame
          "delivery": {**{c: "resident" for c in (1, 2, 3, 4, 5, 6)}, **{c: "streaming" for c in (7, 8, 9)},
                       **{c: "direct" for c in (10, 12, 13, 14)}},
@@ -2661,22 +2725,38 @@ def _gap_expect(runs, v, X):
 
     def free(tag):
         return top(tag) - hrep / ops(tag)
-    for icpt, slope, tags in (("t_op_run", "fill_cpu", ("RU01", "RU17", "F063", "F070")),
-                              ("t_op_copy", "fetch_short", ("C001", "C004", "C008", "C038"))):
-        xs, ys = [bench._row(t)[2] for t in tags], [free(t) for t in tags]
-        b, a = np.polyfit(xs, ys, 1)
-        lift = max(0.0, max(y - (a + b * x) - max(5.5, 1824.0 / (std[t][1] * std[t][0]))
-                            for x, y, t in zip(xs, ys, tags)))
-        e[icpt], e[slope] = a + lift, b
-    longs = [(free(t) - e["t_op_copy"]) / bench._row(t)[2] for t in ("L064", "L072", "L080")]
+
+    def blocks(L):
+        return -(-L // 16)
+    # the fast rows: one kernel call per op of L bytes, (L + 15) >> 4 blocks/passes; each row weighted
+    # by 1 / its line, solved by lstsq on the scaled system
+    for terms, tags in ((("t_op_run", "fill_cpu", "fill_cpu_pass_t"),
+                         ("RU01", "RU17", "F063", "F070", "NR16", "FC56", "FC60", "FC64", "FC68", "FC72", "FC76")),
+                        (("t_op_copy", "fetch_short", "fetch_long", "copy_ldi_pass_t"),
+                         ("C001", "C004", "C008", "C016", "C038", "NC16", "L048", "L056", "L060", "L064", "L072",
+                          "L080"))):
+        Ls = [bench._row(t)[2] for t in tags]
+        if len(terms) == 3:
+            A = np.array([[1.0, L, blocks(L)] for L in Ls])
+        else:
+            A = np.array([[1.0, L if L < 64 else 0.0, L if L >= 64 else 0.0, blocks(L)] for L in Ls])
+        wt = np.array([std[t][1] * std[t][0] / 1824.0 for t in tags])
+        y = np.array([free(t) for t in tags])
+        x = np.linalg.lstsq(A * wt[:, None], y * wt, rcond=None)[0]
+        lift = max(0.0, max(y - A @ x - np.maximum(5.5, 1.0 / wt)))
+        e.update(zip(terms, x))
+        e[terms[0]] += lift
+    longs = [(free(t) - e["t_op_copy"] - e["copy_ldi_pass_t"] * blocks(bench._row(t)[2])) / bench._row(t)[2]
+             for t in ("L064", "L072", "L080")]
     e["fetch_long"] = max(longs)
     facts["fetch_long spread"] = max(longs) - min(longs)
     e["t_skip"], e["t_skip16"] = free("SK00"), free("S160")
     e["copy_dma_per_b"] = (free("C103") - free("C081")) / 22.0
     e["fill_dma_per_b"] = (free("P200") - free("P071")) / 129.0
     # S2 (the 250 B first chunk's cap arm is 18 T), at S1's harness
-    e["s2_ldi8"] = free("C250") - free("C240") - 10 * v["fetch_long"] - 18
-    e["s2_cpu8"] = free("R250") - free("R240") - 10 * v["fill_cpu"] - 18
+    # and the 10 B chunk's one kernel block / pass
+    e["s2_ldi8"] = free("C250") - free("C240") - 10 * v["fetch_long"] - v["copy_ldi_pass_t"] - 18
+    e["s2_cpu8"] = free("R250") - free("R240") - 10 * v["fill_cpu"] - v["fill_cpu_pass_t"] - 18
     # S3
     synth = [("SYN", c) for c in (1, 2, 3, 4)] + [("SYS", 7)]
     for term, tag in (("frame_delta_t", "FE00"), ("frame_middle_t", "FE01"), ("frame_first_t", "KS02"),
@@ -2776,7 +2856,7 @@ def _gap_expect(runs, v, X):
     e["supply_exchange"] = {f"{w}x{hh}": 28000.0 / (v["SD_WIRE_BYTES_PER_MS"] * silicon_r(key, 1.0))
                             for (w, hh), key in (((320, 256), "flat_320"), ((256, 192), "flat_256"),
                                                  ((320, 192), "gapped"), ((320, 144), "gapped"))}
-    pts = [(bench._row(t)[2], top(t) - v["nxb_rep_t"] / ops(t))
+    pts = [(bench._row(t)[2], top(t) - v["nxb_rep_t"] / ops(t) - v["copy_ldi_pass_t"] * blocks(bench._row(t)[2]))
            for t in ("C001", "C004", "C008", "C016", "C038", "L048", "L056", "L060", "L064", "L072", "L080")]
 
     def worst(p):
@@ -2873,23 +2953,31 @@ def t10_gap_rules():
            f"one nxb_rep_t ruling with its hand count: {said}")
     expect("nxb_rep_t" not in g.ruled_coefficients(v) and "nxb_rep_t" in v["s4_terms"],
            "nxb_rep_t is fitted in S4 and never exported")
+    # the kernel pass terms: S1 rulings beside their instruction counts, exported, held by S4
+    for t in ("copy_ldi_pass_t", "fill_cpu_pass_t"):
+        said = [line for line in printed if line.startswith(f"Ruling: {t} ")]
+        expect(len(said) == 1 and g.KERNEL_HAND[t] in said[0] and t in g.ruled_coefficients(v)
+               and t not in v["s4_terms"], f"{t}: one S1 ruling with its instruction count, exported: {said}")
+    # S12 on rows less the harness and the blocks: one line, no selector
     one_w, one_b = facts["S12 one line"]
     said = [line for line in printed if line.startswith("Ruling: one fetch_long rate")]
     expect(v["fetch_selector"] is None and len(said) == 1
            and f"one line worst residual {one_w:.2f} T (slope {one_b:.4f})" in said[0],
-           f"S12's one line on harness-free rows, by hand {one_w:.2f} T slope {one_b:.4f}: {said}")
+           f"S12's one line on harness- and block-free rows, by hand {one_w:.2f} T slope {one_b:.4f}: {said}")
 
     # the band is max(5.5 T, one line of the row), in S1's lift too
     expect(g.op_band((5, 64, 0, 0)) == 1824.0 / 320 and g.op_band((255, 64, 0, 0)) == 5.5, "op_band")
-    xs = np.array([1.0, 17.0, 63.0, 70.0])
-    design = np.stack([np.ones(4), xs], axis=1)
-    lev = (design @ np.linalg.pinv(design))[1, 1]
+    run_tags = ("RU01", "RU17", "F063", "F070", "NR16", "FC56", "FC60", "FC64", "FC68", "FC72", "FC76")
+    Ls = [bench._row(t)[2] for t in run_tags]
+    design = np.array([[1.0, L, -(-L // 16)] for L in Ls])
     hr = facts["S1 nxb_rep_t"]
     for resid, want_lift in ((6.5, 0.0), (8.0, 8.0 - 1824.0 / 255)):
         rows = dict(sit.rows)
-        ys = [g.t_op(rows[t]) - hr / bench._row(t)[3] for t in ("RU01", "RU17", "F063", "F070")]
-        b, a = np.polyfit(xs, ys, 1)
-        t17 = ys[1] + (resid - (ys[1] - a - b * 17)) / (1 - lev)
+        rows["RU17"] = (255, 1, 0, 0.0)                    # R = 1: one line is 7.15 T, and its weight
+        wt = np.array([rows[t][1] * rows[t][0] / 1824.0 for t in run_tags])
+        hat = design @ np.linalg.pinv(design * wt[:, None]) * wt[None, :]
+        ys = np.array([g.t_op(sit.rows[t]) - hr / bench._row(t)[3] for t in run_tags])
+        t17 = ys[1] + (resid - (ys - hat @ ys)[1]) / (1 - hat[1, 1])
         rows["RU17"] = (255, 1, 0, (t17 + hr / 255) * 255 / 1824.0)
         lift = g.s1(g.Sitting(rows, {}), {})[0]["raises"].get("t_op_run", 0.0)
         expect(math.isclose(lift, want_lift, abs_tol=1e-6), f"S1 lift at residual {resid} on a 7.15 T row: {lift}")
@@ -2930,7 +3018,8 @@ def t10_gap_rules():
             "glue_t": X["glue"]["resident"] + X["pace"], "glue_strm_t": X["glue"]["streaming"] + X["pace"],
             "DIRECT_T_PER_B": X["direct"][0], "DIRECT_COL_T": X["direct"][1], "DIRECT_FRAME_T": X["direct"][2]}
     rule_of = {**{t: "S1" for t in ("fetch_short", "fetch_long", "t_skip", "t_skip16", "t_op_run", "t_op_copy",
-                                   "fill_cpu", "copy_dma_per_b", "fill_dma_per_b")},
+                                   "fill_cpu", "copy_dma_per_b", "fill_dma_per_b", "copy_ldi_pass_t",
+                                   "fill_cpu_pass_t")},
                **{t: "S3" for t in res}, "t_palette": "S3", "pal_straddle_t": "S3", "glue_t": "S3",
                "glue_strm_t": "S3", "DIRECT_T_PER_B": "S15", "DIRECT_COL_T": "S15", "DIRECT_FRAME_T": "S15"}
     bad, by_bound = [], []
@@ -3129,18 +3218,19 @@ def t10_gap_rules():
                f"harness STOP: {stop.lines}")
     else:
         raise AssertionError("no S1 STOP on a harness 114 T over")
-    # a row priced only by held S1 terms and the harness STOPs S4; nxb_rep_t never rises to cover it
+    # a row outside S1's fits priced only by held S1 terms and the harness (CP17: COPY8 17, two blocks)
+    # STOPs S4; nxb_rep_t never rises to cover it
     r2 = copy.deepcopy(runs)
     for run in r2:
-        if run["verb"] == "NXBF":
-            run["rows"] = shift(run["rows"], "FC68", 40)
+        if run["verb"] == "NXBO":
+            run["rows"] = shift(run["rows"], "CP17", 40)
     try:
         g.apply_rules(*_gap_text(r2, d_rows), out=[], launch_status=notes)
     except g.Stop as stop:
-        expect(stop.rule == "S4" and stop.lines[0].startswith("FC68 prices ")
-               and stop.lines[0].endswith(" under its band with no fitted term to raise"), f"FC68 STOP: {stop.lines}")
+        expect(stop.rule == "S4" and stop.lines[0].startswith("CP17 prices ")
+               and stop.lines[0].endswith(" under its band with no fitted term to raise"), f"CP17 STOP: {stop.lines}")
     else:
-        raise AssertionError("no S4 STOP on FC68 +40 lines")
+        raise AssertionError("no S4 STOP on CP17 +40 lines")
     for cpu, dma, want in (((0.0, 19.8), (880.0, 19.795), "near-parallel"),
                            ((0.0, 19.8), (5000.0, 5.1), "outside 1..255")):
         try:
