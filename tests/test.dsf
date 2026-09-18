@@ -347,8 +347,9 @@ LS256 111     verb
 ; Rows print at tilemap rows 8+ and become visible when the timeline
 ; report hides Layer 2 at teardown. Each verb ends with the log step
 ; (mode 15): NXBENCH.TXT in the launch folder, LOG OK or LOG ERR xx on
-; row 31. Release's EXTERN 0 12 is ext_stub
-; and flag 248 is inert, so all of them are silent no-ops there.
+; row 31. Session verbs arm through EXTERN 0 12 mode 14, so a game's own
+; flag 248 never diverts a clip. Release's EXTERN 0 12 is ext_stub,
+; so all of them are silent no-ops there.
 NXBO  112     verb
 NXBC  113     verb
 NXBK  114     verb
@@ -1088,7 +1089,8 @@ $pictureOK
 ; SP17 player bench (see the vocabulary block). The standalone
 ; modes set flag 250 then share EXTERN 0 12; the mode cell self-clears
 ; in the handler, so a stray EXTERN can never re-run a row set. The
-; session verbs (NXBD/NXBR/NXBQ/NXBY) set flag 248 and then play the
+; session verbs (NXBD/NXBR/NXBQ/NXBY) set flag 248, arm it with mode 14
+; (EXTERN 0 12, which clears flag 248), and then play the
 ; clip PICK armed: the player opens the file exactly as it ships, and
 ; the bench hook diverts to the session rows once the session is staged
 ; and BEFORE the CTC starts. No PROCESS 10 on the standalone verbs -
@@ -1162,8 +1164,10 @@ $pictureOK
                 DONE
 
 ; NXBD/NXBR/NXBQ/NXBY: the DS1/REAL/SYN/SYS session bench on the clip
-; PICK armed (flag 140).
+; PICK armed (flag 140). Mode 14 copies flag 248 into the arm cell.
 > NXBD    _     LET     248 1
+                LET     250 14
+                EXTERN  0 12
                 GFX     @140 13
                 LET     250 15
                 EXTERN  0 12
@@ -1171,6 +1175,8 @@ $pictureOK
                 DONE
 
 > NXBR    _     LET     248 2
+                LET     250 14
+                EXTERN  0 12
                 GFX     @140 13
                 LET     250 15
                 EXTERN  0 12
@@ -1178,6 +1184,8 @@ $pictureOK
                 DONE
 
 > NXBQ    _     LET     248 3
+                LET     250 14
+                EXTERN  0 12
                 GFX     @140 13
                 LET     250 15
                 EXTERN  0 12
@@ -1185,6 +1193,8 @@ $pictureOK
                 DONE
 
 > NXBY    _     LET     248 4
+                LET     250 14
+                EXTERN  0 12
                 GFX     @140 13
                 LET     250 15
                 EXTERN  0 12

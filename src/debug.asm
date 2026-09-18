@@ -742,7 +742,7 @@ l2scr_trampoline:
 ; before the shared EXTERN, so a new mode costs a table row rather than
 ; a vector. The direct-serve transport mode (NXBD) needs a LIVE armed
 ; session and cannot come through here - it rides the player instead
-; (flags+248 + a GFX n 13 verb; see video.asm's vid_run bench hook).
+; (mode 14 arms flags+248, then a GFX n 13 verb; see vid_run's bench hook).
 ; Same push-target/ovl_map_page idiom as the trampolines above.
 nxb_trampoline:
     ld hl, nxb_entry

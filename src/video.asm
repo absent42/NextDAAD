@@ -2242,9 +2242,9 @@ vid_run:
     and $FF-(HOOK_XBN+HOOK_CYC)
     ld (xbnIntOn), a
  IFDEF DEBUG
-    ; Session bench hook: flags+248 = session mode (nxb_sess). The session is
-    ; staged and the CTC is not armed; playback is replaced by the rows.
-    ld a, (flags+248)
+    ; Session bench hook: nxbSessReq = session mode (nxb_sess), armed only by
+    ; EXTERN 0 12 mode 14. Staged, CTC not armed; the rows replace playback.
+    ld a, (nxbSessReq)
     or a
     jr z, .nobench
     ld (vidDecSp), sp            ; abort anchor = the session anchor
@@ -3760,7 +3760,8 @@ vid_tl_report_ret:
 ;  10 COPY path pairs on the gapped surface at height 144.
 ;  11 RUN path pairs (CPU fill against DMA), flat and gapped.
 ;  12 events: dest-edge bails, SKIP body passes, a dest seam, columns.
-; SESSION MODES (flags+248, nxb_sess) ride a staged clip at vid_run's hook:
+; SESSION MODES (nxbSessReq, armed from flags+248 by mode 14) ride a staged
+; clip at vid_run's hook:
 ;   1 DS1 (direct: frame sweeps, then the transport rows), 2 REAL (real
 ;   frames, audio, the frame loop, the producer, an armed pass), 3 SYN and
 ;   4 SYS (synthetic frames written into a resident / streaming clip).
@@ -3788,6 +3789,7 @@ NXB_SEAM_DST     equ $5F80   ; geo dest code 3, flat rows only
     ASSERT (low NXB_EDGE_DST) == 0
 NXB_MODE_FIRST   equ 2       ; standalone modes, nxbTabDir order
 NXB_MODE_LAST    equ 12
+NXB_MODE_ARM     equ 14      ; flags+248 -> nxbSessReq, flags+248 cleared
 NXB_MODE_LOG     equ 15      ; the log step (nxb_log, NXB_PAGE)
 NXB_TAB_MAX      equ 560     ; nxbTabBuf: every table asserts it fits
 NXB_ROW_LEN      equ 12      ; ds 4 tag, db opc, dw count, db ops,
@@ -3840,8 +3842,8 @@ NXB_K_STRM       equ $80
 ; ---------------------------------------------------------------------
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
-; Modes 2-12 run standalone; direct-serve is session mode 1 (flags+248, nxb_sess).
-; Mode 15 (the log step) is tested first: no blank, bank or table.
+; Modes 2-12 run standalone; mode 14 arms a session (nxbSessReq, nxb_sess).
+; Modes 15 (the log step) and 14 are tested first: no blank, bank or table.
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
 ; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
@@ -3852,6 +3854,8 @@ nxb_entry:
     ld (nxbMode), a
     cp NXB_MODE_LOG
     jr z, .log
+    cp NXB_MODE_ARM
+    jr z, .arm
     ld (vidDecSp), sp            ; abort anchor for the standalone
                                  ; modes (block header). The direct
                                  ; rows keep vid_run's own anchor -
@@ -3878,6 +3882,12 @@ nxb_entry:
 .log:
     ld hl, nxb_log
     jp nxb_hop6
+.arm:
+    ld hl, flags+248             ; the verb's LET 248 n, cleared once copied
+    ld a, (hl)
+    ld (hl), 0
+    ld (nxbSessReq), a
+    ret
 
 ; Blank text rows NXB_ROW0-28 across the tilemap. Corrupts everything.
 nxb_blank:
@@ -3972,6 +3982,7 @@ nxb_ops_setup:
     ld (vidInSpan), a
     ld (vidDirect), a
     ld (nxbSessLive), a
+    ld (nxbSessReq), a
     ; per-session SMC: RAM fetch, RAM bodies
     ld hl, vid_fetch_ram
     ld (vid_fetch.vec + 1), hl
@@ -4018,6 +4029,7 @@ nxb_reclaim:
     jr z, .nosess
     xor a
     ld (nxbSessLive), a
+    ld (nxbSessReq), a
     ld hl, (nxbSessSp)
     ld (vidDecSp), hl
 .nosess:
@@ -4553,13 +4565,11 @@ nxb_tm_out:
     nextreg NR_MMU3, a
     ret
 
-; D1 - the direct-serve bench selector must never outlive the run that
-; set it: a stuck flags+248 diverts the NEXT VDIR/VDIRL/DPACE/DPACL into
-; the bench instead of playing. nxb_sess_setup self-clears on the taken
-; path; this is what the bails call. Corrupts AF.
+; D1 - a stuck nxbSessReq diverts the NEXT video verb into the bench.
+; nxb_sess_setup self-clears on the taken path; the bails call this. Corrupts AF.
 nxb_ds_unsel:
     xor a
-    ld (flags+248), a
+    ld (nxbSessReq), a
     ret
 
 ; Read the raster line (NR $1E:$1F) with a bounded stability retry.
@@ -4676,7 +4686,7 @@ nxb_ds_d:
     ret
 
 ; =====================================================================
-; SESSION BENCH (flags+248). vid_run's hook anchors vidDecSp and calls
+; SESSION BENCH (nxbSessReq). vid_run's hook anchors vidDecSp and calls
 ; nxb_sess. nxb_sess_setup (NXB_PAGE) sets the entry state and stages the
 ; mode's table; nxb_srow_next loads each row and nxb_srow_go runs it, its
 ; kinds jumping to the timed loops below. Every exit reaches
@@ -5043,6 +5053,7 @@ nxbSvTm3:    db 0            ; A2: pre-borrow MMU3 (the real tilemap
                              ; page), captured hot in vid_run
 nxbSvAud3:   db 0            ; A2: the session's borrowed audio page
 nxbSessLive: db 0            ; a session is running (print bracket, exits)
+nxbSessReq:  db 0            ; session mode armed by nxb_entry mode 14, else 0
 nxbSessSp:   dw 0            ; the hook's SP: vid_run.restore reloads it
 nxbSO:       db 0            ; session row O value
 nxbWLeft:    dw 0            ; frame walk: frames still to run
@@ -5357,10 +5368,10 @@ nxbTabEvtEnd:
 nxb_sess_setup:
     ld hl, (vidDecSp)
     ld (nxbSessSp), hl
-    ld a, (flags+248)
+    ld a, (nxbSessReq)
     ld (nxbMode), a
     xor a
-    ld (flags+248), a            ; self-clearing
+    ld (nxbSessReq), a           ; self-clearing
     inc a
     ld (nxbSessLive), a
     ld e, NR_MMU3
