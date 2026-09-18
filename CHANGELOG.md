@@ -147,6 +147,34 @@ All notable changes to NextDAAD are recorded here.
   read. The sprite hook mask is now set and cleared in one
   read-modify-write, so a frame tick can no longer observe it
   half-updated. No condact, save format or extern contract changed.
+- Video decode re-fitted to hardware measurements. The player's COPY
+  kernel select moves from 81 to 53 bytes: copies of 53-80 bytes now
+  take the DMA path, which measured cheaper from 53.75 B on flat
+  surfaces and 67.88 B / 68.61 B on the 192- and 144-row letterboxes.
+  A hardware sweep over real clip frames decoded 1.6% faster than at
+  81. The RUN select stays at 71. Release changes by the three select
+  operands only.
+- Video encoder: the decode-cost model now charges every player event
+  it measured on hardware - per-op dispatch, the 16-byte kernel passes,
+  8- and 16-bit op entries, edge bails, SKIP passes, destination seams,
+  letterbox column hops, frame types, palette loads and the frame-loop
+  glue - and prices source-window seams, edges and palette straddles at
+  each frame's real file offset. Keyframe chunks are sized to the
+  largest length that fits. The composition margins fall from 1.19
+  (full height) and 1.46 (letterbox) to 1.10 and 1.09, so a 25 fps
+  compressed clip gets 874696 T of decode per frame on a full-height
+  shape (was 800000) and 882721 T on a letterbox (was 652055).
+- Video encoder, direct serve: the gate prices a frame as 24.2 T per
+  byte, 674.6 T per column on a 320-wide letterbox and 28061 T per
+  frame, fitted to four hardware sessions. 320x123 at 25 fps measured
+  44.25 ms a frame against its 40 ms period, so it is refused; the
+  wide full-rate route becomes 320x105 and the 256-wide full-rate route
+  grows to 256x167. The 12.5 fps routes are unchanged; 320-wide heights
+  248-255 at 12.5 fps are now refused (320x256 is admitted).
+- Encoder generation bumped to pal9w: re-encoding changes the bytes of
+  every compressed clip. videnc.exe and vidtune.exe rebuilt. Confirmed on Next
+  hardware: decode byte-exact on the predicted checksums, the bench
+  rows as predicted, and every direct-serve route at rate.
 
 ## v0.9.0 - 03/09/2026
 
