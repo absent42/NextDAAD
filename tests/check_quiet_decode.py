@@ -250,8 +250,9 @@ class Fail(Exception):
 
 
 def rel(path):
-    """Listing path -> path relative to SRC_ROOT, posix."""
-    p, r = os.path.abspath(path), str(SRC_ROOT) + os.sep
+    """Listing path -> path relative to SRC_ROOT, posix. sjasmplus runs with
+    cwd=ROOT, so a relative listing path resolves against ROOT."""
+    p, r = os.path.abspath(os.path.join(ROOT, path)), str(SRC_ROOT) + os.sep
     if os.path.normcase(p).startswith(os.path.normcase(r)):
         return p[len(r):].replace(os.sep, "/")
     return p
