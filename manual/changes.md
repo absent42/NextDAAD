@@ -3,15 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## Unreleased
-
-- **Uncompressed routes re-measured.** Action at full rate is now
-  `256x167` (was `256x153`), and its wide framing `320x105`; `320x123`
-  at 25 fps is refused, as it plays slow on real hardware. At 12.5 fps
-  full-screen 320x256 still fits, and 320-wide letterbox heights go up
-  to 247. See [Video](video.md) section 4.
-
-## 0.10.0 - 16 September 2026
+## 0.10.0 - 18 September 2026
 
 - **Loader intro.** A separate launcher, staged as `<GAME>.NEX`, plays a
   scripted slideshow with captions, a credits crawl and AKY, streamed
@@ -29,6 +21,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   the suspend. `SVC_BUSY` bit 3 reports an armed cycle.
 - **Optimisations.** The interpreter video player has been optimised 
   and the encoder updated to reflect that.
+- **Uncompressed routes re-measured.** Action at full rate is now
+  `256x167` (was `256x153`), and its wide framing `320x105`; `320x123`
+  at 25 fps is refused, as it plays slow on real hardware. At 12.5 fps
+  full-screen 320x256 still fits, and 320-wide letterbox heights go up
+  to 247. See [Video](video.md) section 4.
 
 ## 0.9.0 - 3 September 2026
 
