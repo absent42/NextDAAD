@@ -886,9 +886,8 @@ DIRECT_FRAME_T = 28061.3    # per frame [raised 1307.3 T]
 # expert multiplier on the per-byte term only (videnc --direct-transport-factor)
 DIRECT_TRANSPORT_FACTOR = 1.00
 
-# Policy (owner ruling): direct-serve is on-rate or refused, full stop
-# - there is no accept-slow override. A utilization > 1.0 always raises
-# SystemExit; see _encode_direct.
+# Direct-serve is on-rate or refused - there is no accept-slow override.
+# A utilization > 1.0 always raises SystemExit; see _encode_direct.
 
 
 def direct_frame_terms(section_bytes, width, height, transport_factor=None):
@@ -4616,8 +4615,7 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     scoped palettes reuse the delta pipeline's cut detection + sampled
     full-span quantize; there is no delta and no rate control - the
     stream is raw-equivalent by design, gated by WIRE feasibility
-    (direct_supply_check: worst frame, no ring absorber). TIGHTEN
-    ruling (Card #5, 2026-07-26, owner-decided): this gate is
+    (direct_supply_check: worst frame, no ring absorber). The gate is
     UNCONDITIONAL - a worst-frame utilization above 1.00 always
     refuses, there is no slow-playback opt-out."""
     orig = ex["orig"]
@@ -4645,10 +4643,9 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     per_frame_cap_blocks = (max_payload + 511) // 512
     abytes_pad = ex["abytes_pad"]
 
-    # --- DIRECT-SERVE WIRE GATE: the worst frame section must cross
-    # the SD wire inside one frame period (no ring absorber). TIGHTEN
-    # (Card #5, 2026-07-26 owner ruling): UNCONDITIONAL - utilization
-    # > 1.00 always refuses, no accept-slow override exists. ---
+    # --- DIRECT-SERVE WIRE GATE: the worst frame section must cross the SD
+    # wire inside one frame period (no ring absorber). UNCONDITIONAL -
+    # utilization > 1.00 always refuses, no accept-slow override exists. ---
     worst_frame = abytes_pad + per_frame_cap_blocks * 512
     tf = direct_transport_factor  # None = shipping DIRECT_TRANSPORT_FACTOR
     if tf is not None:
@@ -4704,9 +4701,8 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
             f"gapped columns, {ds['frame_ms']:.1f} ms per frame; "
             f"{ds['demand_kbs']:.0f} KB/s). "
             f"Direct-serve has NO ring "
-            f"to absorb bursts and NO slow-playback opt-out (TIGHTEN "
-            f"policy, Card #5 2026-07-26 owner ruling: this gate is "
-            f"unconditional above utilization 1.00). The envelope at "
+            f"to absorb bursts: it plays at rate or is refused, with no "
+            f"slow-playback override. The envelope at "
             f"{fps_val:g}fps, {width}-wide, up to {height} lines: it tops out at "
             f"{width}x{s_at // width} at-rate ({width}x{s_90 // width} "
             f"with the 0.90 burst margin every other gate carries). "
@@ -5154,9 +5150,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
     every frame a full keyframe repaint, header direct-serve hint set
     (flags bit1), gated by worst-frame WIRE feasibility instead of the
-    delta pipeline's dual budgets (see _encode_direct). TIGHTEN ruling
-    (Card #5, 2026-07-26): the gate is unconditional - there is no
-    slow-playback opt-out at this or any layer above it.
+    delta pipeline's dual budgets (see _encode_direct). The gate is
+    unconditional - there is no slow-playback opt-out at this or any
+    layer above it.
 
     direct_transport_factor (--direct-transport-factor): the EXPERT
     OVERRIDE for the direct gate's per-byte transport factor - None
