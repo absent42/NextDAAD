@@ -890,12 +890,9 @@ def geo_fields(geo):
     return bool(geo & GEO_GAPPED), (geo >> 2) & 3, (geo >> 4) & 3
 
 
-# BENCH_TABLES: {mode: ((tag, kind, L, O, R, thr, geo), ...)} for the
-# standalone bench modes 2-12, in row order, the fields of the 12-byte row
-# (ds 4 tag, db opcode, dw count, db ops, dw reps, db thr, db geo). kind is
-# "skip8"/"skip16"/"run8"/"run16"/"copy8"/"copy16" (VOP_*), or "cal" for the
-# special CALL row (opcode NXB_OPC_CAL, only R used). thr 0 = the shipping
-# select value for the row's kind (RUN or COPY); SKIP rows carry 0.
+# BENCH_TABLES: {mode: ((tag, kind, L, O, R, thr, geo), ...)}: modes 2-12, the
+# 12-byte row's fields in row order; kind is a VOP_* name or "cal" (NXB_OPC_CAL).
+# thr 0 = the shipping select for the row's kind; SKIP rows carry 0.
 CAL_KIND = "cal"
 
 # Rows that print more than their own tag, in print order. CALL prints
@@ -1060,17 +1057,9 @@ BENCH_TABLES = {
 }
 
 
-# SESSION_TABLES: {name: (row, ...)} for the session bench modes (flags+248),
-# in row order, as the NXB_PAGE tables define them. kind is one of
-# SESSION_KINDS (NXB_K_* order) and sets the row's layout and length:
-#   (tag, kind, param, reps, thr, strm): 10 bytes (ds 4 tag, db kind, dw param,
-#     dw reps, db thr); strm marks NXB_K_STRM, a row only a streaming session
-#     runs;
-#   (tag, kind, reps, frame, preset, site1, site2) for the SESSION_SYNTH kinds:
-#     25 bytes (ds 4 tag, db kind, dw reps, d24 frame offset, db span preset,
-#     then per site d24 offset, db length 0-3, ds 3 bytes); a site is
-#     (offset, bytes).
-# ARM, DISARM and DSKIP rows print nothing.
+# SESSION_TABLES: {name: (row, ...)} as the NXB_PAGE session tables: 10 B rows
+# (tag, kind, param, reps, thr, strm), strm = NXB_K_STRM; SESSION_SYNTH 25 B rows
+# (tag, kind, reps, frame, preset, site1, site2), a site = (offset, bytes).
 SESSION_KINDS = ("id", "ring", "remn", "scan", "sweep", "frame", "aud", "pace",
                  "loop", "arm", "disarm", "prod", "dsweep", "dsblk", "dskip",
                  "synth", "synth_nocall")
@@ -1325,7 +1314,8 @@ def row_path(tag):
     if thr:
         sel = thr
     else:
-        import nxv2enc   # no copy8 row ships thr=0 today; kept for the interface
+        # thr 0 (NXBC) takes today's select: C080 answers "dma", sitting 5 ran it on LDI
+        import nxv2enc
         sel = nxv2enc.TMODEL_COEFFS["copy_dma_min"]
     return "dma" if L >= sel else "ldi"
 

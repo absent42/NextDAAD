@@ -1263,12 +1263,9 @@ def t10_silicon_r():
 
 @case(10, "silicon bench rows - the event model prices every sitting-5 standalone row inside its band")
 def t10_bench_rows():
-    # Band, not equality. Over-pricing is the safe direction: up to max(3 T,
-    # 5%). Under-pricing makes frames the player cannot decode in time: an
-    # ABSOLUTE 5.5 T, the rules' band. Each row is priced from its own events
-    # (nxv2_path_sim at the row's dest, surface and selects - SITTING_SELECTS
-    # 81/71 for thr 0) through enc.event_coeffs, strictly, and read less the
-    # bench harness nxb_rep_t / O = 717.8 / O.
+    # Band: over by up to max(3 T, 5%), under by at most 5.5 T. Rows priced from
+    # their own events (SITTING_SELECTS 81/71 for thr 0) through enc.event_coeffs,
+    # read less the harness nxb_rep_t / O = 717.8 / O.
     OVER, FLOOR, UNDER_T = 0.05, 3.0, 5.5
     rows = bench.priced_sitting5(enc)
     want = {t for t in bench.SITTING5["Q"]["standalone"] if t not in ("CALL", "CALR")}
@@ -2462,11 +2459,9 @@ def t10_event_parity():
                                             run_thr=bench.row_selects(tag)[1],
                                             dst_pages=bench.NXB_DST_PAGES)
             expect(ev == bench.row_events(tag), f"{tag}: clear-source events differ from row_events")
-    # a frame's price: its frame-type term + its events at its offset. A
-    # 320x192 middle chunk frame of COPY16 1000 + FEND from column 0, payload
-    # at offset 7680 ($DE00), streamed: DMA 192, 192, then 125 clipped at the
-    # window end ($E000), a parity seam, DMA 67, 192, 192 and a 40 B LDI
-    # chunk; 5 column hops
+    # 320x192 middle COPY16 1000 at offset 7680 ($DE00), streamed: DMA 192, 192,
+    # 125 (window end $E000), a parity seam, DMA 67, 192, 192, a 40 B LDI chunk;
+    # 5 column hops
     ops = [(ps.OP_COPY16, 1000), (ps.OP_FEND, 0)]
     nb, t, _st = enc.frame_price(ops, "middle", 320, 192, in_span=True, streamed=True, src_offset=7680)
     ev, _st = enc.frame_events(ops, 320, 192, in_span=True, src_offset=7680)
@@ -3707,12 +3702,9 @@ def t10_copy_dma_model():
     for L in (thr, 81, 128, 200, chunk - 1, chunk):
         expect(abs(enc._copy_t(L) - (path + setup + L * per_b)) < 1e-6,
                f"copy body of {L} B must be the DMA-path price, got {enc._copy_t(L):.1f}")
-    # RULE 3 - the kernel switch is a bounded cost discontinuity, both seams
-    # asserted: (a) the op-threshold step RISES: 52 B LDI 52 x 19.1 + 4 x 13.1
-    # = 1045.6 against 53 B DMA -19.7 + 818.3 + 53 x 5.1 = 1068.9, -23.3 T;
-    # (b) a remainder crossing the select after full chunks FALLS by
-    # copy_body_ldi_t + LDI(52) - (setup + 53 x per_b) = 498.1 + 1045.6 - 1088.6
-    # = 455.1 T (532 -> 533 B). No other length falls by more.
+    # RULE 3 - bounded kernel-switch seams: 52 -> 53 B rises 23.3 T (1045.6 LDI,
+    # 1068.9 DMA); a remainder crossing the select after full chunks falls
+    # 455.1 T (532 -> 533 B), and no other length falls more.
     thr_seam = ldi(thr - 1) - (path + setup + thr * per_b)
     tail_seam = body_ldi + ldi(thr - 1) - (setup + thr * per_b)
     expect(abs(thr_seam - (-23.3)) < 1e-6, f"the op-threshold seam should be -23.3 T, got {thr_seam:.1f}")
@@ -3751,11 +3743,9 @@ def t10_copy_dma_model():
     expect(abs(enc._copy_t(2 * chunk) - (entry16 + 2 * (setup + chunk * per_b))) < 1e-6
            and abs(enc._copy_t(2 * chunk + 1) - (enc._copy_t(2 * chunk) + arm + body_ldi + ldi(1))) < 1e-6,
            f"480 / 481 B copies: {enc._copy_t(480):.1f} / {enc._copy_t(481):.1f}")
-    # RULE 5 - the DMA path never prices a copy above the all-LDI price (bytes
-    # and blocks) at the tested lengths. At exactly the select it sits 4.2 T
-    # above LDI (53 B: 1068.9 against 1064.7) and below from 54 B (1074.0
-    # against 1083.8), the measured placement, so 53 is not tested here. At
-    # 240 B one DMA chunk is (240 x 19.1 + 15 x 13.1) / 2022.6 = 2.36x under.
+    # RULE 5 - DMA never prices above all-LDI at the tested lengths; at the 53 B
+    # select it sits 4.2 T above (1068.9 vs 1064.7), below from 54 B. At 240 B one
+    # DMA chunk is 2.36x under LDI.
     for L in (1, 54, 63, 89, 90, 256, 1024, 65535):
         expect(enc._copy_t(L) <= ldi(L) + 1e-6, f"the DMA term may only ever LOWER the {L} B copy price")
     expect(abs(enc._copy_t(thr) - ldi(thr) - 4.2) < 1e-6, "53 B DMA sits 4.2 T above LDI")
@@ -3782,11 +3772,9 @@ def t10_copy_dma_model():
     def cpu(n):
         return n * fcpu + blocks(n) * fpass
 
-    # SIGNED divergence, same shape as RULE 1b: (792.3 - 71.3) / (15.1 + 15.0 /
-    # 16 - 5.1) = 65.92 B against the player's 71 (+5.08 B). Sitting-5 rule S7
-    # kept 71: modelled decode T over fixtures 001-009 ties at every M in
-    # 65-78. The 66-70 B fills run CPU at most 54.0 T/op over DMA (70 B: 1132.0
-    # against 721 + 70 x 5.1 = 1078.0).
+    # SIGNED divergence as RULE 1b: break-even 65.92 B against the player's 71
+    # (+5.08 B); sitting-5 rule S7 kept 71 (decode T ties for M 65-78; 66-70 B
+    # fills run CPU at most 54.0 T/op over DMA).
     fbreakeven = (fsetup + fpath) / (fcpu + fpass / 16 - fper)
     expect(abs(fbreakeven - 65.92) <= 0.01, f"fill break-even should be 65.92 B, got {fbreakeven:.2f}")
     expect(abs((fthr - fbreakeven) - 5.08) <= 0.01,
@@ -7829,10 +7817,8 @@ def t21_lm_trigger_rebase():
 
 @case(21, "W4 - silicon_r density key: the sitting-5 anchors never read below a measured R, clamps")
 def t21_silicon_r_rekey():
-    # Every REAL session's (density, R_clip) from sitting-5 rule S9: the
-    # anchors merge pairs within 0.02 density at the higher R and round R up
-    # to 0.001, so R at each session's own density never falls below its
-    # measured R_clip.
+    # Sitting-5 rule S9 REAL sessions (density, R_clip): anchors merge pairs within
+    # 0.02 density at the higher R, rounded up to 0.001, so R never reads below R_clip.
     sessions = [
         ("001", (320, 256), 0.8066, 0.9757), ("002", (256, 192), 0.5118, 0.9758),
         ("003", (320, 192), 0.8668, 0.9645), ("004", (320, 144), 0.6956, 0.9628),
