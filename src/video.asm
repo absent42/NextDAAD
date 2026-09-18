@@ -5135,7 +5135,8 @@ nxbTabOpdEnd:
 ; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
 ; C080/C081 straddled the COPY kernel select through sitting 5 (81,
 ; placed at the 81.4 B break-even measured before the current
-; chunk-loop shape; these two rows put the break-even at 58.8 B.
+; chunk-loop shape; sitting 5 put the break-even at 53.75 B flat,
+; so at 53 both rows take DMA.
 ; C073/C074 found the old 74's missing +128 T/op path difference and
 ; were retired with it); C256 is the COPY16 bulk-repaint path (40
 ; keyframe ops carry 16-21% of Sintel's copied bytes).
