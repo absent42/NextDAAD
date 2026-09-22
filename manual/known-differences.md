@@ -60,16 +60,20 @@ for a recount.
 ### `PUTIN` and `TAKEOUT` space their message differently elsewhere
 
 The composite message these condacts print is SM44 (or SM45, or SM52),
-then a space, then the container's name, then SM51 with no space before
-it. With the stock SM51 of "." that gives
+then the container's name, then SM51, with no space inserted anywhere
+by the interpreter - matching both original ZX interpreters. The stock
+DAAD Ready English message table gives SM44/45/52 their own trailing
+space, so with stock text that gives
 
     The hat is in the old box.
 
-Other interpreters put the spaces in different places, so a game whose
-system messages were tuned against one of them can come out with a
-doubled or a missing space here. Write SM44, SM45 and SM52 with no
-trailing space of their own, and SM51 as the punctuation you want the
-sentence to end on; that reads correctly on all of them.
+jDAAD and msx2daad insert a space before the container name, so a game
+whose system messages were tuned against one of them can come out with
+a doubled or a missing space here. Write SM44, SM45 and SM52 with the
+trailing space you want before the name (or none), and SM51 as the
+punctuation you want the sentence to end on with no leading space of
+its own; that reads correctly on both original interpreters and on
+NextDAAD.
 
 ## Flags
 
