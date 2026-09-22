@@ -584,6 +584,9 @@ inp_edit:
     jr nz, .fresh
     call inp_recall_last        ; preload and echo inpLast
 .fresh:
+    ld a, (frameCounter)
+    ld (inpTOFrm), a            ; edge baseline for the blink; inp_to_load
+                                ; re-seeds it when the countdown arms
     ; timeout countdown init (0 = disarmed)
     ld hl, 0
     ld (inpTOFrames), hl
@@ -597,7 +600,15 @@ inp_edit:
     call kb_char
     or a
     jr nz, .key
-    ; no key: timeout tick
+    ; no key: one frame-edge detector feeds the blink and the countdown
+    ld a, (frameCounter)
+    ld e, a
+    ld a, (inpTOFrm)
+    cp e
+    jr z, .wait                 ; same frame
+    ld a, e
+    ld (inpTOFrm), a
+    call inp_blink_tick
     ld hl, (inpTOFrames)
     ld a, h
     or l
@@ -610,13 +621,6 @@ inp_edit:
     or a
     jr nz, .wait                ; typing started: hold the clock
 .tick:
-    ld a, (frameCounter)
-    ld e, a
-    ld a, (inpTOFrm)
-    cp e
-    jr z, .wait
-    ld a, e
-    ld (inpTOFrm), a
     ld hl, (inpTOFrames)
     dec hl
     ld (inpTOFrames), hl
@@ -664,7 +668,7 @@ inp_edit:
     ld e, a
     ld a, (inpLen)
     cp INP_MAX
-    jr nc, .loop
+    jp nc, .loop
     call inp_insert             ; inserts E, redraws tail, len/cur++
     jp .loop
 .bs:
@@ -1054,6 +1058,20 @@ inp_cursor_draw:
     call inp_cursor_attr
     pop af
     jr inp_cursor_cell
+; One frame edge: advance the blink phase when GFX 23 armed it.
+inp_blink_tick:
+    ld a, (curBlink)
+    or a
+    ret z
+    ld hl, inpBlinkCnt
+    dec (hl)
+    ret nz
+    ld a, (inpBlinkOn)
+    or a
+    jp z, inp_cursor_draw       ; hidden -> drawn (draw reloads the count)
+    ld a, (curBlink)
+    ld (inpBlinkCnt), a
+    jp inp_cursor_hide
 ; Erase: the cell back to its character (or space) in the window pair.
 inp_cursor_hide:
     xor a

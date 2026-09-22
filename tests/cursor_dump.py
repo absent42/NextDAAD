@@ -91,10 +91,13 @@ def cache(z):
 def dismiss_more(z, tries=8):
     """Release any More... page: window 0's line count is not reset by an
     input, so the pager fires every 15 lines and would eat the next key.
-    The pager erases its own line on the key, so its text means pending."""
+    The pager erases its own line on the key, so its text means pending.
+    Under UCASE (MODE 1) the pager prints through the upper charset, +128."""
+    shifted = bytes(c + 128 for c in b"More...")
     for _ in range(tries):
         grid = z.read_memory(TM_MAP, 32 * rd(z, "TMCOLS") * 2)
-        if b"More..." not in bytes(grid[0::2]):
+        text = bytes(grid[0::2])
+        if b"More..." not in text and shifted not in text:
             return
         z.tap_dismiss_key()
         time.sleep(0.5)
@@ -264,7 +267,65 @@ def check_glyph(z, verbose):
         print("glyph: PASS")
 
 
-CHECKS = [check_colour, check_glyph]
+def phases(cells):
+    return sorted(set(c.attr for c in cells))
+
+
+def check_blink(z, verbose):
+    """Task 5: both phases under BLINK and FAST, one under STEAD, visible after a key."""
+    verb(z, "BLINK")
+    type_line(z, "abc")
+    s = samples(z, 2.5)
+    c = s[0]
+    expect(phases(s) == sorted({c.win_attr, c.win_attrinv}), "BLINK: both phases seen in 2.5 s (got %s)" % phases(s))
+    expect(all(x.glyph == 32 for x in s), "BLINK: the cell stays a space through both phases")
+    # a key through the matrix: D is row 1 bit 2 (non-bit-0, zrcp.py's
+    # constraint). Held until kb_char emits it (ZEsarUX headless runs near
+    # 30 frames/s, so a fixed 80 ms hold can miss the two-frame settle),
+    # then read at once, well inside the 25-frame half-period - send_keys'
+    # own wait is longer than that, so it cannot make this check.
+    z.hold_matrix("FFFBFFFFFFFFFFFF00")
+    end = time.time() + 2.0
+    while rd(z, "INPLEN") == 3 and time.time() < end:
+        time.sleep(0.005)
+    z.release_matrix()
+    c2 = Cell(z)
+    expect(rd(z, "INPLEN") == 4 and c2.attr == c.win_attrinv, "BLINK: visible right after a key (%r, len %d)" % (c2, rd(z, "INPLEN")))
+    cancel_line(z)
+    verb(z, "FAST")
+    type_line(z, "abc")
+    s = samples(z, 1.0, every=0.02)
+    expect(len(phases(s)) == 2, "FAST: both phases seen in 1 s (got %s)" % phases(s))
+    cancel_line(z)
+    verb(z, "STEAD")
+    type_line(z, "abc")
+    s = samples(z, 1.5)
+    expect(len(phases(s)) == 1 and s[0].attr == s[0].win_attrinv, "STEAD: one phase, inverse (got %s)" % phases(s))
+    cancel_line(z)
+    verb(z, "UCASE")
+    verb(z, "BLINK")
+    type_line(z, "abc")
+    z.write_memory(sym("INPCUR"), bytes([1]))
+    type_line(z, "x")
+    s = samples(z, 2.5)
+    expect(all(x.glyph == ord("b") + 128 for x in s), "UCASE+BLINK: the shifted character survives both phases (got %s, line %r)" % (sorted(set((x.glyph, x.attr) for x in s)), rd(z, "INPLINE", 5)))
+    expect(len(phases(s)) == 2, "UCASE+BLINK: draw and restore both seen mid-line (got %s)" % phases(s))
+    cancel_line(z)
+    # spec 3.1: curGlyph is drawn raw, never charset-shifted
+    verb(z, "STEAD")
+    verb(z, "GLYPH")
+    type_line(z, "abc")
+    c = Cell(z)
+    expect(c.glyph == 95, "UCASE+GLYPH: curGlyph is drawn raw, not shifted to 223: %r" % c)
+    cancel_line(z)
+    verb(z, "BLOCK")
+    verb(z, "LCASE")
+    verb(z, "STEAD")
+    if verbose:
+        print("blink: PASS")
+
+
+CHECKS = [check_colour, check_glyph, check_blink]
 
 
 def run(z, verbose, upto):
