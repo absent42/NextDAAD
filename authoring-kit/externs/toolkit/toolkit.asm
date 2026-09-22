@@ -32,6 +32,8 @@ FLAG_RESULT     equ 251          ; result and status
 OBJ_WORN        equ 253          ; location pseudo-values (nextdaad.inc)
 OBJ_CARRIED     equ 254
 
+    ASSERT (XBN_FLAGS & $FF) == 0 ; flag indexing below uses L alone (rubric 8)
+
 ext:
     ld a, b
     ld (param), a                ; park param1 before any call clobbers B
@@ -167,10 +169,8 @@ emit_pad:
     inc a
     ld (digix), a
     dec a
-    ld l, a
-    ld h, 0
-    ld de, digbuf
-    add hl, de
+    ld hl, digbuf
+    add hl, a                    ; Z80N
     ld a, (hl)
     call SVC_PUTCHAR
     jr .digits
@@ -200,10 +200,8 @@ emit_min2:
 p8:
     call print_enter
     ld a, (param)
+    ld h, high XBN_FLAGS         ; page-aligned flags: L is the flag number
     ld l, a
-    ld h, 0
-    ld de, XBN_FLAGS
-    add hl, de
     ld l, (hl)
     ld h, 0
     call emit_u16
@@ -226,13 +224,11 @@ p16:
 ; A = flag number -> HL = the pair at [A],[A+1], low byte first. Parks the
 ; pointer for pair_store. Caller has already rejected A = 255.
 pair_read:
+    ld h, high XBN_FLAGS         ; page-aligned flags: L is the flag number
     ld l, a
-    ld h, 0
-    ld de, XBN_FLAGS
-    add hl, de
     ld (pairp), hl
     ld e, (hl)
-    inc hl
+    inc l                        ; stays in page: every caller rejects flag 255
     ld d, (hl)
     ex de, hl
     ret
@@ -368,12 +364,10 @@ hhmm:
     jr z, .noop
     call print_enter
     ld a, (param)                ; re-fetch: print_enter clobbers A
+    ld h, high XBN_FLAGS
     ld l, a
-    ld h, 0
-    ld de, XBN_FLAGS
-    add hl, de
     ld a, (hl)
-    inc hl
+    inc l                        ; flag 255 rejected above
     ld (tmpptr), hl
     ld l, a
     ld h, 0
