@@ -55,6 +55,8 @@ ext_main:
     jr z, .fn38
     cp 39
     jr z, .fn39
+    cp 42
+    jp z, pair_probe             ; SVC_PAIR probe; sits past the pad, jp not jr
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -95,7 +97,7 @@ ext_main:
 
 svc_probe:
     call SVC_VERSION
-    ld (XBN_FLAGS+206), a       ; expect 2
+    ld (XBN_FLAGS+206), a       ; expect 3
     call SVC_RANDOM
     ld b, a
     call SVC_RANDOM
@@ -585,6 +587,24 @@ MSGTAB:
 tail_marker:
     ld a, $99
     ld (XBN_FLAGS+222), a       ; callable via CALL to prove page 2 mapped
+    ret
+
+; fn 42: SVC_PAIR. Same request twice must return one attribute (234,
+; 235); the reserved pair 0's colours (paper 0, ink 7) must return 0 (236).
+pair_probe:
+    ld b, 1                      ; paper 1
+    ld c, 6                      ; ink 6
+    call SVC_PAIR
+    ld (XBN_FLAGS+234), a
+    ld b, 1
+    ld c, 6
+    call SVC_PAIR
+    ld (XBN_FLAGS+235), a
+    ld b, 0
+    ld c, 7
+    call SVC_PAIR
+    ld (XBN_FLAGS+236), a
+    or a                         ; CF discipline: deliberate clear
     ret
 xbn_end:
 

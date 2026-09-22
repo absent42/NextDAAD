@@ -235,7 +235,11 @@ pair_reclaim:
 ; B = paper colour 0-255, C = ink colour 0-255.
 ; Out: A = the tilemap attribute byte for that combination.
 ; Corrupts all registers.
+; Also XBN service row 15 (svc_pair, main.asm's xbn_api_tpl): in B =
+; paper, C = ink, out A = attribute with CF CLEAR. Both exits end on
+; add a,a of a pair number below 128, so CF is clear; keep it so.
 pair_get:
+svc_pair equ pair_get
     ld a, b
     call pal_colour
     ld (pairWantP), de
@@ -274,7 +278,7 @@ pair_get:
     call pair_mark              ; is computed and stacked BEFORE the call
     nextreg NR_PAL_CTRL, PAL_L2_FIRST   ; restore the standing convention
     pop af
-    ret
+    ret                          ; CF clear: svc_pair contract
 
 ; No pair holds the wanted combination. Take a free one, or reclaim, or
 ; evict. Out: A = the attribute byte. Corrupts all registers.
@@ -318,6 +322,6 @@ pair_alloc:
     ld (palLock), a
     pop af
     add a, a
-    ret
+    ret                          ; CF clear: svc_pair contract
 
 ; win_attr_resolve moved pre-anchor to windows.asm 2026-09 (ballast).

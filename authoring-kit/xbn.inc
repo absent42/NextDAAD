@@ -74,3 +74,8 @@ SVC_WINDOW      equ XBN_API+42  ; in A = 0-7 selects; out A = previous
                                  ; set, no change. May flush and may
                                  ; raise the More prompt in the OLD
                                  ; window. Foreground-only.
+SVC_PAIR        equ XBN_API+45  ; in B = paper, C = ink (0-255, the
+                                 ; INK/PAPER values); out A = tilemap
+                                 ; attribute byte, CF clear. Corrupts
+                                 ; all registers. API version 3 and up:
+                                 ; check SVC_VERSION first. Foreground-only.

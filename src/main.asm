@@ -553,6 +553,7 @@ xbn_api_tpl:
     jp svc_busy                   ; 12
     jp svc_palread                ; 13
     jp svc_window                 ; 14
+    jp svc_pair                   ; 15 (pair_get, tmpairs.asm - resident)
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -564,7 +565,7 @@ xbn_api_init:                    ; boot; table copy is resident-to-resident,
     ret
 
 svc_version:
-    ld a, 2
+    ld a, 3
     or a                          ; CF clear
     ret
 

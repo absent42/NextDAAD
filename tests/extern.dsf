@@ -289,10 +289,10 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29 and 34-39 exist: XREG XCAL XTIK XSVC XFIO
-;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH (fns 26-29
-;     and 34-39 exist only in xbntest.asm) (on any other leg these print
-;     unwritten flags - zeros)
+;     where fns 20-29, 34-39 and 42 exist: XREG XCAL XTIK XSVC XFIO
+;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB (fns
+;     26-29, 34-39 and 42 exist only in xbntest.asm) (on any other leg
+;     these print unwritten flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
 ;     esxdos handler lacks M_GETDATE and the call derails the machine.
@@ -401,6 +401,7 @@ XRTC   162 verb
 XRTD   163 verb
 XT40   164 verb
 XCNE   165 verb
+XPRB   166 verb
 WIDGET  20 noun
 GIZMO   21 noun
 CLOAK   22 noun
@@ -571,21 +572,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 181 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3B5 (lsb 181, msb 195) - read
+> XCAL _   CALL 186 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3BA (lsb 186, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C325 by phase 2 Task 1's fn 34 dispatch
-                             ; code and palhide_probe landing ahead of
-                             ; call_target.
+                             ; from $C3B5 by Task 1's fn 42 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 12 230         ; Task 4's owed check: tail_marker, address
-                             ; $E60C (lsb 12, msb 230) - the SECOND 8K page
+           CALL 17 230         ; Task 4's owed check: tail_marker, address
+                             ; $E611 (lsb 17, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E57C by phase 2 Task 1's code growth.
+                             ; from $E60C by Task 1's fn 42 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -635,8 +634,16 @@ CLOAK   22 noun
            PRINT 221         ; expect 48-52 (50 +- ISR jitter)
            DONE
 > XSVC _   EXTERN 0 21       ; service probe fn - Task 6 fills flags 206+
-           PRINT 206         ; expect 2
+           PRINT 206         ; expect 3
            PRINT 207
+           DONE
+> XPRB _   EXTERN  0 42       ; SVC_PAIR probe (fixture fn 42)
+           MES     "pair "
+           PRINT   234       ; expect an even number >= 6 (a fresh pair)
+           MES     "/"
+           PRINT   235       ; expect the SAME number as 234
+           MES     " p0 "
+           PRINT   236       ; expect 0 (reserved pair 0 = paper 0, ink 7)
            DONE
 > XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
            EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare

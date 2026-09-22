@@ -218,7 +218,7 @@ XBN_HDR_LEN     equ 14       ; "XBN" + version + extEntry + intEntry + size + 4 
 ; this block (only $BFFD, the AY data I/O port, is expected below $C000).
 XBN_API         equ $BEC8       ; FROZEN from first release with XBN
                                 ; support - see xbn.inc; append-only
-XBN_API_ROWS    equ 15
+XBN_API_ROWS    equ 16
 
 ; --- Error border colours ---
 ERR_BORDER_MISSING  equ 2   ; red
