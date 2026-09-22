@@ -87,6 +87,12 @@ xbn_width:
         ret
     ENDM
 
+; Tilemap map base the row constants inside xbn_width already assume.
+; Row r at width w: XBN_TILEMAP + r * stride (160 at 80 cols, 80 at 40).
+XBN_TILEMAP     equ $6000
+    ASSERT $70E0 == XBN_TILEMAP + 27*160, xbn_width's 80-col row-27 base drifted from XBN_TILEMAP
+    ASSERT $6870 == XBN_TILEMAP + 27*80, xbn_width's 40-col row-27 base drifted from XBN_TILEMAP
+
 ; Scratch RAM above xbn_end: bytes inside the mapped 16K bank ($FFFF) but
 ; outside the saved image. Offset claims from XBN_SCRATCH, chained off
 ; XBN_SCRATCH_FREE below, so modules do not collide.

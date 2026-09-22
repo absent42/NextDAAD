@@ -301,7 +301,8 @@
 ;     expects 9. Any other leg: meaningless.
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
-;     XTCK XT40 XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XFAD XFDI XFSC XDRK XHNP XHNQ
+;     XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
@@ -319,9 +320,13 @@
 ;     combined legs) AND are SILICON-ONLY for the same reason as
 ;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
 ;     emulator replay.
-;   -XbnTicker stages the STANDALONE ticker example: only XTCK and
-;     XT40 are meaningful there (plus XSLT with all slots printing
-;     nothing).
+;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
+;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX are meaningful
+;     there (plus XSLT with all slots printing nothing).
+;   NEVER type a ticker verb on the fixture leg: fns 34-38 are the
+;     fixture's own probes there, and XTCO's EXTERN 1 36 hits the
+;     getdate probe that derails ZEsarUX. tickcheck.py refuses them
+;     when sd\XBN holds the fixture.
 ;   -XbnFade stages the STANDALONE fade example: only XFAD XFDI XFSC
 ;     XDRK are meaningful there (plus the no-op XSLT form).
 ;   XSLT prints toolkit output only on toolkit-carrying legs; on other
@@ -402,6 +407,11 @@ XRTD   163 verb
 XT40   164 verb
 XCNE   165 verb
 XPRB   166 verb
+XTPS   167 verb
+XTBD   168 verb
+XTNR   169 verb
+XTLA   170 verb
+XTPR   176 verb
 WIDGET  20 noun
 GIZMO   21 noun
 CLOAK   22 noun
@@ -484,6 +494,7 @@ CLOAK   22 noun
 /4 "Western winds over the western mountains this evening"
 /5 "Midnight bells over the midnight mountains ring softly"
 /6 "Morning bells over the morning mountains ring softly"
+/7 "ABCDEFGHIJKLMNOPQRSTUVWXY"
 /OTX
 /0 "a spare widget"
 /1 "a widget on the floor"
@@ -796,7 +807,9 @@ CLOAK   22 noun
            EXTERN 9 20       ; with NO XBN staged this must stay inert
            PRINT 200         ; expect 0 in the no-XBN leg, 9 with XBN
            DONE
-> XTCK _   EXTERN 0 30       ; Task 9 ticker example: arm on message 0
+> XTCK _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN 0 30       ; Task 9 ticker example: arm on message 0
            PAUSE 100         ; ships as operand 50 = ONE second (DRC
                              ; halves PAUSE for this target, see XTIK
                              ; above) - message ticks out in ~0.5s, the
@@ -807,10 +820,10 @@ CLOAK   22 noun
            DONE
 ; XT40 - the spec's width-switch check (section 7: "GFX 1 18 then a
 ;        ticker line"), EMULATOR-RUNNABLE, two phases. GFX n 18 resets
-;        the tilemap (tm_width_apply) and the ticker never clears row 27
-;        when a message completes, so each phase leaves PERSISTENT
-;        evidence - a screenshot can be taken anywhere in the PAUSE that
-;        follows it.
+;        the tilemap (tm_width_apply); arming clears row 27 first (fn 30
+;        clears the field it arms), so screenshot 2 shows only phase B's
+;        remainder, no phase-A residue; a completed message is not
+;        cleared, so each phase still leaves evidence during its PAUSE.
 ;        Phase A (the spec's shape): switch to 40 columns, arm message 0
 ;        - the hook's per-frame xbn_width must return the 40-col base:
 ;        the whole message sits on row 27 within 40 cells, nothing
@@ -822,6 +835,9 @@ CLOAK   22 noun
 ;        row (an unfollowed 40-col base written into 80-col tilemap
 ;        memory lands mid-screen).
 > XT40 _   GFX     1 18       ; 40 columns first (P1 1 = 40, 0 = 80)
+           WINDOW  1          ; keep the prompt off the ticker rows at 40 cols
+           WINAT   12 0
+           WINSIZE 12 40
            EXTERN  0 30       ; arm message 0 in 40-col mode (XTCK's line)
            PAUSE   100        ; 1 s: ticks out at 40 cells - screenshot 1
            EXTERN  0 30       ; re-arm, still 40-col
@@ -833,7 +849,99 @@ CLOAK   22 noun
            EXTERN  0 31       ; disarm (idempotent)
            WINDOW  1          ; GFX n 18 reset every window to fullscreen:
            WINAT   12 0       ; put the text back below the picture rows
-           WINSIZE 16 80      ; (see the start process) before more verbs
+           WINSIZE 12 80      ; (see the start process) before more verbs
+           DONE
+; XTPS - positioned typewriter at 40 columns: row 24, cells 10-29, a
+;        25-char message ticked TWICE (second arm re-clears). Leaves the
+;        screen at 40 columns for the capture; XTPR restores. Expect
+;        message 7 wrapped within the field: row 24 cells 10-14 =
+;        UVWXY, cells 15-29 = FGHIJKLMNOPQRST, cells 30-39 blank (one
+;        attr value across 10-29, 00 elsewhere); row 25 empty.
+> XTPS _   GFX     1 18
+           WINDOW  1         ; GFX n 18 reset every window to fullscreen
+           WINAT   12 0
+           WINSIZE 12 40
+           EXTERN  24 32
+           EXTERN  10 33
+           EXTERN  20 34
+           EXTERN  7 30
+           PAUSE   80        ; ships as 40 frames: 25 chars at speed 1
+           EXTERN  7 30
+           PAUSE   80
+           DONE
+; XTPR - XTPS's restore: back to 80 columns, the window band, and the
+;        default position.
+> XTPR _   GFX     0 18
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 80
+           EXTERN  27 32
+           EXTERN  0 33
+           EXTERN  0 34
+           MES     "restored"
+           DONE
+; XTBD - setter range checks. The first five MES lines must NOT print
+;        (the entry fails); the last five must.
+> XTBD _   EXTERN  32 32
+           MES     "bad row printed "
+> XTBD _   EXTERN  80 33
+           MES     "bad col printed "
+> XTBD _   EXTERN  81 34
+           MES     "bad width printed "
+> XTBD _   EXTERN  3 37
+           MES     "bad mode printed "
+> XTBD _   EXTERN  0 38
+           MES     "bad speed printed "
+> XTBD _   EXTERN  31 32
+           MES     "row31 "
+> XTBD _   EXTERN  79 33
+           MES     "col79 "
+> XTBD _   EXTERN  80 34
+           MES     "width80 "
+> XTBD _   EXTERN  2 37
+           MES     "mode2 "
+> XTBD _   EXTERN  255 38
+           MES     "speed255"
+           EXTERN  27 32     ; restore the defaults for later verbs
+           EXTERN  0 33
+           EXTERN  0 34
+           EXTERN  0 37
+           EXTERN  1 38
+           DONE
+; XTNR - column 60 at 80 cols, then GFX 1 18 mid-message: the hook must
+;        write NOTHING to the 40-col map (frozen), then resume at 60+
+;        when the width returns. Each GFX n 18 blanks the whole map, so
+;        the ~10 chars of phase 1 are gone by the end. Expect at the
+;        end: message 0's chars 11-20 in cells 70-79, chars 21-25 in
+;        cells 60-64 (the in-field wrap), 65-69 blank, nothing left of
+;        column 60 and nothing on any other row from the ticker.
+> XTNR _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  60 33
+           EXTERN  0 30
+           PAUSE   20        ; ~10 frames
+           GFX     1 18
+           WINDOW  1         ; keep the prompt off the ticker rows at 40 cols
+           WINAT   12 0
+           WINSIZE 12 40
+           PAUSE   40
+           GFX     0 18
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 80
+           PAUSE   60
+           EXTERN  0 33      ; restore
+           DONE
+; XTLA - a setter mid-message changes nothing until the next arm: arm on
+;        row 27, move the row to 24 after ten frames, let it finish.
+;        Expect message 0 complete on row 27, row 24 empty.
+> XTLA _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  0 30
+           PAUSE   20
+           EXTERN  24 32
+           PAUSE   80
+           EXTERN  27 32     ; restore
            DONE
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);
