@@ -325,7 +325,50 @@ def check_blink(z, verbose):
         print("blink: PASS")
 
 
-CHECKS = [check_colour, check_glyph, check_blink]
+def check_narrow(z, verbose):
+    """Task 6: a one-row input window caps the line; the row above is untouched."""
+    verb(z, "NARRO")
+    above = z.read_memory(TM_MAP + 29 * rd(z, "TMCOLS") * 2, rd(z, "TMCOLS") * 2)
+    type_line(z, "a" * 90, settle=3.0)
+    expect(rd(z, "INPLEN") == 78, "NARRO: 78 characters accepted in an 80-wide row after the prompt (got %d)" % rd(z, "INPLEN"))
+    expect(rd(z, "INPSTARTY") == 0, "NARRO: the origin row never scrolled (inpStartY %d)" % rd(z, "INPSTARTY"))
+    expect(z.read_memory(TM_MAP + 29 * rd(z, "TMCOLS") * 2, rd(z, "TMCOLS") * 2) == above, "NARRO: row 29 untouched")
+    c = Cell(z)
+    expect(c.row == 30 and c.col == 79, "NARRO: cursor on the last cell of row 30: %r" % c)
+    cancel_line(z)
+    verb(z, "WIDE")
+    if verbose:
+        print("narrow: PASS")
+
+
+def check_scroll(z, verbose):
+    """Task 6: a line that wraps at window 0's bottom row scrolls it; the
+    origin moves up by the rows scrolled and the cursor follows."""
+    for tries in range(40):
+        if rd(z, "INPLEN") == 0 and rd(z, "INPSTARTY") == 15:
+            break
+        cancel_line(z)                 # an empty line re-prompts one row down
+    else:
+        sys.exit("cursor_dump: FAIL SCROLL: the prompt never reached window 0's bottom row (inpStartY %d)" % rd(z, "INPSTARTY"))
+    sx, sy = rd(z, "INPSTARTX"), rd(z, "INPSTARTY")
+    text = "abcdefghij" * 10
+    type_line(z, text, settle=3.0)
+    expect(rd(z, "INPLEN") == 100, "SCROLL: 100 characters accepted (got %d)" % rd(z, "INPLEN"))
+    # startX 1 + 100 characters + the cursor cell span two 80-wide rows
+    expect(rd(z, "INPSTARTY") == sy - 1, "SCROLL: the origin moved up one row (inpStartY %d, was %d)" % (rd(z, "INPSTARTY"), sy))
+    c = Cell(z)
+    expect(c.row == 31 and c.col == sx + 100 - 80, "SCROLL: cursor at row 31 col %d: %r" % (sx + 20, c))
+    expect(c.glyph == 32 and c.attr == c.win_attrinv, "SCROLL: the block cursor is drawn there: %r" % c)
+    stride = rd(z, "TMCOLS") * 2
+    first = z.read_memory(TM_MAP + 30 * stride + sx * 2, 1)[0]
+    last = z.read_memory(TM_MAP + 31 * stride + (sx + 99 - 80) * 2, 1)[0]
+    expect(first == ord(text[0]) and last == ord(text[-1]), "SCROLL: line spans row 30 col %d to row 31 col %d (glyphs %d, %d)" % (sx, sx + 19, first, last))
+    cancel_line(z)
+    if verbose:
+        print("scroll: PASS (origin col %d row %d -> %d, %d re-prompt(s))" % (sx, sy, sy - 1, tries))
+
+
+CHECKS = [check_colour, check_glyph, check_blink, check_narrow, check_scroll]
 
 
 def run(z, verbose, upto):

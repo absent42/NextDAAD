@@ -666,9 +666,8 @@ inp_edit:
     jr c, .loop                 ; other controls: ignore
     ; printable: insert at cursor if room
     ld e, a
-    ld a, (inpLen)
-    cp INP_MAX
-    jp nc, .loop
+    call inp_room               ; the window's capacity (<= INP_MAX)
+    jp c, .loop
     call inp_insert             ; inserts E, redraws tail, len/cur++
     jp .loop
 .bs:
@@ -806,6 +805,46 @@ inp_cell_of:
     ld b, a                     ; row
     ret
 
+; A = the longest line the input window holds from its origin column,
+; leaving one cell for the cursor: min(INP_MAX, W*H - startX - 1).
+; Corrupts AF, DE, HL.
+    ASSERT WIN_H == WIN_W+1
+inp_line_limit:
+    ld a, WIN_W
+    call win_field
+    ld d, (hl)
+    inc hl
+    ld e, (hl)
+    mul d, e                    ; Z80N: DE = cells in the window
+    ld a, (inpStartX)
+    inc a
+    ld l, a
+    ld h, 0
+    ex de, hl
+    or a
+    sbc hl, de                  ; HL = cells - startX - 1, never negative
+    ld a, INP_MAX
+    inc h
+    dec h
+    ret nz                      ; over 255: INP_MAX rules
+    ld a, l
+    cp INP_MAX
+    ret c
+    ld a, INP_MAX
+    ret
+
+; CF set = no room for another character plus the cursor cell.
+; Preserves E (the pending character).
+inp_room:
+    push de
+    call inp_line_limit
+    ld c, a
+    ld a, (inpLen)
+    cp c
+    ccf                         ; CF set when inpLen >= limit
+    pop de
+    ret
+
 ; Set the window cursor to inpCur's cell. win_field preserves BC.
 inp_place_cursor:
     ld a, (inpCur)
@@ -838,9 +877,9 @@ inp_redraw_from_cur:
     inc hl
     jr .echo
 .echoed:
-    ; scroll adjust: projected end row (unclamped) - actual WIN_CURY.
-    ; A scroll leaves WIN_CURY clamped below the projection; the
-    ; difference is how many rows the line start moved up.
+    ; scroll adjust: an echo that wraps at the window's bottom row scrolls
+    ; it, so the origin moves up by the rows scrolled; inp_room keeps the
+    ; whole line inside the window, so the origin never leaves it.
     ld a, (inpLen)
     call inp_cell_of            ; B = projected end row (win-rel)
     ld a, WIN_CURY
@@ -890,10 +929,15 @@ inp_clear_line:
 ; Copy inpLast into inpLine, echo it whole, leave cursor at line end.
 inp_recall_last:
     call inp_capture_start      ; anchor start to the window cursor
+    call inp_line_limit
+    ld c, a                     ; C = the window's capacity (<= INP_MAX)
     ld hl, inpLast
     ld de, inpLine
     ld b, 0                     ; B = length
 .cp:
+    ld a, b
+    cp c
+    jr nc, .max                 ; tested first: a limit of 0 copies nothing
     ld a, (hl)
     ld (de), a
     or a
@@ -901,9 +945,8 @@ inp_recall_last:
     inc hl
     inc de
     inc b
-    ld a, b
-    cp INP_MAX
-    jr c, .cp
+    jr .cp
+.max:
     xor a
     ld (de), a                  ; hit max: force terminator
 .done:
