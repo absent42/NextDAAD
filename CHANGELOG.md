@@ -40,6 +40,12 @@ All notable changes to NextDAAD are recorded here.
 - Pinned by `tests/cursor.dsf` (the -Cursor leg, byte-asserted), the
   ZEsarUX harness `tests/cursor_dump.py`, and build-tests'
   Assert-CursorStateWriters.
+- PARSE zeroes the More... line count in all 8 windows after fresh
+  player input, on submit (after the flag 49 echo) and on timeout, as
+  jDAAD, msx2daad and ZXDAAD128 do. Orders taken from the pending
+  buffer do not reset it. Previously the count ran on across turns, so
+  short replies paged every ~15 lines of total output. Pinned by
+  `check_pager` in `tests/cursor_dump.py`.
 
 ## v0.10.0 - 18/09/2026
 

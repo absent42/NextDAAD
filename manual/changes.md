@@ -24,6 +24,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
   an action that ran earlier in the same table keeps its done state,
   and the extern itself does not count as done. Before, the whole done
   state was cleared.
+- **More... after short replies.** The page count now starts again
+  each time the player types a command, as the original interpreters
+  do. Before, a game with short replies paused with More... every
+  fifteen or so lines of output, even across turns.
 
 ## 0.10.0 - 18 September 2026
 
