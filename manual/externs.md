@@ -406,7 +406,7 @@ to each row, so you call them by name:
 
 | # | Symbol | In | Out | From the hook |
 |---|--------|----|-----|---------------|
-| 0 | `SVC_VERSION` | - | A = API version (`2` on this release) | yes |
+| 0 | `SVC_VERSION` | - | A = API version (`3` on this release) | yes |
 | 1 | `SVC_PUTCHAR` | A = character | - | no |
 | 2 | `SVC_PUTS` | HL = ASCIIZ string (may live in your own bank) | - | no |
 | 3 | `SVC_FOPEN` | IX = ASCIIZ filename, B = mode | A = handle, or CF set + A = error | no |
