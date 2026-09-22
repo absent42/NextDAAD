@@ -44,7 +44,7 @@ All notable changes to NextDAAD are recorded here.
   player input, on submit (after the flag 49 echo) and on timeout, as
   jDAAD, msx2daad and ZXDAAD128 do. Orders taken from the pending
   buffer do not reset it. Previously the count ran on across turns, so
-  short replies paged every ~15 lines of total output. Pinned by
+  short replies paged once a window-full of output had built up. Pinned by
   `check_pager` in `tests/cursor_dump.py`.
 
 ## v0.10.0 - 18/09/2026
