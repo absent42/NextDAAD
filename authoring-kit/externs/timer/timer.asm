@@ -39,6 +39,7 @@ ST_MINUTES      equ 2
 ST_EXPIRED      equ 3
 
 FRAMES_PER_SEC  equ 50           ; the hook is the 50Hz frame interrupt
+    ASSERT (XBN_FLAGS & $FF) == 0 ; flag indexing below uses L alone (rubric 8)
 
 ext:
     ld a, b
@@ -131,43 +132,36 @@ arm_minutes:
     cp 3
     ret nc                       ; only slots 0-2 exist
     ld (armslot), a
+    ld h, high XBN_FLAGS         ; page-aligned flags: L is the flag number
+    add a, FLAG_STATE
     ld l, a
-    ld h, 0
-    ld de, XBN_FLAGS + FLAG_STATE
-    add hl, de
     ld (hl), ST_IDLE             ; quiesce first: closes the write-tear window
     call clock_total_safe        ; foreground: must be the retrying reader
     ld (armtotal), hl
     ld a, (armslot)
-    ld l, a
-    ld h, 0
-    add hl, hl                   ; slot*2
-    ld de, XBN_FLAGS + FLAG_REM
-    add hl, de                   ; HL -> the slot's low byte
+    add a, a
+    add a, FLAG_REM
+    ld h, high XBN_FLAGS
+    ld l, a                      ; HL -> the slot's low byte
     ld e, (hl)
-    inc hl
+    inc l
     ld d, (hl)                   ; DE = the author's duration, HL -> high byte
     ld a, d
     and $80
-    jr nz, .refuse                ; duration >= 32768: refuse - the slot was
-                                 ; already idled above, and the pair is left
-                                 ; untouched (the raw duration, not a deadline)
+    jr nz, .refuse                ; duration >= 32768: refuse, pair untouched
     push hl
     ld hl, (armtotal)
     add hl, de                   ; HL = deadline, wrapping mod 65536
     ex de, hl                    ; DE = deadline
     pop hl                       ; HL -> high byte
     ld (hl), d
-    dec hl
+    dec l
     ld (hl), e
     ld a, (armslot)
-    ld l, a
-    ld h, 0
-    ld de, XBN_FLAGS + FLAG_STATE
-    add hl, de
+    add a, FLAG_STATE            ; 235 + 0..2: no carry, so CF is clear at ret
+    ld l, a                      ; H is still the flags page
     ld (hl), ST_MINUTES          ; window closed above: safe to go live now
-    ret                          ; CF clear: this add (flag base + slot 0-2)
-                                 ; never overflows - verified, not an or a fix
+    ret
 .refuse:
     scf                          ; CF set: duration out of range, nothing
     ret                          ; armed - documented meaning of the failure
@@ -222,42 +216,35 @@ int:
 .haveminutes:
     call clock_total
     ex de, hl                    ; DE = clock total
-    ld b, 0
+    ld b, 0                      ; B = slot
 .mloop:
-    push bc
-    ld hl, XBN_FLAGS + FLAG_STATE
-    ld a, b
-    ld c, a
-    ld b, 0
-    add hl, bc
+    ld h, high XBN_FLAGS
+    ld a, FLAG_STATE
+    add a, b
+    ld l, a
     ld a, (hl)
     cp ST_MINUTES
     jr nz, .mnext
-    ld hl, XBN_FLAGS + FLAG_REM
-    add hl, bc
-    add hl, bc                   ; HL -> the slot's low byte
+    ld a, b
+    add a, a
+    add a, FLAG_REM
+    ld l, a                      ; HL -> the slot's low byte
     ld a, (hl)
-    ld c, a
-    inc hl
-    ld a, (hl)
-    ld h, a
-    ld l, c                      ; HL = deadline
+    inc l
+    ld h, (hl)
+    ld l, a                      ; HL = deadline
     or a
     sbc hl, de                   ; HL = deadline - now
     jr z, .mexpire               ; reached exactly
-    ld a, h
-    and $80
+    bit 7, h
     jr z, .mnext                 ; still in the future
 .mexpire:
-    pop bc
-    push bc
-    ld hl, XBN_FLAGS + FLAG_STATE
-    ld c, b
-    ld b, 0
-    add hl, bc
+    ld h, high XBN_FLAGS
+    ld a, FLAG_STATE
+    add a, b
+    ld l, a
     ld (hl), ST_EXPIRED
 .mnext:
-    pop bc
     inc b
     ld a, b
     cp 3
@@ -265,53 +252,47 @@ int:
     ret
 
 ; Subtracts one from every timer whose state equals C, clamping at zero and
-; expiring there. Corrupts all but C. Two pushes per matching slot, popped on
-; BOTH exits - an unbalanced push in a frame hook corrupts the ISR's stack.
+; expiring there. Corrupts all but C. No stack use: a frame-hook routine.
 step_all:
     ld b, 0                      ; B = slot index 0..2
 .slot:
-    push bc
-    ld hl, XBN_FLAGS + FLAG_STATE
-    ld d, 0
-    ld e, b
-    add hl, de
+    ld h, high XBN_FLAGS
+    ld a, FLAG_STATE
+    add a, b
+    ld l, a
     ld a, (hl)
     cp c
     jr nz, .next
-    push hl                      ; [1] this slot's state flag
-    ld hl, XBN_FLAGS + FLAG_REM
-    ld d, 0
-    ld e, b
-    add hl, de
-    add hl, de                   ; remaining pair is at FLAG_REM + slot*2
-    push hl                      ; [2] pointer to its low byte
+    ld a, b
+    add a, a
+    add a, FLAG_REM
+    ld l, a                      ; HL -> the slot's low byte
     ld e, (hl)
-    inc hl
+    inc l
     ld d, (hl)                   ; DE = remaining
-    ex de, hl                    ; HL = remaining
-    ld de, 1
-    or a
-    sbc hl, de                   ; underflow or zero both mean expired
-    jr c, .zero
+    ex de, hl                    ; HL = remaining, DE -> the high byte
     ld a, h
     or l
-    jr z, .zero
-    pop de                       ; [2] pointer
-    ex de, hl                    ; HL = pointer, DE = new remaining
-    ld (hl), e
-    inc hl
+    jr z, .zero                  ; already 0: expired
+    dec hl
+    ld a, h
+    or l
+    jr z, .zero                  ; reached 0: expired
+    ex de, hl                    ; HL -> high byte, DE = new remaining
     ld (hl), d
-    pop hl                       ; [1] discard
+    dec l
+    ld (hl), e
     jr .next
 .zero:
-    pop hl                       ; [2] pointer
+    ex de, hl                    ; HL -> high byte
     ld (hl), 0
-    inc hl
+    dec l
     ld (hl), 0
-    pop hl                       ; [1] state flag
+    ld a, FLAG_STATE
+    add a, b
+    ld l, a                      ; H is still the flags page
     ld (hl), ST_EXPIRED
 .next:
-    pop bc
     inc b
     ld a, b
     cp 3
