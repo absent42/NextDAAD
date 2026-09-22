@@ -822,7 +822,9 @@ inp_line_limit:
     ld h, 0
     ex de, hl
     or a
-    sbc hl, de                  ; HL = cells - startX - 1, never negative
+    sbc hl, de                  ; HL = cells - startX - 1; negative when
+                                 ; startX >= W*H (BACKAT restored a wider
+                                 ; window's cursor) - falls through to INP_MAX
     ld a, INP_MAX
     inc h
     dec h
@@ -834,7 +836,7 @@ inp_line_limit:
     ret
 
 ; CF set = no room for another character plus the cursor cell.
-; Preserves E (the pending character).
+; Corrupts AF, C, HL. Preserves DE (E is the pending character).
 inp_room:
     push de
     call inp_line_limit

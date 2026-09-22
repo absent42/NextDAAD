@@ -301,15 +301,12 @@ vm.runInContext(`
   // cursor is a literal '_' GLYPH appended to the prompt
   // (jdaad.js readText: writeText(readTextStr + '_')), so without this it
   // is teed into the capture and every single turn ends '>_' while the
-  // Next leg ends '>'. NextDAAD's cursor is not a glyph at all - it is an
-  // ATTRIBUTE inversion of the cell under it (src/overlay1.asm
-  // inp_cursor_put renders the char already there with the inverted
-  // pair), and tilemap.decode reads glyphs, not attributes, so the Next
-  // leg can never produce a matching character. The two interpreters are
-  // NOT disagreeing here; only the two capture models are, so the marker
-  // is dropped from the reference capture rather than faked on the Next
-  // side. Scoped to readText so a '_' printed by the GAME (message text,
-  // an object name) is still captured and still compared.
+  // Next leg ends '>'. By default NextDAAD's cursor is an inverse block
+  // (the character already there, or a space, drawn in swapped colours,
+  // not a glyph), which is why stripping jDAAD's '_' matches. A game that
+  // sets a glyph cursor with GFX 22 would need the Next side to drop the
+  // cursor cell too. Scoped to readText so a '_' printed by the GAME
+  // (message text, an object name) is still captured and still compared.
   //
   // DEPTH COUNTER, not a boolean: if readText ever re-enters (directly,
   // or via anything it calls that reaches the input line again), a

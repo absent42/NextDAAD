@@ -21,8 +21,8 @@ All notable changes to NextDAAD are recorded here.
   not count as done. Previously the whole done state was cleared.
   `tests/extern.dsf` XCND re-pinned, XCNE added.
 - GFX 22-26: parser cursor glyph, blink, ink, paper and reset. `GFX n
-  22` sets the cursor's glyph tile (0 is the default inverse block,
-  drawn raw with no charset shift); `GFX n 23` sets the blink
+  22` sets the cursor's glyph tile (0 is the default inverse block; 1-255
+  is a tile drawn raw with no charset shift); `GFX n 23` sets the blink
   half-period in frames (0 is steady); `GFX n 24` and `GFX n 25` set
   ink and paper independently, each resolved lazily through the
   tilemap pair allocator and cached, with pair_reclaim marking the
