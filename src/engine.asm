@@ -193,8 +193,8 @@ eng_push_proc:
     push hl
     ld hl, (ddbHeader+HDR_PROCLST)
     ld a, c
-    add a, a                    ; c*2, 8-bit exactly as before
-    add hl, a                   ; entry in the process list
+    add hl, a                   ; + proc*2 in 16 bits: numPrc is a byte,
+    add hl, a                   ; so tables 128-254 are legal (Z80N)
     call data_save
     call rd_seek
     call rd_next

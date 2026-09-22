@@ -212,9 +212,13 @@ measured (15 transcript lines, pinned):
 - **Falling off the end of process 0 ENDS THE GAME on the original.**
   `tests/condacts.dsf`'s loop shape (PRO 0 runs out and the interpreter
   re-pushes it) drops the 48K machine back to BASIC on every typed
-  command. NextDAAD and jDAAD both re-push; the original does not. Write
-  ZX fixtures in `tests/test.dsf`'s shape - PRO 1, every path ending in
-  `REDO`.
+  command. NextDAAD re-pushes; the original does not, and NEITHER DOES
+  jDAAD: its `run()` pops an empty stack, sets `isTerminated` and
+  returns forever, so every later turn captures nothing and the flags
+  freeze (traced 2026-09-22 on `tests/prochi.dsf`'s first draft; the
+  condacts scripts only survive because their PARSE turns all happen
+  inside PRO 1). Write fixtures in `tests/test.dsf`'s shape - PRO 0
+  calls a loop table, every path in it ending in `REDO`.
 - **The prompt is random** (SM2..SM5, unpinnable without flag 42), so the
   pending prompt message and input row are dropped from BOTH sides of a
   ZX comparison. That is the only normalisation applied.
@@ -298,9 +302,10 @@ The tool makes no judgements. You do five things it cannot.
 ### 1. Prepare the game
 
 Source-available games need nothing: pass the `.dsf` straight in through
-`prepare.prepare_from_dsf`. The five tracked fixtures are
+`prepare.prepare_from_dsf`. The six tracked fixtures are
 `tests/condacts.dsf`, `tests/test.dsf`, `tests/doallnest.dsf`,
-`tests/NDPARTA.DSF`, `tests/NDPARTB.DSF`.
+`tests/NDPARTA.DSF`, `tests/NDPARTB.DSF` and `tests/prochi.dsf` (131
+process tables: PROCESS and REDO reaching tables above 127).
 
 **Rabenstein and Urban Upstart are the real-game targets, and they need
 no decompiler at all** - both ship DSF source directly:
@@ -559,6 +564,7 @@ something the changer must explain; neither is allowed to pass quietly.
 | dracula lamp | `tools/test-games/Dracula Part 1/dracula1.dsf` + `scripts/dracula/lamp.json` | 21 / 7 | `752950ee121abf2a` |
 | dracula compound | same game + `scripts/dracula/compound.json` | 17 / 4 | `2f403989f005cfc2` |
 | rabenstein d1 | `tools/Rabenstein-master/nextdaad/rabenstein.dsf` + `scripts/rabenstein/d1.json` | 6 / 6 | `6ed0e38dfc7e88eb` |
+| prochi | `tests/prochi.dsf` + `scripts/prochi/hi.json` | 2 / 0 | `c0d5305e2f729d46` |
 
 Both condacts full pins were RE-BASELINED on 2026-08-01 by commit
 `cb1707d`, which removed the space before SM51 in the PUTIN/TAKEOUT

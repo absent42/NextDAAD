@@ -157,8 +157,8 @@ h_redo:                         ; 108: restart the top table from its
     call eng_top_ix             ; first entry (own process number)
     ld hl, (ddbHeader+HDR_PROCLST)
     ld a, (ix+0)
-    add a, a                    ; process*2 (same 8-bit truncation as before)
-    add hl, a                   ; Z80N; carry is always cleared, unread here
+    add hl, a                   ; + process*2 in 16 bits: tables 128-254
+    add hl, a                   ; are legal (Z80N; carry cleared, unread)
     call data_save
     call rd_seek
     call rd_next
