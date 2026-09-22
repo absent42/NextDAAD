@@ -40,6 +40,26 @@ All notable changes to NextDAAD are recorded here.
 - Pinned by `tests/cursor.dsf` (the -Cursor leg, byte-asserted), the
   ZEsarUX harness `tests/cursor_dump.py`, and build-tests'
   Assert-CursorStateWriters.
+- Optimisation pass over the extern collection and the loader intro,
+  with no change in behaviour anywhere. The fade extern streams its
+  palette through `OUTINB` (its 8-bit burst halves, its 9-bit burst
+  drops by a third); the hints keystream decodes a whole buffer per
+  call instead of one byte per call; the toolkit reaches its fn codes
+  through a jump table, indexes flags on the page-aligned base and
+  walks the object table with a pointer instead of rebuilding each
+  address; the timer indexes its slots the same way; realtime shifts
+  through `BSRL`; and in the launcher the transition copies are
+  unrolled, the palette interpolation keeps its operands in registers
+  (a full sweep drops by about a third) and `str_len` scans with
+  `CPIR`. Every module's `GAME.XBN` was rebuilt from its source; the
+  combined collection binary is 9476 bytes. Old and new code were
+  compared byte for byte wherever a routine's output is bytes.
+- The loader intro's sample interrupt keeps its ring pointer in the
+  main registers. Holding it in the alternate set, tried during the
+  pass above, hung the PCM leg on hardware: esxDOS keeps state in
+  those registers during a call and not merely across one, so the
+  interrupt corrupted a card read while music played through a
+  picture load.
 - PARSE zeroes the More... line count in all 8 windows after fresh
   player input, on submit (after the flag 49 echo) and on timeout, as
   jDAAD, msx2daad and ZXDAAD128 do. Orders taken from the pending
