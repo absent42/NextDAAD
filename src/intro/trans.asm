@@ -329,12 +329,15 @@ copy_stride:
     ld a, (strideLine)
     ld l, a
     ld de, bounce
+.gather:
     DUP 32                           ; one byte per page column, unrolled like
     ld a, (hl)                       ; the LDWS scatter below
     ld (de), a
     inc h
     inc e
     EDUP
+.gather_end:
+    ASSERT .gather_end - .gather == 128 ; one byte per page column (rubric 8)
     pop bc
     push bc
     ld a, (frontBank)
