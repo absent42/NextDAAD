@@ -132,10 +132,12 @@ def sym(name):
 
 def read_ring(z):
     """Freeze, confirm the freeze (frameCounter must not move), read the
-    pointer and the ring, resume. ZEsarUX sporadically refuses the freeze."""
+    pointer and the ring, resume. ZEsarUX sporadically refuses the freeze;
+    every path out still leaves the CPU running."""
     fc = sym("FRAMECOUNTER")
+    reply = ""
     for _ in range(8):
-        z.enter_cpu_step()
+        reply = z.enter_cpu_step()
         a = z.read_memory(fc, 2)
         time.sleep(0.15)
         b = z.read_memory(fc, 2)
@@ -143,7 +145,12 @@ def read_ring(z):
             break
         time.sleep(0.2)
     else:
-        sys.exit("kblog_dump: could not freeze the CPU (enter-cpu-step refused 8 times)")
+        try:
+            z.exit_cpu_step()
+        except Exception:
+            pass
+        sys.exit("kblog_dump: could not freeze the CPU (enter-cpu-step refused 8 times, "
+                  "last reply %r)" % (reply,))
     try:
         p = z.read_memory(sym("KBLOGPTR"), 2)
         ptr = p[0] | (p[1] << 8)
@@ -184,13 +191,40 @@ def launch(leg, port):
     return proc, z
 
 
+_HEX2 = re.compile(r"^[0-9A-Fa-f]{2}$")
+_HEXDIGITS = set("0123456789ABCDEFabcdef")
+
+
+def parse_hex(text):
+    """DeZog Memory-view hex text, line by line: drop a leading address
+    token (hex digits, either ending in ':' or 4+ digits long), then take
+    tokens from the rest while each is exactly two hex digits - stopping
+    at the first token that is not (the ASCII sidebar, or anything else,
+    starts there). Concatenates across lines."""
+    out = bytearray()
+    for line in text.splitlines():
+        tokens = line.strip().split()
+        if not tokens:
+            continue
+        first = tokens[0]
+        core = first[:-1] if first.endswith(":") else first
+        is_addr = bool(core) and all(c in _HEXDIGITS for c in core) and \
+            (first.endswith(":") or len(first) >= 4)
+        rest = tokens[1:] if is_addr else tokens
+        for tok in rest:
+            if _HEX2.match(tok):
+                out.append(int(tok, 16))
+            else:
+                break
+    return bytes(out)
+
+
 def load_file(path):
     """A 2048-byte binary, or hex text copied from a DeZog Memory view."""
     data = pathlib.Path(path).read_bytes()
     if len(data) == SIZE:
         return data
-    pairs = re.findall(r"\b[0-9A-Fa-f]{2}\b", data.decode("ascii", "replace"))
-    raw = bytes(int(h, 16) for h in pairs)
+    raw = parse_hex(data.decode("ascii", "replace"))
     if len(raw) < SIZE:
         sys.exit("kblog_dump: %s holds %d bytes, want %d" % (path, len(raw), SIZE))
     return raw[:SIZE]
@@ -249,6 +283,28 @@ def selftest():
         raw[4 * i:4 * i + 4] = bytes(((0x40 + k) & 0xFF, 0, ENTERED, 30))
     ents = entries_from(bytes(raw), BASE + 4 * p)
     assert len(ents) == N and ents[0][0] == 0x40, "wrap: %d entries, first %02X" % (len(ents), ents[0][0])
+    # entries_from rejects a malformed ring or pointer
+    try:
+        entries_from(b"\x00" * (SIZE - 1), BASE)
+        assert False, "wrong-length ring: no ValueError"
+    except ValueError:
+        pass
+    try:
+        entries_from(bytes(SIZE), BASE + 1)
+        assert False, "misaligned pointer: no ValueError"
+    except ValueError:
+        pass
+    # line-wise DeZog hex text: 16 bytes/line, "4800: " address, an ASCII
+    # sidebar (no internal spaces) that includes letter pairs a-f - a
+    # whole-blob regex would mistake sidebar substrings for data bytes
+    raw = bytes(range(256)) * 8
+    lines = []
+    for o in range(0, SIZE, 16):
+        row = raw[o:o + 16]
+        hexpairs = " ".join("%02X" % b for b in row)
+        sidebar = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+        lines.append("%04X: %s  %s" % (BASE + o, hexpairs, sidebar))
+    assert parse_hex("\n".join(lines)) == raw, "hex text: parse mismatch"
     print("kblog_dump selftest: PASS")
 
 
