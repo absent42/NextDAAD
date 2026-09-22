@@ -368,7 +368,28 @@ def check_scroll(z, verbose):
         print("scroll: PASS (origin col %d row %d -> %d, %d re-prompt(s))" % (sx, sy, sy - 1, tries))
 
 
-CHECKS = [check_colour, check_glyph, check_blink, check_narrow, check_scroll]
+def check_lifecycle(z, verbose):
+    """Task 7: RESTART, RAMLOAD and a width switch keep the cursor; paper 227 floats."""
+    verb(z, "AGAIN", settle=2.0)
+    want = (95, 25, 6, 0, 3)
+    expect(state(z) == want, "AGAIN: state after RESTART %s (want %s)" % (state(z), want))
+    verb(z, "UNDO")
+    expect(state(z) == want, "UNDO: state after RAMLOAD %s" % (state(z),))
+    verb(z, "W40", settle=2.5)
+    expect(state(z) == want and rd(z, "TMCOLS") == 80, "W40: state after the width switch %s cols %d" % (state(z), rd(z, "TMCOLS")))
+    verb(z, "STEAD")
+    verb(z, "TRANS", settle=2.5)
+    type_line(z, "abc")
+    c = Cell(z)
+    expect(c.glyph == 95 and c.attr == cache(z)[0] and cache(z)[1:] == (15, 227), "TRANS: underscore in the (15, 227) pair over the card: %r cache %s" % (c, cache(z)))
+    cancel_line(z)
+    verb(z, "UNTRA")
+    expect(state(z)[0] == 0 and state(z)[4] == 0, "UNTRA: block, window colours")
+    if verbose:
+        print("lifecycle: PASS")
+
+
+CHECKS = [check_colour, check_glyph, check_blink, check_narrow, check_scroll, check_lifecycle]
 
 
 def run(z, verbose, upto):
