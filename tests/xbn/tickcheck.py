@@ -2,7 +2,9 @@ r"""Boot a staged NextDAAD leg headless in ZEsarUX, type verbs, dump the
 tilemap. Usage:
   python tests\xbn\tickcheck.py sd\XBN XTCK [XT40 ...] [--wait 3] [--row 27]
 Prints each non-blank row as rr|text after the last verb; --row N also
-prints that row's attribute bytes. Exit 0 on a clean run.
+prints that row's attribute bytes; --kblog FILE (DEBUG build) saves the
+keystroke log ring to FILE, its pointer to FILE.ptr, and prints the
+decoded report. Exit 0 on a clean run.
 
 Refuses ticker verbs when the staged GAME.XBN is the xbntest.asm fixture
 (tests\out\xbn\GAME.XBN): there fns 34-38 are the fixture's own probes,
@@ -11,7 +13,8 @@ and fn 36 (XTCO's EXTERN 1 36) is the getdate probe that derails ZEsarUX.
 import argparse, pathlib, shutil, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tests" / "parser"))
+sys.path.insert(0, str(ROOT / "tests"))             # kblog_dump (--kblog)
+sys.path.insert(0, str(ROOT / "tests" / "parser"))  # searched first
 import zrcp, tilemap, nleg  # noqa: E402
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
@@ -45,6 +48,8 @@ def main():
     ap.add_argument("--row", type=int, default=None)
     ap.add_argument("--cols", type=int, default=80,
                     help="decode width: 80 or 40 (after GFX 1 18)")
+    ap.add_argument("--kblog", default=None,
+                    help="DEBUG build: dump the keystroke log ring to FILE")
     args = ap.parse_args()
 
     leg = (ROOT / args.leg).resolve() if not pathlib.Path(args.leg).is_absolute() else pathlib.Path(args.leg)
@@ -89,6 +94,13 @@ def main():
                 print("%02d|%s" % (i, r.rstrip()))
         if args.row is not None:
             print("attr %02d|%s" % (args.row, " ".join("%02X" % a for a in attrs[args.row])))
+        if args.kblog:
+            import kblog_dump
+            raw, ptr = kblog_dump.read_ring(z)
+            out = pathlib.Path(args.kblog)
+            out.write_bytes(raw)
+            pathlib.Path(str(out) + ".ptr").write_text("0x%04X\n" % ptr)
+            print(kblog_dump.report(kblog_dump.entries_from(raw, ptr)))
         z.close()
         rc = 0
     finally:
