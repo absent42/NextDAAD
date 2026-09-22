@@ -195,20 +195,16 @@ tm_row_addr:
     add hl, de
     ret
 
-; HL = string -> A = length (stops at NUL or 80).
+; HL = string -> A = length (stops at NUL or 80). CPIR: on a hit BC = 79 -
+; index, on none BC = 0 with Z clear. Corrupts AF, BC, HL.
 str_len:
-    ld b, 0
-.l:
-    ld a, (hl)
-    or a
-    jr z, .d
-    inc hl
-    inc b
-    ld a, b
-    cp 80
-    jr c, .l
-.d:
-    ld a, b
+    xor a
+    ld bc, 80
+    cpir
+    ld a, 80
+    ret nz                           ; no NUL within 80
+    ld a, 79
+    sub c
     ret
 
 ; B = row, C = col, HL = string in the slot 6 window (page 38 is remapped
