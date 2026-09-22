@@ -96,6 +96,8 @@ open_hnt:
     ld a, (hdr+3)
     cp 1
     jr nz, .bad
+    ld a, (hdr+4)
+    ld (ks_seed), a              ; the keystream's seed immediate (SMC, RAM, foreground)
     or a                         ; CF = 0
     ret
 .bad:
@@ -164,14 +166,13 @@ write_blank:
     ld hl, 0
     call ks_start
     ld hl, rdbuf
-    ld b, 0                       ; 256 iterations
-.fill:
-    push bc
-    call ks_next
-    ld (hl), a
-    pop bc
-    inc hl
-    djnz .fill
+    ld de, rdbuf+1
+    ld bc, 255
+    ld (hl), 0
+    ldir                         ; zero the buffer, then XOR it into the key
+    ld hl, rdbuf
+    ld b, 0                      ; 256 bytes
+    call ks_xor_buf
     ld ix, rdbuf
     ld bc, 256
     ld a, (hprh)
@@ -197,7 +198,7 @@ seek_hl:
     ret
 
 ; Primes the keystream for file offset HL: stores the running S value and
-; high byte for ks_next. MUL D,E (Z80N, ED 30, T=8, B=2; also used at
+; high byte for ks_xor_buf. MUL D,E (Z80N, ED 30, T=8, B=2; also used at
 ; src/gfxcache.asm:29) computes S's low-byte product in one op.
 ks_start:
     ld a, l
@@ -213,29 +214,38 @@ ks_start:
     ld (ks_lo), a                ; the offset's low byte IS the page counter
     ret
 
-; Out: A = the key byte for the current offset, then advances one byte.
-; Clobbers B.
-ks_next:
+; XORs B bytes at HL (B = 0 -> 256) with the keystream from the primed
+; offset and advances it. D = acc, E = hi, C = lo for the run; the seed is
+; the immediate patched by open_hnt. Corrupts AF, BC, DE, HL.
+ks_xor_buf:
     ld a, (ks_acc)
-    ld b, a
+    ld d, a
     ld a, (ks_hi)
-    xor b
-    ld b, a
-    ld a, (hdr+4)                ; seed
-    xor b
-    push af
-    ld a, (ks_acc)
-    add a, 167
-    ld (ks_acc), a
+    ld e, a
     ld a, (ks_lo)
-    inc a
-    ld (ks_lo), a
-    jr nz, .same
-    ld a, (ks_hi)
-    inc a
+    ld c, a
+.byte:
+    ld a, d
+    xor e
+!ks_seed equ $+1                 ; ! keeps .byte/.nx scoped to ks_xor_buf
+    xor 0                        ; seed (hdr+4)
+    xor (hl)
+    ld (hl), a
+    inc hl
+    ld a, d
+    add a, 167
+    ld d, a
+    inc c
+    jr nz, .nx
+    inc e
+.nx:
+    djnz .byte
+    ld a, d
+    ld (ks_acc), a
+    ld a, e
     ld (ks_hi), a
-.same:
-    pop af
+    ld a, c
+    ld (ks_lo), a
     ret
 
 ks_acc:  db 0
@@ -293,17 +303,9 @@ read_dir:
 ; Deobfuscates the 3 bytes in buf3, which were read from file offset HL.
 deob3:
     call ks_start
-    ld b, 3
     ld hl, buf3
-.loop:
-    push bc
-    call ks_next
-    xor (hl)
-    ld (hl), a
-    pop bc
-    inc hl
-    djnz .loop
-    ret
+    ld b, 3
+    jp ks_xor_buf
 
 ; fn 51 - level count for topic B into flag 243. Zero means absent, which
 ; also doubles as "no more hints for this puzzle" for the author.
@@ -352,10 +354,11 @@ hpr_read:
     cp 1
     jr nz, .short
     call ks_start
-    call ks_next
     ld hl, buf3
-    xor (hl)                     ; NOT (ix+0): the file services are
-    or a                         ; documented to clobber IX
+    ld b, 1
+    call ks_xor_buf
+    ld a, (buf3)                 ; ks_xor_buf leaves A = the advanced acc
+    or a                         ; CF clear: its add a,167 can leave carry set
     ret
 .short:
     scf
@@ -364,17 +367,15 @@ hpr_read:
 ; Writes A as topic B's progress byte. CF set on failure - the caller
 ; ignores it (printed-but-unsaved is success).
 hpr_write:
-    push af
+    ld (buf3), a                 ; plaintext first, XORed in place below
     ld h, 0
     ld l, b
-    push hl
-    call ks_start
-    call ks_next
-    ld c, a
+    push hl                      ; topic offset: the seek needs it after the
+    call ks_start                ; keystream calls, which corrupt HL
+    ld hl, buf3
+    ld b, 1
+    call ks_xor_buf
     pop hl
-    pop af
-    xor c
-    ld (buf3), a
     ex de, hl
     ld bc, 0
     ld a, (hprh)
@@ -487,16 +488,9 @@ read_entry:
     ret
 .lenok:
     call ks_start
-    ld b, 4
     ld hl, buf4
-.loop:
-    push bc
-    call ks_next
-    xor (hl)
-    ld (hl), a
-    pop bc
-    inc hl
-    djnz .loop
+    ld b, 4
+    call ks_xor_buf
     ld hl, (buf4)
     ld (toff), hl
     ld hl, (buf4+2)
@@ -507,9 +501,9 @@ read_entry:
 CHUNK   equ 128                  ; rdbuf is 256 bytes, so CHUNK must not
                                  ; exceed 256; write_blank fills all 256
 
-; Prints (tlen) bytes starting at file offset (toff), deobfuscating as it
-; goes. SVC_PUTCHAR prints through the current DAAD window, so wrapping,
-; colour and the More... prompt behave like ordinary game text.
+; Prints (tlen) bytes starting at file offset (toff), deobfuscating each
+; chunk in place. SVC_PUTCHAR prints through the current DAAD window, so
+; wrapping, colour and the More... prompt behave like ordinary game text.
 print_text:
     ld hl, (toff)
     call seek_hl
@@ -549,14 +543,15 @@ print_text:
     jr nz, .short
     ld b, a
     ld hl, rdbuf
-.emit:
     push bc
-    push hl
-    call ks_next
-    pop hl
-    xor (hl)
-    push hl
-    call SVC_PUTCHAR             ; HL is NOT preserved across the print path
+    call ks_xor_buf              ; decode the chunk in place
+    pop bc
+    ld hl, rdbuf
+.emit:
+    ld a, (hl)
+    push bc                      ; SVC_PUTCHAR's corruption set is unstated:
+    push hl                      ; keep BC and HL
+    call SVC_PUTCHAR
     pop hl
     pop bc
     inc hl
