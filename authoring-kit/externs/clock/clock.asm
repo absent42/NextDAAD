@@ -54,10 +54,7 @@ run:
     ld (armed), a
     ld hl, 0
     ld (residue), hl
-    ld a, (XBN_FLAGS + FLAG_RATE)
-    ld l, a
-    ld a, (XBN_FLAGS + FLAG_RATE + 1)
-    ld h, a
+    ld hl, (XBN_FLAGS + FLAG_RATE) ; 16-bit rate, low byte first
     ld a, h
     or l
     jr nz, .rateok
@@ -143,10 +140,7 @@ int:
     ld a, (XBN_FLAGS + FLAG_RUN)
     or a
     ret z
-    ld a, (XBN_FLAGS + FLAG_RATE)
-    ld e, a
-    ld a, (XBN_FLAGS + FLAG_RATE + 1)
-    ld d, a
+    ld de, (XBN_FLAGS + FLAG_RATE)
     ld a, d                      ; rate 0 halts the clock outright - test it
     or e                         ; BEFORE touching residue, so a halted clock
     ret z                        ; accumulates nothing to burst on restart

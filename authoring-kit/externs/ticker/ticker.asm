@@ -137,10 +137,8 @@ int:
     cp (hl)
     jr nc, .done                 ; consumed the whole message
     ; emit text[cursor] at the current column, at the LIVE text width
-    ld e, a
-    ld d, 0
     ld hl, text
-    add hl, de
+    add hl, a                    ; Z80N: text[cursor]
     ld a, (hl)                   ; character - GETMSG already decoded it
                                  ; to a plain printable byte, so no
                                  ; translation is needed here
