@@ -1678,6 +1678,7 @@ h_parse:                        ; 73: condition-like. B = option.
     ; timeout path too. The two option bits do NOT run here; that is
     ; pre-existing behaviour and B22 leaves it alone.
     call inp_stream_pop
+    call pager_reset_all
     or a                        ; CF clear = PARSE passes (timeout)
     ret
 .got:
@@ -1699,6 +1700,7 @@ h_parse:                        ; 73: condition-like. B = option.
     jr z, .noecho
     call inp_reprint            ; prn_char each inpLine char + newline
 .noecho:
+    call pager_reset_all        ; after the echo, as jdaad: it does not count
     call ingest_line
     ld hl, inpPending
     ld (inpPtr), hl
@@ -1753,6 +1755,20 @@ h_parse:                        ; 73: condition-like. B = option.
     call ls_reset
     call parse_order
     jr .verdict
+
+; Player input restarts the More... page count in all 8 windows (jdaad
+; zeroes every window's lastPauseLine). Corrupts AF, B, DE, HL.
+    ASSERT WIN_LINES < WIN_SIZE
+pager_reset_all:
+    ld hl, winTable+WIN_LINES
+    ld de, WIN_SIZE
+    ld b, WINDOW_COUNT
+    xor a
+.l:
+    ld (hl), a
+    add hl, de
+    djnz .l
+    ret
 
 ; Reset the seven logical-sentence flags to NULLWORD. Shared by PARSE 0
 ; and PARSE 1 (jdaad parseEnd clears the same seven for both; the

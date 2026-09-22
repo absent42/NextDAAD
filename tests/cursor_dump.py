@@ -29,7 +29,7 @@ LEG = ROOT / "sd" / "CURSOR"
 NEX = ROOT / "build" / "nextdaad.nex"
 MAP = ROOT / "build" / "nextdaad.map"
 TM_MAP = 0x6000
-WIN_ATTR, WIN_ATTRINV = 10, 11
+WIN_LINES, WIN_ATTR, WIN_ATTRINV, WIN_SIZE = 9, 10, 11, 12
 
 _MAP = {}
 
@@ -88,16 +88,19 @@ def cache(z):
     return tuple(rd(z, n) for n in ("CURATTR", "CURRESINK", "CURRESPAPER"))
 
 
-def dismiss_more(z, tries=8):
-    """Release any More... page: window 0's line count is not reset by an
-    input, so the pager fires every 15 lines and would eat the next key.
-    The pager erases its own line on the key, so its text means pending.
+def more_on_screen(z):
+    """The pager erases its own line on the key, so its text means pending.
     Under UCASE (MODE 1) the pager prints through the upper charset, +128."""
-    shifted = bytes(c + 128 for c in b"More...")
+    grid = z.read_memory(TM_MAP, 32 * rd(z, "TMCOLS") * 2)
+    text = bytes(grid[0::2])
+    return b"More..." in text or bytes(c + 128 for c in b"More...") in text
+
+
+def dismiss_more(z, tries=8):
+    """Release any More... page a long response left, so it cannot eat the
+    next key."""
     for _ in range(tries):
-        grid = z.read_memory(TM_MAP, 32 * rd(z, "TMCOLS") * 2)
-        text = bytes(grid[0::2])
-        if b"More..." not in text and shifted not in text:
+        if not more_on_screen(z):
             return
         z.tap_dismiss_key()
         time.sleep(0.5)
@@ -389,7 +392,32 @@ def check_lifecycle(z, verbose):
         print("lifecycle: PASS")
 
 
-CHECKS = [check_colour, check_glyph, check_blink, check_narrow, check_scroll, check_lifecycle]
+def win_lines(z, n):
+    return z.read_memory(sym("WINTABLE") + n * WIN_SIZE + WIN_LINES, 1)[0]
+
+
+def check_pager(z, verbose):
+    """Player input restarts the More... page count in every window (jdaad
+    lastPauseLine = 0 per window): 25 empty submits in 16-row window 0 never
+    page. Raw ENTER only - dismiss_more would hide the fault."""
+    for n in range(1, 26):
+        z.enter(wait=1.2)
+        if more_on_screen(z):
+            dismiss_more(z)
+            sys.exit("cursor_dump: FAIL PAGER: More... after empty submit %d" % n)
+        expect(win_lines(z, 0) <= 2, "PAGER: window 0 line count %d after submit %d" % (win_lines(z, 0), n))
+    # a sentinel in window 0 and window 3 proves the submit landed and
+    # that the reset is not confined to the input window
+    for w in (0, 3):
+        z.write_memory(sym("WINTABLE") + w * WIN_SIZE + WIN_LINES, bytes([9]))
+    z.enter(wait=1.2)
+    got = (win_lines(z, 0), win_lines(z, 3))
+    expect(got[0] <= 2 and got[1] == 0, "PAGER: sentinel 9 not reset by a submit (window 0 %d, window 3 %d)" % got)
+    if verbose:
+        print("pager: PASS")
+
+
+CHECKS = [check_colour, check_glyph, check_blink, check_narrow, check_scroll, check_lifecycle, check_pager]
 
 
 def run(z, verbose, upto):
