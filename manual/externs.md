@@ -70,18 +70,20 @@ The authoring kit's `externs\ticker\` folder is a complete, working
 XBN worth reading start to finish before you write your own: a
 foreground `EXTERN` call fetches a database message with `SVC_GETMSG`,
 copies it into the extern's own memory, and a `#int` hook ticks it out
-one character per frame along the bottom row of the tilemap - in either
-text width, asking `xbn_width` per character so a `GFX n 18` switch
-mid-message just carries on at the new width, and checking `SVC_BUSY`
-first so it stays silent while a video clip owns the tilemap window.
-Its arm call (fn 30) is a condition: an unavailable message number
-fails the entry instead of arming nothing. It ships with a prebuilt
-`GAME.XBN` beside the source, so you can try it on a card without
-assembling anything. Its own `README.md` covers how to build it and
-wire it into a DSF; the source comments walk through every decision,
-including the one mistake it is built to guard you away from - see
-[SVC_GETMSG's staging semantics](#services) below. It is the same code
-this chapter's examples are drawn from.
+in a field the game places with fns 32-34, in the colours of fns 35-36,
+typed or scrolled (fn 37) at the speed of fn 38 - in either text width,
+asking `xbn_width` per step so a `GFX n 18` switch mid-message just
+carries on at the new width, and checking `SVC_BUSY` first so it stays
+silent while a video clip owns the tilemap window. Its arm call (fn 30)
+is a condition: an unavailable message number fails the entry instead
+of arming nothing, and it resolves its colours through `SVC_PAIR`
+before it fetches the message - the reason is in the source. It ships
+with a prebuilt `GAME.XBN` beside the source, so you can try it on a
+card without assembling anything. Its own `README.md` covers how to
+build it and wire it into a DSF; the source comments walk through every
+decision, including the one mistake it is built to guard you away from
+- see [SVC_GETMSG's staging semantics](#services) below. It is the same
+code this chapter's examples are drawn from.
 
 ### The fade example
 
@@ -606,7 +608,7 @@ needed.
 
 | Extern | What it does | fn codes | Flags used |
 |--------|--------------|----------|------------|
-| `ticker/` | Types a database message across the screen one character per frame, news-ticker style | 30 arm, 31 disarm | - |
+| `ticker/` | Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee | 30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed | - |
 | `fade/` | Fades the Layer 2 picture to any RRRGGGBB colour and back - fade to black for a scene change, change the picture, fade up again. Transparent regions stay transparent; a completed fade-in restores the palette bit for bit | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade | 240 done, 241 speed |
 | `hints/` | Prints hint text served from an SD card file (`GAME.HNT`), so a game can ship a large hint book without spending DAAD message slots or interpreter RAM | 50 print hint, 51 level count, 52 preflight, 53 clear progress | 242 level override, 243 level count |
 | `clock/` | An in-game clock advanced from the frame hook, with hour carry and an author-driven advance for sleeping or travelling | 60 arm and start, 61 stop, 62 advance p minutes | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |

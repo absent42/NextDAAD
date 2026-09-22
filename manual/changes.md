@@ -32,6 +32,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   the tilemap attribute for any ink and paper, the same way `INK` and
   `PAPER` resolve them. The XBN API version is now 3; every existing
   row is unchanged.
+- **Ticker extern.** `externs\ticker` now takes a row, column and
+  width (fns 32-34), ink and paper (35-36), a typewriter or marquee
+  mode (37) and a speed (38), all latched by the next `EXTERN n 30`.
+  Arming clears the field first; `EXTERN 1 31` stops and clears. The
+  defaults reproduce the old bottom-row ticker.
 
 ## 0.10.0 - 18 September 2026
 

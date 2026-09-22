@@ -100,7 +100,10 @@ you: write before you read.
 ## The ticker skeleton
 
 `externs\ticker\ticker.asm` is the minimal working module, and its own
-comments walk through every decision. The skeleton, abridged:
+comments walk through every decision. The shipped module now carries fns
+32-38 (position, colour, mode, speed) and two marquee modes on top of this
+skeleton; the wrapper, the `MODULE ticker` shape, the disarm-first arm and
+the idle hook below are unchanged. The skeleton, abridged:
 
     ; Standalone build emits its own header and binary; a combined build
     ; defines XBN_MODULE and supplies both.

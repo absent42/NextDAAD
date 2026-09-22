@@ -69,6 +69,10 @@ All notable changes to NextDAAD are recorded here.
 - XBN: `SVC_PAIR` (row 15, `XBN_API+45`): B = paper, C = ink -> A =
   tilemap attribute, via the resident `pair_get`. `SVC_VERSION` returns
   3. `XBN_API_ROWS` 16. Fixture fn 42 / verb XPRB; XSVC expects 3.
+- ticker: fns 32-38 (row, column, width, ink, paper, mode, speed), fn
+  31 p=1 clears, arm clears the field, marquee once/loop, colour via
+  SVC_PAIR gated on API 3; xbnmod.inc XBN_TILEMAP; verbs XTPS XTPR
+  XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW; tickcheck.py.
 
 ## v0.10.0 - 18/09/2026
 

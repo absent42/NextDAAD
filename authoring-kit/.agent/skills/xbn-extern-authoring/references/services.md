@@ -1,6 +1,6 @@
 # Services
 
-Fifteen routines in a fixed jump table at `XBN_API` (`$BEC8`), frozen from the
+Sixteen routines in a fixed jump table at `XBN_API` (`$BEC8`), frozen from the
 first shipping release: the address never moves, existing rows never change
 signature, and new rows are only ever appended with a version bump. `xbn.inc`
 binds a symbol to each row, so you `call SVC_PUTS` like any other subroutine.
@@ -14,7 +14,7 @@ row's Out column names carry a result.
 
 | # | Symbol | For | Hook-safe |
 |---|--------|-----|-----------|
-| 0 | `SVC_VERSION` | the API version in A (`2` on this release) | yes |
+| 0 | `SVC_VERSION` | the API version in A (`3` on this release) | yes |
 | 1 | `SVC_PUTCHAR` | print one character through the current DAAD window | no |
 | 2 | `SVC_PUTS` | print an ASCIIZ string (it may live in your own bank) | no |
 | 3 | `SVC_FOPEN` | open a file on the card, raw esxDOS mode byte in B | no |
@@ -29,6 +29,7 @@ row's Out column names carry a result.
 | 12 | `SVC_BUSY` | what the interpreter is in the middle of, as a bit mask | yes |
 | 13 | `SVC_PALREAD` | copy a Layer 2 palette bank into your 512-byte buffer | no |
 | 14 | `SVC_WINDOW` | select a DAAD window; returns the one that was current | no |
+| 15 | `SVC_PAIR` | the tilemap attribute for a (paper, ink) pair, B = paper, C = ink | no |
 
 Errors follow the esxDOS convention throughout: carry set, error code in A.
 
@@ -109,10 +110,13 @@ A game can switch between 80x32 and 40x32 text with `GFX n 18`, which changes
 the tilemap row stride (160 bytes per row at 80 columns, 80 at 40). The width
 is not part of the frozen ABI, so ask the hardware each time rather than
 caching it. `xbnmod.inc`'s `xbn_width` is hook-safe and returns the width in
-columns in E (80 or 40), the row stride in D (160 or 80) and the bottom-row
-base in HL. It corrupts AF, BC, DE, HL - park a counter you keep in BC before
-the call, as the ticker does. The ticker module calls it per character, so a
-switch mid-message just carries on at the new width.
+columns in E (80 or 40), the row stride in D (160 or 80) and a row-27 base in
+HL; for any row use `XBN_TILEMAP + row * stride` (`xbnmod.inc`), as the
+ticker's `tick_field` does. It corrupts AF, BC, DE, HL - park a counter you
+keep in BC before the call, as the ticker does. From the foreground,
+DI-bracket the call (IFF2-preserving, as the ticker's `tick_field` does): the
+frame ISR re-selects $243B without restoring it. The ticker module calls it
+per step, so a switch mid-message just carries on at the new width.
 
 ### The palette interlock
 
@@ -165,6 +169,18 @@ raise the More prompt THERE. And once you print into the target, an exact line
 fill wraps and can raise More in the target, so size a status window for what
 it actually holds. Window geometry stays the author's, set in DSF.
 
+### SVC_PAIR - colours are pairs
+
+A tilemap attribute names a (paper, ink) pair the interpreter allocates on
+demand; only it can hand one out. A pair keeps its colours only while some
+on-screen cell uses it, so resolve at the point of use and never cache an
+attribute across a period when your cells are off screen - a `GFX n 18`
+width switch blanks every cell, and is the named exception. The ticker
+re-resolves at every arm. When one function needs both, call `SVC_PAIR`
+BEFORE `SVC_GETMSG`: the staging buffer dies at the next service call.
+Foreground-only. API version 3: gate it on `SVC_VERSION`, as the ticker's
+arm does.
+
 ### SVC_PALREAD - which bank
 
 `SVC_PALREAD` copies a Layer 2 palette bank into a 512-byte buffer at IX: 256
@@ -194,12 +210,12 @@ identically cannot draw from the hook.
 
 ## Checking the version
 
-`SVC_VERSION` returns `2` on this release. Because the table is append-only,
+`SVC_VERSION` returns `3` on this release. Because the table is append-only,
 code written against an older `xbn.inc` keeps calling the same rows forever.
 An extern that needs a row its `xbn.inc` did not ship with checks first and
 fails gracefully instead of jumping into whatever used to live there:
 
-    MIN_API equ 2
+    MIN_API equ 3
     preflight:
         call SVC_VERSION
         cp MIN_API

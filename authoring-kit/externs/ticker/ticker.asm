@@ -14,6 +14,9 @@
 ; #int hook reads it frame by frame long after ext has returned)
 ; MUST copy it into memory this XBN bank owns. That copy is the whole
 ; point of this example; everything else is bookkeeping around it.
+; SVC_PAIR runs BEFORE SVC_GETMSG: the staging buffer dies at the next
+; service call.
+; marquee_step skips its LDIR at width 1: BC = 0 copies 64K.
 
 ; Standalone build emits its own header and binary; a combined build
 ; defines XBN_MODULE and supplies both.

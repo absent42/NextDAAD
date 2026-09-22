@@ -72,6 +72,9 @@ xbn_pal_check:                   ; A = 1 or 2 (my id). CF clear iff I hold it. I
 ; Out: E = 80|40, D = row stride 160|80, HL = bottom-row (27) base.
 ; Corrupts AF, BC, DE, HL. ISR-safe: the ISR calls the hook only between
 ; complete select+access pairs (src/interrupts.asm's port audit).
+; From the foreground, DI-bracket the call (IFF2-preserving, as the
+; ticker's tick_field does): the frame ISR re-selects $243B without
+; restoring it.
 xbn_width:
         ld bc, $243B
         ld a, $6B

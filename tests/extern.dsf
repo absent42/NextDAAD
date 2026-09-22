@@ -301,8 +301,8 @@
 ;     expects 9. Any other leg: meaningless.
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
-;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTMW XFAD XFDI XFSC XDRK XHNP XHNQ
-;     XHNA XHNR XHNT XHNL
+;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX
+;     XTMW XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still

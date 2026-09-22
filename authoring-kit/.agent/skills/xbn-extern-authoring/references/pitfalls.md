@@ -99,10 +99,15 @@ If you want a border row, verify it on your own target display first.
 after the switch.
 
 **Rule.** The width is not part of the frozen ABI. Ask the hardware each time
-through `xbnmod.inc`'s `xbn_width` (hook-safe: width in E, stride in D,
-bottom-row base in HL). It corrupts AF, BC, DE, HL - park a counter you keep
-in BC before the call, as the ticker does. Handle a width that SHRANK
-mid-output rather than assuming your column is still in range.
+through `xbnmod.inc`'s `xbn_width` (hook-safe: width in E, stride in D, and a
+row-27 base in HL; for any row use `XBN_TILEMAP + row * stride`
+(`xbnmod.inc`), as the ticker's `tick_field` does). It corrupts AF, BC, DE,
+HL - park a counter you keep in BC before the call, as the ticker does. From
+the foreground, DI-bracket the call (IFF2-preserving, as the ticker's
+`tick_field` does): the frame ISR re-selects $243B without restoring it.
+Handle a width that SHRANK mid-output: the ticker freezes a field that fell
+off the live screen and resumes when the width returns rather than
+restarting at column 0.
 
 ## The register-select bracket
 
