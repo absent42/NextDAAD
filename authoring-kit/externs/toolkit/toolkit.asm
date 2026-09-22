@@ -488,30 +488,24 @@ cnt_result:
     scf
     ret
 
-qwant:   db 0                    ; wanted location / noun / attribute mask
-qofs:    db 0                    ; attribute byte offset, 2 or 3
-
 ; fn 78 - EXTERN loc 78. CONDITION: objects whose location byte is loc
 ; counted into flag 251 (252/253/254 pseudo-locations included); CF set
-; when the count is zero.
+; when the count is zero. Walks the table with add hl,OBJ_SIZE (Z80N).
 atloc:
-    ld a, (param)
-    ld (qwant), a
-    ld bc, 0                     ; B = object index, C = count
-.scan:
+    ld c, 0                      ; C = count, cleared before the zero test
     ld a, (XBN_NUMOBJ)
-    cp b
-    jr z, .done
-    ld a, b
-    call obj_ptr_of
-    ld a, (hl)                   ; +0 location
-    ld hl, qwant
+    or a
+    jr z, .done                  ; DJNZ on B = 0 would run 256
+    ld b, a
+    ld hl, XBN_OBJTABLE          ; +0 location
+    ld a, (param)                ; A = wanted location
+.scan:
     cp (hl)
     jr nz, .next
     inc c
 .next:
-    inc b
-    jr .scan
+    add hl, OBJ_SIZE
+    djnz .scan
 .done:
     ld a, c
     jp cnt_result
@@ -520,32 +514,28 @@ atloc:
 ; noun byte is noun, into flag 251; CF set with 251 = 0 when none
 ; matches. Object 0 is a valid answer, so CF is the discriminator.
 bynoun:
-    ld a, (param)
-    ld (qwant), a
-    ld b, 0
-.scan:
+    ld c, 0                      ; C = object number
     ld a, (XBN_NUMOBJ)
-    cp b
+    or a
     jr z, .none
-    ld a, b
-    call obj_ptr_of
-    ld de, 4
-    add hl, de                   ; +4 noun
-    ld a, (hl)
-    ld hl, qwant
+    ld b, a
+    ld hl, XBN_OBJTABLE + 4      ; +4 noun
+    ld a, (param)
+.scan:
     cp (hl)
     jr z, .found
-    inc b
-    jr .scan
-.found:
-    ld a, b
-    ld (XBN_FLAGS + FLAG_RESULT), a
-    or a                         ; CF clear: found
-    ret
+    inc c
+    add hl, OBJ_SIZE
+    djnz .scan
 .none:
     xor a
     ld (XBN_FLAGS + FLAG_RESULT), a
     scf
+    ret
+.found:
+    ld a, c
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    or a                         ; CF clear: found
     ret
 
 ; fn 81 - EXTERN bit 81. CONDITION: objects with extended-attribute bit
@@ -561,30 +551,26 @@ attrcnt:
     sub 8
     dec c                        ; +2 holds attributes 8-15
 .mask:
-    ld hl, qofs
-    ld (hl), c
-    call mask_of
-    ld (qwant), a
-    ld bc, 0                     ; B = object index, C = count
-.scan:
+    ld hl, XBN_OBJTABLE
+    ld b, 0
+    add hl, bc                   ; HL -> object 0's attribute byte
+    call mask_of                 ; A = 1 << bit; corrupts B
+    ld c, a                      ; C = mask
+    ld d, 0                      ; D = count, cleared before the zero test
     ld a, (XBN_NUMOBJ)
-    cp b
+    or a
     jr z, .done
-    ld a, b
-    call obj_ptr_of
-    ld a, (qofs)
-    ld e, a
-    ld d, 0
-    add hl, de
-    ld a, (qwant)
-    and (hl)
+    ld b, a
+.scan:
+    ld a, (hl)
+    and c
     jr z, .next
-    inc c
+    inc d
 .next:
-    inc b
-    jr .scan
+    add hl, OBJ_SIZE
+    djnz .scan
 .done:
-    ld a, c
+    ld a, d
     jp cnt_result
 .none:
     xor a
@@ -597,29 +583,30 @@ attrcnt:
 wtot:
     ld hl, 0
     ld (wtacc), hl
-    ld b, 0
-.scan:
+    ld c, 0                      ; C = object number
     ld a, (XBN_NUMOBJ)
-    cp b
+    or a
     jr z, .done
-    ld a, b
-    call obj_ptr_of
-    ld a, (hl)                   ; +0 location
+    ld b, a
+    ld hl, XBN_OBJTABLE          ; +0 location
+.scan:
+    ld a, (hl)
     cp OBJ_CARRIED
     jr z, .add
     cp OBJ_WORN
     jr nz, .next
 .add:
-    push bc
-    ld a, b
+    push hl                      ; obj_wt16 preserves BC and DE itself
+    ld a, c
     call obj_wt16
     ld de, (wtacc)
     add hl, de                   ; 16-bit, no saturation (see obj_wt16)
     ld (wtacc), hl
-    pop bc
+    pop hl
 .next:
-    inc b
-    jr .scan
+    inc c
+    add hl, OBJ_SIZE
+    djnz .scan
 .done:
     ld hl, (wtacc)
     ld a, l
