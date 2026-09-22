@@ -28,8 +28,8 @@ pcm_open:
     ld a, (isrAudio)
     or a
     jr z, .legok
-    ld a, ERR_MUS_LEG                ; another leg owns the ISR shadow set: stay silent;
-    jp dbg_code                      ; the handle stays open (avail never drops), chain_run closes it
+    ld a, ERR_MUS_LEG                ; another leg owns the shadow set: stay silent;
+    jp dbg_code                      ; handle stays open, chain_run closes it
 .legok:
  ENDIF
     exx

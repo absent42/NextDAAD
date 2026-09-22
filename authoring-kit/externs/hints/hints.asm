@@ -357,7 +357,7 @@ hpr_read:
     ld hl, buf3
     ld b, 1
     call ks_xor_buf
-    ld a, (buf3)                 ; ks_xor_buf leaves A = the advanced acc
+    ld a, (buf3)                 ; ks_xor_buf leaves A = ks_lo, not the byte
     or a                         ; CF clear: its add a,167 can leave carry set
     ret
 .short:

@@ -596,7 +596,7 @@ wtot:
     cp OBJ_WORN
     jr nz, .next
 .add:
-    push hl                      ; obj_wt16 preserves BC and DE itself
+    push hl                      ; obj_wt16 preserves BC itself; DE is reloaded below
     ld a, c
     call obj_wt16
     ld de, (wtacc)
