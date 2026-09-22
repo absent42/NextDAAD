@@ -63,18 +63,20 @@ binary, header included, must fit in 16384 bytes - see
 XBN worth reading start to finish before you write your own: a
 foreground <code>EXTERN</code> call fetches a database message with <code>SVC_GETMSG</code>,
 copies it into the extern's own memory, and a <code>#int</code> hook ticks it out
-one character per frame along the bottom row of the tilemap - in either
-text width, asking <code>xbn_width</code> per character so a <code>GFX n 18</code> switch
-mid-message just carries on at the new width, and checking <code>SVC_BUSY</code>
-first so it stays silent while a video clip owns the tilemap window.
-Its arm call (fn 30) is a condition: an unavailable message number
-fails the entry instead of arming nothing. It ships with a prebuilt
-<code>GAME.XBN</code> beside the source, so you can try it on a card without
-assembling anything. Its own <code>README.md</code> covers how to build it and
-wire it into a DSF; the source comments walk through every decision,
-including the one mistake it is built to guard you away from - see
-<a href="#services">SVC_GETMSG's staging semantics</a> below. It is the same code
-this chapter's examples are drawn from.</p>
+in a field the game places with fns 32-34, in the colours of fns 35-36,
+typed or scrolled (fn 37) at the speed of fn 38 - in either text width,
+asking <code>xbn_width</code> per step so a <code>GFX n 18</code> switch mid-message just
+carries on at the new width, and checking <code>SVC_BUSY</code> first so it stays
+silent while a video clip owns the tilemap window. Its arm call (fn 30)
+is a condition: an unavailable message number fails the entry instead
+of arming nothing, and it resolves its colours through <code>SVC_PAIR</code>
+before it fetches the message - the reason is in the source. It ships
+with a prebuilt <code>GAME.XBN</code> beside the source, so you can try it on a
+card without assembling anything. Its own <code>README.md</code> covers how to
+build it and wire it into a DSF; the source comments walk through every
+decision, including the one mistake it is built to guard you away from
+- see <a href="#services">SVC_GETMSG's staging semantics</a> below. It is the same
+code this chapter's examples are drawn from.</p>
 <h3 id="the-fade-example">The fade example</h3>
 <p>The kit's second worked example, <code>externs/fade</code>, fades the Layer 2
 picture to any RRRGGGBB colour and back for narrative beats. Beyond the
@@ -704,8 +706,8 @@ needed.</p>
 <tbody>
 <tr>
 <td><code>ticker/</code></td>
-<td>Types a database message across the screen one character per frame, news-ticker style</td>
-<td>30 arm, 31 disarm</td>
+<td>Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee</td>
+<td>30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed</td>
 <td>-</td>
 </tr>
 <tr>
