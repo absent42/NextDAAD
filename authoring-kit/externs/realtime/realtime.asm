@@ -214,18 +214,12 @@ close_hst:
     ld (handle), a
     ret
 
-; Out: A = (HL >> B) AND C. B = 0 is a plain mask - djnz would otherwise
-; loop 256 times.
+; Out: A = (HL >> B) AND C. BSRL DE,B (Z80N, core 2+) shifts by B AND 31;
+; B = 0 is a plain mask. Corrupts AF, DE, HL.
 shr_mask:
-    ld a, b
-    or a
-    jr z, .mask
-.loop:
-    srl h
-    rr l
-    djnz .loop
-.mask:
-    ld a, l
+    ex de, hl
+    bsrl de, b
+    ld a, e
     and c
     ret
 
@@ -274,16 +268,12 @@ daynum:
     add a, 3
     srl a
     srl a                        ; (Y+3)>>2 = leap days in the years before
-    ld e, a
-    ld d, 0
-    add hl, de
+    add hl, a                    ; + leap days (Z80N)
     ld a, (dn_m)
     add a, a                     ; word table
-    ld e, a
-    ld d, 0
     push hl
     ld hl, cum
-    add hl, de
+    add hl, a                    ; Z80N: word-table index already doubled
     ld e, (hl)
     inc hl
     ld d, (hl)
@@ -298,9 +288,7 @@ daynum:
     inc hl
 .noleap:
     ld a, (dn_d)
-    ld e, a
-    ld d, 0
-    add hl, de
+    add hl, a                    ; + (D-1) (Z80N)
     ret
 
 cum:
