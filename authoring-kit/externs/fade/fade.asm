@@ -580,13 +580,15 @@ apply:
     ld a, NR_PAL_VAL
     out (c), a
     inc b                        ; BC stays $253B for the burst
-    ld e, 0                      ; 256 iterations
+    ld e, 32                     ; 32 blocks of 8 entries
 .wr:
-    ld a, (hl)
-    out (c), a                   ; auto-inc advances the colour index
-    inc l
+    DUP 8
+    outinb                       ; Z80N: out (BC),(HL), HL++, B untouched - flags
+    EDUP                         ; undefined, so the branch reads dec e's flags
     dec e
     jr nz, .wr
+.wr_end:
+    ASSERT (.wr_end - .wr) == 8*2 + 3 ; eight OUTINBs per block (rubric 8)
     dec b
     ld a, NR_PAL_CTL
     out (c), a
@@ -652,14 +654,15 @@ apply9:
     out (c), a
     inc b                        ; BC stays $253B for the burst
 .wr:
-    ld a, (hl)
-    out (c), a                   ; first write: RRRGGGBB
+    DUP 8
+    outinb                       ; first write: RRRGGGBB from (HL), HL++ (Z80N)
     ld a, (de)
     out (c), a                   ; second write: priority + blue LSB
-    inc l                        ; auto-inc advances the index AFTER the
-    inc e                        ; second write (dev guide, NR $44). Both
-                                 ; pages are aligned, so one index serves
-    jr nz, .wr                   ; as both offsets and the loop count
+    inc e                        ; E is the second source's index AND the
+    EDUP                         ; count: Z on the wrap, after the Z80N op
+    jr nz, .wr
+.wr_end:
+    ASSERT (.wr_end - .wr) == 8*6 + 2 ; eight pairs per block (rubric 8)
     dec b
     ld a, NR_PAL_CTL
     out (c), a
