@@ -1320,6 +1320,8 @@ SPR_NR15_ON     equ %01000011 ; NR $15: bit 6 sprite 0 on top, bit 1 over border
 SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped
                             ; outside video playback, clear of the
                             ; AUD_STAGE2 ring ($4400-$47FF)
+KBLOG_BASE      equ $4800   ; DEBUG keystroke log ring, dead ULA pixels
+KBLOG_END       equ $5000   ; 512 entries of 4 bytes, ends at SPR_DBG_SNAP
 SPR_DBG_LEN     equ 495     ; snapshot bytes: sig 4, seq 1, block 488, hook 1, seq 1
 SPR_STAGE       equ $5200   ; 1K frame-table staging while slot 6 holds the image;
                             ; dead ULA pixel window like SPR_DBG_SNAP and AUD_STAGE2

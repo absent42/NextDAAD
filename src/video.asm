@@ -3860,6 +3860,10 @@ nxb_entry:
                                  ; modes (block header). The direct
                                  ; rows keep vid_run's own anchor -
                                  ; theirs is a live session's.
+ IFDEF DEBUG
+    xor a
+    ld (kblogOn), a             ; the bench remaps slot 2: log off
+ ENDIF
     call nxb_blank
     ld a, (nxbMode)
     sub NXB_MODE_FIRST
@@ -4023,6 +4027,10 @@ nxb_ops_restore:
 ; A live session is ended here too: the LOOP row's frame-loop operands go
 ; back, and vidDecSp takes the session anchor so an abort unwinds to the hook.
 nxb_reclaim:
+ IFDEF DEBUG
+    ld a, 1                     ; before the no-bank ret z; a tick before the
+    ld (kblogOn), a             ; MMU2 restore hits a bank nothing reads
+ ENDIF
     call nxb_lp_unpatch
     ld a, (nxbSessLive)
     or a
