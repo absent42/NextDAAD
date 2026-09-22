@@ -201,11 +201,12 @@ function code.
 returns with the carry flag CLEAR, the entry continues past the
 `EXTERN` exactly as it always did. When it returns with the carry flag
 SET, the calling entry FAILS: processing falls to the next matching
-entry, the way a failed `AT` or `PRESENT` behaves - and the entry's done
-state is cleared, so `ISDONE` afterwards reads not-done even if an
-action earlier in the same entry had already run. Put the `EXTERN`
-guard FIRST in an entry, before the actions that depend on it, and that
-edge never shows.
+entry, the way a failed `AT` or `PRESENT` behaves. The done state is
+treated the same way as for a failed built-in condition: the extern
+itself does not count as an action performed, and an action that ran
+earlier in the same table keeps its done stamp. Putting the `EXTERN`
+guard FIRST in an entry, before the actions that depend on it, is still
+the clearest shape.
 
 Every path out of your extern must therefore return a DELIBERATE carry
 state: `or a` before a `ret` clears it, `scf` sets it. A dispatcher that

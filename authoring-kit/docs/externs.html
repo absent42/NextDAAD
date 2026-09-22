@@ -206,11 +206,12 @@ function code.</p>
 returns with the carry flag CLEAR, the entry continues past the
 <code>EXTERN</code> exactly as it always did. When it returns with the carry flag
 SET, the calling entry FAILS: processing falls to the next matching
-entry, the way a failed <code>AT</code> or <code>PRESENT</code> behaves - and the entry's done
-state is cleared, so <code>ISDONE</code> afterwards reads not-done even if an
-action earlier in the same entry had already run. Put the <code>EXTERN</code>
-guard FIRST in an entry, before the actions that depend on it, and that
-edge never shows.</p>
+entry, the way a failed <code>AT</code> or <code>PRESENT</code> behaves. The done state is
+treated the same way as for a failed built-in condition: the extern
+itself does not count as an action performed, and an action that ran
+earlier in the same table keeps its done stamp. Putting the <code>EXTERN</code>
+guard FIRST in an entry, before the actions that depend on it, is still
+the clearest shape.</p>
 <p>Every path out of your extern must therefore return a DELIBERATE carry
 state: <code>or a</code> before a <code>ret</code> clears it, <code>scf</code> sets it. A dispatcher that
 does not recognise the function code returns with carry clear, so an

@@ -193,10 +193,10 @@ other use of a literal 3 there misaligns every condact after it.
 
 A NextDAAD extension, settled behaviour. When a loaded extern returns with
 the carry flag set, the `EXTERN` behaves as a failed condition: the entry
-stops and processing falls to the next matching entry. The entry's done
-state is cleared as well, so a following `ISDONE` reads not-done even if an
-earlier action in the same entry ran - put the `EXTERN` guard first and the
-difference never shows. With no `GAME.XBN` present, and for the three
+stops and processing falls to the next matching entry. The done state is
+handled as for any failed condition: the extern does not count as an action
+performed, and an earlier action's done stamp in the same table survives.
+With no `GAME.XBN` present, and for the three
 reserved vectors, `EXTERN` remains a pure action that never fails; `CALL`
 never carries a verdict. Classic DAAD interpreters treat `EXTERN` as an
 action only; a database that relies on this extension is portable only to
