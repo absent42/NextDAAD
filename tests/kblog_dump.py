@@ -23,6 +23,7 @@ BASE, END = 0x4800, 0x5000
 SIZE = END - BASE
 N = SIZE // 4
 IDLE0, ENTERED, SETTLE, RECEIVED, ANYKEY, GETKEY, LEFT = range(7)
+ENTER_CODE = 30                     # kb_raw matrix code of ENTER
 NAMES = {IDLE0: "idle", ENTERED: "entered", SETTLE: "settle",
          RECEIVED: "received", ANYKEY: "anykey", GETKEY: "getkey",
          LEFT: "left"}
@@ -78,6 +79,11 @@ def classify(entries, run):
         into6 = _st(e) == LEFT and e[3] == 13 and (last is None or _st(last) != LEFT)
         if into3 or into6:
             return "EMITTED", e[3]
+        # empty-line ENTER: 3 and 6 pass inside one frame, the editor
+        # re-enters with inpRepKey = 30 (ENTER's matrix code in every map)
+        if _st(e) == ENTERED and e[3] == ENTER_CODE and last is not None \
+                and _st(last) == SETTLE and last[3] == ENTER_CODE:
+            return "EMITTED", 13
         last = e
     body = entries[s:t + 1]
     if any(_st(e) in (ANYKEY, GETKEY) or (_st(e) in (IDLE0, LEFT) and e[2] & 0x80) for e in body):
@@ -90,6 +96,18 @@ def classify(entries, run):
     if all(_idle(e) for e in body):
         return "A", None
     return "UNCLASSIFIED", None
+
+
+def settle_boundary(entries, run):
+    """An A run whose own key the editor began settling just after release:
+    a SETTLE in the two entries after the run whose column bit is in the
+    run's key mask. Informational; the verdict stays A."""
+    s, t = run
+    mask = 0
+    for e in entries[s:t + 1]:
+        mask |= e[1]
+    return any(_st(e) == SETTLE and mask & (1 << (e[3] % 5))
+               for e in entries[t + 1:t + 3])
 
 
 def report(entries, video=False, start=0):
@@ -112,10 +130,12 @@ def report(entries, video=False, start=0):
         "" if len(entries) == N else
         (" - ends at a video gap" if video else " - ends at a break (history start, a gap, or damage)")))
     for r in key_runs(entries):
-        if r[1] < start:
-            continue
+        if r[0] < start:
+            continue                             # already down at start
         v, d = classify(entries, r)
         label = "D (suspect kb_raw mapping)" if v == "D" else v
+        if v == "A" and settle_boundary(entries, r):
+            label = "A (released inside the editor's first settle)"
         extra = (" '%s'" % chr(d)) if d is not None and 32 <= d < 127 else ""
         lines.append("run f%02X..f%02X (%d frames): %s%s" % (
             entries[r[0]][0], entries[r[1]][0], r[1] - r[0] + 1, label, extra))
@@ -263,9 +283,17 @@ def selftest():
              + [(0, ENTERED, 30)] * 3,
         "ENTER": idle + [(4, SETTLE, 30), (4, SETTLE, 30), (4, LEFT, 13),
                          (0, LEFT, 13), (0, LEFT, 13)],
+        "ENTER-empty": idle + [(1, SETTLE, 30), (1, SETTLE, 30), (1, ENTERED, 30),
+                               (0, ENTERED, 30)],
+        "ENTER-empty-stale": [(0, SETTLE, 13)] * 3 + [(1, SETTLE, 13), (1, SETTLE, 30),
+                                                      (1, SETTLE, 30), (1, ENTERED, 30),
+                                                      (0, ENTERED, 30), (0, ENTERED, 30)],
+        "letter-reentry": idle + [(2, SETTLE, 31), (2, SETTLE, 31), (2, ENTERED, 31),
+                                  (0, ENTERED, 31)],
     }
     want = {"EMITTED": "EMITTED", "A": "A", "B": "B", "C": "C",
-            "C-more": "C", "D": "D", "ENTER": "EMITTED"}
+            "C-more": "C", "D": "D", "ENTER": "EMITTED", "ENTER-empty": "EMITTED",
+            "ENTER-empty-stale": "EMITTED", "letter-reentry": "B"}
     for name, seq in cases.items():
         raw, ptr = build_ring(seq)
         ents = entries_from(raw, ptr)
@@ -282,6 +310,26 @@ def selftest():
     tail = report(ents, start=len(ents) - 2)
     assert "walk: %d entries" % len(ents) in tail and "run " not in tail \
         and tail.count("\n") == 1, "report start: %r" % tail
+    # start keeps only runs that begin at or after it (runs_from's rule)
+    k0 = cases["EMITTED"].index((2, SETTLE, 26))
+    assert "run " in report(ents, start=k0), "report start: run at start dropped"
+    assert "run " not in report(ents, start=k0 + 1), "report start: straddling run kept"
+    # A released inside the editor's first settle: annotated, verdict stays A
+    SB = "A (released inside the editor's first settle)"
+    boundary = [(0, LEFT, 13)] * 3 + [(9, LEFT, 13)] * 4 + [(0, SETTLE, 13)] * 3 \
+        + [(0, ENTERED, 30)] * 2
+    raw, ptr = build_ring(boundary)
+    ents = entries_from(raw, ptr)
+    assert classify(ents, key_runs(ents)[0])[0] == "A", "boundary: not A"
+    assert SB in report(ents), "boundary: no annotation"
+    nextkey = [(0, LEFT, 13)] * 3 + [(9, LEFT, 13)] * 4 + [(0, LEFT, 13), (2, SETTLE, 26),
+                                                           (2, RECEIVED, ord("o"))]
+    raw, ptr = build_ring(nextkey)
+    ents = entries_from(raw, ptr)
+    rs = key_runs(ents)
+    assert classify(ents, rs[0])[0] == "A", "next key: first run not A"
+    first = [l for l in report(ents).splitlines() if l.startswith("run ")][0]
+    assert first.endswith(": A"), "next key: annotated %r" % first
     # walk-back stops at a frame break: 4 stale entries, then 6 consecutive
     raw = bytearray(SIZE)
     for k in range(4):

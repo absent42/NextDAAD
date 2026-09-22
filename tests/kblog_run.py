@@ -40,7 +40,8 @@ def mark_index(ents, mark):
 
 
 def runs_from(ents, at):
-    """Key runs whose first entry is at or after entry `at`."""
+    """Key runs whose first entry is at or after entry `at` (the rule
+    kb.report(start=) prints by)."""
     return [r for r in kb.key_runs(ents) if r[0] >= at]
 
 
