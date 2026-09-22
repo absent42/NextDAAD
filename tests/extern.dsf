@@ -411,7 +411,10 @@ XTPS   167 verb
 XTBD   168 verb
 XTNR   169 verb
 XTLA   170 verb
+XTCO   171 verb
+XTC0   172 verb
 XTPR   176 verb
+XTCD   177 verb
 WIDGET  20 noun
 GIZMO   21 noun
 CLOAK   22 noun
@@ -942,6 +945,36 @@ CLOAK   22 noun
            EXTERN  24 32
            PAUSE   80
            EXTERN  27 32     ; restore
+           DONE
+; XTCO - colour, stop leaving the text: ink 6 paper 1, arm, EXTERN 0 31.
+;        Row 27 carries the message with ONE nonzero attribute across
+;        the whole row (space cells included - the arm's clear paints
+;        them). Settings stay yellow-on-blue until XTCD.
+> XTCO _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  6 35
+           EXTERN  1 36
+           EXTERN  0 30
+           PAUSE   80
+           EXTERN  0 31
+           DONE
+; XTCD - defaults, arm, stop-and-clear: row 27 blank, attrs all 0.
+;        Restores ink 7 / paper 0.
+> XTCD _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  7 35
+           EXTERN  0 36
+           EXTERN  0 30
+           PAUSE   80
+           EXTERN  1 31
+           DONE
+; XTC0 - EXTERN 1 31 with no arm ever run: row 27 is cleared in the
+;        defaults (space, attr 0), nothing else changes. Type FIRST
+;        after boot for the check to mean anything.
+> XTC0 _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  1 31
+           MES     "cleared"
            DONE
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);

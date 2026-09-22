@@ -99,7 +99,17 @@ ext:
     ld bc, 5
     ldir                         ; latch row, col, width, mode, speed
     xor a
-    ld (attr), a                 ; Task 4 resolves the colour here
+    ld (attr), a                 ; fallback: reserved pair 0, white on black
+    call SVC_VERSION
+    cp TICK_MIN_API
+    jr c, .nocolour              ; older interpreter: no SVC_PAIR row
+    ld a, (set_paper)
+    ld b, a
+    ld a, (set_ink)
+    ld c, a
+    call SVC_PAIR                ; BEFORE SVC_GETMSG: the staging buffer dies
+    ld (attr), a                 ; at the next service call
+.nocolour:
     pop bc
     ld a, b
     call SVC_GETMSG               ; out HL = staging buffer, BC = length
