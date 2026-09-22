@@ -66,6 +66,9 @@ All notable changes to NextDAAD are recorded here.
   buffer do not reset it. Previously the count ran on across turns, so
   short replies paged once a window-full of output had built up. Pinned by
   `check_pager` in `tests/cursor_dump.py`.
+- XBN: `SVC_PAIR` (row 15, `XBN_API+45`): B = paper, C = ink -> A =
+  tilemap attribute, via the resident `pair_get`. `SVC_VERSION` returns
+  3. `XBN_API_ROWS` 16. Fixture fn 42 / verb XPRB; XSVC expects 3.
 
 ## v0.10.0 - 18/09/2026
 

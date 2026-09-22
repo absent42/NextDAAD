@@ -76,7 +76,7 @@ can address a location past `$FFFF` to call into.
 
 ## Service table
 
-A fixed jump table of fifteen three-byte `JP` instructions at `XBN_API`
+A fixed jump table of sixteen three-byte `JP` instructions at `XBN_API`
 (`$BEC8`), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -90,7 +90,7 @@ tables.
 
 | # | Symbol | In | Out | Corrupts | From the `#int` hook |
 |---|--------|----|-----|----------|----------------------|
-| 0 | `SVC_VERSION` | - | A = API version (`2` on this release) | AF | yes |
+| 0 | `SVC_VERSION` | - | A = API version (`3` on this release) | AF | yes |
 | 1 | `SVC_PUTCHAR` | A = character | - | AF, BC, DE, HL, IX, IY | no |
 | 2 | `SVC_PUTS` | HL = ASCIIZ string (may live in your own bank) | - | AF, BC, DE, HL, IX, IY | no |
 | 3 | `SVC_FOPEN` | IX = ASCIIZ filename, B = mode | A = handle, or CF set + A = error | AF, BC, DE, HL, IX, IY | no |
@@ -105,6 +105,7 @@ tables.
 | 12 | `SVC_BUSY` | - | A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle is armed. Bits 4-7 read 0. Bits 0 and 2 are only ever observable from the hook | AF, L | yes |
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | AF, BC, E, IX | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | AF, BC, DE, HL, IX, IY | no |
+| 15 | `SVC_PAIR` | B = paper, C = ink (0-255) | A = tilemap attribute for the (paper, ink) pair; CF clear. The pair is held only while an on-screen cell uses it - resolve at the point of use | AF, BC, DE, HL, IX, IY | no |
 
 Error convention throughout is esxDOS style: carry flag set, error code
 in A. A row's Corrupts column is its contract; only the registers its

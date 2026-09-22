@@ -310,7 +310,7 @@ are not optional:</p>
   called from the hook: <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>, <code>SVC_FRAMES</code> and
   <code>SVC_BUSY</code> - they touch resident memory and never page. Every other
   row (printing, files, <code>SVC_GETMSG</code>, <code>SVC_GETDATE</code>, <code>SVC_PALREAD</code>,
-  <code>SVC_WINDOW</code>) is foreground-only; see <a href="#services">Services</a>.</li>
+  <code>SVC_WINDOW</code>, <code>SVC_PAIR</code>) is foreground-only; see <a href="#services">Services</a>.</li>
 <li><strong>Never install your own interrupt handler.</strong> The IM2 vector table is
   writable RAM, but your code only exists in the address space while
   its own bank is mapped - a self-installed vector is a guaranteed
@@ -391,7 +391,7 @@ own first and return immediately when there is nothing to do - the
 ticker example's <code>int</code> hook is one load-and-test when idle, and that
 idiom is worth copying directly.</p>
 <h2 id="services">Services</h2>
-<p>The interpreter exposes fifteen small routines through a fixed jump
+<p>The interpreter exposes sixteen small routines through a fixed jump
 table at a frozen address, <code>XBN_API</code> (<code>$BEC8</code>). <code>xbn.inc</code> binds a symbol
 to each row, so you call them by name:</p>
 <table>
@@ -510,6 +510,13 @@ to each row, so you call them by name:</p>
 <td>A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
 <td>no</td>
 </tr>
+<tr>
+<td>15</td>
+<td><code>SVC_PAIR</code></td>
+<td>B = paper, C = ink, each a 0-255 colour as <code>INK</code>/<code>PAPER</code> take it</td>
+<td>A = the tilemap attribute byte for that (paper, ink) pair, allocated by the interpreter's own pair allocator, so it behaves exactly as text printed in those colours (227 works). A pair only keeps its colours while some on-screen cell uses it: resolve it where you use it, never cache it across a period when your cells are off screen (a <code>GFX n 18</code> width switch blanks every cell). Call it BEFORE <code>SVC_GETMSG</code> when one function needs both, because the staging buffer dies at the next service call</td>
+<td>no</td>
+</tr>
 </tbody>
 </table>
 <p>Call a service exactly like any other subroutine - <code>call SVC_PUTCHAR</code>
@@ -594,9 +601,13 @@ registers a row's Out column names carry a result.</p>
   holds. Window geometry (<code>WINAT</code>, <code>WINSIZE</code>, colours) stays
   yours, set in DSF. Foreground only. The toolkit's fn 84 is the worked
   use.</li>
+<li><strong><code>SVC_PAIR</code> is API version 3.</strong> It resolves a (paper, ink) pair to a
+  tilemap attribute the same way the interpreter's own print path does,
+  so an extern's own screen writes match <code>INK</code>/<code>PAPER</code> text exactly. The
+  ticker module's arm call shows the version-gated use.</li>
 </ul>
 <h3 id="versioning">Versioning</h3>
-<p><code>SVC_VERSION</code> returns <code>2</code> on this release. The service table is
+<p><code>SVC_VERSION</code> returns <code>3</code> on this release. The service table is
 append-only and its address is frozen: existing rows never move and
 never change signature, so code written against an older <code>xbn.inc</code>
 keeps calling the same rows on every later NextDAAD release. What CAN
@@ -618,9 +629,9 @@ preflight:
 .ok:
     ...
 </code></pre>
-<p>The format version (the header's byte 3, <code>2</code>) and the API version are
-the same number on this release but are separate contracts: the loader
-enforces the first, your code checks the second.</p>
+<p>The format version (the header's byte 3) stays <code>2</code>; the API version is
+<code>3</code> since <code>SVC_PAIR</code> was appended. They are separate contracts: the
+loader enforces the first, your code checks the second.</p>
 <h2 id="flags-and-objects">Flags and objects</h2>
 <p>Your extern reads and writes DAAD flags and object state directly, with
 no service in between - the interpreter simply exposes the memory.</p>

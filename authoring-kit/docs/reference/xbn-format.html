@@ -112,7 +112,7 @@ maximum-size binary: it is loaded and present, but it is not a valid
 <code>CALL</code> target or entry-point address in its own right, since nothing
 can address a location past <code>$FFFF</code> to call into.</p>
 <h2 id="service-table">Service table</h2>
-<p>A fixed jump table of fifteen three-byte <code>JP</code> instructions at <code>XBN_API</code>
+<p>A fixed jump table of sixteen three-byte <code>JP</code> instructions at <code>XBN_API</code>
 (<code>$BEC8</code>), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -139,7 +139,7 @@ tables.</p>
 <td>0</td>
 <td><code>SVC_VERSION</code></td>
 <td>-</td>
-<td>A = API version (<code>2</code> on this release)</td>
+<td>A = API version (<code>3</code> on this release)</td>
 <td>AF</td>
 <td>yes</td>
 </tr>
@@ -252,6 +252,14 @@ tables.</p>
 <td><code>SVC_WINDOW</code></td>
 <td>A = window number 0-7</td>
 <td>A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>SVC_PAIR</code></td>
+<td>B = paper, C = ink (0-255)</td>
+<td>A = tilemap attribute for the (paper, ink) pair; CF clear. The pair is held only while an on-screen cell uses it - resolve at the point of use</td>
 <td>AF, BC, DE, HL, IX, IY</td>
 <td>no</td>
 </tr>

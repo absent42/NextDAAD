@@ -28,6 +28,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
   each time the player types a command, as the original interpreters
   do. Before, a game with short replies paused with More... once a
   window-full of output had built up across turns.
+- **Colour for externs.** A new service, `SVC_PAIR`, gives an extern
+  the tilemap attribute for any ink and paper, the same way `INK` and
+  `PAPER` resolve them. The XBN API version is now 3; every existing
+  row is unchanged.
 
 ## 0.10.0 - 18 September 2026
 

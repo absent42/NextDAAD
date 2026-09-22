@@ -316,7 +316,7 @@ are not optional:
   called from the hook: `SVC_VERSION`, `SVC_RANDOM`, `SVC_FRAMES` and
   `SVC_BUSY` - they touch resident memory and never page. Every other
   row (printing, files, `SVC_GETMSG`, `SVC_GETDATE`, `SVC_PALREAD`,
-  `SVC_WINDOW`) is foreground-only; see [Services](#services).
+  `SVC_WINDOW`, `SVC_PAIR`) is foreground-only; see [Services](#services).
 - **Never install your own interrupt handler.** The IM2 vector table is
   writable RAM, but your code only exists in the address space while
   its own bank is mapped - a self-installed vector is a guaranteed
@@ -400,7 +400,7 @@ idiom is worth copying directly.
 
 ## Services
 
-The interpreter exposes fifteen small routines through a fixed jump
+The interpreter exposes sixteen small routines through a fixed jump
 table at a frozen address, `XBN_API` (`$BEC8`). `xbn.inc` binds a symbol
 to each row, so you call them by name:
 
@@ -421,6 +421,7 @@ to each row, so you call them by name:
 | 12 | `SVC_BUSY` | - | A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle (`GFX n 11`) is armed. Unassigned bits read 0. During a clip's open and prefill the hook still runs and bit 0 reads 1 (the tilemap is untouched then); from the moment the clip is armed until its teardown has restored the screen the hook does not run at all. A hook that must not write during a clip can still test bit 0; the interpreter no longer relies on it doing so. Bit 2 is only ever observable from the hook; bit 3 reads the same from either context. Bit 0 is kept for compatibility (see the hook rules for when it reads 1) | yes |
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
+| 15 | `SVC_PAIR` | B = paper, C = ink, each a 0-255 colour as `INK`/`PAPER` take it | A = the tilemap attribute byte for that (paper, ink) pair, allocated by the interpreter's own pair allocator, so it behaves exactly as text printed in those colours (227 works). A pair only keeps its colours while some on-screen cell uses it: resolve it where you use it, never cache it across a period when your cells are off screen (a `GFX n 18` width switch blanks every cell). Call it BEFORE `SVC_GETMSG` when one function needs both, because the staging buffer dies at the next service call | no |
 
 Call a service exactly like any other subroutine - `call SVC_PUTCHAR`
 and so on. Every row preserves your XBN bank's own mapping across the
@@ -505,10 +506,14 @@ A few things worth knowing about specific rows:
   holds. Window geometry (`WINAT`, `WINSIZE`, colours) stays
   yours, set in DSF. Foreground only. The toolkit's fn 84 is the worked
   use.
+- **`SVC_PAIR` is API version 3.** It resolves a (paper, ink) pair to a
+  tilemap attribute the same way the interpreter's own print path does,
+  so an extern's own screen writes match `INK`/`PAPER` text exactly. The
+  ticker module's arm call shows the version-gated use.
 
 ### Versioning
 
-`SVC_VERSION` returns `2` on this release. The service table is
+`SVC_VERSION` returns `3` on this release. The service table is
 append-only and its address is frozen: existing rows never move and
 never change signature, so code written against an older `xbn.inc`
 keeps calling the same rows on every later NextDAAD release. What CAN
@@ -531,9 +536,9 @@ hints module's preflight is the idiom:
     .ok:
         ...
 
-The format version (the header's byte 3, `2`) and the API version are
-the same number on this release but are separate contracts: the loader
-enforces the first, your code checks the second.
+The format version (the header's byte 3) stays `2`; the API version is
+`3` since `SVC_PAIR` was appended. They are separate contracts: the
+loader enforces the first, your code checks the second.
 
 ## Flags and objects
 
