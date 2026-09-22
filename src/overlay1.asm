@@ -727,12 +727,6 @@ inp_edit:
     call inp_recall_last
     jp .loop
 .enter:
- IFDEF DEBUG
-    ld a, 13                    ; keystroke log: editor left, submitted
-    ld (kblogDetail), a
-    ld a, 6
-    ld (kblogState), a
- ENDIF
     call inp_save_last
     ld a, (flags+FLAG_TIMECTL)
     and $7F                     ; a submit clears the timeout bit
@@ -740,6 +734,12 @@ inp_edit:
     xor a
     ld (moreLock), a
     ld (wrapLock), a
+ IFDEF DEBUG
+    ld a, 13                    ; keystroke log: editor left, submitted
+    ld (kblogDetail), a         ; (after the moreLock clear: no bit 7)
+    ld a, 6
+    ld (kblogState), a
+ ENDIF
     call win_newline            ; raw newline (moreLock off, single line safe)
     or a                        ; CF clear = normal submit
     ret

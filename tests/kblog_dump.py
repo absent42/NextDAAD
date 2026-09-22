@@ -92,21 +92,28 @@ def classify(entries, run):
     return "UNCLASSIFIED", None
 
 
-def report(entries, video=False):
+def report(entries, video=False, start=0):
+    """Timeline and runs from entries[start] onwards; the walk line always
+    describes the whole walk."""
     lines, prev = [], None
-    for e in entries:
+    for k, e in enumerate(entries):
         key = (e[1], e[2], e[3])
-        if key != prev:
-            d = chr(e[3]) if 32 <= e[3] < 127 else "%d" % e[3]
+        if k >= start and (key != prev or k == start):
+            if _st(e) == SETTLE:
+                d = "m%d" % e[3]                 # matrix code, not a character
+            else:
+                d = chr(e[3]) if 32 <= e[3] < 127 else "%d" % e[3]
             lines.append("f%02X keys %s %-8s%s detail %s" % (
                 e[0], format(e[1], "05b"), NAMES.get(_st(e), "?%d" % _st(e)),
                 " more" if e[2] & 0x80 else "", d))
-            prev = key
+        prev = key
     lines.append("walk: %d entries (%.1f s at 50 Hz)%s" % (
         len(entries), len(entries) / 50.0,
         "" if len(entries) == N else
         (" - ends at a video gap" if video else " - ends at a break (history start, a gap, or damage)")))
     for r in key_runs(entries):
+        if r[1] < start:
+            continue
         v, d = classify(entries, r)
         label = "D (suspect kb_raw mapping)" if v == "D" else v
         extra = (" '%s'" % chr(d)) if d is not None and 32 <= d < 127 else ""
@@ -267,6 +274,14 @@ def selftest():
         assert len(runs) == 1, "%s: %d runs" % (name, len(runs))
         got = classify(ents, runs[0])[0]
         assert got == want[name], "%s: classified %s, want %s" % (name, got, want[name])
+    # report: settle detail is a matrix code; start trims timeline and runs only
+    raw, ptr = build_ring(cases["EMITTED"])
+    ents = entries_from(raw, ptr)
+    rep = report(ents)
+    assert "settle   detail m26" in rep, "report: settle detail not m26"
+    tail = report(ents, start=len(ents) - 2)
+    assert "walk: %d entries" % len(ents) in tail and "run " not in tail \
+        and tail.count("\n") == 1, "report start: %r" % tail
     # walk-back stops at a frame break: 4 stale entries, then 6 consecutive
     raw = bytearray(SIZE)
     for k in range(4):

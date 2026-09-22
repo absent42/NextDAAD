@@ -30,13 +30,23 @@ def frame_mark(z):
     return z.read_memory(kb.sym("FRAMECOUNTER"), 1)[0]
 
 
-def runs_from(ents, mark):
-    """Key runs whose first entry is at or after the LAST entry stamped with
-    frame byte `mark` (the ring spans 512 frames, so the byte can recur)."""
+def mark_index(ents, mark):
+    """Index of the LAST entry stamped with frame byte `mark` (the ring spans
+    512 frames, so the byte can recur)."""
     at = max((k for k, e in enumerate(ents) if e[0] == mark), default=None)
     if at is None:
         fail("frame mark %02X not in the ring - the read came too late" % mark)
+    return at
+
+
+def runs_from(ents, at):
+    """Key runs whose first entry is at or after entry `at`."""
     return [r for r in kb.key_runs(ents) if r[0] >= at]
+
+
+def frames_now(z):
+    b = z.read_memory(kb.sym("FRAMECOUNTER"), 2)
+    return b[0] | (b[1] << 8)
 
 
 def main():
@@ -52,15 +62,21 @@ def main():
             fail("idle prompt: keys down or state not 'entered'\n" + kb.report(ents[-10:]))
         print("self-check 1: ring runs, idle at the prompt - PASS")
 
+        f0 = frames_now(z)
         z.hold_matrix(HOLD_L)
         time.sleep(1.0)
         z.release_matrix()
+        held = (frames_now(z) - f0) & 0xFFFF
         time.sleep(0.3)
         ents = snapshot(z)
-        v = [kb.classify(ents, r) for r in kb.key_runs(ents)]
+        runs = kb.key_runs(ents)
+        v = [kb.classify(ents, r) for r in runs]
         if not v or v[-1][0] != "EMITTED" or v[-1][1] != ord("l"):
             fail("held L not received: %s\n%s" % (v, kb.report(ents)))
-        print("self-check 2: held L received - PASS")
+        n = runs[-1][1] - runs[-1][0] + 1
+        if abs(n - held) > 2:
+            fail("held L run is %d entries, key held %d frames\n%s" % (n, held, kb.report(ents)))
+        print("self-check 2: held L received, run %d entries for %d frames held - PASS" % (n, held))
         z.enter(wait=1.5)                             # submit "l..." (no word)
 
         z.send_keys("MOREX")
@@ -70,7 +86,13 @@ def main():
             fail("no More page logged after MOREX\n" + kb.report(ents[-20:]))
         z.tap_dismiss_key()
         time.sleep(2.0)
-        print("self-check 3: More page logged - PASS")
+        ents = snapshot(z)
+        # the editor holds moreLock too: bit 7 means a More page only in states 0 and 6
+        if any(e[2] & 0x80 and e[2] & 0x7F in (kb.IDLE0, kb.LEFT) for e in ents[-20:]) \
+                or ents[-1][2] & 0x7F != kb.ENTERED:
+            fail("More page still logged after the dismiss, or not back at the prompt\n"
+                 + kb.report(ents[-20:]))
+        print("self-check 3: More page logged, cleared on dismiss - PASS")
 
         for label, gap in (("early (inside LONG's pause)", 0.3), ("late (after the prompt)", 4.0)):
             z.send_keys("LONG")
@@ -80,8 +102,9 @@ def main():
             z.enter(wait=3.0)
             ents = snapshot(z)
             print("--- observation, LOOK typed %s (runs from frame %02X)" % (label, mark))
-            print(kb.report(ents[-150:]))
-            rs = runs_from(ents, mark)
+            at = mark_index(ents, mark)
+            print(kb.report(ents, start=at))
+            rs = runs_from(ents, at)
             print("verdicts of the runs typed from the mark: %s" % [kb.classify(ents, r)[0] for r in rs])
     finally:
         try:

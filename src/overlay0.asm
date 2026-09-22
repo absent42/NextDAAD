@@ -1740,6 +1740,8 @@ h_anykey:                       ; 24
     call print_msg
     ld e, $04                   ; ANYKEY timeout arm bit
  IFDEF DEBUG
+    xor a                       ; keystroke log: ANYKEY waiting, detail 0
+    ld (kblogDetail), a
     ld a, 4
     ld (kblogState), a
  ENDIF
@@ -1747,6 +1749,7 @@ h_anykey:                       ; 24
  IFDEF DEBUG
     xor a
     ld (kblogState), a
+    ld (kblogDetail), a
  ENDIF
     jp prn_reset_lines
 h_pause:                        ; 35: B frames, 0 = 256
@@ -1761,6 +1764,8 @@ h_pause:                        ; 35: B frames, 0 = 256
     bit 0, (hl)
     jr z, .timed                ; V2: 0 still means 256 frames
  IFDEF DEBUG
+    xor a                       ; keystroke log: GETKEY waiting, detail 0
+    ld (kblogDetail), a
     ld a, 5
     ld (kblogState), a
  ENDIF
@@ -1769,6 +1774,7 @@ h_pause:                        ; 35: B frames, 0 = 256
     push af
     xor a
     ld (kblogState), a
+    ld (kblogDetail), a
     pop af
  ENDIF
     ld hl, flags+FLAG_KEY1      ; flags is ALIGN 256: the pair is one
