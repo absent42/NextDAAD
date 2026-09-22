@@ -19,7 +19,8 @@ PORT = 10031
 TM_MAP = 0x6000
 FIXTURE_XBN = ROOT / "tests" / "out" / "xbn" / "GAME.XBN"
 TICKER_VERBS = {"XTCK", "XT40", "XTPS", "XTPR", "XTBD", "XTNR", "XTLA",
-                "XTCO", "XTCD", "XTC0", "XTMQ", "XTML", "XTMX", "XTMW"}
+                "XTCO", "XTCD", "XTC0", "XTMQ", "XTML", "XTMX", "XTMW",
+                "XTEF"}
 
 
 def refuse_fixture(leg, verbs):

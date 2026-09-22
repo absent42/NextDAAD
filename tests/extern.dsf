@@ -302,7 +302,7 @@
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
 ;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX
-;     XTMW XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XTMW XTEF XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
@@ -321,7 +321,7 @@
 ;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
 ;     emulator replay.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
-;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW are
+;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF are
 ;     meaningful there (plus XSLT with all slots printing nothing).
 ;   NEVER type a ticker verb on the fixture leg: fns 34-38 are the
 ;     fixture's own probes there, and XTCO's EXTERN 1 36 hits the
@@ -419,6 +419,7 @@ XTMX   175 verb
 XTPR   176 verb
 XTCD   177 verb
 XTMW   178 verb
+XTEF   179 verb
 WIDGET  20 noun
 GIZMO   21 noun
 CLOAK   22 noun
@@ -663,6 +664,8 @@ CLOAK   22 noun
            PRINT   235       ; expect the SAME number as 234
            MES     " p0 "
            PRINT   236       ; expect 0 (reserved pair 0 = paper 0, ink 7)
+           MES     " cf "
+           PRINT   237       ; expect 0
            DONE
 > XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
            EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
@@ -1057,6 +1060,20 @@ CLOAK   22 noun
            EXTERN  0 37
            EXTERN  0 34
            DONE
+; XTEF - failure and stop paths: arm message 0, EXTERN 2 31 (any
+;        nonzero p clears) leaves row 27 blank; EXTERN 255 30 (no such
+;        message - this DDB's numUsrMsg is 117, so 255 not 99 is the
+;        safely-invalid value, matching xbntest's msg_probe_bad) fails
+;        the entry, so its MES must NOT print. Expect "stop2 ok" then
+;        nothing.
+> XTEF _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  0 30
+           PAUSE   20
+           EXTERN  2 31
+           MES     "stop2 ok"
+> XTEF _   EXTERN  255 30
+           MES     " missing printed"
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);
                              ; without art PICTURE skips DISPLAY, and

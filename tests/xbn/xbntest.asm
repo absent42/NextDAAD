@@ -590,20 +590,36 @@ tail_marker:
     ret
 
 ; fn 42: SVC_PAIR. Same request twice must return one attribute (234,
-; 235); the reserved pair 0's colours (paper 0, ink 7) must return 0 (236).
+; 235); the reserved pair 0's colours (paper 0, ink 7) must return 0
+; (236). 237 OR-accumulates CF across all three calls, expect 0 (the
+; contract: SVC_PAIR always returns CF clear).
 pair_probe:
+    xor a
+    ld (XBN_FLAGS+237), a
     ld b, 1                      ; paper 1
     ld c, 6                      ; ink 6
     call SVC_PAIR
     ld (XBN_FLAGS+234), a
+    sbc a, a                     ; A = $FF if CF set, 0 if clear
+    ld hl, XBN_FLAGS+237
+    or (hl)
+    ld (hl), a
     ld b, 1
     ld c, 6
     call SVC_PAIR
     ld (XBN_FLAGS+235), a
+    sbc a, a
+    ld hl, XBN_FLAGS+237
+    or (hl)
+    ld (hl), a
     ld b, 0
     ld c, 7
     call SVC_PAIR
     ld (XBN_FLAGS+236), a
+    sbc a, a
+    ld hl, XBN_FLAGS+237
+    or (hl)
+    ld (hl), a
     or a                         ; CF discipline: deliberate clear
     ret
 xbn_end:
