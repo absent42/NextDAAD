@@ -238,8 +238,8 @@ pair_reclaim:
 ; Also XBN service row 15 (svc_pair, main.asm's xbn_api_tpl): in B =
 ; paper, C = ink, out A = attribute with CF CLEAR. Both exits end on
 ; add a,a of a pair number below 128, so CF is clear; keep it so.
-pair_get:
 svc_pair equ pair_get
+pair_get:
     ld a, b
     call pal_colour
     ld (pairWantP), de

@@ -65,9 +65,10 @@ foreground <code>EXTERN</code> call fetches a database message with <code>SVC_GE
 copies it into the extern's own memory, and a <code>#int</code> hook ticks it out
 in a field the game places with fns 32-34, in the colours of fns 35-36,
 typed or scrolled (fn 37) at the speed of fn 38 - in either text width,
-asking <code>xbn_width</code> per step so a <code>GFX n 18</code> switch mid-message just
-carries on at the new width, and checking <code>SVC_BUSY</code> first so it stays
-silent while a video clip owns the tilemap window. Its arm call (fn 30)
+asking <code>xbn_width</code> every frame while armed so a <code>GFX n 18</code> switch
+mid-message just carries on at the new width, and checking <code>SVC_BUSY</code>
+first so it stays silent while a video clip owns the tilemap window. Its
+arm call (fn 30)
 is a condition: an unavailable message number fails the entry instead
 of arming nothing, and it resolves its colours through <code>SVC_PAIR</code>
 before it fetches the message - the reason is in the source. It ships
@@ -341,9 +342,9 @@ are not optional:</p>
   hardware each time: <code>xbnmod.inc</code>'s <code>xbn_width</code> returns the current
   width in E (80 or 40), the row stride in D (160 or 80) and the
   bottom-row base in HL, from one read of NR $6B bit 6; it is hook-safe.
-  It corrupts AF, BC, DE, HL - park a counter you keep in BC before the
-  call, as the ticker does. The ticker example calls it per character,
-  so a <code>GFX n 18</code> switch mid-message just carries on at the new width.</li>
+  It corrupts AF, BC, DE, HL. The ticker example calls it every frame
+  while armed, so a <code>GFX n 18</code> switch mid-message just carries on at the
+  new width.</li>
 <li><strong>Stay inside rows 4-27 for anything that must be visible on every
   display.</strong> The tilemap's origin (in either width) sits 32 pixels
   above and left of the ULA origin, so rows 0-3 and 28-31 land in the

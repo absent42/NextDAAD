@@ -102,9 +102,9 @@ after the switch.
 through `xbnmod.inc`'s `xbn_width` (hook-safe: width in E, stride in D, and a
 row-27 base in HL; for any row use `XBN_TILEMAP + row * stride`
 (`xbnmod.inc`), as the ticker's `tick_field` does). It corrupts AF, BC, DE,
-HL - park a counter you keep in BC before the call, as the ticker does. From
-the foreground, DI-bracket the call (IFF2-preserving, as the ticker's
-`tick_field` does): the frame ISR re-selects $243B without restoring it.
+HL. From the foreground, DI-bracket the call (IFF2-preserving, as the
+ticker's `tick_field` does): the frame ISR re-selects $243B without
+restoring it.
 Handle a width that SHRANK mid-output: the ticker freezes a field that fell
 off the live screen and resumes when the width returns rather than
 restarting at column 0.

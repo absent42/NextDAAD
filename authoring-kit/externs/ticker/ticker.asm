@@ -2,10 +2,11 @@
 ;
 ; EXTERN n 30 arms, EXTERN p 31 stops (p = 1 clears), EXTERN v 32-38 set
 ; row, column, width, ink, paper, mode, speed - latched by the next arm.
-; Interrupt:  int emits one character per frame into the placed field,
-;             wrapping inside it, until the message is consumed. It
-;             calls xbn_width (xbnmod.inc) for the live text width, so it
-;             stays correct after a GFX n 18 mode switch.
+; Interrupt:  int steps one step per `speed` frames into the placed field
+;             (typewriter, or marquee once/loop), wrapping inside it,
+;             until the message is consumed. It calls xbn_width
+;             (xbnmod.inc) for the live text width, so it stays correct
+;             after a GFX n 18 mode switch.
 ;
 ; What this teaches: SVC_GETMSG's staging buffer is resident and shared
 ; with the rest of the interpreter - it is only valid until the NEXT
@@ -369,7 +370,7 @@ col:        db 0
 width:      db 0
 mode:       db 0
 speed:      db 1
-attr:       db 0                 ; reserved pair 0 until Task 4 resolves it
+attr:       db 0                 ; resolved by each arm (SVC_PAIR); 0 = reserved default pair
 ; Runtime
 armed:      db 0
 cursor:     db 0                 ; feed index, stops at textlen

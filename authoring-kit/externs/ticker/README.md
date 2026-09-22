@@ -38,7 +38,7 @@ This assembles `ticker.asm` and rewrites `GAME.XBN` here.
 | Call | Effect | Default | Fails (CF set) |
 |---|---|---|---|
 | `EXTERN n 30` | latch the settings, clear the field, arm on message n | - | message n does not exist |
-| `EXTERN p 31` | stop; p = 1 also clears the field | - | never |
+| `EXTERN p 31` | stop; p nonzero (normally 1) also clears the field | - | never |
 | `EXTERN r 32` | row 0-31 | 27 | r > 31 |
 | `EXTERN c 33` | start column 0-79 | 0 | c > 79 |
 | `EXTERN w 34` | field width 1-80; 0 = to the end of the row | 0 | w > 80 |
@@ -55,13 +55,20 @@ Rules:
 - A rejected value fails the entry that called it (carry set) and
   leaves the stored setting alone.
 - `EXTERN 0 31` stops the ticker and leaves the text on screen.
-  `EXTERN 1 31` stops it and clears the field.
+  `EXTERN p 31` with p nonzero (normally 1) stops it and clears the
+  field.
 - fn 30 clears only the field it is arming - it never touches the field
   a previous arm used. To MOVE the ticker: `EXTERN 1 31` (stop and
   clear the old field), the setters for the new position, then
   `EXTERN n 30`.
 - Indirection works on the first parameter as on every condact, so
   `EXTERN @100 32` sets the row from flag 100.
+- The stored settings and a running ticker's armed state are module
+  state, not flag state: a `LOAD`, `RESTART` or part switch leaves them
+  untouched - a running ticker keeps ticking, the stored settings stay
+  as last set. This is not a fresh boot. Re-arm the ticker, and re-issue
+  any setters your game relies on, wherever your game already
+  re-establishes its own state after a `LOAD`.
 
 A typical process entry:
 
