@@ -52,8 +52,7 @@ frame_isr:
     pop af
     ei
     reti
-.audio:                              ; isrAudio is AKY/AYS only: in the PCM leg this
-                                     ; path never runs, so HL'/D' (pcm_isr's) survive
+.audio:
     push bc
     push de
     push ix

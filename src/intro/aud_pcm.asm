@@ -24,18 +24,6 @@ pcm_open:
     djnz .fill
     ld hl, 8192
     ld (pcmAvail), hl
- IFDEF DEBUG
-    ld a, (isrAudio)
-    or a
-    jr z, .legok
-    ld a, ERR_MUS_LEG                ; another leg owns the shadow set: stay silent;
-    jp dbg_code                      ; handle stays open, chain_run closes it
-.legok:
- ENDIF
-    exx
-    ld hl, PCM_RING                  ; HL' = ring read pointer, D' = xlat page:
-    ld d, high pcmXlat               ; pcm_isr's context until pcm_stop
-    exx
     ld hl, pcm_isr
     ld (IM2_CTC_STUB+1), hl
     ld e, NR_VIDEO_TIMING
@@ -163,11 +151,12 @@ pcm_refill:
     ret
 
 ; CTC interrupt: one L/R pair through the translation table to the DACs.
-; HL' = ring pointer, D' = high pcmXlat, owned here from pcm_open to pcm_stop;
-; esxDOS never changes the alternate registers (NextZXOS API doc, esxDOS API).
 pcm_isr:
-    ex af, af'
-    exx
+    push af
+    push hl
+    push de
+    ld hl, (pcmRd)
+    ld d, high pcmXlat
     ld e, (hl)
     ld a, (de)
     out (VID_DAC_LEFT), a
@@ -177,15 +166,14 @@ pcm_isr:
     out (VID_DAC_RIGHT), a
     inc hl
     ld a, h
-    or $E0                           ; branchless ring wrap: $00 -> $E0
+    or $E0                           ; branchless ring wrap (doc 03): $00 -> $E0
     ld h, a
-    ld (pcmRd), hl                   ; mirror: pcm_refill and the DEBUG mirror read it
-    exx
-    ex af, af'
+    ld (pcmRd), hl
+    pop de
+    pop hl
+    pop af
     ei
     reti
-pcm_isr_end:
-    ASSERT pcm_isr_end - pcm_isr == 24 ; 127 T body: no push/pop, no pointer reload (rubric 8)
 
 ; pcmXlat[s] = (s - 128) * fadeVol / 16 + 128. L is the index (the table
 ; is page-aligned, doc 03); BSRL does the shift (doc 10). Corrupts all.

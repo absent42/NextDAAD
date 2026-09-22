@@ -162,7 +162,7 @@ lerp_entry:
     ret
 
 ; (HL) pair A, (DE) pair B -> IXL = RRRGGGBB, A = blue LSB; HL, DE += 2.
-; Operands: B = A0, IXH = A1, D = B0, E = B1 (no alternate set: pcm_isr's).
+; Operands: B = A0, IXH = A1, D = B0, E = B1.
 ; Corrupts AF, BC, DE, IX.
 lerp_calc:
     ld b, (hl)                       ; A0
