@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.1 - 22/09/2026
+## v0.10.1 - unreleased
 
 - PROCESS and REDO now reach process tables 128 to 254. The process
   list index was doubled in 8 bits, so a table number above 127 ran
