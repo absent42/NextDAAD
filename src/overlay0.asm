@@ -2040,6 +2040,9 @@ h_newtext:                      ; 92: discard pending input orders so a
     ld (inpPending), a          ; (inpPending is resident)
     ret
 h_extern:                       ; 61: fn C via vector, A = B on entry
+    ld a, (isDone)              ; cprops $C2: EXTERN stamps done here, not
+    ld (donePrev), a            ; in eng_exec, so the prior value is kept
+    call eng_set_done           ; for a forwarded CF-set verdict to restore
     ld a, c
     cp 16
     jp nc, ext_forward
@@ -2053,9 +2056,9 @@ h_extern:                       ; 61: fn C via vector, A = B on entry
     ex de, hl
     jp (hl)
 ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
-    xor a                       ; stamp the engine wrote before
-    ld (isDone), a              ; dispatching this action - the entry
-    ret                         ; continues, the table reads notdone
+    xor a                       ; stamp h_extern wrote before dispatching
+    ld (isDone), a              ; this action - the entry continues, the
+    ret                         ; table reads notdone
 
 ; EXTERN offset_lsb 3 offset_msb (XMESSAGE): print a message from the
 ; DRC-emitted external text file 0.XMB. The engine has already

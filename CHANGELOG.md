@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.1 - unreleased
+## v0.10.1 - 22/09/2026
 
 - PROCESS and REDO now reach process tables 128 to 254. The process
   list index was doubled in 8 bits, so a table number above 127 ran
@@ -15,6 +15,11 @@ All notable changes to NextDAAD are recorded here.
   stock text now renders "in the box." instead of "in the  box.".
   `tests/condacts.dsf` adopts the template's trailing spaces; new
   fixture `tests/putinsp.dsf`.
+- XBN: a forwarded extern that fails its entry (carry set) now leaves
+  the done state as a failed built-in condition would. An action that
+  ran earlier in the table keeps its done stamp; the extern itself does
+  not count as done. Previously the whole done state was cleared.
+  `tests/extern.dsf` XCND re-pinned, XCNE added.
 
 ## v0.10.0 - 18/09/2026
 

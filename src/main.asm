@@ -494,9 +494,10 @@ ext_build_contract:
     call ext_dispatch
     ret nc                      ; action return: CF clear, entry continues
     ; CF set from a FORWARDED extern: fail the entry exactly as a failed
-    ; condition, including reverting the done stamp eng_exec wrote
-    ; before dispatch (ext_undone's mechanism, generalised).
-    xor a
+    ; condition. h_extern stamped done before dispatch (cprops $C2) and
+    ; saved the prior value; put that back, so an earlier action's stamp
+    ; survives and a lone failing extern leaves the table not done.
+    ld a, (donePrev)
     ld (isDone), a
     pop hl                      ; discard eng_exec's call jphl return
     call eng_top_ix

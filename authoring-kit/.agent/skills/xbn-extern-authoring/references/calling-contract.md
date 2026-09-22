@@ -9,10 +9,11 @@ label returns is the verdict on the entry that called it:
 - **Carry SET** - the calling entry FAILS. Processing falls to the next
   matching entry, the way a failed `AT` or `PRESENT` behaves.
 
-One edge comes with failing an entry: the entry's done state is CLEARED, so an
-`ISDONE` afterwards reads not-done even if an action earlier in the same entry
-had already run. Put the `EXTERN` guard FIRST, before the actions that depend
-on it, and that edge never shows.
+A failing `EXTERN` behaves exactly like a failing built-in condition for
+`ISDONE` too: the extern itself does not count as an action performed, but an
+action that ran earlier in the same table keeps its done stamp. Putting the
+`EXTERN` guard FIRST, before the actions that depend on it, is still the
+clearest shape.
 
 ## Every exit returns a deliberate carry
 

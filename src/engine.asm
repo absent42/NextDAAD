@@ -725,7 +725,12 @@ cprops:
     db 2                        ; 55    ISAT (C,2)
     db $81,$80                  ; 56-57 SETCO SPACE
     db 1,1                      ; 58-59 HASAT HASNAT (C,1)
-    db $80,$82,$80,$81          ; 60-63 LISTOBJ EXTERN RAMSAVE RAMLOAD
+    db $80,$C2,$80,$81          ; 60-63 LISTOBJ EXTERN RAMSAVE RAMLOAD
+                                ; EXTERN is $C2: h_extern stamps done
+                                ; itself after saving the prior value, so
+                                ; a forwarded extern's CF-set verdict can
+                                ; restore it (a failed condition never
+                                ; touches an earlier action's stamp)
     db $82,$81,$81,$81          ; 64-67 BEEP PAPER INK BORDER
     db 1,1,1                    ; 68-70 PREP NOUN2 ADJECT2 (C,1)
     db $82,$82,1,$81,$81        ; 71-75 ADD SUB PARSE(C) LISTAT PROCESS
@@ -944,6 +949,9 @@ numObj:     db 0
     ASSERT numObj == $A900   ; frozen XBN ABI anchor, same class as flags
 procStack:  ds PROC_DEPTH*PREC_SIZE
 procSP:     db 0
+donePrev:   db 0                ; isDone before h_extern's stamp; a
+                                ; forwarded extern's CF-set verdict
+                                ; restores it (main.asm ext_build_contract)
 isDone:     db 0                ; ISDONE/ISNDONE. ONE cell for the whole
                                 ; machine, cleared only by a process
                                 ; push, set by every Action condact -
