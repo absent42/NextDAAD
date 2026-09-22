@@ -118,7 +118,14 @@ pal_copy_new_to_cur:
 ; every Layer 2 entry as A + (B-A)*k/16 per RGB333 channel, then the
 ; border (NR $4A) from lerpBorderA to lerpBorderB at the same k. Corrupts everything.
 pal_lerp:
-    ld (lerpK), a
+    push de                          ; DE is palette B; MUL below needs D,E as scratch
+    ld d, LERP_D
+    ld e, a
+    mul d, e                         ; E = k*LERP_D (max 240)
+    ld a, e
+    add a, LERP_D/2
+    ld (lerp_kofs), a                ; loop-invariant table offset, patched once (SMC)
+    pop de
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     nextreg NR_PAL_INDEX, 0
     ld b, 0
@@ -130,7 +137,7 @@ pal_lerp:
     ld hl, lerpBorderA
     ld de, lerpBorderB
     call lerp_calc
-    ld a, (lerpOut)
+    ld a, ixl
     nextreg NR_FALLBACK, a
     ret
 
@@ -146,36 +153,38 @@ colour9_store:
 
 ; One entry: (HL) pair A, (DE) pair B -> two NR $44 writes; HL, DE += 2.
 lerp_entry:
-    call lerp_calc
-    ld a, (lerpOut)
+    call lerp_calc                   ; IXL = RRRGGGBB, A = blue LSB
+    ld c, a
+    ld a, ixl
     nextreg NR_PAL_VALUE9, a
-    ld a, (lerpOut1)
+    ld a, c
     nextreg NR_PAL_VALUE9, a
     ret
-; The arithmetic: (HL) pair A, (DE) pair B -> lerpOut (RRRGGGBB) and
-; lerpOut1 (blue LSB); HL, DE += 2.
+
+; (HL) pair A, (DE) pair B -> IXL = RRRGGGBB, A = blue LSB; HL, DE += 2.
+; Operands: B = A0, IXH = A1, D = B0, E = B1 (no alternate set: pcm_isr's). Corrupts AF, BC, DE, IX.
 lerp_calc:
-    ld a, (hl)
-    ld (lerpA0), a
+    ld b, (hl)                       ; A0
     inc hl
     ld a, (hl)
-    ld (lerpA1), a
+    ld ixh, a                        ; A1
     inc hl
     ld a, (de)
-    ld (lerpB0), a
     inc de
+    ld c, a                          ; B0, parked until DE is free
     ld a, (de)
-    ld (lerpB1), a
     inc de
     push hl
     push de
-    ; red: bits 7-5 (rotate by 5 = swapnib + rrca, doc 00 peepholes)
-    ld a, (lerpA0)
+    ld d, c                          ; D = B0
+    ld e, a                          ; E = B1
+    ; red: bits 7-5 (rotate by 5 = swapnib + rrca)
+    ld a, b
     swapnib
     rrca
     and 7
     ld c, a
-    ld a, (lerpB0)
+    ld a, d
     swapnib
     rrca
     and 7
@@ -183,71 +192,54 @@ lerp_calc:
     rrca
     rrca
     rrca                             ; bits 2-0 -> 7-5 (left 5 = right 3)
-    ld (lerpOut), a
+    ld ixl, a
     ; green: bits 4-2
-    ld a, (lerpA0)
+    ld a, b
     rrca
     rrca
     and 7
     ld c, a
-    ld a, (lerpB0)
+    ld a, d
     rrca
     rrca
     and 7
     call lerp_chan
     rlca
     rlca
-    ld hl, lerpOut
-    or (hl)
-    ld (hl), a
-    ; blue: (byte0 & 3) << 1 | byte1
-    ld a, (lerpA0)
+    or ixl
+    ld ixl, a
+    ; blue: (byte0 & 3) << 1 | byte1. A0's last read: B is free after it.
+    ld a, b
     and 3
     add a, a
-    ld hl, lerpA1
-    or (hl)
+    or ixh
     ld c, a
-    ld a, (lerpB0)
+    ld a, d
     and 3
     add a, a
-    ld hl, lerpB1
-    or (hl)
+    or e
     call lerp_chan
     ld b, a
     srl a
-    ld hl, lerpOut
-    or (hl)
-    ld (hl), a
+    or ixl
+    ld ixl, a
     ld a, b
     and 1
-    ld (lerpOut1), a
     pop de
     pop hl
     ret
 
-; C = channel of A (0-7), A = channel of B (0-7) -> A = C + lerpTab[k*LERP_D + B-C+LERP_D/2].
+; C = channel of A (0-7), A = channel of B (0-7) -> A = C + lerpTab[kofs + B-C],
+; kofs = k*LERP_D + LERP_D/2 patched by pal_lerp. Corrupts F, HL.
 lerp_chan:
     sub c
-    add a, LERP_D/2
-    ld l, a
-    ld a, (lerpK)
-    ld e, a
-    ld d, LERP_D
-    mul d, e
-    ld a, l
-    add a, e
+lerp_kofs equ $+1
+    add a, 0                         ; SMC: k*LERP_D + LERP_D/2
     ld l, a
     ld h, high lerpTab
     ld a, (hl)
     add a, c
     ret
     ASSERT (lerpTab & $FF) == 0      ; high lerpTab above needs 256-byte alignment (rubric 8)
-lerpK:       db 0
-lerpA0:      db 0
-lerpA1:      db 0
-lerpB0:      db 0
-lerpB1:      db 0
-lerpOut:     db 0
-lerpOut1:    db 0
 lerpBorderA: dw 0
 lerpBorderB: dw 0
