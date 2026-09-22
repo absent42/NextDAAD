@@ -93,6 +93,9 @@ pairUsed:   db %00000111        ; bit k set = pair k allocated. Bits 0-2
                                 ; here at boot, never cleared.
 pairNext:   db 3                ; round-robin eviction cursor, wrapping
                                 ; 3..127 so the reserved pairs are skipped
+ IFDEF DEBUG
+pairReclaimCount: db 0          ; harness: how many times pair_reclaim ran
+ ENDIF
 pairWantP:  dw 0                ; the 9-bit paper colour being resolved
 pairWantI:  dw 0                ; the 9-bit ink colour being resolved
 
@@ -170,11 +173,16 @@ pair_free_find:
 
 ; Rebuild pairUsed from what is genuinely still needed: every pair an
 ; on-screen cell uses, plus the reserved pairs, plus every window's
-; cached attribute and its cached cursor inverse - so a colour selected
-; but not yet printed cannot be stolen. Runs only when all 128 pairs
-; are taken, which no realistic adventure reaches.
+; cached attribute and its cached cursor inverse, plus the parser
+; cursor's resolved pair - so a colour selected but not yet printed
+; cannot be stolen. Runs only when all 128 pairs are taken, which no
+; realistic adventure reaches.
 ; Corrupts all registers.
 pair_reclaim:
+ IFDEF DEBUG
+    ld hl, pairReclaimCount
+    inc (hl)
+ ENDIF
     ld hl, pairUsed
     ld de, pairUsed+1
     ld bc, 15
@@ -220,7 +228,9 @@ pair_reclaim:
     add hl, de                  ; -> next window's WIN_ATTR
     pop bc
     djnz .win
-    ret
+    ld a, (curAttr)             ; the cursor's resolved pair, whatever
+    srl a                       ; curColSet says: the cache outlives GFX 26
+    jp pair_mark
 
 ; B = paper colour 0-255, C = ink colour 0-255.
 ; Out: A = the tilemap attribute byte for that combination.

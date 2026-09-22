@@ -945,15 +945,67 @@ inp_capture_start:
     ld (inpStartY), a
     ret
 
-; Out: E = the block cursor's inverted attribute - the pair with this
-; window's ink and paper swapped. Resolved and cached per-window by
-; win_attr_resolve (windows.asm) whenever the colours change, so a window
-; switch (e.g. inp_stream_push's flag-41 handling) picks up whichever
-; window is current, not whichever window last set colours. Preserves D.
-inp_attr_inv:
+; Cursor cell attribute. In: D = 0 swapped window pair (block, or any
+; cursor on a character), 1 straight (a glyph after the text). GFX 24/25
+; override per axis; the resolved pair is cached against its (ink,
+; paper), so a blink phase costs a compare, not a palette scan.
+; Out: E = attribute. Corrupts AF, BC, HL; D only on the explicit path.
+inp_cursor_attr:
+    ld a, (curColSet)
+    or a
+    jr nz, .explicit
+    ld a, d
+    or a
     ld a, WIN_ATTRINV
+    jr z, .fetch
+    ld a, WIN_ATTR
+.fetch:
     call win_field
     ld e, (hl)
+    ret
+.explicit:
+    ld e, a                     ; E = set bits until the exit
+    ld a, WIN_INK
+    call win_field              ; HL -> ink, paper next (windows.asm ASSERT)
+    ld c, (hl)
+    inc hl
+    ld b, (hl)                  ; C = window ink, B = window paper
+    ld a, d
+    or a
+    jr nz, .derived
+    ld a, c                     ; swapped
+    ld c, b
+    ld b, a
+.derived:
+    bit 0, e
+    jr z, .inkok
+    ld a, (curInk)
+    ld c, a
+.inkok:
+    bit 1, e
+    jr z, .papok
+    ld a, (curPaper)
+    ld b, a
+.papok:                         ; C = ink, B = paper (pair_get's order)
+    ld hl, curResInk
+    ld a, c
+    cp (hl)
+    jr nz, .resolve
+    inc hl                      ; curResPaper (main.asm ASSERT)
+    ld a, b
+    cp (hl)
+    jr nz, .resolve
+    ld a, (curAttr)
+    ld e, a
+    ret
+.resolve:
+    ld a, c
+    ld (curResInk), a
+    ld a, b
+    ld (curResPaper), a
+    call pair_get               ; resident; B paper, C ink -> A; corrupts all
+    ld (curAttr), a
+    ld e, a
     ret
 
 ; Draw / erase the block cursor at inpCur's screen cell.
@@ -963,7 +1015,8 @@ inp_cursor_show:
     jr nz, .draw
     call inp_capture_start      ; fresh empty line: anchor the origin
 .draw:
-    call inp_attr_inv           ; E = inverted attr
+    ld d, 0                     ; block: swapped or explicit
+    call inp_cursor_attr        ; E = attr
     jr inp_cursor_put
 inp_cursor_hide:
     call win_attr               ; E = normal attr

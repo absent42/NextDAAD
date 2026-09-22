@@ -921,7 +921,7 @@ function Assert-CursorStateWriters {
     $state = @('curGlyph', 'curBlink', 'curInk', 'curPaper', 'curColSet')
     $cache = @('curAttr', 'curResInk', 'curResPaper')
     $want = @{ 'src\overlay2.asm' = @{ curGlyph = 1; curBlink = 1; curInk = 1; curPaper = 1; curColSet = 3 };
-               'src\overlay1.asm' = @{ curAttr = 0; curResInk = 0; curResPaper = 0 } }   # Task 3 raises these to 1
+               'src\overlay1.asm' = @{ curAttr = 1; curResInk = 1; curResPaper = 1 } }
     foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
         $rel = 'src\' + $f.Name
         $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
@@ -934,6 +934,18 @@ function Assert-CursorStateWriters {
             }
         }
     }
+    $ovl1 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay1.asm') -Raw)
+    $attr = [regex]::Match($ovl1, '(?ms)^inp_cursor_attr:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $attr) { throw "src\overlay1.asm : inp_cursor_attr not found" }
+    foreach ($sym in $cache) {
+        if ($attr -notmatch "ld\s+\($sym\),\s*a") { throw "src\overlay1.asm : the write to $sym is not inside inp_cursor_attr" }
+    }
+    $pairs = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\tmpairs.asm') -Raw)
+    $reclaim = [regex]::Match($pairs, '(?ms)^pair_reclaim:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if ($reclaim -notmatch 'ld\s+a,\s*\(curAttr\)\s+srl\s+a\s+jp\s+pair_mark') {
+        throw "src\tmpairs.asm : pair_reclaim must end by marking curAttr's pair unconditionally (ld a,(curAttr) / srl a / jp pair_mark) - the cache outlives a GFX 26 reset"
+    }
+    if ($reclaim -match 'curColSet') { throw "src\tmpairs.asm : pair_reclaim must not gate the cursor mark on curColSet" }
     foreach ($site in @(@{ f = 'src\overlay0.asm'; r = 'h_restart' }, @{ f = 'src\engine.asm'; r = 'eng_init_game' }, @{ f = 'src\main.asm'; r = 'gfx_drawtarget_clear' }, @{ f = 'src\main.asm'; r = 'tm_width_apply' })) {
         $t = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root $site.f) -Raw)
         $body = [regex]::Match($t, "(?ms)^$($site.r):.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)").Value
