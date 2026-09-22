@@ -37,6 +37,7 @@
 #   -Sprites             sd\SPRITES\   tests\sprites.dsf
 #   -SprAud              sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
 #   -Cycle               sd\CYCLE\     tests\cycle.dsf    (GFX 9-12; palette card as 001.NX2)
+#   -Cursor              sd\CURSOR\    tests\cursor.dsf   (GFX 22-26; palette card as 001.NX2)
 #   -BigDdb              sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok           sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                 sd\XBN\       tests\extern.dsf
@@ -374,7 +375,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -449,6 +450,7 @@ if ($Palette)          { $legName = 'PALETTE' }
 if ($Sprites)          { $legName = 'SPRITES' }
 if ($SprAud)           { $legName = 'SPRAUD' }
 if ($Cycle)            { $legName = 'CYCLE' }
+if ($Cursor)           { $legName = 'CURSOR' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -472,7 +474,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
+               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1439,6 +1441,23 @@ finally {
     Pop-Location
 }
 
+# tests\cursor.dsf: the GFX 22-26 parser cursor stimulus fixture.
+# Compiled on every run; its bytes are asserted below whether or not
+# -Cursor is given. OUT OF TREE like the blocks above.
+$cursorWork = Join-Path $root 'tests\out\cursor-work'
+Remove-Item $cursorWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $cursorWork | Out-Null
+Copy-Item "$PSScriptRoot\cursor.dsf" "$cursorWork\NDCURSOR.DSF" -Force
+Push-Location $cursorWork
+try {
+    & $ndrc @drcTarget EN NDCURSOR.DSF NDCURSOR.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (cursor)" }
+    Copy-Item NDCURSOR.DDB "$root\tests\out\cursor.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # Sprites-under-audio fixture; -SprAud stages this DDB, four .ANI sets,
 # a song and two WAVs into sd\SPRAUD\ (see that switch's block in the
 # STAGING section).
@@ -2027,6 +2046,40 @@ foreach ($c in @(@{ n = 'GFX 100 11';  b = [byte[]]@(87, 100, 11) },
     }
 }
 "cycle.ddb: GFX 9/10/11/12, PRINT, RAMSAVE/RAMLOAD, RESTART, PICTURE/DISPLAY stimuli all present as authored"
+
+# GFX is opcode 87, MODE 81, INPUT 96, RAMSAVE 62, RAMLOAD 63, RESTART 117,
+# MESSAGE 38, LET 51, SAVE 25, LOAD 26. The cursor fixture's stimuli must
+# reach the DDB exactly as authored. One- and two-byte runs (a bare
+# RESTART, MODE n) occur by chance in any DDB, so those are asserted as
+# the authored run with their neighbour condact.
+$cursorBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\cursor.ddb")
+foreach ($c in @(@{ n = 'GFX 95 22';   b = [byte[]]@(87, 95, 22) },
+                 @{ n = 'GFX 223 22';  b = [byte[]]@(87, 223, 22) },
+                 @{ n = 'GFX 0 22';    b = [byte[]]@(87, 0, 22) },
+                 @{ n = 'GFX 25 23';   b = [byte[]]@(87, 25, 23) },
+                 @{ n = 'GFX 3 23';    b = [byte[]]@(87, 3, 23) },
+                 @{ n = 'GFX 0 23';    b = [byte[]]@(87, 0, 23) },
+                 @{ n = 'GFX 6 24';    b = [byte[]]@(87, 6, 24) },
+                 @{ n = 'GFX 2 24';    b = [byte[]]@(87, 2, 24) },
+                 @{ n = 'GFX 15 24';   b = [byte[]]@(87, 15, 24) },
+                 @{ n = 'GFX 0 25';    b = [byte[]]@(87, 0, 25) },
+                 @{ n = 'GFX 227 25';  b = [byte[]]@(87, 227, 25) },
+                 @{ n = 'GFX 0 26';    b = [byte[]]@(87, 0, 26) },
+                 @{ n = 'GFX 1 17';    b = [byte[]]@(87, 1, 17) },
+                 @{ n = 'GFX 0 17';    b = [byte[]]@(87, 0, 17) },
+                 @{ n = 'GFX 1 18 / GFX 0 18';          b = [byte[]]@(87, 1, 18, 87, 0, 18) },
+                 @{ n = 'MODE 1 / MESSAGE 14';          b = [byte[]]@(81, 1, 38, 14) },
+                 @{ n = 'MODE 2 / LET 100 16';          b = [byte[]]@(81, 2, 51, 100, 16) },
+                 @{ n = 'INPUT 2 0 / MESSAGE 12';       b = [byte[]]@(96, 2, 0, 38, 12) },
+                 @{ n = 'RAMSAVE / RAMLOAD 255 / MESSAGE 17'; b = [byte[]]@(62, 63, 255, 38, 17) },
+                 @{ n = 'MESSAGE 16 / RESTART';         b = [byte[]]@(38, 16, 117) },
+                 @{ n = 'SAVE 0 / MESSAGE 21';          b = [byte[]]@(25, 0, 38, 21) },
+                 @{ n = 'LOAD 0 / MESSAGE 22';          b = [byte[]]@(26, 0, 38, 22) })) {
+    if ((Find-ByteRuns $cursorBytes $c.b).Count -lt 1) {
+        throw "cursor: '$($c.n)' not present in tests\out\cursor.ddb - DRC did not emit the authored condact run"
+    }
+}
+"cursor.ddb: GFX 22-26, GFX 18, MODE, INPUT, RAMSAVE/RAMLOAD, RESTART, SAVE/LOAD stimuli all present as authored"
 
 # --- spraud: four sets under music and samples ---
 # SFX is opcode 18 ($12), two parameters. The music loop (6 7), the COMPLETE
@@ -4886,6 +4939,16 @@ if ($Cycle) {
     else {
         "WARNING: no tests\out\*_leg_cache.vid - sd\CYCLE\001.VID NOT staged; S15 reports a clean miss. Run tests\build-tests.ps1 -Vid once to populate the cache."
     }
+}
+
+if ($Cursor) {
+    Copy-Item "$root\tests\out\cursor.ddb" (Join-Path $leg 'GAME.DDB') -Force
+    "staged cursor.ddb -> $leg\GAME.DDB"
+    # TRANS floats a glyph cursor over art: the PALETTE leg's card.
+    & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkpalcard.py failed" }
+    Copy-Item "$root\tests\out\palcard.nx2" (Join-Path $leg '001.NX2') -Force
+    "staged palcard.nx2 -> $leg\001.NX2"
 }
 
 if ($SprAud) {
