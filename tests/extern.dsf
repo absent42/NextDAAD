@@ -301,7 +301,7 @@
 ;     expects 9. Any other leg: meaningless.
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
-;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XFAD XFDI XFSC XDRK XHNP XHNQ
+;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTMW XFAD XFDI XFSC XDRK XHNP XHNQ
 ;     XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
@@ -321,8 +321,8 @@
 ;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
 ;     emulator replay.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
-;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX are meaningful
-;     there (plus XSLT with all slots printing nothing).
+;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW are
+;     meaningful there (plus XSLT with all slots printing nothing).
 ;   NEVER type a ticker verb on the fixture leg: fns 34-38 are the
 ;     fixture's own probes there, and XTCO's EXTERN 1 36 hits the
 ;     getdate probe that derails ZEsarUX. tickcheck.py refuses them
@@ -418,6 +418,7 @@ XTML   174 verb
 XTMX   175 verb
 XTPR   176 verb
 XTCD   177 verb
+XTMW   178 verb
 WIDGET  20 noun
 GIZMO   21 noun
 CLOAK   22 noun
@@ -1040,6 +1041,21 @@ CLOAK   22 noun
            EXTERN  0 30
            PAUSE   80
            EXTERN  27 32
+           DONE
+; XTMW - marquee loop, mid-scroll capture: message 7, 20 wide at column
+;        0, speed 1, stopped with EXTERN 0 31 after ~39 steps so the text
+;        stays. Row 27 cols 0-19 read TUVWXY, four spaces, ABCDEFGHIJ
+;        (+-2 steps of jitter shift it): proves leftward shift, right-edge
+;        feed, the 4-cell gap and the cursor reset. Restores mode/width.
+> XTMW _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  2 37
+           EXTERN  20 34
+           EXTERN  7 30
+           PAUSE   78
+           EXTERN  0 31
+           EXTERN  0 37
+           EXTERN  0 34
            DONE
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);

@@ -280,7 +280,7 @@ marquee_step:                    ; in HL = first cell, B = ew (>= 1)
     ld a, b
     dec a
     add a, a                     ; (ew-1)*2 = byte offset of the rightmost cell
-    ld c, a                      ; parked; Z means ew == 1
+    ld c, a                      ; feeds BC for the LDIR; dead on the ew==1 path (Z)
     jr z, .shifted               ; nothing to move: an LDIR with BC = 0 copies 64K
     ld d, h
     ld e, l                      ; DE = cell 0 (dest)
