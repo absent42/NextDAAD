@@ -36,36 +36,21 @@ ext:
     ld a, b
     ld (param), a                ; park param1 before any call clobbers B
     ld a, c
-    cp 70
-    jp z, p8
-    cp 71
-    jp z, p16
-    cp 72
-    jp z, add8
-    cp 73
-    jp z, sub8
-    cp 74
-    jp z, cmpp
-    cp 75
-    jp z, addp
-    cp 76
-    jp z, pckarm
-    cp 77
-    jp z, pckget
-    cp 78
-    jp z, atloc
-    cp 79
-    jp z, wtot
-    cp 80
-    jp z, bynoun
-    cp 81
-    jp z, attrcnt
-    cp 82
-    jp z, hhmm
-    cp 83
-    jp z, mmss
-    cp 84
-    jp z, settgt
+    sub 70
+    cp 15
+    jr nc, .notmine              ; below 70 wraps high: not ours either
+    add a, a
+    ld hl, .tab
+    add hl, a                    ; Z80N; carry cleared, never read
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    jp (hl)                      ; handlers read (param), never A or B
+.tab:
+    dw p8, p16, add8, sub8, cmpp, addp, pckarm, pckget
+    dw atloc, wtot, bynoun, attrcnt, hhmm, mmss, settgt
+    ASSERT ($ - .tab) == 15*2    ; fns 70-84 in order (rubric 8)
 .notmine:
     or a                          ; CF clear: unrecognised fn, no failure
     ret
