@@ -150,6 +150,12 @@ kb_char:
     ; new key: settle before the first emit
     ld a, c
     ld (inpRepKey), a
+ IFDEF DEBUG
+    ld a, 2                     ; keystroke log: new key, settling
+    ld (kblogState), a
+    ld a, c
+    ld (kblogDetail), a
+ ENDIF
     ld a, 2
     ld (inpRepCnt), a
     ld a, 1
@@ -590,6 +596,12 @@ inp_edit:
     ; timeout countdown init (0 = disarmed)
     ld hl, 0
     ld (inpTOFrames), hl
+ IFDEF DEBUG
+    ld a, 1                     ; keystroke log: editor entered
+    ld (kblogState), a
+    ld a, (inpRepKey)
+    ld (kblogDetail), a
+ ENDIF
     ld a, (flags+FLAG_TIMEOUT)
     or a
     jr z, .loop
@@ -646,10 +658,21 @@ inp_edit:
     xor a
     ld (moreLock), a
     ld (wrapLock), a
+ IFDEF DEBUG
+    xor a                       ; keystroke log: editor left, timed out
+    ld (kblogDetail), a
+    ld a, 6
+    ld (kblogState), a
+ ENDIF
     scf
     ret
 .key:
     push af
+ IFDEF DEBUG
+    ld (kblogDetail), a         ; keystroke log: character received
+    ld a, 3
+    ld (kblogState), a
+ ENDIF
     call inp_cursor_hide
     pop af
     cp 13
@@ -663,7 +686,11 @@ inp_edit:
     cp 10
     jr z, .recall
     cp ' '
+ IFDEF DEBUG
+    jp c, .loop                 ; other controls: ignore (hooks: past jr range)
+ ELSE
     jr c, .loop                 ; other controls: ignore
+ ENDIF
     ; printable: insert at cursor if room
     ld e, a
     call inp_room               ; the window's capacity (<= INP_MAX)
@@ -700,6 +727,12 @@ inp_edit:
     call inp_recall_last
     jp .loop
 .enter:
+ IFDEF DEBUG
+    ld a, 13                    ; keystroke log: editor left, submitted
+    ld (kblogDetail), a
+    ld a, 6
+    ld (kblogState), a
+ ENDIF
     call inp_save_last
     ld a, (flags+FLAG_TIMECTL)
     and $7F                     ; a submit clears the timeout bit

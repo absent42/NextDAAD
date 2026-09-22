@@ -38,6 +38,7 @@
 #   -SprAud              sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
 #   -Cycle               sd\CYCLE\     tests\cycle.dsf    (GFX 9-12; palette card as 001.NX2)
 #   -Cursor              sd\CURSOR\    tests\cursor.dsf   (GFX 22-26; palette card as 001.NX2)
+#   -KbLog               sd\KBLOG\     tests\kblog.dsf    (DEBUG keystroke log lab)
 #   -BigDdb              sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok           sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                 sd\XBN\       tests\extern.dsf
@@ -375,7 +376,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -451,6 +452,7 @@ if ($Sprites)          { $legName = 'SPRITES' }
 if ($SprAud)           { $legName = 'SPRAUD' }
 if ($Cycle)            { $legName = 'CYCLE' }
 if ($Cursor)           { $legName = 'CURSOR' }
+if ($KbLog)            { $legName = 'KBLOG' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -474,7 +476,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
+               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1534,6 +1536,22 @@ finally {
     Pop-Location
 }
 
+# tests\kblog.dsf: the DEBUG keystroke log lab. Compiled on every run;
+# its bytes are asserted below whether or not -KbLog is given.
+$kblogWork = Join-Path $root 'tests\out\kblog-work'
+Remove-Item $kblogWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $kblogWork | Out-Null
+Copy-Item "$PSScriptRoot\kblog.dsf" "$kblogWork\NDKBLOG.DSF" -Force
+Push-Location $kblogWork
+try {
+    & $ndrc @drcTarget EN NDKBLOG.DSF NDKBLOG.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (kblog)" }
+    Copy-Item NDKBLOG.DDB "$root\tests\out\kblog.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # Sprites-under-audio fixture; -SprAud stages this DDB, four .ANI sets,
 # a song and two WAVs into sd\SPRAUD\ (see that switch's block in the
 # STAGING section).
@@ -2157,6 +2175,18 @@ foreach ($c in @(@{ n = 'GFX 95 22';   b = [byte[]]@(87, 95, 22) },
     }
 }
 "cursor.ddb: GFX 22-26, GFX 18, MODE, INPUT, RAMSAVE/RAMLOAD, RESTART, SAVE/LOAD, PROBE stimuli all present as authored"
+
+# Keystroke lab stimuli, each asserted as an authored run with a neighbour.
+$kblogBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\kblog.ddb")
+foreach ($c in @(@{ n = 'LET 42 34';                   b = [byte[]]@(51, 42, 34) },
+                 @{ n = 'PAUSE 50 / DONE (LONG, compiled)'; b = [byte[]]@(35, 50, 22) },
+                 @{ n = 'MESSAGE 3 / ANYKEY / MESSAGE 4'; b = [byte[]]@(38, 3, 24, 38, 4) },
+                 @{ n = 'PAUSE 0 / PRINT 60';          b = [byte[]]@(35, 0, 53, 60) })) {
+    if ((Find-ByteRuns $kblogBytes $c.b).Count -lt 1) {
+        throw "kblog: '$($c.n)' not present in tests\out\kblog.ddb - DRC did not emit the authored condact run"
+    }
+}
+"kblog.ddb: LET 42, LONG's PAUSE, ANYKEY and GETKEY stimuli present as authored"
 
 # --- spraud: four sets under music and samples ---
 # SFX is opcode 18 ($12), two parameters. The music loop (6 7), the COMPLETE
@@ -5027,6 +5057,8 @@ if ($Cursor) {
     Copy-Item "$root\tests\out\palcard.nx2" (Join-Path $leg '001.NX2') -Force
     "staged palcard.nx2 -> $leg\001.NX2"
 }
+
+if ($KbLog) { Copy-Item "$root\tests\out\kblog.ddb" (Join-Path $leg 'GAME.DDB') -Force; "staged kblog.ddb -> $leg\GAME.DDB" }
 
 if ($SprAud) {
     # Sprites under audio: four sets, the kit's 9-channel tune and two

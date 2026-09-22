@@ -838,6 +838,7 @@ msgTgt:      db " TGT ", 0
     ASSERT KBLOG_BASE >= AUD_STAGE2 + AUD_STAGE2_RING
     ASSERT KBLOG_END <= SPR_DBG_SNAP
     ASSERT (KBLOG_BASE & 3) == 0 && (KBLOG_END & $FF) == 0
+    ASSERT (KBLOG_BASE & $FF) == 0 && KBLOG_BASE < KBLOG_END
 kblog_tick:
     ld a, (vidPlaying)          ; a clip owns slot 2 ($4000-$5FFF)
     or a
