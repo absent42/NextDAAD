@@ -275,7 +275,63 @@ typewriter_step:                 ; in HL = first cell, B = ew
     ld (armed), a                ; consumed: disarm, text stays on screen
     ret
 
-marquee_step:                    ; Task 5
+; Modes 1 and 2: shift the field left one cell, feed the rightmost cell.
+marquee_step:                    ; in HL = first cell, B = ew (>= 1)
+    ld a, b
+    dec a
+    add a, a                     ; (ew-1)*2 = byte offset of the rightmost cell
+    ld c, a                      ; parked; Z means ew == 1
+    jr z, .shifted               ; nothing to move: an LDIR with BC = 0 copies 64K
+    ld d, h
+    ld e, l                      ; DE = cell 0 (dest)
+    inc hl
+    inc hl                       ; HL = cell 1 (src); dest below src: LDIR is safe
+    ld b, 0                      ; BC = (ew-1)*2, never 0 here
+    ldir                         ; BC -> 0; DE ends at cell (ew-1) (LDIR: DE = dst+count)
+    ex de, hl                    ; HL = the rightmost cell (C is dead here, not reusable)
+.shifted:
+    ld a, (cursor)
+    ld c, a
+    ld a, (textlen)
+    cp c
+    jr z, .blank                 ; text exhausted: feed a blank, count the tail
+    ld de, text
+    ld a, c
+    add de, a                    ; Z80N: text[cursor]
+    ld a, (de)
+    ld (hl), a
+    inc hl
+    ld a, (attr)
+    ld (hl), a
+    ld hl, cursor
+    inc (hl)
+    ld a, (textlen)
+    cp (hl)
+    ret nz                       ; more text to come
+    ld a, (mode)
+    dec a                        ; Z: mode 1 (once)
+    ld a, TICK_GAP
+    jr nz, .settail              ; mode 2: the gap
+    ld a, (ew)                   ; mode 1: a full field width drains the text out
+.settail:
+    ld (tail), a
+    ret
+.blank:
+    ld (hl), ' '
+    inc hl
+    ld a, (attr)
+    ld (hl), a
+    ld hl, tail
+    dec (hl)
+    ret nz
+    ld a, (mode)
+    dec a
+    jr nz, .again                ; mode 2
+    ld (armed), a                ; mode 1: A = 0 here - disarm, field blank
+    ret
+.again:
+    xor a
+    ld (cursor), a               ; the message enters again after the gap
     ret
 
 ; Setter table: min, max, target - one row per fn 32..38 in order.

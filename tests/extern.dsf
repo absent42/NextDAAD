@@ -413,6 +413,9 @@ XTNR   169 verb
 XTLA   170 verb
 XTCO   171 verb
 XTC0   172 verb
+XTMQ   173 verb
+XTML   174 verb
+XTMX   175 verb
 XTPR   176 verb
 XTCD   177 verb
 WIDGET  20 noun
@@ -498,6 +501,7 @@ CLOAK   22 noun
 /5 "Midnight bells over the midnight mountains ring softly"
 /6 "Morning bells over the morning mountains ring softly"
 /7 "ABCDEFGHIJKLMNOPQRSTUVWXY"
+/8 "THIS MESSAGE IS EXACTLY TWO HUNDRED CHARACTERS LONG SO THE MARQUEE TAIL IS PROVEN TO LIVE IN ITS OWN BYTE AND NEVER BE ADDED TO THE TEXT LENGTH WHICH WOULD WRAP PAST TWO FIVE FIVE AND NEVER DISARM, OK"
 /OTX
 /0 "a spare widget"
 /1 "a widget on the floor"
@@ -975,6 +979,67 @@ CLOAK   22 noun
            WINSIZE 12 80
            EXTERN  1 31
            MES     "cleared"
+           DONE
+; XTMQ - marquee once. Phase 1: width 1, speed 1 (the ew == 1 shift-skip
+;        path): message 0 passes through cell 20 of row 27 one char at
+;        a time and the ticker disarms with the cell blank. Phase 2:
+;        width 20 at column 30, speed 2: message 0 scrolls right-to-left
+;        through cells 30-49 and the field ends blank. A following
+;        typewriter arm on row 25 proves the disarm left a clean state.
+;        Restores every setting it touched.
+> XTMQ _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  1 37
+           EXTERN  20 33
+           EXTERN  1 34
+           EXTERN  0 30
+           PAUSE   80
+           EXTERN  30 33
+           EXTERN  20 34
+           EXTERN  2 38
+           EXTERN  0 30
+           PAUSE   200       ; 25 chars + 20 drain = 45 steps x 2 = 90 frames
+           EXTERN  0 37
+           EXTERN  25 32
+           EXTERN  0 33
+           EXTERN  0 34
+           EXTERN  1 38
+           EXTERN  0 30
+           PAUSE   80
+           EXTERN  27 32
+           DONE
+; XTML - marquee loop, speed 3, 20-wide at column 0: 40 steps in the
+;        PAUSE, more than one 29-step loop (25 chars + 4 gap), so the
+;        message re-enters; EXTERN 1 31 leaves the field blank.
+;        Restores mode, width and speed.
+> XTML _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  2 37
+           EXTERN  20 34
+           EXTERN  3 38
+           EXTERN  0 30
+           PAUSE   240
+           EXTERN  1 31
+           EXTERN  0 37
+           EXTERN  0 34
+           EXTERN  1 38
+           DONE
+; XTMX - marquee once with the 200-char message 8, full row 27: must
+;        disarm (row blank at the end) rather than run forever. A
+;        following typewriter arm on row 25 proves it. Restores mode
+;        and row.
+> XTMX _   WINDOW  1
+           WINSIZE 12 80
+           EXTERN  1 37
+           EXTERN  8 30
+           PAUSE   250       ; 125 frames
+           PAUSE   250
+           PAUSE   250       ; 200 chars + 80 drain = 280 steps
+           EXTERN  0 37
+           EXTERN  25 32
+           EXTERN  0 30
+           PAUSE   80
+           EXTERN  27 32
            DONE
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);
