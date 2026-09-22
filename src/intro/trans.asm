@@ -261,7 +261,7 @@ fade_out_step:
     ASSERT (bounce & $FF) == 0       ; main.asm ALIGN 256 before bounce (rubric 8)
 ; Slot 6 remapped per copy (doc 00); slot 7 stays the audio page, so both
 ; directions share slot 6, not the spec's two-slot copy. HL = contiguous
-; line 0-319, page parked in memory (LDIR consumes BC). Corrupts everything.
+; line 0-319, page parked in memory. Corrupts everything.
 copy_line:
     ld a, l
     and 31
@@ -288,18 +288,26 @@ copy_line:
     add hl, de
     push hl
     ld de, bounce
-    ld bc, 256
-    ldir
+    call copy_256                    ; back page line -> bounce
     ld a, (frontBank)
     add a, a
     ld hl, linePage
     add a, (hl)
     nextreg NR_MMU6, a
     pop de
-    ld hl, bounce
-    ld bc, 256
-    ldir
+    ld hl, bounce                    ; bounce -> front page line, falls into copy_256
+; 256 bytes HL -> DE: eight LDIs per pass, 32 passes (unroll x8). A counts:
+; LDI consumes BC and DE is the destination, so neither can (rubric 2).
+copy_256:
+    ld a, 32
+.c:
+    DUP 8
+    ldi
+    EDUP
+    dec a
+    jr nz, .c
     ret
+    ASSERT $ - copy_256 == 22        ; 8 LDIs x 2 + counter (rubric 8)
 linePage: db 0
 
 ; L = strided line 0-255: gather 32 bytes (one per page) into bounce, then
@@ -321,13 +329,12 @@ copy_stride:
     ld a, (strideLine)
     ld l, a
     ld de, bounce
-    ld b, 32
-.g:
-    ld a, (hl)
+    DUP 32                           ; one byte per page column, unrolled like
+    ld a, (hl)                       ; the LDWS scatter below
     ld (de), a
     inc h
     inc e
-    djnz .g
+    EDUP
     pop bc
     push bc
     ld a, (frontBank)
@@ -343,7 +350,8 @@ copy_stride:
     EDUP
     pop bc
     inc c
-    djnz .page
+    dec b                             ; DJNZ out of range once the gather unrolled (rubric 8)
+    jp nz, .page
     ret
 strideLine: db 0
 
