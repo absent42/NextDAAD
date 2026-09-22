@@ -5,6 +5,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.10.1 - unreleased
 
+- **Parser cursor.** `GFX n 22` to `26` choose the cursor's glyph,
+  blink and colours; the default inverse block is unchanged. Typing
+  past what the input window can hold is now ignored instead of
+  moving the line's start off the window. See [Graphics](graphics.md#parser-cursor).
 - **Process tables above 127.** `PROCESS n` and `REDO` now reach tables
   128 to 254. Before, a table number above 127 silently ran table
   n minus 128.

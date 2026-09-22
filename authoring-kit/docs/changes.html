@@ -13,6 +13,10 @@
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0101-unreleased">0.10.1 - unreleased</h2>
 <ul>
+<li><strong>Parser cursor.</strong> <code>GFX n 22</code> to <code>26</code> choose the cursor's glyph,
+  blink and colours; the default inverse block is unchanged. Typing
+  past what the input window can hold is now ignored instead of
+  moving the line's start off the window. See <a href="graphics.html#parser-cursor">Graphics</a>.</li>
 <li><strong>Process tables above 127.</strong> <code>PROCESS n</code> and <code>REDO</code> now reach tables
   128 to 254. Before, a table number above 127 silently ran table
   n minus 128.</li>

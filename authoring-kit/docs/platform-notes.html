@@ -67,6 +67,14 @@ running), and a last index of 255 is treated as 254.</p>
 mode, so 15 is accepted and does nothing here too. Worth stating
 explicitly now that its neighbour, sub 16, installs a font - see
 <a href="fonts.html">Fonts</a>.</p>
+<h3 id="the-parser-cursor-is-an-inverse-block">The parser cursor is an inverse block</h3>
+<p>Every other interpreter draws an underscore in the text colour after
+the typed line; here the default is an inverse block at the insertion
+point, and the line editor moves through the line (cursor left and
+right, insert and delete anywhere). <code>GFX 95 22</code> gives the underscore
+look; <code>GFX n 23</code> to <code>26</code> add a blink and colours - see <a href="graphics.html#parser-cursor">Graphics</a>. The typed line wraps inside the input
+window and is capped to the window's capacity, where PC and ADP refuse
+at the end of one row.</p>
 <p>The <code>GFX</code> sub-commands that <em>are</em> implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
 drawing) and their reveal semantics on 0 and 2, the surface clears,

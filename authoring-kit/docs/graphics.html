@@ -218,11 +218,13 @@ you don't want text drawn over, for instance).</p>
   letter shapes - a stencil. Combine it with an opaque paper for
   picture-filled lettering on a solid band, or with <code>PAPER 227</code> for a
   cell that is transparent throughout.</li>
-<li><strong>A window using <code>PAPER 227</code> gets a block cursor with transparent
-  glyph pixels.</strong> The block cursor is drawn in the window's colours
-  inverted (paper and ink swapped), so a window whose paper is 227
-  draws its cursor with ink 227 - a see-through cursor block over
-  whatever glyph shape it lands on.</li>
+<li><strong>A window using <code>PAPER 227</code> gets the default block cursor with
+  transparent glyph pixels.</strong> The block cursor is drawn in the
+  window's colours inverted (paper and ink swapped), so a window whose
+  paper is 227 draws its cursor with ink 227 - a see-through cursor
+  block over whatever glyph shape it lands on, visible over the
+  picture only when the text layer is on top (<code>GFX 1 17</code>, see sub 17) -
+  see <a href="#parser-cursor">Parser cursor</a> for a cursor with its own colours.</li>
 </ul>
 <p><strong>Where there is nothing to show through, you get the border colour.</strong>
 Transparent paper over a transparent part of the picture, or outside the
@@ -280,19 +282,21 @@ running at. A game knows its own width because it chose it with <code>GFX n
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - DAAD Ready's Appendix D covers <code>SFX</code>
 and <code>MOUSE</code> only - so write the number.</p>
-<p>For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21
-the first parameter <code>n</code> is ignored: the buffer operations act on the
-whole surface and take no argument. For 9, 10 and 11, <code>n</code> is a flag
-number, the first of a group of flags carrying the parameters; for 13
-and 14, <code>n</code> is the video number; for 16, it is the font number; for 17,
-it is the layer-order selector; for 18, it is the text width selector;
-for 19 and 21, it is the sprite set number; for 20, it is the first of
-four flags carrying the set number and position.</p>
+<p>For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21,
+22, 23, 24 and 25 the first parameter <code>n</code> is ignored: the buffer
+operations act on the whole surface and take no argument. For 9, 10 and
+11, <code>n</code> is a flag number, the first of a group of flags carrying the
+parameters; for 13 and 14, <code>n</code> is the video number; for 16, it is the
+font number; for 17, it is the layer-order selector; for 18, it is the
+text width selector; for 19 and 21, it is the sprite set number; for 20,
+it is the first of four flags carrying the set number and position; for
+22 it is a tile number, for 23 a frame count, for 24 an ink and for 25 a
+paper colour (26 ignores it).</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 7, 8 and 15, and everything from 22 up - see
-<a href="platform-notes.html">Platform notes</a> for why 15 has nothing to act on
+prints a marker). That covers 7, 8 and 15, and everything from 27 up -
+see <a href="platform-notes.html">Platform notes</a> for why 15 has nothing to act on
 here.</p>
 <table>
 <thead>
@@ -378,6 +382,26 @@ here.</p>
 <td>21</td>
 <td>Stop sprite set <code>n</code> and free its space; <code>n</code> 255 stops every set. Stopping a set that is not running does nothing. See <a href="sprites.html">Animated sprites</a>.</td>
 </tr>
+<tr>
+<td>22</td>
+<td>Parser cursor glyph. <code>n</code> 0 is the default block - the cell at the insertion point drawn with the window's ink and paper swapped; 1-255 is the tile drawn after the typed text, the same number a printed character carries (32-127 ASCII, 128-255 the upper charset), taken as is - the window's upper-charset mode does not shift it, so the upper-charset underscore is 223. See <a href="#parser-cursor">Parser cursor</a> below.</td>
+</tr>
+<tr>
+<td>23</td>
+<td>Parser cursor blink. <code>n</code> 0 is steady (the default); 1-255 shows the cursor for <code>n</code> frames and hides it for <code>n</code>, at 50 or 60 frames a second by the machine's timing mode - <code>GFX 25 23</code> is a half-second blink at 50 Hz. Every keypress restarts the visible phase.</td>
+</tr>
+<tr>
+<td>24</td>
+<td>Parser cursor ink <code>n</code>, any colour <code>INK</code> takes. Independent of 25: set alone, the paper still follows the window.</td>
+</tr>
+<tr>
+<td>25</td>
+<td>Parser cursor paper <code>n</code>, any colour <code>PAPER</code> takes, including 227 for a see-through cursor over a picture.</td>
+</tr>
+<tr>
+<td>26</td>
+<td>Parser cursor colours follow the window again (the default). <code>n</code> is ignored.</td>
+</tr>
 </tbody>
 </table>
 <p>Sub 17 composes the layer priority only - it never enables or disables
@@ -398,6 +422,57 @@ Order a width switch before video playback in the same response if both
 happen there: video playback is synchronous and preserves whichever
 width is current, but a clip started before the switch renders over the
 old width instead of the one the response is moving to.</p>
+<h3 id="parser-cursor">Parser cursor</h3>
+<p>The cursor the player types at is an inverse block by default: the cell
+at the insertion point in the window's colours swapped. Subs 22 to 26
+change it, and all five are game-owned state like the layer order and
+the text width - set them once and they survive <code>RESTART</code>, <code>LOAD</code>,
+<code>RAMLOAD</code>, a part switch and a width switch. They are not saved in a
+game file; a loaded game keeps whatever the running game last set.</p>
+<pre><code>GFX 95 22        ; an underscore after the text, as other interpreters draw
+GFX 25 23        ; blink, half a second on, half a second off
+GFX 6 24         ; yellow ink
+GFX 0 25         ; on black, whatever the window's colours
+</code></pre>
+<p>What is drawn:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>After the typed text</th>
+<th>On a character (after cursor left)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Block (<code>GFX 0 22</code>)</td>
+<td>a space in the cursor colours</td>
+<td>the character in the cursor colours</td>
+</tr>
+<tr>
+<td>Glyph (<code>GFX n 22</code>)</td>
+<td>the glyph in the cursor colours</td>
+<td>the character in the cursor colours</td>
+</tr>
+</tbody>
+</table>
+<p>"Cursor colours" are the window's ink and paper swapped, except that a
+glyph after the text uses them unswapped, so <code>GFX 95 22</code> alone gives the
+underscore-in-text-colour of the PC, HTML and ZX interpreters. Any
+component set with 24 or 25 replaces the window-derived one wherever the
+cursor draws. A tile cell holds one glyph, so on a character the glyph
+is never drawn over it; the character shows in the cursor colours
+instead. In an upper-charset window (<code>MODE 1</code> or <code>#g</code>) the character
+under the cursor is shown shifted, as it was typed.</p>
+<p>Paper 25 takes 227 too, for a cursor that is transparent over a
+picture the same way <code>PAPER 227</code> is - but it only floats visibly over
+the art when the text layer is on top (<code>GFX 1 17</code>, see sub 17 above);
+with the default picture-on-top order the picture covers it.</p>
+<p>The typed line wraps inside the input window and is capped to what the
+window can hold from the prompt, leaving a cell for the cursor: a
+one-row window 80 wide with the prompt in column 0 accepts 78
+characters, then ignores further keys. A recalled line is cut to the
+same length.</p>
 <p>Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 <code>RESTART</code>, a same-part <code>LOAD</code>/<code>RAMLOAD</code>, or any game (re)start -
 whichever comes first. Revealing a staged picture (sub 0 or 2) clears

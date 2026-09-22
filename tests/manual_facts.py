@@ -95,6 +95,8 @@ FORBIDDEN = [
     # longer exists.
     (r"hook\s+keeps\s+firing\s+throughout",
      "the frame hook is suspended for the whole of a video clip"),
+    (r"everything\s+from\s+22\s+up",
+     "GFX 22-26 are the parser cursor subs now; the no-op range starts at 27"),
 ]
 
 def parse(path, pattern, label):
@@ -144,7 +146,7 @@ def main():
 
     # --- GFX 9-12 rows (graphics.md) ----------------------------------
     graphics = (MANUAL / "graphics.md").read_text(encoding="utf-8")
-    for sub in ("9", "10", "11", "12"):
+    for sub in ("9", "10", "11", "12", "22", "23", "24", "25", "26"):
         if not re.search(rf"(?m)^\|\s*{sub}\s*\|", graphics):
             failures.append(
                 f"graphics.md: the GFX sub-command table has no row for sub {sub}")

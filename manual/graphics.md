@@ -244,11 +244,13 @@ you don't want text drawn over, for instance).
   letter shapes - a stencil. Combine it with an opaque paper for
   picture-filled lettering on a solid band, or with `PAPER 227` for a
   cell that is transparent throughout.
-- **A window using `PAPER 227` gets a block cursor with transparent
-  glyph pixels.** The block cursor is drawn in the window's colours
-  inverted (paper and ink swapped), so a window whose paper is 227
-  draws its cursor with ink 227 - a see-through cursor block over
-  whatever glyph shape it lands on.
+- **A window using `PAPER 227` gets the default block cursor with
+  transparent glyph pixels.** The block cursor is drawn in the
+  window's colours inverted (paper and ink swapped), so a window whose
+  paper is 227 draws its cursor with ink 227 - a see-through cursor
+  block over whatever glyph shape it lands on, visible over the
+  picture only when the text layer is on top (`GFX 1 17`, see sub 17) -
+  see [Parser cursor](#parser-cursor) for a cursor with its own colours.
 
 **Where there is nothing to show through, you get the border colour.**
 Transparent paper over a transparent part of the picture, or outside the
@@ -313,20 +315,22 @@ running at. A game knows its own width because it chose it with `GFX n
 are no symbolic names for these - DAAD Ready's Appendix D covers `SFX`
 and `MOUSE` only - so write the number.
 
-For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21
-the first parameter `n` is ignored: the buffer operations act on the
-whole surface and take no argument. For 9, 10 and 11, `n` is a flag
-number, the first of a group of flags carrying the parameters; for 13
-and 14, `n` is the video number; for 16, it is the font number; for 17,
-it is the layer-order selector; for 18, it is the text width selector;
-for 19 and 21, it is the sprite set number; for 20, it is the first of
-four flags carrying the set number and position.
+For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21,
+22, 23, 24 and 25 the first parameter `n` is ignored: the buffer
+operations act on the whole surface and take no argument. For 9, 10 and
+11, `n` is a flag number, the first of a group of flags carrying the
+parameters; for 13 and 14, `n` is the video number; for 16, it is the
+font number; for 17, it is the layer-order selector; for 18, it is the
+text width selector; for 19 and 21, it is the sprite set number; for 20,
+it is the first of four flags carrying the set number and position; for
+22 it is a tile number, for 23 a frame count, for 24 an ink and for 25 a
+paper colour (26 ignores it).
 
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 7, 8 and 15, and everything from 22 up - see
-[Platform notes](platform-notes.md) for why 15 has nothing to act on
+prints a marker). That covers 7, 8 and 15, and everything from 27 up -
+see [Platform notes](platform-notes.md) for why 15 has nothing to act on
 here.
 
 | s | Behaviour on this target |
@@ -350,6 +354,11 @@ here.
 | 19 | Start animated sprite set `n` (0-254) at the position baked into `NNN.ANI`. A set already running restarts from its first frame. Silently ignored when the file is missing or the set does not fit beside what is already running. See [Animated sprites](sprites.md). |
 | 20 | As 19, taking the set number from flag `n`, X from flags `n+1` (low) and `n+2` (high), Y from flag `n+3`. The flags are read once and never reserved. `n` above 252 is ignored. See [Animated sprites](sprites.md). |
 | 21 | Stop sprite set `n` and free its space; `n` 255 stops every set. Stopping a set that is not running does nothing. See [Animated sprites](sprites.md). |
+| 22 | Parser cursor glyph. `n` 0 is the default block - the cell at the insertion point drawn with the window's ink and paper swapped; 1-255 is the tile drawn after the typed text, the same number a printed character carries (32-127 ASCII, 128-255 the upper charset), taken as is - the window's upper-charset mode does not shift it, so the upper-charset underscore is 223. See [Parser cursor](#parser-cursor) below. |
+| 23 | Parser cursor blink. `n` 0 is steady (the default); 1-255 shows the cursor for `n` frames and hides it for `n`, at 50 or 60 frames a second by the machine's timing mode - `GFX 25 23` is a half-second blink at 50 Hz. Every keypress restarts the visible phase. |
+| 24 | Parser cursor ink `n`, any colour `INK` takes. Independent of 25: set alone, the paper still follows the window. |
+| 25 | Parser cursor paper `n`, any colour `PAPER` takes, including 227 for a see-through cursor over a picture. |
+| 26 | Parser cursor colours follow the window again (the default). `n` is ignored. |
 
 Sub 17 composes the layer priority only - it never enables or disables
 Layer 2, so it cannot bring back a picture surface the game has hidden.
@@ -371,6 +380,47 @@ Order a width switch before video playback in the same response if both
 happen there: video playback is synchronous and preserves whichever
 width is current, but a clip started before the switch renders over the
 old width instead of the one the response is moving to.
+
+### Parser cursor
+
+The cursor the player types at is an inverse block by default: the cell
+at the insertion point in the window's colours swapped. Subs 22 to 26
+change it, and all five are game-owned state like the layer order and
+the text width - set them once and they survive `RESTART`, `LOAD`,
+`RAMLOAD`, a part switch and a width switch. They are not saved in a
+game file; a loaded game keeps whatever the running game last set.
+
+    GFX 95 22        ; an underscore after the text, as other interpreters draw
+    GFX 25 23        ; blink, half a second on, half a second off
+    GFX 6 24         ; yellow ink
+    GFX 0 25         ; on black, whatever the window's colours
+
+What is drawn:
+
+| | After the typed text | On a character (after cursor left) |
+|---|---|---|
+| Block (`GFX 0 22`) | a space in the cursor colours | the character in the cursor colours |
+| Glyph (`GFX n 22`) | the glyph in the cursor colours | the character in the cursor colours |
+
+"Cursor colours" are the window's ink and paper swapped, except that a
+glyph after the text uses them unswapped, so `GFX 95 22` alone gives the
+underscore-in-text-colour of the PC, HTML and ZX interpreters. Any
+component set with 24 or 25 replaces the window-derived one wherever the
+cursor draws. A tile cell holds one glyph, so on a character the glyph
+is never drawn over it; the character shows in the cursor colours
+instead. In an upper-charset window (`MODE 1` or `#g`) the character
+under the cursor is shown shifted, as it was typed.
+
+Paper 25 takes 227 too, for a cursor that is transparent over a
+picture the same way `PAPER 227` is - but it only floats visibly over
+the art when the text layer is on top (`GFX 1 17`, see sub 17 above);
+with the default picture-on-top order the picture covers it.
+
+The typed line wraps inside the input window and is capped to what the
+window can hold from the prompt, leaving a cell for the cursor: a
+one-row window 80 wide with the prompt in column 0 accepts 78
+characters, then ignores further keys. A recalled line is cut to the
+same length.
 
 Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 `RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -

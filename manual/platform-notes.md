@@ -76,6 +76,17 @@ mode, so 15 is accepted and does nothing here too. Worth stating
 explicitly now that its neighbour, sub 16, installs a font - see
 [Fonts](fonts.md).
 
+### The parser cursor is an inverse block
+
+Every other interpreter draws an underscore in the text colour after
+the typed line; here the default is an inverse block at the insertion
+point, and the line editor moves through the line (cursor left and
+right, insert and delete anywhere). `GFX 95 22` gives the underscore
+look; `GFX n 23` to `26` add a blink and colours - see [Graphics](
+graphics.md#parser-cursor). The typed line wraps inside the input
+window and is capped to the window's capacity, where PC and ADP refuse
+at the end of one row.
+
 The `GFX` sub-commands that *are* implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
 drawing) and their reveal semantics on 0 and 2, the surface clears,
