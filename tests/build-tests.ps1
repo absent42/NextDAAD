@@ -911,6 +911,39 @@ function Assert-CycleStopSites {
     "colour cycle vs RESTART: h_restart reaches no stop; gfx_drawtarget_clear stops; xbnIntOn writers pinned; video suspend/OR-back/bail clear present"
 }
 
+function Assert-CursorStateWriters {
+    # The parser cursor's five state bytes (GFX 22-26) are game-owned like
+    # gfxLayerOrder: written only by h_gfx, never reset after boot. The
+    # three cache bytes are written only by the editor's resolver, and the
+    # reclaim walk reads the cache regardless of curColSet (a reset does not
+    # invalidate the cache, so the mark must not be gated on it).
+    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
+    $state = @('curGlyph', 'curBlink', 'curInk', 'curPaper', 'curColSet')
+    $cache = @('curAttr', 'curResInk', 'curResPaper')
+    $want = @{ 'src\overlay2.asm' = @{ curGlyph = 1; curBlink = 1; curInk = 1; curPaper = 1; curColSet = 3 };
+               'src\overlay1.asm' = @{ curAttr = 0; curResInk = 0; curResPaper = 0 } }   # Task 3 raises these to 1
+    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
+        $rel = 'src\' + $f.Name
+        $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
+        foreach ($sym in ($state + $cache)) {
+            $n = ([regex]::Matches($t, "ld\s+\($sym\),\s*a")).Count
+            $w = 0
+            if ($want.ContainsKey($rel) -and $want[$rel].ContainsKey($sym)) { $w = $want[$rel][$sym] }
+            if ($n -ne $w) {
+                throw "$rel : $n write(s) to $sym, expected $w - cursor state is written only by h_gfx (overlay2) and the cache only by inp_cursor_attr (overlay1); nothing resets either after boot"
+            }
+        }
+    }
+    foreach ($site in @(@{ f = 'src\overlay0.asm'; r = 'h_restart' }, @{ f = 'src\engine.asm'; r = 'eng_init_game' }, @{ f = 'src\main.asm'; r = 'gfx_drawtarget_clear' }, @{ f = 'src\main.asm'; r = 'tm_width_apply' })) {
+        $t = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root $site.f) -Raw)
+        $body = [regex]::Match($t, "(?ms)^$($site.r):.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)").Value
+        foreach ($sym in ($state + $cache)) {
+            if ($body -match "\b$sym\b") { throw "$($site.f) : $($site.r) reaches $sym - the parser cursor is game-owned and survives every reset site" }
+        }
+    }
+    "parser cursor: state written only by h_gfx, cache only by inp_cursor_attr, reclaim marks curAttr unconditionally, reset sites clean"
+}
+
 function Assert-PaletteWriterCensus {
     # Every NR $41/$44 write site that can run while a cycle is armed must sit
     # inside a palLock bracket, or be the tick itself. Counts, comments
@@ -942,6 +975,7 @@ Assert-PalColourDodge
 Assert-LayerOrderReset
 Assert-RestartLeavesSprites
 Assert-CycleStopSites
+Assert-CursorStateWriters
 Assert-PaletteWriterCensus
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py

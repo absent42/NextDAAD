@@ -852,7 +852,7 @@ h_display:
 ;   11/12 = colour cycling start/stop (.cycstart/.cycstop below, tick
 ;       in sprites.asm)
 ;   7/8/15 = no NextDAAD analogue (text-buffer split, split screen);
-;       documented no-op
+;       documented no-op; 27 and up = unknown
 ;   16 = install font B (0 = base - the embedded table, then FONT.CHR
 ;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
 ;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
@@ -886,13 +886,18 @@ h_display:
 ;       a no-op. Triggers clean slate: tilemap cleared, windows reset.
 ;       Width is GAME-OWNED state, surviving all RESTART/LOAD/RAMLOAD and
 ;       part switches.
+;   22-26 = parser cursor (NextDAAD-only; GFX_SUB_CUR_*, nextdaad.inc):
+;       22 glyph tile (0 = block), 23 blink half-period in frames (0 =
+;       steady), 24 ink, 25 paper, 26 colours follow the window again.
+;       GAME-OWNED like 17/18: nothing resets them after boot. Drawn by
+;       the editor (overlay1.asm inp_cursor_draw).
 ; Every no-op sub falls to the shared DEBUG marker below rather than
 ; overlay0's h_unimpl - overlay2 must not call overlay0 (header
 ; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
 ; unknown-sub idiom (SP7 Task 4, overlay1.asm). Corrupts everything.
 h_gfx:
     ld a, c                     ; sub-command; B (P1) and C reach every sub
-    cp 22
+    cp 27
     jr nc, .unk
     add a, a
     ld hl, .tab
@@ -902,7 +907,7 @@ h_gfx:
     ld h, (hl)
     ld l, a
     jp (hl)
-.tab:                           ; sub 0-21; holes 7, 8, 15 -> .unk
+.tab:                           ; sub 0-26; holes 7, 8, 15 -> .unk
     dw .backfront, .frontback, .swap, .toscreen, .tobuffer
     dw l2_clear, l2_clear_back, .unk, .unk, .palset, .palget
     dw .cycstart, .cycstop
@@ -922,7 +927,9 @@ h_gfx:
     dw .sprflags
     ASSERT $ - .tab == 2*GFX_SUB_SPR_STOP
     dw .sprstop
-    ASSERT $ - .tab == 44
+    ASSERT $ - .tab == 2*GFX_SUB_CUR_GLYPH
+    dw .curglyph, .curblink, .curink, .curpaper, .curreset
+    ASSERT $ - .tab == 54
     ; Offset ASSERTs miss a swapped label: read every slot back.
     ASSERT {.tab+2*0} == .backfront && {.tab+2*1} == .frontback && {.tab+2*2} == .swap
     ASSERT {.tab+2*3} == .toscreen && {.tab+2*4} == .tobuffer
@@ -936,6 +943,9 @@ h_gfx:
     ASSERT {.tab+2*GFX_SUB_TXTMODE} == .txtmode
     ASSERT {.tab+2*GFX_SUB_SPR_START} == .sprstart && {.tab+2*GFX_SUB_SPR_FLAGS} == .sprflags
     ASSERT {.tab+2*GFX_SUB_SPR_STOP} == .sprstop
+    ASSERT {.tab+2*GFX_SUB_CUR_GLYPH} == .curglyph && {.tab+2*GFX_SUB_CUR_BLINK} == .curblink
+    ASSERT {.tab+2*GFX_SUB_CUR_INK} == .curink && {.tab+2*GFX_SUB_CUR_PAPER} == .curpaper
+    ASSERT {.tab+2*GFX_SUB_CUR_RESET} == .curreset
 .unk:
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
@@ -1096,6 +1106,32 @@ h_gfx:
                                  ; safe to issue unconditionally at init
     jp tm_width_apply            ; resident, like tm_font_init above;
                                  ; game-owned tmCols survives every reset
+.curglyph:                       ; sub 22: B = tile, 0 = block. Raw, no
+    ld a, b                      ; charset shift (ZXDAAD128's DdbCursor).
+    ld (curGlyph), a
+    ret
+.curblink:                       ; sub 23: B = half-period in frames
+    ld a, b
+    ld (curBlink), a
+    ret
+.curink:                         ; sub 24: B = ink; the pair resolves at
+    ld a, b                      ; cursor-show time (inp_cursor_attr)
+    ld (curInk), a
+    ld a, (curColSet)
+    or 1
+    ld (curColSet), a
+    ret
+.curpaper:                       ; sub 25: B = paper
+    ld a, b
+    ld (curPaper), a
+    ld a, (curColSet)
+    or 2
+    ld (curColSet), a
+    ret
+.curreset:                       ; sub 26: both colours follow the window
+    xor a
+    ld (curColSet), a
+    ret
 .sprstart:                       ; sub 19: B = set number, baked position
     ld a, (l2Mode)
     add a, a

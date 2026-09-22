@@ -1267,6 +1267,11 @@ GFX_SUB_TXTMODE  equ 18          ; NextDAAD: text width. P1 0 = 80x32
 GFX_SUB_SPR_START equ 19    ; GFX n 19: start set n at its baked X,Y
 GFX_SUB_SPR_FLAGS equ 20    ; GFX f 20: set = flag f, X = f+1 (lo) f+2 (hi), Y = f+3
 GFX_SUB_SPR_STOP  equ 21    ; GFX n 21: stop set n; 255 = all
+GFX_SUB_CUR_GLYPH equ 22    ; GFX c 22: cursor glyph tile, 0 = block
+GFX_SUB_CUR_BLINK equ 23    ; GFX r 23: blink half-period in frames, 0 = steady
+GFX_SUB_CUR_INK   equ 24    ; GFX i 24: cursor ink
+GFX_SUB_CUR_PAPER equ 25    ; GFX p 25: cursor paper
+GFX_SUB_CUR_RESET equ 26    ; GFX n 26: cursor colours follow the window again
 
 ; DAC ports: four 8-bit DAC channels, A/B to the left audio channel and
 ; C/D to the right (soundrive-2 pairing); DAC B = $F3, DAC C = $F9 is
