@@ -54,15 +54,19 @@ number matters at that point, set flag 1 yourself rather than waiting
 for a recount.</p>
 <h3 id="putin-and-takeout-space-their-message-differently-elsewhere"><code>PUTIN</code> and <code>TAKEOUT</code> space their message differently elsewhere</h3>
 <p>The composite message these condacts print is SM44 (or SM45, or SM52),
-then a space, then the container's name, then SM51 with no space before
-it. With the stock SM51 of "." that gives</p>
+then the container's name, then SM51, with no space inserted anywhere
+by the interpreter - matching both original ZX interpreters. The stock
+DAAD Ready English message table gives SM44/45/52 their own trailing
+space, so with stock text that gives</p>
 <pre><code>The hat is in the old box.
 </code></pre>
-<p>Other interpreters put the spaces in different places, so a game whose
-system messages were tuned against one of them can come out with a
-doubled or a missing space here. Write SM44, SM45 and SM52 with no
-trailing space of their own, and SM51 as the punctuation you want the
-sentence to end on; that reads correctly on all of them.</p>
+<p>jDAAD and msx2daad insert a space before the container name, so a game
+whose system messages were tuned against one of them can come out with
+a doubled or a missing space here. Write SM44, SM45 and SM52 with the
+trailing space you want before the name (or none), and SM51 as the
+punctuation you want the sentence to end on with no leading space of
+its own; that reads correctly on both original interpreters and on
+NextDAAD.</p>
 <h2 id="flags">Flags</h2>
 <h3 id="flag-50-does-not-survive-a-process-call">Flag 50 does not survive a <code>PROCESS</code> call</h3>
 <p>Flag 50 holds the object a <code>DOALL</code> is currently working on, and it is a

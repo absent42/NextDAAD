@@ -5,7 +5,7 @@
 ; Boot-time version stamp: DEBUG's msgTitle and RELEASE's boot_banner
 ; (both debug.asm) print this exact string, so update it here only -
 ; the two build variants must never drift apart.
-    DEFINE VERSION_STR "NEXTDAAD V0.10.0"
+    DEFINE VERSION_STR "NEXTDAAD V0.10.1"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00

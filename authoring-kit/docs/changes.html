@@ -11,6 +11,24 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="0101-22-september-2026">0.10.1 - 22 September 2026</h2>
+<ul>
+<li><strong>Process tables above 127.</strong> <code>PROCESS n</code> and <code>REDO</code> now reach tables
+  128 to 254. Before, a table number above 127 silently ran table
+  n minus 128.</li>
+<li><strong>PUTIN and TAKEOUT messages.</strong> The composite is now printed as
+  system message 44, 45 or 52, the container's name and message 51
+  with nothing added between them, as the original interpreters do.
+  The template's messages carry their own trailing space, so the stock
+  text reads "The hat is in the box." instead of "in the  box." with
+  two spaces. If your messages 44, 45 or 52 have no trailing space,
+  add one.</li>
+<li><strong>Failing externs and ISDONE.</strong> An <code>EXTERN</code> that fails its entry
+  (carry set) now behaves exactly like a failing built-in condition:
+  an action that ran earlier in the same table keeps its done state,
+  and the extern itself does not count as done. Before, the whole done
+  state was cleared.</li>
+</ul>
 <h2 id="0100-18-september-2026">0.10.0 - 18 September 2026</h2>
 <ul>
 <li><strong>Loader intro.</strong> A separate launcher, staged as <code>&lt;GAME&gt;.NEX</code>, plays a

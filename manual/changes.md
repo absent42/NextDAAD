@@ -3,6 +3,24 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.10.1 - unreleased
+
+- **Process tables above 127.** `PROCESS n` and `REDO` now reach tables
+  128 to 254. Before, a table number above 127 silently ran table
+  n minus 128.
+- **PUTIN and TAKEOUT messages.** The composite is now printed as
+  system message 44, 45 or 52, the container's name and message 51
+  with nothing added between them, as the original interpreters do.
+  The template's messages carry their own trailing space, so the stock
+  text reads "The hat is in the box." instead of "in the  box." with
+  two spaces. If your messages 44, 45 or 52 have no trailing space,
+  add one.
+- **Failing externs and ISDONE.** An `EXTERN` that fails its entry
+  (carry set) now behaves exactly like a failing built-in condition:
+  an action that ran earlier in the same table keeps its done state,
+  and the extern itself does not count as done. Before, the whole done
+  state was cleared.
+
 ## 0.10.0 - 18 September 2026
 
 - **Loader intro.** A separate launcher, staged as `<GAME>.NEX`, plays a
