@@ -20,6 +20,26 @@ All notable changes to NextDAAD are recorded here.
   ran earlier in the table keeps its done stamp; the extern itself does
   not count as done. Previously the whole done state was cleared.
   `tests/extern.dsf` XCND re-pinned, XCNE added.
+- GFX 22-26: parser cursor glyph, blink, ink, paper and reset. `GFX n
+  22` sets the cursor's glyph tile (0 is the default inverse block,
+  drawn raw with no charset shift); `GFX n 23` sets the blink
+  half-period in frames (0 is steady); `GFX n 24` and `GFX n 25` set
+  ink and paper independently, each resolved lazily through the
+  tilemap pair allocator and cached, with pair_reclaim marking the
+  cached pair; `GFX n 26` reverts to the window's own colours. All
+  five are game-owned: they survive `RESTART`, `LOAD`, `RAMLOAD`, a
+  part switch and a `GFX n 18` width switch, and are never saved.
+- The character under a mid-line cursor now takes the window's
+  charset shift, matching the echoed text instead of drawing
+  unshifted.
+- The input line is now capped to what the input window holds from
+  the prompt (`min(127, W*H - startX - 1)`); previously a line longer
+  than a one-row `INPUT` window moved the line's start off the window
+  and drew the cursor outside it. A recalled line is cut to the same
+  length.
+- Pinned by `tests/cursor.dsf` (the -Cursor leg, byte-asserted), the
+  ZEsarUX harness `tests/cursor_dump.py`, and build-tests'
+  Assert-CursorStateWriters.
 
 ## v0.10.0 - 18/09/2026
 
