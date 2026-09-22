@@ -226,7 +226,45 @@ def check_colour(z, verbose):
         print("colour: PASS")
 
 
-CHECKS = [check_colour]
+def check_glyph(z, verbose):
+    """Task 4: glyph after the text, inverse on a character, charset shift."""
+    verb(z, "GLYPH")
+    type_line(z, "abc")
+    c = Cell(z)
+    expect(c.glyph == 95 and c.attr == c.win_attr, "GLYPH: underscore in the straight pair after the text: %r" % c)
+    # mid-line: poke inpCur to 1 (a value 0-9, zrcp.write_memory's safe range)
+    # and type x - the editor inserts at 1 and redraws with the cursor on b.
+    z.write_memory(sym("INPCUR"), bytes([1]))
+    type_line(z, "x")
+    expect(rd(z, "INPLINE", 5)[:4] == b"axbc", "GLYPH mid-line insert landed (line %r)" % rd(z, "INPLINE", 5))
+    c = Cell(z)
+    expect(c.glyph == ord("b") and c.attr == c.win_attrinv, "GLYPH on a character: inverse b: %r" % c)
+    cancel_line(z)
+    verb(z, "UPPER")
+    type_line(z, "abc")
+    c = Cell(z)
+    expect(c.glyph == 223, "UPPER: tile 223 raw: %r" % c)
+    cancel_line(z)
+    verb(z, "BLOCK")
+    type_line(z, "abc")
+    c = Cell(z)
+    expect(c.glyph == 32 and c.attr == c.win_attrinv, "BLOCK: inverse space after the text: %r" % c)
+    cancel_line(z)
+    verb(z, "UCASE")
+    type_line(z, "abc")
+    z.write_memory(sym("INPCUR"), bytes([1]))
+    type_line(z, "x")
+    c = Cell(z)
+    expect(c.glyph == ord("b") + 128 and c.attr == c.win_attrinv, "UCASE: the character under the cursor is shifted like the echo: %r" % c)
+    prev = Cell(z, 1)
+    expect(prev.glyph == ord("x") + 128 and prev.attr == c.win_attr, "UCASE: the echoed x is shifted: %r" % prev)
+    cancel_line(z)
+    verb(z, "LCASE")
+    if verbose:
+        print("glyph: PASS")
+
+
+CHECKS = [check_colour, check_glyph]
 
 
 def run(z, verbose, upto):

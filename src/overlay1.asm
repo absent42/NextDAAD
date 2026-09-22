@@ -1008,44 +1008,82 @@ inp_cursor_attr:
     ld e, a
     ret
 
-; Draw / erase the block cursor at inpCur's screen cell.
+; A = index -> A = inpLine[index] as the echo printed it (prn_shift's
+; charset rule), NZ; or A = 0, Z, at the terminator. Typed chars are
+; 32-126, so a shifted value is 160-254 and never 0. Corrupts C, F, HL.
+inp_char_at:
+    ld hl, inpLine
+    add hl, a                   ; Z80N
+    ld a, (hl)
+    or a
+    ret z
+    ld c, a
+    call prn_shift
+    ld a, c
+    or a
+    ret
+
+; .loop's entry: anchor the origin on a fresh empty line, then draw.
 inp_cursor_show:
     ld a, (inpLen)
     or a
-    jr nz, .draw
-    call inp_capture_start      ; fresh empty line: anchor the origin
-.draw:
-    ld d, 0                     ; block: swapped or explicit
-    call inp_cursor_attr        ; E = attr
-    jr inp_cursor_put
-inp_cursor_hide:
-    call win_attr               ; E = normal attr
+    jr nz, inp_cursor_draw
+    call inp_capture_start
     ; fall through
-; E = attribute. Renders the char under the cursor (or space at the
-; line end) at inpCur's absolute screen cell.
-inp_cursor_put:
-    push de                     ; save attr in E
+; Draw the cursor at inpCur's cell; the blink phase becomes visible.
+inp_cursor_draw:
+    ld a, 1
+    ld (inpBlinkOn), a
+    ld a, (curBlink)
+    ld (inpBlinkCnt), a
     ld a, (inpCur)
-    call inp_cell_of            ; B = win row, C = win col
+    call inp_char_at
+    jr nz, .onchar
+    ld a, (curGlyph)
+    or a
+    jr z, .block
+    ld d, 1                     ; glyph after the text: straight pair
+    call inp_cursor_attr
+    ld a, (curGlyph)
+    jr inp_cursor_cell
+.block:
+    ld a, GLYPH_SPACE
+.onchar:                        ; A = glyph; swapped or explicit pair
+    push af
+    ld d, 0
+    call inp_cursor_attr
+    pop af
+    jr inp_cursor_cell
+; Erase: the cell back to its character (or space) in the window pair.
+inp_cursor_hide:
+    xor a
+    ld (inpBlinkOn), a
+    ld a, (inpCur)
+    call inp_char_at
+    jr nz, .have
+    ld a, GLYPH_SPACE
+.have:
+    push af
+    call win_attr               ; E = straight attr
+    pop af
+    ; fall through
+; A = glyph, E = attribute -> inpCur's absolute screen cell.
+inp_cursor_cell:
+    push de
+    push af
+    ld a, (inpCur)
+    call inp_cell_of            ; B = win row, C = win col (uses E)
     ld hl, (curWin)
     ld a, (hl)                  ; window x
     add a, c
-    ld c, a                     ; screen col
+    ld c, a
     inc hl
     ld a, (hl)                  ; window y
     add a, b
-    ld b, a                     ; screen row
-    ld a, (inpCur)              ; glyph = inpLine[inpCur] or space
-    ld hl, inpLine
-    add hl, a                   ; Z80N ED 31: HL += A (unsigned) - gate
-                                 ; follow-up, same class as OV1-3/OV1-4
-    ld a, (hl)
-    or a
-    jr nz, .g
-    ld a, GLYPH_SPACE
-.g:
-    pop de                      ; E = attr
-    jp tm_putc_at               ; tail call: B row, C col, E attr, A glyph
+    ld b, a
+    pop af
+    pop de
+    jp tm_putc_at               ; B row, C col, A glyph, E attr
 
 ; --- vocabulary ---
 ; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
