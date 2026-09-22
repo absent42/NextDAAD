@@ -13,8 +13,7 @@ and fn 36 (XTCO's EXTERN 1 36) is the getdate probe that derails ZEsarUX.
 import argparse, pathlib, shutil, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tests"))             # kblog_dump (--kblog)
-sys.path.insert(0, str(ROOT / "tests" / "parser"))  # searched first
+sys.path.insert(0, str(ROOT / "tests" / "parser"))
 import zrcp, tilemap, nleg  # noqa: E402
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
@@ -95,6 +94,7 @@ def main():
         if args.row is not None:
             print("attr %02d|%s" % (args.row, " ".join("%02X" % a for a in attrs[args.row])))
         if args.kblog:
+            sys.path.append(str(ROOT / "tests"))
             import kblog_dump
             raw, ptr = kblog_dump.read_ring(z)
             out = pathlib.Path(args.kblog)
