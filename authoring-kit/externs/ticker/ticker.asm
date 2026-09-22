@@ -142,7 +142,21 @@ ext:
 ; the field's first cell, B = ew (0 = col past the live width: nothing to
 ; write), (ew) = B. Corrupts AF, BC, DE, HL.
 tick_field:
+    ; The select+read pair inside xbn_width must be atomic against the
+    ; frame ISR (interrupts.asm's MMU save re-selects and never
+    ; restores) - same IFF2-preserving DI bracket as nr_read
+    ; (hardware.asm).
+    ld a, i
+    jp pe, .sampled
+    ld a, i
+.sampled:
+    push af
+    di
     call xbn_width               ; E = live width, D = stride
+    pop af
+    jp po, .noei
+    ei
+.noei:
     ld a, (col)
     cp e
     jr c, .onscreen
@@ -210,7 +224,7 @@ int:
     ld a, b
     or a
     ret z                        ; field off the live screen: frozen whole,
-                                 ; countdown included (spec 4.1)
+                                 ; countdown included
     ld a, (count)
     dec a
     ld (count), a
