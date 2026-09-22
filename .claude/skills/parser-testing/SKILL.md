@@ -559,12 +559,20 @@ something the changer must explain; neither is allowed to pass quietly.
 | replay | game + script | turns / findings | hash |
 | --- | --- | --- | --- |
 | condacts smoke | `tests/condacts.dsf` + `scripts/condacts/smoke.json` | 13 / 13 | `928a594e261f644b` |
-| condacts full | `tests/condacts.dsf` + `scripts/condacts/full.json` | 18 / 18 | `a580c0ffc7728263` (non-DEBUG build) |
-| " | " | " | `05bf07442b53a686` (DEBUG build - see the build-variant note below) |
+| condacts full | `tests/condacts.dsf` + `scripts/condacts/full.json` | 18 / 18 | `7d9acce5f86ebb2b` (non-DEBUG build) |
+| " | " | " | `7af45d63c52b8820` (DEBUG build - see the build-variant note below) |
 | dracula lamp | `tools/test-games/Dracula Part 1/dracula1.dsf` + `scripts/dracula/lamp.json` | 21 / 7 | `752950ee121abf2a` |
 | dracula compound | same game + `scripts/dracula/compound.json` | 17 / 4 | `2f403989f005cfc2` |
 | rabenstein d1 | `tools/Rabenstein-master/nextdaad/rabenstein.dsf` + `scripts/rabenstein/d1.json` | 6 / 6 | `6ed0e38dfc7e88eb` |
 | prochi | `tests/prochi.dsf` + `scripts/prochi/hi.json` | 2 / 0 | `c0d5305e2f729d46` |
+| putinsp | `tests/putinsp.dsf` + `scripts/putinsp/run.json` | 1 / 1 | `019c6964994cd304` (the one finding is the RULED jDAAD deviation: jDAAD inserts a space before the container name, NextDAAD and both ZX originals do not) |
+
+The condacts full pins were RE-BASELINED AGAIN on 2026-09-22: the
+PUTIN/TAKEOUT composite lost its leading inserted space (owner ruling
+after the ZX originals were measured - `docs/parser-bugs.md` entries
+28 and 40) and `tests/condacts.dsf`'s SM44/45/52 gained the stock
+template's trailing space. Superseded values: `a580c0ffc7728263`
+(non-DEBUG) and `05bf07442b53a686` (DEBUG).
 
 Both condacts full pins were RE-BASELINED on 2026-08-01 by commit
 `cb1707d`, which removed the space before SM51 in the PUTIN/TAKEOUT
@@ -605,7 +613,7 @@ not. It is the only script that drives handlers carrying `IFDEF DEBUG`
 diagnostics (SFX, XMESSAGE, GFX, and the E03 tail), and on a DEBUG build
 those land on the screen the harness captures - "65 OK  SFX? 12",
 "E03 P0C V64 N38 C4B" and so on - so the transcript, and the hash,
-change. Compare against `a580c0ffc7728263` only with a non-DEBUG
+change. Compare against `7d9acce5f86ebb2b` only with a non-DEBUG
 `build/nextdaad.nex`, or it will "fail" for a reason that has nothing to
 do with the harness. Confirm which variant you actually built before
 believing a comparison - `build.ps1` prints the resident headroom, and

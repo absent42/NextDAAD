@@ -9,6 +9,12 @@ All notable changes to NextDAAD are recorded here.
   table n-128 instead. Both references and DRC/NDRC allow 255 tables.
   New differential fixture `tests/prochi.dsf` with
   `tests/parser/scripts/prochi/hi.json` pins it.
+- PUTIN and TAKEOUT print SM44/45/52, the container name and SM51 with
+  no inserted space, as the original ZX interpreters do. The DAAD Ready
+  English template's messages carry their own trailing space, so the
+  stock text now renders "in the box." instead of "in the  box.".
+  `tests/condacts.dsf` adopts the template's trailing spaces; new
+  fixture `tests/putinsp.dsf`.
 
 ## v0.10.0 - 18/09/2026
 
