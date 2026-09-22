@@ -62,7 +62,8 @@ class Cell:
     def __init__(self, z, index=None):
         cur = rd(z, "INPCUR") if index is None else index
         sx, sy = rd(z, "INPSTARTX"), rd(z, "INPSTARTY")
-        win = z.read_memory(rd(z, "CURWIN", 2)[0] | (rd(z, "CURWIN", 2)[1] << 8), 12)
+        lo, hi = rd(z, "CURWIN", 2)
+        win = z.read_memory(lo | (hi << 8), 12)
         w = win[2]
         col, row = sx + cur, sy
         while col >= w:
@@ -215,6 +216,11 @@ def check_colour(z, verbose):
     expect(used[(a >> 1) >> 3] & (1 << ((a >> 1) & 7)), "STORM: curAttr's pair still marked in pairUsed")
     expect(c.attr == a and cache(z)[1:] == (6, 0), "STORM: cursor keeps its colours: %r cache %s" % (c, cache(z)))
     cancel_line(z)
+    # pair_get matches by palette colour: (6, 0) is found in the cursor's
+    # own slot only if reclaim left that slot's colours alone
+    verb(z, "PROBE")
+    w = Cell(z).win_attr
+    expect(w == a, "PROBE: pair_get found (6,0) in the cursor's own pair - the slot kept its colours through the storm (window attr %d, curAttr %d)" % (w, a))
     verb(z, "RESET")
     if verbose:
         print("colour: PASS")

@@ -30,6 +30,7 @@ W40    67  verb
 STORM  68  verb
 SAVE   69  verb
 LOAD   70  verb
+PROBE  71  verb
 LOOK   4   verb
 /STX
 /0  "It's too dark to see anything."
@@ -117,6 +118,7 @@ LOOK   4   verb
 /20 "X"
 /21 "saved#n"
 /22 "loaded#n"
+/23 "probe#n"
 /OTX
 /0 "a thing"
 /LTX
@@ -248,6 +250,10 @@ LOOK   4   verb
              DONE
 > LOAD  _    LOAD 0
              MESSAGE 22
+             DONE
+> PROBE _    INK 6
+             PAPER 0
+             MESSAGE 23
              DONE
 > _     _    MESSAGE 0
              DONE

@@ -2120,12 +2120,13 @@ foreach ($c in @(@{ n = 'GFX 95 22';   b = [byte[]]@(87, 95, 22) },
                  @{ n = 'RAMSAVE / RAMLOAD 255 / MESSAGE 17'; b = [byte[]]@(62, 63, 255, 38, 17) },
                  @{ n = 'MESSAGE 16 / RESTART';         b = [byte[]]@(38, 16, 117) },
                  @{ n = 'SAVE 0 / MESSAGE 21';          b = [byte[]]@(25, 0, 38, 21) },
-                 @{ n = 'LOAD 0 / MESSAGE 22';          b = [byte[]]@(26, 0, 38, 22) })) {
+                 @{ n = 'LOAD 0 / MESSAGE 22';          b = [byte[]]@(26, 0, 38, 22) },
+                 @{ n = 'INK 6 / PAPER 0 / MESSAGE 23'; b = [byte[]]@(66, 6, 65, 0, 38, 23) })) {
     if ((Find-ByteRuns $cursorBytes $c.b).Count -lt 1) {
         throw "cursor: '$($c.n)' not present in tests\out\cursor.ddb - DRC did not emit the authored condact run"
     }
 }
-"cursor.ddb: GFX 22-26, GFX 18, MODE, INPUT, RAMSAVE/RAMLOAD, RESTART, SAVE/LOAD stimuli all present as authored"
+"cursor.ddb: GFX 22-26, GFX 18, MODE, INPUT, RAMSAVE/RAMLOAD, RESTART, SAVE/LOAD, PROBE stimuli all present as authored"
 
 # --- spraud: four sets under music and samples ---
 # SFX is opcode 18 ($12), two parameters. The music loop (6 7), the COMPLETE
