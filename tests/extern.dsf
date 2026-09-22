@@ -178,10 +178,13 @@
 ;
 ; -XbnHints and -XbnAll stage a packed GAME.HNT alongside the combined
 ; binary, for the hints worked example (authoring-kit\externs\hints).
-; XHNP/XHNQ/XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
-; topic 0 exactly two levels and topic 1 exactly three, and MODE_R (the
-; file-open read mode) is also 1, so a build that lost the topic operand
-; would still answer correctly for topic 1 and hide the bug. XHNT alone
+; XHNP/XHNQ/XHNA/XHNR/XHNT drive it, all on TOPIC 0. The level counts come
+; from the shipped HINTS.TXT and are stated once, here, for every bench
+; sheet to quote - tests\hintpack-selftest.ps1 packs that file and fails
+; the suite if this line and the file disagree:
+; HINTLEVELS 0=2 1=5
+; The two topics must differ, or a build that lost the topic operand would
+; answer correctly for either topic and hide the bug. XHNT alone
 ; drives topic 1, to prove the operand actually reaches the index: if it
 ; ever reports the same count as XHNQ, the topic parameter is not
 ; getting through. Under v2 fns 50/52/53 report through CF alone, so
@@ -1217,8 +1220,9 @@ CLOAK   22 noun
            DONE
 > XHNR _   MES     "RESET FAILED"
            DONE
-; XHNT - topic 1 exists too, with 3 levels. Proves the operand reaches the
-;        index rather than only ever selecting one topic.
+; XHNT - topic 1 exists too, with its own level count (see HINTLEVELS
+;        above). Proves the operand reaches the index rather than only
+;        ever selecting one topic.
 > XHNT _   EXTERN 1 51
            MES "levels "
            PRINT 243

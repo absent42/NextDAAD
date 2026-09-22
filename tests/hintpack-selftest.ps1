@@ -168,5 +168,86 @@ $raw = [Text.Encoding]::ASCII.GetString($b)
 if ($raw.Contains('Nudge one.')) { throw 'plaintext is visible in the packed file' }
 $checks++
 
+# ---------------------------------------------------------------------
+# Drift guard: the shipped HINTS.TXT decides how many levels each topic
+# has, and the fixture states those counts for the bench. They have gone
+# out of step repeatedly, so pack the real file and compare.
+$kitHints = Join-Path $root 'authoring-kit\HINTS.TXT'
+$kitOut = "$tmp\KIT.HNT"
+& $pack -In $kitHints -Out $kitOut -WarningAction SilentlyContinue
+if ($LASTEXITCODE -ne 0) { throw "hintpack exited $LASTEXITCODE on the kit HINTS.TXT" }
+$kb = [IO.File]::ReadAllBytes($kitOut)
+$kseed = $kb[4]
+$kp = $kb.Clone()
+for ($o = 6; $o -lt $kp.Length; $o++) { $kp[$o] = $kp[$o] -bxor (Key $o $kseed) }
+$kitLevels = @{}
+for ($t = 0; $t -le $kb[5]; $t++) {
+    $o = 6 + 3 * $t
+    $count = $kp[$o + 2]
+    if ($count -gt 0) { $kitLevels[$t] = [int]$count }
+}
+
+# The fixture carries the canonical line, e.g. "; HINTLEVELS 0=2 1=5".
+$dsf = Get-Content (Join-Path $root 'tests\extern.dsf') -Raw
+$m = [regex]::Match($dsf, '(?m)^;\s*HINTLEVELS\s+(?<pairs>(\d+=\d+\s*)+)')
+if (-not $m.Success) {
+    throw 'tests\extern.dsf has no "; HINTLEVELS t=n ..." line - the bench has no stated level counts to check against'
+}
+$stated = @{}
+foreach ($pair in ($m.Groups['pairs'].Value -split '\s+' | Where-Object { $_ })) {
+    $kv = $pair -split '='
+    $stated[[int]$kv[0]] = [int]$kv[1]
+}
+$checks++
+foreach ($t in ($kitLevels.Keys | Sort-Object)) {
+    if (-not $stated.ContainsKey($t)) {
+        throw "HINTS.TXT has topic $t with $($kitLevels[$t]) levels, but the HINTLEVELS line in tests\extern.dsf does not mention it"
+    }
+    if ($stated[$t] -ne $kitLevels[$t]) {
+        throw "hint level drift: HINTS.TXT topic $t has $($kitLevels[$t]) levels, tests\extern.dsf HINTLEVELS says $($stated[$t]) - fix the fixture comment and any run sheet that quotes it"
+    }
+    $checks++
+}
+foreach ($t in ($stated.Keys | Sort-Object)) {
+    if (-not $kitLevels.ContainsKey($t)) {
+        throw "tests\extern.dsf HINTLEVELS claims topic $t, which HINTS.TXT does not define"
+    }
+}
+
+# The run sheet is gitignored, so check it only where it exists.
+$sheet = Join-Path $root 'docs\xbn-v2-rc-silicon-run-sheet.md'
+if (Test-Path $sheet) {
+    $b9 = @(Get-Content $sheet | Where-Object { $_ -match '^\| B9 ' })
+    if ($b9.Count -gt 0) {
+        $want0 = $kitLevels[0]
+        $want1 = $kitLevels[1]
+        if ($b9[0] -notmatch "levels\s+$want0" -or $b9[0] -notmatch "levels\s+$want1") {
+            throw "run sheet row B9 does not quote the shipped level counts ($want0 then $want1): $($b9[0])"
+        }
+        $checks++
+    }
+}
+
+# Owner rule: one sentence per hint. A hint may end with a full stop, but
+# must not carry a sentence break inside it.
+function Test-OneSentence($topicNo, $lines) {
+    if ($null -eq $topicNo -or $lines.Count -eq 0) { return }
+    $text = ($lines -join ' ').Trim()
+    if ($text -match '[.!?]\s') {
+        throw "a hint in topic ${topicNo} holds more than one sentence: $text"
+    }
+}
+$para = New-Object System.Collections.Generic.List[string]
+$topicNow = $null
+foreach ($line in (Get-Content $kitHints)) {
+    if ($line -match '^\[(\d+)\]') {
+        Test-OneSentence $topicNow $para; $para.Clear(); $topicNow = [int]$Matches[1]; continue
+    }
+    if (-not $line.Trim()) { Test-OneSentence $topicNow $para; $para.Clear(); continue }
+    if ($null -ne $topicNow) { $para.Add($line.Trim()) }
+}
+Test-OneSentence $topicNow $para
+$checks++
+
 Remove-Item $tmp -Recurse -Force
 Write-Output "hintpack selftest: $checks checks passed"

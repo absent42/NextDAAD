@@ -11,8 +11,8 @@ Your game asks for a topic with EXTERN n 50. See externs\hints\README.md.
 
 Try looking at things, and taking anything that is not nailed down.
 
-The lamp is the one object you cannot finish without. Take it before you
-go anywhere dark.
+Take the lamp before you go anywhere dark, because it is the one object
+you cannot finish without.
 
 [1] Verbs to try
 
