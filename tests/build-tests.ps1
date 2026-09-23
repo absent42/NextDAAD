@@ -982,9 +982,16 @@ function Assert-Slot2Writers {
     $vid = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\video.asm') -Raw)
     $entry = [regex]::Match($vid, '(?ms)^nxb_entry:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
     $recl = [regex]::Match($vid, '(?ms)^nxb_reclaim:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    $opsr = [regex]::Match($vid, '(?ms)^nxb_ops_restore:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    $rbody = [regex]::Match($vid, '(?ms)^vid_run_restore_body:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    $rtail = [regex]::Match($vid, '(?ms)^\.restore_tail:.*?(?=^\.?[A-Za-z_][A-Za-z0-9_]*:)').Value
     if ($entry -notmatch 'ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : nxb_entry must clear kblogOn before the bench remaps slot 2" }
-    if ($recl -notmatch 'ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : nxb_reclaim must set kblogOn again" }
-    "slot 2: 11 remaps, all in video.asm; kblog_tick gated on vidPlaying and kblogOn; nxb_entry clears, nxb_reclaim sets"
+    if (-not $recl) { throw "src\video.asm : nxb_reclaim not found" }
+    if ($recl -match '\bkblogOn\b') { throw "src\video.asm : nxb_reclaim must not set kblogOn - slot 2 is restored only at its end, and an abort maps L2 pages after it" }
+    if ($opsr -notmatch '(?s)call\s+nxb_reclaim\s.*ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : nxb_ops_restore must set kblogOn after its call to nxb_reclaim (clean and no-bank exits)" }
+    if ($rbody -notmatch '(?s)nextreg\s+NR_MMU2\b.*ld\s+hl,\s*vid_run\.restore_tail') { throw "src\video.asm : vid_run_restore_body must restore MMU2 before it hops to vid_run.restore_tail" }
+    if ($rtail -notmatch 'ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : vid_run.restore_tail must set kblogOn (the bench abort chain's slot-2-restored point)" }
+    "slot 2: 11 remaps, all in video.asm; kblog_tick gated on vidPlaying and kblogOn; nxb_entry clears, nxb_ops_restore (after nxb_reclaim) and vid_run.restore_tail (after the MMU2 restore) set, nxb_reclaim does not"
 }
 
 function Assert-PaletteWriterCensus {

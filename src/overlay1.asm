@@ -151,10 +151,10 @@ kb_char:
     ld a, c
     ld (inpRepKey), a
  IFDEF DEBUG
-    ld a, 2                     ; keystroke log: new key, settling
+    ld a, c                     ; keystroke log: new key, settling
+    ld (kblogDetail), a         ; detail first: a tick between the stores
+    ld a, 2                     ; must not pair state 2 with a stale detail
     ld (kblogState), a
-    ld a, c
-    ld (kblogDetail), a
  ENDIF
     ld a, 2
     ld (inpRepCnt), a

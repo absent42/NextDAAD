@@ -2545,6 +2545,8 @@ vid_run:
     xor a
     ld (vidPlaying), a
  IFDEF DEBUG
+    inc a                        ; MMU2 is restored: a bench abort's log back on
+    ld (kblogOn), a
     call vid_tl_report           ; fully-torn-down print (hot/cold/hot)
  ENDIF
     ld a, (vidSvMmu6)
@@ -4011,9 +4013,14 @@ nxb_ops_setup:
 nxb_ops_restore:
     ld hl, vid_dec_done
     ld (vid_term_exit + 1), hl
-    ; falls into nxb_reclaim
+    call nxb_reclaim
+ IFDEF DEBUG
+    ld a, 1                     ; slot 2 is back: log on (clean and no-bank
+    ld (kblogOn), a             ; exits; an abort sets it at vid_run.restore_tail)
+ ENDIF
+    ret
 
-; Shared standalone reclaim - called on the CLEAN exit above and from
+; Shared standalone reclaim - called by the CLEAN exit above and from
 ; vid_dec_abort_pos on a structural fault (review fix). nxbBankCnt is
 ; the ownership flag and is zeroed here, so the routine is idempotent
 ; and a plain video session's own abort runs it as a no-op (the six
@@ -4026,11 +4033,8 @@ nxb_ops_restore:
 ; leave MMU7 off VID_PAGE for the ret that follows.
 ; A live session is ended here too: the LOOP row's frame-loop operands go
 ; back, and vidDecSp takes the session anchor so an abort unwinds to the hook.
+; kblogOn is not set here: slot 2 is not back until the caller's tail.
 nxb_reclaim:
- IFDEF DEBUG
-    ld a, 1                     ; before the no-bank ret z; a tick before the
-    ld (kblogOn), a             ; MMU2 restore hits a bank nothing reads
- ENDIF
     call nxb_lp_unpatch
     ld a, (nxbSessLive)
     or a
