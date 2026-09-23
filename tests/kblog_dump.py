@@ -3,7 +3,7 @@
 #   python tests\kblog_dump.py --selftest
 #   python tests\kblog_dump.py --file ring.bin --ptr 0x4A10 [--video]
 #   python tests\kblog_dump.py --port 10041
-#   python tests\kblog_dump.py --boot sd\KBLOG --idle 6
+#   python tests\kblog_dump.py --boot sd\KBLOG --idle 6 [--port 10043]
 import argparse
 import pathlib
 import re
@@ -14,16 +14,20 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
+import nleg                                          # noqa: E402
 import zrcp                                          # noqa: E402
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
 NEX = ROOT / "build" / "nextdaad.nex"
 MAP = ROOT / "build" / "nextdaad.map"
+BOOT_PORT = 10043                   # --boot default; 10041 is shared with other sessions
 BASE, END = 0x4800, 0x5000
 SIZE = END - BASE
 N = SIZE // 4
 IDLE0, ENTERED, SETTLE, RECEIVED, ANYKEY, GETKEY, LEFT = range(7)
 ENTER_CODE = 30                     # kb_raw matrix code of ENTER
+HIDDEN = "(down before the editor polled - if the echo lost a letter, this run hid it: read as A)"
+HELD = "(still down when the next key went down - a shift pressed before its letter reads so)"
 NAMES = {IDLE0: "idle", ENTERED: "entered", SETTLE: "settle",
          RECEIVED: "received", ANYKEY: "anykey", GETKEY: "getkey",
          LEFT: "left"}
@@ -31,7 +35,7 @@ NAMES = {IDLE0: "idle", ENTERED: "entered", SETTLE: "settle",
 
 def entries_from(raw, ptr):
     """Valid entries oldest first: walk back from the entry before ptr while
-    each frame byte is the newer entry's minus one (spec 4)."""
+    each frame byte is the newer entry's minus one."""
     if len(raw) != SIZE:
         raise ValueError("ring is %d bytes, want %d" % (len(raw), SIZE))
     if not (BASE <= ptr < END) or (ptr - BASE) % 4:
@@ -50,9 +54,15 @@ def entries_from(raw, ptr):
 
 
 def key_runs(entries):
+    """Runs of entries with keys down. A run also ends where byte 1 gains a
+    bit the previous entry lacked (a new key down while another is held);
+    a same-column overlap cannot be seen and stays one run."""
     runs, start = [], None
     for k, e in enumerate(entries):
         if e[1] and start is None:
+            start = k
+        elif e[1] and e[1] & ~entries[k - 1][1]:
+            runs.append((start, k - 1))
             start = k
         elif not e[1] and start is not None:
             runs.append((start, k - 1))
@@ -71,7 +81,7 @@ def _idle(e):
 
 
 def classify(entries, run):
-    """Spec 4 order: EMITTED, C, D, B, A, else UNCLASSIFIED."""
+    """Rule order: EMITTED, C, D, B, A, else UNCLASSIFIED."""
     s, t = run
     last = entries[s - 1] if s else None
     for e in entries[s:min(len(entries), t + 3)]:
@@ -98,14 +108,29 @@ def classify(entries, run):
     return "UNCLASSIFIED", None
 
 
+def new_keys(entries, run):
+    """Column bits the run's first entry gained over the entry before it."""
+    s = run[0]
+    return entries[s][1] & ~(entries[s - 1][1] if s else 0)
+
+
+def down_before_editor(entries, run):
+    """The run began while nothing was polling keys (state 0/6, no More)."""
+    return _idle(entries[run[0]])
+
+
+def held_into_next(entries, run):
+    """The run was split off: a new key went down while its keys were held."""
+    t = run[1]
+    return t + 1 < len(entries) and entries[t + 1][1] != 0
+
+
 def settle_boundary(entries, run):
     """An A run whose own key the editor began settling just after release:
-    a SETTLE in the two entries after the run whose column bit is in the
-    run's key mask. Informational; the verdict stays A."""
+    a SETTLE in the two entries after the run whose column bit is one the
+    run's first entry gained. Informational; the verdict stays A."""
     s, t = run
-    mask = 0
-    for e in entries[s:t + 1]:
-        mask |= e[1]
+    mask = new_keys(entries, run)
     return any(_st(e) == SETTLE and mask & (1 << (e[3] % 5))
                for e in entries[t + 1:t + 3])
 
@@ -136,9 +161,14 @@ def report(entries, video=False, start=0):
         label = "D (suspect kb_raw mapping)" if v == "D" else v
         if v == "A" and settle_boundary(entries, r):
             label = "A (released inside the editor's first settle)"
-        extra = (" '%s'" % chr(d)) if d is not None and 32 <= d < 127 else ""
-        lines.append("run f%02X..f%02X (%d frames): %s%s" % (
-            entries[r[0]][0], entries[r[1]][0], r[1] - r[0] + 1, label, extra))
+        if d is not None and 32 <= d < 127:
+            label += " '%s'" % chr(d)
+        if v == "EMITTED" and down_before_editor(entries, r):
+            label += " " + HIDDEN
+        elif v != "EMITTED" and held_into_next(entries, r):
+            label += " " + HELD
+        lines.append("run f%02X..f%02X (%d frames): %s" % (
+            entries[r[0]][0], entries[r[1]][0], r[1] - r[0] + 1, label))
     return "\n".join(lines)
 
 
@@ -179,6 +209,10 @@ def read_ring(z):
         sys.exit("kblog_dump: could not freeze the CPU (enter-cpu-step refused 8 times, "
                   "last reply %r)" % (reply,))
     try:
+        sig = bytes(z.read_memory(sym("KBLOGSIG"), 4))
+        if sig != b"KLG1":
+            sys.exit("kblog_dump: no KLG1 at kblogSig (read %r) - %s does not match "
+                     "the running image, or it is not a DEBUG build" % (sig, MAP))
         p = z.read_memory(sym("KBLOGPTR"), 2)
         ptr = p[0] | (p[1] << 8)
         raw = bytes(z.read_memory(BASE, SIZE))
@@ -188,7 +222,12 @@ def read_ring(z):
 
 
 def launch(leg, port):
-    """Boot a staged leg headless on port; returns (proc, zrcp)."""
+    """Boot a staged leg headless on port; returns (proc, zrcp). Refuses a
+    port already listening (a stale emulator would be attached silently);
+    any failure after the launch kills the emulator before re-raising."""
+    if nleg.port_already_listening(port):
+        sys.exit("kblog_dump: port %d is already listening - a stale emulator? "
+                 "Close it or pick another port" % port)
     work = ROOT / "tests" / "out" / ("kblog-run-%d" % port)
     sd = work / "sd"
     if sd.exists():
@@ -203,18 +242,27 @@ def launch(leg, port):
         "--smartloadpath", str(sd),
     ], cwd=str(sd))
     z = None
-    for _ in range(60):
-        if proc.poll() is not None:
-            sys.exit("kblog_dump: ZEsarUX exited before ZRCP came up")
-        try:
-            z = zrcp.Zrcp(port=port)
-            break
-        except OSError:
-            time.sleep(0.5)
-    if z is None:
+    try:
+        for _ in range(60):
+            if proc.poll() is not None:
+                sys.exit("kblog_dump: ZEsarUX exited before ZRCP came up")
+            try:
+                z = zrcp.Zrcp(port=port)
+                break
+            except OSError:
+                time.sleep(0.5)
+        if z is None:
+            sys.exit("kblog_dump: ZRCP never answered on port %d" % port)
+        z.cmd("smartload %s" % (sd / "nextdaad.nex"), deadline=60.0)
+    except BaseException:
+        if z is not None:
+            try:
+                z.close()
+            except Exception:
+                pass
         proc.kill()
-        sys.exit("kblog_dump: ZRCP never answered on port %d" % port)
-    z.cmd("smartload %s" % (sd / "nextdaad.nex"), deadline=60.0)
+        proc.wait()
+        raise
     return proc, z
 
 
@@ -271,11 +319,11 @@ def selftest():
     L = ord("l")
     idle = [(0, ENTERED, 30)] * 5
     cases = {
-        "EMITTED": idle + [(2, SETTLE, 26), (2, SETTLE, 26), (2, RECEIVED, L),
+        "EMITTED": idle + [(2, SETTLE, 31), (2, SETTLE, 31), (2, RECEIVED, L),
                            (2, RECEIVED, L), (0, RECEIVED, L)] + [(0, RECEIVED, L)] * 3,
         "A": [(0, LEFT, 13)] * 5 + [(2, LEFT, 13)] * 3 + [(0, LEFT, 13)] * 3
              + [(0, ENTERED, 30)] * 4,
-        "B": idle + [(2, SETTLE, 26), (0, SETTLE, 26)] + [(0, SETTLE, 26)] * 4,
+        "B": idle + [(2, SETTLE, 31), (0, SETTLE, 31)] + [(0, SETTLE, 31)] * 4,
         "C": [(0, ANYKEY, 0)] * 3 + [(2, ANYKEY, 0)] * 3 + [(0, IDLE0, 0)] * 4,
         "C-more": [(0, LEFT | 0x80, 13)] * 3 + [(2, LEFT | 0x80, 13)] * 2
                   + [(0, LEFT, 13)] * 4,
@@ -306,12 +354,12 @@ def selftest():
     raw, ptr = build_ring(cases["EMITTED"])
     ents = entries_from(raw, ptr)
     rep = report(ents)
-    assert "settle   detail m26" in rep, "report: settle detail not m26"
+    assert "settle   detail m31" in rep, "report: settle detail not m31"
     tail = report(ents, start=len(ents) - 2)
     assert "walk: %d entries" % len(ents) in tail and "run " not in tail \
         and tail.count("\n") == 1, "report start: %r" % tail
     # start keeps only runs that begin at or after it (runs_from's rule)
-    k0 = cases["EMITTED"].index((2, SETTLE, 26))
+    k0 = cases["EMITTED"].index((2, SETTLE, 31))
     assert "run " in report(ents, start=k0), "report start: run at start dropped"
     assert "run " not in report(ents, start=k0 + 1), "report start: straddling run kept"
     # A released inside the editor's first settle: annotated, verdict stays A
@@ -330,6 +378,44 @@ def selftest():
     assert classify(ents, rs[0])[0] == "A", "next key: first run not A"
     first = [l for l in report(ents).splitlines() if l.startswith("run ")][0]
     assert first.endswith(": A"), "next key: annotated %r" % first
+    # rollover: L down while the submitting ENTER is held, L released during
+    # the response, then O typed - L's run splits off ENTER's and reads A
+    O = ord("o")
+    roll = idle + [(1, SETTLE, 30), (1, SETTLE, 30), (1, LEFT, 13), (1, LEFT, 13),
+                   (3, LEFT, 13), (3, LEFT, 13), (2, LEFT, 13), (2, LEFT, 13),
+                   (0, LEFT, 13), (0, LEFT, 13), (0, ENTERED, 30), (0, ENTERED, 30),
+                   (2, SETTLE, 26), (2, SETTLE, 26), (2, RECEIVED, O), (0, RECEIVED, O)]
+    raw, ptr = build_ring(roll)
+    ents = entries_from(raw, ptr)
+    rs = key_runs(ents)
+    got = [classify(ents, r) for r in rs]
+    assert [v for v, _ in got] == ["EMITTED", "A", "EMITTED"] and got[0][1] == 13 \
+        and got[2][1] == O, "rollover: %s" % got
+    assert new_keys(ents, rs[1]) == 2, "rollover: L run new keys %d" % new_keys(ents, rs[1])
+    runl = [l for l in report(ents).splitlines() if l.startswith("run ")]
+    assert runl[0].endswith(": EMITTED") and runl[1].endswith(": A") \
+        and HIDDEN not in runl[2], "rollover: %r" % runl
+    # CAPS down a frame before L in the response: CAPS's split-off run is
+    # marked as held into the next; L's own run is a plain A
+    caps = [(0, LEFT, 13)] * 3 + [(1, LEFT, 13)] + [(3, LEFT, 13)] * 3 + [(0, LEFT, 13)] * 2
+    runl = [l for l in report(entries_from(*build_ring(caps))).splitlines() if l.startswith("run ")]
+    assert len(runl) == 2 and runl[0].endswith(": A " + HELD) and runl[1].endswith(": A"), \
+        "caps first: %r" % runl
+    # same column: O down while L is held (both bit 1), L lost in the response,
+    # O held into the editor - one run, EMITTED 'o', annotated as a hidden A
+    same = [(0, LEFT, 13)] * 3 + [(2, LEFT, 13)] * 5 + [(2, ENTERED, 30), (2, SETTLE, 26),
+                                                       (2, SETTLE, 26), (2, RECEIVED, O),
+                                                       (0, RECEIVED, O)]
+    raw, ptr = build_ring(same)
+    ents = entries_from(raw, ptr)
+    rs = key_runs(ents)
+    assert len(rs) == 1 and classify(ents, rs[0]) == ("EMITTED", O), "same column: %s" % rs
+    runl = [l for l in report(ents).splitlines() if l.startswith("run ")]
+    assert runl[0].endswith(": EMITTED 'o' " + HIDDEN), "same column: %r" % runl
+    # a letter typed at the prompt is not annotated
+    runl = [l for l in report(entries_from(*build_ring(cases["EMITTED"]))).splitlines()
+            if l.startswith("run ")]
+    assert runl[0].endswith(": EMITTED 'l'"), "prompt letter: %r" % runl
     # walk-back stops at a frame break: 4 stale entries, then 6 consecutive
     raw = bytearray(SIZE)
     for k in range(4):
@@ -376,7 +462,7 @@ def main():
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--file")
     ap.add_argument("--ptr", type=lambda s: int(s, 0))
-    ap.add_argument("--port", type=int)
+    ap.add_argument("--port", type=int, help="ZRCP port to read; with --boot, the port to launch on")
     ap.add_argument("--boot", help="staged leg to boot headless, e.g. sd\\KBLOG")
     ap.add_argument("--idle", type=float, default=6.0, help="seconds after boot before the read")
     ap.add_argument("--video", action="store_true", help="a clip or NXB run happened in the session")
@@ -388,13 +474,8 @@ def main():
         if a.ptr is None:
             sys.exit("kblog_dump: --file needs --ptr")
         raw, ptr = load_file(a.file), a.ptr
-    elif a.port:
-        z = zrcp.Zrcp(port=a.port)
-        raw, ptr = read_ring(z)
-        z.close()
     elif a.boot:
-        port = 10041
-        proc, z = launch((ROOT / a.boot).resolve(), port)
+        proc, z = launch((ROOT / a.boot).resolve(), a.port or BOOT_PORT)
         try:
             time.sleep(a.idle)
             raw, ptr = read_ring(z)
@@ -405,6 +486,10 @@ def main():
                 pass
             proc.kill()
             proc.wait()
+    elif a.port:
+        z = zrcp.Zrcp(port=a.port)
+        raw, ptr = read_ring(z)
+        z.close()
     else:
         ap.error("one of --selftest, --file, --port, --boot")
     print(report(entries_from(raw, ptr), video=a.video))

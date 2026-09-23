@@ -53,8 +53,9 @@ def frames_now(z):
 def main():
     if not LEG.is_dir():
         sys.exit("kblog_run: %s missing - run tests\\build-tests.ps1 -KbLog" % LEG)
-    proc, z = kb.launch(LEG, PORT)
+    proc = z = None
     try:
+        proc, z = kb.launch(LEG, PORT)
         time.sleep(6.0)
         ents = snapshot(z)
         if len(ents) < 100:
@@ -108,12 +109,14 @@ def main():
             rs = runs_from(ents, at)
             print("verdicts of the runs typed from the mark: %s" % [kb.classify(ents, r)[0] for r in rs])
     finally:
-        try:
-            z.close()
-        except Exception:
-            pass
-        proc.kill()
-        proc.wait()
+        if z is not None:
+            try:
+                z.close()
+            except Exception:
+                pass
+        if proc is not None:
+            proc.kill()
+            proc.wait()
 
 
 if __name__ == "__main__":
