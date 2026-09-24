@@ -1627,16 +1627,22 @@ h_parse:                        ; 73: condition-like. B = option.
     ld a, b
     or a
     jp nz, .quoted              ; PARSE 1+ (B21) lives past .valid
+    ld a, (injPending)          ; SVC_INJECT parked a line: it goes
+    or a                        ; ahead of the pending buffer, no prompt
+    jp nz, .injected
     ; pending buffer empty?
     ld a, (inpPending)
     or a
-    jr nz, .frombuf
+    jp nz, .frombuf
     ; fresh input: prompt, then edit. SP16 B22 - the prompt and the
     ; edit both run in flag 41's window when that flag names one
     ; (jdaad calls PreserveStream BEFORE printing the prompt,
     ; jdaad.js:1352).
     call inp_stream_push
-    xor a
+.reprompt:                      ; line hook CF set re-enters HERE, after
+    xor a                       ; the push (a second push would overwrite
+    ld (inpFresh), a            ; inpWinStash and the pop would then
+                                 ; find the windows equal: no restore)
     ld (inpFromBuf), a
     ld a, (flags+FLAG_PROMPT)
     or a
@@ -1689,6 +1695,12 @@ h_parse:                        ; 73: condition-like. B = option.
     ; selected), then the stream is restored, then bit 4 reprints into
     ; the window the game was using before the input. Neither bit's own
     ; behaviour changes.
+    ld a, (inpLine)
+    or a
+    jr z, .nofresh
+    ld a, 1
+    ld (inpFresh), a            ; non-empty submit: SVC_GETLINE reads fresh
+.nofresh:
     ld a, (flags+FLAG_TIMECTL)
     bit 3, a
     jr z, .nocls
@@ -1702,6 +1714,20 @@ h_parse:                        ; 73: condition-like. B = option.
 .noecho:
     call pager_reset_all        ; after the echo, as jdaad: it does not count
     call ingest_line
+    ld hl, inpPending
+    ld (inpPtr), hl
+    jr .extract
+.injected:
+    xor a
+    ld (injPending), a
+    ld (inpFromBuf), a
+    ld a, (injOpts)
+    bit 0, a
+    jr z, .injnoecho
+    call inp_reprint            ; echo in the current window (not flag 41's)
+.injnoecho:
+    call pager_reset_all
+    call ingest_line             ; overwrites inpPending: replace semantics
     ld hl, inpPending
     ld (inpPtr), hl
     jr .extract
@@ -1973,10 +1999,18 @@ sav_prompt:
     ld (savTimeStash), a
     xor a
     ld (flags+FLAG_TIMEOUT), a
+    ld hl, inpLast               ; stash the recall line: the filename must
+    ld de, savStage               ; not reach inpLast. savStage is idle here
+    ld bc, INP_MAX+1              ; (sav_read_v2 fills it only after this
+    ldir                          ; returns; SVC_GETMSG cannot run mid-prompt)
     ld e, 60                    ; "Type in name of file."
     xor a
     call print_msg
     call inp_edit               ; CF (timeout) impossible: flag 48 = 0
+    ld hl, savStage
+    ld de, inpLast
+    ld bc, INP_MAX+1
+    ldir
     ld a, (savTimeStash)
     ld (flags+FLAG_TIMEOUT), a
     call prn_reset_lines

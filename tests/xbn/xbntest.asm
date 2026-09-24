@@ -57,6 +57,12 @@ ext_main:
     jr z, .fn39
     cp 42
     jp z, pair_probe             ; SVC_PAIR probe; sits past the pad, jp not jr
+    cp 43
+    jp z, getline_probe
+    cp 44
+    jp z, inject_probe
+    cp 45
+    jp z, pending_probe
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -622,6 +628,63 @@ pair_probe:
     ld (hl), a
     or a                         ; CF discipline: deliberate clear
     ret
+
+; fn 43: SVC_GETLINE -> 120 length, 121 fresh (1/0), 122-125 first 4 chars.
+getline_probe:
+    call SVC_GETLINE
+    ld a, 0
+    adc a, 0                     ; A = CF: 1 = stale
+    xor 1                        ; 1 = fresh
+    ld (XBN_FLAGS+121), a
+    ld a, c
+    ld (XBN_FLAGS+120), a
+    ld de, XBN_FLAGS+122
+    ld bc, 4
+    ldir
+    or a
+    ret
+
+; fn 44: SVC_INJECT. B selects the text: 0/1 = "XLIN" (B = echo bit),
+; 2 = empty, 3 = 127 chars, 4 = 128 chars. 126 = 0 accepted, 1 refused.
+inject_probe:
+    ld a, b
+    cp 2
+    jr c, .xlin
+    ld hl, inj_empty
+    jr z, .go
+    ld hl, inj_127
+    cp 3
+    jr z, .go
+    ld hl, inj_128
+    jr .go
+.xlin:
+    ld hl, inj_xlin
+.go:
+    ld a, b
+    and 1                        ; only B = 1 echoes
+    call SVC_INJECT
+    ld a, 0
+    adc a, 0
+    ld (XBN_FLAGS+126), a
+    or a
+    ret
+inj_xlin:  db "XLIN", 0
+inj_empty: db 0
+inj_127:   ds 127, 'A'
+           db 0
+inj_128:   ds 128, 'A'
+           db 0
+
+; fn 45: SVC_GETPENDING -> 127 length, 128 first byte.
+pending_probe:
+    call SVC_GETPENDING
+    ld a, c
+    ld (XBN_FLAGS+127), a
+    ld a, (hl)
+    ld (XBN_FLAGS+128), a
+    or a
+    ret
+
 xbn_end:
 
     SAVEBIN "tests/out/xbn/GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

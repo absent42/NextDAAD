@@ -36,7 +36,10 @@ SVC_FOPEN       equ XBN_API+9   ; in IX = ASCIIZ name, B = mode; out A/CF.
 SVC_FREAD       equ XBN_API+12  ; in A = handle, IX = buf, BC = len; out
                                  ; BC/CF. Foreground-only.
 SVC_FWRITE      equ XBN_API+15  ; in A = handle, IX = buf, BC = len; out
-                                 ; CF. Foreground-only.
+                                 ; CF, BC = bytes written (API 3 documents
+                                 ; it; a short count with CF clear is the
+                                 ; seek-then-extend hazard: treat it as
+                                 ; failure). Foreground-only.
 SVC_FSEEK       equ XBN_API+18  ; in A = handle, BCDE = offset; out CF.
                                  ; Foreground-only.
 SVC_FCLOSE      equ XBN_API+21  ; in A = handle. Foreground-only.
@@ -77,5 +80,32 @@ SVC_WINDOW      equ XBN_API+42  ; in A = 0-7 selects; out A = previous
 SVC_PAIR        equ XBN_API+45  ; in B = paper, C = ink (0-255, the
                                  ; INK/PAPER values); out A = tilemap
                                  ; attribute byte, CF clear. Corrupts
-                                 ; all registers. API version 3 and up:
-                                 ; check SVC_VERSION first. Foreground-only.
+                                 ; all registers. API version 3 and up
+                                 ; (as are rows 16-19 below): check
+                                 ; SVC_VERSION first. Foreground-only.
+SVC_GETLINE     equ XBN_API+48  ; out HL = ASCIIZ line the player typed
+                                 ; this turn (read-only, resident), BC =
+                                 ; length; CF set = no non-empty line
+                                 ; submitted this turn (HL then holds the
+                                 ; previous one). API 3. Foreground-only.
+SVC_GETPENDING  equ XBN_API+51  ; out HL = ASCIIZ orders after a
+                                 ; conjunction not yet consumed (empty
+                                 ; when none), BC = length, CF clear.
+                                 ; API 3. Foreground-only.
+SVC_INJECT      equ XBN_API+54  ; in HL = ASCIIZ text (your bank is fine),
+                                 ; A = options: bit 0 echo it as typed.
+                                 ; The next PARSE 0 consumes it, no
+                                 ; prompt, REPLACING any pending orders
+                                 ; (read SVC_GETPENDING first to keep
+                                 ; them). CF set + A = $FF: over 127
+                                 ; chars or a line already parked. A
+                                 ; rewriter called from a PARSE entry's
+                                 ; remainder must ALWAYS inject (the
+                                 ; original line when nothing matched) or
+                                 ; the second PARSE 0 prompts again
+                                 ; silently. API 3. Foreground-only.
+
+; SVC_FOPEN modes (esxDOS)
+XBN_FMODE_R     equ $01         ; read
+XBN_FMODE_RW    equ $03         ; existing file, read/write, no truncate
+XBN_FMODE_W     equ $0E         ; write, create or truncate

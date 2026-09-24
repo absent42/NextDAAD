@@ -554,6 +554,9 @@ xbn_api_tpl:
     jp svc_palread                ; 13
     jp svc_window                 ; 14
     jp svc_pair                   ; 15 (pair_get, tmpairs.asm - resident)
+    jp svc_getline                ; 16
+    jp svc_getpending             ; 17
+    jp svc_inject                 ; 18
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -761,6 +764,69 @@ svc_fseek:
     jp esx_fseek
 
 svc_fclose: jp esx_fclose         ; in A=handle
+
+; Rows 16-18: parser input (design: parser-extern interface). All read
+; resident input.asm state; the caller's bank stays mapped throughout.
+; HL = ASCIIZ -> BC = length, capped at INP_MAX+1 (128 = too long).
+; Corrupts AF, HL. CF clear on exit.
+svc_strlen:
+    ld bc, 0
+.l:
+    ld a, (hl)
+    or a
+    ret z
+    inc hl
+    inc c
+    ld a, c
+    cp INP_MAX+1
+    jr c, .l
+    or a
+    ret
+
+; Row 16: out HL = inpLast, BC = length; CF set when inpFresh = 0.
+svc_getline:
+    ld hl, inpLast
+    call svc_strlen
+    ld hl, inpLast
+    ld a, (inpFresh)
+    sub 1                         ; 0 -> CF set (stale)
+    ret
+
+; Row 17: out HL = inpPending (empty when none), BC = length, CF clear.
+svc_getpending:
+    ld hl, inpPending
+    call svc_strlen
+    ld hl, inpPending
+    or a
+    ret
+
+; Row 18: in HL = ASCIIZ text (caller's bank), A = options (bit 0 echo).
+; Parks the text in inpLine and arms injPending; the next PARSE 0 takes
+; it ahead of the prompt (h_parse .injected, overlay1.asm). CF set +
+; A = $FF: over INP_MAX or a line already parked; nothing written.
+; Corrupts AF, BC, DE, HL.
+svc_inject:
+    ld (injOpts), a
+    ld a, (injPending)
+    or a
+    jr nz, .refuse
+    push hl
+    call svc_strlen
+    pop hl
+    ld a, c
+    cp INP_MAX+1
+    jr nc, .refuse                ; 128 = longer than INP_MAX
+    ld de, inpLine
+    inc bc                        ; text plus NUL
+    ldir
+    ld a, 1
+    ld (injPending), a
+    or a                          ; CF clear
+    ret
+.refuse:
+    ld a, $FF
+    scf
+    ret
 
 ; A = user message number (kind 1 = MTX, h_mes's own kind) -> savStage;
 ; out HL = savStage, BC = length (<=256, truncated), CF clear. CF set +

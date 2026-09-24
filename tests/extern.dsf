@@ -292,10 +292,11 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 34-39 and 42 exist: XREG XCAL XTIK XSVC XFIO
-;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB (fns
-;     26-29, 34-39 and 42 exist only in xbntest.asm) (on any other leg
-;     these print unwritten flags - zeros)
+;     where fns 20-29, 34-39 and 42-45 exist: XREG XCAL XTIK XSVC XFIO
+;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB
+;     XGLN XINJ XLIN XPND XSAV XINE XINL (fns 26-29, 34-39 and 42-45
+;     exist only in xbntest.asm) (on any other leg these print unwritten
+;     flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
 ;     esxdos handler lacks M_GETDATE and the call derails the machine.
@@ -423,6 +424,14 @@ XTPR   176 verb
 XTCD   177 verb
 XTMW   178 verb
 XTEF   179 verb
+XGLN   180 verb
+XINJ   181 verb
+XLIN   182 verb
+XPND   183 verb
+XSAV   184 verb
+XINE   185 verb
+XINL   186 verb
+AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
 CLOAK   22 noun
@@ -595,19 +604,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 186 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3BA (lsb 186, msb 195) - read
+> XCAL _   CALL 201 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3C9 (lsb 201, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C3B5 by Task 1's fn 42 dispatch code.
+                             ; from $C3BA by Task 1's fn 43-45 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 17 230         ; Task 4's owed check: tail_marker, address
-                             ; $E611 (lsb 17, msb 230) - the SECOND 8K page
+           CALL 32 230         ; Task 4's owed check: tail_marker, address
+                             ; $E620 (lsb 32, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E60C by Task 1's fn 42 dispatch code.
+                             ; from $E611 by Task 1's fn 43-45 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -669,6 +678,41 @@ CLOAK   22 noun
            PRINT   236       ; expect 0 (reserved pair 0 = paper 0, ink 7)
            MES     " cf "
            PRINT   237       ; expect 0
+           DONE
+> XGLN _   EXTERN  0 43       ; SVC_GETLINE probe (fixture fn 43)
+           MES     "len "
+           PRINT   120       ; expect 4
+           MES     " fresh "
+           PRINT   121       ; expect 1
+           DONE
+> XINJ _   EXTERN  1 44       ; parks "XLIN" with echo: next PARSE 0 runs it
+           MES     "parked "
+           PRINT   126       ; expect 0
+           DONE
+> XLIN _   MES     "INJECTED"
+           DONE
+> XPND _   EXTERN  0 45       ; type "XPND AND XLIN": pending = "   XLIN"
+           MES     "pend "
+           PRINT   127       ; expect 7, not 4: pending_compact steps past
+                             ; only the '.' ingest_line wrote in AND's
+                             ; place, not the blank-fill spaces beside it
+                             ; (2 from blanking AND, 1 the original space
+                             ; before XLIN) - ingest_line/pending_compact
+                             ; are unchanged, this is what they already do
+           DONE
+> XSAV _   SAVE    0          ; answer the prompt with T
+           EXTERN  0 43
+           MES     "fresh "
+           PRINT   121       ; expect 1: the stash kept the turn's line
+           MES     " len "
+           PRINT   120       ; expect 4 (XSAV), not 1 (T)
+           DONE
+> XINE _   EXTERN  2 44       ; injects "": next PARSE 0 finds nothing,
+           DONE              ; passes, and PRO 1's REDO re-prompts silently
+> XINL _   EXTERN  4 44       ; 128 chars: refused (over INP_MAX)
+           PRINT   126       ; expect 1
+           EXTERN  3 44      ; 127 chars: accepted, parked WITH echo (B=3)
+           PRINT   126       ; expect 0
            DONE
 > XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
            EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
