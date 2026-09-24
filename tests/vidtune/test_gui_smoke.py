@@ -510,6 +510,157 @@ def test_encode_all_stale_cancel_after_current_stops_queue(fixture_kit, qtbot, m
     assert not clip2.vid.is_file()
 
 
+class _RecordingEncodeJob(_FakeEncodeJob):
+    """_FakeEncodeJob that records each job's (output name, argv)."""
+    runs = []
+
+    def start(self, input_path, output_path, args):
+        _RecordingEncodeJob.runs.append((Path(output_path).name, list(args)))
+        super().start(input_path, output_path, args)
+
+
+def _edit_dither(win, value):
+    s = win.settings_panel.get_settings()
+    s["dither"] = value
+    win.settings_panel.set_settings(s, win.kit_base)
+
+
+def test_encode_all_stale_uses_and_saves_session_edits(fixture_kit, qtbot, monkeypatch):
+    # Unaccepted per-clip edits (one parked in session_edits, one live in
+    # the panel) must drive the encode AND land in CONFIG.BAT, or the
+    # next BUILD.BAT re-encodes the clip at the saved settings.
+    monkeypatch.setattr(vt_mainwindow, "EncodeJob", _RecordingEncodeJob)
+    _RecordingEncodeJob.runs = []
+
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.encoder_argv = ["fake-encoder"]
+    win.ffmpeg = Path("fake-ffmpeg.exe")
+    win.stamp = "pal9k"
+
+    win.select_clip("001")
+    _edit_dither(win, "0.2")
+    win.select_clip("002")
+    _edit_dither(win, "0.3")
+
+    win.on_encode_all_stale()
+    qtbot.waitUntil(lambda: len(_RecordingEncodeJob.runs) == 2, timeout=5000)
+    qtbot.waitUntil(lambda: win._job is None, timeout=5000)
+
+    runs = dict(_RecordingEncodeJob.runs)
+    a1, a2 = (runs[c.vid.name] for c in win.clips)
+    assert a1[a1.index("--dither") + 1] == "0.2"
+    assert a2[a2.index("--dither") + 1] == "0.3"
+    assert "--shape" in a2                        # saved per-clip opts kept
+
+    assert "--dither 0.2" in win.cfg.per_clip.get("001", "")
+    assert "--dither 0.3" in win.cfg.per_clip.get("002", "")
+    assert "--shape 16:9" in win.cfg.per_clip.get("002", "")
+    for clip in win.clips:
+        assert not clip_state(clip, win.cfg, win.stamp)[1]
+
+
+def test_encode_all_stale_includes_fresh_clip_with_unsaved_edits(fixture_kit, qtbot, monkeypatch):
+    monkeypatch.setattr(vt_mainwindow, "EncodeJob", _RecordingEncodeJob)
+    _RecordingEncodeJob.runs = []
+
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.encoder_argv = ["fake-encoder"]
+    win.ffmpeg = Path("fake-ffmpeg.exe")
+    win.stamp = "pal9k"
+
+    win.on_encode_all_stale()
+    qtbot.waitUntil(lambda: win._job is None and not win._all_queue, timeout=5000)
+    qtbot.waitUntil(lambda: len(_RecordingEncodeJob.runs) == 2, timeout=5000)
+    assert not any(clip_state(c, win.cfg, win.stamp)[1] for c in win.clips)
+
+    _RecordingEncodeJob.runs = []
+    win.select_clip("001")
+    _edit_dither(win, "0.2")
+    win.on_encode_all_stale()
+    qtbot.waitUntil(lambda: len(_RecordingEncodeJob.runs) == 1, timeout=5000)
+    qtbot.waitUntil(lambda: win._job is None, timeout=5000)
+    qtbot.wait(50)
+
+    assert [name for name, _ in _RecordingEncodeJob.runs] == [win.clips[0].vid.name]
+    assert "--dither 0.2" in win.cfg.per_clip.get("001", "")
+    assert not clip_state(win.clips[0], win.cfg, win.stamp)[1]
+
+
+def _rail_status(win, num3):
+    for i in range(win.clip_list.count()):
+        item = win.clip_list.item(i)
+        if item.data(Qt.UserRole) == num3:
+            return item.data(vt_mainwindow._ClipDelegate.STATUS_ROLE)
+    return None
+
+
+def test_rail_marks_unsaved_edits_and_clears_after_encode_all(fixture_kit, qtbot, monkeypatch):
+    monkeypatch.setattr(vt_mainwindow, "EncodeJob", _RecordingEncodeJob)
+    _RecordingEncodeJob.runs = []
+
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.encoder_argv = ["fake-encoder"]
+    win.ffmpeg = Path("fake-ffmpeg.exe")
+    win.stamp = "pal9k"
+    win._populate_clip_list()
+    assert _rail_status(win, "001") == "stale"
+
+    win.select_clip("001")
+    win.settings_panel._on_apply_values({"dither": "0.2"})   # emits changed
+    assert _rail_status(win, "001") == "edited"
+    assert _rail_status(win, "002") == "stale"
+
+    win.settings_panel._on_apply_values({"dither": "0.5"})   # back to saved
+    assert _rail_status(win, "001") == "stale"
+
+    win.settings_panel._on_apply_values({"dither": "0.2"})
+    win.select_clip("002")                                    # parked edit
+    win._populate_clip_list()
+    assert _rail_status(win, "001") == "edited"
+
+    win.on_encode_all_stale()
+    qtbot.waitUntil(lambda: len(_RecordingEncodeJob.runs) == 2, timeout=5000)
+    qtbot.waitUntil(lambda: win._job is None, timeout=5000)
+    assert _rail_status(win, "001") == "tuned"
+    assert _rail_status(win, "002") == "tuned"
+
+
+def test_revert_restores_saved_settings(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.encoder_argv = ["fake-encoder"]
+    win.stamp = "pal9k"
+    cfg_before = (fixture_kit / "CONFIG.BAT").read_bytes()
+
+    win.select_clip("002")
+    saved = win.settings_panel.get_settings()
+    assert win.revert_button.isEnabled() is False
+
+    win.settings_panel._on_apply_values({"dither": "0.2", "shape": "full"})
+    assert win.revert_button.isEnabled() is True
+    assert _rail_status(win, "002") == "edited"
+
+    # parked edits revert too, once the clip is reopened
+    win.select_clip("001")
+    win.select_clip("002")
+    assert win.settings_panel.get_settings()["dither"] == "0.2"
+
+    win.revert_button.click()
+    assert win.settings_panel.get_settings() == saved
+    assert win.settings_panel.get_settings()["shape"] == "16:9"
+    assert "002" not in win.session_edits
+    assert _rail_status(win, "002") == "stale"
+    assert win.revert_button.isEnabled() is False
+    assert (fixture_kit / "CONFIG.BAT").read_bytes() == cfg_before
+
+    win.select_clip("001")
+    win.select_clip("002")
+    assert win.settings_panel.get_settings() == saved
+
+
 # -- Preview pane mode/focus/segment behaviour ------------------------------
 
 def test_flicker_and_heatmap_disabled_without_source(qtbot):

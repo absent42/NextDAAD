@@ -635,6 +635,11 @@ around it.</p>
 segment, adjust shape, frame rate, dither and the other knobs above,
 encode and accept - the settings land in <code>VIDOPTS_NNN</code> in <code>CONFIG.BAT</code>,
 so the next build reproduces the same encode.</p>
+<p>A clip whose settings you have changed but not saved shows as <code>edited</code>
+in the clip list. Revert throws those changes away and goes back to
+what <code>CONFIG.BAT</code> holds. Encode Stale + Edited encodes every stale or edited
+clip with the settings you gave it, and saves them to <code>CONFIG.BAT</code> the
+same way Accept does.</p>
 <h2 id="the-starter-games-demo-clips">The starter game's demo clips</h2>
 <p><code>VIDEO\001.mp4</code> and <code>VIDEO\002.mp4</code> build with the kit so the video
 condacts work out of the box. 001 encodes at the <code>full</code> 320x256 default;

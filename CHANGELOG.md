@@ -85,6 +85,17 @@ All notable changes to NextDAAD are recorded here.
   and `FONT.draw`. `tests/fontconv-selftest.ps1` Y1-Y10 and D1-D3.
   Manual fonts page gains an "Other font formats" section listing every
   readable format and the monobit route.
+- vidtune: Encode All Stale encoded every clip with its CONFIG.BAT
+  settings, ignoring unaccepted per-clip edits, so a new clip tuned in
+  the session encoded at the kit defaults. The queue now snapshots each
+  clip's session settings, queues any clip whose settings differ from
+  CONFIG.BAT, and on success writes its VIDOPTS_NNN line the way Accept
+  does (shared `_save_vidopts`), so BUILD.BAT agrees. The button is
+  renamed Encode Stale + Edited. The clip rail shows a new `edited`
+  status (accent colour, outranks `stale`), refreshed on every panel
+  edit. New Revert button drops the open clip's unsaved edits back to
+  CONFIG.BAT. `tests/vidtune/test_gui_smoke.py` gains four tests.
+  vidtune.exe rebuilt.
 
 ## v0.10.0 - 18/09/2026
 

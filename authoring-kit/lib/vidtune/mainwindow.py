@@ -342,6 +342,7 @@ class _ClipDelegate(QStyledItemDelegate):
     painting changes."""
 
     STATUS_COLOURS = {
+        "edited": theme.ACCENT,      # unsaved settings differ from CONFIG.BAT
         "stale": theme.PHOSPHOR,     # needs a re-encode
         "tuned": theme.HEADROOM,     # has per-clip settings, up to date
         "default": theme.INK_FAINT,  # riding the kit defaults
@@ -800,6 +801,7 @@ class MainWindow(QMainWindow):
         self._job_argv = None
         self._job_lines = []
         self._all_queue = []
+        self._all_settings = None
         self._all_cancelled = False
 
         self.setWindowTitle("vidtune")
@@ -873,7 +875,11 @@ class MainWindow(QMainWindow):
         self.accept_button = QPushButton("Accept")
         self.accept_button.setProperty("primary", True)
         self.accept_button.setEnabled(False)
-        self.encode_all_button = QPushButton("Encode All Stale")
+        self.revert_button = QPushButton("Revert")
+        self.revert_button.setToolTip(
+            "discard this clip's unsaved edits - back to CONFIG.BAT")
+        self.revert_button.setEnabled(False)
+        self.encode_all_button = QPushButton("Encode Stale + Edited")
 
         actions_row = QHBoxLayout()
         actions_row.setSpacing(theme.GAP_ROW)
@@ -881,8 +887,9 @@ class MainWindow(QMainWindow):
         actions_row.addWidget(self.encode_button)
         actions_row.addSpacing(theme.GAP_ROW)
         actions_row.addWidget(self.accept_button)
+        actions_row.addWidget(self.revert_button)
         actions_row.addStretch(1)
-        # A bulk action over every stale clip, not part of tuning the
+        # A bulk action over every stale or edited clip, not part of tuning the
         # clip in front of you - held apart at the far end of the row.
         actions_row.addWidget(self.encode_all_button)
 
@@ -913,9 +920,11 @@ class MainWindow(QMainWindow):
         self.preview_button.clicked.connect(self.on_preview_segment)
         self.encode_button.clicked.connect(self.on_encode_full)
         self.accept_button.clicked.connect(self.on_accept)
+        self.revert_button.clicked.connect(self.on_revert)
         self.encode_all_button.clicked.connect(self.on_encode_all_stale)
         self.metrics_bar.cancel_requested.connect(self._on_cancel_requested)
         self.settings_panel.changed.connect(self._update_accept_enabled)
+        self.settings_panel.changed.connect(self._refresh_current_status)
         self.preview.cleared.connect(self._on_pane_cleared)
 
         self.clip_list.currentItemChanged.connect(self._on_current_item_changed)
@@ -1010,13 +1019,7 @@ class MainWindow(QMainWindow):
         self.clip_list.clear()
         try:
             for clip in self.clips:
-                tuned, stale = clip_state(clip, self.cfg, self.stamp)
-                if stale:
-                    status = "stale"
-                elif tuned:
-                    status = "tuned"
-                else:
-                    status = "default"
+                status = self._clip_status(clip)
                 # text() stays the plain "001  stale" data string; the
                 # two roles are what _ClipDelegate actually paints from.
                 item = QListWidgetItem(f"{clip.num3}  {status}")
@@ -1031,6 +1034,39 @@ class MainWindow(QMainWindow):
             self._banner.setText(str(exc))
             self._banner.setVisible(True)
             self._set_actions_enabled(False)
+
+    def _has_unsaved_edits(self, num3, settings=None):
+        """True when the clip's session settings would encode differently
+        from CONFIG.BAT, i.e. Encode Stale + Edited will re-encode and save it."""
+        if settings is None:
+            settings = self._current_settings(num3)
+        return self._argv_for_settings(settings) != \
+            settingsmodel.build_arg_vector(self.cfg, num3)
+
+    def _clip_status(self, clip):
+        """Rail status. "edited" outranks "stale": unsaved settings are
+        lost on close, and either way the clip is queued."""
+        tuned, stale = clip_state(clip, self.cfg, self.stamp)
+        if self._has_unsaved_edits(clip.num3):
+            return "edited"
+        if stale:
+            return "stale"
+        return "tuned" if tuned else "default"
+
+    def _refresh_current_status(self):
+        num3 = self._current_clip
+        clip = self._clip_by_num3(num3) if num3 is not None else None
+        if clip is None:
+            return
+        status = self._guarded(self._clip_status, clip)
+        if status is None:
+            return
+        for i in range(self.clip_list.count()):
+            item = self.clip_list.item(i)
+            if item.data(Qt.UserRole) == num3:
+                item.setText(f"{num3}  {status}")
+                item.setData(_ClipDelegate.STATUS_ROLE, status)
+                break
 
     def _on_current_item_changed(self, current, previous):
         if current is None:
@@ -1248,15 +1284,21 @@ class MainWindow(QMainWindow):
             self._update_accept_enabled()
         else:
             self.accept_button.setEnabled(False)
+            self.revert_button.setEnabled(False)
 
     def _update_accept_enabled(self):
+        """Also drives Revert: both follow the open clip's settings."""
         num3 = self._current_clip
         if num3 is None:
             self.accept_button.setEnabled(False)
+            self.revert_button.setEnabled(False)
             return
         argv = self._guarded(self.full_argv, num3)
         enabled = argv is not None and self.full_ok.get(num3) == argv
         self.accept_button.setEnabled(bool(enabled))
+        edited = argv is not None and self._job is None \
+            and self._guarded(self._has_unsaved_edits, num3)
+        self.revert_button.setEnabled(bool(edited))
 
     def _start_job(self, kind, num3, clip, output, argv):
         if self.encoder_argv is None:
@@ -1310,18 +1352,28 @@ class MainWindow(QMainWindow):
         self._advance_all_queue()
 
     def _stale_clips(self):
-        return [c for c in self.clips if clip_state(c, self.cfg, self.stamp)[1]]
+        """(clip, settings) for every clip stale against CONFIG.BAT or
+        carrying unaccepted session edits; settings snapshot at queue
+        start so panel edits mid-queue do not leak into it."""
+        queue = []
+        for c in self.clips:
+            settings = dict(self._current_settings(c.num3))
+            if self._has_unsaved_edits(c.num3, settings) \
+                    or clip_state(c, self.cfg, self.stamp)[1]:
+                queue.append((c, settings))
+        return queue
 
     def _advance_all_queue(self):
         if self._all_cancelled or not self._all_queue:
             self._all_queue = []
             self._set_actions_enabled(True)
             return
-        clip = self._all_queue.pop(0)
-        argv = self._guarded(settingsmodel.build_arg_vector, self.cfg, clip.num3)
+        clip, settings = self._all_queue.pop(0)
+        argv = self._guarded(self._argv_for_settings, settings)
         if argv is None:
             self._all_queue = []
             return
+        self._all_settings = settings
         self._start_job("all", clip.num3, clip, clip.vid, argv)
 
     def _on_cancel_requested(self):
@@ -1352,43 +1404,59 @@ class MainWindow(QMainWindow):
         clip = self._clip_by_num3(num3)
         if clip is None:
             return
-        settings = self._current_settings(num3)
-        dev = self._guarded(settingsmodel.deviations, settings, self.cfg)
-        if dev is None:
-            return
-        opts = " ".join(dev)
-        config_path = self.kit_root / "CONFIG.BAT"
-        try:
-            write_vidopts_line(config_path, num3, opts, expected_mtime=self.cfg_mtime)
-        except ConfigConflict:
-            choice = QMessageBox.warning(
-                self, "vidtune",
-                "CONFIG.BAT changed on disk since it was loaded - reload "
-                "and try Accept again?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if choice == QMessageBox.Yes:
-                self._reload_config()
-            return
-        except RuntimeError as exc:
-            QMessageBox.critical(self, "vidtune", str(exc))
-            return
-
-        # Sidecar args come from the SAVED config state (re-parsed after
-        # the write), not the live settings dict - this is what makes
-        # the sidecar hash match what a subsequent BUILD.BAT run would
-        # compute from CONFIG.BAT alone.
-        self.cfg = parse_config(config_path)
-        self.cfg_mtime = config_path.stat().st_mtime
-        saved_argv = self._guarded(settingsmodel.build_arg_vector, self.cfg, num3)
+        saved_argv = self._save_vidopts(num3, self._current_settings(num3), "Accept")
         if saved_argv is None:
             return
         shutil.copyfile(self.scratch_dir / f"full_{num3}.vid", clip.vid)
         write_sidecar(clip.sidecar, self.stamp or "", saved_argv)
 
-        self.kit_base = settingsmodel._kit_base(self.cfg)
         self.full_ok.pop(num3, None)
         self._populate_clip_list()
         self._update_accept_enabled()
+
+    def on_revert(self):
+        """Drops the open clip's unsaved edits, reloading its CONFIG.BAT
+        settings into the panel."""
+        num3 = self._current_clip
+        if num3 is None or self._job is not None:
+            return
+        settings = self._guarded(effective_settings, self.cfg, num3)
+        if settings is None:
+            return
+        self.session_edits.pop(num3, None)
+        self.settings_panel.set_settings(settings, self.kit_base)
+        self._refresh_current_status()
+        self._update_accept_enabled()
+
+    def _save_vidopts(self, num3, settings, action):
+        """Writes settings' deviations as VIDOPTS_NNN and returns the
+        argv re-read from the saved CONFIG.BAT, or None on failure."""
+        dev = self._guarded(settingsmodel.deviations, settings, self.cfg)
+        if dev is None:
+            return None
+        config_path = self.kit_root / "CONFIG.BAT"
+        try:
+            write_vidopts_line(config_path, num3, " ".join(dev),
+                               expected_mtime=self.cfg_mtime)
+        except ConfigConflict:
+            choice = QMessageBox.warning(
+                self, "vidtune",
+                "CONFIG.BAT changed on disk since it was loaded - reload "
+                f"and try {action} again?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if choice == QMessageBox.Yes:
+                self._reload_config()
+            return None
+        except RuntimeError as exc:
+            QMessageBox.critical(self, "vidtune", str(exc))
+            return None
+
+        # Sidecar args come from the SAVED config state, not the live
+        # settings, so the hash matches what BUILD.BAT computes.
+        self.cfg = parse_config(config_path)
+        self.cfg_mtime = config_path.stat().st_mtime
+        self.kit_base = settingsmodel._kit_base(self.cfg)
+        return self._guarded(settingsmodel.build_arg_vector, self.cfg, num3)
 
     def _reload_config(self):
         config_path = self.kit_root / "CONFIG.BAT"
@@ -1454,6 +1522,12 @@ class MainWindow(QMainWindow):
 
     def _on_all_success(self, num3, argv, summary):
         clip = self._clip_by_num3(num3)
+        # Unaccepted edits are saved too, else BUILD.BAT re-encodes the clip.
+        if argv != self._guarded(settingsmodel.build_arg_vector, self.cfg, num3):
+            argv = self._save_vidopts(num3, self._all_settings, "Encode Stale + Edited")
+            if argv is None:
+                self._all_queue = []
+                return
         write_sidecar(clip.sidecar, self.stamp or "", argv)
         self.metrics_bar.update_from(summary, num3 in self.pinned_budgets, num3)
         self.metrics_bar.set_status("")

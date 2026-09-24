@@ -44,6 +44,14 @@ game behaves, how it builds, or what the kit gives you, it is here.
   mode (37) and a speed (38), all latched by the next `EXTERN n 30`.
   Arming clears the field first; `EXTERN 1 31` stops and clears. The
   defaults reproduce the old bottom-row ticker.
+- **VIDTUNE bulk encode keeps your settings.** Encode All Stale used
+  the settings saved in `CONFIG.BAT` and ignored changes you had not
+  accepted, so a batch of newly tuned clips encoded at the defaults.
+  The button, now Encode Stale + Edited, encodes each clip with the
+  settings you gave it and saves them to `CONFIG.BAT` as Accept does.
+  A clip with unsaved changes shows as `edited` in the clip list, and
+  a new Revert button puts the open clip back to its saved settings.
+  See [Video](video.md#9-encoding-tools).
 
 ## 0.10.0 - 18 September 2026
 
