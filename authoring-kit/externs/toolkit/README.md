@@ -16,11 +16,11 @@ NUMBER, and fns 78 to 81 take a value - a location, a noun word id or an
 attribute bit. Fn 84 takes a window number.
 
 Two of them arm module state, and it is not flag state: fn 76's picker
-pool (see Random without repeat below) and fn 84's print target. The
-module has no hook and no `LOAD` logic, so neither a `LOAD` nor a
-`RESTART` resets them - both survive as bank state, stale against
-whatever the flags now say. Re-arm both wherever your game
-re-establishes its own state.
+pool (see Random without repeat below) and fn 84's print target. Both
+live in the extern state area, so `LOAD` and `RAMLOAD` now restore them
+along with the flags; `RESTART` does not reset them, matching the area's
+own lifetime. Re-arm both wherever your game re-establishes its own
+state from a fresh start.
 
 ## Calling convention
 
@@ -188,11 +188,11 @@ both on purpose:
   the cycle silently; a condition that never fails cannot tell a game
   the pool ran out, and a game that wants the old behaviour writes the
   `EXTERN n 76` above, which is one line and visible.
-- The used-mask lives in the module, not in flags the author names, so
-  it is NOT part of a SAVE. A LOAD restores the flags and leaves the
-  picker untouched: the same pool size and the same used-mask as before,
-  now stale against the restored game. Re-arm with `EXTERN n 76`
-  wherever your game already re-establishes state after a LOAD.
+- The used-mask lives in the extern state area, not in flags the author
+  names. A LOAD (or RAMLOAD) now restores it along with the flags: the
+  pool size and used-mask come back exactly as they were saved, not as
+  whatever they happened to be at load time. Re-arm with `EXTERN n 76`
+  wherever your game establishes a fresh pool on a new game.
 
 ## Time formats
 

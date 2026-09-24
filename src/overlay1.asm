@@ -2170,6 +2170,25 @@ sav_write_v2:
     ld a, b
     or c                        ; zero only when BC was 1
     jp nz, .errclose
+    ; v3 tail: length byte, then the area - same call shape as above
+    ld a, (savHandle)
+    ld ix, savAreaLen
+    ld bc, 1
+    call esx_fwrite
+    jp c, .errclose
+    dec bc
+    ld a, b
+    or c
+    jp nz, .errclose
+    ld a, (savHandle)
+    ld ix, XBN_STATE
+    ld bc, XBN_STATE_LEN
+    call esx_fwrite
+    jp c, .errclose
+    ld a, c
+    sub XBN_STATE_LEN
+    or b                        ; zero only when BC == XBN_STATE_LEN
+    jp nz, .errclose
     ld a, (savHandle)
     call esx_fclose
     xor a
@@ -2244,6 +2263,10 @@ sav_read_v2:
     ld bc, 1
     call esx_fread
     jp c, .errclose
+    push bc                      ; probe count: 0 = v1 file
+    call sav_area_read           ; v3 tail or zeros -> savAreaStage
+    pop bc
+    jp c, .errclose
     ld a, b
     or c
     jp z, .v1                    ; EOF at exactly N bytes: v1 file
@@ -2255,6 +2278,10 @@ sav_read_v2:
     ; savLocs above, hop to the shared overlay0 entry ---
     ld a, (savHandle)
     call esx_fclose
+    ld hl, savAreaStage+1         ; commit the area now: XBN_STATE is
+    ld de, XBN_STATE              ; resident and the switch keeps it. A
+    ld bc, XBN_STATE_LEN          ; failed probe leaves it restored while
+    ldir                          ; the flags are not (documented)
     ld hl, xpart_load_entry
     push hl
     ld hl, savStage
@@ -2281,6 +2308,10 @@ sav_read_v2:
     ld de, flags
     ld bc, 256
     ldir
+    ld hl, savAreaStage+1
+    ld de, XBN_STATE
+    ld bc, XBN_STATE_LEN
+    ldir
     call sav_scatter_locs         ; resident (file.asm); uses LIVE
                                    ; numObj, which the check just above
                                    ; proved equals the file's own count
@@ -2290,6 +2321,45 @@ sav_read_v2:
     ld a, (savHandle)
     call esx_fclose
 .ioerr:
+    scf
+    ret
+
+; Reads the v3 tail (length byte + area) into savAreaStage, zeroed first
+; so a v1/v2 file restores zeros. A declared length above this build's
+; area reads only what fits. CF set = read error or short read.
+; Corrupts AF, BC, DE, HL, IX.
+sav_area_read:
+    ld hl, savAreaStage
+    ld de, savAreaStage+1
+    ld bc, XBN_STATE_LEN
+    ld (hl), 0
+    ldir
+    ld a, (savHandle)
+    ld ix, savAreaStage
+    ld bc, 1
+    call esx_fread
+    ret c
+    ld a, b
+    or c
+    ret z                        ; EOF: no tail, CF clear
+    ld a, (savAreaStage)
+    or a
+    ret z
+    cp XBN_STATE_LEN+1
+    jr c, .lenok
+    ld a, XBN_STATE_LEN
+.lenok:
+    ld c, a
+    ld b, 0
+    push bc
+    ld a, (savHandle)
+    ld ix, savAreaStage+1
+    call esx_fread
+    pop hl                       ; HL = requested
+    ret c
+    or a
+    sbc hl, bc                   ; zero only when BC == requested
+    ret z
     scf
     ret
 
@@ -2320,6 +2390,10 @@ h_ramsave:                      ; 62: flags + object locations -> buffer
                                   ; cross-part RAMLOAD's swapObjCount
                                   ; (xpart_load_entry, overlay0.asm)
     call sav_gather_to           ; DE = ramSaveBuf+256 from the ldir above
+    ld hl, XBN_STATE
+    ld de, ramSaveArea
+    ld bc, XBN_STATE_LEN
+    ldir
 .mark:
     ld a, (curPart)
     ld (ramSavePart), a          ; SP11 T4: which part this snapshot
@@ -2349,6 +2423,10 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     ld b, 0
     inc bc                      ; BC = arg1 + 1
     ldir
+    ld hl, ramSaveArea           ; unconditional, whatever arg1 says
+    ld de, XBN_STATE
+    ld bc, XBN_STATE_LEN
+    ldir
     xor a                       ; same-part RAMLOAD clears the transient
     call gfx_drawtarget_clear   ; GFX 87/4 draw-target state; the layer
                                 ; order is game-owned and NOT cleared -
@@ -2363,6 +2441,10 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     ; same shared overlay0 entry sav_read_v2's cross-part path uses
     ; (xpart_load_entry, overlay0.asm), staged from ramSaveBuf instead
     ; of savStage/savLocs.
+    ld hl, ramSaveArea             ; commit the area now, same reasoning
+    ld de, XBN_STATE               ; as sav_read_v2's cross-part branch
+    ld bc, XBN_STATE_LEN
+    ldir
     ld hl, xpart_load_entry
     push hl
     ld hl, ramSaveBuf

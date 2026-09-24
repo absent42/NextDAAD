@@ -120,6 +120,13 @@ XBN_SCRATCH equ xbn_end
         ASSERT XBN_SCRATCH + XBN_SCRATCH_FREE <= $10000, scratch RAM claims run past the mapped 16K bank ($FFFF)
     ENDM
 
+; Extern state area claims (XBN_STATE, saved with the game). Membership
+; rule: only state that must agree with the restored flags.
+;
+; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
+XBN_STATE_FREE  equ 10           ; next unclaimed offset - bump when you add a claim
+    ASSERT XBN_STATE_FREE <= XBN_STATE_LEN
+
 ; Dispatch chain shared by all.asm and xbnbuild's generated source - one
 ; definition. Rebuilds the entry contract (A=B=param1, C=fn,
 ; HL=flags+param1, DE=objTable+param1*6, IX=flags base) per module call.

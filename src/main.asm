@@ -91,9 +91,10 @@ main:
     call ovl_map_page
     call xms_boot_reset
     call xbn_boot_load
-    call xbn_api_init           ; copy the frozen SVC table to XBN_API;
-                                ; resident (Task 6), so the OVL0_PAGE
-                                ; mapping above is incidental, not required
+    call xbn_api_init           ; copy the frozen SVC table to XBN_API and
+                                ; zero the extern state area (falls through
+                                ; to xbn_state_clear); resident (Task 6), so
+                                ; the OVL0_PAGE mapping above is incidental
     ; SP7 boot autoplay: probe GAME.AKY/GAME.SFB (loaders live in
     ; overlay1; the dispatcher-owned slot 7 is free at boot). Fail-
     ; silent when absent - same esxDOS discipline as every loader.
@@ -566,7 +567,22 @@ xbn_api_init:                    ; boot; table copy is resident-to-resident,
     ld de, XBN_API
     ld bc, XBN_API_ROWS*3
     ldir
+    ; falls through: boot also zeroes the extern state area here
+
+; Boot only: RESTART and part switches keep the extern state area.
+xbn_state_clear:
+    ld hl, XBN_STATE
+    ld de, XBN_STATE+1
+    ld bc, XBN_STATE_LEN-1
+    ld (hl), 0
+    ldir
     ret
+
+savAreaLen:   db XBN_STATE_LEN   ; v3 save tail: length byte written
+                                 ; before the area (overlay1.asm sav_write_v2)
+savAreaStage: ds XBN_STATE_LEN+1 ; sav_area_read (overlay1.asm): length + area
+ramSaveArea:  ds XBN_STATE_LEN   ; RAMSAVE/RAMLOAD carry of the state area,
+                                 ; beside ramSaveBuf (file.asm)
 
 ; Format 3 line hook. Called by h_parse (.got) after the editor returns.
 ; Out: CF from the hook; CF clear when no hook. Reuses extSaved: PARSE

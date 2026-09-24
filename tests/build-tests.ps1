@@ -3414,6 +3414,17 @@ if ($Xbn) {
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\GAME.XBN -> sd\$legName\GAME.XBN"
+        # XLD2: a v2 save file (no state-area tail), committed and staged
+        # unmodified - regenerate with tests\xbn\mkv2sav.py if the
+        # fixture's object list changes.
+        $v2sav = "$root\tests\xbn\V2.SAV"
+        if (Test-Path $v2sav) {
+            Copy-Item $v2sav "$leg\V2.SAV" -Force
+            "staged tests\xbn\V2.SAV -> sd\$legName\V2.SAV"
+        }
+        else {
+            "WARNING: tests\xbn\V2.SAV missing - run tests\xbn\mkv2sav.py, XLD2 will fail to load"
+        }
         # XPAL needs a picture on screen to read back. CSpect-lock: see
         # header.
         $palArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"

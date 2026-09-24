@@ -413,7 +413,7 @@ tmpsec:  db 0
 ; tgtWin 0 = none (the author brackets prints with WINDOW). tgtWin 1-7 =
 ; the four printing fns bracket their own output: print_enter selects it
 ; and parks the replaced window, print_leave restores it - and so flushes.
-tgtWin:  db 0
+tgtWin equ XBN_STATE+9           ; state area (saved with the game)
 prevWin: db 0
 
 ; fn 84 - EXTERN w 84. p1 1-7 sets the target; p1 = 0 or p1 > 7 clears it
@@ -678,8 +678,8 @@ owf16:
     ret
 
 ; --- Random without repeat (fns 76-77) --------------------------------
-pickPool: db 0                   ; pool size 1-64; 0 = not armed
-pickUsed: ds 8                   ; 64-bit used bitmap
+pickPool equ XBN_STATE+0         ; state area (saved with the game): pool size 1-64; 0 = not armed
+pickUsed equ XBN_STATE+1         ; 8-byte used bitmap, 64 bits
 
 ; A = index 0-63 -> HL = its pickUsed byte, A = its mask within that
 ; byte. Corrupts E, F; preserves BC.

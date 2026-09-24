@@ -40,6 +40,14 @@ OBJ_SIZE        equ 6           ; +0 location, +1 weight/attrs, +2/+3
                                 ; extended attrs, +4 noun, +5 adjective
 XBN_NUMOBJ      equ $A900       ; object count byte (frozen)
 
+XBN_STATE       equ $BF80       ; 128-byte extern state area, FROZEN: saved
+XBN_STATE_LEN   equ 128         ; with the game (SAVE, LOAD, RAMSAVE,
+                                 ; RAMLOAD), zeroed at boot only. Claim
+                                 ; offsets through xbnmod.inc's
+                                 ; XBN_STATE_FREE. For state that must
+                                 ; agree with the flags after a LOAD;
+                                 ; session configuration stays bank state.
+
 ; Service jump table (frozen address, append-only; call directly)
 ; ISR-safe rows may be called from the #int hook; every other row is
 ; foreground-only.

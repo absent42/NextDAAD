@@ -220,6 +220,11 @@ XBN_API         equ $BEC8       ; FROZEN from first release with XBN
                                 ; support - see xbn.inc; append-only
 XBN_API_ROWS    equ 20
 
+XBN_STATE       equ $BF80       ; FROZEN: 128-byte extern state area,
+XBN_STATE_LEN   equ 128         ; saved after the part byte (save v3),
+                                ; carried by RAMSAVE; zeroed at boot only
+    ASSERT XBN_API + 61*3 <= XBN_STATE   ; service table ceiling: 61 rows
+
 ; --- Error border colours ---
 ERR_BORDER_MISSING  equ 2   ; red
 ERR_BORDER_OVERSIZE equ 3   ; magenta

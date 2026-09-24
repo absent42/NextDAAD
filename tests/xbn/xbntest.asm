@@ -26,7 +26,7 @@ ext_main:
     ld (XBN_FLAGS+205), a       ; IX low byte - expect $00
     ld a, c
     cp 21
-    jr z, .fn21
+    jp z, .fn21                  ; jr went out of range once fn47/48 grew the chain
     cp 22
     jr z, .fn22
     cp 23
@@ -65,6 +65,10 @@ ext_main:
     jp z, pending_probe
     cp 46
     jp z, voc_probe
+    cp 47
+    jp z, state_w
+    cp 48
+    jp z, state_r
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -740,6 +744,18 @@ out_probe:
     ld (XBN_FLAGS+135), a
     ld a, c
     ld (XBN_FLAGS+136), a
+    ret
+
+; fn 47: XBN_STATE[0] = B. fn 48: 132 = XBN_STATE[0].
+state_w:
+    ld a, b
+    ld (XBN_STATE), a
+    or a
+    ret
+state_r:
+    ld a, (XBN_STATE)
+    ld (XBN_FLAGS+132), a
+    or a
     ret
 
 xbn_end:

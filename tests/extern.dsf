@@ -292,11 +292,16 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 34-39 and 42-46 exist: XREG XCAL XTIK XSVC XFIO
+;     where fns 20-29, 34-39 and 42-48 exist: XREG XCAL XTIK XSVC XFIO
 ;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB
-;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC (fns 26-29, 34-39 and 42-46
-;     exist only in xbntest.asm) (on any other leg these print unwritten
-;     flags - zeros)
+;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR (fns 26-29,
+;     34-39 and 42-48 exist only in xbntest.asm) (on any other leg these
+;     print unwritten flags - zeros)
+;   XLOD XRMS XRML XLD2: SAVE/LOAD/RAMSAVE/RAMLOAD are resident
+;     interpreter condacts, meaningful on any leg with a filesystem, but
+;     XSTW/XSTZ/XSTR (fn 47/48, fixture-only) make the sequence prove the
+;     extern state area round-trips; typed elsewhere they just exercise
+;     save/load without the state check.
 ;   XHKZ XHKS XSWL: format 3 hook probes, fixture leg only. XSWL is a
 ;     real verb the fixture's line hook swallows; on the ticker leg
 ;     (format 2, no hook) it prints SWALLOW FAILED, the negative control.
@@ -437,6 +442,13 @@ XINL   186 verb
 XVOC   187 verb
 XHKS   188 verb
 XHKZ   189 verb
+XSTW   190 verb
+XSTZ   191 verb
+XSTR   192 verb
+XLOD   193 verb
+XRMS   194 verb
+XRML   195 verb
+XLD2   196 verb
 XSWL   205 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
@@ -611,19 +623,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 206 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3CE (lsb 206, msb 195) - read
+> XCAL _   CALL 217 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3D9 (lsb 217, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C3C9 by Task 2's fn 46 dispatch code.
+                             ; from $C3CE by the state-area fn 47/48 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 37 230         ; Task 4's owed check: tail_marker, address
-                             ; $E625 (lsb 37, msb 230) - the SECOND 8K page
+           CALL 48 230         ; Task 4's owed check: tail_marker, address
+                             ; $E630 (lsb 48, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E620 by Task 2's fn 46 dispatch code.
+                             ; from $E625 by the state-area fn 47/48 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -1934,6 +1946,27 @@ CLOAK   22 noun
            PRINT   238
            DONE
 > XRTD _   MES     "stamp failed"
+           DONE
+; XSTW/XSTZ/XSTR - extern state area (fixture fn 47/48). XLOD/XRMS/XRML/
+;   XLD2 - save format v3 and RAMSAVE/RAMLOAD carriage. XLOD and XLD2
+;   both answer a LOAD filename prompt; the harness types the answer as
+;   its own typed "verb" right after (T for the v3 file, V2 for the
+;   pre-staged v2 fixture tests\xbn\V2.SAV).
+> XSTW _   EXTERN  90 47      ; state[0] = 90
+           DONE
+> XSTZ _   EXTERN  0 47       ; state[0] = 0
+           DONE
+> XSTR _   EXTERN  0 48
+           MES     "state "
+           PRINT   132
+           DONE
+> XLOD _   LOAD    0          ; answer the prompt with T
+           DONE
+> XRMS _   RAMSAVE
+           DONE
+> XRML _   RAMLOAD 255
+           DONE
+> XLD2 _   LOAD    0          ; answer with V2: the harness-staged v2 file
            DONE
 /PRO 6
 ; ---- one-shot init ----
