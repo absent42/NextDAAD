@@ -688,6 +688,9 @@ CLOAK   22 noun
 > XINJ _   EXTERN  1 44       ; parks "XLIN" with echo: next PARSE 0 runs it
            MES     "parked "
            PRINT   126       ; expect 0
+           EXTERN  0 44      ; B=0: "XLIN" no echo, refused - a line is
+                             ; already parked; must not touch injOpts
+           PRINT   126       ; expect 1
            DONE
 > XLIN _   MES     "INJECTED"
            DONE

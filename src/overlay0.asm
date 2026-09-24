@@ -2038,6 +2038,7 @@ h_synonym:                      ; 36
 h_newtext:                      ; 92: discard pending input orders so a
     xor a                       ; rejected order's compound tail dies
     ld (inpPending), a          ; (inpPending is resident)
+    ld (injPending), a          ; a parked inject is a pending order too
     ret
 h_extern:                       ; 61: fn C via vector, A = B on entry
     ld a, (isDone)              ; cprops $C2: EXTERN stamps done here, not

@@ -806,7 +806,7 @@ svc_getpending:
 ; A = $FF: over INP_MAX or a line already parked; nothing written.
 ; Corrupts AF, BC, DE, HL.
 svc_inject:
-    ld (injOpts), a
+    ld e, a                       ; stash options; svc_strlen corrupts AF, HL only
     ld a, (injPending)
     or a
     jr nz, .refuse
@@ -816,6 +816,8 @@ svc_inject:
     ld a, c
     cp INP_MAX+1
     jr nc, .refuse                ; 128 = longer than INP_MAX
+    ld a, e
+    ld (injOpts), a               ; only written once the call is accepted
     ld de, inpLine
     inc bc                        ; text plus NUL
     ldir

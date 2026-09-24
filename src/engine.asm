@@ -663,9 +663,9 @@ eng_doall_next:
     ;     mutation here"); unitTests tests_condacts_v3.c D-CANCEL-2d
     ;     regression-tests against exactly that merge (a NOTDONE here
     ;     made a successful DROP ALL answer "I can't do that").
-    ; NEWTEXT is h_newtext's body inlined (clear inpPending, a resident
-    ; cell - overlay0.asm:1947-1950); h_newtext itself lives in
-    ; overlay0 and cannot be called from here.
+    ; NEWTEXT is h_newtext's body inlined (clear inpPending and
+    ; injPending, both resident cells - overlay0.asm); h_newtext itself
+    ; lives in overlay0 and cannot be called from here.
     ; Flag 53 bit 0 needs no action here: caso A never reaches .take's
     ; clear, so the entry-time SET from h_doall simply stands.
     xor a
@@ -677,6 +677,7 @@ eng_doall_next:
     jp nz, eng_pop_tail         ; caso B: complete as DONE, as before
     xor a
     ld (inpPending), a          ; caso A: NEWTEXT
+    ld (injPending), a          ; a parked inject is a pending order too
     jp eng_exit_table           ; then NOTDONE (A = 0) and pop
 
 ; --- condact properties: bit 7 = action, bit 6 = no done, argc = 0-1 --

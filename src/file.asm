@@ -485,6 +485,7 @@ savStage:   ds 256               ; sav_read_v2 (overlay1.asm) staging:
                                  ; overlap. Contract: the returned pointer
                                  ; is valid until the next SVC_GETMSG call
                                  ; OR a save/load.
+                                 ; also sav_prompt's inpLast stash across the filename edit (overlay1.asm)
 savHandle:  db 0
 savLocs:    ds 255
 ramSaveBuf: ds 512               ; RAMSAVE: flags[256] + locs[<=255]
