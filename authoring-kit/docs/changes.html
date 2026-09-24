@@ -60,6 +60,28 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   A clip with unsaved changes shows as <code>edited</code> in the clip list, and
   a new Revert button puts the open clip back to its saved settings.
   See <a href="video.html#9-encoding-tools">Video</a>.</li>
+<li><strong>Externs can read and drive the parser.</strong> Four new services let your
+  extern see the line the player typed this turn, read text still
+  queued after "and", inject a line as if the player had typed it, and
+  look up a word in your database's own vocabulary - enough to build a
+  name-entry prompt, a password check, a command alias, or a
+  walkthrough player that types for the player. See
+  <a href="externs.html#services">Services</a>.</li>
+<li><strong>Externs can watch every line and every printed character.</strong> A new
+  XBN header format, 3, adds a line hook, called before each line is
+  parsed, and an output hook, called on every character the game
+  prints; either can be left unused. See
+  <a href="externs.html#the-line-hook">The line hook</a> and
+  <a href="externs.html#the-output-hook">The output hook</a>.</li>
+<li><strong>A 128-byte extern state area now travels with your save.</strong> <code>SAVE</code>,
+  <code>LOAD</code>, <code>RAMSAVE</code> and <code>RAMLOAD</code> carry it the same way they carry your
+  flags, so an extern no longer needs a flag of its own just to survive
+  a <code>LOAD</code> - old saves still load, with the area zeroed. See
+  <a href="externs.html#the-extern-state-area">The extern state area</a>.</li>
+<li><strong>New extern: transcript.</strong> Records every command typed, and
+  optionally everything the game prints, to a file on the card - a
+  walkthrough recorder, or a bug report that writes itself. See
+  <a href="externs.html#the-extern-collection">the extern collection</a>.</li>
 </ul>
 <h2 id="0100-18-september-2026">0.10.0 - 18 September 2026</h2>
 <ul>

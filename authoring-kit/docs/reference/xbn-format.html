@@ -35,7 +35,7 @@ format itself.</p>
 <td>3</td>
 <td>1</td>
 <td>version</td>
-<td>Format version - <code>2</code></td>
+<td>Format version - <code>2</code> or <code>3</code></td>
 </tr>
 <tr>
 <td>4</td>
@@ -58,20 +58,25 @@ format itself.</p>
 <tr>
 <td>10</td>
 <td>4</td>
-<td>reserved</td>
-<td>Must be zero. A later format may make one of these bytes load-bearing; a version 2 loader rejects any nonzero value so that change can land without another version cliff</td>
+<td>reserved / hooks</td>
+<td>Format 2: must be zero. Format 3: two 2-byte fields instead - offsets 10-11 lineEntry, 12-13 outEntry, each <code>0</code> (unused) or an address strictly inside the binary, validated like extEntry</td>
 </tr>
 </tbody>
 </table>
-<p><code>xbn.inc</code>'s <code>XBN_HEADER</code> macro emits this for you from two labels (or
-<code>0</code>), reserved bytes included; you never build it by hand. Collection
-modules use <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code> instead, which emits the same
-header followed by the <code>CALL</code> slot table at <code>$C00E</code> (see
-<a href="../externs.html#one-binary-any-subset">Externs</a>).</p>
+<p>The header is fourteen bytes either way - format 3 does not grow it, it
+just gives the four bytes format 2 reserved a meaning. <code>xbn.inc</code>'s
+<code>XBN_HEADER</code> macro emits the format 2 layout from two labels (or <code>0</code>);
+<code>XBN_HEADER3</code> emits the format 3 layout from four. Collection modules
+use <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code> or <code>XBN_BEGIN3</code> instead, which emit the
+same header followed by the <code>CALL</code> slot table at <code>$C00E</code> (see
+<a href="../externs.html#one-binary-any-subset">Externs</a>). You never build either
+header by hand.</p>
 <p>A version 1 binary (ten-byte header, version byte <code>1</code>) is rejected by
 this interpreter and the game plays with externs off: rebuild it against
 the current <code>xbn.inc</code>. The other direction is equally closed - an
-interpreter that predates format 2 rejects a version 2 file.</p>
+interpreter that predates format 2 rejects a version 2 file, and one
+that predates format 3 (this release) rejects a version 3 file the same
+way, whatever its lineEntry and outEntry declare.</p>
 <h2 id="validation">Validation</h2>
 <p>The loader checks a <code>GAME.XBN</code> it finds at boot, in this order, and
 rejects the file - freeing anything it had already allocated and
@@ -82,8 +87,11 @@ fails:</p>
 <li>The file holds at least the fourteen header bytes (a shorter file is
    truncated).</li>
 <li>The magic bytes read exactly <code>"XBN"</code>.</li>
-<li>The version byte reads <code>2</code>.</li>
-<li>The four reserved bytes at offsets 10-13 are all zero.</li>
+<li>The version byte reads <code>2</code> or <code>3</code>.</li>
+<li>Format 2: the four reserved bytes at offsets 10-13 are all zero.
+   Format 3: offsets 10-11 (lineEntry) and 12-13 (outEntry) are each
+   validated like extEntry - <code>0</code>, or a genuine address strictly inside
+   the loaded binary's extent.</li>
 <li>The size field is no larger than <code>$4000</code>.</li>
 <li>The size field matches the number of bytes actually read from the
    file - a size field that disagrees with the real file length is
@@ -112,7 +120,7 @@ maximum-size binary: it is loaded and present, but it is not a valid
 <code>CALL</code> target or entry-point address in its own right, since nothing
 can address a location past <code>$FFFF</code> to call into.</p>
 <h2 id="service-table">Service table</h2>
-<p>A fixed jump table of sixteen three-byte <code>JP</code> instructions at <code>XBN_API</code>
+<p>A fixed jump table of twenty three-byte <code>JP</code> instructions at <code>XBN_API</code>
 (<code>$BEC8</code>), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -179,7 +187,7 @@ tables.</p>
 <td>5</td>
 <td><code>SVC_FWRITE</code></td>
 <td>A = handle, IX = buffer, BC = length</td>
-<td>CF set + A = error, on failure</td>
+<td>BC = bytes written; CF set + A = error, on failure</td>
 <td>AF, BC, DE, HL, IX, IY</td>
 <td>no</td>
 </tr>
@@ -263,6 +271,38 @@ tables.</p>
 <td>AF, BC, DE, HL, IX, IY</td>
 <td>no</td>
 </tr>
+<tr>
+<td>16</td>
+<td><code>SVC_GETLINE</code></td>
+<td>-</td>
+<td>HL = ASCIIZ line typed this turn (resident, read-only), BC = length; CF set = no non-empty line submitted this turn (HL then holds whatever the recall buffer holds)</td>
+<td>AF, BC, HL</td>
+<td>no</td>
+</tr>
+<tr>
+<td>17</td>
+<td><code>SVC_GETPENDING</code></td>
+<td>-</td>
+<td>HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length; CF clear</td>
+<td>AF, BC, HL</td>
+<td>no</td>
+</tr>
+<tr>
+<td>18</td>
+<td><code>SVC_INJECT</code></td>
+<td>HL = ASCIIZ text (your own bank is fine), A = options: bit 0 echo it as typed</td>
+<td>CF set + A = <code>$FF</code> on refusal (over 127 characters, or a line already parked); nothing is written on refusal</td>
+<td>AF, BC, DE, HL</td>
+<td>no</td>
+</tr>
+<tr>
+<td>19</td>
+<td><code>SVC_VOCFIND</code></td>
+<td>HL = ASCIIZ word (any case, first five characters count)</td>
+<td>D = word id, E = type, CF clear; CF set = not in the vocabulary</td>
+<td>AF, BC, DE, HL</td>
+<td>no</td>
+</tr>
 </tbody>
 </table>
 <p>Error convention throughout is esxDOS style: carry flag set, error code
@@ -281,6 +321,10 @@ call or the next save/load - see <a href="../externs.html#services">Externs</a>.
 <p><code>SVC_RANDOM</code> draws from the same stream as <code>CHANCE</code> and <code>RANDOM</code>. A draw
 from the hook consumes that stream at a time the game cannot predict, so
 a game that needs reproducible runs must not draw from the hook.</p>
+<p><code>SVC_VOCFIND</code> is foreground-only like most of rows 1-19, but the rule is
+stricter than usual for it: never call it from the output hook either,
+even though the output hook is not the <code>#int</code> hook. The lookup reuses
+shared resident state that a print already in flight is also using.</p>
 <h2 id="frozen-data-anchors">Frozen data anchors</h2>
 <p>Fixed addresses <code>xbn.inc</code> binds symbols to, none of which move between
 releases:</p>
@@ -318,10 +362,16 @@ releases:</p>
 <td><code>$BEC8</code></td>
 <td>Base of the service jump table</td>
 </tr>
+<tr>
+<td><code>XBN_STATE</code></td>
+<td><code>$BF80</code></td>
+<td>Base of the 128-byte extern state area (<code>XBN_STATE_LEN</code>): saved and restored with the game (<code>SAVE</code>, <code>LOAD</code>, <code>RAMSAVE</code>, <code>RAMLOAD</code>), zeroed at boot only. Claim offsets through <code>xbnmod.inc</code>'s <code>XBN_STATE_FREE</code> chain - see <a href="../externs.html#the-extern-state-area">Externs</a></td>
+</tr>
 </tbody>
 </table>
-<p><code>XBN_API</code> grew to fifteen rows in format 2; rows 0-9 kept their
-addresses and signatures.</p>
+<p><code>XBN_API</code> grew to fifteen rows in format 2, to sixteen at API version 3
+(<code>SVC_PAIR</code>), and to twenty at format 3 (rows 16-19); rows 0-9 kept
+their addresses and signatures throughout.</p>
 <h2 id="limits">Limits</h2>
 <ul>
 <li><strong>16384 bytes (<code>$4000</code>) maximum</strong>, header included, for the whole

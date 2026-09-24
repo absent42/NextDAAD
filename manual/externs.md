@@ -401,9 +401,74 @@ own first and return immediately when there is nothing to do - the
 ticker example's `int` hook is one load-and-test when idle, and that
 idiom is worth copying directly.
 
+## The line hook
+
+A format 3 `GAME.XBN` can name a fourth entry point, called once for
+every line the player submits, after it leaves the editor and before
+the echo or the parse. Declare it with `xbn.inc`'s `XBN_HEADER3` macro
+(or `xbnmod.inc`'s `XBN_BEGIN3` in a collection module) in place of the
+format 2 version, passing `0` for either new hook you do not need - see
+[XBN format](reference/xbn-format.md#header).
+
+Entry: HL = the typed line (resident, writable, ASCIIZ, up to 127
+characters), B = its length, IX = the flags base, exactly as for
+`EXTERN`. The NUL is the truth of the line's length; B is a convenience
+the interpreter recomputes before every module in a collection, so
+trust the NUL over B if your own rewrite changed the length.
+
+Return with a carry flag verdict: CLEAR continues with the line - your
+own rewrite included, if you changed the bytes at HL - into the
+ordinary echo and parse. SET consumes the line silently: the
+interpreter re-prompts, nothing is parsed, the each-turn process does
+not run, and the turn counter does not advance.
+
+The hook is NOT called for a timeout exit, for an injected line
+(`SVC_INJECT`), or for a `SAVE`/`LOAD` filename prompt.
+
+It runs in the foreground, so any service is fair game here - this is
+where a module doing file IO belongs. The transcript module flushes to
+the card from this hook, once per turn, before that turn's response.
+
+## The output hook
+
+A format 3 `GAME.XBN` can name a fifth entry point, called once for
+every character the interpreter is about to print.
+
+Entry: C = the character about to print (`$0D` for a newline), IX =
+the flags base. There is no return contract - the hook only watches;
+its carry flag on return is ignored.
+
+What it sees: decoded message text, `PRINT` digits, object names
+already substituted for `_`/`@`, `NEWLINE`, and the flag 49 reprint of
+the typed line - the same bytes that land on the tilemap from ordinary
+game text. What it never sees: the editor's own keystroke echo while
+the player is typing, the `More...` prompt, the newlines the word
+wrapper inserts to fit a window's width (so a recording taken this way
+is width-independent), or the charset-shift bytes `$0E`/`$0F`, `$0B`
+(`CLS`) or `$0C` - none of those reach the hook. An accent glyph
+(16-31) arrives as its raw byte, with no shift context around it.
+
+The hook must call NO service at all. `SVC_GETMSG` and `SVC_WINDOW`
+share state with the print already in flight, and `SVC_PUTCHAR` or
+`SVC_PUTS` would recurse straight back into the print path that is
+calling you. It must preserve the alternate register set (AF', BC',
+DE', HL') - the trampoline does not save it for you - and it should be
+tiny: it runs once per character, on every character the game ever
+prints.
+
+### Hooks in a collection
+
+A collection binary has exactly one lineEntry and one outEntry in its
+header, whatever the number of modules built in - `xbnmod.inc` chains
+them for you (`XBN_LINE_ENTER`/`XBN_LINE_CALL`/`XBN_LINE_END` for the
+line hook, `XBN_OUT_CALL` for the output hook). The first module whose
+line hook returns carry set ends the chain for that line; modules after
+it are skipped. Every module in a collection still needs an `int`
+entry, even if it is only a `ret` - the chain macros assume one.
+
 ## Services
 
-The interpreter exposes sixteen small routines through a fixed jump
+The interpreter exposes twenty small routines through a fixed jump
 table at a frozen address, `XBN_API` (`$BEC8`). `xbn.inc` binds a symbol
 to each row, so you call them by name:
 
@@ -414,7 +479,7 @@ to each row, so you call them by name:
 | 2 | `SVC_PUTS` | HL = ASCIIZ string (may live in your own bank) | - | no |
 | 3 | `SVC_FOPEN` | IX = ASCIIZ filename, B = mode | A = handle, or CF set + A = error | no |
 | 4 | `SVC_FREAD` | A = handle, IX = buffer, BC = length | BC = bytes read, or CF set + A = error | no |
-| 5 | `SVC_FWRITE` | A = handle, IX = buffer, BC = length | CF set + A = error, on failure | no |
+| 5 | `SVC_FWRITE` | A = handle, IX = buffer, BC = length | BC = bytes written; CF set + A = error, on failure | no |
 | 6 | `SVC_FSEEK` | A = handle, BCDE = offset | CF set + A = error, on failure | no |
 | 7 | `SVC_FCLOSE` | A = handle | - | no |
 | 8 | `SVC_RANDOM` | - | A = random byte (full range, not the 1-100 `CHANCE` scale) | yes |
@@ -425,6 +490,10 @@ to each row, so you call them by name:
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
 | 15 | `SVC_PAIR` | B = paper, C = ink, each a 0-255 colour as `INK`/`PAPER` take it | A = the tilemap attribute byte for that (paper, ink) pair, allocated by the interpreter's own pair allocator, so it behaves exactly as text printed in those colours (227 works). A pair only keeps its colours while some on-screen cell uses it: resolve it where you use it, never cache it across a period when your cells are off screen (a `GFX n 18` width switch blanks every cell). Call it BEFORE `SVC_GETMSG` when one function needs both, because the staging buffer dies at the next service call | no |
+| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn (HL then holds whatever the recall buffer holds) | no |
+| 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length | no |
+| 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 = echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | no |
+| 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | no |
 
 Call a service exactly like any other subroutine - `call SVC_PUTCHAR`
 and so on. Every row preserves your XBN bank's own mapping across the
@@ -513,6 +582,44 @@ A few things worth knowing about specific rows:
   tilemap attribute the same way the interpreter's own print path does,
   so an extern's own screen writes match `INK`/`PAPER` text exactly. The
   ticker module's arm call shows the version-gated use.
+- **`SVC_FWRITE` reports what it actually wrote.** BC on return is the
+  number of bytes written - documented from API version 3, though the
+  row always returned it. A short count with the carry flag still
+  clear is esxDOS's seek-then-extend hazard: the write landed short of
+  what you asked for without the call failing outright. Treat it as a
+  failure exactly as you would a set carry flag.
+- **`SVC_GETLINE` and `SVC_GETPENDING` read this turn's input.**
+  `SVC_GETLINE` returns the line the player actually typed this turn -
+  read-only, in the interpreter's own recall buffer - and its carry
+  flag tells you whether a non-empty line was really submitted this
+  turn: a timeout, an injected line, or a turn taken from pending
+  orders leaves it set, and HL then holds whatever the recall buffer
+  last held. `SVC_GETPENDING` returns whatever a conjunction ("and",
+  "then") left unconsumed - `LOOK AND GET LAMP` leaves `GET LAMP`
+  pending, with the leading blanks the parser left where it blanked
+  the conjunction word still in the text, so folding this into an
+  injected line picks up harmless extra spaces. Both are foreground
+  only, resident memory, no paging.
+- **`SVC_INJECT` queues a line for the very next `PARSE 0`**, bypassing
+  the prompt entirely - your own bank is a fine source for the text,
+  and option bit 0 echoes it as if the player had typed it. It
+  REPLACES any pending order already queued from a conjunction; read
+  `SVC_GETPENDING` first if you need to keep it. It refuses (carry
+  set, A = `$FF`, nothing written) a line over 127 characters or a
+  second injection while one is still parked. A rewriter called from a
+  `PARSE` entry's own remainder must always inject something - the
+  original line when nothing else matched - or the game's next
+  `PARSE 0` silently prompts again with no visible cause. Never call it
+  between a `PARSE 0` and the `PARSE 1` that reads the same order's
+  quoted section: it parks its text over the buffer `PARSE 1` reads
+  from and clobbers the quote.
+- **`SVC_VOCFIND` resolves a word against your database's own
+  vocabulary**, the same lookup the parser itself uses - any case, only
+  the first five characters significant. Foreground only, and more
+  strictly than most rows marked that way: never call it from the
+  output hook. The output hook is not the `#int` hook, but the lookup
+  reuses shared resident state that a print already in flight is also
+  using.
 
 ### Versioning
 
@@ -539,9 +646,17 @@ hints module's preflight is the idiom:
     .ok:
         ...
 
-The format version (the header's byte 3) stays `2`; the API version is
-`3` since `SVC_PAIR` was appended. They are separate contracts: the
-loader enforces the first, your code checks the second.
+The format version (the header's byte 3) stays `2` unless your XBN
+declares a line or output hook, which needs format `3` (see
+[XBN format](reference/xbn-format.md#header)) - a stricter cliff than
+the API version: a format 3 header needs this release's loader, and an
+interpreter that predates it rejects the header outright and the game
+plays with externs off, where an old `xbn.inc` simply never calls the
+rows it does not know about. Rows 15 to 19 - `SVC_PAIR` through
+`SVC_VOCFIND` - are all API version 3, whichever header format you use;
+the API version is `3` since `SVC_PAIR` was appended. They are separate
+contracts: the loader enforces the format version, your code checks the
+API version.
 
 ## Flags and objects
 
@@ -585,18 +700,53 @@ The extern bank itself is never part of a save game. `SAVE`, `LOAD`,
 always did - nothing about your XBN's own code or data changes because
 of them. Practically, that means:
 
-- **Anything you need to survive a `LOAD` belongs in a flag**, not in a
-  variable inside your XBN's own memory. A `LOAD` restores flags to
-  whatever they held at save time; it does not touch your bank at all,
-  so a value you kept only in your own RAM is left exactly as it was
-  before the load - stale, not restored.
-- **Bank-resident state does survive within a session**: across
-  `EXTERN`/`CALL` invocations, across part switches, and across
-  `RESTART`. It is only a `LOAD` (or a `RAMLOAD`) that leaves it
-  unsynchronised with the flags the player just restored.
+- **Anything that must agree with the flags after a `LOAD` belongs in
+  the state area or in a flag**, not in ordinary bank memory. A `LOAD`
+  restores flags to whatever they held at save time, and restores the
+  [extern state area](#the-extern-state-area) the same way; it does not
+  touch the rest of your bank at all, so a value kept only there is
+  left exactly as it was before the load - stale, not restored.
+- **Bank-resident state outside the state area survives within a
+  session**: across `EXTERN`/`CALL` invocations, across part switches,
+  and across `RESTART`. It is only a `LOAD` (or a `RAMLOAD`) that
+  leaves it unsynchronised with the flags the player just restored -
+  the state area is the tool for the part of that state that needs to
+  survive a `LOAD` too.
 - **There is no dedicated init entry.** Initialise your extern's own
   state from an ordinary `EXTERN` call in your startup process, the way
   classic DAAD games initialised externs from `PRO 6`.
+
+## The extern state area
+
+128 bytes at `XBN_STATE` (`$BF80`, a frozen address) are the one piece
+of your extern's own memory that travels with the game's save data.
+`SAVE` writes it, `LOAD` restores it, `RAMSAVE` and `RAMLOAD` carry it
+the same way - `RAMLOAD n` restores it whatever slot `n` names. It is
+zeroed once, at boot: `RESTART` and a part switch leave it exactly as
+your extern last set it.
+
+A save file made before this area existed loads with it zeroed. A save
+file that carries it loads fine on an interpreter that predates the
+area - the extra bytes are simply never read.
+
+Membership rule: put here only state that must agree with the flags
+after a `LOAD` - the same test the [Save and load](#save-and-load)
+rule above applies to a flag. Session configuration - whether a module
+is armed, a recorder's own bookkeeping, colours chosen this session -
+stays ordinary bank memory; only what the player would notice was
+wrong after loading an old save belongs in the state area.
+
+Claim your own offsets through `xbnmod.inc`'s `XBN_STATE_FREE` chain,
+the same discipline as the `CALL` slot table: bump it past whatever you
+claim so the next module's claim does not collide with yours. The
+toolkit claims the first ten bytes (the picker's pool size and used
+bitmap, the print target window) - fn 76's picker and fn 84's print
+target are now restored by `LOAD` and `RAMLOAD`, where they used to go
+stale.
+
+One edge case worth knowing: a cross-part `LOAD` whose target part
+fails to load leaves the state area restored to the save's values while
+the flags are not.
 
 ## The extern collection
 
@@ -604,7 +754,7 @@ The kit ships a collection of ready-made externs under `externs\`, one
 folder each: the assembly source, a prebuilt `GAME.XBN` you can copy
 straight to the card, a `README.md` with the DSF lines that drive it,
 and a rebuild script. The ticker and fade worked examples above are two
-of them; the other five are libraries to use as they come, no assembler
+of them; the other six are libraries to use as they come, no assembler
 needed.
 
 | Extern | What it does | fn codes | Flags used |
@@ -615,14 +765,16 @@ needed.
 | `clock/` | An in-game clock advanced from the frame hook, with hour carry and an author-driven advance for sleeping or travelling | 60 arm and start, 61 stop, 62 advance p minutes | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |
 | `timer/` | Three independent countdown timers, counting real seconds or in-game minutes, that expire into a flag your process table can test | 63 arm, 64 stop all three, 65 arm slot p as an in-game-minute deadline | 229-234 remaining (3 pairs), 235-237 state; an armed in-game-minute slot also READS the clock's 224, 225 and 244 |
 | `realtime/` | Reads the Next's real-time clock: date and time fields for the game to print or test, and day stamps kept in `GAME.HST` beside the database so a game can tell how long it has been since the last visit | 66 refresh, 67 field, 68 stamp, 69 days since | 238 result, 239 available |
-| `toolkit/` | Decimal printing, 16-bit flag-pair arithmetic, object queries, a random-without-repeat picker and time formatting. No hook - every function runs to completion inside the EXTERN that calls it; fns 76 and 84 arm module state that LOAD and RESTART do not reset | 70-84: 70 print flag as decimal, 71 print pair as decimal, 72-75 16-bit arithmetic, 76/77 picker, 78-81 object queries, 82 HH:MM, 83 MM:SS, 84 print target window | 248 width, 249 operand, 250 fn 79's high byte, 251 result |
+| `toolkit/` | Decimal printing, 16-bit flag-pair arithmetic, object queries, a random-without-repeat picker and time formatting. No hook - every function runs to completion inside the EXTERN that calls it; fns 76 and 84 keep their state in the extern state area, restored by LOAD | 70-84: 70 print flag as decimal, 71 print pair as decimal, 72-75 16-bit arithmetic, 76/77 picker, 78-81 object queries, 82 HH:MM, 83 MM:SS, 84 print target window | 248 width, 249 operand, 250 fn 79's high byte, 251 result |
+| `transcript/` | Records every typed line, and optionally everything printed, to `TRANS.TXT` beside the database - a walkthrough recorder, or a bug report that writes itself. Needs a v0.10.1 interpreter (format 3 header, line and output hooks) - an older interpreter loads the game with the module off | 90 start recording (mode bitmask), 91 stop, 92 condition, 93 write message n as a label line, 94 restrict to window w | - |
 
 Function codes and flags are disjoint across the whole collection, so
 any subset coexists in one binary. Flags 224-251 are the collection's
 reserved band: a game using any collection module should treat that
 range as spoken for. Function codes 66-69 (realtime), 76-81 and 84
 (toolkit's object queries, picker and print target) joined that
-allocation in this release.
+allocation in an earlier release; function codes 90-94 (transcript,
+which claims no flags) joined it in this one.
 
 ### One binary, any subset
 
@@ -645,21 +797,23 @@ fade. Arming is bank state: it survives `RESTART`, a part switch and a
 `LOAD`, but not a fresh boot, so arming calls belong in your start
 process, the way classic DAAD games initialised externs from `PRO 6`.
 
-Two toolkit functions hold state that is neither an arming call nor a
-flag: the picker (fn 76) and the print target (fn 84). A `LOAD`
-restores your flags and leaves both untouched - the same pool and
-used-mask, the same target window, now stale against the game you just
-restored. The start process covers a fresh boot; re-arm them wherever
-your game already re-establishes its own state after a `LOAD`.
+Two toolkit functions used to go stale across a `LOAD`: the picker
+(fn 76) and the print target (fn 84). Both now keep their state in the
+[extern state area](#the-extern-state-area), so a `LOAD` or a
+`RAMLOAD` restores the picker's pool size and used mask and the print
+target's window exactly as they stood when the game was saved - no
+re-arming needed on that path. The start process still covers a fresh
+boot, which the state area's own zero-at-boot rule does not.
 
 `CALL` targets in collection binaries are SLOTS in a fixed jump table
 at `$C00E` - slot n at `$C00E + 3n`, so slot 0 is `CALL 14 192` -
 never routine addresses, which move whenever any module is edited. An
 unowned slot jumps to a bare `RET` and does nothing.
 
-Collection modules get that table from `xbnmod.inc`'s `XBN_BEGIN`, used
-in place of `XBN_HEADER`; `CONTRIBUTING.md` at the repository root
-documents the module shape.
+Collection modules get that table from `xbnmod.inc`'s `XBN_BEGIN` (or
+`XBN_BEGIN3`, its format 3 twin, for a module with a line or output
+hook), used in place of `XBN_HEADER`/`XBN_HEADER3`; `CONTRIBUTING.md`
+at the repository root documents the module shape.
 
 ### hints - a hint book on the card
 

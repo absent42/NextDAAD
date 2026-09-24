@@ -96,6 +96,58 @@ All notable changes to NextDAAD are recorded here.
   edit. New Revert button drops the open clip's unsaved edits back to
   CONFIG.BAT. `tests/vidtune/test_gui_smoke.py` gains four tests.
   vidtune.exe rebuilt.
+- XBN: rows 16-19, all API version 3 and append-only - `SVC_GETLINE`
+  (`XBN_API+48`, out HL/BC = this turn's typed line, CF set = none
+  submitted), `SVC_GETPENDING` (`+51`, out HL/BC = unconsumed
+  conjunction remainder), `SVC_INJECT` (`+54`, in HL/A, queues a line
+  for the next PARSE 0, replacing any pending order, refuses over 127
+  chars or a second injection with nothing written), `SVC_VOCFIND`
+  (`+57`, in HL, out D/E/CF, vocabulary lookup - foreground only, never
+  from the output hook). `XBN_API_ROWS` 16 -> 20. Fixture fns 43-48,
+  verbs XGLN XINJ XLIN XPND XSAV XINE XINL (rows 16-18), XVOC (row 19);
+  fixture prompt pinned to SM2 by flag 42.
+- XBN: format 3 header (version byte 3; offsets 10-11 lineEntry, 12-13
+  outEntry, reusing format 2's reserved bytes - `XBN_HEADER3` /
+  `XBN_BEGIN3`). The line hook runs on extSaved, before the echo and the
+  parse; CF set consumes the line silently, no parse, no each-turn
+  process, no turn advance. The output hook runs on its own cell
+  (outSaved) once per printed character, reads the MMU through
+  `nr_read`'s DI bracket, calls no service, and must preserve
+  AF'/BC'/DE'/HL'. Collection chaining via xbnmod.inc's
+  `XBN_LINE_ENTER`/`XBN_LINE_CALL`/`XBN_LINE_END` and `XBN_OUT_CALL`;
+  every collection module needs an `int` entry even if it is only a
+  `ret`. An older interpreter rejects a format 3 header and the game
+  plays with externs off. Fixture verbs XHKZ XHKS XSWL; harness
+  `-XbnBad` gains `line`, `rsv` now builds a format 2 header.
+- XBN: extern state area at `XBN_STATE` (`$BF80`, 128 bytes, frozen).
+  Save format v3 = v2 + one length byte (128) + the area; v1/v2 files
+  load with it zeroed, a v3 save loads on an older interpreter with the
+  extra bytes ignored. `RAMLOAD n` restores it unconditionally; zeroed
+  at boot only, not on RESTART or a part switch. Claims chained off
+  `xbnmod.inc`'s `XBN_STATE_FREE`; toolkit claims offsets 0-9 (picker
+  pool size, 8-byte used bitmap, print target window) - fns 76 and 84
+  no longer go stale across LOAD/RAMLOAD. A cross-part LOAD whose target
+  part fails to load leaves the area restored while the flags are not.
+  Fixture verbs XSTW XSTZ XSTR XLOD XRMS XRML XLD2, V2.SAV fixture.
+- externs: transcript module (fns 90-94, no flags). fn 90
+  `EXTERN mode 90` starts recording to TRANS.TXT, truncating it - mode
+  bit 0: 1 full (typed lines + printed text), 0 input-only (replayable
+  walkthrough); bit 1: 1 = no date stamp (skips SVC_GETDATE, which some
+  emulators hang on). fn 91 stop (flush + disarm), fn 92 condition (CF
+  clear while recording), fn 93 writes user message n as a `##` label
+  line, fn 94 restricts recording to window w (255 = all, the default).
+  Flush runs at every line hook: open read-write, seek to the running
+  length, write, check the byte count, close - one card round trip per
+  turn before the response. TRANSCRIPT_RING build define (default
+  2048) sizes the buffer; output past the cap becomes one `~` and drops
+  the rest of that turn's output, the next command line is never among
+  the dropped bytes. ZEsarUX's esxDOS emulation keeps only the last
+  write of a reopened file, so multi-turn transcripts are only faithful
+  on real hardware. Fixture verbs XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2
+  XTRF XTRO XTRD (XTRD silicon-only); tests/xbn/transcheck.py (tilemap
+  vs file diff), tests/parser/transcript2jsonl.py, tests/xbn/mkv2sav.py,
+  tickcheck.py --grab. The combined collection binary (externs/all) now
+  carries a format 3 header and needs a v0.10.1 interpreter.
 
 ## v0.10.0 - 18/09/2026
 

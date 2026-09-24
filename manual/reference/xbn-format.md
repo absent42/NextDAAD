@@ -12,22 +12,27 @@ Fourteen bytes at the start of the file, loaded to `$C000`:
 | Offset | Size | Field | Meaning |
 |--------|------|-------|---------|
 | 0 | 3 | magic | `"XBN"` |
-| 3 | 1 | version | Format version - `2` |
+| 3 | 1 | version | Format version - `2` or `3` |
 | 4 | 2 | extEntry | `EXTERN`/`CALL` entry address, `$C000`-`$FFFF`, or `0` for none |
 | 6 | 2 | intEntry | 50Hz frame-hook entry address, or `0` for none |
 | 8 | 2 | size | Total byte count, header included, up to `$4000` |
-| 10 | 4 | reserved | Must be zero. A later format may make one of these bytes load-bearing; a version 2 loader rejects any nonzero value so that change can land without another version cliff |
+| 10 | 4 | reserved / hooks | Format 2: must be zero. Format 3: two 2-byte fields instead - offsets 10-11 lineEntry, 12-13 outEntry, each `0` (unused) or an address strictly inside the binary, validated like extEntry |
 
-`xbn.inc`'s `XBN_HEADER` macro emits this for you from two labels (or
-`0`), reserved bytes included; you never build it by hand. Collection
-modules use `xbnmod.inc`'s `XBN_BEGIN` instead, which emits the same
-header followed by the `CALL` slot table at `$C00E` (see
-[Externs](../externs.md#one-binary-any-subset)).
+The header is fourteen bytes either way - format 3 does not grow it, it
+just gives the four bytes format 2 reserved a meaning. `xbn.inc`'s
+`XBN_HEADER` macro emits the format 2 layout from two labels (or `0`);
+`XBN_HEADER3` emits the format 3 layout from four. Collection modules
+use `xbnmod.inc`'s `XBN_BEGIN` or `XBN_BEGIN3` instead, which emit the
+same header followed by the `CALL` slot table at `$C00E` (see
+[Externs](../externs.md#one-binary-any-subset)). You never build either
+header by hand.
 
 A version 1 binary (ten-byte header, version byte `1`) is rejected by
 this interpreter and the game plays with externs off: rebuild it against
 the current `xbn.inc`. The other direction is equally closed - an
-interpreter that predates format 2 rejects a version 2 file.
+interpreter that predates format 2 rejects a version 2 file, and one
+that predates format 3 (this release) rejects a version 3 file the same
+way, whatever its lineEntry and outEntry declare.
 
 ## Validation
 
@@ -40,8 +45,11 @@ fails:
 2. The file holds at least the fourteen header bytes (a shorter file is
    truncated).
 3. The magic bytes read exactly `"XBN"`.
-4. The version byte reads `2`.
-5. The four reserved bytes at offsets 10-13 are all zero.
+4. The version byte reads `2` or `3`.
+5. Format 2: the four reserved bytes at offsets 10-13 are all zero.
+   Format 3: offsets 10-11 (lineEntry) and 12-13 (outEntry) are each
+   validated like extEntry - `0`, or a genuine address strictly inside
+   the loaded binary's extent.
 6. The size field is no larger than `$4000`.
 7. The size field matches the number of bytes actually read from the
    file - a size field that disagrees with the real file length is
@@ -76,7 +84,7 @@ can address a location past `$FFFF` to call into.
 
 ## Service table
 
-A fixed jump table of sixteen three-byte `JP` instructions at `XBN_API`
+A fixed jump table of twenty three-byte `JP` instructions at `XBN_API`
 (`$BEC8`), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -95,7 +103,7 @@ tables.
 | 2 | `SVC_PUTS` | HL = ASCIIZ string (may live in your own bank) | - | AF, BC, DE, HL, IX, IY | no |
 | 3 | `SVC_FOPEN` | IX = ASCIIZ filename, B = mode | A = handle, or CF set + A = error | AF, BC, DE, HL, IX, IY | no |
 | 4 | `SVC_FREAD` | A = handle, IX = buffer, BC = length | BC = bytes read, or CF set + A = error | AF, BC, DE, HL, IX, IY | no |
-| 5 | `SVC_FWRITE` | A = handle, IX = buffer, BC = length | CF set + A = error, on failure | AF, BC, DE, HL, IX, IY | no |
+| 5 | `SVC_FWRITE` | A = handle, IX = buffer, BC = length | BC = bytes written; CF set + A = error, on failure | AF, BC, DE, HL, IX, IY | no |
 | 6 | `SVC_FSEEK` | A = handle, BCDE = offset | CF set + A = error, on failure | AF, BC, DE, HL, IX, IY | no |
 | 7 | `SVC_FCLOSE` | A = handle | - | AF, BC, DE, HL, IX, IY | no |
 | 8 | `SVC_RANDOM` | - | A = random byte (full range, not the 1-100 `CHANCE` scale) | AF only; BC, DE, HL preserved | yes |
@@ -106,6 +114,10 @@ tables.
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | AF, BC, E, IX | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | AF, BC, DE, HL, IX, IY | no |
 | 15 | `SVC_PAIR` | B = paper, C = ink (0-255) | A = tilemap attribute for the (paper, ink) pair; CF clear. The pair is held only while an on-screen cell uses it - resolve at the point of use | AF, BC, DE, HL, IX, IY | no |
+| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line typed this turn (resident, read-only), BC = length; CF set = no non-empty line submitted this turn (HL then holds whatever the recall buffer holds) | AF, BC, HL | no |
+| 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length; CF clear | AF, BC, HL | no |
+| 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | AF, BC, DE, HL | no |
+| 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | AF, BC, DE, HL | no |
 
 Error convention throughout is esxDOS style: carry flag set, error code
 in A. A row's Corrupts column is its contract; only the registers its
@@ -127,6 +139,11 @@ call or the next save/load - see [Externs](../externs.md#services).
 from the hook consumes that stream at a time the game cannot predict, so
 a game that needs reproducible runs must not draw from the hook.
 
+`SVC_VOCFIND` is foreground-only like most of rows 1-19, but the rule is
+stricter than usual for it: never call it from the output hook either,
+even though the output hook is not the `#int` hook. The lookup reuses
+shared resident state that a print already in flight is also using.
+
 ## Frozen data anchors
 
 Fixed addresses `xbn.inc` binds symbols to, none of which move between
@@ -139,9 +156,11 @@ releases:
 | `OBJ_SIZE` | `6` | Bytes per object table entry: `+0` location, `+1` weight/attribute bits, `+2`/`+3` extended attributes in flag order - `+3` holds attribute bits 0-7, `+2` holds bits 8-15, `+4` noun ID, `+5` adjective ID |
 | `XBN_NUMOBJ` | `$A900` | The object count: one byte, the number of entries in the object table. Read it with `ld a, (XBN_NUMOBJ)`; walk `0` to `(XBN_NUMOBJ) - 1`, the byte's value; entries past the count are stale |
 | `XBN_API` | `$BEC8` | Base of the service jump table |
+| `XBN_STATE` | `$BF80` | Base of the 128-byte extern state area (`XBN_STATE_LEN`): saved and restored with the game (`SAVE`, `LOAD`, `RAMSAVE`, `RAMLOAD`), zeroed at boot only. Claim offsets through `xbnmod.inc`'s `XBN_STATE_FREE` chain - see [Externs](../externs.md#the-extern-state-area) |
 
-`XBN_API` grew to fifteen rows in format 2; rows 0-9 kept their
-addresses and signatures.
+`XBN_API` grew to fifteen rows in format 2, to sixteen at API version 3
+(`SVC_PAIR`), and to twenty at format 3 (rows 16-19); rows 0-9 kept
+their addresses and signatures throughout.
 
 ## Limits
 

@@ -64,11 +64,19 @@ FORBIDDEN = [
     (r"\$C00A",
      "the CALL slot table moved to $C00E in XBN format 2"),
     (r"\bten (small routines|three-byte|services)\b",
-     "the service table has sixteen rows since API 3"),
+     "the service table has twenty rows since format 3 (rows 16-19)"),
     (r"\bfifteen (small routines|three-byte|services)\b",
-     "the service table has sixteen rows since API 3 (SVC_PAIR)"),
+     "the service table has twenty rows since format 3 (rows 16-19)"),
+    (r"\bsixteen (small routines|three-byte|services)\b",
+     "the service table has twenty rows since format 3 added rows 16-19"),
     (r"version byte reads .\b1\b.",
      "the format 2 header is fourteen bytes, version 2"),
+    (r"version byte reads `?2`?(?!.{0,15}or\s*`?3`?)",
+     "the version byte reads 2 or 3 now that format 3 exists"),
+    (r"(?s)reserved\s+bytes?(?:\s+at\s+offsets\s+[\d-]+)?\s+"
+     r"(?:are\s+all|must\s+be)\s+zero(?!.{0,200}format\s*3)",
+     "reserved-bytes-zero only applies to format 2 now - format 3 reuses "
+     "offsets 10-13 for lineEntry/outEntry - say so nearby"),
     (r"Ten bytes at the start",
      "the format 2 header is fourteen bytes, version 2"),
     # Spec 3.1 edge: the CF-fail clears a stamp a failed built-in
