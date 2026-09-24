@@ -8,12 +8,14 @@
 # place instead of once per format.
 #
 # Every Read-Font* function returns the same object:
-#   Format   'RAW' | 'FON' | 'PSF1' | 'PSF2' | 'BDF'
+#   Format   'RAW' | 'FON' | 'PSF1' | 'PSF2' | 'BDF' | 'YAFF' | 'DRAW'
 #   FaceName human-readable, for messages
 #   Width    declared glyph width in pixels
 #   Height   declared glyph height in rows
-#   Charset  'OEM' | 'ANSI' | 'UNKNOWN' - only 'OEM' enables
-#            fontconv.ps1's in-face pound sterling rule
+#   Charset  'OEM' | 'ANSI' | 'ZX' | 'UNKNOWN' - only 'OEM' enables
+#            fontconv.ps1's in-face pound sterling rule; 'ZX' (a
+#            source declaring the ZX charset) exempts it from slot
+#            substitution the way a classic 768-byte .ch8 is
 #   Glyphs   hashtable, character code (int) -> byte[] of Height rows,
 #            most significant bit leftmost, left-aligned in the byte
 #   Faces    one entry per face the container held, each with Index,
@@ -22,7 +24,7 @@
 #   OverWide character codes the source declared wider than 8px, whose
 #            glyph data was therefore not read at all. Defaults to an
 #            empty array; only containers with a per-glyph declared
-#            width (FON, BDF) populate it. The caller decides whether
+#            width (FON, BDF, YAFF, DRAW) populate it. The caller decides whether
 #            an over-wide code is fatal - the range 32-127 is
 #            fontconv.ps1's business, not this file's.
 #   Truncated character codes whose glyph data ran past the end of the
@@ -52,6 +54,11 @@ function Get-FontFormat([byte[]]$bytes) {
     if ($bytes.Length -ge 10) {
         $head = [System.Text.Encoding]::ASCII.GetString($bytes, 0, 10)
         if ($head -eq 'JSJ SINTAC') { return 'SINTAC' }
+    }
+    $text = Get-FontText $bytes
+    if ($null -ne $text) {
+        if ($text -match $script:DrawDetect) { return 'DRAW' }
+        if ($text -match $script:YaffDetect) { return 'YAFF' }
     }
     return 'RAW'
 }
@@ -449,6 +456,205 @@ function Read-FontBdf([byte[]]$b, [string]$path) {
     New-FontResult 'BDF' $name $fbbW $fbbH 'UNKNOWN' $glyphs @(@{ Index = 0; Width = $fbbW; Height = $fbbH; Name = $name }) $overWide
 }
 
+# The two text formats monobit and the hoard-of-bitfonts collection use.
+# Both are recognised by structure, since neither has a magic number:
+# the optional 'yaff:' version line is absent from every hoard file.
+# The row characters decide. Draw is a bare hex label ('41:') whose
+# rows are '-' paper and '#' ink, on the label line or the lines after
+# it (the hoard has both shapes). YAFF rows are '.' paper and '@' ink,
+# or the lone '-' empty-glyph marker, on the lines after a label. Draw
+# is tested first because a bare hex label also reads as a YAFF
+# decimal label, and the two would put '41:' at different codes.
+$script:DrawDetect = '(?m)^[0-9A-Fa-f]+:[ \t]*(?:\r?\n)?[ \t]*[-#]{2,}[ \t]*\r?$'
+$script:YaffDetect = '(?m)^\S[^\r\n]*:[ \t]*\r?\n[ \t]+(?:[.@]+|-)[ \t]*\r?$'
+
+# Bytes decoded as UTF-8 text, BOM stripped, or $null when they cannot
+# be text at all. Every binary format here carries zero bytes within its
+# first few KB (a blank glyph 32 alone guarantees it), and no text
+# format ever does, so that one test keeps the regexes off binary input.
+function Get-FontText([byte[]]$bytes) {
+    if ($bytes.Length -eq 0) { return $null }
+    $probe = [Math]::Min($bytes.Length, 4096)
+    for ($i = 0; $i -lt $probe; $i++) { if ($bytes[$i] -eq 0) { return $null } }
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    return $text
+}
+
+# Rows of '.'/'-' paper and '@'/'#' ink into one left-aligned byte each,
+# shifted right by a bearing. The caller has already checked the width
+# fits, so nothing here can lose a pixel.
+function ConvertTo-InkRows([string[]]$rows, [int]$bearing) {
+    $out = New-Object byte[] $rows.Count
+    for ($r = 0; $r -lt $rows.Count; $r++) {
+        $v = 0
+        for ($c = 0; $c -lt $rows[$r].Length; $c++) {
+            $ch = $rows[$r][$c]
+            if ($ch -eq '@' -or $ch -eq '#') { $v = $v -bor (1 -shl (7 - ($bearing + $c))) }
+        }
+        $out[$r] = [byte]$v
+    }
+    return $out
+}
+
+# Every row of a text glyph must be the same width; returns it.
+function Get-TextGlyphWidth([string[]]$rows, [string]$what) {
+    $width = 0
+    foreach ($r in $rows) {
+        if ($width -eq 0) { $width = $r.Length }
+        elseif ($r.Length -ne $width) { throw "fontconv: $what has rows of unequal length - every row of a glyph must be the same width" }
+    }
+    return $width
+}
+
+# 'encoding:' names the codepage outright, which is a better charset
+# signal than the FON charset byte: any 437 variant is CP437/OEM, and
+# zx-spectrum IS the ZX charset (pound at 96, copyright at 127), which
+# the caller treats exactly like a classic 768-byte .ch8.
+function Get-YaffCharset([string]$encoding) {
+    if ($encoding -match '437')                { return 'OEM' }
+    if ($encoding -match '^zx[-_ ]?spectrum$') { return 'ZX' }
+    return 'UNKNOWN'
+}
+
+# The character code a YAFF glyph's labels name: a codepoint label
+# ('0x41', '0o101', '65') wins; else a u+XXXX or 'A' label below 128,
+# since only ASCII agrees with every encoding (the PSF2 reader's limit).
+# Tags and codepoint sequences give -1: they reach no slot.
+function Resolve-YaffCode([string[]]$labels, [string]$path) {
+    $uni = -1
+    foreach ($l in $labels) {
+        if ($l -match '^0x([0-9A-Fa-f]{1,8})$') { return [Convert]::ToInt64($Matches[1], 16) }
+        if ($l -match '^0o([0-7]{1,11})$')      { return [Convert]::ToInt64($Matches[1], 8) }
+        if ($l -match '^\d+$')                  { return (ConvertTo-FontInt "$path label '$l'" $l) }
+        if ($uni -lt 0 -and $l -match '^u\+([0-9A-Fa-f]{1,8})$') {
+            $v = [Convert]::ToInt64($Matches[1], 16)
+            if ($v -lt 128) { $uni = $v }
+        }
+        if ($uni -lt 0 -and $l -match "^'(.)'$") {
+            $v = [int][char]$Matches[1]
+            if ($v -lt 128) { $uni = $v }
+        }
+    }
+    return $uni
+}
+
+# Finish the glyph the parser has been collecting into $st: resolve its
+# code, check its rows, apply left-bearing, and queue it for placement.
+function Complete-YaffGlyph($st, [string]$path) {
+    if ($st.Labels.Count -eq 0) { return }
+    $lbl = $st.Labels; $rows = @($st.Rows); $gp = $st.Props
+    $st.Labels = @(); $st.Rows = @(); $st.Props = @{}
+    $code = Resolve-YaffCode $lbl $path
+    if ($code -lt 0 -or $code -gt 255) { return }
+    if ($rows.Count -eq 1 -and $rows[0] -eq '-') { $rows = @() }   # the empty-glyph marker
+    $width = Get-TextGlyphWidth $rows "$path glyph $code (label '$($lbl[0])')"
+    $bearing = 0; $shift = 0
+    if ($gp.ContainsKey('left-bearing')) { $bearing = ConvertTo-FontInt "$path glyph $code left-bearing '$($gp['left-bearing'])', which" $gp['left-bearing'] }
+    if ($gp.ContainsKey('shift-up'))     { $shift   = ConvertTo-FontInt "$path glyph $code shift-up '$($gp['shift-up'])', which" $gp['shift-up'] }
+    if ($bearing -lt 0 -or $bearing + $width -gt 8) { $st.OverWide += [int]$code; return }
+    $st.Pending += [PSCustomObject]@{ Code = [int]$code; Rows = (ConvertTo-InkRows $rows $bearing); ShiftUp = $shift }
+}
+
+# YAFF: monobit's native text format. A glyph is one or more label lines
+# ('0x41:', 'u+0041:', "'A':", '"tag":') followed by indented rows, an
+# optional blank line and indented per-glyph properties. Placement
+# follows the format: rasters sit on a shared baseline, 'shift-up'
+# raises or lowers one, and the cell top is the highest raster top over
+# the whole font (monobit's own 'raster' bound), so a character-cell
+# font with no metrics stacks at row 0 and a proportional font puts its
+# descenders where BDF's BBX yoff would. 'left-bearing' shifts ink
+# right; a glyph whose bearing plus width passes column 8 is OverWide,
+# never clipped.
+function Read-FontYaff([string]$text, [string]$path) {
+    $maxCellRows = 4096
+    $props = @{}
+    $st = @{ Labels = @(); Rows = @(); Props = @{}; Pending = @(); OverWide = @() }
+    $inGlyph = $false
+    foreach ($raw in ($text -split "`r?`n")) {
+        if ($raw -match '^#') { continue }
+        $t = $raw.Trim()
+        if ($t -eq '') { continue }
+        if ($raw -match '^\s') {
+            if (-not $inGlyph) { continue }               # multi-line global property text
+            if ($t -match '^([A-Za-z][\w\-.]*):\s*(.*)$') { $st.Props[$Matches[1]] = $Matches[2]; continue }
+            if ($t -match '^[.@#\-]+$') { $st.Rows += $t; continue }
+            throw "fontconv: $path glyph labelled '$($st.Labels[0])' has a malformed row: '$t'"
+        }
+        if ($st.Rows.Count -gt 0 -or $st.Props.Count -gt 0) { Complete-YaffGlyph $st $path; $inGlyph = $false }
+        if ($t -match '^(.*?):\s*$') { $st.Labels += $Matches[1].Trim(); $inGlyph = $true; continue }
+        if (-not $inGlyph -and $t -match '^([A-Za-z][\w\-.]*):\s*(.+)$') { $props[$Matches[1]] = $Matches[2].Trim() }
+    }
+    Complete-YaffGlyph $st $path
+    if ($st.Pending.Count -eq 0 -and $st.OverWide.Count -eq 0) { throw "fontconv: $path parsed as YAFF but yielded no glyphs" }
+
+    # Cell top = highest raster top over the font, so every glyph lands
+    # at ascent - (height + shift-up) and none starts above row 0.
+    $ascent = 0
+    foreach ($g in $st.Pending) { $top = $g.Rows.Length + $g.ShiftUp; if ($top -gt $ascent) { $ascent = $top } }
+    if ($ascent -gt $maxCellRows) { throw "fontconv: $path declares a shift-up that puts a raster $ascent rows above the baseline - implausible for an 8-row target" }
+    $glyphs = @{}
+    foreach ($g in $st.Pending) {
+        $top = $ascent - ($g.Rows.Length + $g.ShiftUp)
+        if ($top -gt $maxCellRows) { throw "fontconv: $path glyph $($g.Code) has a shift-up that places it $top rows below the cell top - implausible for an 8-row target" }
+        $cell = New-Object byte[] ([Math]::Max(8, $top + $g.Rows.Length))
+        for ($i = 0; $i -lt $g.Rows.Length; $i++) { $cell[$top + $i] = $g.Rows[$i] }
+        $glyphs[$g.Code] = $cell
+    }
+
+    $w = 8; $h = $ascent
+    if ($props.ContainsKey('cell-size') -and $props['cell-size'] -match '^(\d+)\s*x\s*(\d+)$') {
+        $w = ConvertTo-FontInt "$path cell-size width" $Matches[1]
+        $h = ConvertTo-FontInt "$path cell-size height" $Matches[2]
+    }
+    $charset = 'UNKNOWN'
+    if ($props.ContainsKey('encoding')) { $charset = Get-YaffCharset $props['encoding'] }
+    $name = if ($props.ContainsKey('name')) { $props['name'] } else { [System.IO.Path]::GetFileNameWithoutExtension($path) }
+    New-FontResult 'YAFF' $name $w $h $charset $glyphs @(@{ Index = 0; Width = $w; Height = $h; Name = $name }) $st.OverWide
+}
+
+function Complete-DrawGlyph($st, [string]$path) {
+    if ($st.Code -lt 0) { return }
+    $c = $st.Code; $rows = @($st.Rows)
+    $st.Code = -1; $st.Rows = @()
+    if ($c -gt 255) { return }
+    $width = Get-TextGlyphWidth $rows "$path glyph $c"
+    if ($width -gt 8) { $st.OverWide += [int]$c; return }
+    $st.Glyphs[[int]$c] = ConvertTo-InkRows $rows 0
+}
+
+# Draw (monobit's hexdraw): a hex codepoint label, then rows on the
+# label line after whitespace and/or indented on the lines below; '#'
+# or '@' ink, '-' or '.' paper; '#' in column 0 is a comment. No
+# metrics, so rows stack from row 0. A raster wider than 8 is OverWide.
+function Read-FontDraw([string]$text, [string]$path) {
+    $st = @{ Code = -1; Rows = @(); Glyphs = @{}; OverWide = @() }
+    foreach ($raw in ($text -split "`r?`n")) {
+        if ($raw -match '^#') { continue }
+        $t = $raw.Trim()
+        if ($t -eq '') { continue }
+        if ($raw -match '^\s') {
+            if ($st.Code -lt 0) { continue }
+            if ($t -match '^[.@#\-]+$') { $st.Rows += $t; continue }
+            throw "fontconv: $path glyph $($st.Code) has a malformed row: '$t'"
+        }
+        Complete-DrawGlyph $st $path
+        if ($t -match '^([0-9A-Fa-f]{1,8}):\s*(.*)$') {
+            $st.Code = [Convert]::ToInt64($Matches[1], 16)
+            $first = $Matches[2]
+            if ($first -eq '') { continue }
+            if ($first -match '^[.@#\-]+$') { $st.Rows += $first }
+            else { throw "fontconv: $path glyph $($st.Code) has a malformed row: '$first'" }
+        }
+    }
+    Complete-DrawGlyph $st $path
+    if ($st.Glyphs.Count -eq 0 -and $st.OverWide.Count -eq 0) { throw "fontconv: $path parsed as draw but yielded no glyphs" }
+    $h = 8
+    foreach ($g in $st.Glyphs.Values) { if ($g.Length -gt $h) { $h = $g.Length } }
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($path)
+    New-FontResult 'DRAW' $name 8 $h 'UNKNOWN' $st.Glyphs @(@{ Index = 0; Width = 8; Height = $h; Name = $name }) $st.OverWide
+}
+
 function Read-FontFile([byte[]]$bytes, [string]$path, [int]$first, [string]$face) {
     switch (Get-FontFormat $bytes) {
         'SINTAC' {
@@ -459,6 +665,8 @@ function Read-FontFile([byte[]]$bytes, [string]$path, [int]$first, [string]$face
         'PSF1' { return Read-FontPsf1 $bytes $path }
         'PSF2' { return Read-FontPsf2 $bytes $path }
         'BDF'  { return Read-FontBdf $bytes $path }
+        'YAFF' { return Read-FontYaff (Get-FontText $bytes) $path }
+        'DRAW' { return Read-FontDraw (Get-FontText $bytes) $path }
         default {
             throw "fontconv: $path was detected as $(Get-FontFormat $bytes), which this build cannot read yet"
         }

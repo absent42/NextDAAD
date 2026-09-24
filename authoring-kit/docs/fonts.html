@@ -51,6 +51,47 @@ this only applies when you run <code>fontconv.ps1</code> yourself. Any other inp
 size is an error naming both shapes it accepts.</p>
 <p>Put the resulting <code>FONT.CHR</code> (or <code>FONT1.CHR</code> to <code>FONT9.CHR</code>) in the kit
 folder to ship it.</p>
+<h2 id="other-font-formats">Other font formats</h2>
+<p>The same converter reads fonts drawn for other machines, and the kit
+build picks those up too: a <code>FONT.fon</code>, <code>.psf</code>, <code>.psfu</code>, <code>.bdf</code>,
+<code>.yaff</code>, <code>.draw</code>, <code>.spr</code> or <code>.fnt</code> in the kit folder (or <code>FONT1.*</code>
+to <code>FONT9.*</code>) is converted the same way a <code>.ch8</code> is. The format is read
+from the file itself, not its extension.</p>
+<ul>
+<li><code>.fon</code> - Windows bitmap fonts. A file holding several faces picks
+  an exact 8x8 face, else the tallest face whose ink fits; <code>-Face
+  &lt;index|WxH&gt;</code> chooses one by hand.</li>
+<li><code>.psf</code> and <code>.psfu</code> - Linux console fonts.</li>
+<li><code>.bdf</code> - X11 bitmap fonts.</li>
+<li><code>.yaff</code> and <code>.draw</code> - the text formats used by
+  <a href="https://github.com/robhagemans/monobit">monobit</a> and the
+  <a href="https://github.com/robhagemans/hoard-of-bitfonts">hoard of
+  bitfonts</a>, which collects the character sets of most 1980s and
+  1990s machines in both. Any 8x8 font from that collection converts
+  as it is. A file declaring <code>encoding: zx-spectrum</code> is treated as a
+  ZX charset and keeps its own pound and copyright signs; one declaring
+  a 437 codepage lifts its pound from slot 156, like a <code>.fon</code> does.</li>
+<li><code>.spr</code> - a gfx2next <code>-font</code> sheet (use <code>-font</code>, not <code>-font-y</code>).</li>
+<li><code>.fnt</code> - a raw glyph dump; a length other than 768 or 2048 needs
+  <code>-First &lt;code&gt;</code> naming the character its first glyph belongs to.</li>
+</ul>
+<p>A source whose ink needs more than an 8x8 cell is refused, with the
+characters named, rather than squeezed - a descender that loses a row
+stops reading as one. Glyphs outside 32 to 127 that do not fit are
+dropped and counted instead. Characters 96 and 127 are a pound and a
+copyright sign on the Next but a grave accent and a house on a PC, so
+a converted font takes those two from the built-in font unless the
+source is a ZX charset; <code>-Slots Source</code> keeps the source's own.</p>
+<p>For a format not in that list, convert it with monobit first. It reads
+dozens of formats and writes BDF, which carries the character codes:</p>
+<pre><code>pip install monobit
+monobit-convert MyFont.xyz to FONT.bdf
+</code></pre>
+<p>Then drop the <code>FONT.bdf</code> in the kit folder, or run <code>fontconv.ps1</code> on it.
+Fonts from the hoard need no such step - the kit reads them directly.
+The hoard's own licence notes that some of its source folders carry
+their own terms, so check the folder a font came from before shipping
+it in a game.</p>
 <h2 id="which-glyphs-actually-get-drawn">Which glyphs actually get drawn</h2>
 <p>The whole 256-glyph table is addressable, but ordinary game text only
 ever reaches part of it:</p>

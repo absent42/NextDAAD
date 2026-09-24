@@ -812,6 +812,367 @@ ENDFONT
         throw "S2 : the glyph 32 warning must name -font-y as a likely cause, since it is the only signal a Y-ordered .spr ever produces. Got: $yWarn"
     }
 
+    # --- Y1 a hoard-shaped YAFF character-cell font converts ---
+    # Comment header, properties, dual u+/0x labels, '.' paper and '@'
+    # ink, and the bare '-' empty-glyph marker for the space.
+    $yaff = @'
+# test font
+# source: none
+
+name: Test
+spacing: character-cell
+cell-size: 8x8
+encoding: ascii
+
+
+# [ ] SPACE
+u+0020:
+0x20:
+    -
+
+
+# [A] LATIN CAPITAL LETTER A
+u+0041:
+0x41:
+    ..@@@...
+    .@...@..
+    .@...@..
+    .@@@@@..
+    .@...@..
+    .@...@..
+    .@...@..
+    ........
+'@
+    $inY1 = "$tmp\y1.yaff"
+    Set-Content -LiteralPath $inY1 -Value $yaff -Encoding utf8
+    $y1msg = & $conv -In $inY1 -Out "$tmp\y1.CHR" 3>&1 2>&1 | Out-String
+    $y1 = [System.IO.File]::ReadAllBytes("$tmp\y1.CHR")
+    $yA = [byte[]](0x38,0x44,0x44,0x7C,0x44,0x44,0x44,0x00)
+    Assert-Eq $y1.Length 2048 'Y1 output size'
+    Assert-Bytes $y1[520..527]   $yA 'Y1 glyph 65 from the YAFF rows'
+    Assert-Bytes $y1[1544..1551] $yA 'Y1 glyph 193 mirrored from glyph 65'
+    Assert-Bytes $y1[256..263] (New-Object byte[] 8) 'Y1 the - marker is an all-blank glyph 32'
+    $script:checks++
+    if ($y1msg -match 'glyph 32') { throw "Y1 : the - marker must not trip the glyph 32 warning, got: $y1msg" }
+    $script:checks++
+    if ($y1msg -notmatch 'format=YAFF') { throw "Y1 : output line must name the format, got: $y1msg" }
+
+    # --- Y2 encoding: zx-spectrum keeps the source's own 96 and 127 ---
+    # The hoard's zx-spectrum.yaff IS the ZX charset, pound at 96 and
+    # copyright at 127 in its own face, so it gets the same exemption a
+    # 768-byte .ch8 does. Y3 proves the opposite: cp437 lifts the pound
+    # from slot 156 and takes 127 from the base font.
+    function New-SlotYaff([string]$encoding) {
+@"
+name: Slots
+spacing: character-cell
+cell-size: 8x8
+encoding: $encoding
+
+0x60:
+    @@@@@@@@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @@@@@@@@
+
+0x7f:
+    @@@@@@@@
+    @@@@@@@@
+    @@@@@@@@
+    @@@@@@@@
+    @@@@@@@@
+    @@@@@@@@
+    @@@@@@@@
+    @@@@@@@@
+
+0x9c:
+    ...@@...
+    ..@..@..
+    ..@.....
+    .@@@@...
+    ..@.....
+    ..@.....
+    .@@@@@..
+    ........
+"@
+    }
+    $box  = [byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0x81,0xFF)
+    $full = [byte[]](0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF)
+    $lb   = [byte[]](0x18,0x24,0x20,0x78,0x20,0x20,0x7C,0x00)
+    $inY2 = "$tmp\y2.yaff"
+    Set-Content -LiteralPath $inY2 -Value (New-SlotYaff 'zx-spectrum') -Encoding utf8
+    $y2msg = & $conv -In $inY2 -Out "$tmp\y2.CHR" | Out-String
+    $y2 = [System.IO.File]::ReadAllBytes("$tmp\y2.CHR")
+    Assert-Bytes $y2[768..775]   $box  'Y2 zx-spectrum: glyph 96 kept from the source'
+    Assert-Bytes $y2[1016..1023] $full 'Y2 zx-spectrum: glyph 127 kept from the source'
+    $script:checks++
+    if ($y2msg -notmatch 'kept from the source') { throw "Y2 : expected the ZX charset note, got: $y2msg" }
+
+    $inY3 = "$tmp\y3.yaff"
+    Set-Content -LiteralPath $inY3 -Value (New-SlotYaff 'cp437') -Encoding utf8
+    $y3msg = & $conv -In $inY3 -Out "$tmp\y3.CHR" | Out-String
+    $y3 = [System.IO.File]::ReadAllBytes("$tmp\y3.CHR")
+    Assert-Bytes $y3[768..775]   $lb 'Y3 cp437: glyph 96 lifted from the source''s slot 156'
+    Assert-Bytes $y3[1016..1023] $baseBytes[1016..1023] 'Y3 cp437: glyph 127 from the base font'
+    $script:checks++
+    if ($y3msg -notmatch 'source slot 156') { throw "Y3 : expected the in-face pound note, got: $y3msg" }
+
+    # --- Y4 every label form the format allows, and the ones skipped ---
+    # A glyph reached only by u+0042 lands at 66; 'C' at 67; decimal 68
+    # at 68; a tag alone reaches nothing; a codepoint SEQUENCE reaches
+    # nothing (it is not a single character); u+ above 127 is ignored
+    # because only ASCII agrees with every encoding - checked at 137,
+    # inside the source-fed 128-159 band (160-255 is a mirror and would
+    # hide the answer).
+    $yaffLabels = @'
+name: Labels
+spacing: character-cell
+cell-size: 8x8
+
+u+0042:
+    @@@@@@@@
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+
+'C':
+    .@@@@@@@
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+
+68:
+    ..@@@@@@
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+
+"latin_e":
+    ...@@@@@
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+
+0x46, 0x47:
+    ....@@@@
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+
+u+0089:
+    .....@@@
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+'@
+    $inY4 = "$tmp\y4.yaff"
+    Set-Content -LiteralPath $inY4 -Value $yaffLabels -Encoding utf8
+    & $conv -In $inY4 -Out "$tmp\y4.CHR" | Out-Null
+    $y4 = [System.IO.File]::ReadAllBytes("$tmp\y4.CHR")
+    Assert-Eq $y4[66*8] 0xFF 'Y4 u+0042 alone lands at 66'
+    Assert-Eq $y4[67*8] 0x7F "Y4 'C' literal lands at 67"
+    Assert-Eq $y4[68*8] 0x3F 'Y4 decimal 68 lands at 68'
+    Assert-Eq $y4[69*8] $baseBytes[69*8] 'Y4 a tag alone reaches no slot (base glyph 69 stands)'
+    Assert-Eq $y4[70*8] $baseBytes[70*8] 'Y4 a codepoint sequence reaches no slot (base glyph 70 stands)'
+    Assert-Eq $y4[71*8] $baseBytes[71*8] 'Y4 a codepoint sequence reaches no slot (base glyph 71 stands)'
+    Assert-Eq $y4[137*8] $baseBytes[137*8] 'Y4 u+0089 is not read (base glyph 137 stands)'
+
+    # --- Y5 proportional metrics: shift-up places from the baseline,
+    #     left-bearing shifts the ink right ---
+    # ascent 7: 'A' (7 rows, shift-up 0) at rows 0-6; 'g' (7 rows,
+    # shift-up -1) at rows 1-7; 'i' (3 wide, left-bearing 3) has its
+    # ink in columns 3-5.
+    $yaffProp = @'
+name: Prop
+spacing: proportional
+ascent: 7
+descent: 1
+
+0x41:
+    @@@@@@@@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @@@@@@@@
+
+0x67:
+    ..@@@@..
+    .@....@.
+    .@....@.
+    ..@@@@..
+    ......@.
+    ......@.
+    ..@@@@..
+
+    shift-up: -1
+
+0x69:
+    .@.
+    ...
+    @@.
+    .@.
+    .@.
+    .@.
+    @@@
+
+    left-bearing: 3
+    right-bearing: 1
+'@
+    $inY5 = "$tmp\y5.yaff"
+    Set-Content -LiteralPath $inY5 -Value $yaffProp -Encoding utf8
+    & $conv -In $inY5 -Out "$tmp\y5.CHR" | Out-Null
+    $y5 = [System.IO.File]::ReadAllBytes("$tmp\y5.CHR")
+    Assert-Bytes $y5[520..527] ([byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0xFF,0x00)) 'Y5 A on the baseline, rows 0-6'
+    Assert-Bytes $y5[824..831] ([byte[]](0x00,0x3C,0x42,0x42,0x3C,0x02,0x02,0x3C)) 'Y5 g dropped one row by shift-up -1'
+    Assert-Bytes $y5[840..847] ([byte[]](0x08,0x00,0x18,0x08,0x08,0x08,0x1C,0x00)) 'Y5 i shifted right by left-bearing 3'
+
+    # --- Y6/Y7 a glyph whose bearing plus width passes column 8 is
+    #     refused inside the text range and dropped outside it ---
+    function New-WideYaff([string]$label) {
+@"
+name: Wide
+spacing: proportional
+
+0x41:
+    @@@@@@@@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @@@@@@@@
+    ........
+
+${label}:
+    @@@@@
+    @...@
+    @...@
+    @...@
+    @...@
+    @...@
+    @@@@@
+    .....
+
+    left-bearing: 4
+"@
+    }
+    $inY6 = "$tmp\y6.yaff"
+    Set-Content -LiteralPath $inY6 -Value (New-WideYaff '0x42') -Encoding utf8
+    Assert-Throws { & $conv -In $inY6 -Out "$tmp\y6.CHR" } 'wider than 8 pixels' 'Y6 a 4+5 wide glyph at 66 is refused, not clipped'
+    $inY7 = "$tmp\y7.yaff"
+    Set-Content -LiteralPath $inY7 -Value (New-WideYaff '0x88') -Encoding utf8
+    $y7msg = & $conv -In $inY7 -Out "$tmp\y7.CHR" | Out-String
+    $y7 = [System.IO.File]::ReadAllBytes("$tmp\y7.CHR")
+    Assert-Eq $y7[136*8] $baseBytes[136*8] 'Y7 the same glyph at 136 is dropped, base glyph stands'
+    $script:checks++
+    if ($y7msg -notmatch '1 decorative glyph') { throw "Y7 : expected the dropped count, got: $y7msg" }
+
+    # --- Y8 ink on a ninth row is refused, never cropped ---
+    $yaffTall = @'
+name: Tall
+spacing: character-cell
+cell-size: 8x9
+
+0x41:
+    @@@@@@@@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @......@
+    @@@@@@@@
+'@
+    $inY8 = "$tmp\y8.yaff"
+    Set-Content -LiteralPath $inY8 -Value $yaffTall -Encoding utf8
+    Assert-Throws { & $conv -In $inY8 -Out "$tmp\y8.CHR" } 'does not fit an 8x8 cell' 'Y8 a 9-row glyph with ink on row 8 is refused'
+
+    # --- Y9 ragged rows are a malformed glyph, not blank pixels ---
+    $yaffRagged = @'
+name: Ragged
+
+0x41:
+    @@@@@@@@
+    @.....@
+    @@@@@@@@
+'@
+    $inY9 = "$tmp\y9.yaff"
+    Set-Content -LiteralPath $inY9 -Value $yaffRagged -Encoding utf8
+    Assert-Throws { & $conv -In $inY9 -Out "$tmp\y9.CHR" } 'fontconv:.*glyph 65' 'Y9 rows of unequal length refused with a fontconv: message'
+
+    # --- Y10 a UTF-8 BOM and a yaff: version line are both accepted ---
+    $yaffBom = "yaff: 1.0.4`nname: Bom`n`n0x41:`n    @@@@@@@@`n    ........`n    ........`n    ........`n    ........`n    ........`n    ........`n    ........`n"
+    $inY10 = "$tmp\y10.yaff"
+    [System.IO.File]::WriteAllBytes($inY10, ([byte[]](0xEF,0xBB,0xBF)) + [System.Text.Encoding]::UTF8.GetBytes($yaffBom))
+    & $conv -In $inY10 -Out "$tmp\y10.CHR" | Out-Null
+    $y10 = [System.IO.File]::ReadAllBytes("$tmp\y10.CHR")
+    Assert-Eq $y10[65*8] 0xFF 'Y10 glyph 65 read through a BOM and a yaff: header'
+
+    # --- D1 a hoard-shaped .draw file converts ---
+    # Hex label, first row on the label line after a tab, '-' paper and
+    # '#' ink, remaining rows tab-indented.
+    $draw = "# test draw`n#`n`n41:`t--###---`n`t-#---#--`n`t-#---#--`n`t-#####--`n`t-#---#--`n`t-#---#--`n`t-#---#--`n`t--------`n`n7f:`t########`n`t########`n`t########`n`t########`n`t########`n`t########`n`t########`n`t########`n"
+    $inD1 = "$tmp\d1.draw"
+    Set-Content -LiteralPath $inD1 -Value $draw -Encoding ascii -NoNewline
+    $d1msg = & $conv -In $inD1 -Out "$tmp\d1.CHR" | Out-String
+    $d1 = [System.IO.File]::ReadAllBytes("$tmp\d1.CHR")
+    Assert-Bytes $d1[520..527]   $yA 'D1 glyph 65 from the draw rows'
+    Assert-Bytes $d1[1544..1551] $yA 'D1 glyph 193 mirrored'
+    Assert-Bytes $d1[1016..1023] $baseBytes[1016..1023] 'D1 glyph 127 from the base font (a draw file declares no charset)'
+    $script:checks++
+    if ($d1msg -notmatch 'format=DRAW') { throw "D1 : output line must name the format, got: $d1msg" }
+
+    # --- D2 a draw glyph with ink past row 7 is refused ---
+    $drawTall = "41:`t########`n`t--------`n`t--------`n`t--------`n`t--------`n`t--------`n`t--------`n`t--------`n`t########`n"
+    $inD2 = "$tmp\d2.draw"
+    Set-Content -LiteralPath $inD2 -Value $drawTall -Encoding ascii -NoNewline
+    Assert-Throws { & $conv -In $inD2 -Out "$tmp\d2.CHR" } 'does not fit an 8x8 cell' 'D2 a 9-row draw glyph with ink on row 8 is refused'
+
+    # --- D3 a draw file whose rows start on the line after the label
+    #     is still draw: hex labels, not YAFF decimal ---
+    # The hoard's sam_coupe.draw has this shape; '41:' must land at 65,
+    # and a six-wide raster is left-aligned.
+    $drawNext = "# next-line rows`n`n41:`n`t--##--`n`t-#--#-`n`t-#--#-`n`t-####-`n`t-#--#-`n`t-#--#-`n`t-#--#-`n`t------`n"
+    $inD3 = "$tmp\d3.draw"
+    Set-Content -LiteralPath $inD3 -Value $drawNext -Encoding ascii -NoNewline
+    $d3msg = & $conv -In $inD3 -Out "$tmp\d3.CHR" | Out-String
+    $d3 = [System.IO.File]::ReadAllBytes("$tmp\d3.CHR")
+    Assert-Bytes $d3[520..527] ([byte[]](0x30,0x48,0x48,0x78,0x48,0x48,0x48,0x00)) 'D3 41: is hex 65 in a draw file, six-wide raster left-aligned'
+    Assert-Eq $d3[41*8] $baseBytes[41*8] 'D3 nothing landed at decimal 41'
+    $script:checks++
+    if ($d3msg -notmatch 'format=DRAW') { throw "D3 : must be detected as draw by its -/# rows, got: $d3msg" }
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {

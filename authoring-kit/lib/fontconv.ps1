@@ -17,6 +17,16 @@
 #          only 32-127 is read (any Unicode table is ignored).
 #   BDF    'STARTFONT' - X11 bitmap font, glyphs positioned from the
 #          baseline rather than stacked.
+#   YAFF   text, a label line ('0x41:') followed by indented rows of
+#          '.' paper and '@' ink - monobit's native format and the one
+#          hoard-of-bitfonts ships. Codepoint labels name the slot;
+#          u+XXXX and 'A' labels only below 128. shift-up places a
+#          raster against the baseline, left-bearing shifts it right.
+#          'encoding: zx-spectrum' gets the classic ZX slot exemption,
+#          any 437 codepage counts as OEM.
+#   DRAW   text, a bare hex label ('41:') with rows of '-' paper and
+#          '#' ink on the label line or below it - monobit's hexdraw,
+#          the hoard's other format. No metrics: rows stack.
 #   SINTAC 'JSJ SINTAC' - DAAD Ready's PC.FNT / PCDAAD's DAAD.FNT -
 #          refused by name (per-character width table, not a fixed cell).
 #   RAW    anything else - headerless dump, 8 rows per glyph. 2048
@@ -56,7 +66,9 @@
 # 96 lifts from the source's own slot 156 instead when the source
 # declares itself OEM and that slot is non-blank. A 768-byte RAW input
 # read at its historic first character is EXEMPT from both
-# substitutions (that shape IS a classic ZX charset already). -Slots
+# substitutions (that shape IS a classic ZX charset already), and so
+# is a source that declares the ZX charset by name (YAFF 'encoding:
+# zx-spectrum'). -Slots
 # Source turns both substitutions off everywhere. The output line
 # always says which path ran.
 #
@@ -233,7 +245,10 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
     # other length placed with -First has no declared ordering and could
     # be either charset, so it keeps the substitution, with -Slots
     # Source as the escape hatch.
-    if ($slots -eq 'ZX' -and $classicZx) {
+    if ($slots -eq 'ZX' -and $font.Charset -eq 'ZX') {
+        $notes += 'source declares the ZX charset: glyphs 96 and 127 kept from the source'
+    }
+    elseif ($slots -eq 'ZX' -and $classicZx) {
         $notes += 'classic 768-byte ZX charset: glyphs 96 and 127 kept from the source'
     }
     elseif ($slots -eq 'ZX') {
@@ -340,6 +355,7 @@ if ($isRaw) {
 $classicZx = ($inBytes.Length -eq 768 -and $isRaw -and $firstChar -eq 32)
 
 $font  = Read-FontFile $inBytes $In $firstChar $Face
+if ($font.Charset -eq 'ZX') { $classicZx = $true }   # declared, not inferred from shape
 $table = Build-GlyphTable $font $baseBytes $Slots $In $classicZx
 
 if (-not (Test-GlyphBlank $table (32 * 8))) { Write-GlyphSpaceWarning $In $isRaw }
