@@ -1655,6 +1655,8 @@ h_parse:                        ; 73: condition-like. B = option.
     ld a, 1
     ld (inpFresh), a            ; non-empty submit: SVC_GETLINE reads fresh
 .nofresh:
+    call xbn_line_hook          ; format 3 line hook (main.asm): may
+    jp c, .reprompt             ; rewrite inpLine; CF set = consumed
     ld a, (flags+FLAG_TIMECTL)
     bit 3, a
     jr z, .nocls

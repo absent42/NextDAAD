@@ -297,6 +297,9 @@
 ;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC (fns 26-29, 34-39 and 42-46
 ;     exist only in xbntest.asm) (on any other leg these print unwritten
 ;     flags - zeros)
+;   XHKZ XHKS XSWL: format 3 hook probes, fixture leg only. XSWL is a
+;     real verb the fixture's line hook swallows; on the ticker leg
+;     (format 2, no hook) it prints SWALLOW FAILED, the negative control.
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
 ;     esxdos handler lacks M_GETDATE and the call derails the machine.
@@ -432,6 +435,9 @@ XSAV   184 verb
 XINE   185 verb
 XINL   186 verb
 XVOC   187 verb
+XHKS   188 verb
+XHKZ   189 verb
+XSWL   205 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -724,6 +730,18 @@ CLOAK   22 noun
            PRINT   130       ; expect 0
            MES     "/"
            PRINT   131       ; expect 1
+           DONE
+> XHKZ _   LET     133 0      ; zero the hook counters
+           LET     135 0
+           DONE
+> XHKS _   MES     "line "
+           PRINT   133       ; calls since XHKZ
+           MES     " len "
+           PRINT   134       ; length of the line that reached the hook
+           MES     " out "
+           PRINT   135       ; characters tapped (mod 256)
+           DONE
+> XSWL _   MES     "SWALLOW FAILED"   ; must never print on a hook run
            DONE
 > XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
            EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare

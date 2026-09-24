@@ -2278,6 +2278,11 @@ xbn_boot_load:
     ld (xbnExt), hl
     ld (xbnInt), hl
     ld (xbnEnd), hl
+    xor a
+    ld (outHookOn), a
+    ld hl, 0
+    ld (xbnLine), hl
+    ld (xbnOut), hl
     call esx_getsetdrv
     ret c                        ; no card / no default drive: off
     ld ix, .name
@@ -2348,14 +2353,22 @@ xbn_boot_load:
     jp c, .reject                 ; fewer bytes than a header: truncated
     ld hl, DATA_WINDOW
     ld de, .magic
-    ld b, 4
+    ld b, 3
 .m:
     ld a, (de)
-    cp (hl)                     ; "XBN",2 - HL lands on the ext word
+    cp (hl)                     ; "XBN"
     jp nz, .reject
     inc hl
     inc de
     djnz .m
+    ld a, (hl)                  ; version byte: 2 or 3
+    ld (.hdrVer), a
+    cp 2
+    jr z, .verok
+    cp 3
+    jp nz, .reject
+.verok:
+    inc hl                      ; HL -> ext word
     ld e, (hl)
     inc hl
     ld d, (hl)
@@ -2371,18 +2384,27 @@ xbn_boot_load:
     ld d, (hl)
     ld (.hdrSize), de
 
-    ; v2: four reserved bytes, must be zero - the future door. A later
-    ; release may make one load-bearing; this reject is what makes that
-    ; safe without another version cliff.
+    ; offsets 10-13: v3 lineEntry, outEntry; v2 reserved, must be zero
+    inc hl                      ; offset 10
+    ld e, (hl)
     inc hl
-    ld a, (hl)
+    ld d, (hl)
+    ld (.hdrLine), de
     inc hl
-    or (hl)
+    ld e, (hl)
     inc hl
-    or (hl)
-    inc hl
-    or (hl)
+    ld d, (hl)
+    ld (.hdrOut), de
+    ld a, (.hdrVer)
+    cp 3
+    jr z, .rsvok
+    ld hl, (.hdrLine)           ; format 2: all four reserved bytes zero
+    ld a, h
+    or l
+    or d
+    or e
     jp nz, .reject
+.rsvok:
 
     call data_restore             ; window done; the rest is arithmetic
                                   ; on the cached fields - .reject below
@@ -2422,6 +2444,24 @@ xbn_boot_load:
     ld de, (.hdrInt)
     call .checkEntry
     jp c, .reject
+    ld hl, (.hdrEnd)
+    ld de, (.hdrLine)
+    call .checkEntry
+    jp c, .reject
+    ld hl, (.hdrEnd)
+    ld de, (.hdrOut)
+    call .checkEntry
+    jp c, .reject
+    ld hl, (.hdrLine)
+    ld (xbnLine), hl
+    ld hl, (.hdrOut)
+    ld (xbnOut), hl
+    ld a, h
+    or l
+    jr z, .outoff
+    ld a, 1
+.outoff:
+    ld (outHookOn), a
 
     ; --- commit resident state (Tasks 3-6 read these) ---
     ld hl, (.hdrExt)
@@ -2490,7 +2530,10 @@ xbn_boot_load:
 .hdrInt:    dw 0
 .hdrSize:   dw 0
 .hdrEnd:    dw 0
-.magic:     db "XBN", 2
+.hdrLine:   dw 0
+.hdrOut:    dw 0
+.hdrVer:    db 0
+.magic:     db "XBN"
 
 ; --- part switch primitive (EXTERN n 4 / XPART) ---
 

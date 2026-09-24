@@ -115,6 +115,7 @@ prn_char:
     ld a, (wrapLock)
     or a
     jr nz, prn_char_raw         ; editor: immediate echo, no buffering
+    call xbn_char_gate          ; format 3 output tap (main.asm); keeps C
     ld a, c
     cp ' '
     jr z, .space
@@ -211,7 +212,7 @@ prn_flush:
 ; flush's own conditional wrap uses prn_newline_raw, so this cannot
 ; recurse back into the flush.
 prn_newline:
-    call prn_flush
+    call xbn_nl_gate            ; format 3 $0D tap, then prn_flush (main.asm)
 prn_newline_raw:
     call win_newline            ; windows.asm: column 0, next row, scroll
     jr prn_more_check

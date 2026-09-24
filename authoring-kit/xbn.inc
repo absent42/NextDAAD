@@ -16,6 +16,22 @@ XBN_ORG         equ $C000
         ds 4, 0                 ; v2 reserved, must be zero
     ENDM
 
+; Format 3 header: two more entry points (label or 0). The line hook gets
+; HL = the typed line (writable, ASCIIZ, up to 127), B = length, IX =
+; flags; CF set on return consumes the line (silent re-prompt). The
+; output hook gets C = one printed character ($0D = newline), IX =
+; flags; it must call no service. Needs a v0.10.1 interpreter; older
+; loaders reject the header and the game plays with externs off.
+    MACRO XBN_HEADER3 ext_entry, int_entry, line_entry, out_entry
+        db "XBN"
+        db 3                    ; format version
+        dw ext_entry
+        dw int_entry
+        dw xbn_end - XBN_ORG    ; total size, header included
+        dw line_entry
+        dw out_entry
+    ENDM
+
 ; Frozen interpreter data anchors (never move between releases)
 XBN_FLAGS       equ $A200       ; 256 DAAD flags; IX also points here
 XBN_OBJTABLE    equ $A300       ; object table, OBJ_SIZE bytes per object

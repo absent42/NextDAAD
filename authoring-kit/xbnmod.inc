@@ -8,6 +8,14 @@ XBN_CALL_SLOTS  equ 8            ; FROZEN at first release. Append only.
 ; absent slots jump to xbn_null_ret. Invoke once per binary.
     MACRO XBN_BEGIN ext_entry, int_entry
         XBN_HEADER ext_entry, int_entry
+        XBN_BEGIN_BODY
+    ENDM
+; Format 3 twin of XBN_BEGIN (xbn.inc's XBN_HEADER3).
+    MACRO XBN_BEGIN3 ext_entry, int_entry, line_entry, out_entry
+        XBN_HEADER3 ext_entry, int_entry, line_entry, out_entry
+        XBN_BEGIN_BODY
+    ENDM
+    MACRO XBN_BEGIN_BODY
 xbn_call_table:
         IFDEF XBN_HAS_TOOLKIT
         jp toolkit.tk_call0
@@ -171,4 +179,45 @@ xbn_fnsave:
         db 0
 xbn_cfacc:
         db 0
+    ENDM
+
+; Hook chains (format 3). The interpreter passes HL = line, B = length
+; once; each module gets the contract re-established. The first module
+; that returns CF set consumes the line and ends the chain.
+    MACRO XBN_LINE_ENTER
+        ld (xbn_line_hl), hl
+        ld a, b
+        ld (xbn_line_b), a
+    ENDM
+    MACRO XBN_LINE_CALL target   ; B is recomputed from the NUL: a module
+        call xbn_line_len        ; ahead may have rewritten the line
+        ld ix, XBN_FLAGS
+        call target
+        ret c
+    ENDM
+    MACRO XBN_LINE_END
+        or a
+        ret
+xbn_line_hl:    dw 0
+xbn_line_b:     db 0
+xbn_line_len:                    ; out HL = line, B = its length (to the NUL)
+        ld hl, (xbn_line_hl)
+        ld b, 0
+.l:
+        ld a, (hl)
+        or a
+        jr z, .d
+        inc hl
+        inc b
+        jr .l
+.d:
+        ld hl, (xbn_line_hl)
+        ret
+    ENDM
+; Output chain: C = the character, preserved across modules.
+    MACRO XBN_OUT_CALL target
+        push bc
+        ld ix, XBN_FLAGS
+        call target
+        pop bc
     ENDM

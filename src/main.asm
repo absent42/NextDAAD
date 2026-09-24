@@ -568,6 +568,92 @@ xbn_api_init:                    ; boot; table copy is resident-to-resident,
     ldir
     ret
 
+; Format 3 line hook. Called by h_parse (.got) after the editor returns.
+; Out: CF from the hook; CF clear when no hook. Reuses extSaved: PARSE
+; is a condact handler and never runs inside an EXTERN. Corrupts all.
+xbn_line_hook:
+    ld hl, (xbnLine)
+    ld a, h
+    or l
+    ret z                         ; no hook: CF clear
+    ld (lineTarget), hl
+    call xbn_mmu_save
+    call xbn_mmu_map
+    ld hl, inpLine
+    ld a, (inpLen)
+    ld b, a
+    ld ix, flags
+    call .go
+    jp xbn_mmu_restore            ; flag-free: the hook's CF crosses
+.go:
+lineTarget equ $+1
+    jp 0
+
+outSaved:   dw 0                  ; own MMU cell: the tap fires inside
+                                  ; SVC_PUTS with svcSaved and extSaved live
+outChar:    db 0
+; Format 3 output tap. In: C = character. Preserves AF, BC, DE, HL, IX,
+; IY. Gate cleared while the hook runs (no recursion). MMU reads via
+; nr_read's DI bracket: the frame ISR re-selects $243B.
+xbn_out_hook:
+    push af
+    push bc
+    push de
+    push hl
+    push ix
+    push iy
+    xor a
+    ld (outHookOn), a
+    ld a, c
+    ld (outChar), a
+    ld e, NR_MMU6
+    call nr_read                  ; DI-bracketed, IFF2-preserving
+    ld (outSaved), a
+    ld e, NR_MMU7
+    call nr_read
+    ld (outSaved+1), a
+    call xbn_mmu_map
+    ld a, (outChar)
+    ld c, a
+    ld ix, flags
+    call .go
+    ld hl, outSaved
+    call mmu_restore_hl           ; nextreg writes only: no select port
+    ld a, 1
+    ld (outHookOn), a
+    pop iy
+    pop ix
+    pop hl
+    pop de
+    pop bc
+    pop af
+    ret
+.go:
+    ld hl, (xbnOut)
+    jp (hl)
+
+; prn_char's tap gate, out of line: the pre-flags pad cannot hold it.
+xbn_char_gate:
+    ld a, (outHookOn)
+    or a
+    ret z
+    jp xbn_out_hook
+
+; prn_newline's $0D tap, then its flush; out of line for the pre-flags pad.
+xbn_nl_gate:
+    ld a, (wrapLock)
+    or a
+    jr nz, .nl
+    ld a, (outHookOn)
+    or a
+    jr z, .nl
+    push bc
+    ld c, $0D
+    call xbn_out_hook
+    pop bc
+.nl:
+    jp prn_flush
+
 svc_version:
     ld a, 3
     or a                          ; CF clear

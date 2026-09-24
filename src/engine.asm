@@ -970,6 +970,10 @@ xbnInt:     dw 0            ; cached header intEntry
 xbnEnd:     dw 0            ; $C000 + size (exclusive window limit)
 xbnIntOn:   db 0            ; bit 0 = XBN intEntry armed, bit 1 = sprite
                             ; tick, bit 2 = colour cycle tick; ISR tests nonzero
+xbnLine:    dw 0            ; format 3 header lineEntry (0 = none)
+xbnOut:     dw 0            ; format 3 header outEntry (0 = none)
+outHookOn:  db 0            ; 1 = outEntry armed; prn_char/prn_newline gate
+                            ; (print.asm); cleared while the hook runs
 doallObj:   db $FF
 doallLoc:   db 0
 doallLevel: db 0

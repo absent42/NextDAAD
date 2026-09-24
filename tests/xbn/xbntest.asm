@@ -6,7 +6,7 @@
     DEVICE ZXSPECTRUMNEXT
     INCLUDE "../../authoring-kit/xbn.inc"
     ORG XBN_ORG
-    XBN_HEADER ext_main, int_tick
+    XBN_HEADER3 ext_main, int_tick, line_probe, out_probe
 
 ext_main:
     ; Contract on entry: A=B=param1, C=fn, HL=flags+param1,
@@ -705,6 +705,42 @@ voc_probe:
     ret
 w_xsvc: db "xsvc", 0
 w_none: db "qqqqq", 0
+
+; Format 3 line hook probe: 133 = calls, 134 = B (length). A line whose
+; first four letters are XSWL is swallowed (CF set: silent re-prompt).
+line_probe:
+    ld a, (XBN_FLAGS+133)
+    inc a
+    ld (XBN_FLAGS+133), a
+    ld a, b
+    ld (XBN_FLAGS+134), a
+    ld de, sw_text
+    ld b, 4
+.cmp:
+    ld a, (hl)
+    and $DF                      ; case-fold letters
+    ex de, hl
+    cp (hl)
+    ex de, hl
+    jr nz, .keep
+    inc hl
+    inc de
+    djnz .cmp
+    scf
+    ret
+.keep:
+    or a
+    ret
+sw_text: db "XSWL"
+
+; Output tap probe: 135 = characters seen (wraps), 136 = last one.
+out_probe:
+    ld a, (XBN_FLAGS+135)
+    inc a
+    ld (XBN_FLAGS+135), a
+    ld a, c
+    ld (XBN_FLAGS+136), a
+    ret
 
 xbn_end:
 
