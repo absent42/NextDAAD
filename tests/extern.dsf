@@ -318,7 +318,8 @@
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
-;     SILICON-ONLY, see below)
+;     SILICON-ONLY, see below) XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF
+;     XTRD (transcript; XTRD is SILICON-ONLY, see below)
 ;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
 ;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
 ;     -XbnClock/-XbnTool XHNP aborts at fn 52 and prints "no book", and
@@ -332,6 +333,12 @@
 ;     combined legs) AND are SILICON-ONLY for the same reason as
 ;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
 ;     emulator replay.
+;   XTRD needs the TRANSCRIPT module (-XbnAll and the other combined
+;     legs) AND is SILICON-ONLY for the same reason as XDAT/XRTC:
+;     EXTERN 1 90 leaves mode bit 1 (no-date) clear, so fn 90 calls
+;     SVC_GETDATE. DO NOT TYPE it in an emulator replay. The other
+;     transcript verbs (XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF) set
+;     mode bit 1 and are emulator-safe.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
 ;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF are
 ;     meaningful there (plus XSLT with all slots printing nothing).
@@ -450,6 +457,15 @@ XRMS   194 verb
 XRML   195 verb
 XLD2   196 verb
 XSWL   205 verb
+XTRS   197 verb
+XTRE   198 verb
+XTRQ   199 verb
+XTRL   200 verb
+XTR1   201 verb
+XTR2   202 verb
+XTRF   203 verb
+XTRI   204 verb
+XTRD   206 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -535,6 +551,7 @@ CLOAK   22 noun
 /6 "Morning bells over the morning mountains ring softly"
 /7 "ABCDEFGHIJKLMNOPQRSTUVWXY"
 /8 "THIS MESSAGE IS EXACTLY TWO HUNDRED CHARACTERS LONG SO THE MARQUEE TAIL IS PROVEN TO LIVE IN ITS OWN BYTE AND NEVER BE ADDED TO THE TEXT LENGTH WHICH WOULD WRAP PAST TWO FIVE FIVE AND NEVER DISARM, OK"
+/9 "STEP LABEL"
 /OTX
 /0 "a spare widget"
 /1 "a widget on the floor"
@@ -1968,6 +1985,54 @@ CLOAK   22 noun
            DONE
 > XLD2 _   LOAD    0          ; answer with V2: the harness-staged v2 file
            DONE
+; XTRS/XTRI/XTRD/XTRE/XTRQ/XTRL/XTR1/XTR2/XTRF - transcript module (fns
+; 90-94), combined-binary legs only (see LEG SCOPE above). Mode bit 1
+; (no-date) is set on XTRS/XTRI so they stay emulator-safe; XTRD leaves
+; it clear and reaches SVC_GETDATE - SILICON-ONLY, see LEG SCOPE.
+> XTRS _   EXTERN  3 90       ; start, full mode, no-date
+           MES     "recording"
+           DONE
+> XTRI _   EXTERN  2 90       ; start, input only, no-date
+           MES     "recording input"
+           DONE
+; XTRD - SILICON-ONLY (SVC_GETDATE derails ZEsarUX - DO NOT TYPE in an
+;        emulator). Start, full mode, WITH the date stamp.
+> XTRD _   EXTERN  1 90
+           MES     "recording dated"
+           DONE
+> XTRE _   EXTERN  0 91
+           MES     "stopped"
+           DONE
+> XTRQ _   EXTERN  0 92
+           MES     "REC"
+           DONE
+> XTRQ _   MES     "NOREC"
+           DONE
+> XTRL _   EXTERN  9 93       ; label line from message 9
+           MES     "labelled"
+           DONE
+> XTR1 _   CLS
+           MES     "ONE TWO THREE "
+           PRINT   120
+           NEWLINE
+           MES     "FOUR"
+           LISTOBJ
+           DONE
+> XTR2 _   CLS
+           MES     "SECOND TURN"
+           NEWLINE
+           LET     140 42
+           MES     "PAIR "
+           EXTERN  140 70     ; toolkit: print flag 140 as decimal via SVC_PUTCHAR
+           DONE
+> XTRF _   CLS
+           WINDOW  2          ; a 4-row window: forces More prompts
+           WINAT   20 0
+           WINSIZE 4 80
+           MES     "L01#nL02#nL03#nL04#nL05#nL06#nL07#nL08#nL09#nL10#n"
+           MES     "L11#nL12#nL13#nL14#nL15#nL16#nL17#nL18#nL19#nL20#n"
+           WINDOW  1
+           DONE
 /PRO 6
 ; ---- one-shot init ----
 > _ _   WINDOW 1
@@ -1976,5 +2041,6 @@ CLOAK   22 noun
         PAPER 0
         INK 7
         CLS
+        LET 42 2          ; pin the prompt to SM2 "What now?" (was the frame-counter pick)
         MES "NEXTDAAD XBN EXTERN FIXTURE#n"
 /END

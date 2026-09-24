@@ -110,7 +110,11 @@ XBN_TILEMAP     equ $6000
 ;
 ; Claims: hints.asm rdbuf, offset 0, 256 bytes
 ; Claims: fade.asm palStage, offset 256, 512 bytes
-XBN_SCRATCH_FREE equ 768         ; next unclaimed offset - bump when you add a claim
+; Claims: transcript.asm tbuf, offset 768, TRANSCRIPT_RING bytes
+    IFNDEF TRANSCRIPT_RING
+TRANSCRIPT_RING equ 2048         ; transcript buffer; standalone builds may raise it
+    ENDIF
+XBN_SCRATCH_FREE equ 768 + TRANSCRIPT_RING
 
 ; Sets XBN_SCRATCH and asserts every claim above still fits inside the
 ; mapped bank. Invoke once, right after the top-level file's own

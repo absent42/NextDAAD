@@ -45,6 +45,8 @@ def main():
     ap.add_argument("--row", type=int, default=None)
     ap.add_argument("--cols", type=int, default=80,
                     help="decode width: 80 or 40 (after GFX 1 18)")
+    ap.add_argument("--grab", default=None,
+                    help="file in the leg's card root to copy to tests\\out\\xbn after the run")
     args = ap.parse_args()
 
     leg = (ROOT / args.leg).resolve() if not pathlib.Path(args.leg).is_absolute() else pathlib.Path(args.leg)
@@ -89,6 +91,14 @@ def main():
                 print("%02d|%s" % (i, r.rstrip()))
         if args.row is not None:
             print("attr %02d|%s" % (args.row, " ".join("%02X" % a for a in attrs[args.row])))
+        if args.grab:
+            src = sd / args.grab
+            dst = ROOT / "tests" / "out" / "xbn" / args.grab
+            if src.exists():
+                shutil.copyfile(src, dst)
+                print("grabbed %s -> %s" % (args.grab, dst))
+            else:
+                print("grab: %s was not written" % args.grab)
         z.close()
         rc = 0
     finally:

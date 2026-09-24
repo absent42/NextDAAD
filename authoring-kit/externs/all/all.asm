@@ -16,10 +16,11 @@
     DEFINE XBN_HAS_TIMER
     DEFINE XBN_HAS_REALTIME
     DEFINE XBN_HAS_TOOLKIT
+    DEFINE XBN_HAS_TRANSCRIPT
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
     ORG XBN_ORG
-    XBN_BEGIN all_ext, all_int
+    XBN_BEGIN3 all_ext, all_int, all_line, all_out
 
 ; EXTERN/CALL chain. xbn_setup rebuilds the documented entry contract
 ; before each module call - modules may clobber everything. Each module
@@ -47,6 +48,9 @@ all_ext:
     call xbn_setup
     call toolkit.ext
     XBN_CHAIN_CAPTURE
+    call xbn_setup
+    call transcript.ext
+    XBN_CHAIN_CAPTURE
     XBN_CHAIN_VERDICT
 
 ; #int chain. IX = flags base is the only documented register; every
@@ -68,6 +72,16 @@ all_int:
     call realtime.int
     ld ix, XBN_FLAGS
     call toolkit.int
+    ld ix, XBN_FLAGS
+    call transcript.int
+    ret
+
+all_line:
+    XBN_LINE_ENTER
+    XBN_LINE_CALL transcript.line
+    XBN_LINE_END
+all_out:
+    XBN_OUT_CALL transcript.out
     ret
 
     XBN_CHAIN_SETUP
@@ -79,6 +93,7 @@ all_int:
     INCLUDE "externs/timer/timer.asm"
     INCLUDE "externs/realtime/realtime.asm"
     INCLUDE "externs/toolkit/toolkit.asm"
+    INCLUDE "externs/transcript/transcript.asm"
 
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
