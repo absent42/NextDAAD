@@ -13,10 +13,11 @@ TR_MIN_API      equ 3
 TR_BUF          equ XBN_SCRATCH + 768
 TR_BUFSZ        equ TRANSCRIPT_RING
 INP_MAX         equ 127          ; mirrors the interpreter's frozen line length
-; Output-tap cap: reserves the line hook's worst case ("\r" ">>" 127
-; chars "\r" = INP_MAX+4) so a full ring still has room for the NEXT
-; command's marker - the one guarantee the overflow design promises.
-TR_OUTCAP       equ TR_BUFSZ - (INP_MAX+4)
+; Output-tap cap: reserves the line hook's worst case, 131 bytes
+; ("\r" ">>" 127 chars "\r" = INP_MAX+4), PLUS one more for append's
+; own sentinel slot at TR_BUFSZ-1 - without it the marker's trailing
+; "\r" lands exactly on that slot and becomes '~' instead. INP_MAX+5.
+TR_OUTCAP       equ TR_BUFSZ - (INP_MAX+5)
     ASSERT TR_OUTCAP > 0, TR_OUTCAP not positive - TRANSCRIPT_RING too small
 
 ext:
