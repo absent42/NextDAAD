@@ -791,7 +791,8 @@ class MainWindow(QMainWindow):
         self._last_source_error = None
 
         self.scratch_dir = Path(tempfile.mkdtemp(prefix="vidtune-"))
-        self.encoder_argv = resolve_encoder(self.kit_root, self.cfg.toolsdir)
+        self.encoder_argv = resolve_encoder(self.kit_root, self.cfg.toolsdir,
+                                            self.cfg.vidtoolsdir)
         self.ffmpeg = self._resolve_ffmpeg()
 
         self._job = None

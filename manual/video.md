@@ -148,7 +148,7 @@ the game, so use those only for something you genuinely want everywhere.
 **By hand**, for a one-off encode or to cut a clip from a longer source:
 
 ```
-tools\videnc\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
+tools\vidtools\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
 ```
 
 Keep the source file outside `VIDEO\` when you do this. The build
@@ -527,9 +527,11 @@ chosen width. Take one from that list.
 The build's encode pass needs an encoder and ffmpeg, both resolved from
 `TOOLSDIR` (see [Getting started](getting-started.md)):
 
-- **`videnc.exe`** (`tools\videnc\videnc.exe`) - the standalone encoder,
+- **`videnc.exe`** (`tools\vidtools\videnc.exe`) - the standalone encoder,
   which ships with the kit. No Python needed, nothing to download, and
-  it is preferred automatically.
+  it is preferred automatically. It shares `tools\vidtools\` with
+  `vidtune.exe` and runs from that folder's `_internal\`, so keep the
+  folder whole.
 - **`lib\videnc.py`** - the same encoder as a script, the fallback if
   `videnc.exe` is ever missing. Needs Python 3, Pillow and numpy
   (`pip install Pillow numpy`).

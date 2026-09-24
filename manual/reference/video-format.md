@@ -28,7 +28,7 @@ screen.
   `--ffmpeg PATH`.
 
 The standalone `videnc.exe` (shipped in the kit at
-`tools\videnc\videnc.exe`, built from this script with PyInstaller)
+`tools\vidtools\videnc.exe`, built from this script with PyInstaller)
 needs none of the Python stack - only ffmpeg.
 
 ## Usage

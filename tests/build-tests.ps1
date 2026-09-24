@@ -990,13 +990,14 @@ Assert-PaletteWriterCensus
 & python "$PSScriptRoot\art\pngchain.py"
 if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-transparency chain is broken" }
 
-# videnc.exe/vidtune.exe are PyInstaller bundles that FREEZE the encoder
-# source in; a stale bundle has silently shipped old-encoder bytes twice.
+# tools\vidtools\ (videnc.exe + vidtune.exe) is a PyInstaller bundle that
+# FREEZES the encoder source in; a stale bundle has silently shipped
+# old-encoder bytes twice.
 # tests\check_frozen_exes.py diffs each bundle against the working tree:
 # exit 1 = stale, exit 2 = not verified (missing, LFS pointer, unreadable,
 # or host Python minor version differs from the bundle's).
 & python "$PSScriptRoot\check_frozen_exes.py"
-if ($LASTEXITCODE -eq 1) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild both" }
+if ($LASTEXITCODE -eq 1) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild with scripts\build-vidtools.ps1" }
 if ($LASTEXITCODE -ne 0) { throw "tests\check_frozen_exes.py could not verify the frozen kit exes - see its NOT VERIFIED lines" }
 
 function Assert-ManualFresh {

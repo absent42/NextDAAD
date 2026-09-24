@@ -308,12 +308,12 @@ if (-not (Test-Path $ffmpeg)) {
 $kitRoot = Split-Path -Parent $PSScriptRoot
 $enc = $null
 $exeCandidates = @(
-    $(if ($env:VIDENC) { $env:VIDENC } else { Join-Path $env:TOOLSDIR 'videnc\videnc.exe' }),
-    (Join-Path $kitRoot 'tools\videnc\videnc.exe')
+    $(if ($env:VIDENC) { $env:VIDENC } else { Join-Path $env:TOOLSDIR 'vidtools\videnc.exe' }),
+    (Join-Path $kitRoot 'tools\vidtools\videnc.exe')
 ) | Where-Object { $_ } | Select-Object -Unique
 foreach ($exe in $exeCandidates) {
     # >1MB check: a clone made without git-lfs leaves a tiny text
-    # POINTER file at this path, not the real (26MB) binary - skip it
+    # POINTER file at this path, not the real (5MB) launcher - skip it
     # and fall through to the Python script rather than "running" text.
     if ((Test-Path $exe) -and (Get-Item $exe).Length -gt 1MB) { $enc = @($exe); break }
 }
@@ -327,7 +327,7 @@ if (-not $enc) {
 }
 if (-not $enc) {
     Write-Host 'ERROR: no encoder for VIDEO\*.mp4 - videnc.exe not found and no Python 3 with Pillow + numpy'
-    Write-Host "       Easiest: download videnc.exe into $($exeCandidates[-1]) (see tools\README.txt)"
+    Write-Host "       Easiest: restore the kit's tools\vidtools\ folder whole - videnc.exe needs its _internal\ (see tools\README.txt)"
     Write-Host '       Or install Python 3 (https://www.python.org/) plus: pip install Pillow numpy'
     exit 1
 }

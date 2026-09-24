@@ -177,7 +177,7 @@ are per-clip decisions - one cutscene may want one route and the next
 another. <code>VIDASPECT</code>, <code>VIDFPS</code> and <code>VIDOPTS</code> apply to <em>every</em> clip in
 the game, so use those only for something you genuinely want everywhere.</p>
 <p><strong>By hand</strong>, for a one-off encode or to cut a clip from a longer source:</p>
-<pre><code>tools\videnc\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
+<pre><code>tools\vidtools\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
 </code></pre>
 <p>Keep the source file outside <code>VIDEO\</code> when you do this. The build
 re-encodes any <code>VIDEO\NNN.mp4</code> whose settings it does not recognise, so
@@ -562,9 +562,11 @@ chosen width. Take one from that list.</p>
 <p>The build's encode pass needs an encoder and ffmpeg, both resolved from
 <code>TOOLSDIR</code> (see <a href="getting-started.html">Getting started</a>):</p>
 <ul>
-<li><strong><code>videnc.exe</code></strong> (<code>tools\videnc\videnc.exe</code>) - the standalone encoder,
+<li><strong><code>videnc.exe</code></strong> (<code>tools\vidtools\videnc.exe</code>) - the standalone encoder,
   which ships with the kit. No Python needed, nothing to download, and
-  it is preferred automatically.</li>
+  it is preferred automatically. It shares <code>tools\vidtools\</code> with
+  <code>vidtune.exe</code> and runs from that folder's <code>_internal\</code>, so keep the
+  folder whole.</li>
 <li><strong><code>lib\videnc.py</code></strong> - the same encoder as a script, the fallback if
   <code>videnc.exe</code> is ever missing. Needs Python 3, Pillow and numpy
   (<code>pip install Pillow numpy</code>).</li>

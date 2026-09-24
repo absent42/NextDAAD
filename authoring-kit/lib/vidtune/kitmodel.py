@@ -27,6 +27,7 @@ class KitConfig:
     vid_fps: str = ""
     vid_opts: str = ""
     toolsdir: str = "tools"
+    vidtoolsdir: str = ""
     per_clip: dict = field(default_factory=dict)
     vidprofile: str = ""
 
@@ -50,6 +51,8 @@ def parse_config(config_path):
             cfg.vid_opts = value
         elif name == "TOOLSDIR":
             cfg.toolsdir = value or "tools"
+        elif name == "VIDTOOLSDIR":
+            cfg.vidtoolsdir = value
         elif name == "VIDPROFILE":
             cfg.vidprofile = value
         elif name.startswith("VIDOPTS_"):

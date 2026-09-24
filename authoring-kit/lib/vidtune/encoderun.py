@@ -3,6 +3,7 @@ BuildReport reading. The QProcess job is added in a later task."""
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,10 +19,14 @@ _RETIME_RE = re.compile(r"retime:\s+(.*)")
 _SLACK_RE = re.compile(r"tile-slack:\s+(.*)")
 
 
-def resolve_encoder(kit_root, toolsdir):
+def resolve_encoder(kit_root, toolsdir, vidtoolsdir=""):
     kit_root = Path(kit_root)
-    for exe in (Path(toolsdir, "videnc", "videnc.exe"),
-                kit_root / "tools" / "videnc" / "videnc.exe"):
+    cands = [Path(vidtoolsdir or Path(toolsdir, "vidtools"), "videnc.exe"),
+             kit_root / "tools" / "vidtools" / "videnc.exe"]
+    if getattr(sys, "frozen", False):
+        # the videnc.exe frozen in the same build: previews and encodes agree
+        cands.insert(0, Path(sys.executable).with_name("videnc.exe"))
+    for exe in cands:
         if not exe.is_absolute():
             exe = kit_root / exe
         if exe.is_file() and exe.stat().st_size > _MB:

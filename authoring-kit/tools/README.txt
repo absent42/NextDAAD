@@ -35,6 +35,11 @@ Gfx2Next       PNG to Layer 2 conversion
 videnc.exe     Standalone NXV video cutscene encoder
 vidtune.exe    Per-clip video tuning GUI
 
+videnc.exe and vidtune.exe share one folder, tools\vidtools\, and both
+run from its _internal\ subfolder. Keep the folder whole: an exe copied
+out of it on its own will not start. tools\vidtools\LICENSES\ holds the
+licences of the libraries bundled inside it.
+
 The DAAD compiler, NDRC, needs no download: it ships built-in as
 ..\lib\ndrc.exe. DAAD Ready and PHP are not required to build a game
 for this kit.
@@ -46,8 +51,8 @@ After extracting, these paths must exist:
   tools\ArkosTracker3\tools\SongToYm.exe (only needed for STREAM_NNN.aks)
   tools\CSpect\CSpect.exe
   tools\ffmpeg\bin\ffmpeg.exe (only needed for VIDEO\NNN.mp4 cutscenes)
-  tools\videnc\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
-  tools\vidtune\vidtune.exe (only needed for interactive per-clip tuning)
+  tools\vidtools\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
+  tools\vidtools\vidtune.exe (only needed for interactive per-clip tuning)
 
 
 Already have one of these installed?

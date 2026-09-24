@@ -148,6 +148,19 @@ All notable changes to NextDAAD are recorded here.
   vs file diff), tests/parser/transcript2jsonl.py, tests/xbn/mkv2sav.py,
   tickcheck.py --grab. The combined collection binary (externs/all) now
   carries a format 3 header and needs a v0.10.1 interpreter.
+- kit: videnc.exe and vidtune.exe are now one PyInstaller onedir bundle,
+  `authoring-kit/tools/vidtools/`, sharing `_internal/`; built from
+  `scripts/vidtools.spec` by `scripts/build-vidtools.ps1` (build outside
+  the repo, check_frozen_exes, mirror-deploy). The two launchers can no
+  longer drift apart. Unused Qt modules (Quick, QML, PDF, Network, SVG,
+  VirtualKeyboard, opengl32sw, translations), Pillow AVIF/WebP/CMS and
+  OpenSSL are excluded: 94 MB of exes becomes a 42 MB zip. Encodes are
+  byte-identical to the previous videnc.exe on both kit clips.
+  VIDENCDIR/VIDTUNEDIR are replaced by VIDTOOLSDIR (tools.bat, video.ps1,
+  VIDTUNE.BAT, vidtune kitmodel). A frozen vidtune runs its sibling
+  videnc.exe first. `LICENSES/` ships the Python, Qt (LGPL-3.0), numpy,
+  Pillow and PyInstaller licences. check_frozen_exes takes an optional
+  bundle folder.
 
 ## v0.10.0 - 18/09/2026
 

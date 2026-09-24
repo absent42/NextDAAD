@@ -82,6 +82,12 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   optionally everything the game prints, to a file on the card - a
   walkthrough recorder, or a bug report that writes itself. See
   <a href="externs.html#the-extern-collection">the extern collection</a>.</li>
+<li><strong>videnc and vidtune share one folder.</strong> Both now live in
+  <code>tools\vidtools\</code> and run from its <code>_internal\</code>, which halves the
+  kit's download. <code>CONFIG.BAT</code>'s <code>VIDENCDIR</code> and <code>VIDTUNEDIR</code> become one
+  setting, <code>VIDTOOLSDIR</code>. The old <code>tools\videnc\</code> and <code>tools\vidtune\</code>
+  folders are no longer used and can be deleted. See
+  <a href="video.html#9-encoding-tools">Video</a>.</li>
 </ul>
 <h2 id="0100-18-september-2026">0.10.0 - 18 September 2026</h2>
 <ul>

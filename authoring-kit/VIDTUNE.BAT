@@ -21,7 +21,7 @@ REM states for videnc.exe: a TOOLSDIR pointed elsewhere must not hide the
 REM copy that came with the kit.
 REM The >1MB test rejects the tiny text POINTER file a clone made without
 REM git-lfs leaves at this path, rather than "running" it.
-for %%V in ("%VIDTUNE%" "%~dp0tools\vidtune\vidtune.exe") do (
+for %%V in ("%VIDTUNE%" "%~dp0tools\vidtools\vidtune.exe") do (
     if exist "%%~V" (
         for %%A in ("%%~V") do if %%~zA GTR 1000000 (
             start "" "%%~V"
@@ -40,7 +40,7 @@ python -c "import PySide6, numpy, PIL" >nul 2>&1 && (
 )
 echo ERROR: vidtune not found. Looked for:
 echo          %VIDTUNE%
-echo          %~dp0tools\vidtune\vidtune.exe
-echo        See tools\README.txt, or set VIDTUNEDIR in CONFIG.BAT
+echo          %~dp0tools\vidtools\vidtune.exe
+echo        See tools\README.txt, or set VIDTOOLSDIR in CONFIG.BAT
 echo        or Python 3 with: pip install PySide6 numpy Pillow
 exit /b 1

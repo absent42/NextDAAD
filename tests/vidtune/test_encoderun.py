@@ -1,19 +1,38 @@
 import json
+import sys
 
 from vidtune.encoderun import (parse_progress_line, read_report,
                                resolve_encoder, summarize_report)
 
 
+def _big_exe(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\0" * (2 * 1024 * 1024))
+    return path
+
+
 def test_resolve_prefers_big_exe(tmp_path):
-    exe = tmp_path / "tools" / "videnc" / "videnc.exe"
-    exe.parent.mkdir(parents=True)
-    exe.write_bytes(b"\0" * (2 * 1024 * 1024))
+    exe = _big_exe(tmp_path / "tools" / "vidtools" / "videnc.exe")
     got = resolve_encoder(tmp_path, "tools")
     assert got == [str(exe)]
 
 
+def test_resolve_vidtoolsdir_wins_over_toolsdir(tmp_path):
+    _big_exe(tmp_path / "tools" / "vidtools" / "videnc.exe")
+    own = _big_exe(tmp_path / "elsewhere" / "videnc.exe")
+    assert resolve_encoder(tmp_path, "tools", "elsewhere") == [str(own)]
+
+
+def test_resolve_frozen_prefers_sibling(tmp_path, monkeypatch):
+    _big_exe(tmp_path / "tools" / "vidtools" / "videnc.exe")
+    sib = _big_exe(tmp_path / "bundle" / "videnc.exe")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "bundle" / "vidtune.exe"))
+    assert resolve_encoder(tmp_path, "tools") == [str(sib)]
+
+
 def test_resolve_skips_lfs_pointer(tmp_path):
-    exe = tmp_path / "tools" / "videnc" / "videnc.exe"
+    exe = tmp_path / "tools" / "vidtools" / "videnc.exe"
     exe.parent.mkdir(parents=True)
     exe.write_bytes(b"version https://git-lfs...")     # tiny pointer file
     got = resolve_encoder(tmp_path, "tools")
