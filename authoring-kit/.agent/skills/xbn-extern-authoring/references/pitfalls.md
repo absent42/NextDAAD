@@ -1,6 +1,6 @@
 # Pitfalls
 
-Twelve mistakes that have already cost someone a debugging session. Each is
+Nineteen mistakes that have already cost someone a debugging session. Each is
 the lesson and the rule it produced.
 
 ## halt is not a frame
@@ -70,6 +70,55 @@ claiming the same fn code, or the same flag, break each other silently.
 anything. Use fn codes 16 and up. Treat flags 224-251 as the collection's
 reserved band and 0-63 as the interpreter's.
 
+## The output hook calls no service
+
+**Lesson.** `SVC_GETMSG` and `SVC_WINDOW` share state with the print already
+in flight, and `SVC_PUTCHAR`/`SVC_PUTS` recurse straight back into the print
+path that is calling the hook. Any service call from the output hook is
+corruption or a crash, not a shortcut.
+
+**Rule.** The output hook only appends the character it was handed to your
+own buffer. If you need to print, do it from `EXTERN`, `CALL` or the line
+hook instead - all foreground, all service-safe.
+
+## Every recorded turn costs a card round trip
+
+**Lesson.** A module that flushes to disk from the line hook pays one
+open-seek-write-close round trip per recorded turn, before that turn's
+response appears - the transcript module's own cost.
+
+**Rule.** Flush before the parse runs, not after - the file on the card
+should always end with the command about to run, which is what makes it
+crash evidence. Keep timing-sensitive fixtures (a timeout, a More prompt)
+unrecorded, or their numbers measure the card, not the game.
+
+## Seek then extend can short-write
+
+**Lesson.** `SVC_FWRITE` can return with carry CLEAR and BC less than the
+length you asked for - esxDOS's seek-then-extend hazard. A caller that only
+checks carry ships a truncated file and never notices.
+
+**Rule.** Always compare BC against the length you asked for, even when
+carry is clear. Treat a short count exactly as you would treat carry set.
+
+## A rewriter that does not inject re-prompts silently
+
+**Lesson.** A line hook or `PARSE`-entry rewriter that only calls
+`SVC_INJECT` on the branch where it changed something leaves the game's next
+`PARSE 0` prompting again with no visible cause on every other branch.
+
+**Rule.** A rewriter must ALWAYS inject - the original line unmodified when
+nothing needed to change. Decide, then inject unconditionally.
+
+## Injecting between PARSE 0 and PARSE 1 clobbers the quoted section
+
+**Lesson.** `SVC_INJECT` parks its text in the same buffer `PARSE 1` reads
+the quoted section from. Calling it between a `PARSE 0` and the `PARSE 1`
+that reads the same order overwrites that buffer before `PARSE 1` gets to it.
+
+**Rule.** Never call `SVC_INJECT` between a `PARSE 0` and its matching
+`PARSE 1`. Inject before the next `PARSE 0` instead.
+
 ## The tilemap during video clips
 
 **Lesson.** A hook writing the tilemap while a video clip's audio feed was
@@ -129,6 +178,26 @@ faithfully - test `SVC_GETDATE` and any file-writing function on hardware.
 run on a real machine before you publish it. Write the no-clock path as the
 normal case, not as an error: carry set from `SVC_GETDATE` means BC and DE are
 zero and HL is UNDEFINED.
+
+## SVC_GETDATE derails ZEsarUX
+
+**Lesson.** ZEsarUX's esxDOS handler hangs on the `M_GETDATE` call
+`SVC_GETDATE` wraps. A module that always stamps a date makes itself
+untestable under that emulator, not just imprecise.
+
+**Rule.** Give any date-stamping feature a no-date path and use it for
+emulator testing (the transcript module's fn 90 mode bit 1). Reserve the
+dated path for real hardware.
+
+## ZEsarUX keeps only the last write of a reopened file
+
+**Lesson.** ZEsarUX's esxDOS file emulation keeps only the last write of a
+file opened, closed and reopened for another write - earlier regions read
+back as zeros. A module that writes a file in several passes (open, seek,
+write, close, repeat) looks broken under ZEsarUX even when it is correct.
+
+**Rule.** A multi-write file feature is only faithfully verified on real
+hardware. Treat a ZEsarUX capture of one as inconclusive, not as a failure.
 
 ## A v1 binary is rejected silently
 

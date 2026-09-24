@@ -1,6 +1,6 @@
 # Services
 
-Sixteen routines in a fixed jump table at `XBN_API` (`$BEC8`), frozen from the
+Twenty routines in a fixed jump table at `XBN_API` (`$BEC8`), frozen from the
 first shipping release: the address never moves, existing rows never change
 signature, and new rows are only ever appended with a version bump. `xbn.inc`
 binds a symbol to each row, so you `call SVC_PUTS` like any other subroutine.
@@ -30,8 +30,14 @@ row's Out column names carry a result.
 | 13 | `SVC_PALREAD` | copy a Layer 2 palette bank into your 512-byte buffer | no |
 | 14 | `SVC_WINDOW` | select a DAAD window; returns the one that was current | no |
 | 15 | `SVC_PAIR` | the tilemap attribute for a (paper, ink) pair, B = paper, C = ink | no |
+| 16 | `SVC_GETLINE` | the line the player typed this turn, read-only | no |
+| 17 | `SVC_GETPENDING` | orders left unconsumed after a conjunction | no |
+| 18 | `SVC_INJECT` | queue a line for the very next `PARSE 0` | no |
+| 19 | `SVC_VOCFIND` | resolve a word against the database vocabulary | no |
 
 Errors follow the esxDOS convention throughout: carry set, error code in A.
+Rows 15-19 are API version 3: gate any of them on `SVC_VERSION` first if your
+extern must also run against an older `xbn.inc`.
 
 ## The hook rule
 
@@ -207,6 +213,79 @@ it yourself. It preserves BC, DE and HL, which is what makes the four-line
 chance condition possible. It is hook-safe, but a hook draw consumes the
 shared stream at a moment the game cannot predict: a game that must replay
 identically cannot draw from the hook.
+
+### SVC_GETLINE - the SAVE prompt never lands in it
+
+`SVC_GETLINE` returns the line the player actually typed this turn - HL
+points at the interpreter's own recall buffer (read-only), BC is its length.
+Carry SET means no non-empty line was really submitted this turn: after a
+timeout HL holds the partial line typed when it fired; on an injected turn
+(`SVC_INJECT`) HL holds the last line the player actually typed, never the
+injected text. A `SAVE`/`LOAD` filename prompt stashes the typed line and
+restores it afterwards, so it never reaches this buffer - an extern reading
+`SVC_GETLINE` after a `SAVE` earlier in the same turn still gets the
+player's real command.
+
+### SVC_GETPENDING - leading blanks are real
+
+HL/BC give whatever a conjunction ("and", "then") left unconsumed - `LOOK
+AND GET LAMP` leaves `GET LAMP` pending, but the parser blanks the
+conjunction word IN PLACE, so the text is `"   GET LAMP"` with the leading
+spaces still there. A module folding this into an injected line picks up
+harmless extra spaces; do not strip them expecting a clean start.
+
+### SVC_INJECT - replace semantics and the always-inject rule
+
+`SVC_INJECT` queues text for the very next `PARSE 0`, bypassing the prompt.
+It REPLACES any pending order already queued from a conjunction - read
+`SVC_GETPENDING` first if you need to keep it. Option bit 0 echoes the text
+as if typed. Refusal (over 127 characters, or a line already parked) sets
+carry and A = `$FF` and writes NOTHING, options included - do not assume a
+partial injection happened.
+
+A rewriter called from a `PARSE` entry's own remainder must ALWAYS inject
+something, even when it found nothing to change - inject the original line
+unmodified. A line hook that rewrites conditionally and only injects on the
+rewrite path leaves the game's next `PARSE 0` prompting again with no
+visible cause, the PRO 1 sketch below is the shape to copy:
+
+    ; PRO 1 (or the line hook): decide, then ALWAYS inject
+        call decide_rewrite      ; HL = text to send, whether changed or not
+        xor a                    ; options: no echo
+        call SVC_INJECT
+        ret                      ; CF from SVC_INJECT is refusal, not "changed"
+
+Never call it between a `PARSE 0` and the `PARSE 1` that reads the same
+order's quoted section - it parks its text over the buffer `PARSE 1` reads
+from and clobbers the quote.
+
+### SVC_VOCFIND - foreground only, never from the output hook
+
+Resolves a word against the database's own vocabulary, any case, first five
+characters significant: D = word id, E = type, carry clear on a match, carry
+set when the word is unknown. Foreground only, and more strictly than most
+rows marked that way - never call it from the output hook either. The output
+hook is not the `#int` hook, but the lookup reuses shared resident state that
+a print already in flight is also using.
+
+### SVC_FWRITE - the short-write rule
+
+BC on return is the number of bytes actually written - documented from API
+version 3, though the row always returned it. A short count with carry
+still CLEAR is esxDOS's seek-then-extend hazard: the write landed short of
+what you asked for without the call failing outright. Treat a short count
+exactly as you would treat carry set - never assume a clear carry alone
+means the whole buffer landed.
+
+### File mode constants
+
+`xbn.inc` defines the raw esxDOS mode byte for `SVC_FOPEN`'s B:
+
+| Symbol | Value | For |
+|--------|-------|-----|
+| `XBN_FMODE_R` | `$01` | read |
+| `XBN_FMODE_RW` | `$03` | existing file, read/write, no truncate |
+| `XBN_FMODE_W` | `$0E` | write, create or truncate |
 
 ## Checking the version
 

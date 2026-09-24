@@ -143,8 +143,56 @@ module leaves its slots harmless rather than dangerous.
 Never publish a routine address as a `CALL` target: routine addresses move
 whenever any module in the binary is edited.
 
+## The line hook
+
+A format 3 binary's `line` entry runs once for every line the player
+submits, after it leaves the editor and before the echo or the parse.
+Entry: HL = the line (resident, writable, ASCIIZ, up to 127 characters), B =
+its length, IX = flags base. The NUL is the truth of the length - B is a
+convenience the interpreter recomputes before every module in a collection
+chain, so trust the NUL over B if your own rewrite changed the length.
+
+Rewrite the line in place at HL if you mean to change what gets parsed.
+Return a carry verdict:
+
+- **Carry CLEAR** - continue with the (possibly rewritten) line into the
+  ordinary echo and parse.
+- **Carry SET** - consume the line silently: the interpreter re-prompts, no
+  parse runs, the each-turn process does not re-run, and the turn counter
+  does not advance.
+
+Not called for a timeout exit, for an injected line (`SVC_INJECT`), or for a
+`SAVE`/`LOAD` filename prompt. It runs in the foreground, so any service is
+fair game - this is where a module doing file IO belongs (the transcript
+module flushes to the card here).
+
+## The output hook
+
+A format 3 binary's `out` entry runs once for every character the
+interpreter is about to print. Entry: C = the character (`$0D` for a
+newline), IX = flags base. There is no return contract - the hook only
+watches; its carry flag on return is ignored.
+
+What it sees: decoded message text, `PRINT` digits, object names already
+substituted for `_`/`@`, `NEWLINE`, and the flag 49 reprint of the typed
+line. What it never sees: the editor's own keystroke echo, the `More...`
+prompt, the word wrapper's inserted newlines (so a recording taken this way
+is width-independent), or the charset-shift bytes `$0E`/`$0F`, `$0B` (`CLS`)
+or `$0C`. An accent glyph (16-31) arrives as its raw byte, with no shift
+context around it.
+
+It must preserve nothing you did not set up yourself, but it must itself
+preserve the alternate register set (AF', BC', DE', HL') - the trampoline
+does not save it for you. It must call NO service at all: `SVC_GETMSG` and
+`SVC_WINDOW` share state with the print already in flight, and
+`SVC_PUTCHAR`/`SVC_PUTS` would recurse straight back into the print path
+that is calling you. Keep it tiny - it runs once per character, on every
+character the game ever prints.
+
 Full detail: the manual's [EXTERN contract](../../../../docs/externs.html#the-extern-contract),
 [Condition semantics](../../../../docs/externs.html#condition-semantics),
 [The result convention](../../../../docs/externs.html#the-result-convention),
-[CALL](../../../../docs/externs.html#call) and
-[Flags and objects](../../../../docs/externs.html#flags-and-objects).
+[CALL](../../../../docs/externs.html#call),
+[Flags and objects](../../../../docs/externs.html#flags-and-objects),
+[The line hook](../../../../docs/externs.html#the-line-hook) and
+[The output hook](../../../../docs/externs.html#the-output-hook).

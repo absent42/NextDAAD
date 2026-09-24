@@ -1,6 +1,6 @@
 ---
 name: xbn-extern-authoring
-description: "Authoring reference for NextDAAD XBN externs - Z80 machine code a DAAD game ships as GAME.XBN and the interpreter calls from EXTERN, CALL and a 50Hz frame hook. Use when writing, extending, building or debugging an extern for a NextDAAD game. Covers: the standalone and combinable module source shapes (xbn.inc, xbnmod.inc), registers on entry, the EXTERN carry verdict contract and the result convention, the sixteen-row service table and which four rows the interrupt hook may call, the frozen anchors (the $C000 window, flags at $A200, the object table at $A300, services at $BEC8, CALL slots at $C00E), building a standalone or combined binary, and the mistakes that cost the shipped examples a debugging session."
+description: "Authoring reference for NextDAAD XBN externs - Z80 machine code a DAAD game ships as GAME.XBN and the interpreter calls from EXTERN, CALL, a 50Hz frame hook and, in a format 3 binary, a per-line and a per-character output hook. Use when writing, extending, building or debugging an extern for a NextDAAD game. Covers: the standalone and combinable module source shapes (xbn.inc, xbnmod.inc), registers on entry, the EXTERN carry verdict contract and the result convention, the line and output hook contracts, the twenty-row service table (including the four parser-input rows) and which four rows the interrupt hook may call, the extern state area, the frozen anchors (the $C000 window, flags at $A200, the object table at $A300, services at $BEC8, CALL slots at $C00E, state at $BF80), building a standalone or combined binary, and the mistakes that cost the shipped examples a debugging session."
 ---
 
 # XBN extern authoring
@@ -21,25 +21,30 @@ shippable to a player who has none.
 - **Assembled to the `$C000` window.** `XBN_ORG` is `$C000`; the interpreter
   maps your bank there at call time. The whole file, header included, must fit
   in 16384 bytes.
-- **Three call sites.** `EXTERN p1 fn` (a condition as well as an action),
-  `CALL lsb msb` (a parameter-free action), and a 50Hz `#int` frame hook. The
-  fourteen-byte header names two entry addresses - the `EXTERN` entry and the
-  hook entry - and either may be `0`. A `CALL` reaches any address inside your
-  binary's extent and nowhere else; in a combined binary those addresses are
-  the fixed slots at `$C00E`, never routine addresses.
+- **Three call sites, plus two optional hooks.** `EXTERN p1 fn` (a condition
+  as well as an action), `CALL lsb msb` (a parameter-free action), and a 50Hz
+  `#int` frame hook. The fourteen-byte format 2 header names two entry
+  addresses - the `EXTERN` entry and the hook entry - and either may be `0`. A
+  `CALL` reaches any address inside your binary's extent and nowhere else; in
+  a combined binary those addresses are the fixed slots at `$C00E`, never
+  routine addresses. A format 3 header adds two more entries - a line hook
+  (called once per submitted line, before the echo and the parse) and an
+  output hook (called once per printed character) - see
+  `references/calling-contract.md`.
 
 ## When to reach for one
 
 Only when a condact genuinely cannot do the job: custom per-frame animation,
 reading or writing your own file on the SD card, a calculation too fiddly for
-`LET`, or driving hardware the condact set does not expose. Anything a condact
-already does, do with the condact.
+`LET`, driving hardware the condact set does not expose, or reading/rewriting
+what the player typed, feeding the parser a line, or recording a session.
+Anything a condact already does, do with the condact.
 
-Check `externs\` first. The kit ships seven ready-made modules - `ticker`,
-`fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit` - each with a
-prebuilt `GAME.XBN` that needs no assembler, and `externs\all\GAME.XBN` holds
-the lot. If one of them already does the job, wire it into the DSF instead of
-writing code.
+Check `externs\` first. The kit ships eight ready-made modules - `ticker`,
+`fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`, `transcript` - each
+with a prebuilt `GAME.XBN` that needs no assembler, and `externs\all\GAME.XBN`
+holds the lot. If one of them already does the job, wire it into the DSF
+instead of writing code.
 
 ## Workflow
 
@@ -49,7 +54,11 @@ writing code.
    collection table in `externs\README.md`. See
    `references/module-shape.md` for the folder checklist - the copied
    `build.ps1` assembles a hard-coded file name and the copied `README.md`
-   describes the module you copied; rename both.
+   describes the module you copied; rename both. A module that needs the line
+   or output hook uses `XBN_HEADER3`/`XBN_BEGIN3` in place of
+   `XBN_HEADER`/`XBN_BEGIN` and needs the interpreter from v0.10.1 - an older
+   interpreter rejects the format 3 header and the game plays with externs
+   off.
 2. **Write `ext`.** Dispatch on `C` (the fn code), return immediately on
    anything you do not own, and give every exit a deliberate carry: an action
    ends `or a` / `ret`, a condition ends `scf` / `ret` on its one documented
@@ -68,7 +77,7 @@ writing code.
 
 ## Frozen anchors
 
-`xbn.inc` binds a symbol to the first five; the last comes from `xbnmod.inc`'s
+`xbn.inc` binds a symbol to the first six; the last comes from `xbnmod.inc`'s
 `XBN_BEGIN`. None of them move between releases.
 
 | Symbol | Address | What |
@@ -77,7 +86,8 @@ writing code.
 | `XBN_FLAGS` | `$A200` | Base of the 256 DAAD flags; `IX` points here on entry |
 | `XBN_OBJTABLE` | `$A300` | Object table, `OBJ_SIZE` (6) bytes per entry |
 | `XBN_NUMOBJ` | `$A900` | Object count, one byte; walk `0` to `(XBN_NUMOBJ) - 1` |
-| `XBN_API` | `$BEC8` | Service jump table, sixteen three-byte `JP` rows |
+| `XBN_API` | `$BEC8` | Service jump table, twenty three-byte `JP` rows |
+| `XBN_STATE` | `$BF80` | 128 bytes, saved with the game (`SAVE`/`LOAD`/`RAMSAVE`/`RAMLOAD`); zeroed only at boot |
 | `xbn_call_table` | `$C00E` | Combined binaries only: eight `CALL` slots, slot n at `$C00E + 3n` |
 
 Flags 0-127 are reachable as `(ix+n)`; flags 128-255 need `XBN_FLAGS+n`.
@@ -93,21 +103,25 @@ Load the one the work needs.
 ### Module shape
 **File**: [references/module-shape.md](references/module-shape.md)
 - The standalone and combinable source shapes, the ticker skeleton, registers
-  on entry, the `int` label rule, fn/flag disjointness, and what a publishable
-  folder must contain.
+  on entry, the `int` label rule, fn/flag disjointness, what a publishable
+  folder must contain, the format 3 hooked-module shape and the transcript
+  skeleton, and the extern state area's claim discipline.
 
 ### Calling contract
 **File**: [references/calling-contract.md](references/calling-contract.md)
 - Condition semantics and the done-state edge, the guard-first idiom, the
   extern-`CHANCE` worked example, the result convention, what never fails an
-  entry, `CALL` slots, and how parameters reach your code.
+  entry, `CALL` slots, how parameters reach your code, and the line and
+  output hooks' entry/exit contracts.
 
 ### Services
 **File**: [references/services.md](references/services.md)
 - One line per service row with its hook rule, then the rules that bite:
   hook-safe rows, frame waits, the palette interlock, `SVC_BUSY` during
   clips, `SVC_GETMSG`'s buffer lifetime, `SVC_WINDOW`'s flush, `SVC_PALREAD`'s
-  bank select, the version check, and `SVC_PAIR`'s pair lifetime.
+  bank select, the version check, `SVC_PAIR`'s pair lifetime, and rows 16-19
+  (`SVC_GETLINE`, `SVC_GETPENDING`, `SVC_INJECT`, `SVC_VOCFIND`) for reading
+  and rewriting this turn's input.
 
 ### Bundling and build
 **File**: [references/bundling-and-build.md](references/bundling-and-build.md)
@@ -117,7 +131,7 @@ Load the one the work needs.
 
 ### Pitfalls
 **File**: [references/pitfalls.md](references/pitfalls.md)
-- Twelve mistakes that have already cost someone a debugging session, each as
+- Nineteen mistakes that have already cost someone a debugging session, each as
   the lesson and the rule it produced. Read this before writing a hook.
 
 ## The manual

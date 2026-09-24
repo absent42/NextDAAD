@@ -4,14 +4,16 @@ A game loads exactly ONE `GAME.XBN`. You never merge sources by hand.
 
 ## Building one module
 
-Every folder under `externs\` has a `build.ps1`. Run it from the folder:
+Every folder under `externs\` has a `build.ps1`, including `transcript\`.
+Run it from the folder:
 
     .\build.ps1
 
 It assembles the folder's `.asm` with the kit root on the include path
 (`-I <kit root>`, which is what makes `INCLUDE "xbn.inc"` resolve) and
 rewrites `GAME.XBN` in place. Commit the source and the binary together: they
-are checked against each other.
+are checked against each other. Every module's `build.ps1` takes an optional
+`-SjasmPlus <path>` parameter.
 
 It finds sjasmplus in this order, from `lib\resolve-sjasmplus.ps1`:
 
@@ -20,9 +22,11 @@ It finds sjasmplus in this order, from `lib\resolve-sjasmplus.ps1`:
    deeper, since a zip extract can leave it either way;
 3. `sjasmplus.exe` on `PATH`.
 
-If none of those find it, download it from
-https://github.com/z00m128/sjasmplus and extract it into `tools\sjasmplus\`.
-You only need an assembler to CHANGE a module - every folder ships a prebuilt
+The kit's own `tools\sjasmplus\` folder may ship empty - do not assume its
+presence means an assembler is there. If none of the three find one, download
+it from https://github.com/z00m128/sjasmplus and extract it into
+`tools\sjasmplus\`, or pass `-SjasmPlus` with a path of your own. You only
+need an assembler to CHANGE a module - every folder ships a prebuilt
 `GAME.XBN`.
 
 ## Building a subset
@@ -32,9 +36,9 @@ From the kit root:
     EXTERNS.BAT ticker fade
 
 That writes a `GAME.XBN` holding only the modules you name to the kit root,
-beside `BUILD.BAT`. The names it accepts are the seven module folders in
-`externs\`: `ticker`, `fade`, `hints`, `clock`, `timer`, `realtime` and
-`toolkit`.
+beside `BUILD.BAT`. The names it accepts are the eight module folders in
+`externs\`: `ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`,
+`toolkit` and `transcript`.
 
 This route puts one step in front of that ladder: it reads `SJASMPLUSDIR` from
 `CONFIG.BAT` (empty by default, which falls back to the kit's `tools\`
@@ -46,7 +50,10 @@ author who has sjasmplus on `PATH` but has not downloaded it into the kit.
 The subset builder generates a top-level source with the same shape as
 `all.asm`: your modules in the order you named them, each `INCLUDE`d, each
 wired into both chains. It prints the finished size and how much of the 16384
-bytes is left.
+bytes is left. Naming a hooked module (`transcript` today) makes it emit a
+format 3 header (`XBN_BEGIN3 sub_ext, sub_int, sub_line, sub_out`) and the
+`sub_line`/`sub_out` chain blocks alongside `sub_ext`/`sub_int`; naming only
+unhooked modules keeps the plain `XBN_BEGIN` format 2 header and skips them.
 
 ## Why all\ exists
 
@@ -61,6 +68,19 @@ using only the fade pays for only the fade.
 source (`all.asm`), `GAME.XBN`, `README.md`, `build.ps1`.
 
 ## The all.asm wiring
+
+`all.asm` already carries a format 3 header - `XBN_BEGIN3 all_ext, all_int,
+all_line, all_out` - because the collection includes a hooked module
+(`transcript`). `all_line`/`all_out` chain every hooked module's `line`/`out`
+the same way `all_ext`/`all_int` chain every module's `ext`/`int`:
+
+    all_line:
+        XBN_LINE_ENTER
+        XBN_LINE_CALL transcript.line
+        XBN_LINE_END
+    all_out:
+        XBN_OUT_CALL transcript.out
+        ret
 
 Adding a module to the combined binary is four edits in `all.asm` and nothing
 else moves:
@@ -89,6 +109,17 @@ else moves:
    contract documents.
 4. **An `INCLUDE`.** `INCLUDE "externs/myext/myext.asm"`, by kit-relative
    path, resolved by the `-I <kit root>` the build passes.
+5. **If the module is hooked, a line and/or an out chain entry.** One line
+   each in `all_line`/`all_out`:
+
+        XBN_LINE_CALL myext.line
+        XBN_OUT_CALL myext.out
+
+   Only needed for a module that declares that hook (`0` in its header for
+   the one it does not use needs no chain entry). A module with neither hook
+   needs no format 3 header of its own and no chain entries at all - only
+   the top-level `all.asm` header has to be format 3, and only because at
+   least one included module needs it.
 
 Module ORDER in the chains is pinned, not arbitrary. The subset builder emits
 modules in the order you name them, and `all.asm` records the one ordering
@@ -106,6 +137,14 @@ chained off `XBN_SCRATCH_FREE` in `xbnmod.inc` so modules never collide: take
 the current value as your offset, add a claim comment, bump the value past
 your claim. The assert in `XBN_SCRATCH_END` fails the build if the claims
 would run past the mapped bank.
+
+`XBN_SCRATCH_FREE`'s value now depends on `TRANSCRIPT_RING`, since the
+transcript module's ring buffer is the last scratch claim:
+`XBN_SCRATCH_FREE equ 768 + TRANSCRIPT_RING`. `TRANSCRIPT_RING` defaults to
+2048 (`IFNDEF` in `xbnmod.inc`) and is a build define, not a module
+constant - define it before including `xbnmod.inc` in a standalone build
+that needs a bigger ring; the combined collection binary keeps the smaller
+default because every scratch claim shares the one 16K bank.
 
 ## Where GAME.XBN goes
 
