@@ -128,8 +128,9 @@ number per frame - drop to a single number (`delay=6`) for a set whose
 sheet is only one frame wide. `loop=1` cycles forever, and `bits=8` fixes
 the set's depth instead of leaving it to the sheet's own colour count.
 
-The build prints one line per set, so you can see what you got without
-opening the file:
+The build prints one line for each set it packs, so you can see what you
+got without opening the file. A set is packed again only when its sheet
+or its `.txt` changes:
 
 ```
   sprite 002.ANI: 16x16, 2 frame(s), 2 cell(s), 8-bit, blocks 8000, 532 bytes

@@ -13,6 +13,13 @@
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0101-unreleased">0.10.1 - unreleased</h2>
 <ul>
+<li><strong>Faster builds.</strong> <code>BUILD.BAT</code> now converts or copies only the
+  pictures, sprite sets, sounds, tunes and video that changed since the
+  last build, and keeps the rest of <code>RELEASE\</code> as it is. A game with a
+  hundred pictures rebuilds in a couple of seconds instead of over a
+  minute. Removing a source still removes its file from <code>RELEASE\</code>.
+  <code>CLEAN.BAT</code> forces everything to convert again. See
+  <a href="getting-started.html#build-and-run">Getting started</a>.</li>
 <li><strong>Parser cursor.</strong> <code>GFX n 22</code> to <code>26</code> choose the cursor's glyph,
   blink and colours; the default inverse block is unchanged. Typing
   past what the input window can hold is now ignored instead of

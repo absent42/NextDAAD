@@ -69,23 +69,14 @@ tasklist /FI "IMAGENAME eq CSpect.exe" 2>nul | find /I "CSpect.exe" >nul && (
     exit /b 1
 )
 
-REM ---- prepare RELEASE\ and remove stale converted assets ----
-REM      *.N2Z/*.NXZ are the 8.3 title synonyms (see lib\gfx.bat's
-REM      ready-made DAAD.* staging) - covered here so a title removed
-REM      since the last build cannot leave a stray DAAD.N2Z/DAAD.NXZ
-REM      behind on the SD card. RELEASE\FONT.CHR is covered too (SP12
-REM      T2 - see the ready-made font staging below) so a font removed
-REM      from the kit root cannot leave a stray RELEASE\FONT.CHR behind.
-REM      RELEASE\POINTER.SPR is covered the same way (SP12 T3 - see the
-REM      ready-made pointer staging below). RELEASE\FONT1-9.CHR and
-REM      RELEASE\POINTER1-9.SPR need the same treatment (SP18): a stale
-REM      numbered asset that still loads is worse than a missing one -
-REM      a font or pointer removed from the kit root must not leave a
-REM      RELEASE\ copy behind for GFX n 16 / MOUSE n 5 to keep silently
-REM      installing. Cleaned in the numbered loop just below, same
-REM      idiom as the multi-part GAME<n>.DDB cleanup that follows it.
+REM ---- prepare RELEASE\ and remove outputs rebuilt every run ----
+REM      Pictures, sprite sets, audio and video are NOT cleared here:
+REM      lib\assets.ps1 keeps the current ones and removes those whose
+REM      source is gone. Fonts, pointers, hints and the extern are
+REM      cleared so one removed from the kit root cannot leave a copy
+REM      that GFX n 16 / MOUSE n 5 would keep silently installing.
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\*.VID" "RELEASE\*.WAV" "RELEASE\*.ANI" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" "RELEASE\GAME.HNT" "RELEASE\GAME.XBN" 2>nul
+del /Q "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" "RELEASE\GAME.HNT" "RELEASE\GAME.XBN" 2>nul
 for %%N in (1 2 3 4 5 6 7 8 9) do (
     del /Q "RELEASE\FONT%%N.CHR" "RELEASE\POINTER%%N.SPR" 2>nul
 )

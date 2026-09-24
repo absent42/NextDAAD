@@ -192,6 +192,10 @@ count nor the palette-collision warning described in
 you ship compressed art, run one build with `COMPRESS=0` and read them
 from that.
 
+The report appears on the build that converts the picture, and a picture
+is only converted again when you change it. To see the report for every
+picture at once, run `CLEAN.BAT` and then build.
+
 The count is the quickest way to confirm the hole is the size you
 intended, and to catch one you did not ask for. You can also run the
 audit script directly against a converted file, as

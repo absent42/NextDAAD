@@ -150,12 +150,18 @@ with the game.
 - **`RUN.BAT`** - launches CSpect on whatever is already in `RELEASE\`,
   without rebuilding.
 - **`CLEAN.BAT`** - empties `RELEASE\` and clears the compiler's staged
-  intermediates.
+  intermediates. The next build then converts everything from scratch.
 
-The build stops at the first error, with a message naming the cause. It
-clears the converted assets out of `RELEASE\` before it starts, so a
-picture or tune you delete from the kit folder cannot linger there from
-an earlier build.
+The build stops at the first error, with a message naming the cause.
+
+Pictures, sprite sets, sounds, tunes and video are only converted or
+copied when their source has changed since the last build. Everything
+else in `RELEASE\` is left as it is, so a game with hundreds of pictures
+rebuilds in seconds. A file counts as changed when its size or modified
+time differs, including a file replaced by an older copy. Updating the
+kit or a conversion tool also converts everything again. The build
+deletes the output of any picture or tune you remove from the kit
+folder, so nothing lingers on the card from an earlier build.
 
 Your database is compiled as DAAD version 3. If you are bringing in a
 game written for version 2, three behaviours change silently - see

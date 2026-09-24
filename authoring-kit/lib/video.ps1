@@ -3,10 +3,9 @@
 # Encodes VIDEO\NNN.mp4 -> VIDEO\NNN.vid via lib\videnc whenever the
 # .vid is stale: missing, older than its .mp4, or its cached ARGUMENT
 # VECTOR (shape/fps/options - see below) no longer matches the current
-# CONFIG.BAT. The .vid beside the source is the encode cache - BUILD.BAT
-# wipes RELEASE\, not VIDEO\, so a slow encode runs once per source/
-# config change, not once per build. Cache identity is a sidecar file,
-# VIDEO\NNN.vid.args, holding an 8-hex-char hash of the exact videnc
+# CONFIG.BAT. The .vid beside the source is the encode cache, so a slow
+# encode runs once per source/config change, not once per build. Cache
+# identity is a sidecar file, VIDEO\NNN.vid.args, holding an 8-hex-char hash of the exact videnc
 # argument list used for that video's last successful encode; changing
 # VIDASPECT/VIDFPS/VIDOPTS/VIDOPTS_NNN changes the hash and forces a
 # re-encode automatically - nothing to delete by hand. Shape and options

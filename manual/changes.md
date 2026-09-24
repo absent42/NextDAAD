@@ -5,6 +5,13 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.10.1 - unreleased
 
+- **Faster builds.** `BUILD.BAT` now converts or copies only the
+  pictures, sprite sets, sounds, tunes and video that changed since the
+  last build, and keeps the rest of `RELEASE\` as it is. A game with a
+  hundred pictures rebuilds in a couple of seconds instead of over a
+  minute. Removing a source still removes its file from `RELEASE\`.
+  `CLEAN.BAT` forces everything to convert again. See
+  [Getting started](getting-started.md#build-and-run).
 - **Parser cursor.** `GFX n 22` to `26` choose the cursor's glyph,
   blink and colours; the default inverse block is unchanged. Typing
   past what the input window can hold is now ignored instead of
