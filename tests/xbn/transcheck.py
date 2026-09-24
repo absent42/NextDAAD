@@ -26,24 +26,16 @@ PROMPT = "What now?>"   # SM2 (flag 42 pinned to 2) then SM33, appended to
                         # the response row with no newline of its own
 
 
-def strip_prompt(lines):
-    # both sides end with the NEXT turn's prompt appended to the last
-    # response line ("restoredWhat now?>"); remove the suffix, drop the
-    # line only if nothing remains. The cursor cell is a space or an
-    # attribute change, so rstrip leaves the row ending in ">".
-    if lines:
-        last = lines[-1].rstrip()
-        if last.endswith(PROMPT):
-            last = last[:-len(PROMPT)].rstrip()
-            lines = lines[:-1] + ([last] if last else [])
-    return lines
-
-
 def screen_turn(z, cols):
+    # both sides end with the NEXT turn's prompt appended to the last
+    # response line ("restoredWhat now?>"); transcript2jsonl.strip_prompt
+    # removes the suffix, dropping the line only if nothing remains. The
+    # cursor cell is a space or an attribute change, so rstrip leaves the
+    # row ending in ">".
     grid = z.read_memory(TM_MAP, cols * tilemap.ROWS * 2)
     rows, _ = tilemap.decode(grid, cols=cols)
     body = [r.rstrip() for r in rows[WIN_TOP:WIN_TOP + WIN_ROWS] if r.strip()]
-    return "\n".join(strip_prompt(body))
+    return "\n".join(transcript2jsonl.strip_prompt(body, PROMPT))
 
 
 def extract_content(raw, content_verb):
@@ -67,7 +59,7 @@ def extract_content(raw, content_verb):
     content_lines = lines[:stop_idx]
     if content_lines and content_lines[0].strip().upper() == content_verb.strip().upper():
         content_lines = content_lines[1:]
-    content_lines = strip_prompt(content_lines)
+    content_lines = transcript2jsonl.strip_prompt(content_lines, PROMPT)
     return "\n".join(content_lines)
 
 

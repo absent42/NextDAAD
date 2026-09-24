@@ -1,13 +1,16 @@
 r"""TRANS.TXT (NextDAAD transcript module) -> harness per-turn JSONL.
 Usage: python tests\parser\transcript2jsonl.py TRANS.TXT out.jsonl
+    [--prompt TEXT]
 Lines end in $0D. ">>cmd" starts a turn, "##" lines are labels (dropped),
 the flag 49 echo of the command is dropped when it is the turn's first
-line. Bytes 16-31 are DAAD's accent glyphs; the order below is DRC's
-(verify against DRF's ConvertChars in D:\DRC before relying on it for an
-accented game)."""
-import json, sys
+line. --prompt strips TEXT from the end of each turn's last line,
+dropping the line if nothing remains (default: no strip - pass it when
+the source was captured with the next prompt glued to the last response
+line). Bytes 16-31 are DAAD's accent glyphs; the order below matches
+DRF's ConvertChars codes 16-31."""
+import argparse, json, sys
 
-ACCENTS = "\u00aa\u00a1\u00bf\u00ab\u00bb\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1\u00d1\u00e7\u00c7\u00fc\u00dc"
+ACCENTS = "ª¡¿«»áéíóúñÑçÇüÜ"
 
 
 def decode(raw):
@@ -22,7 +25,20 @@ def decode(raw):
     return "".join(out)
 
 
-def parse(text):
+def strip_prompt(lines, prompt):
+    r"""Remove `prompt` from the end of the last line, dropping the line
+    if nothing remains. Same logic tests\xbn\transcheck.py applies to a
+    tilemap capture, shared from here so both comparisons treat a prompt
+    suffix the same way."""
+    if prompt and lines:
+        last = lines[-1].rstrip()
+        if last.endswith(prompt):
+            last = last[:-len(prompt)].rstrip()
+            lines = lines[:-1] + ([last] if last else [])
+    return lines
+
+
+def parse(text, prompt=None):
     turns, cur = [], None
     for line in text.split("\n"):
         if line.startswith(">>"):
@@ -40,19 +56,25 @@ def parse(text):
         lines = t["lines"]
         if lines and lines[0].strip().upper() == t["command"].strip().upper():
             lines = lines[1:]
+        lines = strip_prompt(lines, prompt)
         out.append({"command": t["command"],
                     "text": "\n".join(lines).strip()})
     return out
 
 
 def main(argv):
-    src, dst = argv[1], argv[2]
-    with open(src, "rb") as fh:
-        turns = parse(decode(fh.read()))
-    with open(dst, "w", encoding="utf-8") as fh:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("src")
+    ap.add_argument("dst")
+    ap.add_argument("--prompt", default=None,
+                     help="strip this suffix from each turn's last line (default: no strip)")
+    args = ap.parse_args(argv[1:])
+    with open(args.src, "rb") as fh:
+        turns = parse(decode(fh.read()), args.prompt)
+    with open(args.dst, "w", encoding="utf-8") as fh:
         for t in turns:
             fh.write(json.dumps(t) + "\n")
-    print("%d turns -> %s" % (len(turns), dst))
+    print("%d turns -> %s" % (len(turns), args.dst))
 
 
 if __name__ == "__main__":

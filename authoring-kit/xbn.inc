@@ -108,14 +108,19 @@ SVC_PAIR        equ XBN_API+45  ; in B = paper, C = ink (0-255, the
                                  ; all registers. API version 3 and up
                                  ; (as are rows 16-19 below): check
                                  ; SVC_VERSION first. Foreground-only.
-SVC_GETLINE     equ XBN_API+48  ; out HL = ASCIIZ line the player typed
-                                 ; this turn (read-only, resident), BC =
-                                 ; length; CF set = no non-empty line
-                                 ; submitted this turn (HL then holds the
-                                 ; previous one). API 3. Foreground-only.
+SVC_GETLINE     equ XBN_API+48  ; out HL = ASCIIZ line the player last
+                                 ; typed (read-only, resident), BC =
+                                 ; length; CF set = the prompt just run
+                                 ; ended in a timeout or an empty ENTER
+                                 ; (HL then holds the recall buffer as it
+                                 ; was - the partial line after a
+                                 ; timeout). CF clear otherwise, including
+                                 ; an injected turn. API 3. Foreground-only.
 SVC_GETPENDING  equ XBN_API+51  ; out HL = ASCIIZ orders after a
                                  ; conjunction not yet consumed (empty
-                                 ; when none), BC = length, CF clear.
+                                 ; when none), BC = length, CF clear. Can
+                                 ; start with blanks: the parser blanks
+                                 ; the conjunction word in place.
                                  ; API 3. Foreground-only.
 SVC_INJECT      equ XBN_API+54  ; in HL = ASCIIZ text (your bank is fine),
                                  ; A = options: bit 0 echo it as typed.
@@ -130,11 +135,13 @@ SVC_INJECT      equ XBN_API+54  ; in HL = ASCIIZ text (your bank is fine),
                                  ; the second PARSE 0 prompts again
                                  ; silently. API 3. Foreground-only.
 SVC_VOCFIND     equ XBN_API+57  ; in HL = ASCIIZ word (any case, first 5
-                                 ; chars count); out D = word id, E =
-                                 ; type, CF clear; CF set = not in the
-                                 ; vocabulary. Corrupts AF, BC, DE, HL.
-                                 ; API 3. Foreground-only; NEVER from the
-                                 ; output hook.
+                                 ; chars count); HL points at ONE word - a
+                                 ; space or punctuation counts as a
+                                 ; character, so pass a single word. out
+                                 ; D = word id, E = type, CF clear; CF set
+                                 ; = not in the vocabulary. Corrupts AF,
+                                 ; BC, DE, HL. API 3. Foreground-only;
+                                 ; NEVER from the output hook.
 
 ; SVC_FOPEN modes (esxDOS)
 XBN_FMODE_R     equ $01         ; read

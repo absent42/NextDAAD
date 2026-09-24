@@ -114,7 +114,7 @@ tables.
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | AF, BC, E, IX | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | AF, BC, DE, HL, IX, IY | no |
 | 15 | `SVC_PAIR` | B = paper, C = ink (0-255) | A = tilemap attribute for the (paper, ink) pair; CF clear. The pair is held only while an on-screen cell uses it - resolve at the point of use | AF, BC, DE, HL, IX, IY | no |
-| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line typed this turn (resident, read-only), BC = length; CF set = no non-empty line submitted this turn: after a timeout HL holds the partial line typed when it fired, on an injected turn HL holds the last line the player actually typed. A `SAVE`/`LOAD` filename never reaches this buffer - the prompt stashes and restores the line around it | AF, BC, HL | no |
+| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line the player last typed (resident, read-only), BC = length; CF set = the prompt just run ended in a timeout or an empty `ENTER` (HL then holds whatever the recall buffer already held - the partial line after a timeout); CF clear otherwise, including an injected turn - HL is always the last line actually typed, never injected text. A `SAVE`/`LOAD` filename never reaches this buffer - the prompt stashes and restores the line around it | AF, BC, HL | no |
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length; CF clear | AF, BC, HL | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | AF, BC, DE, HL | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | AF, BC, DE, HL | no |
@@ -139,10 +139,13 @@ call or the next save/load - see [Externs](../externs.md#services).
 from the hook consumes that stream at a time the game cannot predict, so
 a game that needs reproducible runs must not draw from the hook.
 
-`SVC_VOCFIND` is foreground-only like most of rows 1-19, but the rule is
-stricter than usual for it: never call it from the output hook either,
-even though the output hook is not the `#int` hook. The lookup reuses
-shared resident state that a print already in flight is also using.
+`SVC_VOCFIND`'s HL points at exactly one word: a space or other
+punctuation counts as an ordinary character toward the five significant,
+so pass a single word, not a phrase. It is foreground-only like most of
+rows 1-19, but the rule is stricter than usual for it: never call it
+from the output hook either, even though the output hook is not the
+`#int` hook. The lookup reuses shared resident state that a print
+already in flight is also using.
 
 ## Frozen data anchors
 

@@ -412,6 +412,10 @@ interpreter re-prompts, nothing is parsed, the each-turn process does
 not run, and the turn counter does not advance.</p>
 <p>The hook is NOT called for a timeout exit, for an injected line
 (<code>SVC_INJECT</code>), or for a <code>SAVE</code>/<code>LOAD</code> filename prompt.</p>
+<p>A line hook rewrites the line IN PLACE (the bytes at HL) and returns its
+carry verdict; it must never call <code>SVC_INJECT</code> - injecting from here
+overwrites <code>inpLine</code> mid-parse and parks a line the next <code>PARSE 0</code>
+consumes as a phantom empty input.</p>
 <p>It runs in the foreground, so any service is fair game here - this is
 where a module doing file IO belongs. The transcript module flushes to
 the card from this hook, once per turn, before that turn's response.</p>
@@ -576,7 +580,7 @@ to each row, so you call them by name:</p>
 <td>16</td>
 <td><code>SVC_GETLINE</code></td>
 <td>-</td>
-<td>HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn: after a timeout HL holds the partial line typed when it fired, on an injected turn HL holds the last line the player actually typed. A <code>SAVE</code>/<code>LOAD</code> filename never reaches this buffer - the prompt stashes and restores the line around it</td>
+<td>HL = ASCIIZ line the player last typed (resident, read-only), BC = length. CF set = the prompt that just ran ended in a timeout or an empty <code>ENTER</code>: HL then holds whatever the recall buffer already held (the partial line after a timeout). CF clear covers a typed submit, an order taken after a conjunction, and an injected turn - HL is always the last line actually typed, never injected text. A <code>SAVE</code>/<code>LOAD</code> filename never reaches this buffer - the prompt stashes and restores the line around it</td>
 <td>no</td>
 </tr>
 <tr>
@@ -694,25 +698,25 @@ registers a row's Out column names carry a result.</p>
   clear is esxDOS's seek-then-extend hazard: the write landed short of
   what you asked for without the call failing outright. Treat it as a
   failure exactly as you would a set carry flag.</li>
-<li><strong><code>SVC_GETLINE</code> and <code>SVC_GETPENDING</code> read this turn's input.</strong>
-  <code>SVC_GETLINE</code> returns the line the player actually typed this turn -
-  read-only, in the interpreter's own recall buffer - and its carry
-  flag tells you whether a non-empty line was really submitted this
-  turn: a timeout, an injected turn, or a turn taken from pending
-  orders leaves it set. After a timeout, HL holds the partial line the
-  player had typed when it fired. On a turn whose line was injected by
-  <code>SVC_INJECT</code>, HL holds the last line the player actually typed
-  instead - the injected text is never in this buffer. A <code>SAVE</code>/<code>LOAD</code>
-  filename prompt never reaches this buffer either: it stashes the
-  typed line and restores it afterwards, so an extern reading
-  <code>SVC_GETLINE</code> after a <code>SAVE</code> earlier in the same turn still gets the
-  player's actual command - the reassurance a name-entry or password
-  prompt needs. <code>SVC_GETPENDING</code> returns whatever a conjunction ("and",
-  "then") left unconsumed - <code>LOOK AND GET LAMP</code> leaves <code>GET LAMP</code>
-  pending, with the leading blanks the parser left where it blanked
-  the conjunction word still in the text, so folding this into an
-  injected line picks up harmless extra spaces. Both are foreground
-  only, resident memory, no paging.</li>
+<li><strong><code>SVC_GETLINE</code> and <code>SVC_GETPENDING</code> read the player's input.</strong>
+  <code>SVC_GETLINE</code> returns the line the player actually typed - read-only,
+  in the interpreter's own recall buffer - and its carry flag tells you
+  whether the prompt that just ran ended cleanly: it is SET only when
+  that prompt ended in a timeout or an empty <code>ENTER</code>, and HL then holds
+  whatever the recall buffer already held (the partial line after a
+  timeout). It is CLEAR for a typed submit, for an order taken after a
+  conjunction, and for an injected turn - HL is always the last line
+  the player actually typed, the injected text is never in this buffer.
+  A <code>SAVE</code>/<code>LOAD</code> filename prompt never reaches this buffer either: it
+  stashes the typed line and restores it afterwards, so an extern
+  reading <code>SVC_GETLINE</code> after a <code>SAVE</code> earlier in the same turn still
+  gets the player's actual command - the reassurance a name-entry or
+  password prompt needs. <code>SVC_GETPENDING</code> returns whatever a
+  conjunction ("and", "then") left unconsumed - <code>LOOK AND GET LAMP</code>
+  leaves <code>GET LAMP</code> pending, with the leading blanks the parser left
+  where it blanked the conjunction word still in the text, so folding
+  this into an injected line picks up harmless extra spaces. Both are
+  foreground only, resident memory, no paging.</li>
 <li><strong><code>SVC_INJECT</code> queues a line for the very next <code>PARSE 0</code></strong>, bypassing
   the prompt entirely - your own bank is a fine source for the text,
   and option bit 0 echoes it as if the player had typed it. It
@@ -722,14 +726,17 @@ registers a row's Out column names carry a result.</p>
   second injection while one is still parked. A rewriter called from a
   <code>PARSE</code> entry's own remainder must always inject something - the
   original line when nothing else matched - or the game's next
-  <code>PARSE 0</code> silently prompts again with no visible cause. Never call it
-  between a <code>PARSE 0</code> and the <code>PARSE 1</code> that reads the same order's
-  quoted section: it parks its text over the buffer <code>PARSE 1</code> reads
-  from and clobbers the quote.</li>
+  <code>PARSE 0</code> silently prompts again with no visible cause. The line hook
+  is different: it never calls <code>SVC_INJECT</code> at all, it rewrites the
+  line in place instead. Never call it between a <code>PARSE 0</code> and the
+  <code>PARSE 1</code> that reads the same order's quoted section: it parks its
+  text over the buffer <code>PARSE 1</code> reads from and clobbers the quote.</li>
 <li><strong><code>SVC_VOCFIND</code> resolves a word against your database's own
   vocabulary</strong>, the same lookup the parser itself uses - any case, only
-  the first five characters significant. Foreground only, and more
-  strictly than most rows marked that way: never call it from the
+  the first five characters significant. HL points at ONE word: a
+  space or other punctuation counts as an ordinary character toward
+  the five, so pass a single word, not a phrase. Foreground only, and
+  more strictly than most rows marked that way: never call it from the
   output hook. The output hook is not the <code>#int</code> hook, but the lookup
   reuses shared resident state that a print already in flight is also
   using.</li>
@@ -828,7 +835,7 @@ of them. Practically, that means:</p>
 <p>128 bytes at <code>XBN_STATE</code> (<code>$BF80</code>, a frozen address) are the one piece
 of your extern's own memory that travels with the game's save data.
 <code>SAVE</code> writes it, <code>LOAD</code> restores it, <code>RAMSAVE</code> and <code>RAMLOAD</code> carry it
-the same way - <code>RAMLOAD n</code> restores it whatever slot <code>n</code> names. It is
+the same way - <code>RAMLOAD n</code> restores it whatever <code>n</code> is. It is
 zeroed once, at boot: <code>RESTART</code> and a part switch leave it exactly as
 your extern last set it.</p>
 <p>A save file made before this area existed loads with it zeroed. A save

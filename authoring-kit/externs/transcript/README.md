@@ -49,6 +49,11 @@ This assembles `transcript.asm` and rewrites `GAME.XBN` here.
   its stamp. Some emulators (ZEsarUX's esxdos handler) hang on that
   call; set this bit for any headless/emulator run. Real hardware and
   a real RTC only need it when the date is not wanted in the file.
+  Setting this bit makes an emulator run safe, not faithful: ZEsarUX's
+  esxDOS emulation keeps only the last open-seek-write-close cycle of a
+  reopened file, zero-filling every earlier flush's region, so a
+  multi-turn transcript is only faithful on real hardware regardless of
+  this bit.
 
 `EXTERN 1 90` - full, dated (silicon only). `EXTERN 3 90` - full,
 no-date (emulator-safe). `EXTERN 2 90` - input-only, no-date. `EXTERN
@@ -66,7 +71,10 @@ long-filename dependency):
     interpreter found no RTC.
   - `## NextDAAD transcript no-date` - mode bit 1 set: `SVC_GETDATE`
     was never called.
-- `>>text` - a typed line, queued by the line hook before the parse.
+- `>>text` - a typed line, queued by the line hook before the parse. A
+  line injected with `SVC_INJECT` gets no marker of its own - the line
+  hook is not called for it - so during playback its output joins the
+  previous typed turn.
 - `~` - overflow sentinel: the ring filled mid-turn, the rest of that
   turn's OUTPUT was dropped. The typed-line marker for the NEXT
   command is never among the dropped bytes - see "Latency and the

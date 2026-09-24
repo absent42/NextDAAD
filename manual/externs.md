@@ -425,6 +425,11 @@ not run, and the turn counter does not advance.
 The hook is NOT called for a timeout exit, for an injected line
 (`SVC_INJECT`), or for a `SAVE`/`LOAD` filename prompt.
 
+A line hook rewrites the line IN PLACE (the bytes at HL) and returns its
+carry verdict; it must never call `SVC_INJECT` - injecting from here
+overwrites `inpLine` mid-parse and parks a line the next `PARSE 0`
+consumes as a phantom empty input.
+
 It runs in the foreground, so any service is fair game here - this is
 where a module doing file IO belongs. The transcript module flushes to
 the card from this hook, once per turn, before that turn's response.
@@ -490,7 +495,7 @@ to each row, so you call them by name:
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
 | 15 | `SVC_PAIR` | B = paper, C = ink, each a 0-255 colour as `INK`/`PAPER` take it | A = the tilemap attribute byte for that (paper, ink) pair, allocated by the interpreter's own pair allocator, so it behaves exactly as text printed in those colours (227 works). A pair only keeps its colours while some on-screen cell uses it: resolve it where you use it, never cache it across a period when your cells are off screen (a `GFX n 18` width switch blanks every cell). Call it BEFORE `SVC_GETMSG` when one function needs both, because the staging buffer dies at the next service call | no |
-| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn: after a timeout HL holds the partial line typed when it fired, on an injected turn HL holds the last line the player actually typed. A `SAVE`/`LOAD` filename never reaches this buffer - the prompt stashes and restores the line around it | no |
+| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line the player last typed (resident, read-only), BC = length. CF set = the prompt that just ran ended in a timeout or an empty `ENTER`: HL then holds whatever the recall buffer already held (the partial line after a timeout). CF clear covers a typed submit, an order taken after a conjunction, and an injected turn - HL is always the last line actually typed, never injected text. A `SAVE`/`LOAD` filename never reaches this buffer - the prompt stashes and restores the line around it | no |
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 = echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | no |
@@ -588,25 +593,25 @@ A few things worth knowing about specific rows:
   clear is esxDOS's seek-then-extend hazard: the write landed short of
   what you asked for without the call failing outright. Treat it as a
   failure exactly as you would a set carry flag.
-- **`SVC_GETLINE` and `SVC_GETPENDING` read this turn's input.**
-  `SVC_GETLINE` returns the line the player actually typed this turn -
-  read-only, in the interpreter's own recall buffer - and its carry
-  flag tells you whether a non-empty line was really submitted this
-  turn: a timeout, an injected turn, or a turn taken from pending
-  orders leaves it set. After a timeout, HL holds the partial line the
-  player had typed when it fired. On a turn whose line was injected by
-  `SVC_INJECT`, HL holds the last line the player actually typed
-  instead - the injected text is never in this buffer. A `SAVE`/`LOAD`
-  filename prompt never reaches this buffer either: it stashes the
-  typed line and restores it afterwards, so an extern reading
-  `SVC_GETLINE` after a `SAVE` earlier in the same turn still gets the
-  player's actual command - the reassurance a name-entry or password
-  prompt needs. `SVC_GETPENDING` returns whatever a conjunction ("and",
-  "then") left unconsumed - `LOOK AND GET LAMP` leaves `GET LAMP`
-  pending, with the leading blanks the parser left where it blanked
-  the conjunction word still in the text, so folding this into an
-  injected line picks up harmless extra spaces. Both are foreground
-  only, resident memory, no paging.
+- **`SVC_GETLINE` and `SVC_GETPENDING` read the player's input.**
+  `SVC_GETLINE` returns the line the player actually typed - read-only,
+  in the interpreter's own recall buffer - and its carry flag tells you
+  whether the prompt that just ran ended cleanly: it is SET only when
+  that prompt ended in a timeout or an empty `ENTER`, and HL then holds
+  whatever the recall buffer already held (the partial line after a
+  timeout). It is CLEAR for a typed submit, for an order taken after a
+  conjunction, and for an injected turn - HL is always the last line
+  the player actually typed, the injected text is never in this buffer.
+  A `SAVE`/`LOAD` filename prompt never reaches this buffer either: it
+  stashes the typed line and restores it afterwards, so an extern
+  reading `SVC_GETLINE` after a `SAVE` earlier in the same turn still
+  gets the player's actual command - the reassurance a name-entry or
+  password prompt needs. `SVC_GETPENDING` returns whatever a
+  conjunction ("and", "then") left unconsumed - `LOOK AND GET LAMP`
+  leaves `GET LAMP` pending, with the leading blanks the parser left
+  where it blanked the conjunction word still in the text, so folding
+  this into an injected line picks up harmless extra spaces. Both are
+  foreground only, resident memory, no paging.
 - **`SVC_INJECT` queues a line for the very next `PARSE 0`**, bypassing
   the prompt entirely - your own bank is a fine source for the text,
   and option bit 0 echoes it as if the player had typed it. It
@@ -616,14 +621,17 @@ A few things worth knowing about specific rows:
   second injection while one is still parked. A rewriter called from a
   `PARSE` entry's own remainder must always inject something - the
   original line when nothing else matched - or the game's next
-  `PARSE 0` silently prompts again with no visible cause. Never call it
-  between a `PARSE 0` and the `PARSE 1` that reads the same order's
-  quoted section: it parks its text over the buffer `PARSE 1` reads
-  from and clobbers the quote.
+  `PARSE 0` silently prompts again with no visible cause. The line hook
+  is different: it never calls `SVC_INJECT` at all, it rewrites the
+  line in place instead. Never call it between a `PARSE 0` and the
+  `PARSE 1` that reads the same order's quoted section: it parks its
+  text over the buffer `PARSE 1` reads from and clobbers the quote.
 - **`SVC_VOCFIND` resolves a word against your database's own
   vocabulary**, the same lookup the parser itself uses - any case, only
-  the first five characters significant. Foreground only, and more
-  strictly than most rows marked that way: never call it from the
+  the first five characters significant. HL points at ONE word: a
+  space or other punctuation counts as an ordinary character toward
+  the five, so pass a single word, not a phrase. Foreground only, and
+  more strictly than most rows marked that way: never call it from the
   output hook. The output hook is not the `#int` hook, but the lookup
   reuses shared resident state that a print already in flight is also
   using.
@@ -728,7 +736,7 @@ of them. Practically, that means:
 128 bytes at `XBN_STATE` (`$BF80`, a frozen address) are the one piece
 of your extern's own memory that travels with the game's save data.
 `SAVE` writes it, `LOAD` restores it, `RAMSAVE` and `RAMLOAD` carry it
-the same way - `RAMLOAD n` restores it whatever slot `n` names. It is
+the same way - `RAMLOAD n` restores it whatever `n` is. It is
 zeroed once, at boot: `RESTART` and a part switch leave it exactly as
 your extern last set it.
 

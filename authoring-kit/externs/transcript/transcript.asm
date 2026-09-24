@@ -99,7 +99,9 @@ setwin:
     or a
     ret
 
-; fn 93: EXTERN n 93. User message n as a "##" label line. Action.
+; fn 93: EXTERN n 93. User message n as a "##" label line. Routed through
+; append_out (the output cap), not append: an unbounded message could
+; otherwise eat the line hook's marker reserve. Action.
 label:
     ld a, (armed)
     or a
@@ -108,17 +110,17 @@ label:
     call SVC_GETMSG
     jr c, .done
     ld a, $0D
-    call append
+    call append_out
     ld a, '#'
-    call append
+    call append_out
     ld a, '#'
-    call append
+    call append_out
     ld a, b
     or c
     jr z, .eol
 .cp:
     ld a, (hl)
-    call append
+    call append_out
     inc hl
     dec bc
     ld a, b
@@ -126,7 +128,7 @@ label:
     jr nz, .cp
 .eol:
     ld a, $0D
-    call append
+    call append_out
 .done:
     or a
     ret
@@ -178,7 +180,7 @@ out:
 
 ; A -> TR_BUF[tlen], tlen++; the sentinel '~' goes in once at the cap
 ; and the rest is dropped. Preserves BC, DE, HL. Two entries share this
-; body: append (line, label - cap TR_BUFSZ) and append_out (the output
+; body: append (line - cap TR_BUFSZ) and append_out (label, the output
 ; tap - cap TR_OUTCAP, reserving the line hook's worst case so a full
 ; ring never costs the next command's marker).
 append:

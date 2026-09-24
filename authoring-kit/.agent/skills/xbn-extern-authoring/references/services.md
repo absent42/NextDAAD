@@ -216,15 +216,16 @@ identically cannot draw from the hook.
 
 ### SVC_GETLINE - the SAVE prompt never lands in it
 
-`SVC_GETLINE` returns the line the player actually typed this turn - HL
-points at the interpreter's own recall buffer (read-only), BC is its length.
-Carry SET means no non-empty line was really submitted this turn: after a
-timeout HL holds the partial line typed when it fired; on an injected turn
-(`SVC_INJECT`) HL holds the last line the player actually typed, never the
-injected text. A `SAVE`/`LOAD` filename prompt stashes the typed line and
-restores it afterwards, so it never reaches this buffer - an extern reading
-`SVC_GETLINE` after a `SAVE` earlier in the same turn still gets the
-player's real command.
+`SVC_GETLINE` returns the line the player actually typed - HL points at the
+interpreter's own recall buffer (read-only), BC is its length. Carry SET
+means the prompt that just ran ended in a timeout or an empty `ENTER`; HL
+then holds whatever the recall buffer already held (the partial line after
+a timeout). Carry CLEAR covers a typed submit, an order taken after a
+conjunction, and an injected turn (`SVC_INJECT`) - HL is always the last
+line the player actually typed, never the injected text. A `SAVE`/`LOAD`
+filename prompt stashes the typed line and restores it afterwards, so it
+never reaches this buffer - an extern reading `SVC_GETLINE` after a `SAVE`
+earlier in the same turn still gets the player's real command.
 
 ### SVC_GETPENDING - leading blanks are real
 
@@ -245,25 +246,31 @@ partial injection happened.
 
 A rewriter called from a `PARSE` entry's own remainder must ALWAYS inject
 something, even when it found nothing to change - inject the original line
-unmodified. A line hook that rewrites conditionally and only injects on the
-rewrite path leaves the game's next `PARSE 0` prompting again with no
-visible cause, the PRO 1 sketch below is the shape to copy:
+unmodified, or the game's next `PARSE 0` prompts again with no visible
+cause. The PRO 1 sketch below is the shape to copy:
 
-    ; PRO 1 (or the line hook): decide, then ALWAYS inject
+    ; PRO 1: decide, then ALWAYS inject
         call decide_rewrite      ; HL = text to send, whether changed or not
         xor a                    ; options: no echo
         call SVC_INJECT
         ret                      ; CF from SVC_INJECT is refusal, not "changed"
 
-Never call it between a `PARSE 0` and the `PARSE 1` that reads the same
-order's quoted section - it parks its text over the buffer `PARSE 1` reads
-from and clobbers the quote.
+A line hook is different: it rewrites the line IN PLACE, the buffer it was
+handed, and returns a carry verdict - it never calls `SVC_INJECT`. Injecting
+from the line hook overwrites `inpLine` mid-parse and parks an extra line
+the next `PARSE 0` consumes as a phantom empty input.
+
+Never call `SVC_INJECT` between a `PARSE 0` and the `PARSE 1` that reads the
+same order's quoted section - it parks its text over the buffer `PARSE 1`
+reads from and clobbers the quote.
 
 ### SVC_VOCFIND - foreground only, never from the output hook
 
 Resolves a word against the database's own vocabulary, any case, first five
 characters significant: D = word id, E = type, carry clear on a match, carry
-set when the word is unknown. Foreground only, and more strictly than most
+set when the word is unknown. HL points at ONE word - a space or other
+punctuation counts as an ordinary character toward the five, so pass a
+single word, not a phrase. Foreground only, and more strictly than most
 rows marked that way - never call it from the output hook either. The output
 hook is not the `#int` hook, but the lookup reuses shared resident state that
 a print already in flight is also using.

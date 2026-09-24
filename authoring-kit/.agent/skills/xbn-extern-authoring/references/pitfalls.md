@@ -103,12 +103,16 @@ carry is clear. Treat a short count exactly as you would treat carry set.
 
 ## A rewriter that does not inject re-prompts silently
 
-**Lesson.** A line hook or `PARSE`-entry rewriter that only calls
-`SVC_INJECT` on the branch where it changed something leaves the game's next
-`PARSE 0` prompting again with no visible cause on every other branch.
+**Lesson.** A `PARSE`-entry remainder rewriter that only calls `SVC_INJECT`
+on the branch where it changed something leaves the game's next `PARSE 0`
+prompting again with no visible cause on every other branch. Calling
+`SVC_INJECT` from the line hook is a different mistake, not a fix for this
+one: it overwrites `inpLine` mid-parse and parks an extra line the next
+`PARSE 0` consumes as a phantom empty input.
 
-**Rule.** A rewriter must ALWAYS inject - the original line unmodified when
-nothing needed to change. Decide, then inject unconditionally.
+**Rule.** A `PARSE`-entry rewriter must ALWAYS inject - the original line
+unmodified when nothing needed to change. A line hook rewrites the line IN
+PLACE instead and never calls `SVC_INJECT`.
 
 ## Injecting between PARSE 0 and PARSE 1 clobbers the quoted section
 
