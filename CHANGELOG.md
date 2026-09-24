@@ -73,6 +73,18 @@ All notable changes to NextDAAD are recorded here.
   31 p=1 clears, arm clears the field, marquee once/loop, colour via
   SVC_PAIR gated on API 3; xbnmod.inc XBN_TILEMAP; verbs XTPS XTPR
   XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW; tickcheck.py.
+- fontconv: reads monobit's YAFF and draw text formats (the
+  hoard-of-bitfonts collection). `lib\fontfmt.ps1` gains Read-FontYaff
+  (0x/decimal/0o codepoint labels, u+XXXX and 'A' labels below 128,
+  shift-up and left-bearing placement against a shared baseline,
+  `encoding:` naming the charset) and Read-FontDraw (hex label, `-`/`#`
+  rows on or below the label line). Both are detected structurally by
+  their row characters, draw first, since a bare hex label also reads
+  as a YAFF decimal. A source declaring the ZX charset keeps its own 96
+  and 127 like a 768-byte `.ch8`. BUILD.BAT auto-converts `FONT.yaff`
+  and `FONT.draw`. `tests/fontconv-selftest.ps1` Y1-Y10 and D1-D3.
+  Manual fonts page gains an "Other font formats" section listing every
+  readable format and the monobit route.
 
 ## v0.10.0 - 18/09/2026
 

@@ -32,6 +32,13 @@ game behaves, how it builds, or what the kit gives you, it is here.
   the tilemap attribute for any ink and paper, the same way `INK` and
   `PAPER` resolve them. The XBN API version is now 3; every existing
   row is unchanged.
+- **Fonts from the hoard of bitfonts.** `lib\fontconv.ps1` and the kit
+  build now read monobit's `.yaff` and `.draw` text formats, so any 8x8
+  character set from that collection drops in as `FONT.yaff` or
+  `FONT.draw` and converts. A YAFF file declaring the ZX charset keeps
+  its own pound and copyright signs. The fonts page now lists every
+  format the converter reads and how to reach the rest through monobit.
+  See [Fonts](fonts.md#other-font-formats).
 - **Ticker extern.** `externs\ticker` now takes a row, column and
   width (fns 32-34), ink and paper (35-36), a typewriter or marquee
   mode (37) and a speed (38), all latched by the next `EXTERN n 30`.
