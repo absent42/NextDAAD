@@ -63,6 +63,8 @@ ext_main:
     jp z, inject_probe
     cp 45
     jp z, pending_probe
+    cp 46
+    jp z, voc_probe
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -684,6 +686,25 @@ pending_probe:
     ld (XBN_FLAGS+128), a
     or a
     ret
+
+; fn 46: SVC_VOCFIND. "xsvc" -> 129 id (104), 130 type (0 = verb);
+; "qqqqq" -> 131 = 1 (CF set).
+voc_probe:
+    ld hl, w_xsvc
+    call SVC_VOCFIND
+    ld a, d
+    ld (XBN_FLAGS+129), a
+    ld a, e
+    ld (XBN_FLAGS+130), a
+    ld hl, w_none
+    call SVC_VOCFIND
+    ld a, 0
+    adc a, 0
+    ld (XBN_FLAGS+131), a
+    or a
+    ret
+w_xsvc: db "xsvc", 0
+w_none: db "qqqqq", 0
 
 xbn_end:
 

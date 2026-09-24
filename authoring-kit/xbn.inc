@@ -104,6 +104,12 @@ SVC_INJECT      equ XBN_API+54  ; in HL = ASCIIZ text (your bank is fine),
                                  ; original line when nothing matched) or
                                  ; the second PARSE 0 prompts again
                                  ; silently. API 3. Foreground-only.
+SVC_VOCFIND     equ XBN_API+57  ; in HL = ASCIIZ word (any case, first 5
+                                 ; chars count); out D = word id, E =
+                                 ; type, CF clear; CF set = not in the
+                                 ; vocabulary. Corrupts AF, BC, DE, HL.
+                                 ; API 3. Foreground-only; NEVER from the
+                                 ; output hook.
 
 ; SVC_FOPEN modes (esxDOS)
 XBN_FMODE_R     equ $01         ; read

@@ -557,6 +557,7 @@ xbn_api_tpl:
     jp svc_getline                ; 16
     jp svc_getpending             ; 17
     jp svc_inject                 ; 18
+    jp svc_vocfind                ; 19
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -829,6 +830,90 @@ svc_inject:
     ld a, $FF
     scf
     ret
+
+; --- vocabulary ---
+; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
+; Out: CF set = not found; else D = word id, E = word type.
+; Vocab entries are 7 bytes: 5 chars stored 255-complemented (spaces
+; pad short words), id, type. Table ends at raw byte 0.
+voc_find:
+    call data_save
+    ld hl, (ddbHeader+HDR_VOCAB)
+    call rd_seek
+.entry:
+    call rd_next
+    or a
+    jr z, .miss                 ; raw 0 = end of table
+    ; compare 5 encoded chars against inpWord
+    ld hl, inpWord
+    ld b, 5
+.cmp:
+    cpl                         ; decode vocab char
+    cp (hl)
+    jr nz, .skip
+    inc hl
+    djnz .cmpnext
+    jr .matched
+.cmpnext:
+    call rd_next
+    jr .cmp
+.skip:
+    ; consume the rest of this entry: we have read (6-B) chars so far
+    ; including the mismatch; read the remaining (B-1) chars + id + type
+    ld a, b
+    inc a                       ; (B-1)+2 = remaining chars + id + type
+    ld b, a
+.drain:
+    call rd_next
+    djnz .drain
+    jr .entry
+.matched:
+    call rd_next
+    ld d, a                     ; id
+    call rd_next
+    ld e, a                     ; type
+    call data_restore
+    or a
+    ret
+.miss:
+    call data_restore
+    scf
+    ret
+
+; Row 19: in HL = ASCIIZ word (caller's bank); out D = id, E = type,
+; CF clear; CF set = not in the vocabulary. The word is copied into
+; inpWord FIRST: voc_find's rd_seek remaps slot 6 over the caller's
+; bank and data_restore puts it back before the return. Never reach
+; this from the output hook (data_save's cell is live during a print).
+; Corrupts AF, BC, DE, HL.
+svc_vocfind:
+    ld de, inpWord
+    ld b, 5
+.cp:
+    ld a, (hl)
+    or a
+    jr z, .pad
+    inc hl
+    cp 'a'
+    jr c, .st
+    cp 'z'+1
+    jr nc, .st
+    sub 32                        ; uppercase, as word_next produces
+.st:
+    ld (de), a
+    inc de
+    djnz .cp
+    jr .nul
+.pad:
+    ld a, ' '
+.padl:
+    ld (de), a
+    inc de
+    djnz .padl
+.nul:
+    xor a
+    ld (de), a
+    jp voc_find
 
 ; A = user message number (kind 1 = MTX, h_mes's own kind) -> savStage;
 ; out HL = savStage, BC = length (<=256, truncated), CF clear. CF set +

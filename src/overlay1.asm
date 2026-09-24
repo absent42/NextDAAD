@@ -1148,54 +1148,8 @@ inp_cursor_cell:
     pop de
     jp tm_putc_at               ; B row, C col, A glyph, E attr
 
-; --- vocabulary ---
-; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
-; Out: CF set = not found; else D = word id, E = word type.
-; Vocab entries are 7 bytes: 5 chars stored 255-complemented (spaces
-; pad short words), id, type. Table ends at raw byte 0.
-voc_find:
-    call data_save
-    ld hl, (ddbHeader+HDR_VOCAB)
-    call rd_seek
-.entry:
-    call rd_next
-    or a
-    jr z, .miss                 ; raw 0 = end of table
-    ; compare 5 encoded chars against inpWord
-    ld hl, inpWord
-    ld b, 5
-.cmp:
-    cpl                         ; decode vocab char
-    cp (hl)
-    jr nz, .skip
-    inc hl
-    djnz .cmpnext
-    jr .matched
-.cmpnext:
-    call rd_next
-    jr .cmp
-.skip:
-    ; consume the rest of this entry: we have read (6-B) chars so far
-    ; including the mismatch; read the remaining (B-1) chars + id + type
-    ld a, b
-    inc a                       ; (B-1)+2 = remaining chars + id + type
-    ld b, a
-.drain:
-    call rd_next
-    djnz .drain
-    jr .entry
-.matched:
-    call rd_next
-    ld d, a                     ; id
-    call rd_next
-    ld e, a                     ; type
-    call data_restore
-    or a
-    ret
-.miss:
-    call data_restore
-    scf
-    ret
+; voc_find lives in main.asm (resident, post-anchor) since SVC_VOCFIND:
+; every primitive it calls was already resident. Contract unchanged.
 
 ; Scan the ASCIIZ order at (inpPtr) for the next word: fills inpWord
 ; (5 chars uppercase space-padded), advances inpPtr past the word.

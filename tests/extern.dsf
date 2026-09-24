@@ -292,9 +292,9 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 34-39 and 42-45 exist: XREG XCAL XTIK XSVC XFIO
+;     where fns 20-29, 34-39 and 42-46 exist: XREG XCAL XTIK XSVC XFIO
 ;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB
-;     XGLN XINJ XLIN XPND XSAV XINE XINL (fns 26-29, 34-39 and 42-45
+;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC (fns 26-29, 34-39 and 42-46
 ;     exist only in xbntest.asm) (on any other leg these print unwritten
 ;     flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
@@ -431,6 +431,7 @@ XPND   183 verb
 XSAV   184 verb
 XINE   185 verb
 XINL   186 verb
+XVOC   187 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -604,19 +605,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 201 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3C9 (lsb 201, msb 195) - read
+> XCAL _   CALL 206 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3CE (lsb 206, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C3BA by Task 1's fn 43-45 dispatch code.
+                             ; from $C3C9 by Task 2's fn 46 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 32 230         ; Task 4's owed check: tail_marker, address
-                             ; $E620 (lsb 32, msb 230) - the SECOND 8K page
+           CALL 37 230         ; Task 4's owed check: tail_marker, address
+                             ; $E625 (lsb 37, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E611 by Task 1's fn 43-45 dispatch code.
+                             ; from $E620 by Task 2's fn 46 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -716,6 +717,13 @@ CLOAK   22 noun
            PRINT   126       ; expect 1
            EXTERN  3 44      ; 127 chars: accepted, parked WITH echo (B=3)
            PRINT   126       ; expect 0
+           DONE
+> XVOC _   EXTERN  0 46       ; SVC_VOCFIND probe (fixture fn 46)
+           PRINT   129       ; expect 104
+           MES     "/"
+           PRINT   130       ; expect 0
+           MES     "/"
+           PRINT   131       ; expect 1
            DONE
 > XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
            EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
