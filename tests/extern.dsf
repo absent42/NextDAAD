@@ -319,7 +319,7 @@
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
 ;     SILICON-ONLY, see below) XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF
-;     XTRD (transcript; XTRD is SILICON-ONLY, see below)
+;     XTRD XTRO (transcript; XTRD is SILICON-ONLY, see below)
 ;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
 ;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
 ;     -XbnClock/-XbnTool XHNP aborts at fn 52 and prints "no book", and
@@ -337,8 +337,8 @@
 ;     legs) AND is SILICON-ONLY for the same reason as XDAT/XRTC:
 ;     EXTERN 1 90 leaves mode bit 1 (no-date) clear, so fn 90 calls
 ;     SVC_GETDATE. DO NOT TYPE it in an emulator replay. The other
-;     transcript verbs (XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF) set
-;     mode bit 1 and are emulator-safe.
+;     transcript verbs (XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF XTRO)
+;     set mode bit 1 and are emulator-safe.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
 ;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF are
 ;     meaningful there (plus XSLT with all slots printing nothing).
@@ -466,6 +466,7 @@ XTR2   202 verb
 XTRF   203 verb
 XTRI   204 verb
 XTRD   206 verb
+XTRO   207 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -2032,6 +2033,24 @@ CLOAK   22 noun
            MES     "L01#nL02#nL03#nL04#nL05#nL06#nL07#nL08#nL09#nL10#n"
            MES     "L11#nL12#nL13#nL14#nL15#nL16#nL17#nL18#nL19#nL20#n"
            WINDOW  1
+           DONE
+; XTRO - append_out overflow guard: message 8 is exactly 200 chars,
+;        printed 12 times = 2400 chars, well past TR_OUTCAP. Proves
+;        the sentinel lands once and the NEXT command's line-hook
+;        marker still reaches the file.
+> XTRO _   CLS
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
+           MES     8
            DONE
 /PRO 6
 ; ---- one-shot init ----

@@ -12,6 +12,12 @@
 TR_MIN_API      equ 3
 TR_BUF          equ XBN_SCRATCH + 768
 TR_BUFSZ        equ TRANSCRIPT_RING
+INP_MAX         equ 127          ; mirrors the interpreter's frozen line length
+; Output-tap cap: reserves the line hook's worst case ("\r" ">>" 127
+; chars "\r" = INP_MAX+4) so a full ring still has room for the NEXT
+; command's marker - the one guarantee the overflow design promises.
+TR_OUTCAP       equ TR_BUFSZ - (INP_MAX+4)
+    ASSERT TR_OUTCAP > 0, TR_OUTCAP not positive - TRANSCRIPT_RING too small
 
 ext:
     ld a, c
@@ -167,19 +173,29 @@ out:
     ret nz
 .rec:
     ld a, c
-    jp append
+    jp append_out
 
-; A -> TR_BUF[tlen], tlen++. At TR_BUFSZ-1 the sentinel '~' goes in
-; once and the rest of the turn is dropped. Preserves BC, DE, HL.
+; A -> TR_BUF[tlen], tlen++; the sentinel '~' goes in once at the cap
+; and the rest is dropped. Preserves BC, DE, HL. Two entries share this
+; body: append (line, label - cap TR_BUFSZ) and append_out (the output
+; tap - cap TR_OUTCAP, reserving the line hook's worst case so a full
+; ring never costs the next command's marker).
 append:
     push hl
     push de
     push af
-    ld hl, (tlen)
     ld de, TR_BUFSZ-1
+    jr append_cap
+append_out:
+    push hl
+    push de
+    push af
+    ld de, TR_OUTCAP-1
+append_cap:
+    ld hl, (tlen)
     or a
     sbc hl, de
-    jr c, .room                  ; tlen < size-1
+    jr c, .room                  ; tlen < cap-1
     jr nz, .full                 ; past the sentinel: drop
     pop af
     ld a, '~'

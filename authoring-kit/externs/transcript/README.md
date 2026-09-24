@@ -34,12 +34,25 @@ This assembles `transcript.asm` and rewrites `GAME.XBN` here.
 
 | Call | Effect | Fails (CF set) |
 |---|---|---|
-| `EXTERN 1 90` | start recording, full mode (typed lines and printed text) | interpreter predates API 3, or the file cannot be created |
-| `EXTERN 0 90` | start recording, input-only mode (typed lines only - a replayable walkthrough script) | as above |
+| `EXTERN mode 90` | start recording (mode is a bitmask - see below) | interpreter predates API 3, or the file cannot be created |
 | `EXTERN 0 91` | stop: flush and disarm | never |
 | `EXTERN 0 92` | condition: CF clear while recording | CF set when not recording, or after a flush failure |
 | `EXTERN n 93` | write user message n into the file as a `##` label line, for run sheets ("step 4" markers a diff can anchor on) | never (no-op if not recording) |
 | `EXTERN w 94` | record window w (0-7) only; 255 (the default after start) records every window | never |
+
+### fn 90's mode bitmask
+
+- bit 0: 1 = full (typed lines and printed text), 0 = input only
+  (typed lines only - a replayable walkthrough script, none of the
+  game's own output).
+- bit 1: 1 = no date - the header omits the `SVC_GETDATE` call and
+  its stamp. Some emulators (ZEsarUX's esxdos handler) hang on that
+  call; set this bit for any headless/emulator run. Real hardware and
+  a real RTC only need it when the date is not wanted in the file.
+
+`EXTERN 1 90` - full, dated (silicon only). `EXTERN 3 90` - full,
+no-date (emulator-safe). `EXTERN 2 90` - input-only, no-date. `EXTERN
+0 90` - input-only, dated (silicon only).
 
 ## File format
 
@@ -47,9 +60,17 @@ Plain text, `$0D` line ends, in the game's own folder (8.3 name, no
 long-filename dependency):
 
 - `## ...` - a header line (start) or a label line (`EXTERN n 93`).
+  The header reads one of:
+  - `## NextDAAD transcript YYYY-MM-DD HH:MM` - dated (mode bit 1 clear).
+  - `## NextDAAD transcript no-rtc` - dated was asked for but the
+    interpreter found no RTC.
+  - `## NextDAAD transcript no-date` - mode bit 1 set: `SVC_GETDATE`
+    was never called.
 - `>>text` - a typed line, queued by the line hook before the parse.
 - `~` - overflow sentinel: the ring filled mid-turn, the rest of that
-  turn's text was dropped. The next line hook resumes normally.
+  turn's OUTPUT was dropped. The typed-line marker for the NEXT
+  command is never among the dropped bytes - see "Latency and the
+  ring" below.
 
 ## Latency and the ring
 
@@ -64,8 +85,17 @@ that dies with the crash it was meant to document is worthless.
 Everything one turn prints must fit in the ring; a room description
 plus a LISTOBJ is on the order of 1K.
 
+Printed output and the next typed line share the ring but not the same
+cap: the output tap stops short of the true end, reserving enough room
+for the largest possible line-hook marker (a 127-character line plus
+its `\r>>...\r` wrapping). Output that reaches its cap gets one `~`
+and the rest of that turn's OUTPUT is dropped; the typed-line marker
+for the turn after it is never among the casualties - the file may
+lose what a turn printed, never what the player typed next.
+
 ## Input-only mode
 
-`EXTERN 0 90` records typed lines only, none of the game's own output -
-a walkthrough script another run can replay, without the printed text
-bloating the file or drifting between print-width settings.
+Mode bit 0 clear (`EXTERN 0 90` or `EXTERN 2 90`) records typed lines
+only, none of the game's own output - a walkthrough script another run
+can replay, without the printed text bloating the file or drifting
+between print-width settings.
