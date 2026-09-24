@@ -275,7 +275,7 @@ tables.</p>
 <td>16</td>
 <td><code>SVC_GETLINE</code></td>
 <td>-</td>
-<td>HL = ASCIIZ line typed this turn (resident, read-only), BC = length; CF set = no non-empty line submitted this turn (HL then holds whatever the recall buffer holds)</td>
+<td>HL = ASCIIZ line typed this turn (resident, read-only), BC = length; CF set = no non-empty line submitted this turn: after a timeout HL holds the partial line typed when it fired, on an injected turn HL holds the last line the player actually typed. A <code>SAVE</code>/<code>LOAD</code> filename never reaches this buffer - the prompt stashes and restores the line around it</td>
 <td>AF, BC, HL</td>
 <td>no</td>
 </tr>

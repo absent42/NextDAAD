@@ -490,7 +490,7 @@ to each row, so you call them by name:
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
 | 15 | `SVC_PAIR` | B = paper, C = ink, each a 0-255 colour as `INK`/`PAPER` take it | A = the tilemap attribute byte for that (paper, ink) pair, allocated by the interpreter's own pair allocator, so it behaves exactly as text printed in those colours (227 works). A pair only keeps its colours while some on-screen cell uses it: resolve it where you use it, never cache it across a period when your cells are off screen (a `GFX n 18` width switch blanks every cell). Call it BEFORE `SVC_GETMSG` when one function needs both, because the staging buffer dies at the next service call | no |
-| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn (HL then holds whatever the recall buffer holds) | no |
+| 16 | `SVC_GETLINE` | - | HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn: after a timeout HL holds the partial line typed when it fired, on an injected turn HL holds the last line the player actually typed. A `SAVE`/`LOAD` filename never reaches this buffer - the prompt stashes and restores the line around it | no |
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 = echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | no |
@@ -592,9 +592,16 @@ A few things worth knowing about specific rows:
   `SVC_GETLINE` returns the line the player actually typed this turn -
   read-only, in the interpreter's own recall buffer - and its carry
   flag tells you whether a non-empty line was really submitted this
-  turn: a timeout, an injected line, or a turn taken from pending
-  orders leaves it set, and HL then holds whatever the recall buffer
-  last held. `SVC_GETPENDING` returns whatever a conjunction ("and",
+  turn: a timeout, an injected turn, or a turn taken from pending
+  orders leaves it set. After a timeout, HL holds the partial line the
+  player had typed when it fired. On a turn whose line was injected by
+  `SVC_INJECT`, HL holds the last line the player actually typed
+  instead - the injected text is never in this buffer. A `SAVE`/`LOAD`
+  filename prompt never reaches this buffer either: it stashes the
+  typed line and restores it afterwards, so an extern reading
+  `SVC_GETLINE` after a `SAVE` earlier in the same turn still gets the
+  player's actual command - the reassurance a name-entry or password
+  prompt needs. `SVC_GETPENDING` returns whatever a conjunction ("and",
   "then") left unconsumed - `LOOK AND GET LAMP` leaves `GET LAMP`
   pending, with the leading blanks the parser left where it blanked
   the conjunction word still in the text, so folding this into an

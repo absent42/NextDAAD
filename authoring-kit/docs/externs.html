@@ -576,7 +576,7 @@ to each row, so you call them by name:</p>
 <td>16</td>
 <td><code>SVC_GETLINE</code></td>
 <td>-</td>
-<td>HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn (HL then holds whatever the recall buffer holds)</td>
+<td>HL = ASCIIZ line typed this turn (resident, read-only), BC = length. CF set = no non-empty line was submitted this turn: after a timeout HL holds the partial line typed when it fired, on an injected turn HL holds the last line the player actually typed. A <code>SAVE</code>/<code>LOAD</code> filename never reaches this buffer - the prompt stashes and restores the line around it</td>
 <td>no</td>
 </tr>
 <tr>
@@ -698,9 +698,16 @@ registers a row's Out column names carry a result.</p>
   <code>SVC_GETLINE</code> returns the line the player actually typed this turn -
   read-only, in the interpreter's own recall buffer - and its carry
   flag tells you whether a non-empty line was really submitted this
-  turn: a timeout, an injected line, or a turn taken from pending
-  orders leaves it set, and HL then holds whatever the recall buffer
-  last held. <code>SVC_GETPENDING</code> returns whatever a conjunction ("and",
+  turn: a timeout, an injected turn, or a turn taken from pending
+  orders leaves it set. After a timeout, HL holds the partial line the
+  player had typed when it fired. On a turn whose line was injected by
+  <code>SVC_INJECT</code>, HL holds the last line the player actually typed
+  instead - the injected text is never in this buffer. A <code>SAVE</code>/<code>LOAD</code>
+  filename prompt never reaches this buffer either: it stashes the
+  typed line and restores it afterwards, so an extern reading
+  <code>SVC_GETLINE</code> after a <code>SAVE</code> earlier in the same turn still gets the
+  player's actual command - the reassurance a name-entry or password
+  prompt needs. <code>SVC_GETPENDING</code> returns whatever a conjunction ("and",
   "then") left unconsumed - <code>LOOK AND GET LAMP</code> leaves <code>GET LAMP</code>
   pending, with the leading blanks the parser left where it blanked
   the conjunction word still in the text, so folding this into an
