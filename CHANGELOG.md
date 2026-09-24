@@ -161,6 +161,23 @@ All notable changes to NextDAAD are recorded here.
   videnc.exe first. `LICENSES/` ships the Python, Qt (LGPL-3.0), numpy,
   Pillow and PyInstaller licences. check_frozen_exes takes an optional
   bundle folder.
+- kit: BUILD.BAT stages assets incrementally. It no longer clears
+  pictures, sprite sets, audio or video from `RELEASE\`. The new
+  `lib/assets.ps1` (`-Stage Pictures|Audio|Video`) replaces the
+  per-file loops in gfx.bat, audio.bat and video.bat, which are now
+  thin wrappers. Copies (WAV, VID, ready-made pictures and title) are
+  current when size and modified time match the source. Conversions
+  (PNG, AKY, AYS, SFB, ANI) are current when the output's modified
+  time equals the newest source time plus a fingerprint of the sources
+  and converters (name, size, time, including assets.ps1) in the
+  sub-second ticks. That catches edits, older replacements and tool or
+  kit updates, and writes no state files. At the end of each stage,
+  outputs with no source are deleted, so a COMPRESS switch swaps .NX2
+  and .NX2.zx0. Fonts, pointers, hints, XBN, DDB, INTRO\ and PART<n>\
+  are still rebuilt every run. Palette reports and sprite lines print
+  only when a file converts. With 102 pictures a build took 67.8 s
+  before, 5.8 s cold and 2.1 s unchanged. Output is byte-identical to
+  the old scripts. pnginfo.ps1 is removed.
 
 ## v0.10.0 - 18/09/2026
 
