@@ -20,7 +20,8 @@ XBN_ORG         equ $C000
 ; HL = the typed line (writable, ASCIIZ, up to 127), B = length, IX =
 ; flags; CF set on return consumes the line (silent re-prompt). The
 ; output hook gets C = one printed character ($0D = newline), IX =
-; flags; it must call no service. Needs a v0.10.1 interpreter; older
+; flags; it must call no service and must preserve AF', BC', DE', HL'
+; (the trampoline does not save them). Needs a v0.10.1 interpreter; older
 ; loaders reject the header and the game plays with externs off.
     MACRO XBN_HEADER3 ext_entry, int_entry, line_entry, out_entry
         db "XBN"

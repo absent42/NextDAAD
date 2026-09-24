@@ -241,8 +241,8 @@
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN (XABS
 #                              no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated GAME.XBN instead
-#                              of the good one: magic|ver|rsv|shorthdr|
-#                              size|trunc (a kind is required). All six
+#                              of the good one: magic|ver|rsv|line|
+#                              shorthdr|size|trunc (a kind is required). All seven
 #                              variants are generated unconditionally
 #                              alongside the good GAME.XBN so a break in
 #                              the generator is caught on a plain run.
@@ -375,7 +375,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -2950,8 +2950,10 @@ $xbnBadMagic = $xbnGood.Clone(); $xbnBadMagic[0] = 0x5A                    # mag
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADMAGIC.XBN", $xbnBadMagic)
 $xbnBadVer = $xbnGood.Clone(); $xbnBadVer[3] = 1                          # version 1: the pre-v2 header, now rejected
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADVER.XBN", $xbnBadVer)
-$xbnBadRsv = $xbnGood.Clone(); $xbnBadRsv[10] = 1                          # reserved byte nonzero
+$xbnBadRsv = $xbnGood.Clone(); $xbnBadRsv[3] = 2; $xbnBadRsv[10] = 1       # format 2 header with a nonzero reserved byte
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADRSV.XBN", $xbnBadRsv)
+$xbnBadLine = $xbnGood.Clone(); $xbnBadLine[10] = 0xFF; $xbnBadLine[11] = 0xFF # format 3, lineEntry $FFFF: outside the binary
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\BADLINE.XBN", $xbnBadLine)
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\SHORTHDR.XBN", $xbnGood[0..11])  # shorter than the 14-byte header
 $xbnBadSize = $xbnGood.Clone(); $xbnBadSize[8] = 0x01; $xbnBadSize[9] = 0x40 # size $4001
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADSIZE.XBN", $xbnBadSize)
@@ -3131,7 +3133,7 @@ if ($Xbn) {
         "staged tests\out\extern.ddb -> sd\$legName\GAME.DDB (no GAME.XBN staged - -XbnNoBin)"
     }
     elseif ($XbnBad) {
-        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; rsv = 'BADRSV.XBN'; shorthdr = 'SHORTHDR.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
+        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; rsv = 'BADRSV.XBN'; line = 'BADLINE.XBN'; shorthdr = 'SHORTHDR.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
         Copy-Item "$root\tests\out\xbn\$xbnBadFile" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\$xbnBadFile -> sd\$legName\GAME.XBN (-XbnBad $XbnBad reject variant)"
     }
