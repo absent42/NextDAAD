@@ -23,8 +23,10 @@ All notable changes to NextDAAD are recorded here.
   asserts. An entry label or size equate sjasmplus defines outside the
   scanned file (an `INCLUDE`) is refused. `EXTERNS.BAT` re-quotes its
   arguments and takes its own folder once, so a trailing `\` and a
-  quoted relative launch path both work. Errors print one `xbnbuild:`
-  line. New
+  quoted relative launch path both work. Paths are taken literally
+  (`[` and `]` are not wildcards), `<folder>\<folder>.asm` names its
+  folder, and a non-ASCII module path is refused up front. Errors print
+  one `xbnbuild:` line. New
   `tests/xbnbuild-selftest.ps1`, fixtures `tests/xbn/usermods/`,
   emulator check `tests/xbn/hookshape.py`.
 - PROCESS and REDO now reach process tables 128 to 254. The process

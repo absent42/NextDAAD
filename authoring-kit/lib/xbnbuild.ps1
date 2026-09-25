@@ -13,7 +13,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-$kitRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$kitRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $externsDir = Join-Path $kitRoot 'externs'
 if (-not $BaseDir) { $BaseDir = (Get-Location).Path }
 
@@ -23,8 +23,8 @@ function Fail([string]$msg) {
 }
 
 # Bare-name modules: externs\<d>\<d>.asm, minus the prebuilt all\.
-$kitModules = @(Get-ChildItem $externsDir -Directory |
-    Where-Object { $_.Name -ne 'all' -and (Test-Path (Join-Path $_.FullName "$($_.Name).asm")) } |
+$kitModules = @(Get-ChildItem -LiteralPath $externsDir -Directory |
+    Where-Object { $_.Name -ne 'all' -and (Test-Path -LiteralPath (Join-Path $_.FullName "$($_.Name).asm")) } |
     ForEach-Object { $_.Name })
 
 if (-not $Modules) {
@@ -86,12 +86,21 @@ foreach ($arg in $Modules) {
     if ($arg -match '[\\/]') {
         $dir = if ([IO.Path]::IsPathRooted($arg)) { $arg } else { Join-Path $BaseDir $arg }
         $dir = [IO.Path]::GetFullPath($dir).TrimEnd('\', '/')
-        if (Test-Path $dir -PathType Container) { $dir = (Get-Item $dir).FullName.TrimEnd('\') }
+        # <folder>\<folder>.asm names its folder; any other file does not.
+        if (Test-Path -LiteralPath $dir -PathType Leaf) {
+            $parent = Split-Path $dir -Parent
+            if ([IO.Path]::GetFileNameWithoutExtension($dir) -ne (Split-Path $parent -Leaf) -or
+                [IO.Path]::GetExtension($dir) -ne '.asm') {
+                Fail "'$arg' is a file - name the module's folder, which holds <folder>.asm"
+            }
+            $dir = $parent
+        }
+        if (Test-Path -LiteralPath $dir -PathType Container) { $dir = (Get-Item -LiteralPath $dir).FullName.TrimEnd('\') }
         $name = Split-Path $dir -Leaf
         $kitDir = Join-Path $externsDir $name
         if ($kitModules -contains $name) {
             # A path to the kit's own module folder is that module.
-            if ((Test-Path $kitDir) -and ((Get-Item $kitDir).FullName.TrimEnd('\') -eq $dir)) {
+            if ((Test-Path -LiteralPath $kitDir) -and ((Get-Item -LiteralPath $kitDir).FullName.TrimEnd('\') -eq $dir)) {
                 $inKit = $true
                 $name = ($kitModules | Where-Object { $_ -eq $name })
             } else {
@@ -111,7 +120,10 @@ foreach ($arg in $Modules) {
     }
     if ($name -eq 'all') { Fail "'all' is the prebuilt collection, not a module - name the modules you want" }
     $src = Join-Path $dir "$name.asm"
-    if (-not (Test-Path $src -PathType Leaf)) { Fail "module '$name': no $name.asm in $dir" }
+    if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { Fail "module '$name': no $name.asm in $dir" }
+    if ($src -match '[^\x20-\x7E]') {
+        Fail "module '$name': sjasmplus cannot open a path with non-ASCII characters ($src) - move it to a plain-ASCII folder"
+    }
     if ($seen.ContainsKey($name.ToLower())) { Fail "module '$name' is named twice" }
     $seen[$name.ToLower()] = $true
     $scan = Read-Module $name $src
@@ -230,10 +242,10 @@ try {
             }
         }
     }
-    Copy-Item (Join-Path $work 'GAME.XBN') $Out -Force
+    Copy-Item -LiteralPath (Join-Path $work 'GAME.XBN') -Destination $Out -Force
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
-$len = (Get-Item $Out).Length
+$len = (Get-Item -LiteralPath $Out).Length
 Write-Output "$Out written: $len bytes, $(16384 - $len) free of 16384"

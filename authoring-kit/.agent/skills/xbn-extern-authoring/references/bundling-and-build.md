@@ -41,9 +41,11 @@ beside `BUILD.BAT`. Each argument is either:
 - a bare name - a folder under `externs\`: the eight shipped modules
   (`ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
   `transcript`) or one you dropped there; or
-- a path, anything with a `\` or `/` - a folder holding `<folder>.asm`,
-  named after the folder, relative to the directory you ran
-  `EXTERNS.BAT` from. It may not reuse a name from `externs\`.
+- a path, anything with a `\` or `/` - a folder holding `<folder>.asm`
+  (or that `.asm` itself), named after the folder, relative to the
+  directory you ran `EXTERNS.BAT` from. It may not reuse a name from
+  `externs\`, and must be plain ASCII - sjasmplus cannot open anything
+  else.
 
 This route puts one step in front of the assembler ladder: it reads
 `SJASMPLUSDIR` from `CONFIG.BAT` (empty by default, which falls back to the

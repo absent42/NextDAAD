@@ -153,6 +153,15 @@ New-Module $neg 'tight' "    MODULE tight`nSCRATCH_SIZE:equ 300`next:`n    or a`
 $t = Build-Ok 'SIZE:equ spelling' @("$neg\tight", "$fix\ub", '-Out', "$o\tight.xbn")
 Assert-Match $t "claim ub scratch \+$($scrBase + 300) " 'SIZE:equ claim placed before ub'
 
+# Brackets in a path are literal, not wildcards.
+New-Item -ItemType Directory -Force "$work\mods [old]" | Out-Null
+Copy-Item -LiteralPath "$fix\ua" -Destination "$work\mods [old]\ua" -Recurse
+Build-Ok 'brackets in path' @("$work\mods [old]\ua", '-Out', "$o\brk.xbn") | Out-Null
+Assert-Eq (Same-Bytes "$o\brk.xbn" "$o\sp.xbn") $true 'bracketed path builds ua'
+# Naming <folder>\<folder>.asm is the same as naming the folder.
+Build-Ok 'module .asm named' @("$fix\ua\ua.asm", '-Out', "$o\asmarg.xbn") | Out-Null
+Assert-Eq (Same-Bytes "$o\asmarg.xbn" "$o\sp.xbn") $true 'ua.asm argument builds ua'
+
 # Refusals: one xbnbuild: line, exit 1, nothing assembled.
 New-Module $neg 'noint' "    MODULE noint`next:`n    or a`n    ret`n    ENDMODULE`n"
 New-Module $neg 'nomod' "ext:`n    ret`nint:`n    ret`n"
@@ -182,6 +191,13 @@ New-Module $neg 'incsize' "    MODULE incsize`next:`n    or a`n    ret`nint:`n  
 [IO.File]::WriteAllText("$neg\incsize\sizes.asm", "STATE_SIZE equ 2`n", [Text.Encoding]::ASCII)
 Build-Fails 'hook label in an include' @("$neg\inchook", '-Out', $x) "module 'inchook': 'line' is defined outside inchook\.asm"
 Build-Fails 'size equate in an include' @("$neg\incsize", '-Out', $x) "module 'incsize': 'STATE_SIZE' is defined outside incsize\.asm"
+# Any other .asm file is not a module folder.
+Build-Fails 'other .asm named' @("$fix\ua\uainc.asm", '-Out', $x) "'.*uainc\.asm' is a file - name the module's folder"
+# sjasmplus cannot open a non-ASCII path; say so before it tries.
+$accent = "$work\caf$([char]0xE9)"
+New-Item -ItemType Directory -Force $accent | Out-Null
+Copy-Item -LiteralPath "$fix\ua" -Destination "$accent\ua" -Recurse
+Build-Fails 'non-ASCII path' @("$accent\ua", '-Out', $x) "module 'ua': sjasmplus cannot open a path with non-ASCII characters"
 Assert-Eq (Test-Path $x) $false 'no refused build wrote its output'
 
 # EXTERNS.BAT itself, run in a copy of the kit so the tracked GAME.XBN is

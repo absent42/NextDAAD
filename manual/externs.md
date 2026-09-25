@@ -839,8 +839,10 @@ collection module by its name and your own by its folder:
     EXTERNS.BAT fade ..\mymods\doors toolkit
 
 An argument with a `\` or `/` in it is a folder holding `<folder>.asm`,
-and the folder's name is the module's name. A relative path counts from
-the folder you ran `EXTERNS.BAT` in. A folder you put inside `externs\`
+and the folder's name is the module's name; naming that `.asm` file
+itself works too. A relative path counts from the folder you ran
+`EXTERNS.BAT` in. The path must be plain ASCII: sjasmplus cannot open a
+file whose path has accented or other non-ASCII characters. A folder you put inside `externs\`
 is reached by its bare name, like the shipped ones; a folder anywhere
 else may not reuse a name from `externs\`. Modules run in the order you
 name them.
