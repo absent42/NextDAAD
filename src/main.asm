@@ -20,7 +20,11 @@ main:
     call audio_init
     call im2_init
     call dbg_cls
-    call boot_banner
+ IFDEF DEBUG
+    call boot_banner             ; version + core diagnostics
+ ELSE
+    call txt_init                ; clean tilemap early; Release prints no version
+ ENDIF
     call ram_detect
     call bank_table_init
     call ram_diag

@@ -5,6 +5,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.10.1 - unreleased
 
+- **No version stamp at boot.** The interpreter no longer prints its
+  version number and pauses for a second before the game starts; boot
+  goes straight to the title, intro or first location.
 - **Faster builds.** `BUILD.BAT` now converts or copies only the
   pictures, sprite sets, sounds, tunes and video that changed since the
   last build, and keeps the rest of `RELEASE\` as it is. A game with a

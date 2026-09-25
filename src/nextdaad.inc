@@ -2,9 +2,7 @@
 ; and hardware registers. All later modules include this file.
 
 ; --- Version ---
-; Boot-time version stamp: DEBUG's msgTitle and RELEASE's boot_banner
-; (both debug.asm) print this exact string, so update it here only -
-; the two build variants must never drift apart.
+; Boot-time version stamp, printed by the DEBUG build only (debug.asm msgTitle).
     DEFINE VERSION_STR "NEXTDAAD V0.10.1"
 
 ; --- Next registers ---

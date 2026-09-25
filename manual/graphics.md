@@ -535,8 +535,7 @@ straight into play.
 
 The art rules are identical to location pictures: 8-bit paletted PNG,
 320 wide for full-screen or 256 wide for the classic bordered frame,
-same `COMPRESS` handling. A game shipping a title screen does not print
-its version stamp at boot, so the title is the first thing seen.
+same `COMPRESS` handling.
 
 The title is shown once, at cold boot, and is never overridden per part
 in a [multi-part game](multi-part-games.md).

@@ -3244,14 +3244,9 @@ zx0DepackSP: dw 0                ; SP snapshot for zx0_fail's rewind
 ; it never competes with the picture cache/numbered-art namespace) and,
 ; if one exists, shows it with music already playing (aud_boot_probe
 ; started it before chaining here - see overlay1.asm) until any key is
-; pressed. Two entry points:
-;   title_present - probe only, for debug.asm's release boot_banner
-;     gate (self-contained: no overlay0/overlay1 dependency, esxDOS is
-;     already up by boot_banner time - see its call site);
-;   title_boot - the full sequence, chained from aud_boot_probe's tail.
-; Both are UNCONDITIONAL (no IFDEF DEBUG): the DEBUG build shows its
-; diagnostics first, then the title; only the release banner's PRINT is
-; gated on title_present, in debug.asm.
+; pressed. Entry point title_boot, chained from aud_boot_probe's tail.
+; UNCONDITIONAL (no IFDEF DEBUG): the DEBUG build shows its diagnostics
+; first, then the title.
 
 TITLE_ROW equ 4                  ; word name ptr + mode byte + compressed byte
 
@@ -3338,49 +3333,6 @@ title_probe:
     or a
     ret
 
-; Boot-banner presence gate (debug.asm's release boot_banner): probes
-; the same 6 DAAD.* names as title_boot but only wants the verdict, so
-; the handle title_probe opens is closed again immediately rather than
-; carried into a load. Out: CF clear = a title is staged for boot (the
-; banner print is skipped - the title itself becomes the first thing
-; the player sees); CF set = none of the 6 exist (boot proceeds exactly
-; as before). Corrupts AF, BC, DE, HL only - IX is saved/restored
-; around title_probe's esxDOS calls so that holds regardless of what
-; esx_fopen/esx_fclose do to it.
-title_present:
-    push ix
-    call title_probe
-    jr c, .none
-    call gfx_close_handle
-    or a
-    jr .ret
-.none:
-    scf
-.ret:
-    pop ix
-    ret
-
-; Probe INTRO\INTRO.DAT (the launcher's compiled show) so the banner
-; stays quiet when an intro ships, the same courtesy a title gets.
-; CF clear = present. Corrupts AF, BC, DE, HL; IX saved around the esxDOS calls.
-intro_present:
-    push ix
-    call esx_getsetdrv
-    jr c, .none
-    ld ix, introDatName
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    jr c, .none
-    call esx_fclose
-    or a
-    jr .ret
-.none:
-    scf
-.ret:
-    pop ix
-    ret
-introDatName: db "INTRO", 92, "INTRO.DAT", 0
-
 ; Full boot title sequence, chained from aud_boot_probe's tail
 ; (overlay1.asm) via the ovl_map_page trampoline, entered with
 ; OVL2_PAGE freshly mapped at MMU7. Probes the 6 DAAD.* names
@@ -3423,7 +3375,7 @@ introDatName: db "INTRO", 92, "INTRO.DAT", 0
 ; in this overlay page and cannot execute while MMU7 holds
 ; pointer_load's OVL0_PAGE.
 ;
-; The release banner and DEBUG diagnostics (debug.asm) render before
+; The DEBUG diagnostics (debug.asm) render before
 ; this point, still in the embedded font by design - interpreter
 ; furniture, not game text; everything from here on uses the custom
 ; font, once loaded.

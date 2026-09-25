@@ -4,6 +4,13 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.10.1 - unreleased
 
+- Version stamp is DEBUG-only. Release and kit builds no longer print
+  `VERSION_STR` or hold for 50 frames at boot; the DEBUG build still
+  shows it with its diagnostics. The Release `boot_banner` is removed
+  and `main.asm` calls `txt_init` directly, keeping the early tilemap
+  setup. `title_present` and `intro_present` (overlay2.asm), which
+  only gated that print, are removed. Kit interpreter and manual
+  rebuilt.
 - PROCESS and REDO now reach process tables 128 to 254. The process
   list index was doubled in 8 bits, so a table number above 127 ran
   table n-128 instead. Both references and DRC/NDRC allow 255 tables.
