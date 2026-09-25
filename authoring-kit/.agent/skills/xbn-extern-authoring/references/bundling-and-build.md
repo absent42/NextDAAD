@@ -33,27 +33,44 @@ need an assembler to CHANGE a module - every folder ships a prebuilt
 
 From the kit root:
 
-    EXTERNS.BAT ticker fade
+    EXTERNS.BAT ticker fade ..\mymods\doors
 
-That writes a `GAME.XBN` holding only the modules you name to the kit root,
-beside `BUILD.BAT`. The names it accepts are the eight module folders in
-`externs\`: `ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`,
-`toolkit` and `transcript`.
+That writes one `GAME.XBN` holding the modules you name to the kit root,
+beside `BUILD.BAT`. Each argument is either:
 
-This route puts one step in front of that ladder: it reads `SJASMPLUSDIR` from
-`CONFIG.BAT` (empty by default, which falls back to the kit's `tools\`
-folder), turns it into an absolute path, and passes it down as `-SjasmPlus`
-only if that path actually exists. That last condition matters - passing it
-unconditionally would skip the `PATH` fallback and fail every build for an
-author who has sjasmplus on `PATH` but has not downloaded it into the kit.
+- a bare name - a folder under `externs\`: the eight shipped modules
+  (`ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
+  `transcript`) or one you dropped there; or
+- a path, anything with a `\` or `/` - a folder holding `<folder>.asm`,
+  named after the folder, relative to the directory you ran
+  `EXTERNS.BAT` from. It may not reuse a name from `externs\`.
 
-The subset builder generates a top-level source with the same shape as
-`all.asm`: your modules in the order you named them, each `INCLUDE`d, each
-wired into both chains. It prints the finished size and how much of the 16384
-bytes is left. Naming a hooked module (`transcript` today) makes it emit a
-format 3 header (`XBN_BEGIN3 sub_ext, sub_int, sub_line, sub_out`) and the
-`sub_line`/`sub_out` chain blocks alongside `sub_ext`/`sub_int`; naming only
-unhooked modules keeps the plain `XBN_BEGIN` format 2 header and skips them.
+This route puts one step in front of the assembler ladder: it reads
+`SJASMPLUSDIR` from `CONFIG.BAT` (empty by default, which falls back to the
+kit's `tools\` folder), turns it into an absolute path, and passes it down
+as `-SjasmPlus` only if that path actually exists. That last condition
+matters - passing it unconditionally would skip the `PATH` fallback and
+fail every build for an author who has sjasmplus on `PATH` but has not
+downloaded it into the kit.
+
+The builder (`lib\xbnbuild.ps1`) reads each module's `MODULE` block for its
+entry labels at column 0 and its `SCRATCH_SIZE`/`STATE_SIZE` declarations.
+It then generates a top-level source with the same shape as `all.asm`:
+your modules in the order you named them, each `INCLUDE`d, each wired into
+the ext and int chains, with a `DEFINE XBN_HAS_<NAME>` for each. A module
+with a `line` label joins the line chain, and one with `out` the output
+chain. Any hook makes the header format 3 (`XBN_BEGIN3`), with `0` for a
+hook no module has. Declared claims are placed after the collection's and
+printed:
+
+    > claim doors scratch +2816 (256), state +10 (4)
+
+It prints the finished size and how much of the 16384 bytes is left.
+Mistakes stop the build with one `xbnbuild:` line before anything is
+assembled: an unknown name, a missing `int` label, an indented entry
+label, or a name used twice. The module's name is the spelling on its
+`MODULE` line; the folder may differ from it in case. Run `EXTERNS.BAT`
+with no modules for the usage and the module list.
 
 ## Why all\ exists
 
@@ -68,6 +85,10 @@ using only the fade pays for only the fade.
 source (`all.asm`), `GAME.XBN`, `README.md`, `build.ps1`.
 
 ## The all.asm wiring
+
+This section is for adding a module to the shipped collection. A module
+for your own game needs none of it - `EXTERNS.BAT` generates the same
+wiring.
 
 `all.asm` already carries a format 3 header - `XBN_BEGIN3 all_ext, all_int,
 all_line, all_out` - because the collection includes a hooked module
@@ -145,6 +166,13 @@ transcript module's ring buffer is the last scratch claim:
 constant - define it before including `xbnmod.inc` in a standalone build
 that needs a bigger ring; the combined collection binary keeps the smaller
 default because every scratch claim shares the one 16K bank.
+
+A module outside the collection declares `SCRATCH_SIZE`/`STATE_SIZE`
+instead of editing `xbnmod.inc`. The generated source places those claims
+after `XBN_SCRATCH_FREE`/`XBN_STATE_FREE` with `xbnmod.inc`'s
+`XBN_CLAIM_AT`, in argument order. Its asserts fail the build if a running
+total passes the bank end or `XBN_STATE_LEN`. A standalone build does the
+same with `XBN_CLAIMS`.
 
 ## Where GAME.XBN goes
 

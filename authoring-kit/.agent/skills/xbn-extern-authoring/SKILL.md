@@ -54,7 +54,9 @@ instead of writing code.
    collection table in `externs\README.md`. See
    `references/module-shape.md` for the folder checklist - the copied
    `build.ps1` assembles a hard-coded file name and the copied `README.md`
-   describes the module you copied; rename both. A module that needs the line
+   describes the module you copied; rename both. Put `ext`, `int` and any
+   `line`/`out` label at column 0 - `EXTERNS.BAT` finds them by reading
+   the source. A module that needs the line
    or output hook uses `XBN_HEADER3`/`XBN_BEGIN3` in place of
    `XBN_HEADER`/`XBN_BEGIN` and needs the interpreter from v0.10.1 - an older
    interpreter rejects the format 3 header and the game plays with externs
@@ -68,7 +70,8 @@ instead of writing code.
    load-and-test and nothing more, and only four services are legal inside it.
    See `references/services.md`.
 4. **Build.** Run the folder's `build.ps1` for a standalone binary, or
-   `EXTERNS.BAT ticker fade` from the kit root for a subset. See
+   `EXTERNS.BAT ticker fade` from the kit root for a subset - your own
+   module joins by its folder, `EXTERNS.BAT fade ..\mymods\doors`. See
    `references/bundling-and-build.md`.
 5. **Test with a DSF that exercises both branches of every condition** - one
    entry that passes and one that fails, with the flag poisoned before the
@@ -105,7 +108,8 @@ Load the one the work needs.
 - The standalone and combinable source shapes, the ticker skeleton, registers
   on entry, the `int` label rule, fn/flag disjointness, what a publishable
   folder must contain, the format 3 hooked-module shape and the transcript
-  skeleton, and the extern state area's claim discipline.
+  skeleton, the extern state area's claim discipline, and declared
+  `SCRATCH_SIZE`/`STATE_SIZE` claims for your own modules.
 
 ### Calling contract
 **File**: [references/calling-contract.md](references/calling-contract.md)
@@ -125,7 +129,8 @@ Load the one the work needs.
 
 ### Bundling and build
 **File**: [references/bundling-and-build.md](references/bundling-and-build.md)
-- `build.ps1` and how it finds sjasmplus, `EXTERNS.BAT` subsets, why `all\`
+- `build.ps1` and how it finds sjasmplus, `EXTERNS.BAT` subsets including
+  your own modules by path, why `all\`
   exists, the `all.asm` wiring a module needs, scratch RAM claims, and where
   `GAME.XBN` goes on the card.
 

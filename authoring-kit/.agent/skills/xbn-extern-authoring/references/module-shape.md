@@ -47,6 +47,8 @@ interlock helpers and `xbn_width`.
         ENDIF
 
         MODULE myext
+    SCRATCH_SIZE equ 256        ; optional: scratch RAM at myext.SCRATCH
+    STATE_SIZE   equ 4          ; optional: saved bytes at myext.STATE
     ext:
         ; EXTERN/CALL entry. Test C (the fn code) against your own range
         ; FIRST and return immediately on anything else - in a combined
@@ -63,6 +65,9 @@ interlock helpers and `xbn_width`.
     xbn_end:
         SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
         XBN_SCRATCH_END
+        MODULE myext
+        XBN_CLAIMS SCRATCH_SIZE, STATE_SIZE ; 0 for a size you did not declare
+        ENDMODULE
         ENDIF
 
 Rules that come with the shape:
@@ -77,14 +82,38 @@ Rules that come with the shape:
   emitting your own would truncate the binary at your module.
 - **Never publish a routine address as a `CALL` target.** Addresses move
   whenever any module in the binary is edited. Publish a slot number.
+- **Entry labels at column 0.** `ext`, `int`, and `line`/`out` for a
+  hooked module, each at the start of its line inside the `MODULE`
+  block, colon recommended. `EXTERNS.BAT` finds them by reading your
+  source; an indented one is refused.
+- **Reserved names inside the module:** `ext`, `int`, `line`, `out`,
+  `SCRATCH`, `STATE`, `SCRATCH_SIZE`, `STATE_SIZE`. A module handed to
+  `EXTERNS.BAT` by path may not reuse the name of a folder in
+  `externs\`.
 
 ### Scratch RAM claims
 
 Bytes above `xbn_end` are inside the mapped 16K bank but outside the saved
-image - RAM you do not pay for in file size. `XBN_SCRATCH` only exists once
-`XBN_SCRATCH_END` has run, and in a combined build that happens in the
-top-level source, so claims go in a re-opened `MODULE` block after the closing
-bracket:
+image - RAM you do not pay for in file size. Scratch RAM is never
+initialised for you: write before you read.
+
+For a module of your own, declare the size inside your `MODULE` block and
+use `SCRATCH` as the base:
+
+    SCRATCH_SIZE equ 256
+    ...
+        ld hl, SCRATCH
+
+`EXTERNS.BAT` places each declared claim after the collection's, in the
+order you name the modules. It prints where each one landed
+(`claim myext scratch +2816 (256), state +10 (0)`) and fails the build if
+the claims run past the bank. A standalone build places it with
+`XBN_CLAIMS` (skeleton above).
+
+A module for the shipped collection claims a fixed offset instead.
+`XBN_SCRATCH` only exists once `XBN_SCRATCH_END` has run, and in a
+combined build that happens in the top-level source, so the claim goes in
+a re-opened `MODULE` block after the closing bracket:
 
     ; Read buffer, 256 bytes, claimed from XBN_SCRATCH (see xbnmod.inc).
         MODULE myext
@@ -94,17 +123,25 @@ bracket:
 Take your offset from `XBN_SCRATCH_FREE` in `xbnmod.inc`, add your claim to
 the comment list kept beside it, and bump `XBN_SCRATCH_FREE` past your claim
 so the next module does not collide. `XBN_SCRATCH_END` asserts that every
-claim still fits inside the mapped bank. Scratch RAM is never initialised for
-you: write before you read.
+claim still fits inside the mapped bank.
 
 ### State area claims
 
 `XBN_STATE` (`$BF80`, 128 bytes, `xbn.inc`) is the one piece of your module's
 own memory that travels with the game's save data - `SAVE` writes it, `LOAD`
-restores it, `RAMSAVE`/`RAMLOAD` carry it, zeroed only at boot. Claim offsets
-the same way as scratch RAM, chained off `XBN_STATE_FREE` in `xbnmod.inc`:
-take the current value as your offset, add a claim comment, bump the value
-past your claim. `XBN_STATE_FREE <= XBN_STATE_LEN` is asserted.
+restores it, `RAMSAVE`/`RAMLOAD` carry it, zeroed only at boot.
+
+A module of your own declares `STATE_SIZE` and uses `STATE`, placed the
+same way as its scratch claim: after the collection's, in the order you
+name the modules, asserted against `XBN_STATE_LEN`. That order is part of
+your save format - adding, removing or reordering state-claiming modules
+moves offsets, and a save made with the old binary restores bytes into the
+wrong module. Settle the module list before release.
+
+A module for the shipped collection chains a fixed offset off
+`XBN_STATE_FREE` in `xbnmod.inc` instead: take the current value as your
+offset, add a claim comment, bump the value past your claim.
+`XBN_STATE_FREE <= XBN_STATE_LEN` is asserted.
 
     ; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
     XBN_STATE_FREE  equ 10
@@ -230,6 +267,11 @@ in a collection still needs an `int` label even when it does nothing -
 `int: ret` - because the chain macros and the subset builder call it
 unconditionally.
 
+`EXTERNS.BAT` builds those chains for you from the labels it finds: a
+module with a `line` label joins the line chain, one with `out` the output
+chain, and a hook no module has is `0` in the header - a binary with only a
+line hook never pays for a per-character call.
+
 ### The transcript skeleton
 
 `externs\transcript\transcript.asm` is the shipped hooked module, built
@@ -338,7 +380,8 @@ budget.
 
 ## A publishable folder
 
-Exactly four files, the shape every module in `externs\` has:
+A module for the shipped collection is exactly four files, the shape
+every module in `externs\` has:
 
 | File | Requirement |
 |------|-------------|
@@ -350,6 +393,11 @@ Exactly four files, the shape every module in `externs\` has:
 A fifth file in the folder breaks the contract. If you want the module in the
 shipped collection, the submission requirements and the automated audit that
 checks them are in the NextDAAD repository's `CONTRIBUTING.md`.
+
+A module for your own game has no such limit. It can `INCLUDE` files
+beside it (a relative `INCLUDE` resolves from the module's own folder)
+and live anywhere `EXTERNS.BAT` can be pointed at - see the manual's
+[Your own modules in a subset](../../../../docs/externs.html#your-own-modules-in-a-subset).
 
 Full detail: the manual's [Externs chapter](../../../../docs/externs.html#building-an-xbn)
 and the [XBN format reference](../../../../docs/reference/xbn-format.html#header).
