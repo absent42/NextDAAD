@@ -591,6 +591,12 @@ $xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
     throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit transcript playername DRIFTED from authoring-kit\externs\all\GAME.XBN (format v$($xbnDriftFresh[3]) vs v$($xbnDriftShipped[3])) - generator and all.asm disagree; compare $xbnDriftOut"
 }
+# The kit-root GAME.XBN is what BUILD.BAT stages into RELEASE; it must be a
+# byte copy of externs\all\GAME.XBN.
+$xbnKitRoot = [IO.File]::ReadAllBytes("$root\authoring-kit\GAME.XBN")
+if (-not [System.Linq.Enumerable]::SequenceEqual($xbnKitRoot, $xbnDriftShipped)) {
+    throw "authoring-kit\GAME.XBN differs from authoring-kit\externs\all\GAME.XBN - copy the combined build to the kit root and commit both together"
+}
 
 & "$PSScriptRoot\xbnbuild-selftest.ps1"
 & "$PSScriptRoot\audit-externs-selftest.ps1"
