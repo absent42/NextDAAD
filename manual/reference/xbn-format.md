@@ -84,7 +84,7 @@ can address a location past `$FFFF` to call into.
 
 ## Service table
 
-A fixed jump table of twenty three-byte `JP` instructions at `XBN_API`
+A fixed jump table of twenty-one three-byte `JP` instructions at `XBN_API`
 (`$BEC8`), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -118,6 +118,7 @@ tables.
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length; CF clear | AF, BC, HL | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | AF, BC, DE, HL | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | AF, BC, DE, HL | no |
+| 20 | `SVC_FITWORD` | A = length of the word about to be printed (0 = flush only) | Flushes any pending word, then starts a new line if the word would not fit the rest of the current window's line but fits the window (word wrap, with scrolling and More paging); CF clear | AF, BC, DE, HL, IX, IY | no |
 
 Error convention throughout is esxDOS style: carry flag set, error code
 in A. A row's Corrupts column is its contract; only the registers its
@@ -162,8 +163,9 @@ releases:
 | `XBN_STATE` | `$BF80` | Base of the 128-byte extern state area (`XBN_STATE_LEN`): saved and restored with the game (`SAVE`, `LOAD`, `RAMSAVE`, `RAMLOAD`), zeroed at boot only. Collection modules claim fixed offsets from the top (`xbnmod.inc`'s `XBN_STATE_TOP`); declare `STATE_SIZE` in your own module - see [Externs](../externs.md#the-extern-state-area) |
 
 `XBN_API` grew to fifteen rows in format 2, to sixteen at API version 3
-(`SVC_PAIR`), and to twenty at format 3 (rows 16-19); rows 0-9 kept
-their addresses and signatures throughout.
+(`SVC_PAIR`), to twenty at format 3 (rows 16-19), and to twenty-one with
+`SVC_FITWORD` (row 20); rows 0-9 kept their addresses and signatures
+throughout.
 
 ## Limits
 

@@ -219,6 +219,7 @@ All notable changes to NextDAAD are recorded here.
   only when a file converts. With 102 pictures a build took 67.8 s
   before, 5.8 s cold and 2.1 s unchanged. Output is byte-identical to
   the old scripts. pnginfo.ps1 is removed.
+- XBN: SVC_FITWORD (row 20, XBN_API+60): flush, then prn_fit's wrap rule for a word of length A; prn_flush now calls prn_fit. XBN_API_ROWS 21. ticker fn 39 types message n at the cursor (tybuf scratch claim). Fixture fn 49 / XFWD; verbs XTTY XTTW XTTO XTTA XTTM XTTK XTTL.
 
 ## v0.10.0 - 18/09/2026
 

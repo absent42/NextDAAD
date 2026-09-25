@@ -319,7 +319,8 @@ are not optional:
   called from the hook: `SVC_VERSION`, `SVC_RANDOM`, `SVC_FRAMES` and
   `SVC_BUSY` - they touch resident memory and never page. Every other
   row (printing, files, `SVC_GETMSG`, `SVC_GETDATE`, `SVC_PALREAD`,
-  `SVC_WINDOW`, `SVC_PAIR`) is foreground-only; see [Services](#services).
+  `SVC_WINDOW`, `SVC_PAIR`, `SVC_FITWORD`) is foreground-only; see
+  [Services](#services).
 - **Never install your own interrupt handler.** The IM2 vector table is
   writable RAM, but your code only exists in the address space while
   its own bank is mapped - a self-installed vector is a guaranteed
@@ -473,7 +474,7 @@ entry, even if it is only a `ret` - the chain macros assume one.
 
 ## Services
 
-The interpreter exposes twenty small routines through a fixed jump
+The interpreter exposes twenty-one small routines through a fixed jump
 table at a frozen address, `XBN_API` (`$BEC8`). `xbn.inc` binds a symbol
 to each row, so you call them by name:
 
@@ -499,6 +500,7 @@ to each row, so you call them by name:
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 = echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | no |
+| 20 | `SVC_FITWORD` | A = the length of the word you are about to print (0 = flush only) | Flushes any word the printer is holding, then starts a new line if a word that long would not fit the rest of the current window's line but fits the window - the printer's own word wrap, with scrolling and More paging. Print the word's letters with a one-character `SVC_PUTS` each and it lands exactly where `MES` would put it. The ticker's fn 39 is the worked use | no |
 
 Call a service exactly like any other subroutine - `call SVC_PUTCHAR`
 and so on. Every row preserves your XBN bank's own mapping across the
@@ -780,7 +782,7 @@ needed.
 | Extern | What it does | fn codes | Flags used |
 |--------|--------------|----------|------------|
 | `playername/` | Asks for the player's name and keeps it with the game: captures the typed line, prints it back, and tests it against a message. Kept in the extern state area, so `SAVE` and `LOAD` carry it. Needs API 3 | 20 capture the last typed line, 21 print, 22 no name yet, 23 name equals message p | - |
-| `ticker/` | Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee | 30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed | - |
+| `ticker/` | Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee | 30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed, 39 type message at cursor | - |
 | `fade/` | Fades the Layer 2 picture to any RRRGGGBB colour and back - fade to black for a scene change, change the picture, fade up again. Transparent regions stay transparent; a completed fade-in restores the palette bit for bit | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade | 240 done, 241 speed |
 | `hints/` | Prints hint text served from an SD card file (`GAME.HNT`), so a game can ship a large hint book without spending DAAD message slots or interpreter RAM | 50 print hint, 51 level count, 52 preflight, 53 clear progress | 242 level override, 243 level count |
 | `clock/` | An in-game clock advanced from the frame hook, with hour carry and an author-driven advance for sleeping or travelling | 60 arm and start, 61 stop, 62 advance p minutes | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |

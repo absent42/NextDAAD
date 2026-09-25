@@ -64,11 +64,16 @@ FORBIDDEN = [
     (r"\$C00A",
      "the CALL slot table moved to $C00E in XBN format 2"),
     (r"\bten (small routines|three-byte|services)\b",
-     "the service table has twenty rows since format 3 (rows 16-19)"),
+     "the service table has twenty-one rows since format 3 (rows 16-19) "
+     "and SVC_FITWORD (row 20)"),
     (r"\bfifteen (small routines|three-byte|services)\b",
-     "the service table has twenty rows since format 3 (rows 16-19)"),
+     "the service table has twenty-one rows since format 3 (rows 16-19) "
+     "and SVC_FITWORD (row 20)"),
     (r"\bsixteen (small routines|three-byte|services)\b",
-     "the service table has twenty rows since format 3 added rows 16-19"),
+     "the service table has twenty-one rows since format 3 added rows "
+     "16-19 and SVC_FITWORD added row 20"),
+    (r"\btwenty (small routines|three-byte|services)\b",
+     "the service table has twenty-one rows since SVC_FITWORD (row 20)"),
     (r"version byte reads .\b1\b.",
      "the format 2 header is fourteen bytes, version 2"),
     (r"version byte reads `?2`?(?!.{0,15}or\s*`?3`?)",

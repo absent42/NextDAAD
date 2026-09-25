@@ -1,6 +1,6 @@
 # Services
 
-Twenty routines in a fixed jump table at `XBN_API` (`$BEC8`), frozen from the
+Twenty-one routines in a fixed jump table at `XBN_API` (`$BEC8`), frozen from the
 first shipping release: the address never moves, existing rows never change
 signature, and new rows are only ever appended with a version bump. `xbn.inc`
 binds a symbol to each row, so you `call SVC_PUTS` like any other subroutine.
@@ -34,9 +34,10 @@ row's Out column names carry a result.
 | 17 | `SVC_GETPENDING` | orders left unconsumed after a conjunction | no |
 | 18 | `SVC_INJECT` | queue a line for the very next `PARSE 0` | no |
 | 19 | `SVC_VOCFIND` | resolve a word against the database vocabulary | no |
+| 20 | `SVC_FITWORD` | make room for a word: flush, then wrap if it will not fit the line | no |
 
 Errors follow the esxDOS convention throughout: carry set, error code in A.
-Rows 15-19 are API version 3: gate any of them on `SVC_VERSION` first if your
+Rows 15-20 are API version 3: gate any of them on `SVC_VERSION` first if your
 extern must also run against an older `xbn.inc`.
 
 ## The hook rule
@@ -274,6 +275,19 @@ single word, not a phrase. Foreground only, and more strictly than most
 rows marked that way - never call it from the output hook either. The output
 hook is not the `#int` hook, but the lookup reuses shared resident state that
 a print already in flight is also using.
+
+### SVC_FITWORD - typing with word wrap
+
+`SVC_PUTCHAR` hands characters to the printer's word buffer, so text
+appears a word at a time; a one-character `SVC_PUTS` shows each letter at
+once but breaks words at the window edge. To type letter by letter with
+real word wrap, call `SVC_FITWORD` with the length of the next word, then
+print its letters one `SVC_PUTS` each. Count only characters that take a
+cell: `$0E`/`$0F` charset toggles sit inside words (an accented letter is
+`$0E chr $0F`) and have no width. A word containing `_` has a length only
+the interpreter knows - send it with `SVC_PUTCHAR` and flush it with an
+empty `SVC_PUTS`. The ticker's fn 39 is the worked pattern.
+Foreground-only.
 
 ### SVC_FWRITE - the short-write rule
 

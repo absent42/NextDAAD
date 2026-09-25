@@ -99,6 +99,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
   setting, `VIDTOOLSDIR`. The old `tools\videnc\` and `tools\vidtune\`
   folders are no longer used and can be deleted. See
   [Video](video.md#9-encoding-tools).
+- **Typed messages.** The ticker extern's new `EXTERN n 39` types
+  message n at the cursor a letter at a time, wrapping words exactly as
+  `MES` does. A new extern service, `SVC_FITWORD`, makes that possible
+  for any extern.
 
 ## 0.10.0 - 18 September 2026
 

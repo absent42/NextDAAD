@@ -65,7 +65,7 @@ chain. Any hook makes the header format 3 (`XBN_BEGIN3`), with `0` for a
 hook no module has. Declared claims are placed after the collection's and
 printed:
 
-    > claim doors scratch +2816 (256), state +10 (4)
+    > claim doors scratch +3072 (256), state +10 (4)
 
 It prints the finished size and how much of the 16384 bytes is left.
 Mistakes stop the build with one `xbnbuild:` line before anything is
@@ -163,13 +163,16 @@ the current value as your offset, add a claim comment, bump the value past
 your claim. The assert in `XBN_SCRATCH_END` fails the build if the claims
 would run past the mapped bank.
 
-`XBN_SCRATCH_FREE`'s value now depends on `TRANSCRIPT_RING`, since the
-transcript module's ring buffer is the last scratch claim:
-`XBN_SCRATCH_FREE equ 768 + TRANSCRIPT_RING`. `TRANSCRIPT_RING` defaults to
-2048 (`IFNDEF` in `xbnmod.inc`) and is a build define, not a module
-constant - define it before including `xbnmod.inc` in a standalone build
-that needs a bigger ring; the combined collection binary keeps the smaller
-default because every scratch claim shares the one 16K bank.
+The collection's scratch claims, in order: the transcript module's ring
+buffer at offset 768 (`TRANSCRIPT_RING` bytes, 2048 by default), then the
+ticker module's `tybuf` at `768 + TRANSCRIPT_RING` (256 bytes, fn 39's
+typing copy of a message). `XBN_SCRATCH_FREE` is the offset past the last
+of them: `XBN_SCRATCH_FREE equ 768 + TRANSCRIPT_RING + 256`.
+`TRANSCRIPT_RING` defaults to 2048 (`IFNDEF` in `xbnmod.inc`) and is a
+build define, not a module constant - define it before including
+`xbnmod.inc` in a standalone build that needs a bigger ring; the combined
+collection binary keeps the smaller default because every scratch claim
+shares the one 16K bank.
 
 A module outside the collection declares `SCRATCH_SIZE`/`STATE_SIZE`
 instead of editing `xbnmod.inc`. The generated source places those claims

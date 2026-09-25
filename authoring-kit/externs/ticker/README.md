@@ -46,6 +46,7 @@ This assembles `ticker.asm` and rewrites `GAME.XBN` here.
 | `EXTERN p 36` | paper 0-255 | 0 | never |
 | `EXTERN m 37` | mode: 0 typewriter, 1 marquee once, 2 marquee loop | 0 | m > 2 |
 | `EXTERN f 38` | speed: frames per step 1-255 | 1 | f = 0 |
+| `EXTERN n 39` | type message n at the cursor, `speed` frames per letter; blocks until done | - | message n does not exist |
 
 Rules:
 
@@ -89,6 +90,30 @@ v2 behaviour: if message `n` does not exist, fn 30 fails the EXTERN
 entry (CF set) instead of silently leaving the ticker disarmed. Games
 that call fn 30 with a number that might not exist should account for
 the entry failing, the same as any other DAAD condition.
+
+## Typed messages
+
+`EXTERN n 39` types message n into the current window at its own
+cursor position, one letter at a time, with the same word wrap,
+colours, scrolling and More paging as `MES` - the finished text matches
+`MES n` exactly, cell for cell. It prints no newline at the end; add
+`NEWLINE` yourself if you want one, the same as after `MES`.
+
+Speed is the fn 38 setting at the moment fn 39 is called, in frames per
+letter: one pause per letter and one pause per space, including a
+space swallowed at the start of a line - it still costs its pause even
+though nothing is printed for it. There is no skip key: the game waits
+until the whole message has been typed before the entry returns. A
+word containing an object name (`_`) appears whole rather than letter
+by letter, because only the interpreter knows its printed length.
+
+Fn 39 needs API version 3. On an older interpreter its words still
+appear whole, but only after a pause per letter instead of with proper
+word wrap - the README's fallback rather than a failure.
+
+The ticker itself (fns 30-38) runs in the background, one step per
+frame from the `#int` hook; fn 39 does not - it blocks the EXTERN call
+until the message is fully typed.
 
 ## The field
 

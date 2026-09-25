@@ -1,6 +1,6 @@
 ---
 name: xbn-extern-authoring
-description: "Authoring reference for NextDAAD XBN externs - Z80 machine code a DAAD game ships as GAME.XBN and the interpreter calls from EXTERN, CALL, a 50Hz frame hook and, in a format 3 binary, a per-line and a per-character output hook. Use when writing, extending, building or debugging an extern for a NextDAAD game. Covers: the standalone and combinable module source shapes (xbn.inc, xbnmod.inc), registers on entry, the EXTERN carry verdict contract and the result convention, the line and output hook contracts, the twenty-row service table (including the four parser-input rows) and which four rows the interrupt hook may call, the extern state area, the frozen anchors (the $C000 window, flags at $A200, the object table at $A300, services at $BEC8, CALL slots at $C00E, state at $BF80), building a standalone or combined binary, and the mistakes that cost the shipped examples a debugging session."
+description: "Authoring reference for NextDAAD XBN externs - Z80 machine code a DAAD game ships as GAME.XBN and the interpreter calls from EXTERN, CALL, a 50Hz frame hook and, in a format 3 binary, a per-line and a per-character output hook. Use when writing, extending, building or debugging an extern for a NextDAAD game. Covers: the standalone and combinable module source shapes (xbn.inc, xbnmod.inc), registers on entry, the EXTERN carry verdict contract and the result convention, the line and output hook contracts, the twenty-one-row service table (including the four parser-input rows) and which four rows the interrupt hook may call, the extern state area, the frozen anchors (the $C000 window, flags at $A200, the object table at $A300, services at $BEC8, CALL slots at $C00E, state at $BF80), building a standalone or combined binary, and the mistakes that cost the shipped examples a debugging session."
 ---
 
 # XBN extern authoring
@@ -90,7 +90,7 @@ instead of writing code.
 | `XBN_FLAGS` | `$A200` | Base of the 256 DAAD flags; `IX` points here on entry |
 | `XBN_OBJTABLE` | `$A300` | Object table, `OBJ_SIZE` (6) bytes per entry |
 | `XBN_NUMOBJ` | `$A900` | Object count, one byte; walk `0` to `(XBN_NUMOBJ) - 1` |
-| `XBN_API` | `$BEC8` | Service jump table, twenty three-byte `JP` rows |
+| `XBN_API` | `$BEC8` | Service jump table, twenty-one three-byte `JP` rows |
 | `XBN_STATE` | `$BF80` | 128 bytes, saved with the game (`SAVE`/`LOAD`/`RAMSAVE`/`RAMLOAD`); zeroed only at boot |
 | `xbn_call_table` | `$C00E` | Combined binaries only: eight `CALL` slots, slot n at `$C00E + 3n` |
 
@@ -124,9 +124,10 @@ Load the one the work needs.
 - One line per service row with its hook rule, then the rules that bite:
   hook-safe rows, frame waits, the palette interlock, `SVC_BUSY` during
   clips, `SVC_GETMSG`'s buffer lifetime, `SVC_WINDOW`'s flush, `SVC_PALREAD`'s
-  bank select, the version check, `SVC_PAIR`'s pair lifetime, and rows 16-19
+  bank select, the version check, `SVC_PAIR`'s pair lifetime, rows 16-19
   (`SVC_GETLINE`, `SVC_GETPENDING`, `SVC_INJECT`, `SVC_VOCFIND`) for reading
-  and rewriting this turn's input.
+  and rewriting this turn's input, and `SVC_FITWORD` for typing with word
+  wrap.
 
 ### Bundling and build
 **File**: [references/bundling-and-build.md](references/bundling-and-build.md)

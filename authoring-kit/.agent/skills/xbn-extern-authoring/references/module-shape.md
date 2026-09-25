@@ -108,7 +108,7 @@ use `SCRATCH` as the base:
 
 `EXTERNS.BAT` places each declared claim after the collection's, in the
 order you name the modules. It prints where each one landed
-(`claim myext scratch +2816 (256), state +10 (0)`) and fails the build if
+(`claim myext scratch +3072 (256), state +10 (0)`) and fails the build if
 the claims run past the bank. A standalone build places it with
 `XBN_CLAIMS` (skeleton above).
 
