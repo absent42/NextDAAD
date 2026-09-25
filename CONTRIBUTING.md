@@ -12,8 +12,9 @@ The rest of this document is about submitting an extern for the authoring kit.
 
 Externs live in `authoring-kit\externs\`, one folder per extern. Yours
 should do one thing well, be driveable from a handful of DSF lines, and
-be useful beyond a single game. The shipped collection (`ticker`,
-`fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`) is the
+be useful beyond a single game. The shipped collection (`playername`,
+`ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
+`transcript`) is the
 reference for tone, size and documentation, and every folder in it
 follows the combinable module convention below.
 

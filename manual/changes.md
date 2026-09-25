@@ -15,6 +15,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
   minute. Removing a source still removes its file from `RELEASE\`.
   `CLEAN.BAT` forces everything to convert again. See
   [Getting started](getting-started.md#build-and-run).
+- **New extern: playername.** Asks for the player's name, keeps it with
+  saved games and prints it back, and can test it against a message -
+  for example a word that skips the introduction. Part of
+  `externs\all\`. See [Externs](externs.md#playername-the-players-name).
 - **Your own externs in EXTERNS.BAT.** `EXTERNS.BAT fade ..\mymods\doors`
   builds one `GAME.XBN` from shipped modules and your own; name your
   module by its folder. The builder wires in its hooks and places its

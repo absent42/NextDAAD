@@ -339,6 +339,10 @@
 ;     SVC_GETDATE. DO NOT TYPE it in an emulator replay. The other
 ;     transcript verbs (XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF XTRO)
 ;     set mode bit 1 and are emulator-safe.
+;   XNMU XNMA XNMK XNMP need the PLAYERNAME module (-XbnAll and the other
+;     combined legs); emulator-safe (tests\xbn\namecheck.py). On a
+;     combined leg the fixture verbs XREG XSVC XFIO XMSG XABS (fns
+;     20-23) reach playername too: they capture or print the name.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
 ;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF are
 ;     meaningful there (plus XSLT with all slots printing nothing).
@@ -467,6 +471,10 @@ XTRF   203 verb
 XTRI   204 verb
 XTRD   206 verb
 XTRO   207 verb
+XNMU   208 verb
+XNMA   209 verb
+XNMK   210 verb
+XNMP   211 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -553,6 +561,9 @@ CLOAK   22 noun
 /7 "ABCDEFGHIJKLMNOPQRSTUVWXY"
 /8 "THIS MESSAGE IS EXACTLY TWO HUNDRED CHARACTERS LONG SO THE MARQUEE TAIL IS PROVEN TO LIVE IN ITS OWN BYTE AND NEVER BE ADDED TO THE TEXT LENGTH WHICH WOULD WRAP PAST TWO FIVE FIVE AND NEVER DISARM, OK"
 /9 "STEP LABEL"
+; Messages 10-11: playername fn 23 comparands (XNMK).
+/10 "KEVIN"
+/11 "SKIP"
 /OTX
 /0 "a spare widget"
 /1 "a widget on the floor"
@@ -2052,6 +2063,34 @@ CLOAK   22 noun
            MES     8
            MES     8
            DONE
+; XNMU/XNMA/XNMK - playername module (fns 20-23), tests\xbn\namecheck.py.
+;   XNMU - fn 22: "NAME NONE" with no name stored, else "NAME SET".
+;   XNMA - process 7 reads a line with PARSE 0, fn 20 captures it and
+;          fn 21 prints it: "GOT <name>", or "EMPTY" for an empty
+;          ENTER or blanks only.
+;   XNMK - fn 23 against message 11 (SKIP, no match), 250 (out of
+;          range) and 10 (KEVIN, matches a captured "kevin"):
+;          "S-PASS R-PASS K-FAIL".
+;   XNMP - fn 21 alone: "NAME=<name>", "NAME=" with none stored.
+> XNMU _   EXTERN  0 22
+           MES     "NAME NONE"
+           DONE
+> XNMU _   MES     "NAME SET"
+           DONE
+> XNMA _   PROCESS 7
+           DONE
+> XNMK _   EXTERN  11 23
+           MES     "S-PASS "
+           EXTERN  250 23
+           MES     "R-PASS "
+           EXTERN  10 23
+           MES     "K-PASS"
+           DONE
+> XNMK _   MES     "K-FAIL"
+           DONE
+> XNMP _   MES     "NAME="
+           EXTERN  0 21
+           DONE
 /PRO 6
 ; ---- one-shot init ----
 > _ _   WINDOW 1
@@ -2062,4 +2101,15 @@ CLOAK   22 noun
         CLS
         LET 42 2          ; pin the prompt to SM2 "What now?" (was the frame-counter pick)
         MES "NEXTDAAD XBN EXTERN FIXTURE#n"
+/PRO 7
+; XNMA's prompt. PARSE 0 reads a fresh line; the entry after it runs
+; whether or not that line parses.
+> _ _   MES     "NAME? "
+> _ _   PARSE   0
+> _ _   EXTERN  0 20
+        MES     "GOT "
+        EXTERN  0 21
+        DONE
+> _ _   MES     "EMPTY"
+        DONE
 /END

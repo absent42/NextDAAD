@@ -13,9 +13,9 @@ $checks = 0
 if (-not (Test-Path $sj)) { throw "xbnbuild-selftest: sjasmplus not found at $sj" }
 
 # Collection claims end here (xbnmod.inc): XBN_SCRATCH_FREE = 768 +
-# TRANSCRIPT_RING (2048), XBN_STATE_FREE = 10. Re-pin if either moves.
+# TRANSCRIPT_RING (2048), XBN_STATE_FREE = 31. Re-pin if either moves.
 $scrBase = 2816
-$stBase = 10
+$stBase = 31
 
 function Assert-Eq($actual, $expected, $what) {
     $script:checks++

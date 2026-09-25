@@ -108,7 +108,7 @@ use `SCRATCH` as the base:
 
 `EXTERNS.BAT` places each declared claim after the collection's, in the
 order you name the modules. It prints where each one landed
-(`claim myext scratch +2816 (256), state +10 (0)`) and fails the build if
+(`claim myext scratch +2816 (256), state +31 (0)`) and fails the build if
 the claims run past the bank. A standalone build places it with
 `XBN_CLAIMS` (skeleton above).
 
@@ -146,7 +146,8 @@ offset, add a claim comment, bump the value past your claim.
 `XBN_STATE_FREE <= XBN_STATE_LEN` is asserted.
 
     ; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
-    XBN_STATE_FREE  equ 10
+    ; Claims: playername.asm name 10 (21)
+    XBN_STATE_FREE  equ 31
 
 Membership rule: only state that must agree with the flags after a `LOAD`
 belongs here - the same test a flag's own save/load behaviour gets. Session

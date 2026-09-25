@@ -38,9 +38,9 @@ From the kit root:
 That writes one `GAME.XBN` holding the modules you name to the kit root,
 beside `BUILD.BAT`. Each argument is either:
 
-- a bare name - a folder under `externs\`: the eight shipped modules
-  (`ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
-  `transcript`) or one you dropped there; or
+- a bare name - a folder under `externs\`: the nine shipped modules
+  (`playername`, `ticker`, `fade`, `hints`, `clock`, `timer`,
+  `realtime`, `toolkit`, `transcript`) or one you dropped there; or
 - a path, anything with a `\` or `/` - a folder holding `<folder>.asm`
   (or that `.asm` itself), named after the folder, relative to the
   directory you ran `EXTERNS.BAT` from. It may not reuse a name from
@@ -65,7 +65,7 @@ chain. Any hook makes the header format 3 (`XBN_BEGIN3`), with `0` for a
 hook no module has. Declared claims are placed after the collection's and
 printed:
 
-    > claim doors scratch +2816 (256), state +10 (4)
+    > claim doors scratch +2816 (256), state +31 (4)
 
 It prints the finished size and how much of the 16384 bytes is left.
 Mistakes stop the build with one `xbnbuild:` line before anything is

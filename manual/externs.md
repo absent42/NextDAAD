@@ -758,7 +758,9 @@ collection's own modules claim fixed offsets through `xbnmod.inc`'s
 `XBN_STATE_FREE` chain instead. The toolkit claims the first ten bytes
 (the picker's pool size and used bitmap, the print target window) -
 fn 76's picker and fn 84's print target are now restored by `LOAD` and
-`RAMLOAD`, where they used to go stale.
+`RAMLOAD`, where they used to go stale. The playername module claims
+the next 21 (offsets 10-30, the player's name), so modules of your own
+start at offset 31.
 
 One edge case worth knowing: a cross-part `LOAD` whose target part
 fails to load leaves the state area restored to the save's values while
@@ -770,11 +772,12 @@ The kit ships a collection of ready-made externs under `externs\`, one
 folder each: the assembly source, a prebuilt `GAME.XBN` you can copy
 straight to the card, a `README.md` with the DSF lines that drive it,
 and a rebuild script. The ticker and fade worked examples above are two
-of them; the other six are libraries to use as they come, no assembler
+of them; the other seven are libraries to use as they come, no assembler
 needed.
 
 | Extern | What it does | fn codes | Flags used |
 |--------|--------------|----------|------------|
+| `playername/` | Asks for the player's name and keeps it with the game: captures the typed line, prints it back, and tests it against a message. Kept in the extern state area, so `SAVE` and `LOAD` carry it. Needs API 3 | 20 capture the last typed line, 21 print, 22 no name yet, 23 name equals message p | - |
 | `ticker/` | Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee | 30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed | - |
 | `fade/` | Fades the Layer 2 picture to any RRRGGGBB colour and back - fade to black for a scene change, change the picture, fade up again. Transparent regions stay transparent; a completed fade-in restores the palette bit for bit | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade | 240 done, 241 speed |
 | `hints/` | Prints hint text served from an SD card file (`GAME.HNT`), so a game can ship a large hint book without spending DAAD message slots or interpreter RAM | 50 print hint, 51 level count, 52 preflight, 53 clear progress | 242 level override, 243 level count |
@@ -789,8 +792,9 @@ any subset coexists in one binary. Flags 224-251 are the collection's
 reserved band: a game using any collection module should treat that
 range as spoken for. Function codes 66-69 (realtime), 76-81 and 84
 (toolkit's object queries, picker and print target) joined that
-allocation in an earlier release; function codes 90-94 (transcript,
-which claims no flags) joined it in this one.
+allocation in an earlier release; function codes 90-94 (transcript)
+and 20-23 (playername), neither of which claims flags, joined it in
+this one.
 
 ### One binary, any subset
 
@@ -1085,6 +1089,37 @@ A number printed as the last thing in an entry stays in the word
 wrapper's buffer until a space, a newline, a window switch or a full
 window width flushes it - which is what the print target's own bracket
 does for you.
+
+### playername - the player's name
+
+DAAD cannot keep free text, so read the name as an ordinary line with
+`PARSE 0` and let the module copy it out of the interpreter's recall
+buffer. Blanks are trimmed, the name is cut to 20 characters and its
+first letter is capitalised. It lives in the
+[extern state area](#the-extern-state-area), so `SAVE`, `LOAD`,
+`RAMSAVE` and `RAMLOAD` keep it with the game:
+
+```
+$askName
+> _ _   MESSAGE "What is your first name?"
+> _ _   PARSE   0           ; the next entry runs either way
+> _ _   EXTERN  0 20        ; fails only when nothing was typed
+        SKIP    $named
+> _ _   SKIP    $askName
+$named
+> _ _   EXTERN  40 23       ; fails when the name is message 40 ("SKIP")
+        SKIP    $greet
+> _ _   PROCESS proNEWGAME  ; the player typed SKIP
+        DONE
+$greet
+> _ _   MES     "May luck be with you, "
+        EXTERN  0 21        ; prints the name
+```
+
+`EXTERN 0 22` passes while no name is stored. The module needs an
+interpreter with API 3; on an older one, or with no `GAME.XBN`, no name
+is kept and every condition passes. Its README has the full function
+table.
 
 ## Contributing your extern
 

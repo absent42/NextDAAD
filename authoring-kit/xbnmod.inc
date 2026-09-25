@@ -129,7 +129,8 @@ XBN_SCRATCH equ xbn_end
 ; rule: only state that must agree with the restored flags.
 ;
 ; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
-XBN_STATE_FREE  equ 10           ; next unclaimed offset - bump when you add a claim
+; Claims: playername.asm name 10 (21)
+XBN_STATE_FREE  equ 31           ; next unclaimed offset - bump when you add a claim
     ASSERT XBN_STATE_FREE <= XBN_STATE_LEN
 
 ; Claims for modules outside the collection: declare SCRATCH_SIZE and/or

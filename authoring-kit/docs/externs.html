@@ -854,7 +854,9 @@ collection's own modules claim fixed offsets through <code>xbnmod.inc</code>'s
 <code>XBN_STATE_FREE</code> chain instead. The toolkit claims the first ten bytes
 (the picker's pool size and used bitmap, the print target window) -
 fn 76's picker and fn 84's print target are now restored by <code>LOAD</code> and
-<code>RAMLOAD</code>, where they used to go stale.</p>
+<code>RAMLOAD</code>, where they used to go stale. The playername module claims
+the next 21 (offsets 10-30, the player's name), so modules of your own
+start at offset 31.</p>
 <p>One edge case worth knowing: a cross-part <code>LOAD</code> whose target part
 fails to load leaves the state area restored to the save's values while
 the flags are not.</p>
@@ -863,7 +865,7 @@ the flags are not.</p>
 folder each: the assembly source, a prebuilt <code>GAME.XBN</code> you can copy
 straight to the card, a <code>README.md</code> with the DSF lines that drive it,
 and a rebuild script. The ticker and fade worked examples above are two
-of them; the other six are libraries to use as they come, no assembler
+of them; the other seven are libraries to use as they come, no assembler
 needed.</p>
 <table>
 <thead>
@@ -875,6 +877,12 @@ needed.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>playername/</code></td>
+<td>Asks for the player's name and keeps it with the game: captures the typed line, prints it back, and tests it against a message. Kept in the extern state area, so <code>SAVE</code> and <code>LOAD</code> carry it. Needs API 3</td>
+<td>20 capture the last typed line, 21 print, 22 no name yet, 23 name equals message p</td>
+<td>-</td>
+</tr>
 <tr>
 <td><code>ticker/</code></td>
 <td>Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee</td>
@@ -930,8 +938,9 @@ any subset coexists in one binary. Flags 224-251 are the collection's
 reserved band: a game using any collection module should treat that
 range as spoken for. Function codes 66-69 (realtime), 76-81 and 84
 (toolkit's object queries, picker and print target) joined that
-allocation in an earlier release; function codes 90-94 (transcript,
-which claims no flags) joined it in this one.</p>
+allocation in an earlier release; function codes 90-94 (transcript)
+and 20-23 (playername), neither of which claims flags, joined it in
+this one.</p>
 <h3 id="one-binary-any-subset">One binary, any subset</h3>
 <p>A game loads ONE <code>GAME.XBN</code>, and you never merge sources by hand:</p>
 <ul>
@@ -1184,6 +1193,32 @@ line and the container rules fn 79 follows.</p>
 wrapper's buffer until a space, a newline, a window switch or a full
 window width flushes it - which is what the print target's own bracket
 does for you.</p>
+<h3 id="playername-the-players-name">playername - the player's name</h3>
+<p>DAAD cannot keep free text, so read the name as an ordinary line with
+<code>PARSE 0</code> and let the module copy it out of the interpreter's recall
+buffer. Blanks are trimmed, the name is cut to 20 characters and its
+first letter is capitalised. It lives in the
+<a href="#the-extern-state-area">extern state area</a>, so <code>SAVE</code>, <code>LOAD</code>,
+<code>RAMSAVE</code> and <code>RAMLOAD</code> keep it with the game:</p>
+<pre><code>$askName
+&gt; _ _   MESSAGE &quot;What is your first name?&quot;
+&gt; _ _   PARSE   0           ; the next entry runs either way
+&gt; _ _   EXTERN  0 20        ; fails only when nothing was typed
+        SKIP    $named
+&gt; _ _   SKIP    $askName
+$named
+&gt; _ _   EXTERN  40 23       ; fails when the name is message 40 (&quot;SKIP&quot;)
+        SKIP    $greet
+&gt; _ _   PROCESS proNEWGAME  ; the player typed SKIP
+        DONE
+$greet
+&gt; _ _   MES     &quot;May luck be with you, &quot;
+        EXTERN  0 21        ; prints the name
+</code></pre>
+<p><code>EXTERN 0 22</code> passes while no name is stored. The module needs an
+interpreter with API 3; on an older one, or with no <code>GAME.XBN</code>, no name
+is kept and every condition passes. Its README has the full function
+table.</p>
 <h2 id="contributing-your-extern">Contributing your extern</h2>
 <p>Written an extern other games could use? The collection above takes
 community submissions - each ships as source plus a

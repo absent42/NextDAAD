@@ -23,6 +23,7 @@ its flag block stays yours.
 
 | Module | fn codes | README |
 |---|---|---|
+| playername | 20-23 | `../playername/README.md` |
 | ticker | 30-38 | `../ticker/README.md` |
 | fade | 40-43 | `../fade/README.md` |
 | hints | 50-53 | `../hints/README.md` |

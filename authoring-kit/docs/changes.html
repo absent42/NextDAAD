@@ -23,6 +23,10 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   minute. Removing a source still removes its file from <code>RELEASE\</code>.
   <code>CLEAN.BAT</code> forces everything to convert again. See
   <a href="getting-started.html#build-and-run">Getting started</a>.</li>
+<li><strong>New extern: playername.</strong> Asks for the player's name, keeps it with
+  saved games and prints it back, and can test it against a message -
+  for example a word that skips the introduction. Part of
+  <code>externs\all\</code>. See <a href="externs.html#playername-the-players-name">Externs</a>.</li>
 <li><strong>Your own externs in EXTERNS.BAT.</strong> <code>EXTERNS.BAT fade ..\mymods\doors</code>
   builds one <code>GAME.XBN</code> from shipped modules and your own; name your
   module by its folder. The builder wires in its hooks and places its

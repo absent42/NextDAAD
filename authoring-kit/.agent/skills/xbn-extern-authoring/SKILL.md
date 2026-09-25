@@ -40,8 +40,9 @@ reading or writing your own file on the SD card, a calculation too fiddly for
 what the player typed, feeding the parser a line, or recording a session.
 Anything a condact already does, do with the condact.
 
-Check `externs\` first. The kit ships eight ready-made modules - `ticker`,
-`fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`, `transcript` - each
+Check `externs\` first. The kit ships nine ready-made modules - `playername`,
+`ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
+`transcript` - each
 with a prebuilt `GAME.XBN` that needs no assembler, and `externs\all\GAME.XBN`
 holds the lot. If one of them already does the job, wire it into the DSF
 instead of writing code.
