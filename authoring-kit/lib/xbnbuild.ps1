@@ -222,7 +222,8 @@ Set-Content -Path $src -Value $sb.ToString() -Encoding ASCII
 try {
     Push-Location $work
     try {
-        & $SjasmPlus --msg=war --sym=subset.sym -I "$kitRoot" $src
+        # Bare name (cwd is $work): a backslash path draws a sjasmplus warning.
+        & $SjasmPlus --msg=war --sym=subset.sym -I "$kitRoot" subset.asm
         if ($LASTEXITCODE -ne 0) { throw "subset assembly failed" }
     }
     finally {

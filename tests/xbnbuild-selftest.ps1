@@ -105,6 +105,7 @@ Assert-Eq $h.Format 3 'toolkit+ua format'
 Assert-Eq ($h.Line -ne 0) $true 'toolkit+ua lineEntry'
 Assert-Eq $h.Out 0 'toolkit+ua outEntry'
 Assert-Match $t "claim ua scratch \+$scrBase \(300\), state \+$stBase \(4\)" 'toolkit+ua claims'
+Assert-Eq ($t -match 'warning\[backslash\]') $false 'no sjasmplus backslash warning'
 Build-Ok 'ub alone' @("$fix\ub", '-Out', "$o\b.xbn") | Out-Null
 Assert-Eq (Header "$o\b.xbn").Format 2 'ub format'
 Build-Ok 'uo alone' @("$fix\uo", '-Out', "$o\o.xbn") | Out-Null
