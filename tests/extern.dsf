@@ -314,8 +314,8 @@
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
 ;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX
-;     XTMW XTEF XTTY XTTW XTTO XTTA XTTM XTTK XTTL XFAD XFDI XFSC XDRK
-;     XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XTMW XTEF XTTY XTTW XTTO XTTA XTTB XTTM XTTK XTTL XFAD XFDI XFSC
+;     XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
@@ -346,7 +346,7 @@
 ;     20-23) reach playername too: they capture or print the name.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
 ;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF
-;     XTTY XTTW XTTO XTTA XTTM XTTK XTTL are meaningful there (plus
+;     XTTY XTTW XTTO XTTA XTTB XTTM XTTK XTTL are meaningful there (plus
 ;     XSLT with all slots printing nothing).
 ;   NEVER type a ticker verb on the fixture leg: fns 34-38 are the
 ;     fixture's own probes there, and XTCO's EXTERN 1 36 hits the
@@ -486,6 +486,7 @@ XTTA   216 verb
 XTTM   217 verb
 XTTK   218 verb
 XTTL   219 verb
+XTTB   220 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -2161,8 +2162,10 @@ CLOAK   22 noun
            NEWLINE
            DONE
 ; XTTO - an object name and a #n newline (object 1 referenced through
-;        flag 51, restored after). Expect rows 12-14 cols 0-29 identical
-;        to cols 40-69; row 12 starts "Take ".
+;        flag 51, restored after). Expect rows 12-13 cols 0-29 identical
+;        to cols 40-69; row 12 starts "Take ". Row 14 is NOT compared:
+;        window 1 stays current after DONE, so the parser's own re-prompt
+;        lands there while window 2 (abandoned after its MES) stays blank.
 > XTTO _   COPYFF  51 191
            LET     51 1
            WINDOW  2
@@ -2193,6 +2196,27 @@ CLOAK   22 noun
            WINDOW  1
            WINAT   12 0
            WINSIZE 12 13
+           CLS
+           EXTERN  1 38
+           EXTERN  13 39
+           NEWLINE
+           DONE
+; XTTB - same shape as XTTA, one column wider: at 14 columns the toggles
+;        must add no width, or "caf?" would wrap instead of exactly
+;        filling row 12. Working the printer's wrap rule for message 13
+;        at 14 columns: row 12 "Here is a caf?" (cols 0-13, exact fit,
+;        CURX reaches 14 so the following space is swallowed at column
+;        0 of row 13); row 13 "table and a ve" (cols 0-13, exact fit);
+;        row 14 "rylongwo?rds" (cols 0-11) - 3 rows total. A build that
+;        counts the toggles into L would wrap "caf?" off row 12 instead.
+> XTTB _   WINDOW  2
+           WINAT   12 40
+           WINSIZE 12 14
+           CLS
+           MES     13
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 14
            CLS
            EXTERN  1 38
            EXTERN  13 39
