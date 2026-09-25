@@ -314,7 +314,8 @@
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
 ;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX
-;     XTMW XTEF XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XTMW XTEF XTTY XTTW XTTO XTTA XTTM XTTK XTTL XFAD XFDI XFSC XDRK
+;     XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
@@ -344,12 +345,14 @@
 ;     combined leg the fixture verbs XREG XSVC XFIO XMSG XABS (fns
 ;     20-23) reach playername too: they capture or print the name.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
-;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF are
-;     meaningful there (plus XSLT with all slots printing nothing).
+;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF
+;     XTTY XTTW XTTO XTTA XTTM XTTK XTTL are meaningful there (plus
+;     XSLT with all slots printing nothing).
 ;   NEVER type a ticker verb on the fixture leg: fns 34-38 are the
 ;     fixture's own probes there, and XTCO's EXTERN 1 36 hits the
-;     getdate probe that derails ZEsarUX. tickcheck.py refuses them
-;     when sd\XBN holds the fixture.
+;     getdate probe that derails ZEsarUX; on that leg fn 39 is the
+;     SVC_WINDOW probe. tickcheck.py refuses them when sd\XBN holds
+;     the fixture.
 ;   -XbnFade stages the STANDALONE fade example: only XFAD XFDI XFSC
 ;     XDRK are meaningful there (plus the no-op XSLT form).
 ;   XSLT prints toolkit output only on toolkit-carrying legs; on other
@@ -476,6 +479,13 @@ XNMA   209 verb
 XNMK   210 verb
 XNMP   211 verb
 XFWD   212 verb
+XTTY   213 verb
+XTTW   214 verb
+XTTO   215 verb
+XTTA   216 verb
+XTTM   217 verb
+XTTK   218 verb
+XTTL   219 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -565,6 +575,9 @@ CLOAK   22 noun
 ; Messages 10-11: playername fn 23 comparands (XNMK).
 /10 "KEVIN"
 /11 "SKIP"
+; Messages 12-13: ticker fn 39 (typed message) test payloads.
+/12 "Take _ now.#nThen leave."
+/13 "Here is a caf#g#A#t table and a verylongwo#g#A#trds"
 /OTX
 /0 "a spare widget"
 /1 "a widget on the floor"
@@ -2113,6 +2126,116 @@ CLOAK   22 noun
            EXTERN  15 49
            MES     "C"
            NEWLINE
+           DONE
+; XTTY - fn 39 vs MES at 30 columns, message 1 (token-compressed). Expect
+;        rows 12-13 cols 0-29 identical to cols 40-69: "Northern lights
+;        over the" / "northern mountains tonight".
+> XTTY _   WINDOW  2
+           WINAT   12 40
+           WINSIZE 12 30
+           CLS
+           MES     1
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 30
+           CLS
+           EXTERN  1 38
+           EXTERN  1 39
+           NEWLINE
+           DONE
+; XTTW - 8 columns: a word that fills the line, a line that fills
+;        exactly ("over the"), a 9-letter word that char-wraps. Expect
+;        rows 12-18 cols 0-7 identical to cols 40-47: Northern / lights /
+;        over the / northern / mountain / s / tonight.
+> XTTW _   WINDOW  2
+           WINAT   12 40
+           WINSIZE 12 8
+           CLS
+           MES     1
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 8
+           CLS
+           EXTERN  1 38
+           EXTERN  1 39
+           NEWLINE
+           DONE
+; XTTO - an object name and a #n newline (object 1 referenced through
+;        flag 51, restored after). Expect rows 12-14 cols 0-29 identical
+;        to cols 40-69; row 12 starts "Take ".
+> XTTO _   COPYFF  51 191
+           LET     51 1
+           WINDOW  2
+           WINAT   12 40
+           WINSIZE 12 30
+           CLS
+           MES     12
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 30
+           CLS
+           EXTERN  1 38
+           EXTERN  12 39
+           NEWLINE
+           COPYFF  191 51
+           DONE
+; XTTA - charset toggles inside words at 13 columns. "caf" + accent must
+;        wrap as one 4-cell word (a split at the toggle would leave "caf"
+;        on row 12); the 14-cell accented word char-wraps at the same
+;        cell as MES. Expect rows 12-15 cols 0-12 identical to cols 40-52:
+;        "Here is a" / "caf? table" / "and a verylon" / "gwo?rds", and
+;        glyph $90 at (13,3), (15,3), (13,43), (15,43).
+> XTTA _   WINDOW  2
+           WINAT   12 40
+           WINSIZE 12 13
+           CLS
+           MES     13
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 13
+           CLS
+           EXTERN  1 38
+           EXTERN  13 39
+           NEWLINE
+           DONE
+; XTTM - a message that does not exist fails the entry: nothing typed,
+;        the MES must NOT print.
+> XTTM _   WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 80
+           CLS
+           EXTERN  255 39
+           MES     "missing printed"
+; XTTK - fn 39 while a ticker loops on row 27 (speed 3, latched at arm)
+;        and typing runs at speed 1: rows 12-13 hold message 1 as in XTTY,
+;        row 27 cols 0-19 hold a fragment of message 0, cols 20-79 blank.
+;        Restores mode, width and speed.
+> XTTK _   WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 30
+           CLS
+           EXTERN  2 37
+           EXTERN  20 34
+           EXTERN  3 38
+           EXTERN  0 30
+           EXTERN  1 38
+           EXTERN  1 39
+           NEWLINE
+           EXTERN  0 31
+           EXTERN  0 37
+           EXTERN  0 34
+           DONE
+; XTTL - a 200-character message in a 4-row window: the More prompt
+;        appears mid-typing; after a key, typing continues to the end.
+;        Headless shows the prompt; the continuation is a silicon check.
+> XTTL _   WINDOW  1
+           WINAT   12 0
+           WINSIZE 4 30
+           CLS
+           EXTERN  1 38
+           EXTERN  8 39
+           NEWLINE
+           WINSIZE 12 30
            DONE
 /PRO 6
 ; ---- one-shot init ----

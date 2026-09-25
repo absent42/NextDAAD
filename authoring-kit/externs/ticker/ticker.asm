@@ -1,7 +1,8 @@
 ; ticker.asm - NextDAAD XBN worked example.
 ;
-; EXTERN n 30 arms, EXTERN p 31 stops (p = 1 clears), EXTERN v 32-38 set
-; row, column, width, ink, paper, mode, speed - latched by the next arm.
+; EXTERN n 30 arms, EXTERN p 31 stops (p nonzero clears), EXTERN v 32-38
+; set row, column, width, ink, paper, mode, speed - latched by the next
+; arm. EXTERN n 39 types message n at the cursor (foreground, blocks).
 ; Interrupt:  int steps one step per `speed` frames into the placed field
 ;             (typewriter, or marquee once/loop), wrapping inside it,
 ;             until the message is consumed. It calls xbn_width
@@ -56,6 +57,8 @@ ext:
     jr z, .arm
     cp 31
     jr z, .stop
+    cp 39
+    jp z, type_msg                ; fn 39: typed message, foreground
     sub 32
     cp 7
     jr nc, .notmine              ; outside 30-38
@@ -338,6 +341,189 @@ marquee_step:                    ; in HL = first cell, B = ew (>= 1)
     ld (cursor), a               ; the message enters again after the gap
     ret
 
+; fn 39: type message B at the cursor, set_speed frames per letter, with
+; the printer's word wrap (SVC_FITWORD). Blocks until done. tybuf is the
+; copy: the hook reads text while a ticker runs.
+type_msg:
+    ld a, b
+    call SVC_GETMSG               ; out HL = staging buffer, BC = length
+    ret c                         ; no such message: the entry fails
+    ld a, b
+    or c
+    ret z                         ; empty: CF clear, nothing typed
+    ld a, b
+    or a
+    jr z, .lenok
+    ld bc, 255                    ; 256 clamps to 255, as fn 30 does
+.lenok:
+    ld a, c
+    ld (tylen), a
+    ld de, tybuf
+    ldir                          ; BC > 0 here; the staging buffer dies at the next service call
+    xor a
+    ld (tyidx), a
+    call SVC_VERSION
+    cp TICK_MIN_API
+    jr c, .fallback               ; no SVC_FITWORD: word-at-a-time
+.next:
+    ld a, (tyidx)
+    ld hl, tylen
+    cp (hl)
+    jr nc, .done
+    ld hl, tybuf
+    add hl, a                     ; Z80N
+    ld a, (hl)
+    cp ' '
+    jr z, .space
+    cp $0B
+    jr c, .word                  ; $01-$0A print as glyphs: word characters
+    cp $10
+    jr c, .ctrl                  ; $0B-$0D break, $0E/$0F latch: no delay
+.word:
+    call ty_word                  ; types the word, leaves tyidx past it
+    jr .next
+.ctrl:
+    call SVC_PUTCHAR
+    jr .adv
+.space:
+    ld hl, tyspc
+    call SVC_PUTS                 ; " " + flush; swallowed at column 0 like MES
+    call ty_delay
+.adv:
+    ld hl, tyidx
+    inc (hl)
+    jr .next
+.fallback:
+    ld a, (tyidx)
+    ld hl, tylen
+    cp (hl)
+    jr nc, .fdone
+    ld hl, tybuf
+    add hl, a
+    ld a, (hl)
+    push af
+    call SVC_PUTCHAR
+    pop af
+    cp $0B
+    jr c, .fdelay
+    cp $10
+    jr c, .fadv                  ; controls and toggles: no delay
+.fdelay:
+    call ty_delay
+.fadv:
+    ld hl, tyidx
+    inc (hl)
+    jr .fallback
+.fdone:
+    ld hl, tyone+1                ; empty string: flush the last word
+    call SVC_PUTS
+.done:
+    or a                          ; CF clear
+    ret
+
+; Word from tyidx: L = characters that are not $0E/$0F, up to a space or
+; $0B-$0D. A word with '_' or '@' goes out whole (the interpreter alone
+; knows an object name's length). Leaves tyidx at the word's end.
+ty_word:
+    ld a, (tyidx)
+    ld e, a                       ; E = scan index
+    ld d, 0                       ; D = L
+    ld c, d                       ; C = nonzero if '_' or '@'
+.scan:
+    ld a, e
+    ld hl, tylen
+    cp (hl)
+    jr nc, .scanned
+    ld hl, tybuf
+    add hl, a
+    ld a, (hl)
+    cp ' '
+    jr z, .scanned
+    cp $0B
+    jr c, .count
+    cp $0E
+    jr c, .scanned                ; $0B-$0D end the word
+    cp $10
+    jr c, .skip                   ; $0E/$0F: zero width
+    cp '_'
+    jr z, .esc
+    cp '@'
+    jr nz, .count
+.esc:
+    ld c, 1
+.count:
+    inc d
+.skip:
+    inc e
+    jr .scan
+.scanned:
+    ld a, e
+    ld (tyend), a
+    ld a, c
+    or a
+    jr nz, .whole
+    ld a, d
+    or a
+    call nz, SVC_FITWORD           ; make room: the printer's own wrap rule
+.type:
+    ld a, (tyidx)
+    ld hl, tyend
+    cp (hl)
+    ret nc
+    ld hl, tybuf
+    add hl, a
+    ld a, (hl)
+    cp $0E
+    jr c, .letter
+    cp $10
+    jr nc, .letter
+    call SVC_PUTCHAR                ; toggle: latch only, no delay
+    jr .tnext
+.letter:
+    ld (tyone), a
+    ld hl, tyone
+    call SVC_PUTS                   ; one letter + flush: shows at once
+    call ty_delay
+.tnext:
+    ld hl, tyidx
+    inc (hl)
+    jr .type
+.whole:
+    ld a, (tyidx)
+    ld hl, tyend
+    cp (hl)
+    jr nc, .wflush
+    ld hl, tybuf
+    add hl, a
+    ld a, (hl)
+    call SVC_PUTCHAR
+    ld hl, tyidx
+    inc (hl)
+    jr .whole
+.wflush:
+    ld hl, tyone+1                  ; empty string: the printer places the word
+    call SVC_PUTS
+    ; fall through: one delay for the whole word
+
+; set_speed frames, counted as SVC_FRAMES changes (HALT is not a frame
+; tick: the sample CTC wakes it). Corrupts AF, DE, HL.
+ty_delay:
+    ld a, (set_speed)
+    ld (tycnt), a
+.frame:
+    call SVC_FRAMES                 ; HL = counter; corrupts AF, HL
+    ld (tyfr), hl
+.wait:
+    call SVC_FRAMES
+    ld de, (tyfr)
+    or a
+    sbc hl, de
+    jr z, .wait
+    ld hl, tycnt
+    dec (hl)
+    jr nz, .frame
+    ret
+
 ; Setter table: min, max, target - one row per fn 32..38 in order.
 settab:
     db 0, 31
@@ -379,7 +565,17 @@ textlen:    db 0
 count:      db 1                 ; frames until the next step
 tail:       db 0                 ; blank steps still to feed (marquee)
 ew:         db 0                 ; this frame's effective width
+tylen:      db 0                 ; fn 39: message length
+tyidx:      db 0                 ; fn 39: next character
+tyend:      db 0                 ; fn 39: end of the current word
+tycnt:      db 0                 ; fn 39: frames left in this delay
+tyfr:       dw 0                 ; fn 39: frame counter snapshot
+tyone:      db 0, 0              ; one-letter string; tyone+1 = ""
+tyspc:      db " ", 0
 text:       ds 256
+
+; fn 39's copy of the message: 256 bytes of XBN scratch (xbnmod.inc claims).
+tybuf:      equ XBN_SCRATCH + 768 + TRANSCRIPT_RING
 
     ENDMODULE
 
