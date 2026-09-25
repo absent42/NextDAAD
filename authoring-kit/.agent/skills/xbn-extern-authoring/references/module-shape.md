@@ -108,7 +108,7 @@ use `SCRATCH` as the base:
 
 `EXTERNS.BAT` places each declared claim after the collection's, in the
 order you name the modules. It prints where each one landed
-(`claim myext scratch +2816 (256), state +31 (0)`) and fails the build if
+(`claim myext scratch +2816 (256), state +10 (0)`) and fails the build if
 the claims run past the bank. A standalone build places it with
 `XBN_CLAIMS` (skeleton above).
 
@@ -135,19 +135,22 @@ restores it, `RAMSAVE`/`RAMLOAD` carry it, zeroed only at boot.
 
 A module of your own declares `STATE_SIZE` and uses `STATE`, placed the
 same way as its scratch claim: after the collection's, in the order you
-name the modules, asserted against `XBN_STATE_LEN`. That order is part of
+name the modules, asserted against `XBN_STATE_TOP`. That order is part of
 your save format - adding, removing or reordering state-claiming modules
 moves offsets, and a save made with the old binary restores bytes into the
 wrong module. Settle the module list before release.
 
-A module for the shipped collection chains a fixed offset off
-`XBN_STATE_FREE` in `xbnmod.inc` instead: take the current value as your
-offset, add a claim comment, bump the value past your claim.
-`XBN_STATE_FREE <= XBN_STATE_LEN` is asserted.
+A module for the shipped collection takes a fixed offset from the TOP of
+the area instead, so authors' offsets (from `XBN_STATE_FREE` up) never
+move when the collection gains state: lower `XBN_STATE_TOP` in
+`xbnmod.inc` by your size, claim at the new value, and add a claim
+comment. `XBN_STATE_FREE <= XBN_STATE_TOP` is asserted. The toolkit's
+claim at the bottom predates the rule.
 
     ; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
-    ; Claims: playername.asm name 10 (21)
-    XBN_STATE_FREE  equ 31
+    XBN_STATE_FREE  equ 10
+    ; Claims from the top: playername.asm name 111 (17)
+    XBN_STATE_TOP   equ 111
 
 Membership rule: only state that must agree with the flags after a `LOAD`
 belongs here - the same test a flag's own save/load behaviour gets. Session

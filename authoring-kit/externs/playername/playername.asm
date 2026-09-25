@@ -22,7 +22,7 @@
 ; Each condition passes when no GAME.XBN is loaded, the safe default for
 ; every one of them.
 ;
-; Flags: none. State area: NAME_MAX + 1 bytes at offset 10 (xbnmod.inc).
+; Flags: none. State area: NAME_MAX + 1 bytes at offset 111 (xbnmod.inc).
 
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
@@ -34,12 +34,13 @@
 
     MODULE playername
 
-NAME_MAX    equ 20                          ; characters kept, the NUL is extra
+NAME_MAX    equ 16                          ; characters kept, the NUL is extra
 MIN_API     equ 3                           ; SVC_GETLINE arrived with API 3
 
-; Claim: the name, ASCIIZ, at state offset 10 (xbnmod.inc claim list).
-name        equ XBN_STATE + 10
-    ASSERT 10 + NAME_MAX + 1 <= XBN_STATE_FREE
+; Claim: the name, ASCIIZ, at the top of the state area (xbnmod.inc).
+name        equ XBN_STATE + 111
+    ASSERT 111 >= XBN_STATE_TOP
+    ASSERT 111 + NAME_MAX + 1 <= XBN_STATE_LEN
 
 ext:
     ld a, c

@@ -13,9 +13,10 @@ $checks = 0
 if (-not (Test-Path $sj)) { throw "xbnbuild-selftest: sjasmplus not found at $sj" }
 
 # Collection claims end here (xbnmod.inc): XBN_SCRATCH_FREE = 768 +
-# TRANSCRIPT_RING (2048), XBN_STATE_FREE = 31. Re-pin if either moves.
+# TRANSCRIPT_RING (2048), XBN_STATE_FREE = 10, XBN_STATE_TOP = 111 (collection
+# claims grow down from the top). Re-pin if any moves.
 $scrBase = 2816
-$stBase = 31
+$stBase = 10
 
 function Assert-Eq($actual, $expected, $what) {
     $script:checks++
@@ -181,7 +182,12 @@ Build-Fails 'unknown bare name' @('nosuch', '-Out', $x) "unknown module 'nosuch'
 Build-Fails 'missing path' @("$neg\nothere", '-Out', $x) 'no nothere\.asm in'
 Build-Fails 'duplicate by path' @("$fix\ua", "$fix\UA", '-Out', $x) 'is named twice'
 Build-Fails 'duplicate bare' @('fade', 'FADE', '-Out', $x) 'is named twice'
-Build-Fails 'state overflow' @("$neg\bigst", '-Out', $x) 'extern state claim runs past XBN_STATE_LEN'
+Build-Fails 'state overflow' @("$neg\bigst", '-Out', $x) 'extern state claim runs past XBN_STATE_TOP'
+# Author claims stop below the collection's top-down claims (offset 111).
+New-Module $neg 'sttop' "    MODULE sttop`nSTATE_SIZE equ 102`next:`n    ret`nint:`n    ret`n    ENDMODULE`n"
+New-Module $neg 'stfit' "    MODULE stfit`nSTATE_SIZE equ 101`next:`n    or a`n    ret`nint:`n    ret`n    ENDMODULE`n"
+Build-Fails 'state claim into the collection top' @("$neg\sttop", '-Out', $x) 'extern state claim runs past XBN_STATE_TOP'
+Build-Ok 'state claim up to the collection top' @("$neg\stfit", '-Out', "$o\stfit.xbn") | Out-Null
 Build-Fails 'scratch overflow' @("$neg\bigscr", '-Out', $x) 'scratch claim runs past the mapped 16K bank'
 Build-Fails 'usage' @() 'Usage: EXTERNS\.BAT(?s:.*)Modules: .*fade'
 # Entry labels and sizes in an INCLUDEd file are defined but never wired.

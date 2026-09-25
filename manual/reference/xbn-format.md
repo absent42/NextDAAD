@@ -159,7 +159,7 @@ releases:
 | `OBJ_SIZE` | `6` | Bytes per object table entry: `+0` location, `+1` weight/attribute bits, `+2`/`+3` extended attributes in flag order - `+3` holds attribute bits 0-7, `+2` holds bits 8-15, `+4` noun ID, `+5` adjective ID |
 | `XBN_NUMOBJ` | `$A900` | The object count: one byte, the number of entries in the object table. Read it with `ld a, (XBN_NUMOBJ)`; walk `0` to `(XBN_NUMOBJ) - 1`, the byte's value; entries past the count are stale |
 | `XBN_API` | `$BEC8` | Base of the service jump table |
-| `XBN_STATE` | `$BF80` | Base of the 128-byte extern state area (`XBN_STATE_LEN`): saved and restored with the game (`SAVE`, `LOAD`, `RAMSAVE`, `RAMLOAD`), zeroed at boot only. Claim offsets through `xbnmod.inc`'s `XBN_STATE_FREE` chain, or declare `STATE_SIZE` in your own module - see [Externs](../externs.md#the-extern-state-area) |
+| `XBN_STATE` | `$BF80` | Base of the 128-byte extern state area (`XBN_STATE_LEN`): saved and restored with the game (`SAVE`, `LOAD`, `RAMSAVE`, `RAMLOAD`), zeroed at boot only. Collection modules claim fixed offsets from the top (`xbnmod.inc`'s `XBN_STATE_TOP`); declare `STATE_SIZE` in your own module - see [Externs](../externs.md#the-extern-state-area) |
 
 `XBN_API` grew to fifteen rows in format 2, to sixteen at API version 3
 (`SVC_PAIR`), and to twenty at format 3 (rows 16-19); rows 0-9 kept

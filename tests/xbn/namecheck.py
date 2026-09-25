@@ -1,7 +1,7 @@
 r"""playername module (fns 20-23) on a live interpreter, through the
 -XbnAll leg's extern.dsf verbs XNMU/XNMA/XNMK. Each step types a line,
 waits for the input editor, then checks the new output rows and the
-name bytes in the extern state area (XBN_STATE + 10, 21 bytes).
+name bytes in the extern state area (XBN_STATE + 111, 17 bytes).
 
 Usage: python tests\xbn\namecheck.py sd\XBN
 The leg is staged by tests\build-tests.ps1 -XbnAll. Exit 1 on a failed
@@ -14,8 +14,8 @@ import nleg, symbols, tilemap, zrcp  # noqa: E402
 
 PORT = 10034
 TM_MAP = 0x6000
-NAME_ADDR = 0xBF80 + 10         # XBN_STATE + playername's claim
-NAME_LEN = 21
+NAME_ADDR = 0xBF80 + 111        # XBN_STATE + playername's claim
+NAME_LEN = 17
 BOOT_FLOOR_S = 2.0
 READY_TIMEOUT_S = 30.0
 
@@ -31,7 +31,7 @@ STEPS = [
     ("XNMA", "bob", "GOT Bob", b"Bob"),
     ("XRML", None, "", b"Kevin"),
     ("XNMP", None, "NAME=Kevin", b"Kevin"),
-    ("XNMA", "abcdefghijklmnopqrstuvwxy", "GOT Abcdefghijklmnopqrst", b"Abcdefghijklmnopqrst"),
+    ("XNMA", "abcdefghijklmnopqrstuvwxy", "GOT Abcdefghijklmnop", b"Abcdefghijklmnop"),
     ("XNMA", "   ", "EMPTY", b""),
     ("XNMU", None, "NAME NONE", b""),
     ("XNMA", "", "EMPTY", b""),

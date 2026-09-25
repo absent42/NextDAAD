@@ -854,9 +854,11 @@ collection's own modules claim fixed offsets through <code>xbnmod.inc</code>'s
 <code>XBN_STATE_FREE</code> chain instead. The toolkit claims the first ten bytes
 (the picker's pool size and used bitmap, the print target window) -
 fn 76's picker and fn 84's print target are now restored by <code>LOAD</code> and
-<code>RAMLOAD</code>, where they used to go stale. The playername module claims
-the next 21 (offsets 10-30, the player's name), so modules of your own
-start at offset 31.</p>
+<code>RAMLOAD</code>, where they used to go stale. Later collection claims come
+from the top of the area instead: playername holds the last 17 bytes
+(offsets 111-127, the player's name). Modules of your own claim from
+offset 10 up to 110, so their offsets stay put when the collection gains
+state.</p>
 <p>One edge case worth knowing: a cross-part <code>LOAD</code> whose target part
 fails to load leaves the state area restored to the save's values while
 the flags are not.</p>
@@ -1196,7 +1198,7 @@ does for you.</p>
 <h3 id="playername-the-players-name">playername - the player's name</h3>
 <p>DAAD cannot keep free text, so read the name as an ordinary line with
 <code>PARSE 0</code> and let the module copy it out of the interpreter's recall
-buffer. Blanks are trimmed, the name is cut to 20 characters and its
+buffer. Blanks are trimmed, the name is cut to 16 characters and its
 first letter is capitalised. It lives in the
 <a href="#the-extern-state-area">extern state area</a>, so <code>SAVE</code>, <code>LOAD</code>,
 <code>RAMSAVE</code> and <code>RAMLOAD</code> keep it with the game:</p>

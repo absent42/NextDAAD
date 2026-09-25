@@ -8,12 +8,12 @@ Needs an interpreter with API version 3 (the input services). On an older interp
 
 | fn | Kind | What it does |
 |---|---|---|
-| `EXTERN 0 20` | Condition | Takes the last typed line as the name: leading and trailing blanks dropped, cut to 20 characters, first letter capitalised. Fails (carry set) when nothing was typed - an empty ENTER, a timeout or only blanks - and leaves no name. |
+| `EXTERN 0 20` | Condition | Takes the last typed line as the name: leading and trailing blanks dropped, cut to 16 characters, first letter capitalised. Fails (carry set) when nothing was typed - an empty ENTER, a timeout or only blanks - and leaves no name. |
 | `EXTERN 0 21` | Action | Prints the name through the current window, or nothing when there is none. |
 | `EXTERN 0 22` | Condition | Passes when no name is stored, fails when one is. |
 | `EXTERN m 23` | Condition | Fails when the name equals message `m`, in any case. Passes when it differs, when there is no name, or when message `m` does not exist. Use it to catch a keyword typed at the name prompt. |
 
-No flags are used. The name takes 21 bytes of the extern state area at offset 10, a fixed claim in `xbnmod.inc`.
+No flags are used. The name takes the last 17 bytes of the extern state area (offsets 111-127), a fixed claim in `xbnmod.inc`; modules of your own claim below it.
 
 ## DSF lines
 

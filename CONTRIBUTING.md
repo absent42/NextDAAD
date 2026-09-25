@@ -81,11 +81,13 @@ Rules that come with it:
 - Your fn codes and flags must be disjoint from every other collection
   module - check the table in `authoring-kit\externs\README.md` and
   add your row to it.
-- Scratch RAM above the saved image and extern state area bytes are
-  claimed through the fixed `XBN_SCRATCH_FREE` and `XBN_STATE_FREE`
-  chains in `xbnmod.inc` (see the comments there), so collection
-  modules never collide. The `SCRATCH_SIZE`/`STATE_SIZE` declarations
-  are for a game's own modules and are not used in the collection.
+- Scratch RAM above the saved image is claimed through the fixed
+  `XBN_SCRATCH_FREE` chain in `xbnmod.inc`, and extern state area
+  bytes from the top of the area by lowering `XBN_STATE_TOP` (see the
+  comments there), so collection modules never collide and authors'
+  own-module offsets never move. The `SCRATCH_SIZE`/`STATE_SIZE`
+  declarations are for a game's own modules and are not used in the
+  collection.
 - Wiring into the combined binary is a `DEFINE XBN_HAS_<NAME>` and an
   `INCLUDE` in `authoring-kit\externs\all\all.asm`, a three-line
   ext-chain entry there (`call xbn_setup / call <name>.ext /

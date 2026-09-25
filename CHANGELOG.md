@@ -13,12 +13,15 @@ All notable changes to NextDAAD are recorded here.
   rebuilt.
 - New collection extern `playername` (fns 20-23): fn 20 captures the
   last typed line (SVC_GETLINE) as the player's name, trimmed, cut to
-  20 characters, first letter capitalised; fn 21 prints it; fn 22
+  16 characters, first letter capitalised; fn 21 prints it; fn 22
   passes while none is stored; fn 23 fails when it equals message p.
-  The name is a fixed extern state claim at offsets 10-30
-  (`XBN_STATE_FREE` 10 -> 31). Wired into `all.asm`, the drift list and
-  the kit-root `GAME.XBN`. `tests/extern.dsf` verbs XNMU/XNMA/XNMK and
-  emulator check `tests/xbn/namecheck.py`.
+  The name is a fixed extern state claim at the top of the area,
+  offsets 111-127. Collection state claims now grow down from the top
+  (`XBN_STATE_TOP` in `xbnmod.inc`), so authors' own-module claims keep
+  starting at offset 10 and are asserted against `XBN_STATE_TOP`. Wired
+  into `all.asm`, the drift list and the kit-root `GAME.XBN`.
+  `tests/extern.dsf` verbs XNMU/XNMA/XNMK/XNMP and emulator check
+  `tests/xbn/namecheck.py`.
 - `tests/audit-externs.ps1` validates format 3 headers as the loader
   does: version 2 or 3, bytes 10-13 zero only in v2, `lineEntry`/
   `outEntry` range-checked in v3, the end of a 16K image clamped to

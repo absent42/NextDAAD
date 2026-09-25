@@ -368,7 +368,7 @@ releases:</p>
 <tr>
 <td><code>XBN_STATE</code></td>
 <td><code>$BF80</code></td>
-<td>Base of the 128-byte extern state area (<code>XBN_STATE_LEN</code>): saved and restored with the game (<code>SAVE</code>, <code>LOAD</code>, <code>RAMSAVE</code>, <code>RAMLOAD</code>), zeroed at boot only. Claim offsets through <code>xbnmod.inc</code>'s <code>XBN_STATE_FREE</code> chain, or declare <code>STATE_SIZE</code> in your own module - see <a href="../externs.html#the-extern-state-area">Externs</a></td>
+<td>Base of the 128-byte extern state area (<code>XBN_STATE_LEN</code>): saved and restored with the game (<code>SAVE</code>, <code>LOAD</code>, <code>RAMSAVE</code>, <code>RAMLOAD</code>), zeroed at boot only. Collection modules claim fixed offsets from the top (<code>xbnmod.inc</code>'s <code>XBN_STATE_TOP</code>); declare <code>STATE_SIZE</code> in your own module - see <a href="../externs.html#the-extern-state-area">Externs</a></td>
 </tr>
 </tbody>
 </table>

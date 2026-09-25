@@ -10,7 +10,7 @@ lines from its README. No assembler needed unless you change the source.
 
 | Extern | What it does | fn codes | Flags used |
 |--------|--------------|----------|------------|
-| `playername/` | Asks for the player's name and keeps it with the game: captures the typed line, prints it back, and tests it against a message. Kept in the extern state area (offsets 10-30), so `SAVE` and `LOAD` carry it. Needs API 3 | 20 capture the last typed line, 21 print, 22 no name yet, 23 name equals message p | - |
+| `playername/` | Asks for the player's name and keeps it with the game: captures the typed line, prints it back, and tests it against a message. Kept in the extern state area (offsets 111-127), so `SAVE` and `LOAD` carry it. Needs API 3 | 20 capture the last typed line, 21 print, 22 no name yet, 23 name equals message p | - |
 | `ticker/` | Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee | 30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed | - |
 | `fade/` | Fades the Layer 2 picture to any RRRGGGBB colour and back - fade to black for a scene change, change the picture, fade up again. Transparent regions stay transparent; a completed fade-in restores the palette bit for bit | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade | 240 done, 241 speed |
 | `hints/` | Prints hint text served from an SD card file (`GAME.HNT`), so a game can ship a large hint book without spending DAAD message slots or interpreter RAM | 50 print hint, 51 level count, 52 preflight, 53 clear progress | 242 level override, 243 level count |

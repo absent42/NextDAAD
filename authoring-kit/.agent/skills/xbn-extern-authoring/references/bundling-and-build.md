@@ -65,7 +65,7 @@ chain. Any hook makes the header format 3 (`XBN_BEGIN3`), with `0` for a
 hook no module has. Declared claims are placed after the collection's and
 printed:
 
-    > claim doors scratch +2816 (256), state +31 (4)
+    > claim doors scratch +2816 (256), state +10 (4)
 
 It prints the finished size and how much of the 16384 bytes is left.
 Mistakes stop the build with one `xbnbuild:` line before anything is
@@ -175,7 +175,7 @@ A module outside the collection declares `SCRATCH_SIZE`/`STATE_SIZE`
 instead of editing `xbnmod.inc`. The generated source places those claims
 after `XBN_SCRATCH_FREE`/`XBN_STATE_FREE` with `xbnmod.inc`'s
 `XBN_CLAIM_AT`, in argument order. Its asserts fail the build if a running
-total passes the bank end or `XBN_STATE_LEN`. A standalone build does the
+total passes the bank end or `XBN_STATE_TOP`. A standalone build does the
 same with `XBN_CLAIMS`.
 
 ## Where GAME.XBN goes
