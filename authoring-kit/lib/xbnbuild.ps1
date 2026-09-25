@@ -64,7 +64,7 @@ function Read-Module([string]$name, [string]$src) {
         elseif ($line -cmatch '^\s+(ext|int|line|out)\s*:') {
             Fail "module '$declared': entry label '$($Matches[1])' must start at column 0 ($src line $n)"
         }
-        if ($line -cmatch '^(SCRATCH_SIZE|STATE_SIZE)(\s*:?\s*=|:?\s+(?i:equ|defl)\b)') { $sizes[$Matches[1]] = $true }
+        if ($line -cmatch '^(SCRATCH_SIZE|STATE_SIZE)\s*:?\s*(=|(?i:equ|defl)\b)') { $sizes[$Matches[1]] = $true }
     }
     if (-not $declared) { Fail "module '$name': $src has no MODULE $name block" }
     foreach ($req in 'ext', 'int') {
@@ -210,11 +210,25 @@ Set-Content -Path $src -Value $sb.ToString() -Encoding ASCII
 try {
     Push-Location $work
     try {
-        & $SjasmPlus --msg=war -I "$kitRoot" $src
+        & $SjasmPlus --msg=war --sym=subset.sym -I "$kitRoot" $src
         if ($LASTEXITCODE -ne 0) { throw "subset assembly failed" }
     }
     finally {
         Pop-Location
+    }
+    # A hook label or size equate the scan missed (one in an INCLUDEd
+    # file) assembles but is never wired: refuse it.
+    $defined = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($s in [IO.File]::ReadAllLines((Join-Path $work 'subset.sym'))) {
+        if ($s -match '^([^:\s]+):') { [void]$defined.Add($Matches[1]) }
+    }
+    foreach ($m in $mods) {
+        $wired = @{ line = $m.Line; out = $m.Out; SCRATCH_SIZE = $m.Scratch; STATE_SIZE = $m.State }
+        foreach ($k in 'line', 'out', 'SCRATCH_SIZE', 'STATE_SIZE') {
+            if (-not $wired[$k] -and $defined.Contains("$($m.Name).$k")) {
+                Fail "module '$($m.Name)': '$k' is defined outside $($m.Name).asm (an INCLUDEd file?) - put entry labels and SIZE equates in $($m.Name).asm itself"
+            }
+        }
     }
     Copy-Item (Join-Path $work 'GAME.XBN') $Out -Force
 }

@@ -1012,7 +1012,9 @@ xbn_end:
 <ul>
 <li><code>ext</code> and <code>int</code> are required, <code>line</code> and <code>out</code> optional, each a label
   at the start of its line inside your <code>MODULE</code> block (the colon is
-  recommended). An indented one is refused. A <code>line</code> label joins the
+  recommended). An indented one is refused. These labels and the two
+  sizes below go in <code>&lt;folder&gt;.asm</code> itself, not in a file it <code>INCLUDE</code>s;
+  the build refuses one it finds only in an included file. A <code>line</code> label joins the
   <a href="#the-line-hook">line hook</a> chain and an <code>out</code> label the
   <a href="#the-output-hook">output hook</a> chain; either makes the binary format
   3, which needs interpreter v0.10.1 or later.</li>

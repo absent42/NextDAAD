@@ -148,6 +148,10 @@ New-Module $neg 'spell' "    MODULE spell ; a trailing comment`nSCRATCH_SIZE = 8
 $t = Build-Ok 'colon-less labels, = equate' @("$neg\spell", '-Out', "$o\spell.xbn")
 Assert-Eq ((Header "$o\spell.xbn").Line -ne 0) $true 'colon-less line label wired'
 Assert-Match $t 'claim spell scratch \+\d+ \(8\)' '= equate claimed'
+# SIZE:equ with no space is an equate to sjasmplus too.
+New-Module $neg 'tight' "    MODULE tight`nSCRATCH_SIZE:equ 300`next:`n    or a`n    ret`nint:`n    ret`n    ENDMODULE`n"
+$t = Build-Ok 'SIZE:equ spelling' @("$neg\tight", "$fix\ub", '-Out', "$o\tight.xbn")
+Assert-Match $t "claim ub scratch \+$($scrBase + 300) " 'SIZE:equ claim placed before ub'
 
 # Refusals: one xbnbuild: line, exit 1, nothing assembled.
 New-Module $neg 'noint' "    MODULE noint`next:`n    or a`n    ret`n    ENDMODULE`n"
@@ -171,5 +175,36 @@ Build-Fails 'duplicate bare' @('fade', 'FADE', '-Out', $x) 'is named twice'
 Build-Fails 'state overflow' @("$neg\bigst", '-Out', $x) 'extern state claim runs past XBN_STATE_LEN'
 Build-Fails 'scratch overflow' @("$neg\bigscr", '-Out', $x) 'scratch claim runs past the mapped 16K bank'
 Build-Fails 'usage' @() 'Usage: EXTERNS\.BAT(?s:.*)Modules: .*fade'
+# Entry labels and sizes in an INCLUDEd file are defined but never wired.
+New-Module $neg 'inchook' "    MODULE inchook`next:`n    or a`n    ret`nint:`n    ret`n    INCLUDE `"hooks.asm`"`n    ENDMODULE`n"
+[IO.File]::WriteAllText("$neg\inchook\hooks.asm", "line:`n    or a`n    ret`n", [Text.Encoding]::ASCII)
+New-Module $neg 'incsize' "    MODULE incsize`next:`n    or a`n    ret`nint:`n    ret`n    INCLUDE `"sizes.asm`"`n    ENDMODULE`n"
+[IO.File]::WriteAllText("$neg\incsize\sizes.asm", "STATE_SIZE equ 2`n", [Text.Encoding]::ASCII)
+Build-Fails 'hook label in an include' @("$neg\inchook", '-Out', $x) "module 'inchook': 'line' is defined outside inchook\.asm"
+Build-Fails 'size equate in an include' @("$neg\incsize", '-Out', $x) "module 'incsize': 'STATE_SIZE' is defined outside incsize\.asm"
+Assert-Eq (Test-Path $x) $false 'no refused build wrote its output'
+
+# EXTERNS.BAT itself, run in a copy of the kit so the tracked GAME.XBN is
+# never written: a quoted path with a space and a trailing backslash.
+$kc = "$work\kit copy"
+New-Item -ItemType Directory -Force "$kc\lib" | Out-Null
+Copy-Item "$kit\EXTERNS.BAT", "$kit\CONFIG.BAT", "$kit\xbn.inc", "$kit\xbnmod.inc" $kc
+Copy-Item "$kit\lib\tools.bat", "$kit\lib\xbnbuild.ps1", "$kit\lib\resolve-sjasmplus.ps1" "$kc\lib"
+Copy-Item "$kit\externs" "$kc\externs" -Recurse
+function Invoke-Driver([string]$name, [string]$callLine) {
+    [IO.File]::WriteAllText("$work\$name.cmd", "@cd /d `"%~dp0`"`r`n@call $callLine`r`n@exit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
+    Remove-Item "$kc\GAME.XBN" -ErrorAction SilentlyContinue
+    $oldPath = $env:PATH
+    $env:PATH = "$(Split-Path $sj);$env:PATH"
+    try { $text = Invoke-Native { & cmd /c "$work\$name.cmd" }; $code = $LASTEXITCODE }
+    finally { $env:PATH = $oldPath }
+    Assert-Eq $code 0 "EXTERNS.BAT via $($name):`n$text"
+}
+Build-Ok 'batch reference' @('fade', "$work\with space\ua", 'toolkit', '-Out', "$o\batref.xbn") | Out-Null
+Invoke-Driver 'argquote' "`"%~dp0kit copy\EXTERNS.BAT`" fade `"with space\ua\`" toolkit"
+Assert-Eq (Same-Bytes "$kc\GAME.XBN" "$o\batref.xbn") $true 'EXTERNS.BAT passes a trailing-backslash argument and the rest intact'
+# Launched by a quoted relative path, as from a mods folder beside the kit.
+Invoke-Driver 'relbat' "`"kit copy\EXTERNS.BAT`" fade `"with space\ua`" toolkit"
+Assert-Eq (Same-Bytes "$kc\GAME.XBN" "$o\batref.xbn") $true 'EXTERNS.BAT launched by a quoted relative path'
 
 Write-Output "xbnbuild-selftest: $checks checks passed"

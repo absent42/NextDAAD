@@ -85,7 +85,9 @@ Rules that come with the shape:
 - **Entry labels at column 0.** `ext`, `int`, and `line`/`out` for a
   hooked module, each at the start of its line inside the `MODULE`
   block, colon recommended. `EXTERNS.BAT` finds them by reading your
-  source; an indented one is refused.
+  source; an indented one is refused. They, and `SCRATCH_SIZE`/
+  `STATE_SIZE`, go in the module's own `.asm`, never in an `INCLUDE`d
+  file - the build refuses one it finds only in an included file.
 - **Reserved names inside the module:** `ext`, `int`, `line`, `out`,
   `SCRATCH`, `STATE`, `SCRATCH_SIZE`, `STATE_SIZE`. A module handed to
   `EXTERNS.BAT` by path may not reuse the name of a folder in

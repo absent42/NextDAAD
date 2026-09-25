@@ -68,7 +68,9 @@ printed:
 It prints the finished size and how much of the 16384 bytes is left.
 Mistakes stop the build with one `xbnbuild:` line before anything is
 assembled: an unknown name, a missing `int` label, an indented entry
-label, or a name used twice. The module's name is the spelling on its
+label, or a name used twice. After assembly it also refuses an entry
+label or size equate that sjasmplus defined but the scan did not see -
+one in an `INCLUDE`d file - and writes nothing. The module's name is the spelling on its
 `MODULE` line; the folder may differ from it in case. Run `EXTERNS.BAT`
 with no modules for the usage and the module list.
 

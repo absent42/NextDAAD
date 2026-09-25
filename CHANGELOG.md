@@ -20,7 +20,11 @@ All notable changes to NextDAAD are recorded here.
   hook tables; a format 3 header gets `0` for a hook no module has.
   Declared claims are placed after the collection's by
   `xbnmod.inc`'s new `XBN_CLAIM_AT`/`XBN_CLAIMS`, with overflow
-  asserts. Errors print one `xbnbuild:` line. New
+  asserts. An entry label or size equate sjasmplus defines outside the
+  scanned file (an `INCLUDE`) is refused. `EXTERNS.BAT` re-quotes its
+  arguments and takes its own folder once, so a trailing `\` and a
+  quoted relative launch path both work. Errors print one `xbnbuild:`
+  line. New
   `tests/xbnbuild-selftest.ps1`, fixtures `tests/xbn/usermods/`,
   emulator check `tests/xbn/hookshape.py`.
 - PROCESS and REDO now reach process tables 128 to 254. The process

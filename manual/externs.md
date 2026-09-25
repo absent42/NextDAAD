@@ -881,7 +881,9 @@ Your module has the shape every collection module has:
 
 - `ext` and `int` are required, `line` and `out` optional, each a label
   at the start of its line inside your `MODULE` block (the colon is
-  recommended). An indented one is refused. A `line` label joins the
+  recommended). An indented one is refused. These labels and the two
+  sizes below go in `<folder>.asm` itself, not in a file it `INCLUDE`s;
+  the build refuses one it finds only in an included file. A `line` label joins the
   [line hook](#the-line-hook) chain and an `out` label the
   [output hook](#the-output-hook) chain; either makes the binary format
   3, which needs interpreter v0.10.1 or later.
