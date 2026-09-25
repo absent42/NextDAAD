@@ -118,7 +118,7 @@ tables.
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length; CF clear | AF, BC, HL | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | AF, BC, DE, HL | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | AF, BC, DE, HL | no |
-| 20 | `SVC_FITWORD` | A = length of the word about to be printed (0 = flush only) | Flushes any pending word, then starts a new line if the word would not fit the rest of the current window's line but fits the window (word wrap, with scrolling and More paging); CF clear | AF, BC, DE, HL, IX, IY | no |
+| 20 | `SVC_FITWORD` | A = length of the word about to be printed (0 = flush only) | Flushes any pending word, then starts a new line if the word would not fit the rest of the current window's line but fits the window (word wrap, with scrolling and More paging); A = the current window's width, CF clear | AF, BC, DE, HL, IX, IY | no |
 
 Error convention throughout is esxDOS style: carry flag set, error code
 in A. A row's Corrupts column is its contract; only the registers its

@@ -85,6 +85,8 @@ A typical process entry:
     EXTERN 1 31     ; stop and clear the field
 
 `n` is the message number as it appears in your DSF's `/MTX` block.
+Messages are ticked up to 255 characters; split longer text across
+messages.
 
 v2 behaviour: if message `n` does not exist, fn 30 fails the EXTERN
 entry (CF set) instead of silently leaving the ticker disarmed. Games
@@ -97,7 +99,8 @@ the entry failing, the same as any other DAAD condition.
 cursor position, one letter at a time, with the same word wrap,
 colours, scrolling and More paging as `MES` - the finished text matches
 `MES n` exactly, cell for cell. It prints no newline at the end; add
-`NEWLINE` yourself if you want one, the same as after `MES`.
+`NEWLINE` yourself if you want one, the same as after `MES`. Messages
+are typed up to 255 characters; split longer text across messages.
 
 Speed is the fn 38 setting at the moment fn 39 is called, in frames per
 letter: one pause per letter and one pause per space, including a
@@ -107,9 +110,8 @@ until the whole message has been typed before the entry returns. A
 word containing an object name (`_`) appears whole rather than letter
 by letter, because only the interpreter knows its printed length.
 
-Fn 39 needs API version 3. On an older interpreter its words still
-appear whole, but only after a pause per letter instead of with proper
-word wrap - the README's fallback rather than a failure.
+On an interpreter older than API 3, each word appears whole after a
+pause per letter; wrap is unchanged.
 
 The ticker itself (fns 30-38) runs in the background, one step per
 frame from the `#int` hook; fn 39 does not - it blocks the EXTERN call

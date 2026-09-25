@@ -286,8 +286,10 @@ print its letters one `SVC_PUTS` each. Count only characters that take a
 cell: `$0E`/`$0F` charset toggles sit inside words (an accented letter is
 `$0E chr $0F`) and have no width. A word containing `_` has a length only
 the interpreter knows - send it with `SVC_PUTCHAR` and flush it with an
-empty `SVC_PUTS`. The ticker's fn 39 is the worked pattern.
-Foreground-only.
+empty `SVC_PUTS`. `SVC_FITWORD` returns A = the current window's width. A
+word as wide as the window or wider is placed by the printer in chunks of
+the window width: call `SVC_FITWORD` before each chunk with that chunk's
+length. The ticker's fn 39 is the worked pattern. Foreground-only.
 
 ### SVC_FWRITE - the short-write rule
 

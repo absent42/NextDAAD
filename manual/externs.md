@@ -500,7 +500,7 @@ to each row, so you call them by name:
 | 17 | `SVC_GETPENDING` | - | HL = ASCIIZ orders after a conjunction not yet consumed (empty when none), BC = length | no |
 | 18 | `SVC_INJECT` | HL = ASCIIZ text (your own bank is fine), A = options: bit 0 = echo it as typed | CF set + A = `$FF` on refusal (over 127 characters, or a line already parked); nothing is written on refusal | no |
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | no |
-| 20 | `SVC_FITWORD` | A = the length of the word you are about to print (0 = flush only) | Flushes any word the printer is holding, then starts a new line if a word that long would not fit the rest of the current window's line but fits the window - the printer's own word wrap, with scrolling and More paging. Print the word's letters with a one-character `SVC_PUTS` each and it lands exactly where `MES` would put it. The ticker's fn 39 is the worked use | no |
+| 20 | `SVC_FITWORD` | A = the length of the word you are about to print (0 = flush only) | Flushes any word the printer is holding, then starts a new line if a word that long would not fit the rest of the current window's line but fits the window - the printer's own word wrap, with scrolling and More paging. Returns A = the current window's width. Print the word's letters with a one-character `SVC_PUTS` each and it lands exactly where `MES` would put it; a word as wide as the window or wider goes in chunks of that width, `SVC_FITWORD` before each. The ticker's fn 39 is the worked use | no |
 
 Call a service exactly like any other subroutine - `call SVC_PUTCHAR`
 and so on. Every row preserves your XBN bank's own mapping across the

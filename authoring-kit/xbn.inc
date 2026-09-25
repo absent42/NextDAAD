@@ -147,8 +147,9 @@ SVC_FITWORD     equ XBN_API+60  ; in A = length of the word about to be
                                  ; pending word, then starts a new line if
                                  ; the word will not fit the rest of the
                                  ; current window's line but fits the
-                                 ; window (scroll, More paging). Out CF
-                                 ; clear. Corrupts all registers. API 3.
+                                 ; window (scroll, More paging). Out A =
+                                 ; the current window's width, CF clear.
+                                 ; Corrupts all registers. API 3.
                                  ; Foreground-only.
 
 ; SVC_FOPEN modes (esxDOS)
