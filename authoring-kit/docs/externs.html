@@ -313,7 +313,8 @@ are not optional:</p>
   called from the hook: <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>, <code>SVC_FRAMES</code> and
   <code>SVC_BUSY</code> - they touch resident memory and never page. Every other
   row (printing, files, <code>SVC_GETMSG</code>, <code>SVC_GETDATE</code>, <code>SVC_PALREAD</code>,
-  <code>SVC_WINDOW</code>, <code>SVC_PAIR</code>) is foreground-only; see <a href="#services">Services</a>.</li>
+  <code>SVC_WINDOW</code>, <code>SVC_PAIR</code>, <code>SVC_FITWORD</code>) is foreground-only; see
+  <a href="#services">Services</a>.</li>
 <li><strong>Never install your own interrupt handler.</strong> The IM2 vector table is
   writable RAM, but your code only exists in the address space while
   its own bank is mapped - a self-installed vector is a guaranteed
@@ -450,7 +451,7 @@ line hook returns carry set ends the chain for that line; modules after
 it are skipped. Every module in a collection still needs an <code>int</code>
 entry, even if it is only a <code>ret</code> - the chain macros assume one.</p>
 <h2 id="services">Services</h2>
-<p>The interpreter exposes twenty small routines through a fixed jump
+<p>The interpreter exposes twenty-one small routines through a fixed jump
 table at a frozen address, <code>XBN_API</code> (<code>$BEC8</code>). <code>xbn.inc</code> binds a symbol
 to each row, so you call them by name:</p>
 <table>
@@ -602,6 +603,13 @@ to each row, so you call them by name:</p>
 <td><code>SVC_VOCFIND</code></td>
 <td>HL = ASCIIZ word (any case, first five characters count)</td>
 <td>D = word id, E = type, CF clear; CF set = not in the vocabulary</td>
+<td>no</td>
+</tr>
+<tr>
+<td>20</td>
+<td><code>SVC_FITWORD</code></td>
+<td>A = the length of the word you are about to print (0 = flush only)</td>
+<td>Flushes any word the printer is holding, then starts a new line if a word that long would not fit the rest of the current window's line but fits the window - the printer's own word wrap, with scrolling and More paging. Print the word's letters with a one-character <code>SVC_PUTS</code> each and it lands exactly where <code>MES</code> would put it. The ticker's fn 39 is the worked use</td>
 <td>no</td>
 </tr>
 </tbody>
@@ -888,7 +896,7 @@ needed.</p>
 <tr>
 <td><code>ticker/</code></td>
 <td>Types or scrolls a database message in a field you place, size and colour - typewriter, marquee once or looping marquee</td>
-<td>30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed</td>
+<td>30 arm, 31 stop (p = 1 clears), 32 row, 33 column, 34 width, 35 ink, 36 paper, 37 mode, 38 speed, 39 type message at cursor</td>
 <td>-</td>
 </tr>
 <tr>

@@ -120,7 +120,7 @@ maximum-size binary: it is loaded and present, but it is not a valid
 <code>CALL</code> target or entry-point address in its own right, since nothing
 can address a location past <code>$FFFF</code> to call into.</p>
 <h2 id="service-table">Service table</h2>
-<p>A fixed jump table of twenty three-byte <code>JP</code> instructions at <code>XBN_API</code>
+<p>A fixed jump table of twenty-one three-byte <code>JP</code> instructions at <code>XBN_API</code>
 (<code>$BEC8</code>), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -303,6 +303,14 @@ tables.</p>
 <td>AF, BC, DE, HL</td>
 <td>no</td>
 </tr>
+<tr>
+<td>20</td>
+<td><code>SVC_FITWORD</code></td>
+<td>A = length of the word about to be printed (0 = flush only)</td>
+<td>Flushes any pending word, then starts a new line if the word would not fit the rest of the current window's line but fits the window (word wrap, with scrolling and More paging); CF clear</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
+</tr>
 </tbody>
 </table>
 <p>Error convention throughout is esxDOS style: carry flag set, error code
@@ -373,8 +381,9 @@ releases:</p>
 </tbody>
 </table>
 <p><code>XBN_API</code> grew to fifteen rows in format 2, to sixteen at API version 3
-(<code>SVC_PAIR</code>), and to twenty at format 3 (rows 16-19); rows 0-9 kept
-their addresses and signatures throughout.</p>
+(<code>SVC_PAIR</code>), to twenty at format 3 (rows 16-19), and to twenty-one with
+<code>SVC_FITWORD</code> (row 20); rows 0-9 kept their addresses and signatures
+throughout.</p>
 <h2 id="limits">Limits</h2>
 <ul>
 <li><strong>16384 bytes (<code>$4000</code>) maximum</strong>, header included, for the whole
