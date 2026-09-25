@@ -11,6 +11,18 @@ All notable changes to NextDAAD are recorded here.
   setup. `title_present` and `intro_present` (overlay2.asm), which
   only gated that print, are removed. Kit interpreter and manual
   rebuilt.
+- EXTERNS.BAT combines an author's own XBN modules with the kit's. A
+  module is a bare name (`externs\<name>\`) or a folder path, relative
+  to the caller's directory; a path may not reuse a name from
+  `externs\`. `lib\xbnbuild.ps1` scans each `MODULE` block for
+  `ext`/`int`/`line`/`out` labels at column 0 and
+  `SCRATCH_SIZE`/`STATE_SIZE` equates, replacing its fixed module and
+  hook tables; a format 3 header gets `0` for a hook no module has.
+  Declared claims are placed after the collection's by
+  `xbnmod.inc`'s new `XBN_CLAIM_AT`/`XBN_CLAIMS`, with overflow
+  asserts. Errors print one `xbnbuild:` line. New
+  `tests/xbnbuild-selftest.ps1`, fixtures `tests/xbn/usermods/`,
+  emulator check `tests/xbn/hookshape.py`.
 - PROCESS and REDO now reach process tables 128 to 254. The process
   list index was doubled in 8 bits, so a table number above 127 ran
   table n-128 instead. Both references and DRC/NDRC allow 255 tables.

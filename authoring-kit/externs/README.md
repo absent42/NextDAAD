@@ -41,6 +41,14 @@ point `SJASMPLUSDIR` in `CONFIG.BAT` at an install you already have. You do not
 need it otherwise: every extern here ships a prebuilt `GAME.XBN`, and `all/`
 ships one containing the lot.
 
+Your own modules combine the same way - name the folder that holds one:
+
+    EXTERNS.BAT fade ..\mymods\doors
+
+A relative path counts from the folder you ran `EXTERNS.BAT` in. The
+shape your module needs is in the manual, `docs\externs.html`, under
+"Your own modules in a subset".
+
 `CALL` targets are slots in a fixed jump table at `$C00E` - slot n is at
 `$C00E + 3n` - never routine addresses, which differ between the standalone,
 combined and subset builds.

@@ -15,6 +15,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   minute. Removing a source still removes its file from `RELEASE\`.
   `CLEAN.BAT` forces everything to convert again. See
   [Getting started](getting-started.md#build-and-run).
+- **Your own externs in EXTERNS.BAT.** `EXTERNS.BAT fade ..\mymods\doors`
+  builds one `GAME.XBN` from shipped modules and your own; name your
+  module by its folder. The builder wires in its hooks and places its
+  scratch RAM and saved state for you. See
+  [Externs](externs.md#your-own-modules-in-a-subset).
 - **Parser cursor.** `GFX n 22` to `26` choose the cursor's glyph,
   blink and colours; the default inverse block is unchanged. Typing
   past what the input window can hold is now ignored instead of

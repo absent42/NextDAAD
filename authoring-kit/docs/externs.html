@@ -847,13 +847,14 @@ rule above applies to a flag. Session configuration - whether a module
 is armed, a recorder's own bookkeeping, colours chosen this session -
 stays ordinary bank memory; only what the player would notice was
 wrong after loading an old save belongs in the state area.</p>
-<p>Claim your own offsets through <code>xbnmod.inc</code>'s <code>XBN_STATE_FREE</code> chain,
-the same discipline as the <code>CALL</code> slot table: bump it past whatever you
-claim so the next module's claim does not collide with yours. The
-toolkit claims the first ten bytes (the picker's pool size and used
-bitmap, the print target window) - fn 76's picker and fn 84's print
-target are now restored by <code>LOAD</code> and <code>RAMLOAD</code>, where they used to go
-stale.</p>
+<p>A module you combine with <code>EXTERNS.BAT</code> asks for bytes by declaring
+<code>STATE_SIZE</code> and finds them at <code>STATE</code> - see
+<a href="#your-own-modules-in-a-subset">Your own modules in a subset</a>. The
+collection's own modules claim fixed offsets through <code>xbnmod.inc</code>'s
+<code>XBN_STATE_FREE</code> chain instead. The toolkit claims the first ten bytes
+(the picker's pool size and used bitmap, the print target window) -
+fn 76's picker and fn 84's print target are now restored by <code>LOAD</code> and
+<code>RAMLOAD</code>, where they used to go stale.</p>
 <p>One edge case worth knowing: a cross-part <code>LOAD</code> whose target part
 fails to load leaves the state area restored to the save's values while
 the flags are not.</p>
@@ -937,8 +938,8 @@ which claims no flags) joined it in this one.</p>
 <li><code>externs\all\GAME.XBN</code> ships every module in one prebuilt binary.
   Copy it beside <code>GAME.DDB</code> and use whichever functions you want.</li>
 <li><code>EXTERNS.BAT ticker fade</code> from the kit root builds a binary holding
-  only the modules you name (this route needs sjasmplus - see
-  <code>externs\README.md</code> for where it looks).</li>
+  only the modules you name, your own included (this route needs
+  sjasmplus - see <code>externs\README.md</code> for where it looks).</li>
 </ul>
 <p>An unused module costs nothing at run time. This is the collection's
 dormancy rule: every module stays inert until the game invokes it - an
@@ -963,8 +964,77 @@ never routine addresses, which move whenever any module is edited. An
 unowned slot jumps to a bare <code>RET</code> and does nothing.</p>
 <p>Collection modules get that table from <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code> (or
 <code>XBN_BEGIN3</code>, its format 3 twin, for a module with a line or output
-hook), used in place of <code>XBN_HEADER</code>/<code>XBN_HEADER3</code>; <code>CONTRIBUTING.md</code>
-at the repository root documents the module shape.</p>
+hook), used in place of <code>XBN_HEADER</code>/<code>XBN_HEADER3</code>; the module shape is
+under <a href="#your-own-modules-in-a-subset">Your own modules in a subset</a>.</p>
+<h3 id="your-own-modules-in-a-subset">Your own modules in a subset</h3>
+<p><code>EXTERNS.BAT</code> combines your own modules with the collection's. Name a
+collection module by its name and your own by its folder:</p>
+<pre><code>EXTERNS.BAT fade ..\mymods\doors toolkit
+</code></pre>
+<p>An argument with a <code>\</code> or <code>/</code> in it is a folder holding <code>&lt;folder&gt;.asm</code>,
+and the folder's name is the module's name. A relative path counts from
+the folder you ran <code>EXTERNS.BAT</code> in. A folder you put inside <code>externs\</code>
+is reached by its bare name, like the shipped ones; a folder anywhere
+else may not reuse a name from <code>externs\</code>. Modules run in the order you
+name them.</p>
+<p>Your module has the shape every collection module has:</p>
+<pre><code>; Standalone build emits its own header; a combined build
+; defines XBN_MODULE and supplies it.
+    IFNDEF XBN_MODULE
+    DEVICE ZXSPECTRUMNEXT
+    INCLUDE "xbn.inc"
+    INCLUDE "xbnmod.inc"
+    ORG XBN_ORG
+    XBN_BEGIN doors.ext, doors.int  ; XBN_BEGIN3 with a line/out hook
+    ENDIF
+
+    MODULE doors
+SCRATCH_SIZE equ 256                ; optional
+STATE_SIZE   equ 4                  ; optional
+ext:
+    ; test C (the fn code) first; not yours: or a / ret
+    or a
+    ret
+int:
+    ret                             ; required, even when idle
+    ENDMODULE
+
+    IFNDEF XBN_MODULE
+xbn_end:
+    SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    XBN_SCRATCH_END
+    MODULE doors
+    XBN_CLAIMS SCRATCH_SIZE, STATE_SIZE ; 0 for a size you did not declare
+    ENDMODULE
+    ENDIF
+</code></pre>
+<p><code>EXTERNS.BAT</code> reads your source to wire it in:</p>
+<ul>
+<li><code>ext</code> and <code>int</code> are required, <code>line</code> and <code>out</code> optional, each a label
+  at the start of its line inside your <code>MODULE</code> block (the colon is
+  recommended). An indented one is refused. A <code>line</code> label joins the
+  <a href="#the-line-hook">line hook</a> chain and an <code>out</code> label the
+  <a href="#the-output-hook">output hook</a> chain; either makes the binary format
+  3, which needs interpreter v0.10.1 or later.</li>
+<li><code>SCRATCH_SIZE</code> asks for that many bytes of scratch RAM above the
+  binary: inside your 16K bank, not in the file, not saved, never
+  initialised. <code>STATE_SIZE</code> asks for bytes of the
+  <a href="#the-extern-state-area">extern state area</a>. Your code finds them at
+  <code>SCRATCH</code> and <code>STATE</code>. The build prints where each module's claims
+  landed and fails if either area runs out.</li>
+<li>Reserved inside your module: <code>ext</code>, <code>int</code>, <code>line</code>, <code>out</code>, <code>SCRATCH</code>,
+  <code>STATE</code>, <code>SCRATCH_SIZE</code>, <code>STATE_SIZE</code>.</li>
+</ul>
+<p>Your <code>STATE</code> offset depends on the modules named before yours that also
+claim state. Adding, removing or reordering them moves it, and a save
+made with the old binary then restores those bytes into the wrong
+module. Settle the module list before you release.</p>
+<p>Pick fn codes 16 and up, clear of the codes in the collection table
+above, and keep off flags 224-251, the collection's reserved band.</p>
+<p>The closing <code>IFNDEF</code> block builds your module on its own with sjasmplus
+(<code>-I</code> the kit root); <code>XBN_CLAIMS</code> places its claims there.
+<code>EXTERNS.BAT</code> with just your folder builds the same module without the
+assembler command line.</p>
 <h3 id="hints-a-hint-book-on-the-card">hints - a hint book on the card</h3>
 <p>Author <code>HINTS.TXT</code> beside your game source; <code>BUILD.BAT</code> packs it into
 <code>RELEASE\GAME.HNT</code> (up to 256 topics, 255 levels per topic, 64KB of
