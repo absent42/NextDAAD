@@ -292,11 +292,11 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 34-39 and 42-48 exist: XREG XCAL XTIK XSVC XFIO
+;     where fns 20-29, 34-39 and 42-49 exist: XREG XCAL XTIK XSVC XFIO
 ;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB
-;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR (fns 26-29,
-;     34-39 and 42-48 exist only in xbntest.asm) (on any other leg these
-;     print unwritten flags - zeros)
+;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR XFWD (fns
+;     26-29, 34-39 and 42-49 exist only in xbntest.asm) (on any other leg
+;     these print unwritten flags - zeros)
 ;   XLOD XRMS XRML XLD2: SAVE/LOAD/RAMSAVE/RAMLOAD are resident
 ;     interpreter condacts, meaningful on any leg with a filesystem, but
 ;     XSTW/XSTZ/XSTR (fn 47/48, fixture-only) make the sequence prove the
@@ -475,6 +475,7 @@ XNMU   208 verb
 XNMA   209 verb
 XNMK   210 verb
 XNMP   211 verb
+XFWD   212 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -652,19 +653,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 217 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3D9 (lsb 217, msb 195) - read
+> XCAL _   CALL 223 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3DF (lsb 223, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C3CE by the state-area fn 47/48 dispatch code.
+                             ; from $C3D9 by the fn 49 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 48 230         ; Task 4's owed check: tail_marker, address
-                             ; $E630 (lsb 48, msb 230) - the SECOND 8K page
+           CALL 54 230         ; Task 4's owed check: tail_marker, address
+                             ; $E636 (lsb 54, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E625 by the state-area fn 47/48 dispatch code.
+                             ; from $E630 by the fn 49 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -2090,6 +2091,28 @@ CLOAK   22 noun
            DONE
 > XNMP _   MES     "NAME="
            EXTERN  0 21
+           DONE
+; XFWD - SVC_FITWORD (fixture fn 49) in a 10-column window after an
+;        8-character word: length 2 fits (A follows on the same row),
+;        length 5 does not (B starts the next row), length 15 is wider
+;        than the window (no wrap: C follows on the same row). Expect
+;        rows 12-15, columns 0-9: 12345678A / 12345678 / B / 12345678C.
+> XFWD _   WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 10
+           CLS
+           MES     "12345678"
+           EXTERN  2 49
+           MES     "A"
+           NEWLINE
+           MES     "12345678"
+           EXTERN  5 49
+           MES     "B"
+           NEWLINE
+           MES     "12345678"
+           EXTERN  15 49
+           MES     "C"
+           NEWLINE
            DONE
 /PRO 6
 ; ---- one-shot init ----

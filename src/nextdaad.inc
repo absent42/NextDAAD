@@ -211,12 +211,12 @@ XBN_HDR_LEN     equ 14       ; "XBN" + version + extEntry + intEntry + size + 4 
 ; poked territory like IM2_STUB/IM2_CTC_STUB above, not part of the
 ; assembled resident image - main.asm's xbn_api_init ldirs the table
 ; template here at boot. Sanity: below IM2_CTC2_STUB ($BEC5-$BEC7) ends
-; clear at $BEC7, so the 20-row table ($BEC8-$BF03) does not collide;
+; clear at $BEC7, so the 21-row table ($BEC8-$BF06) does not collide;
 ; re-grep src/ for $BEC8-$BFFF literals before every commit that touches
 ; this block (only $BFFD, the AY data I/O port, is expected below $C000).
 XBN_API         equ $BEC8       ; FROZEN from first release with XBN
                                 ; support - see xbn.inc; append-only
-XBN_API_ROWS    equ 20
+XBN_API_ROWS    equ 21
 
 XBN_STATE       equ $BF80       ; FROZEN: 128-byte extern state area,
 XBN_STATE_LEN   equ 128         ; saved after the part byte (save v3),

@@ -142,6 +142,14 @@ SVC_VOCFIND     equ XBN_API+57  ; in HL = ASCIIZ word (any case, first 5
                                  ; = not in the vocabulary. Corrupts AF,
                                  ; BC, DE, HL. API 3. Foreground-only;
                                  ; NEVER from the output hook.
+SVC_FITWORD     equ XBN_API+60  ; in A = length of the word about to be
+                                 ; printed (0 = flush only). Flushes any
+                                 ; pending word, then starts a new line if
+                                 ; the word will not fit the rest of the
+                                 ; current window's line but fits the
+                                 ; window (scroll, More paging). Out CF
+                                 ; clear. Corrupts all registers. API 3.
+                                 ; Foreground-only.
 
 ; SVC_FOPEN modes (esxDOS)
 XBN_FMODE_R     equ $01         ; read

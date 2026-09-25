@@ -563,6 +563,7 @@ xbn_api_tpl:
     jp svc_getpending             ; 17
     jp svc_inject                 ; 18
     jp svc_vocfind                ; 19
+    jp svc_fitword                ; 20
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -806,6 +807,20 @@ svc_putchar:
     call xbn_svc_mmu_save
     pop af
     call prn_decoded
+    call xbn_svc_mmu_restore
+    or a                          ; CF clear
+    ret
+
+; A = length of the word the extern types next (0 = flush only). Flush
+; pending, then prn_fit's wrap rule. svc_putchar's bracket: the More
+; prompt prn_fit can raise maps DDB pages.
+svc_fitword:
+    push af
+    call xbn_svc_mmu_save
+    call prn_flush
+    pop af
+    or a
+    call nz, prn_fit
     call xbn_svc_mmu_restore
     or a                          ; CF clear
     ret

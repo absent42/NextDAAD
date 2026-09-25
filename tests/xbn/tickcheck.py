@@ -1,8 +1,10 @@
 r"""Boot a staged NextDAAD leg headless in ZEsarUX, type verbs, dump the
 tilemap. Usage:
   python tests\xbn\tickcheck.py sd\XBN XTCK [XT40 ...] [--wait 3] [--row 27]
+    [--compare R0,C0:R1,C1:H,W] [--glyph R,C]
 Prints each non-blank row as rr|text after the last verb; --row N also
-prints that row's attribute bytes. Exit 0 on a clean run.
+prints that row's attribute bytes. Exit 0 on a clean run, 3 if any
+--compare block mismatches.
 
 Refuses ticker verbs when the staged GAME.XBN is the xbntest.asm fixture
 (tests\out\xbn\GAME.XBN): there fns 34-38 are the fixture's own probes,
@@ -47,6 +49,11 @@ def main():
                     help="decode width: 80 or 40 (after GFX 1 18)")
     ap.add_argument("--grab", default=None,
                     help="file in the leg's card root to copy to tests\\out\\xbn after the run")
+    ap.add_argument("--compare", action="append", default=[],
+                    help="R0,C0:R1,C1:H,W - the HxW block at R0,C0 must equal "
+                         "the block at R1,C1 (glyph and attribute); exit 3 if not")
+    ap.add_argument("--glyph", action="append", default=[],
+                    help="R,C - print the glyph byte at row R, column C")
     args = ap.parse_args()
 
     leg = (ROOT / args.leg).resolve() if not pathlib.Path(args.leg).is_absolute() else pathlib.Path(args.leg)
@@ -91,6 +98,32 @@ def main():
                 print("%02d|%s" % (i, r.rstrip()))
         if args.row is not None:
             print("attr %02d|%s" % (args.row, " ".join("%02X" % a for a in attrs[args.row])))
+        def cell(r, c):
+            i = (r * args.cols + c) * 2
+            return grid[i], grid[i + 1]
+        for spec in args.glyph:
+            r, c = (int(v) for v in spec.split(","))
+            print("glyph %d,%d = $%02X" % (r, c, cell(r, c)[0]))
+        bad = False
+        for spec in args.compare:
+            a, b, hw = spec.split(":")
+            r0, c0 = (int(v) for v in a.split(","))
+            r1, c1 = (int(v) for v in b.split(","))
+            h, w = (int(v) for v in hw.split(","))
+            miss = []
+            for dr in range(h):
+                for dc in range(w):
+                    x, y = cell(r0 + dr, c0 + dc), cell(r1 + dr, c1 + dc)
+                    if x != y:
+                        miss.append("+%d,+%d: $%02X/$%02X vs $%02X/$%02X"
+                                    % (dr, dc, x[0], x[1], y[0], y[1]))
+            if miss:
+                bad = True
+                print("compare %s MISMATCH (%d cells)" % (spec, len(miss)))
+                for m in miss[:20]:
+                    print("  " + m)
+            else:
+                print("compare %s OK" % spec)
         if args.grab:
             src = sd / args.grab
             dst = ROOT / "tests" / "out" / "xbn" / args.grab
@@ -100,7 +133,7 @@ def main():
             else:
                 print("grab: %s was not written" % args.grab)
         z.close()
-        rc = 0
+        rc = 3 if bad else 0
     finally:
         proc.kill()
         proc.wait(timeout=10)

@@ -28,7 +28,7 @@ ext_main:
     cp 21
     jp z, .fn21                  ; jr went out of range once fn47/48 grew the chain
     cp 22
-    jr z, .fn22
+    jp z, .fn22                  ; jr went out of range once fn49 grew the chain
     cp 23
     jr z, .fn23
     cp 24
@@ -69,6 +69,8 @@ ext_main:
     jp z, state_w
     cp 48
     jp z, state_r
+    cp 49
+    jp z, fitword_probe          ; SVC_FITWORD probe; past the pad, jp not jr
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -632,6 +634,13 @@ pair_probe:
     ld hl, XBN_FLAGS+237
     or (hl)
     ld (hl), a
+    or a                         ; CF discipline: deliberate clear
+    ret
+
+; fn 49: SVC_FITWORD with p1 as the length. The DSF reads the effect.
+fitword_probe:
+    ld a, b
+    call SVC_FITWORD
     or a                         ; CF discipline: deliberate clear
     ret
 

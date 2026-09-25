@@ -158,6 +158,25 @@ prn_glyph:
     call win_newline            ; complete the wrap's line advance
     jr prn_more_check
 
+; A = length of the word about to print (1-255). New line first when it
+; will not fit the rest of the line but fits the window - the one copy of
+; the wrap rule (prn_flush, SVC_FITWORD). Corrupts all registers.
+prn_fit:
+    ld e, a                     ; E = length (win_field keeps DE)
+    ld a, WIN_W
+    call win_field
+    ld c, (hl)                  ; C = WIN_W
+    ld a, WIN_CURX
+    call win_field
+    ld a, c
+    sub (hl)                    ; A = WIN_W - WIN_CURX (CURX < WIN_W)
+    cp e
+    ret nc                      ; remaining >= length: fits
+    ld a, e
+    cp c
+    ret nc                      ; length >= WIN_W: too wide, char-wrap
+    jp prn_newline_raw          ; fits the window: wrap it down first
+
 ; Emit the buffered word through prn_glyph. If the word overflows the
 ; line remainder but still fits the window, newline (+ More check) first
 ; so the whole word moves down together. No-op while wrapLock is held
@@ -170,24 +189,7 @@ prn_flush:
     ld a, (wrapLen)
     or a
     ret z
-    ld a, WIN_W
-    call win_field
-    ld c, (hl)                  ; C = WIN_W
-    ld a, WIN_CURX
-    call win_field
-    ld a, (hl)
-    ld b, a                     ; B = WIN_CURX
-    ld a, c
-    sub b                       ; A = remaining = WIN_W - WIN_CURX
-    ld b, a                     ; B = remaining
-    ld a, (wrapLen)
-    cp b
-    jr c, .emit                 ; wrapLen < remaining: fits as-is
-    jr z, .emit                 ; wrapLen == remaining: fills exactly
-    ld a, (wrapLen)             ; wrapLen > remaining
-    cp c
-    jr nc, .emit                ; wrapLen >= WIN_W: too wide, char-wrap
-    call prn_newline_raw        ; word fits the window: wrap it down first
+    call prn_fit
 .emit:
     xor a
     ld (wrapIdx), a
