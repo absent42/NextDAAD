@@ -423,7 +423,8 @@ type_msg:
 
 ; Word from tyidx: L = characters that are not $0E/$0F, up to a space or
 ; $0B-$0D. A word with '_' or '@' goes out whole (the interpreter alone
-; knows an object name's length). Leaves tyidx at the word's end.
+; knows an object name's length). Others are typed in chunks of at most
+; WIN_W glyphs, each fitted, as prn_char flushes. Leaves tyidx at the end.
 ty_word:
     ld a, (tyidx)
     ld e, a                       ; E = scan index
@@ -462,9 +463,14 @@ ty_word:
     ld a, c
     or a
     jr nz, .whole
+    ld (tychunk), a               ; A = 0: a toggles-only run makes no fit
     ld a, d
+    ld (tyrem), a
     or a
-    call nz, SVC_FITWORD           ; make room: the printer's own wrap rule
+    jr z, .type
+    call SVC_FITWORD              ; make room: the printer's own wrap rule
+    ld (tywid), a                 ; out A = WIN_W
+    call ty_chunk
 .type:
     ld a, (tyidx)
     ld hl, tyend
@@ -484,6 +490,14 @@ ty_word:
     ld hl, tyone
     call SVC_PUTS                   ; one letter + flush: shows at once
     call ty_delay
+    ld hl, tychunk
+    dec (hl)
+    jr nz, .tnext
+    ld a, (tyrem)
+    or a
+    jr z, .tnext
+    call ty_chunk                   ; prn_char flushes every WIN_W glyphs:
+    call SVC_FITWORD                ; place the next chunk by its own length
 .tnext:
     ld hl, tyidx
     inc (hl)
@@ -522,6 +536,22 @@ ty_delay:
     ld hl, tycnt
     dec (hl)
     jr nz, .frame
+    ret
+
+; A = tychunk = min(tyrem, tywid); tyrem -= A. Corrupts F, E, HL.
+ty_chunk:
+    ld a, (tywid)
+    ld hl, tyrem
+    cp (hl)
+    jr c, .set                      ; wider than the window: a full chunk
+    ld a, (hl)
+.set:
+    ld (tychunk), a
+    ld e, a
+    ld a, (hl)
+    sub e
+    ld (hl), a
+    ld a, e
     ret
 
 ; Setter table: min, max, target - one row per fn 32..38 in order.
@@ -568,6 +598,9 @@ ew:         db 0                 ; this frame's effective width
 tylen:      db 0                 ; fn 39: message length
 tyidx:      db 0                 ; fn 39: next character
 tyend:      db 0                 ; fn 39: end of the current word
+tywid:      db 0                 ; fn 39: window width (SVC_FITWORD's A)
+tychunk:    db 0                 ; fn 39: glyphs left in this chunk
+tyrem:      db 0                 ; fn 39: glyphs after this chunk
 tycnt:      db 0                 ; fn 39: frames left in this delay
 tyfr:       dw 0                 ; fn 39: frame counter snapshot
 tyone:      db 0, 0              ; one-letter string; tyone+1 = ""

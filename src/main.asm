@@ -813,7 +813,7 @@ svc_putchar:
 
 ; A = length of the word the extern types next (0 = flush only). Flush
 ; pending, then prn_fit's wrap rule. svc_putchar's bracket: the More
-; prompt prn_fit can raise maps DDB pages.
+; prompt prn_fit can raise maps DDB pages. Out: A = WIN_W.
 svc_fitword:
     push af
     call xbn_svc_mmu_save
@@ -822,7 +822,10 @@ svc_fitword:
     or a
     call nz, prn_fit
     call xbn_svc_mmu_restore
-    or a                          ; CF clear
+    ld a, WIN_W
+    call win_field
+    ld a, (hl)
+    or a                          ; CF clear (WIN_W is nonzero)
     ret
 
 ; HL = ASCIIZ, may live in the extern bank. svc_putchar restores the

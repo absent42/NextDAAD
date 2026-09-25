@@ -190,7 +190,6 @@ prn_flush:
     or a
     ret z
     call prn_fit
-.emit:
     xor a
     ld (wrapIdx), a
 .eloop:

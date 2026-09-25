@@ -30,7 +30,7 @@ ext_main:
     cp 22
     jp z, .fn22                  ; jr went out of range once fn49 grew the chain
     cp 23
-    jr z, .fn23
+    jp z, .fn23                  ; jr went out of range once fn50 grew the chain
     cp 24
     jr z, .fn24
     cp 25
@@ -71,6 +71,8 @@ ext_main:
     jp z, state_r
     cp 49
     jp z, fitword_probe          ; SVC_FITWORD probe; past the pad, jp not jr
+    cp 50
+    jp z, fitflush_probe
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -643,6 +645,29 @@ fitword_probe:
     call SVC_FITWORD
     or a                         ; CF discipline: deliberate clear
     ret
+
+; fn 50: SVC_FITWORD must flush a pending word before placing the next:
+; "12345678" held unflushed, then length 5, then "M" (XFWF reads it).
+fitflush_probe:
+    ld hl, ffp_word
+.loop:
+    ld a, (hl)
+    or a
+    jr z, .fit
+    push hl
+    call SVC_PUTCHAR             ; buffered: no flush
+    pop hl
+    inc hl
+    jr .loop
+.fit:
+    ld a, 5
+    call SVC_FITWORD
+    ld hl, ffp_m
+    call SVC_PUTS
+    or a                         ; CF discipline: deliberate clear
+    ret
+ffp_word: db "12345678", 0
+ffp_m:    db "M", 0
 
 ; fn 43: SVC_GETLINE -> 120 length, 121 fresh (1/0), 122-125 first 4 chars.
 getline_probe:

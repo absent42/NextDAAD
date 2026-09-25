@@ -292,10 +292,10 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 34-39 and 42-49 exist: XREG XCAL XTIK XSVC XFIO
+;     where fns 20-29, 34-39 and 42-50 exist: XREG XCAL XTIK XSVC XFIO
 ;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB
-;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR XFWD (fns
-;     26-29, 34-39 and 42-49 exist only in xbntest.asm) (on any other leg
+;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR XFWD XFWF (fns
+;     26-29, 34-39 and 42-50 exist only in xbntest.asm) (on any other leg
 ;     these print unwritten flags - zeros)
 ;   XLOD XRMS XRML XLD2: SAVE/LOAD/RAMSAVE/RAMLOAD are resident
 ;     interpreter condacts, meaningful on any leg with a filesystem, but
@@ -314,7 +314,7 @@
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
 ;     XTCK XT40 XTPS XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX
-;     XTMW XTEF XTTY XTTW XTTO XTTA XTTB XTTM XTTK XTTL XFAD XFDI XFSC
+;     XTMW XTEF XTTY XTTW XTTO XTTA XTTB XTTC XTTM XTTK XTTL XFAD XFDI XFSC
 ;     XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
@@ -346,7 +346,7 @@
 ;     20-23) reach playername too: they capture or print the name.
 ;   -XbnTicker stages the STANDALONE ticker example: XTCK XT40 XTPS
 ;     XTPR XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW XTEF
-;     XTTY XTTW XTTO XTTA XTTB XTTM XTTK XTTL are meaningful there (plus
+;     XTTY XTTW XTTO XTTA XTTB XTTC XTTM XTTK XTTL are meaningful there (plus
 ;     XSLT with all slots printing nothing).
 ;   NEVER type a ticker verb on the fixture leg: fns 34-38 are the
 ;     fixture's own probes there, and XTCO's EXTERN 1 36 hits the
@@ -487,6 +487,8 @@ XTTM   217 verb
 XTTK   218 verb
 XTTL   219 verb
 XTTB   220 verb
+XTTC   221 verb
+XFWF   222 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -576,9 +578,10 @@ CLOAK   22 noun
 ; Messages 10-11: playername fn 23 comparands (XNMK).
 /10 "KEVIN"
 /11 "SKIP"
-; Messages 12-13: ticker fn 39 (typed message) test payloads.
+; Messages 12-14: ticker fn 39 (typed message) test payloads.
 /12 "Take _ now.#nThen leave."
 /13 "Here is a caf#g#A#t table and a verylongwo#g#A#trds"
+/14 "abcd efghij#g#A#tklmnop"
 /OTX
 /0 "a spare widget"
 /1 "a widget on the floor"
@@ -667,19 +670,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 223 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3DF (lsb 223, msb 195) - read
+> XCAL _   CALL 229 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3E5 (lsb 229, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C3D9 by the fn 49 dispatch code.
+                             ; from $C3DF by the fn 50 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 54 230         ; Task 4's owed check: tail_marker, address
-                             ; $E636 (lsb 54, msb 230) - the SECOND 8K page
+           CALL 60 230         ; Task 4's owed check: tail_marker, address
+                             ; $E63C (lsb 60, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E630 by the fn 49 dispatch code.
+                             ; from $E636 by the fn 50 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -2128,6 +2131,16 @@ CLOAK   22 noun
            MES     "C"
            NEWLINE
            DONE
+; XFWF - SVC_FITWORD flushes a pending word first (fixture fn 50: eight
+;        SVC_PUTCHARs, then length 5, then "M") in a 10-column window.
+;        Expect row 12 "12345678", row 13 "M" at column 0.
+> XFWF _   WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 10
+           CLS
+           EXTERN  0 50
+           NEWLINE
+           DONE
 ; XTTY - fn 39 vs MES at 30 columns, message 1 (token-compressed). Expect
 ;        rows 12-13 cols 0-29 identical to cols 40-69: "Northern lights
 ;        over the" / "northern mountains tonight".
@@ -2220,6 +2233,24 @@ CLOAK   22 noun
            CLS
            EXTERN  1 38
            EXTERN  13 39
+           NEWLINE
+           DONE
+; XTTC - a word at least as wide as the window, starting past column 0,
+;        at 8 columns: the printer places it in chunks of 8 glyphs, each
+;        wrapped by its own length. Expect rows 12-14 cols 0-7 identical
+;        to cols 40-47: "abcd efg" / "hij?k" / "lmnop", glyph $90 at
+;        (13,3) and (13,43).
+> XTTC _   WINDOW  2
+           WINAT   12 40
+           WINSIZE 12 8
+           CLS
+           MES     14
+           WINDOW  1
+           WINAT   12 0
+           WINSIZE 12 8
+           CLS
+           EXTERN  1 38
+           EXTERN  14 39
            NEWLINE
            DONE
 ; XTTM - a message that does not exist fails the entry: nothing typed,
