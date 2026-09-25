@@ -111,6 +111,7 @@ XBN_TILEMAP     equ $6000
 ; Claims: hints.asm rdbuf, offset 0, 256 bytes
 ; Claims: fade.asm palStage, offset 256, 512 bytes
 ; Claims: transcript.asm tbuf, offset 768, TRANSCRIPT_RING bytes
+; Modules outside the collection declare sizes instead (XBN_CLAIM_AT below).
     IFNDEF TRANSCRIPT_RING
 TRANSCRIPT_RING equ 2048         ; transcript buffer; standalone builds may raise it
     ENDIF
@@ -130,6 +131,20 @@ XBN_SCRATCH equ xbn_end
 ; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
 XBN_STATE_FREE  equ 10           ; next unclaimed offset - bump when you add a claim
     ASSERT XBN_STATE_FREE <= XBN_STATE_LEN
+
+; Claims for modules outside the collection: declare SCRATCH_SIZE and/or
+; STATE_SIZE; xbnbuild places them after the two chains above. Invoke
+; inside the module's MODULE block - defines SCRATCH and STATE there.
+    MACRO XBN_CLAIM_AT scr_off, scr_len, st_off, st_len
+SCRATCH equ XBN_SCRATCH + (scr_off)
+STATE   equ XBN_STATE + (st_off)
+        ASSERT XBN_SCRATCH + (scr_off) + (scr_len) <= $10000, scratch claim runs past the mapped 16K bank ($FFFF)
+        ASSERT (st_off) + (st_len) <= XBN_STATE_LEN, extern state claim runs past XBN_STATE_LEN
+    ENDM
+; Standalone build tail: claims start where the collection's end.
+    MACRO XBN_CLAIMS scr_len, st_len
+        XBN_CLAIM_AT XBN_SCRATCH_FREE, scr_len, XBN_STATE_FREE, st_len
+    ENDM
 
 ; Dispatch chain shared by all.asm and xbnbuild's generated source - one
 ; definition. Rebuilds the entry contract (A=B=param1, C=fn,

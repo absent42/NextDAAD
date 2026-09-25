@@ -592,6 +592,8 @@ if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShippe
     throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit transcript DRIFTED from authoring-kit\externs\all\GAME.XBN (format v$($xbnDriftFresh[3]) vs v$($xbnDriftShipped[3])) - generator and all.asm disagree; compare $xbnDriftOut"
 }
 
+& "$PSScriptRoot\xbnbuild-selftest.ps1"
+
 & "$PSScriptRoot\hintpack-selftest.ps1"
 & "$PSScriptRoot\hintpack-accent-oracle.ps1"
 
