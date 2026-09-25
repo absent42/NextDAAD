@@ -593,6 +593,7 @@ if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShippe
 }
 
 & "$PSScriptRoot\xbnbuild-selftest.ps1"
+& "$PSScriptRoot\audit-externs-selftest.ps1"
 
 & "$PSScriptRoot\hintpack-selftest.ps1"
 & "$PSScriptRoot\hintpack-accent-oracle.ps1"

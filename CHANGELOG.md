@@ -11,6 +11,11 @@ All notable changes to NextDAAD are recorded here.
   setup. `title_present` and `intro_present` (overlay2.asm), which
   only gated that print, are removed. Kit interpreter and manual
   rebuilt.
+- `tests/audit-externs.ps1` validates format 3 headers as the loader
+  does: version 2 or 3, bytes 10-13 zero only in v2, `lineEntry`/
+  `outEntry` range-checked in v3, the end of a 16K image clamped to
+  `$FFFF`. `all` and `transcript` now pass. New `-ExternsDir` and
+  `tests/audit-externs-selftest.ps1` (crafted headers).
 - EXTERNS.BAT combines an author's own XBN modules with the kit's. A
   module is a bare name (`externs\<name>\`) or a folder path, relative
   to the caller's directory; a path may not reuse a name from
