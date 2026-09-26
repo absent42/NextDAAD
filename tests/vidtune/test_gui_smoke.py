@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator, QGuiApplication
-from PySide6.QtWidgets import QApplication, QSizePolicy
+from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 
 import vidtune
 from vidtune import mainwindow as vt_mainwindow
+from vidtune import theme as vt_theme
 from vidtune.mainwindow import MainWindow, PreviewPane, SettingsPanel
 from vidtune.encoderun import MetricsSummary
 from vidtune.kitmodel import KitConfig, arg_hash, clip_state
@@ -714,8 +715,9 @@ def test_all_pane_buttons_have_no_focus_policy(qtbot):
     buttons = list(pane._mode_buttons.values()) + [
         pane._play_btn, pane._stop_btn, pane._step_back_btn, pane._step_fwd_btn,
         pane._loop_checkbox, pane._set_in_btn, pane._set_out_btn, pane._clear_btn,
-        pane._scale_btn, pane._scrub_slider,
-    ]
+        pane._scrub_slider, pane._view, pane._view.horizontalScrollBar(),
+        pane._view.verticalScrollBar(),
+    ] + list(pane._zoom_buttons.values())
     assert buttons  # sanity: the loop below must not be vacuous
     for btn in buttons:
         assert btn.focusPolicy() == Qt.NoFocus
@@ -736,16 +738,16 @@ def test_space_reaches_pane_flicker_toggle_after_button_click(qtbot):
     assert pane.showing_source != shown_before
 
 
-def test_click_image_still_toggles_flicker(qtbot):
-    # The click-image-to-flicker path (_ClickableLabel) is independent of
-    # keyboard focus.
+def test_click_image_does_not_toggle_flicker(qtbot):
+    # A click on the picture starts a pan; only Space toggles Flicker.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=_frames(5), source=_frames(5), fps=25, column_major=False)
     pane.set_mode("Flicker")
+    pane.show()
     shown_before = pane.showing_source
-    pane._image_label.clicked.emit()
-    assert pane.showing_source != shown_before
+    qtbot.mouseClick(pane._view.viewport(), Qt.LeftButton)
+    assert pane.showing_source == shown_before
 
 
 def test_segment_readout_lifecycle(qtbot):
@@ -856,13 +858,122 @@ def test_preview_pane_defaults_to_2x_scale(qtbot):
     pane = PreviewPane()
     qtbot.addWidget(pane)
     assert pane.scale == 2
-    assert pane._scale_btn.isChecked() is True
+    assert [n for n, b in pane._zoom_buttons.items() if b.isChecked()] == [2]
 
     # The initial render (once frames arrive) must honour it too.
     pane.set_frames(encoded=_frames(3), source=None, fps=25, column_major=False)
     pixmap = pane._image_label.pixmap()
     assert not pixmap.isNull()
     assert pixmap.width() == 8 * 2 and pixmap.height() == 8 * 2
+
+
+# -- zoom 1x-5x, drag pan, wheel and key zoom -------------------------------
+
+def _shown_pane(qtbot, h=100, w=320):
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(3, h, w), source=_frames(3, h, w),
+                    fps=25, column_major=False)
+    pane.resize(500, 500)
+    pane.show()
+    qtbot.waitExposed(pane)
+    QApplication.processEvents()
+    return pane
+
+
+def test_zoom_buttons_scale_pixmap_one_to_five(qtbot):
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(3), source=None, fps=25, column_major=False)
+    assert list(pane._zoom_buttons) == [1, 2, 3, 4, 5]
+    for n, btn in pane._zoom_buttons.items():
+        btn.click()
+        assert pane.scale == n
+        assert pane._image_label.pixmap().size().toTuple() == (8 * n, 8 * n)
+        assert [z for z, b in pane._zoom_buttons.items() if b.isChecked()] == [n]
+    pane.set_scale(9)
+    assert pane.scale == 5
+    pane.set_scale(0)
+    assert pane.scale == 1
+
+
+def test_zoom_buttons_sit_in_mode_row(qtbot):
+    pane = _shown_pane(qtbot)
+    mode_y = pane._mode_buttons["Encoded"].y()
+    for btn in pane._zoom_buttons.values():
+        assert abs(btn.y() - mode_y) <= 2
+        assert btn.x() > pane._mode_buttons["Heatmap"].x()
+
+
+def test_zoom_beyond_view_scrolls_and_keeps_centre(qtbot):
+    pane = _shown_pane(qtbot)
+    pane.set_scale(1)
+    hbar, vbar = pane._view.horizontalScrollBar(), pane._view.verticalScrollBar()
+    assert hbar.maximum() == 0 and vbar.maximum() == 0
+
+    pane.set_scale(5)
+    assert hbar.maximum() > 0
+    centre_x = (hbar.value() + hbar.pageStep() / 2) / (hbar.maximum() + hbar.pageStep())
+    assert abs(centre_x - 0.5) < 0.01
+
+    # Off-centre, then zoom in: the same picture point stays at the centre.
+    pane.set_scale(4)
+    assert hbar.maximum() > 0
+    hbar.setValue(hbar.maximum())
+    before = (hbar.value() + hbar.pageStep() / 2) / (hbar.maximum() + hbar.pageStep())
+    pane.set_scale(5)
+    after = (hbar.value() + hbar.pageStep() / 2) / (hbar.maximum() + hbar.pageStep())
+    assert abs(after - before) < 0.01
+
+
+def test_drag_pans_view(qtbot):
+    pane = _shown_pane(qtbot)
+    pane.set_scale(5)
+    hbar, vbar = pane._view.horizontalScrollBar(), pane._view.verticalScrollBar()
+    h0, v0 = hbar.value(), vbar.value()
+    vp = pane._view.viewport()
+    start = vp.rect().center()
+    qtbot.mousePress(vp, Qt.LeftButton, pos=start)
+    qtbot.mouseMove(vp, start + type(start)(-40, -20))
+    qtbot.mouseRelease(vp, Qt.LeftButton, pos=start + type(start)(-40, -20))
+    assert hbar.value() == h0 + 40
+    assert vbar.value() == min(vbar.maximum(), v0 + 20)
+
+
+def test_wheel_steps_zoom(qtbot):
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+
+    pane = _shown_pane(qtbot)
+    vp = pane._view.viewport()
+
+    def wheel(dy):
+        pos = QPointF(vp.rect().center())
+        ev = QWheelEvent(pos, QPointF(vp.mapToGlobal(vp.rect().center())),
+                         QPoint(0, 0), QPoint(0, dy), Qt.NoButton, Qt.NoModifier,
+                         Qt.NoScrollPhase, False)
+        QApplication.sendEvent(vp, ev)
+
+    assert pane.scale == 2
+    wheel(120)
+    assert pane.scale == 3
+    wheel(-240)
+    assert pane.scale == 1
+    wheel(60)                          # half a notch: no step yet
+    assert pane.scale == 1
+    wheel(60)
+    assert pane.scale == 2
+
+
+def test_number_keys_set_zoom(qtbot):
+    pane = _shown_pane(qtbot)
+    pane.setFocus()
+    for key, n in ((Qt.Key_4, 4), (Qt.Key_1, 1), (Qt.Key_5, 5)):
+        qtbot.keyClick(pane, key)
+        assert pane.scale == n
+        assert pane._zoom_buttons[n].isChecked()
+    qtbot.keyClick(pane, Qt.Key_2, Qt.ControlModifier)
+    assert pane.scale == 5
 
 
 def test_main_window_sizes_wide_enough_for_settings_panel(fixture_kit, qtbot):
@@ -914,8 +1025,8 @@ def test_mode_buttons_are_not_expanding(qtbot):
 
 def test_transport_controls_split_into_two_compact_rows(qtbot):
     # Row 1 is playback (play/pause, stop, step back/forward, loop); row 2
-    # is markers/scale (frame counter, Set In, Set Out, Clear, segment
-    # readout, 2x). All object names/attributes are unchanged - only the
+    # is markers (frame counter, Set In, Set Out, Clear, segment
+    # readout). All object names/attributes are unchanged - only the
     # layout containers split - so this checks the resulting geometry
     # rather than any new attribute.
     pane = PreviewPane()
@@ -930,7 +1041,7 @@ def test_transport_controls_split_into_two_compact_rows(qtbot):
     playback_widgets = (pane._play_btn, pane._stop_btn, pane._step_back_btn,
                         pane._step_fwd_btn, pane._loop_checkbox)
     marker_widgets = (pane._frame_label, pane._set_in_btn, pane._set_out_btn,
-                      pane._clear_btn, pane._segment_label, pane._scale_btn)
+                      pane._clear_btn, pane._segment_label)
     playback_ys = [w.y() for w in playback_widgets]
     marker_ys = [w.y() for w in marker_widgets]
     # A couple of px of tolerance within a row: QCheckBox is a couple of
@@ -944,9 +1055,13 @@ def test_transport_controls_split_into_two_compact_rows(qtbot):
 def test_preview_pane_minimum_width_shrinks_after_two_row_split(qtbot):
     # The two-row transport layout must keep minimumSizeHint below the
     # single-row floor, so MainWindow's geometry falls back to the
-    # smaller 320-wide-at-2x image floor instead.
-    pane = PreviewPane()
-    qtbot.addWidget(pane)
+    # smaller 320-wide-at-2x image floor instead. Measured under the
+    # theme MainWindow applies: bare native styles floor every button at
+    # 75px, which the eight-button mode row does not fit.
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.setStyleSheet(vt_theme.stylesheet())
+    pane = PreviewPane(host)
     assert pane.minimumSizeHint().width() < 680   # below PREVIEW_WIDTH's own floor
 
 

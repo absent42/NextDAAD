@@ -5,6 +5,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.11.0 - unreleased
 
+- **VIDTUNE zooms 1x to 5x.** The preview's single 2x button is now
+  five zoom buttons beside Encoded, Flicker and Heatmap; keys `1` to `5`
+  and the mouse wheel also change zoom, and the centre of the view
+  stays put. A picture bigger than the pane scrolls: drag it to pan.
+  Clicking the picture no longer switches Flicker - use Space.
 - **Switching text width keeps your colours.** `GFX 1 18` and `GFX 0 18`
   now keep every window's `INK`, `PAPER` and `MODE`. The screen still
   clears and every window still goes back to full screen, but the

@@ -4,6 +4,14 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.11.0 - unreleased
 
+- vidtune preview zoom 1x-5x: the 2x toggle becomes five exclusive
+  zoom buttons in the mode row; keys 1-5 and the mouse wheel (one step
+  per notch, touchpad deltas accumulated) also set zoom, keeping the
+  view centre. The picture sits in a scroll area (`_ImageView`) that
+  pans by drag once it outgrows the view. Clicking the picture no
+  longer toggles Flicker; Space does. `tests/vidtune/test_gui_smoke.py`
+  gains six tests; the pane-width floor test is measured under the
+  theme. vidtune.exe rebuilt.
 - GFX 18 keeps each window's display style across a width change:
   MODE, INK, PAPER and the cached attribute pairs survive in all 8
   windows; geometry, cursors and line counts still reset, and the
