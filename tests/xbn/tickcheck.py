@@ -3,10 +3,8 @@ tilemap. Usage:
   python tests\xbn\tickcheck.py sd\XBN XTCK [XT40 ...] [--wait 3] [--row 27]
     [--compare R0,C0:R1,C1:H,W] [--glyph R,C]
 Prints each non-blank row as rr|text after the last verb; --row N also
-prints that row's attribute bytes; --kblog FILE (DEBUG build) saves the
-keystroke log ring to FILE, its pointer to FILE.ptr, and prints the
-decoded report. Exit 0 on a clean run, 3 if any --compare block
-mismatches.
+prints that row's attribute bytes. Exit 0 on a clean run, 3 if any
+--compare block mismatches.
 
 Refuses ticker verbs when the staged GAME.XBN is the xbntest.asm fixture
 (tests\out\xbn\GAME.XBN): there fns 34-38 are the fixture's own probes,
@@ -50,8 +48,6 @@ def main():
     ap.add_argument("--row", type=int, default=None)
     ap.add_argument("--cols", type=int, default=80,
                     help="decode width: 80 or 40 (after GFX 1 18)")
-    ap.add_argument("--kblog", default=None,
-                    help="DEBUG build: dump the keystroke log ring to FILE")
     ap.add_argument("--grab", default=None,
                     help="file in the leg's card root to copy to tests\\out\\xbn after the run")
     ap.add_argument("--compare", action="append", default=[],
@@ -137,14 +133,6 @@ def main():
                 print("grabbed %s -> %s" % (args.grab, dst))
             else:
                 print("grab: %s was not written" % args.grab)
-        if args.kblog:
-            sys.path.append(str(ROOT / "tests"))
-            import kblog_dump
-            raw, ptr = kblog_dump.read_ring(z)
-            out = pathlib.Path(args.kblog)
-            out.write_bytes(raw)
-            pathlib.Path(str(out) + ".ptr").write_text("0x%04X\n" % ptr)
-            print(kblog_dump.report(kblog_dump.entries_from(raw, ptr)))
         z.close()
         rc = 3 if bad else 0
     finally:

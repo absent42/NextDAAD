@@ -833,53 +833,6 @@ msgDdb:      db "GAME.DDB SIZE ", 0
 msgVer:      db "VER ", 0
 msgTgt:      db " TGT ", 0
 
-; Keystroke log: one entry per frame from im2_isr (frame, keys down on any
-; row, editor state, detail). Off while a clip or the NXB bench owns slot 2.
-    ASSERT KBLOG_BASE >= AUD_STAGE2 + AUD_STAGE2_RING
-    ASSERT KBLOG_END <= SPR_DBG_SNAP
-    ASSERT (KBLOG_BASE & 3) == 0 && (KBLOG_END & $FF) == 0
-    ASSERT (KBLOG_BASE & $FF) == 0 && KBLOG_BASE < KBLOG_END
-kblog_tick:
-    ld a, (vidPlaying)          ; a clip owns slot 2 ($4000-$5FFF)
-    or a
-    ret nz
-    ld a, (kblogOn)             ; the NXB bench owns slot 2
-    or a
-    ret z
-    ld hl, (kblogPtr)
-    ld a, (frameCounter)
-    ld (hl), a
-    inc l
-    xor a
-    in a, ($FE)                 ; A = 0: all rows
-    cpl
-    and $1F
-    ld (hl), a
-    inc l
-    ld a, (moreLock)
-    or a
-    ld a, (kblogState)          ; ld leaves Z from the or
-    jr z, .nm
-    or $80
-.nm:
-    ld (hl), a
-    inc l
-    ld a, (kblogDetail)
-    ld (hl), a
-    inc hl
-    ld a, h
-    cp high KBLOG_END
-    jr c, .st
-    ld h, high KBLOG_BASE
-.st:
-    ld (kblogPtr), hl
-    ret
-kblogSig:    db "KLG1"
-kblogPtr:    dw KBLOG_BASE
-kblogState:  db 0
-kblogDetail: db 0
-kblogOn:     db 1
-
  ELSE
 
 ; Release stubs: same entry points, no output, minimal size.

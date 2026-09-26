@@ -145,13 +145,13 @@ im2_init:
     reti
 
 ; ISR contract (SP7 Task 3): the fast path (audEnable = 0) touches only
-; AF, HL and frameCounter (and, in DEBUG, the keystroke log ring), exactly
-; as before - never MMU, esxDOS or the $C000 window. SP-XBN Task 5
-; EXCEPTION: xbnIntOn is a BIT MASK, not a flag - bit 0 = an XBN with a
-; nonzero intEntry, bit 1 = the sprite tick (SP20) - and any bit set makes
-; the fast path take its own full-context save (.xbnhook_fast) before
-; running isr_hook_body, so a sprite-only game with no XBN pays exactly the
-; same save. MMU6/7 for the XBN bank go through the ISR-private
+; AF, HL and frameCounter, exactly as before - never MMU, esxDOS or the
+; $C000 window. SP-XBN Task 5 EXCEPTION: xbnIntOn is a BIT MASK, not a
+; flag - bit 0 = an XBN with a nonzero intEntry, bit 1 = the sprite tick
+; (SP20) - and any bit set makes the fast path take its own full-context
+; save (.xbnhook_fast) before running isr_hook_body, so a sprite-only
+; game with no XBN pays exactly the same save. MMU6/7 for the XBN bank
+; go through the ISR-private
 ; extSavedIsr/xbn_isr_mmu_save/restore pair (main.asm) - never extSaved,
 ; which a foreground extern call may be mid-flight on. audEnable = 0 and
 ; xbnIntOn = 0 together (no XBN loaded or its intEntry left 0, and no
@@ -179,9 +179,6 @@ im2_isr:
     ld hl, (frameCounter)
     inc hl
     ld (frameCounter), hl
- IFDEF DEBUG
-    call kblog_tick             ; AF, HL only; interrupts still off here
- ENDIF
     ld a, (audEnable)
     or a
     jr nz, .audio

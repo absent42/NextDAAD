@@ -1739,18 +1739,7 @@ h_anykey:                       ; 24
     xor a
     call print_msg
     ld e, $04                   ; ANYKEY timeout arm bit
- IFDEF DEBUG
-    xor a                       ; keystroke log: ANYKEY waiting, detail 0
-    ld (kblogDetail), a
-    ld a, 4
-    ld (kblogState), a
- ENDIF
     call wait_key_timeout
- IFDEF DEBUG
-    xor a
-    ld (kblogState), a
-    ld (kblogDetail), a
- ENDIF
     jp prn_reset_lines
 h_pause:                        ; 35: B frames, 0 = 256
     ; Under V3, PAUSE 0 is GETKEY: block for a keypress and store it
@@ -1763,20 +1752,7 @@ h_pause:                        ; 35: B frames, 0 = 256
     ld hl, ddbVer
     bit 0, (hl)
     jr z, .timed                ; V2: 0 still means 256 frames
- IFDEF DEBUG
-    xor a                       ; keystroke log: GETKEY waiting, detail 0
-    ld (kblogDetail), a
-    ld a, 5
-    ld (kblogState), a
- ENDIF
     call key_wait_char
- IFDEF DEBUG
-    push af
-    xor a
-    ld (kblogState), a
-    ld (kblogDetail), a
-    pop af
- ENDIF
     ld hl, flags+FLAG_KEY1      ; flags is ALIGN 256: the pair is one
     ld (hl), a                  ; INC L apart (doc 07 (a))
     inc l

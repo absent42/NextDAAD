@@ -970,42 +970,6 @@ function Assert-CursorStateWriters {
     "parser cursor: state written only by h_gfx, cache only by inp_cursor_attr, reclaim marks curAttr unconditionally, reset sites clean"
 }
 
-function Assert-Slot2Writers {
-    # The DEBUG keystroke log writes $4800-$4FFF (MMU slot 2) every frame,
-    # gated on vidPlaying (vid_run) and kblogOn (the NXB bench). Every slot-2
-    # remap is counted so a new borrower cannot appear without a gate.
-    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
-    $want = @{ 'src\video.asm' = 11 }
-    $files = @(Get-ChildItem (Join-Path $root 'src\*.asm')) + @(Get-ChildItem (Join-Path $root 'src\audio\*.asm'))
-    foreach ($f in $files) {
-        $rel = $f.FullName.Substring($root.Length + 1)
-        $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
-        $n = ([regex]::Matches($t, 'nextreg\s+NR_MMU2\b')).Count + ([regex]::Matches($t, 'ld\s+e,\s*NR_MMU2\b')).Count
-        $w = if ($want.ContainsKey($rel)) { $want[$rel] } else { 0 }
-        if ($n -ne $w) {
-            throw "$rel : $n MMU slot 2 remap(s), expected $w - the DEBUG keystroke log writes `$4800 every frame; a new slot-2 borrower must clear kblogOn (or run under vidPlaying) before this table is updated"
-        }
-    }
-    $dbg = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\debug.asm') -Raw)
-    $tick = [regex]::Match($dbg, '(?ms)^kblog_tick:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
-    if ($tick -notmatch 'ld\s+a,\s*\(vidPlaying\)' -or $tick -notmatch 'ld\s+a,\s*\(kblogOn\)') {
-        throw "src\debug.asm : kblog_tick must test vidPlaying and kblogOn before touching the ring"
-    }
-    $vid = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\video.asm') -Raw)
-    $entry = [regex]::Match($vid, '(?ms)^nxb_entry:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
-    $recl = [regex]::Match($vid, '(?ms)^nxb_reclaim:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
-    $opsr = [regex]::Match($vid, '(?ms)^nxb_ops_restore:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
-    $rbody = [regex]::Match($vid, '(?ms)^vid_run_restore_body:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
-    $rtail = [regex]::Match($vid, '(?ms)^\.restore_tail:.*?(?=^\.?[A-Za-z_][A-Za-z0-9_]*:)').Value
-    if ($entry -notmatch 'ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : nxb_entry must clear kblogOn before the bench remaps slot 2" }
-    if (-not $recl) { throw "src\video.asm : nxb_reclaim not found" }
-    if ($recl -match '\bkblogOn\b') { throw "src\video.asm : nxb_reclaim must not set kblogOn - slot 2 is restored only at its end, and an abort maps L2 pages after it" }
-    if ($opsr -notmatch '(?s)call\s+nxb_reclaim\s.*ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : nxb_ops_restore must set kblogOn after its call to nxb_reclaim (clean and no-bank exits)" }
-    if ($rbody -notmatch '(?s)nextreg\s+NR_MMU2\b.*ld\s+hl,\s*vid_run\.restore_tail') { throw "src\video.asm : vid_run_restore_body must restore MMU2 before it hops to vid_run.restore_tail" }
-    if ($rtail -notmatch 'ld\s+\(kblogOn\),\s*a') { throw "src\video.asm : vid_run.restore_tail must set kblogOn (the bench abort chain's slot-2-restored point)" }
-    "slot 2: 11 remaps, all in video.asm; kblog_tick gated on vidPlaying and kblogOn; nxb_entry clears, nxb_ops_restore (after nxb_reclaim) and vid_run.restore_tail (after the MMU2 restore) set, nxb_reclaim does not"
-}
-
 function Assert-PaletteWriterCensus {
     # Every NR $41/$44 write site that can run while a cycle is armed must sit
     # inside a palLock bracket, or be the tick itself. Counts, comments
@@ -1070,7 +1034,6 @@ Assert-LayerOrderReset
 Assert-RestartLeavesSprites
 Assert-CycleStopSites
 Assert-CursorStateWriters
-Assert-Slot2Writers
 Assert-PaletteWriterCensus
 Assert-WidthSwitchKeepsStyle
 
