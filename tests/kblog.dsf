@@ -1,6 +1,6 @@
-; NextDAAD keystroke lab: the fixture for the DEBUG keystroke log. Text only,
+; NextDAAD keystroke lab: the typeahead regression fixture. Text only,
 ; window 0 full screen, prompt ">" (flag 42 = 34). LONG prints and pauses so
-; a player can type the next command early. The screen is never cleared
+; a player can type the next command early (LONG pauses 2.5 s). The screen is never cleared
 ; after a response; flag 200 guards the one-time init.
 
 /CTL
@@ -104,7 +104,7 @@ LOOK   4   verb
 /PRO 1
 > LONG  _    LET 100 0
              PROCESS 2
-             PAUSE 100
+             PAUSE 250
              DONE
 > SHORT _    MESSAGE 2
              DONE

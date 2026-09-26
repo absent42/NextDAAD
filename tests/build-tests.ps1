@@ -38,7 +38,7 @@
 #   -SprAud              sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
 #   -Cycle               sd\CYCLE\     tests\cycle.dsf    (GFX 9-12; palette card as 001.NX2)
 #   -Cursor              sd\CURSOR\    tests\cursor.dsf   (GFX 22-26; palette card as 001.NX2)
-#   -KbLog               sd\KBLOG\     tests\kblog.dsf    (DEBUG keystroke log lab)
+#   -KbLog               sd\KBLOG\     tests\kblog.dsf    (typeahead lab, tests\typeahead_run.py)
 #   -BigDdb              sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok           sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                 sd\XBN\       tests\extern.dsf
@@ -2195,7 +2195,7 @@ foreach ($c in @(@{ n = 'GFX 95 22';   b = [byte[]]@(87, 95, 22) },
 # Keystroke lab stimuli, each asserted as an authored run with a neighbour.
 $kblogBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\kblog.ddb")
 foreach ($c in @(@{ n = 'LET 42 34';                   b = [byte[]]@(51, 42, 34) },
-                 @{ n = 'PAUSE 50 / DONE (LONG, compiled)'; b = [byte[]]@(35, 50, 22) },
+                 @{ n = 'PAUSE 125 / DONE (LONG, compiled)'; b = [byte[]]@(35, 125, 22) },
                  @{ n = 'MESSAGE 3 / ANYKEY / MESSAGE 4'; b = [byte[]]@(38, 3, 24, 38, 4) },
                  @{ n = 'PAUSE 0 / PRINT 60';          b = [byte[]]@(35, 0, 53, 60) })) {
     if ((Find-ByteRuns $kblogBytes $c.b).Count -lt 1) {
