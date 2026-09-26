@@ -4,9 +4,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # lib siblings
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from vidtune import theme
+from vidtune import ICON_PATH, theme
 from vidtune.kitmodel import find_kit_root
 from vidtune.mainwindow import MainWindow
 
@@ -19,6 +20,7 @@ def main():
     # boxes, menus - so the tool has one look end to end.
     app.setFont(theme.ui_font())
     app.setStyleSheet(theme.stylesheet())
+    app.setWindowIcon(QIcon(str(ICON_PATH)))  # kit picker, message boxes
     root = find_kit_root(Path.cwd())
     if root is None:
         picked = QFileDialog.getExistingDirectory(

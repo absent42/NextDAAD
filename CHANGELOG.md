@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.1 - unreleased
+## v0.11.0 - unreleased
 
 - Version stamp is DEBUG-only. Release and kit builds no longer print
   `VERSION_STR` or hold for 50 frames at boot; the DEBUG build still

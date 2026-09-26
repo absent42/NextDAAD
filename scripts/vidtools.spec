@@ -7,6 +7,7 @@
 import os
 
 LIB = os.path.abspath(os.path.join(SPECPATH, "..", "authoring-kit", "lib"))
+ICON = os.path.join(LIB, "vidtune", "vidtune.ico")
 
 # Sibling imports under lib\ are sys.path tricks PyInstaller cannot see.
 GUI_HIDDEN = ["nxv2dec", "nxv2enc", "nxv2path", "videnc"]
@@ -53,6 +54,7 @@ gui = Analysis(
     [os.path.join(LIB, "vidtune", "__main__.py")],
     pathex=[LIB],
     hiddenimports=GUI_HIDDEN,
+    datas=[(ICON, "vidtune")],   # runtime window icon
     excludes=EXCLUDES,
     noarchive=False,
 )
@@ -73,6 +75,7 @@ gui_exe = EXE(
     [],
     exclude_binaries=True,
     name="vidtune",
+    icon=ICON,
     console=False,
     upx=False,
 )

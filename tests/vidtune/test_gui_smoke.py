@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator, QGuiApplication
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
+import vidtune
 from vidtune import mainwindow as vt_mainwindow
 from vidtune.mainwindow import MainWindow, PreviewPane, SettingsPanel
 from vidtune.encoderun import MetricsSummary
@@ -22,6 +23,14 @@ def test_window_populates_clip_list(fixture_kit, qtbot):
     assert len(texts) == 2
     assert texts[0].startswith("001")
     assert "stale" in texts[0]            # no .vid exists yet
+
+
+def test_window_title_version_and_icon(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    assert win.windowTitle() == f"vidtune {vidtune.__version__}"
+    assert not win.windowIcon().isNull()
+    assert {s.width() for s in win.windowIcon().availableSizes()} >= {16, 32, 256}
 
 
 def test_settings_panel_roundtrip(fixture_kit, qtbot):

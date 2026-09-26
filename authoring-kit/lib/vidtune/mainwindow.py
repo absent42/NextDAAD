@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QDoubleValidator,
     QFont,
     QGuiApplication,
+    QIcon,
     QPainter,
 )
 from PySide6.QtWidgets import (
@@ -46,7 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import presets, settingsmodel, theme
+from . import ICON_PATH, __version__, presets, settingsmodel, theme
 from .presetrow import LadderPanel, RouteMenuButton
 from .configwrite import ConfigConflict, write_sidecar, write_vidopts_line
 from .encoderun import EncodeJob, resolve_encoder, summarize_report
@@ -805,7 +806,8 @@ class MainWindow(QMainWindow):
         self._all_settings = None
         self._all_cancelled = False
 
-        self.setWindowTitle("vidtune")
+        self.setWindowTitle(f"vidtune {__version__}")
+        self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.setStyleSheet(theme.stylesheet())
 
         self._banner = QLabel("")

@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.10.1 - unreleased
+## 0.11.0 - unreleased
 
 - **No version stamp at boot.** The interpreter no longer prints its
   version number and pauses for a second before the game starts; boot
