@@ -213,10 +213,9 @@ boot_data_init:
 bank_table_init:
     ld hl, bankTable
     ld b, BANK_TABLE_SIZE
+    call kb_flush           ; drop presses queued since im2_init (a key held
+                            ; at power-on); foreground writes kbQr only
     xor a                   ; BT_RESERVED
-    ld (kbQw), a            ; typeahead queue empty on a warm re-entry;
-    ld (kbQr), a            ; kbPrev is left so a key held across the
-                            ; re-entry is not a press edge
 .zero:
     ld (hl), a
     inc hl
@@ -1447,11 +1446,9 @@ tm_width_core:
     ret
 
 ; --- keyboard press queue (typeahead) ---
-; kb_tick runs from im2_isr every frame with interrupts ENABLED (the CTC
-; feeders nest, AF/HL-only, touching nothing here); AF/HL saved by the
-; caller. Press edges go into kbQ as code | CAPS<<6 | SYM<<7 (matrix code
-; row*5+bit, kbRows order); kb_char (overlay1) pops them. The FPGA latches
-; all eight rows at once each scan, so a row read is never torn.
+; kb_tick: im2_isr, every frame, interrupts ENABLED (CTC feeders nest, AF/HL
+; only). Press edges -> kbQ as code | CAPS<<6 | SYM<<7 (row*5+bit, kbRows
+; order); kb_char pops. The FPGA latches all 8 rows per scan: reads not torn.
 KB_QMASK        equ 15
 KB_SETTLE       equ 2               ; frames the newest entry keeps taking
                                     ; live shift bits (a human chord, CSpect)

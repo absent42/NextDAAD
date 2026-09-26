@@ -145,9 +145,9 @@ im2_init:
     reti
 
 ; ISR contract (SP7 Task 3): the fast path (audEnable = 0) touches only
-; AF, HL, frameCounter and the typeahead queue (kb_tick, main.asm, which
-; saves BC/DE itself and runs inside its own ei/di bracket) - never MMU,
-; esxDOS or the $C000 window. SP-XBN Task 5 EXCEPTION: xbnIntOn is a BIT MASK, not a
+; AF, HL, frameCounter and the typeahead queue (kb_tick, main.asm, which saves
+; BC/DE itself and runs inside its own ei/di bracket) - never MMU, esxDOS or
+; the $C000 window. SP-XBN Task 5 EXCEPTION: xbnIntOn is a BIT MASK, not a
 ; flag - bit 0 = an XBN with a nonzero intEntry, bit 1 = the sprite tick
 ; (SP20) - and any bit set makes the fast path take its own full-context
 ; save (.xbnhook_fast) before running isr_hook_body, so a sprite-only
