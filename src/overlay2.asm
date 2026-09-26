@@ -4207,7 +4207,7 @@ l2scr_anykey:
 l2scr_wait_release:
     call l2scr_anykey
     jr nz, l2scr_wait_release
-    ret
+    jp kb_flush
 
 ; Live config block - field order MUST match an l2sCfg row (LDIR).
 l2sMode:  db 0                  ; 0 = 256x192 mode-0, 1 = 320x256 mode-1

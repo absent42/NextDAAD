@@ -322,7 +322,7 @@ key_down:
 ; up first, so the ENTER that submitted a command cannot dismiss a
 ; More/ANYKEY arming while still held (ZXDAAD128 WaitForKey waits on a
 ; new LASTK event; silicon accent run check 8 caught the race).
-; Corrupts AF.
+; Corrupts AF. Flushes the typeahead queue on exit: the dismiss key is consumed.
 wait_key:
 .settle:
     call key_down
@@ -333,13 +333,13 @@ wait_key:
 .release:
     call key_down
     jr nz, .release
-    ret
+    jp kb_flush
 
 ; Wait for a key press then release, honouring the DAAD input timeout
 ; when armed. E = arm mask against flag 49 ($02 More..., $04 ANYKEY).
 ; Returns early with flag 49 bit 7 set if flag 48 seconds elapse
 ; before a press. A normal keypress leaves bit 7 untouched.
-; Corrupts AF, BC, DE, HL.
+; Corrupts AF, BC, DE, HL. Both exits flush the typeahead queue.
 wait_key_timeout:
     ld a, (flags+FLAG_TIMEOUT)
     ld d, a                     ; keep flag 48 for the MUL below
@@ -369,7 +369,7 @@ wait_key_timeout:
 .press:
     call key_down
     jr nz, .press               ; wait for release
-    ret
+    jp kb_flush
 .up:
     ld c, 1
 .tick:
@@ -387,7 +387,7 @@ wait_key_timeout:
     ld a, (flags+FLAG_TIMECTL)
     or $80
     ld (flags+FLAG_TIMECTL), a
-    ret
+    jp kb_flush
 
 ; $0C escape: wait for a key, then the pause restarts the page count.
 wait_key_reset:

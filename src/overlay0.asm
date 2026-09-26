@@ -1701,7 +1701,8 @@ keyRows:                        ; port MSB, then bits 0-4's chars
     db $BF, 13, 'l','k','j','h'
     db $7F, ' ', 0, 'm','n','b'
 
-; Block for a fresh press (waits for prior release first).
+; Block for a fresh press (waits for prior release first). Flushes the
+; typeahead queue.
 key_wait_char:
 .settle:
     call key_scan
@@ -1716,12 +1717,15 @@ key_wait_char:
     call key_scan               ; is still held, so the old ld e, a
     or a                        ; stash read back 0 after release
     jr nz, .release
+    call kb_flush               ; kwcChar is memory, not a register
     ld a, (kwcChar)
     ret
 kwcChar: db 0
 
 ; --- interaction / movement / stub condacts ---
 h_inkey:                        ; 111: condition; key -> flag 60
+; Flushes the typeahead queue first: an INKEY loop is a reader.
+    call kb_flush
     call key_scan
     ; Flag 61 (fKey2, the IBM extended code) is cleared whenever flag
     ; 60 is written, following jDAAD's _INKEY2 (writes both flags on
