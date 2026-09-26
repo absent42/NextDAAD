@@ -883,7 +883,9 @@ h_display:
 ;   18 = text width select (NextDAAD-only, no jdaad/DAAD-reference
 ;       analogue; GFX_SUB_TXTMODE, nextdaad.inc). B = 0 selects 80-column
 ;       mode (80x32, boot default), 1 = 40-column mode (40x32). B >= 2 is
-;       a no-op. Triggers clean slate: tilemap cleared, windows reset.
+;       a no-op. A width change clears the map in window 0's attribute
+;       and resets every window's geometry, cursor and line count;
+;       MODE, INK, PAPER and the cached pairs are kept (win_regeom).
 ;       Width is GAME-OWNED state, surviving all RESTART/LOAD/RAMLOAD and
 ;       part switches.
 ;   22-26 = parser cursor (NextDAAD-only; GFX_SUB_CUR_*, nextdaad.inc):
@@ -1104,8 +1106,12 @@ h_gfx:
     cp (hl)
     ret z                        ; already active: no clear, no reset -
                                  ; safe to issue unconditionally at init
-    jp tm_width_apply            ; resident, like tm_font_init above;
-                                 ; game-owned tmCols survives every reset
+    push af                      ; A = width, live into tm_width_core
+    ld a, (winTable+WIN_ATTR)    ; window 0's attribute fills the map
+    ld (tmAttr), a
+    pop af
+    call tm_width_core           ; resident; game-owned tmCols
+    jp win_regeom                ; geometry reset, style kept
 .curglyph:                       ; sub 22: B = tile, 0 = block. Raw, no
     ld a, b                      ; charset shift (ZXDAAD128's DdbCursor).
     ld (curGlyph), a
@@ -1374,6 +1380,36 @@ gfx_pal_ctl:
 .first:
     or PAL_L2_FIRST
     ret
+
+; GFX 18 width change: reset every window's geometry, cursor and line
+; count at the new width; MODE, INK, PAPER and both cached pairs stay.
+; Ends in win_select 0 like windows_init. Corrupts everything.
+    ASSERT WIN_X == 0 && WIN_CURY == 5 && WIN_FLAGS == 6 && WIN_INK == 7
+    ASSERT WIN_PAPER == 8 && WIN_LINES == 9 && WIN_ATTR == 10
+    ASSERT WIN_ATTRINV == 11 && WIN_SIZE == 12
+win_regeom:
+    ld a, (tmCols)
+    ld (winTpl+WIN_W), a         ; resident template, as windows_init does
+    ld de, winTable
+    ld b, WINDOW_COUNT
+.win:
+    push bc
+    ld hl, winTpl
+    ld bc, WIN_FLAGS             ; X, Y, W, H, CURX, CURY
+    ldir
+    ex de, hl                    ; HL -> this record's FLAGS
+    inc hl                       ; keep FLAGS (MODE)
+    inc hl                       ; keep INK
+    inc hl                       ; keep PAPER
+    ld (hl), 0                   ; LINES
+    inc hl
+    inc hl                       ; keep ATTR
+    inc hl                       ; keep ATTRINV
+    ex de, hl                    ; DE -> next record
+    pop bc
+    djnz .win
+    xor a
+    jp win_select
 
  IFDEF DEBUG
 msgGfxUnk: db "GFX? ", 0

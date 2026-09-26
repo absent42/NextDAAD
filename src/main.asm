@@ -1396,13 +1396,22 @@ gfx_layer_apply:
     nextreg NR_LAYERS, a
     ret
 
+; A = width in columns (80 or 40). Default clean slate: boot and fatal()
+; via txt_init. GFX 18's keep-style path is overlay2's .txtmode.
+; Corrupts everything.
+tm_width_apply:
+    ld hl, tmAttr
+    ld (hl), TM_ATTR_DEFAULT     ; not through A: A carries the width
+    call tm_width_core
+    jp windows_init              ; all 8 windows full-screen at (tmCols),
+                                 ; cursors homed, window 0 reselected
+
 ; A = width in columns (80 or 40). The one composer of NR $6B outside
 ; video playback (vid_play saves/restores the register wholesale) and
-; the only writer of tmCols and tmStride. Clean slate per the GFX 18
-; contract: full map blanked, all 8 windows reset at the new width.
-; RESIDENT alongside gfx_layer_apply above (same reason: callable from
-; overlay2). Corrupts everything.
-tm_width_apply:
+; the only writer of tmCols and tmStride. Fills the full map from
+; (tmAttr). RESIDENT alongside gfx_layer_apply above (same reason:
+; callable from overlay2). Corrupts everything.
+tm_width_core:
     ld (tmCols), a
     cp 40
     ld d, 80                     ; 40-col: 40*2 bytes/row
@@ -1417,8 +1426,7 @@ tm_width_apply:
     ; map would otherwise return stale on a later widen (display and
     ; pair_reclaim both walk them). Raw fill, not tm_cell_addr - the
     ; stride was just patched.
-    ld a, TM_ATTR_DEFAULT
-    ld (tmAttr), a
+    ld a, (tmAttr)
     ld hl, TM_MAP
     ld (hl), GLYPH_SPACE
     inc hl
@@ -1432,11 +1440,10 @@ tm_width_apply:
     ld a, e
     nextreg NR_TM_CTRL, a        ; width bit flips only after the map is clean
     xor a
-    ld (wrapLen), a              ; discard the pending wrap word: windows_init
-                                 ; falls into win_select, whose prn_flush would
-                                 ; print it onto the cleared screen
-    jp windows_init              ; all 8 windows full-screen at (tmCols),
-                                 ; cursors homed, window 0 reselected
+    ld (wrapLen), a              ; discard the pending wrap word: the window
+                                 ; reset ends in win_select, whose prn_flush
+                                 ; would print it onto the cleared screen
+    ret
 
 ; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
 ; static ret table here every call and runs the chain with SP on it, so an

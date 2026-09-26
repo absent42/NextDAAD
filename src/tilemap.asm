@@ -66,7 +66,7 @@ tm_font_init:
     ldir
     ret
 
-; tm_width_apply lives in main.asm's resident block, right after
+; tm_width_apply/tm_width_core live in main.asm's resident block, after
 ; gfx_layer_apply (single composer of NR $6B, same residency reason:
 ; callable from overlay2). txt_init below tail-calls it cross-file.
 
@@ -80,7 +80,7 @@ tm_cell_addr:
     ld e, b                     ; row (0..31)
 tmStride equ $+1
     ld d, 160                   ; bytes/row: 160 (80-col) or 80 (40-col);
-                                ; operand patched by tm_width_apply only
+                                ; operand patched by tm_width_core only
     mul d, e                    ; DE = row*stride
     ex de, hl                    ; HL = row*160
     ld a, c

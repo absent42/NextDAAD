@@ -1264,8 +1264,8 @@ GFX_SUB_LAYER    equ 17          ; NextDAAD: layer order. P1 0 = picture
                                  ; game gets), 1 = text on top. Follows
                                  ; FONT past the classic 0-15 block.
 GFX_SUB_TXTMODE  equ 18          ; NextDAAD: text width. P1 0 = 80x32
-                                 ; (boot default), 1 = 40x32. Clean
-                                 ; slate: map cleared, windows reset.
+                                 ; (boot default), 1 = 40x32. Map
+                                 ; cleared, geometry reset, style kept.
                                  ; Next free number past FONT/LAYER.
 GFX_SUB_SPR_START equ 19    ; GFX n 19: start set n at its baked X,Y
 GFX_SUB_SPR_FLAGS equ 20    ; GFX f 20: set = flag f, X = f+1 (lo) f+2 (hi), Y = f+3

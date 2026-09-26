@@ -181,7 +181,7 @@ win_attr_resolve:
     ld (hl), e
     ret
 
-; One window record at boot; WIN_W is patched from tmCols by windows_init.
+; One window record at boot; WIN_W patched from tmCols by windows_init and win_regeom.
 winTpl:
     db 0                        ; WIN_X
     db 0                        ; WIN_Y

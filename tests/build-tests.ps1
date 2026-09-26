@@ -957,9 +957,10 @@ function Assert-CursorStateWriters {
         throw "src\tmpairs.asm : pair_reclaim must end by marking curAttr's pair unconditionally (ld a,(curAttr) / srl a / jp pair_mark) - the cache outlives a GFX 26 reset"
     }
     if ($reclaim -match 'curColSet') { throw "src\tmpairs.asm : pair_reclaim must not gate the cursor mark on curColSet" }
-    foreach ($site in @(@{ f = 'src\overlay0.asm'; r = 'h_restart' }, @{ f = 'src\engine.asm'; r = 'eng_init_game' }, @{ f = 'src\main.asm'; r = 'gfx_drawtarget_clear' }, @{ f = 'src\main.asm'; r = 'tm_width_apply' })) {
+    foreach ($site in @(@{ f = 'src\overlay0.asm'; r = 'h_restart' }, @{ f = 'src\engine.asm'; r = 'eng_init_game' }, @{ f = 'src\main.asm'; r = 'gfx_drawtarget_clear' }, @{ f = 'src\main.asm'; r = 'tm_width_apply' }, @{ f = 'src\main.asm'; r = 'tm_width_core' }, @{ f = 'src\overlay2.asm'; r = 'win_regeom' })) {
         $t = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root $site.f) -Raw)
         $body = [regex]::Match($t, "(?ms)^$($site.r):.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)").Value
+        if (-not $body) { throw "$($site.f) : $($site.r) not found as a top-level label - the reset-site check would pass on an empty body" }
         foreach ($sym in ($state + $cache)) {
             if ($body -match "\b$sym\b") { throw "$($site.f) : $($site.r) reaches $sym - the parser cursor is game-owned and survives every reset site" }
         }
@@ -993,6 +994,26 @@ function Assert-PaletteWriterCensus {
     "palette writer census: overlay2 9, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
 }
 
+function Assert-WidthSwitchKeepsStyle {
+    # GFX 18 keeps each window's MODE, INK, PAPER and cached pairs: the
+    # overlay2 geometry reset must not reach them, and boot/fatal() keep
+    # the default clean slate through tm_width_apply.
+    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
+    $ovl2 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay2.asm') -Raw)
+    $regeom = [regex]::Match($ovl2, '(?ms)^win_regeom:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $regeom) { throw "src\overlay2.asm : win_regeom not found as a top-level label" }
+    if ($regeom -match '\bWIN_(INK|PAPER|ATTR|ATTRINV)\b|\bwindows_init\b|\bwin_attr_resolve\b|\bpair_get\b') {
+        throw "src\overlay2.asm : win_regeom reaches window style - a GFX 18 width switch keeps MODE, INK, PAPER and the cached pairs"
+    }
+    $tm = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\tilemap.asm') -Raw)
+    $txt = [regex]::Match($tm, '(?ms)^txt_init:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $txt) { throw "src\tilemap.asm : txt_init not found as a top-level label" }
+    if ($txt -notmatch 'jp\s+tm_width_apply\b') {
+        throw "src\tilemap.asm : txt_init must tail-call tm_width_apply - boot and fatal() take the default clean slate, not the keep-style path"
+    }
+    "width switch: win_regeom leaves style alone, txt_init keeps the default clean slate"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
 Assert-LayerOrderReset
@@ -1000,6 +1021,7 @@ Assert-RestartLeavesSprites
 Assert-CycleStopSites
 Assert-CursorStateWriters
 Assert-PaletteWriterCensus
+Assert-WidthSwitchKeepsStyle
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
