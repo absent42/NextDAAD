@@ -214,6 +214,9 @@ bank_table_init:
     ld hl, bankTable
     ld b, BANK_TABLE_SIZE
     xor a                   ; BT_RESERVED
+    ld (kbQw), a            ; typeahead queue empty on a warm re-entry;
+    ld (kbQr), a            ; kbPrev is left so a key held across the
+                            ; re-entry is not a press edge
 .zero:
     ld (hl), a
     inc hl
@@ -1441,6 +1444,144 @@ tm_width_core:
     ld (wrapLen), a              ; discard the pending wrap word: the window
                                  ; reset ends in win_select, whose prn_flush
                                  ; would print it onto the cleared screen
+    ret
+
+; --- keyboard press queue (typeahead) ---
+; kb_tick runs from im2_isr every frame with interrupts ENABLED (the CTC
+; feeders nest, AF/HL-only, touching nothing here); AF/HL saved by the
+; caller. Press edges go into kbQ as code | CAPS<<6 | SYM<<7 (matrix code
+; row*5+bit, kbRows order); kb_char (overlay1) pops them. The FPGA latches
+; all eight rows at once each scan, so a row read is never torn.
+KB_QMASK        equ 15
+KB_SETTLE       equ 2               ; frames the newest entry keeps taking
+                                    ; live shift bits (a human chord, CSpect)
+kbPrev:         ds 8                ; last frame's masked half-rows
+kbQ:            ds 16
+kbQw:           db 0                ; ISR writes
+kbQr:           db 0                ; foreground writes
+kbQpend:        db $FF              ; slot still settling, $FF none
+kbQpendN:       db 0
+kbAnyPrev:      db 0                ; any key down last frame
+
+; Row read + edge detect. Flags from `and c` reach the call: ld and inc hl
+; leave them alone. mask clears the shift key's own bit on its row.
+    MACRO KBROW rowsel, mask, code
+    ld a, rowsel
+    in a, ($FE)
+    cpl
+    and mask
+    ld c, a                         ; C = down now
+    ld a, (hl)
+    cpl
+    and c                           ; A = new presses
+    ld (hl), c
+    inc hl
+    ld d, code
+    call nz, kb_enq
+    ENDM
+
+kb_tick:
+    push bc
+    push de
+    xor a
+    in a, ($FE)                     ; A = 0 selects every row
+    cpl
+    and $1F
+    ld c, a                         ; C = something down now
+    ld hl, kbAnyPrev
+    ld a, (hl)
+    ld (hl), c
+    or c
+    jr nz, .live
+    ld a, (kbQpend)
+    inc a
+    jp z, .done                     ; idle, nothing settling (jp: .done is
+                                    ; past the eight unrolled rows)
+.live:
+    ld e, 0                         ; E = shift bits in the entry's format
+    ld a, $FE
+    in a, ($FE)
+    bit 0, a
+    jr nz, .nocaps
+    set 6, e
+.nocaps:
+    ld a, $7F
+    in a, ($FE)
+    bit 1, a
+    jr nz, .nosym
+    set 7, e
+.nosym:
+    ld a, (kbQpend)
+    inc a
+    jr z, .rows
+    dec a
+    ld hl, kbQ
+    add hl, a
+    ld a, (hl)
+    or e                            ; union: a shift landing late still counts
+    ld (hl), a
+    ld hl, kbQpendN
+    dec (hl)
+    jr nz, .rows
+    ld a, $FF
+    ld (kbQpend), a
+.rows:
+    ld hl, kbPrev
+    KBROW $FE, $1E, 0               ; CAPS Z X C V - CAPS masked
+    KBROW $FD, $1F, 5               ; A S D F G
+    KBROW $FB, $1F, 10              ; Q W E R T
+    KBROW $F7, $1F, 15              ; 1 2 3 4 5
+    KBROW $EF, $1F, 20              ; 0 9 8 7 6
+    KBROW $DF, $1F, 25              ; P O I U Y
+    KBROW $BF, $1F, 30              ; ENTER L K J H
+    KBROW $7F, $1D, 35              ; SPACE SYM M N B - SYM masked
+.done:
+    pop de
+    pop bc
+    ret
+
+; A = new press bits of one row (nonzero), D = the row's bit-0 code, E =
+; shift bits. Full queue drops the press. Preserves DE, HL; corrupts AF, BC.
+kb_enq:
+    push hl
+    ld b, a
+    ld c, d
+.bit:
+    srl b
+    jr nc, .next
+    ld a, (kbQw)
+    inc a
+    and KB_QMASK
+    ld hl, kbQr
+    cp (hl)
+    jr z, .next                     ; full
+    dec a
+    and KB_QMASK                    ; back to the slot being written
+    ld (kbQpend), a
+    ld hl, kbQ
+    add hl, a
+    ld a, c
+    or e
+    ld (hl), a
+    ld a, (kbQw)
+    inc a
+    and KB_QMASK
+    ld (kbQw), a
+    ld a, KB_SETTLE
+    ld (kbQpendN), a
+.next:
+    inc c
+    ld a, b
+    or a
+    jr nz, .bit
+    pop hl
+    ret
+
+; Drop every queued press: a key that dismissed a wait or fed INKEY must not
+; reach the prompt (the reference's LASTK is consumed by its wait). Corrupts AF.
+kb_flush:
+    ld a, (kbQw)
+    ld (kbQr), a
     ret
 
 ; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
