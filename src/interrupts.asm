@@ -223,22 +223,22 @@ im2_isr:
     ;      the selected register, the slot 6/7 mapping, and AF' all survive intact.
     ;  (3) Only one CTC nest is ever live (period >> its ~196T body), +4 bytes of
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
-    ; DI sections: nr_read's bracket ~76T (~2.7us), mmu_save_hl's ~125T,
-    ; rng_step's ~162T (~6us) and the tick's pointer brackets ~20T stay
-    ; well under one CTC period
-    ; (~50us at 20kHz); every indefinite-DI
-    ; teardown calls audio_init (resets the CTC) first. PLY_AKY_PLAY nests
-    ; too: its ret chain runs on akyRetShadow (main.asm) whose guard absorbs
-    ; this ISR's pushes, and its one DI (the linker read) is ~350 T once per
-    ; pattern. The old whole-call bracket lost every CTC edge past the first
-    ; in a 5.5k-15k T window every frame (player_aky.asm header).
+    ; DI sections: nr_read's bracket ~76T (~2.7us), mmu_save_hl's 137T
+    ; (~4.9us), rng_step's ~162T (~6us) and the tick's pointer brackets
+    ; ~20T stay well under one CTC period (~64us at 15625 Hz); every
+    ; indefinite-DI teardown calls audio_init (resets the CTC) first.
+    ; PLY_AKY_PLAY nests too: its ret chain runs on akyRetShadow (main.asm)
+    ; whose guard absorbs this ISR's pushes, and its one DI (the linker
+    ; read) is ~350 T once per pattern. The old whole-call bracket lost
+    ; every CTC edge past the first in a 5.5k-15k T window every frame
+    ; (player_aky.asm header).
     ei
     ; Save MMU 6/7 via the register-select port pair. Mainline users of
     ; $243B/$253B are DI-bracketed (hardware.asm nr_read, main.asm
-    ; mmu_save_hl) or run before
-    ; im2_init's ei (see the SP7 Task 3 report's port audit), so this
-    ; selection cannot race a mainline select. A nested ctc_isr never
-    ; touches this pair, so it cannot split the select from the read.
+    ; mmu_save_hl), run before im2_init's ei, or are the video palette
+    ; bursts, which run with the frame hook suspended and audio frozen
+    ; for the clip, so this selection cannot race them. A nested ctc_isr
+    ; never touches this pair, so it cannot split the select from the read.
     ; SP14c INT-1 (opus-gated): TBBLUE_REG_SEL ($243B) and
     ; TBBLUE_REG_ACC ($253B) differ only in B ($24 vs $25) - load the
     ; pair once and toggle B with inc/dec instead of four LD BC,nn

@@ -796,7 +796,8 @@ state_r:
 
 ; fn 51: p1 rounds (0 = 256) of MMU_N SVC_FITWORD(0) calls - the cheapest
 ; service bracketed by the svcSaved MMU save. NR $56 is read after each
-; against the entry page; mismatches counted in 137/138 and repaired.
+; against the entry page; mismatches counted in 137/138 (saturating) and
+; repaired.
 ; 139/140 = frames taken. Code and data sit in slot 7 so a wrong slot 6
 ; page cannot unmap them. The R-driven delay keeps the loop from phase-
 ; locking to the frame interrupt.
@@ -830,6 +831,9 @@ mmu_probe:
     nextreg $56, a               ; repair slot 6 so the loop continues
     ld hl, (XBN_FLAGS+137)
     inc hl
+    ld a, h
+    or l
+    jr z, .ok                    ; saturate at $FFFF
     ld (XBN_FLAGS+137), hl
 .ok:
     pop de
