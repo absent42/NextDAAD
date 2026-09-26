@@ -1,6 +1,5 @@
-# Typeahead regression on the keystroke lab (sd\KBLOG): keys pressed while
-# a response runs reach the next prompt; taps and rollover are kept; a key
-# that dismisses ANYKEY, More or GETKEY is not typed.
+# Typeahead regression on the keystroke lab (sd\KBLOG): keys typed during a
+# response reach the prompt; taps and rollover kept; dismiss keys not typed.
 #   .\build.ps1 ; pwsh -File tests\build-tests.ps1 -KbLog ; python tests\typeahead_run.py
 import pathlib
 import shutil
@@ -131,11 +130,9 @@ def echo_reply(rows):
 
 
 def tap(z, rows, hold, gap):
-    """Headless ZEsarUX runs a frame in about 37 ms of wall time; hold and
-    gap must each span one frame edge for the press to be an edge of its
-    own. A 50 ms gap is only 13 ms over a frame, so a heavily loaded host
-    can merge two taps into one press - that shows as a FAIL, not as
-    INCONCLUSIVE; re-run on a quiet host before reading it as a defect."""
+    """Headless ZEsarUX frames are about 37 ms of wall time; hold and gap
+    must each span a frame edge. A 50 ms gap is 13 ms over a frame, so a
+    loaded host can merge two taps (a FAIL, not INCONCLUSIVE): re-run quiet."""
     z.hold_matrix(rows)
     time.sleep(hold)
     z.release_matrix()
