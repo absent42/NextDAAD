@@ -140,7 +140,7 @@ kb_char:
     ld hl, kbQpend
     cp (hl)
     jp z, .nochar               ; newest entry still taking shift bits
-                                ; (jp: .nochar sits past .held, out of jr range)
+                                ; (jp: .nochar is +128 from here, past jr)
     ld hl, kbQ
     add hl, a                   ; Z80N ADD HL,A
     inc a
@@ -166,14 +166,14 @@ kb_char:
     ; CAPS+2 lock toggle: armed once per fresh press, consumed at .emit
     ld a, c
     cp 16
-    jp nz, .emit                ; jp: .emit is past .held, out of jr range
+    jr nz, .emit
     ld a, b
     and 3
     cp 1                        ; bit0 (caps) set, bit1 (sym) clear
-    jp nz, .emit
+    jr nz, .emit
     ld a, 1
     ld (capsLockArmed), a
-    jp .emit
+    jr .emit
 .live:
     call kb_raw
     cp $FF
@@ -222,7 +222,7 @@ kb_char:
     ; keystopress combo table and the dev guide's keyboard chapter). It
     ; is a LOCK TOGGLE, never a character - kbMapCaps[16] literal '2'
     ; was the bug. capsLockArmed (input.asm, resident) is set once by
-    ; the "new key" branch above and consumed here, so a long hold
+    ; the queue pop above and consumed here, so a long hold
     ; toggles exactly once rather than once per autorepeat tick.
     ld a, c
     cp 16
