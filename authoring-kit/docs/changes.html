@@ -13,6 +13,15 @@
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0110-unreleased">0.11.0 - unreleased</h2>
 <ul>
+<li><strong>Type ahead.</strong> Keys pressed while the game is still printing,
+  pausing or drawing are kept and appear at the next prompt, in order,
+  up to fifteen of them. A quick tap is no longer lost, and a letter
+  pressed while the previous one is still held is no longer dropped.
+  The key that dismisses <code>More...</code>, <code>ANYKEY</code> or <code>GETKEY</code> is used up by
+  that wait and is not typed; anything you type after it is. <code>INKEY</code>
+  also empties the queue each time it runs, so in a game that polls
+  <code>INKEY</code> every turn, keys typed before that poll do not carry over to
+  the prompt - only keys typed after it do.</li>
 <li><strong>VIDTUNE zooms 1x to 5x.</strong> The preview's single 2x button is now
   five zoom buttons beside Encoded, Flicker and Heatmap; keys <code>1</code> to <code>5</code>
   and the mouse wheel also change zoom, and the centre of the view
