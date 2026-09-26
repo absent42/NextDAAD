@@ -128,14 +128,53 @@ kbMapSym:                       ; symbol shift: classic punctuation
     db '_',')','(', 39, '&',  '"',';',   0,']','['
     db  13, '=','+','-','^',  ' ',  0, '.',',','*'
 
-; kb_char: A = decoded character/control code, or 0 if nothing usable
-; is pressed. New keys settle for 2 frames before the first emit so a
-; chord's shift bit is always sampled together with the key (CSpect
-; delivers PC Backspace as Caps+0 with the bits landing on different
-; frames - emitting on first contact printed '0' from the plain map).
-; Autorepeat: first emit after the settle, then 35-frame delay, then
-; every 5 frames. Corrupts AF, BC, DE, HL.
+; kb_char: A = decoded character/control code, or 0 if nothing usable.
+; Queued press edges (kb_tick, main.asm) are delivered first, each as if
+; its settle had just emitted; the live poll then only autorepeats the key
+; last delivered (35 frames, then every 5). Corrupts AF, BC, DE, HL.
 kb_char:
+    ld a, (kbQr)
+    ld hl, kbQw
+    cp (hl)
+    jr z, .live                 ; queue empty
+    ld hl, kbQpend
+    cp (hl)
+    jp z, .nochar               ; newest entry still taking shift bits
+                                ; (jp: .nochar sits past .held, out of jr range)
+    ld hl, kbQ
+    add hl, a                   ; Z80N ADD HL,A
+    inc a
+    and KB_QMASK
+    ld (kbQr), a                ; consumed
+    ld a, (hl)
+    ld c, a
+    rlca
+    rlca                        ; bit 6 -> 0 (CAPS), bit 7 -> 1 (SYM)
+    and 3
+    ld b, a                     ; B = shift state, kb_raw's layout
+    ld a, c
+    and $3F
+    ld c, a                     ; C = matrix code
+    ld (inpRepKey), a
+    ld a, 35                    ; delivered = the settle emit: full delay next
+    ld (inpRepCnt), a
+    xor a
+    ld (inpRepFirst), a
+    ld (capsLockArmed), a
+    ld a, (frameCounter)
+    ld (inpRepFrm), a
+    ; CAPS+2 lock toggle: armed once per fresh press, consumed at .emit
+    ld a, c
+    cp 16
+    jp nz, .emit                ; jp: .emit is past .held, out of jr range
+    ld a, b
+    and 3
+    cp 1                        ; bit0 (caps) set, bit1 (sym) clear
+    jp nz, .emit
+    ld a, 1
+    ld (capsLockArmed), a
+    jp .emit
+.live:
     call kb_raw
     cp $FF
     jr nz, .down
@@ -146,33 +185,7 @@ kb_char:
     ld c, a                     ; C = matrix code
     ld a, (inpRepKey)
     cp c
-    jr z, .held
-    ; new key: settle before the first emit
-    ld a, c
-    ld (inpRepKey), a
-    ld a, 2
-    ld (inpRepCnt), a
-    ld a, 1
-    ld (inpRepFirst), a
-    ld a, (frameCounter)
-    ld (inpRepFrm), a           ; seed the per-frame tick baseline
-    ; arm the CAPS+2 caps-lock toggle exactly once per fresh press (see
-    ; .emit's CAPS+2 handling below for the consuming side and the
-    ; audit note on why this combo is special-cased at all)
-    xor a
-    ld (capsLockArmed), a
-    ld a, c
-    cp 16
-    jr nz, .noarm
-    ld a, b
-    and 3
-    cp 1                         ; bit0 (caps) set, bit1 (sym) clear
-    jr nz, .noarm
-    ld a, 1
-    ld (capsLockArmed), a
-.noarm:
-    xor a
-    ret
+    jr nz, .nochar              ; not the delivered key: its edge is queued
 .held:
     ld a, (frameCounter)
     ld e, a

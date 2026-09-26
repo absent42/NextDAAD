@@ -195,6 +195,68 @@ def main():
         check("rollover: K under a held O echoes ok", last_echo(rows) == ">ok",
               "echo %r" % last_echo(rows))
 
+        # 4b. held through: L pressed during the pause, released 15 frames
+        #     after the prompt is seen back (detection adds a few frames;
+        #     the total stays well inside the 35-frame repeat delay) -
+        #     exactly one l, no immediate autorepeat. The hold starts only
+        #     once `long 20` is the bottom row, so the prompt detector
+        #     cannot fire on the `>long` echo before the response prints.
+        z.send_keys("long")
+        z.enter(wait=0.2)
+        for _ in range(60):                      # wait for the last line
+            if bottom(screen(z)).startswith("long 20"):
+                break
+            time.sleep(0.1)
+        else:
+            sys.exit("typeahead_run: LONG's last line never appeared")
+        z.hold_matrix(HOLD_L)
+        for _ in range(120):                     # wait for the prompt row
+            time.sleep(0.1)
+            if bottom(screen(z)).startswith(">"):
+                break
+        f0 = frames(z)
+        while (frames(z) - f0) & 0xFFFF < 15:    # frame-counted, not slept
+            time.sleep(0.02)
+        z.release_matrix()
+        time.sleep(0.3)
+        z.enter(wait=1.5)
+        rows = screen(z)
+        check("held through: one l, no repeat inside 35 frames",
+              last_echo(rows) == ">l", "echo %r" % last_echo(rows))
+
+        # 4c. the same key twice inside one pause
+        z.send_keys("long")
+        z.enter(wait=0.3)
+        tap(z, HOLD_L, 0.1, 0.3)
+        tap(z, HOLD_L, 0.1, 0.3)
+        z.enter(wait=6.0)
+        rows = screen(z)
+        check("double tap in the pause: ll", last_echo(rows) == ">ll", "echo %r" % last_echo(rows))
+
+        # 4d. overflow: 18 taps in one pause keep the first 15 in order.
+        #     Valid only if the prompt is still away after the last tap;
+        #     a tap typed live at the prompt would add to the 15. ENTER is
+        #     sent only once the prompt is back and the queue has drained:
+        #     pressed inside the pause it would be the 16th press, dropped.
+        z.send_keys("long")
+        z.enter(wait=0.3)
+        for _ in range(18):
+            tap(z, HOLD_L, 0.05, 0.05)
+        still_paused = not bottom(screen(z)).startswith(">")
+        for _ in range(120):                     # wait for the prompt row
+            time.sleep(0.1)
+            if bottom(screen(z)).startswith(">"):
+                break
+        time.sleep(0.5)                          # let the editor pop all 15
+        z.enter(wait=1.5)
+        rows = screen(z)
+        if not still_paused:
+            print("INCONCLUSIVE overflow: the prompt was back before the last tap "
+                  "(host too slow for 18 taps inside the pause) - echo %r" % last_echo(rows))
+        else:
+            check("overflow: 15 of 18 taps kept", last_echo(rows) == ">" + "l" * 15,
+                  "echo %r" % last_echo(rows))
+
         # 5. the key that dismisses ANYKEY is not typed
         z.send_keys("anyk")
         z.enter(wait=1.5)
