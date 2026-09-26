@@ -246,8 +246,8 @@ survives everything the art can put behind it.</p>
 <p><code>GFX 1 18</code> switches the tilemap from 80x32 single-width text to 40x32
 double-width text - fewer, wider columns, for a game that wants larger
 glyphs at the cost of characters per line. <code>GFX 0 18</code> returns to 80x32.
-See the sub-command table below for the full switch behaviour (clean
-slate, game-owned, same-width no-op).</p>
+See the sub-command table below for the full switch behaviour (layout
+reset, style kept, game-owned, same-width no-op).</p>
 <p>Author against your chosen width from the start, not as an afterthought:</p>
 <ul>
 <li><strong>Every coordinate is in the current width's columns.</strong> <code>WINAT</code>,
@@ -264,8 +264,9 @@ slate, game-owned, same-width no-op).</p>
 <li><strong>Issue <code>GFX 1 18</code> in the init process, before drawing anything.</strong>
   The switch clears the screen and resets every window's position and
   size, so doing it first avoids drawing at the wrong width and
-  immediately wiping it. <code>INK</code>, <code>PAPER</code> and <code>MODE</code> survive the switch,
-  so they can be set before or after it.</li>
+  immediately wiping it. <code>INK</code>, <code>PAPER</code> and <code>MODE</code> survive the switch;
+  set them before it and the cleared screen already takes window 0's
+  paper.</li>
 <li><strong>Layer 2 hole-cutting moves with the width.</strong> <a href="#transparency">Transparency</a>
   above gives <code>left = column x 4, width = width x 4</code> against a 320-wide
   picture, because one 80-column text cell is 4 picture pixels wide. A

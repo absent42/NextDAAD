@@ -1005,13 +1005,25 @@ function Assert-WidthSwitchKeepsStyle {
     if ($regeom -match '\bWIN_(INK|PAPER|ATTR|ATTRINV)\b|\bwindows_init\b|\bwin_attr_resolve\b|\bpair_get\b') {
         throw "src\overlay2.asm : win_regeom reaches window style - a GFX 18 width switch keeps MODE, INK, PAPER and the cached pairs"
     }
+    if ($regeom -notmatch 'ld\s+bc,\s*WIN_FLAGS\b') {
+        throw "src\overlay2.asm : win_regeom must ldir with bc = WIN_FLAGS - the geometry reset must copy only offsets 0-5 and store only WIN_LINES"
+    }
+    $hlStores = [regex]::Matches($regeom, 'ld\s+\(hl\),')
+    if ($hlStores.Count -ne 1) {
+        throw "src\overlay2.asm : win_regeom has $($hlStores.Count) (hl) store(s), expected 1 - the geometry reset must copy only offsets 0-5 and store only WIN_LINES"
+    }
+    $hgfx = [regex]::Match($ovl2, '(?ms)^h_gfx:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $hgfx) { throw "src\overlay2.asm : h_gfx not found as a top-level label" }
+    if ($hgfx -notmatch 'call\s+tm_width_core\b' -or $hgfx -notmatch 'jp\s+win_regeom\b' -or $hgfx -match '\btm_width_apply\b') {
+        throw "src\overlay2.asm : h_gfx must call tm_width_core then jp win_regeom, never tm_width_apply - GFX 18 must take the keep-style path"
+    }
     $tm = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\tilemap.asm') -Raw)
     $txt = [regex]::Match($tm, '(?ms)^txt_init:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
     if (-not $txt) { throw "src\tilemap.asm : txt_init not found as a top-level label" }
     if ($txt -notmatch 'jp\s+tm_width_apply\b') {
         throw "src\tilemap.asm : txt_init must tail-call tm_width_apply - boot and fatal() take the default clean slate, not the keep-style path"
     }
-    "width switch: win_regeom leaves style alone, txt_init keeps the default clean slate"
+    "width switch: win_regeom leaves style alone (single WIN_FLAGS copy, one LINES store), h_gfx's GFX 18 takes tm_width_core+win_regeom, txt_init keeps the default clean slate"
 }
 
 Assert-TranspConstantsInSync

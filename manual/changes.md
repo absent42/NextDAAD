@@ -10,7 +10,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   clears and every window still goes back to full screen, but the
   cleared screen takes window 0's paper, so a blue screen stays blue.
   If your game relied on a switch to go back to white on black, issue
-  `INK 7`, `PAPER 0` and `MODE 0` after it. See
+  `INK 7`, `PAPER 0` and `MODE 0` in each window you styled before the
+  switch - the screen then clears black. See
   [40-column games](graphics.md#40-column-games).
 - **No version stamp at boot.** The interpreter no longer prints its
   version number and pauses for a second before the game starts; boot

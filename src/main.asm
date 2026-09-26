@@ -1406,11 +1406,9 @@ tm_width_apply:
     jp windows_init              ; all 8 windows full-screen at (tmCols),
                                  ; cursors homed, window 0 reselected
 
-; A = width in columns (80 or 40). The one composer of NR $6B outside
-; video playback (vid_play saves/restores the register wholesale) and
-; the only writer of tmCols and tmStride. Fills the full map from
-; (tmAttr). RESIDENT alongside gfx_layer_apply above (same reason:
-; callable from overlay2). Corrupts everything.
+; A = width in columns (80 or 40). Only composer of NR $6B outside
+; video playback and only writer of tmCols/tmStride. Fills the full
+; map from (tmAttr). RESIDENT so overlay2 can call it. Corrupts everything.
 tm_width_core:
     ld (tmCols), a
     cp 40

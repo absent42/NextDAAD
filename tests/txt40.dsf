@@ -8,8 +8,8 @@
 ; across a synchronous video play from 40-col mode.
 ;
 ; Verbs:
-;   T40   GFX 1 18 - switch to 40-col, clean slate, print at 40
-;   T80   GFX 0 18 - switch to 80-col, clean slate, print at 80
+;   T40   GFX 1 18 - switch to 40-col, layout reset, style kept, print at 40
+;   T80   GFX 0 18 - switch to 80-col, layout reset, style kept, print at 80
 ;   WINS  WINDOW 1, WINAT 2 2, WINSIZE 10 36, a message that wraps at
 ;         36 - proves WINAT/WINSIZE clamp and wrap use the live width
 ;   CENT  WINDOW 2, WINSIZE 3 20, CENTRE - proves CENTRE's tmCols math

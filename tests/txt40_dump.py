@@ -337,7 +337,13 @@ def main():
     if not port_free(a.port):
         sys.exit("txt40_dump: port %d busy" % a.port)
     work = a.work or str(ROOT / "tests" / "out" / "txt40-run")
-    proc, z = launch(work, a.port, leg)
+    allowed = (ROOT / "tests" / "out").resolve()
+    work_path = pathlib.Path(work).resolve()
+    try:
+        work_path.relative_to(allowed)
+    except ValueError:
+        sys.exit("txt40_dump: --work must stay inside %s (got %s)" % (allowed, work_path))
+    proc, z = launch(work_path, a.port, leg)
     try:
         if a.walk:
             walk(z, [w.strip() for w in a.walk.split(",") if w.strip()], a.shots)

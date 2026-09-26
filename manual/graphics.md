@@ -276,8 +276,8 @@ survives everything the art can put behind it.
 `GFX 1 18` switches the tilemap from 80x32 single-width text to 40x32
 double-width text - fewer, wider columns, for a game that wants larger
 glyphs at the cost of characters per line. `GFX 0 18` returns to 80x32.
-See the sub-command table below for the full switch behaviour (clean
-slate, game-owned, same-width no-op).
+See the sub-command table below for the full switch behaviour (layout
+reset, style kept, game-owned, same-width no-op).
 
 Author against your chosen width from the start, not as an afterthought:
 
@@ -295,8 +295,9 @@ Author against your chosen width from the start, not as an afterthought:
 - **Issue `GFX 1 18` in the init process, before drawing anything.**
   The switch clears the screen and resets every window's position and
   size, so doing it first avoids drawing at the wrong width and
-  immediately wiping it. `INK`, `PAPER` and `MODE` survive the switch,
-  so they can be set before or after it.
+  immediately wiping it. `INK`, `PAPER` and `MODE` survive the switch;
+  set them before it and the cleared screen already takes window 0's
+  paper.
 - **Layer 2 hole-cutting moves with the width.** [Transparency](#transparency)
   above gives `left = column x 4, width = width x 4` against a 320-wide
   picture, because one 80-column text cell is 4 picture pixels wide. A

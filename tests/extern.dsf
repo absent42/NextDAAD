@@ -974,7 +974,7 @@ CLOAK   22 noun
            DONE
 ; XT40 - the spec's width-switch check (section 7: "GFX 1 18 then a
 ;        ticker line"), EMULATOR-RUNNABLE, two phases. GFX n 18 resets
-;        the tilemap (tm_width_apply); arming clears row 27 first (fn 30
+;        the tilemap (tm_width_core); arming clears row 27 first (fn 30
 ;        clears the field it arms), so screenshot 2 shows only phase B's
 ;        remainder, no phase-A residue; a completed message is not
 ;        cleared, so each phase still leaves evidence during its PAUSE.
