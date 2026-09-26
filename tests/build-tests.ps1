@@ -2172,13 +2172,21 @@ foreach ($c in @(
     @{ n = 'GFX 0 18'; b = [byte[]]@(87, 0, 18) },
     @{ n = 'WINAT 2 2'; b = [byte[]]@(82, 2, 2) },
     @{ n = 'WINSIZE 10 36'; b = [byte[]]@(107, 10, 36) },
-    @{ n = 'GFX 1 13 (video)'; b = [byte[]]@(87, 1, 13) }
+    @{ n = 'GFX 1 13 (video)'; b = [byte[]]@(87, 1, 13) },
+    @{ n = 'COLR setup + style'; b = [byte[]]@(87, 0, 18, 78, 1, 66, 0, 65, 4, 81, 1, 78, 0, 66, 6, 65, 1, 81, 0) },
+    @{ n = 'COLB setup + style'; b = [byte[]]@(87, 1, 18, 78, 0, 66, 6, 65, 1, 81, 0, 78, 1, 66, 0, 65, 4, 81, 1) },
+    @{ n = 'MORE setup + MODE 2'; b = [byte[]]@(87, 0, 18, 78, 0, 81, 2) },
+    @{ n = 'SAME setup + style'; b = [byte[]]@(87, 1, 18, 78, 0, 81, 0, 66, 6, 65, 1) },
+    @{ n = 'TRNS setup + paper 227'; b = [byte[]]@(87, 0, 18, 78, 0, 66, 7, 65, 227, 81, 0) },
+    @{ n = 'REKEY style'; b = [byte[]]@(78, 0, 66, 6, 65, 1, 78, 1, 66, 0, 65, 4, 78, 0) },
+    @{ n = 'WINAT 10 0'; b = [byte[]]@(82, 10, 0) },
+    @{ n = 'WINSIZE 4 40'; b = [byte[]]@(107, 4, 40) }
 )) {
     if ((Find-ByteRuns $txt40Bytes $c.b).Count -lt 1) {
         throw "txt40: '$($c.n)' not present in tests\out\txt40.ddb - ndrc did not emit the authored condact"
     }
 }
-"txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, and the from-40-col video play all present as authored"
+"txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, the from-40-col video play and the keep-style verbs' setup/style runs all present as authored"
 
 # --- accents: ndrc's two accent encodings ---
 # Message text is stored complemented (byte = 255 - char; the

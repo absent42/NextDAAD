@@ -3,7 +3,7 @@
 ; Compiled and byte-asserted by tests\build-tests.ps1 on every run;
 ; -Txt40 additionally stages it into sd\TXT40\. Drives GFX 0/1 18 (the
 ; width-select sub-command, src\nextdaad.inc GFX_SUB_TXTMODE, src\
-; main.asm tm_width_apply), WINAT/WINSIZE clamping at the live width,
+; main.asm tm_width_core), WINAT/WINSIZE clamping at the live width,
 ; CENTRE's tmCols-relative window placement, and the $6B save/restore
 ; across a synchronous video play from 40-col mode.
 ;
@@ -19,9 +19,14 @@
 ;         bit through playback (video.asm's vid_run: entry capture,
 ;         restored on every exit)
 ;   LEAK  a message ending mid-word, then GFX 1 18 - the pending wrap
-;         word must be discarded on switch (main.asm tm_width_apply
-;         zeroes wrapLen before windows_init), not leaked onto the
+;         word must be discarded on switch (main.asm tm_width_core
+;         zeroes wrapLen before the window reset), not leaked onto the
 ;         cleared screen
+;   COLR COLB MORE SAME TRNS REKEY - GFX 18 keeps each window's MODE,
+;         INK and PAPER (tests\txt40_dump.py). Each verb first switches
+;         to the OPPOSITE of its target width, sets every style it
+;         checks, prints KEEPMARK, then switches: a surviving KEEPMARK
+;         means the switch was a no-op. SAME is the same-width control.
 ;
 ; V2 header (plain "DRF.exe nextdaad", no -v3) to match every other
 ; byte-asserted stimulus fixture in this suite.
@@ -35,6 +40,12 @@ WINS   12  verb
 CENT   13  verb
 VID    14  verb
 LEAK   15  verb
+COLR   16  verb
+COLB   17  verb
+MORE   18  verb
+SAME   19  verb
+TRNS   20  verb
+REKEY  21  verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -44,7 +55,7 @@ LEAK   15  verb
 /5  "What should I do next?"
 /6  "I didn't understand."
 /7  "I can't go in that direction."
-/8  "I don't know that verb - try T40 T80 WINS CENT VID LEAK."
+/8  "I don't know that verb - try T40 T80 WINS CENT VID LEAK COLR COLB MORE SAME TRNS REKEY."
 /9  "I have with me:"
 /10 "I am wearing:"
 /11 " "
@@ -105,7 +116,11 @@ LEAK   15  verb
 /4 "The pending word buffer should not leak this fragment after switching wid"
 /5 "NEXTDAAD TXT40 - 40 COLUMN MODE FIXTURE#n"
 /6 "back from video, still readable#n"
-/7 "VERBS  T40  T80  WINS  CENT  VID  LEAK#n"
+/7 "VERBS  T40 T80 WINS CENT VID LEAK COLR COLB MORE SAME TRNS REKEY#n"
+/8 "KEEPMARK#n"
+/9 "window one#n"
+/10 "window zero#n"
+/11 "01#n02#n03#n04#n05#n06#n07#n08#n09#n10#n11#n12#n13#n14#n15#n16#n17#n18#n19#n20#n21#n22#n23#n24#n25#n26#n27#n28#n29#n30#n31#n32#n33#n34#n35#n36#n37#n38#n39#n40#n"
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -152,6 +167,73 @@ LEAK   15  verb
           DONE
 > LEAK  _ MESSAGE 4
           GFX 1 18
+          DONE
+> COLR  _ GFX 0 18
+          WINDOW 1
+          INK 0
+          PAPER 4
+          MODE 1
+          WINDOW 0
+          INK 6
+          PAPER 1
+          MODE 0
+          MESSAGE 8
+          GFX 1 18
+          MESSAGE 10
+          WINDOW 1
+          WINAT 10 0
+          WINSIZE 4 40
+          MESSAGE 9
+          WINDOW 0
+          DONE
+> COLB  _ GFX 1 18
+          WINDOW 0
+          INK 6
+          PAPER 1
+          MODE 0
+          WINDOW 1
+          INK 0
+          PAPER 4
+          MODE 1
+          MESSAGE 8
+          GFX 0 18
+          MESSAGE 10
+          WINDOW 1
+          WINAT 10 0
+          WINSIZE 4 40
+          MESSAGE 9
+          WINDOW 0
+          DONE
+> MORE  _ GFX 0 18
+          WINDOW 0
+          MODE 2
+          MESSAGE 8
+          GFX 1 18
+          MESSAGE 11
+          DONE
+> SAME  _ GFX 1 18
+          WINDOW 0
+          MODE 0
+          INK 6
+          PAPER 1
+          MESSAGE 8
+          GFX 1 18
+          DONE
+> TRNS  _ GFX 0 18
+          WINDOW 0
+          INK 7
+          PAPER 227
+          MODE 0
+          MESSAGE 8
+          GFX 1 18
+          DONE
+> REKEY _ WINDOW 0
+          INK 6
+          PAPER 1
+          WINDOW 1
+          INK 0
+          PAPER 4
+          WINDOW 0
           DONE
 > _ _     NEWTEXT
           SYSMESS 8
