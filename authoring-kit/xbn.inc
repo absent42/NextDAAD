@@ -110,12 +110,14 @@ SVC_PAIR        equ XBN_API+45  ; in B = paper, C = ink (0-255, the
                                  ; SVC_VERSION first. Foreground-only.
 SVC_GETLINE     equ XBN_API+48  ; out HL = ASCIIZ line the player last
                                  ; typed (read-only, resident), BC =
-                                 ; length; CF set = the prompt just run
-                                 ; ended in a timeout or an empty ENTER
-                                 ; (HL then holds the recall buffer as it
-                                 ; was - the partial line after a
-                                 ; timeout). CF clear otherwise, including
-                                 ; an injected turn. API 3. Foreground-only.
+                                 ; length; CF set = stale - before the
+                                 ; first prompt, or after one that ended
+                                 ; in a timeout or an empty ENTER (HL then
+                                 ; holds the recall buffer as it was, the
+                                 ; partial line after a timeout). CF is
+                                 ; unchanged by SVC_INJECT: an injected
+                                 ; turn keeps whatever it already was.
+                                 ; API 3. Foreground-only.
 SVC_GETPENDING  equ XBN_API+51  ; out HL = ASCIIZ orders after a
                                  ; conjunction not yet consumed (empty
                                  ; when none), BC = length, CF clear. Can

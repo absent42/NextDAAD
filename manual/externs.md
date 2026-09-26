@@ -597,13 +597,16 @@ A few things worth knowing about specific rows:
   failure exactly as you would a set carry flag.
 - **`SVC_GETLINE` and `SVC_GETPENDING` read the player's input.**
   `SVC_GETLINE` returns the line the player actually typed - read-only,
-  in the interpreter's own recall buffer - and its carry flag tells you
-  whether the prompt that just ran ended cleanly: it is SET only when
-  that prompt ended in a timeout or an empty `ENTER`, and HL then holds
+  in the interpreter's own recall buffer - and its carry flag follows
+  the last real prompt, not the current turn: CLEAR once a prompt ends
+  in a non-empty line, staying clear through every later order taken
+  from that same line and through a line injected after it. SET before
+  the first prompt of the session, and after one that ends in a timeout
+  or an empty `ENTER`; it stays SET through an injected turn in either
+  case too, because `SVC_INJECT` never touches it. When SET, HL holds
   whatever the recall buffer already held (the partial line after a
-  timeout). It is CLEAR for a typed submit, for an order taken after a
-  conjunction, and for an injected turn - HL is always the last line
-  the player actually typed, the injected text is never in this buffer.
+  timeout). HL is always the last line the player actually typed - the
+  injected text itself is never in this buffer.
   A `SAVE`/`LOAD` filename prompt never reaches this buffer either: it
   stashes the typed line and restores it afterwards, so an extern
   reading `SVC_GETLINE` after a `SAVE` earlier in the same turn still

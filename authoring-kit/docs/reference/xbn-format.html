@@ -275,7 +275,7 @@ tables.</p>
 <td>16</td>
 <td><code>SVC_GETLINE</code></td>
 <td>-</td>
-<td>HL = ASCIIZ line the player last typed (resident, read-only), BC = length; CF set = the prompt just run ended in a timeout or an empty <code>ENTER</code> (HL then holds whatever the recall buffer already held - the partial line after a timeout); CF clear otherwise, including an injected turn - HL is always the last line actually typed, never injected text. A <code>SAVE</code>/<code>LOAD</code> filename never reaches this buffer - the prompt stashes and restores the line around it</td>
+<td>HL = ASCIIZ line the player last typed (resident, read-only), BC = length; CF set = no fresh line yet - before the first prompt, or after one that ended in a timeout or an empty <code>ENTER</code> (HL then holds whatever the recall buffer already held - the partial line after a timeout); CF clear once a prompt ends in a non-empty line, staying clear through any later order from it and any line injected after - <code>SVC_INJECT</code> never changes CF itself. HL is always the last line actually typed, never injected text. A <code>SAVE</code>/<code>LOAD</code> filename never reaches this buffer - the prompt stashes and restores the line around it</td>
 <td>AF, BC, HL</td>
 <td>no</td>
 </tr>

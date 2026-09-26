@@ -30,7 +30,7 @@ row's Out column names carry a result.
 | 13 | `SVC_PALREAD` | copy a Layer 2 palette bank into your 512-byte buffer | no |
 | 14 | `SVC_WINDOW` | select a DAAD window; returns the one that was current | no |
 | 15 | `SVC_PAIR` | the tilemap attribute for a (paper, ink) pair, B = paper, C = ink | no |
-| 16 | `SVC_GETLINE` | the line the player typed this turn, read-only | no |
+| 16 | `SVC_GETLINE` | the last line the player typed, read-only; carry says whether it is fresh | no |
 | 17 | `SVC_GETPENDING` | orders left unconsumed after a conjunction | no |
 | 18 | `SVC_INJECT` | queue a line for the very next `PARSE 0` | no |
 | 19 | `SVC_VOCFIND` | resolve a word against the database vocabulary | no |
@@ -218,15 +218,19 @@ identically cannot draw from the hook.
 ### SVC_GETLINE - the SAVE prompt never lands in it
 
 `SVC_GETLINE` returns the line the player actually typed - HL points at the
-interpreter's own recall buffer (read-only), BC is its length. Carry SET
-means the prompt that just ran ended in a timeout or an empty `ENTER`; HL
-then holds whatever the recall buffer already held (the partial line after
-a timeout). Carry CLEAR covers a typed submit, an order taken after a
-conjunction, and an injected turn (`SVC_INJECT`) - HL is always the last
-line the player actually typed, never the injected text. A `SAVE`/`LOAD`
-filename prompt stashes the typed line and restores it afterwards, so it
-never reaches this buffer - an extern reading `SVC_GETLINE` after a `SAVE`
-earlier in the same turn still gets the player's real command.
+interpreter's own recall buffer (read-only), BC is its length. Carry
+follows the last real prompt, not the current turn: CLEAR once a prompt
+ends in a non-empty line, staying clear through every later order taken
+from it and through a line injected afterwards. SET before the first
+prompt of the session and after one that ends in a timeout or an empty
+`ENTER` - and still SET through an injected turn in either case, because
+`SVC_INJECT` never touches carry. When SET, HL holds whatever the recall
+buffer already held (the partial line after a timeout). HL is always the
+last line the player actually typed, never the injected text. A
+`SAVE`/`LOAD` filename prompt stashes the typed line and restores it
+afterwards, so it never reaches this buffer - an extern reading
+`SVC_GETLINE` after a `SAVE` earlier in the same turn still gets the
+player's real command.
 
 ### SVC_GETPENDING - leading blanks are real
 
