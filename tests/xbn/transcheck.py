@@ -5,6 +5,8 @@ cycle of a session to the host file, zero-filling every earlier
 flush's region - a known emulator divergence, not a module fault.
 
 Usage: python tests\xbn\transcheck.py sd\XBN ARM CONTENT STOP
+Needs the leg staged by tests\build-tests.ps1 -Xbn -XbnTrans, which
+carries the toolkit+transcript subset instead of the plain fixture.
 Exactly three verbs. ARM arms recording (its own line is typed before
 fn 90 arms, so it never reaches the file); CONTENT is the turn under
 test; STOP's line hook is what flushes CONTENT's queued output, and

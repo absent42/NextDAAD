@@ -3435,17 +3435,22 @@ if ($Xbn) {
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
+        $transOut = "$root\tests\out\xbn\TRANS.XBN"
+        Remove-Item $transOut -ErrorAction SilentlyContinue
         $transBuildDir = Join-Path $root 'tests\out\xbn\_transbuild'
         New-Item -ItemType Directory -Force $transBuildDir | Out-Null
         Push-Location $transBuildDir
         try {
-            & "$root\authoring-kit\lib\xbnbuild.ps1" toolkit transcript -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out "$root\tests\out\xbn\TRANS.XBN" | Out-Null
+            $transBuildLog = & "$root\authoring-kit\lib\xbnbuild.ps1" toolkit transcript -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $transOut
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $transOut)) {
+                throw "xbnbuild.ps1 toolkit transcript failed to produce TRANS.XBN (exit $LASTEXITCODE): $($transBuildLog -join "`n")"
+            }
         }
         finally {
             Pop-Location
             Remove-Item $transBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
-        Copy-Item "$root\tests\out\xbn\TRANS.XBN" "$leg\GAME.XBN" -Force
+        Copy-Item $transOut "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\TRANS.XBN -> sd\$legName\GAME.XBN (-XbnTrans: toolkit+transcript subset built by xbnbuild.ps1, not the fixture)"
     }
     else {

@@ -960,9 +960,10 @@ this one.</p>
 <li><code>externs\all\GAME.XBN</code> ships every module in this collection EXCEPT
   transcript, in one prebuilt binary. Copy it beside <code>GAME.DDB</code> and use
   whichever functions you want. With no hooked module in it, this
-  binary carries a plain format 2 header and needs only API 3, for
-  playername's <code>SVC_GETLINE</code> - the loader never arms the output tap for
-  it, so every printed character costs nothing extra.</li>
+  binary carries a plain format 2 header - the loader never arms the
+  output tap for it, so every printed character costs nothing extra.
+  Playername's <code>SVC_GETLINE</code> and ticker's <code>SVC_PAIR</code>/<code>SVC_FITWORD</code> need
+  API 3, each module checking the version itself.</li>
 <li><code>externs\transcript\GAME.XBN</code> ships that module alone, or fold it
   into a subset build below. The loader arms the output tap for ANY
   binary whose header names one, whether or not the module is

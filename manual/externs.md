@@ -810,9 +810,10 @@ A game loads ONE `GAME.XBN`, and you never merge sources by hand:
 - `externs\all\GAME.XBN` ships every module in this collection EXCEPT
   transcript, in one prebuilt binary. Copy it beside `GAME.DDB` and use
   whichever functions you want. With no hooked module in it, this
-  binary carries a plain format 2 header and needs only API 3, for
-  playername's `SVC_GETLINE` - the loader never arms the output tap for
-  it, so every printed character costs nothing extra.
+  binary carries a plain format 2 header - the loader never arms the
+  output tap for it, so every printed character costs nothing extra.
+  Playername's `SVC_GETLINE` and ticker's `SVC_PAIR`/`SVC_FITWORD` need
+  API 3, each module checking the version itself.
 - `externs\transcript\GAME.XBN` ships that module alone, or fold it
   into a subset build below. The loader arms the output tap for ANY
   binary whose header names one, whether or not the module is

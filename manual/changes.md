@@ -106,6 +106,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   message n at the cursor a letter at a time, wrapping words exactly as
   `MES` does. A new extern service, `SVC_FITWORD`, makes that possible
   for any extern.
+- **Fixed: a rare crash or corruption in games using externs with a
+  frame hook.** The interpreter could restore the wrong memory page
+  after an extern or service call if a frame interrupt landed at
+  exactly the wrong moment, occasionally running the wrong code next.
+  That can no longer happen.
 
 ## 0.10.0 - 18 September 2026
 

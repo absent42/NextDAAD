@@ -46,7 +46,7 @@ assembler. Download sjasmplus from
 https://github.com/z00m128/sjasmplus and extract it into `tools\sjasmplus\`, or
 point `SJASMPLUSDIR` in `CONFIG.BAT` at an install you already have. You do not
 need it otherwise: every extern here ships a prebuilt `GAME.XBN`, and `all/`
-ships one containing the lot.
+ships one containing every module except transcript.
 
 Your own modules combine the same way - name the folder that holds one:
 

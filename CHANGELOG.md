@@ -191,8 +191,9 @@ All notable changes to NextDAAD are recorded here.
   output tap for any binary whose header names one, so a binary with
   this hook costs every game that loads it on every printed character,
   recording or not. Ships standalone (externs/transcript/GAME.XBN) or in
-  an EXTERNS.BAT subset; the collection stays a format 2 binary and
-  needs only API 3, for playername's SVC_GETLINE.
+  an EXTERNS.BAT subset; the collection stays a format 2 binary.
+  Playername's SVC_GETLINE and ticker's SVC_PAIR/SVC_FITWORD need API 3,
+  each module checking the version itself.
 - kit: videnc.exe and vidtune.exe are now one PyInstaller onedir bundle,
   `authoring-kit/tools/vidtools/`, sharing `_internal/`; built from
   `scripts/vidtools.spec` by `scripts/build-vidtools.ps1` (build outside
@@ -230,6 +231,13 @@ All notable changes to NextDAAD are recorded here.
   the window in chunks of that width as prn_char flushes it. Fixture
   fns 49/50, XFWD XFWF; verbs XTTY XTTW XTTO XTTA XTTB XTTC XTTM
   XTTK XTTL.
+- Fixed: the MMU save around extern and service calls (`mmu_save_hl`)
+  read the register-select port pair with interrupts on, so a frame
+  interrupt landing between the select and the read could restore the
+  wrong memory page, rarely returning into the wrong code in a game
+  using externs with a frame hook. The select-then-read is now
+  DI-bracketed like every other user of that pair. Fixture fn 51, verb
+  XMMU.
 
 ## v0.10.0 - 18/09/2026
 

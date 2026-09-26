@@ -416,7 +416,9 @@ xbn_svc_mmu_save:               ; corrupts A, BC, HL, F; result in svcSaved - fa
 ; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch:
 ; the cell address rides in HL, so the three entries need no lock between
 ; them. DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects
-; $243B without restoring it. Entered with interrupts off (ISR), stays off.
+; $243B without restoring it. `ret po` restores the caller's own interrupt
+; state: off for the ISR's fast path, on for its audio path, which calls
+; here after its own `ei`.
 mmu_save_hl:
     ld a, i
     jp pe, .sampled             ; P/V = IFF2

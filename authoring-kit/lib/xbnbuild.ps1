@@ -35,7 +35,9 @@ if (-not $Modules) {
     Write-Output 'below, or the path of a folder holding <folder>.asm - your own'
     Write-Output 'module. You do NOT need this to use the shipped externs: every'
     Write-Output 'module ships a prebuilt GAME.XBN, and externs\all\GAME.XBN holds'
-    Write-Output 'all of them.'
+    Write-Output 'every one of them except transcript, which costs every printed'
+    Write-Output 'character once its output hook is in a binary - ship it standalone'
+    Write-Output 'or in a subset instead.'
     Write-Output ''
     Write-Output "Modules: $($kitModules -join ' ')"
     exit 1

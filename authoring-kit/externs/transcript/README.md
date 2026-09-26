@@ -92,9 +92,10 @@ long-filename dependency):
 ## Latency and the ring
 
 The typed-line queue and printed-text tap both write into a bank
-scratch ring (`TRANSCRIPT_RING`, default 2048 bytes; override the
-define before including this module in a standalone build for more
-headroom - the combined collection binary needs the smaller default).
+scratch ring (`TRANSCRIPT_RING`, default 2048 bytes; a subset build
+combining this module with others needs the smaller default to stay
+inside the 16K bank - override the define before including this
+module in a standalone build for more headroom).
 The ring drains only at the next line hook (or at `EXTERN 0 91`): one
 open-seek-write-close round trip to the card per turn, before that
 turn's response. That is the trade for crash safety - a transcript

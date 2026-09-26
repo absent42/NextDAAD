@@ -150,8 +150,12 @@ else moves:
    contract documents.
 4. **An `INCLUDE`.** `INCLUDE "externs/myext/myext.asm"`, by kit-relative
    path, resolved by the `-I <kit root>` the build passes.
-5. **If the module is hooked, a line and/or an out chain entry.** One line
-   each in `all_line`/`all_out`:
+5. **If the module is hooked, a line and/or an out chain entry.** `all.asm`
+   has no `all_line`/`all_out` blocks today - the collection's one hooked
+   module, transcript, was pulled from the combined binary (see above).
+   Adding a hooked module means switching to `XBN_BEGIN3` and building
+   those blocks first, the way the paragraph above describes, then adding
+   one line per hook inside them:
 
         XBN_LINE_CALL myext.line
         XBN_OUT_CALL myext.out
@@ -186,9 +190,9 @@ typing copy of a message). `XBN_SCRATCH_FREE` is the offset past the last
 of them: `XBN_SCRATCH_FREE equ 768 + TRANSCRIPT_RING + 256`.
 `TRANSCRIPT_RING` defaults to 2048 (`IFNDEF` in `xbnmod.inc`) and is a
 build define, not a module constant - define it before including
-`xbnmod.inc` in a standalone build that needs a bigger ring; the combined
-collection binary keeps the smaller default because every scratch claim
-shares the one 16K bank.
+`xbnmod.inc` in a standalone build that needs a bigger ring; a subset
+build that combines transcript with other collection modules keeps the
+smaller default so their claims still fit the one 16K bank.
 
 A module outside the collection declares `SCRATCH_SIZE`/`STATE_SIZE`
 instead of editing `xbnmod.inc`. The generated source places those claims

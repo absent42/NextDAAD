@@ -236,9 +236,11 @@ im2_isr:
     ; Save MMU 6/7 via the register-select port pair. Mainline users of
     ; $243B/$253B are DI-bracketed (hardware.asm nr_read, main.asm
     ; mmu_save_hl), run before im2_init's ei, or are the video palette
-    ; bursts, which run with the frame hook suspended and audio frozen
-    ; for the clip, so this selection cannot race them. A nested ctc_isr
-    ; never touches this pair, so it cannot split the select from the read.
+    ; bursts and the DEBUG-only NXBENCH raster read (nxb_line, video.asm),
+    ; which run with the frame hook suspended and audio frozen for the
+    ; clip or bench visit, so this selection cannot race them. A nested
+    ; ctc_isr never touches this pair, so it cannot split the select from
+    ; the read.
     ; SP14c INT-1 (opus-gated): TBBLUE_REG_SEL ($243B) and
     ; TBBLUE_REG_ACC ($253B) differ only in B ($24 vs $25) - load the
     ; pair once and toggle B with inc/dec instead of four LD BC,nn
