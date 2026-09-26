@@ -1135,6 +1135,17 @@ def test_new_knob_tooltips_present(fixture_kit, qtbot):
     assert "disables" in panel._rows["kf_cadence"]["label"].toolTip()
 
 
+def test_knob_row_labels_are_display_names(fixture_kit, qtbot):
+    panel = SettingsPanel()
+    qtbot.addWidget(panel)
+
+    for name, row in panel._rows.items():
+        assert "_" not in row["label"].text(), name
+    assert panel._rows["stream_budget"]["label"].text() == "stream budget"
+    assert panel._rows["kf_cadence"]["label"].text() == "keyframe cadence"
+    assert panel._rows["fps"]["label"].text() == "fps"
+
+
 def test_new_knobs_land_in_expected_form_level(fixture_kit, qtbot):
     # prefilter is basic (front-line authoring guidance per VIDEO-
     # PRESETS.md); kf_cadence is advanced.

@@ -521,7 +521,7 @@ class SettingsPanel(QWidget):
             reset_btn.setToolTip("restore this knob to the kit default")
             reset_btn.clicked.connect(
                 lambda checked=False, name=knob.name: self._reset(name))
-            label = QLabel(knob.name)
+            label = QLabel(knob.label or knob.name)
             if knob.tooltip:
                 label.setToolTip(knob.tooltip)
 
