@@ -319,8 +319,10 @@
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     XRTC XRTD (realtime is in the combined binary; both are still
-;     SILICON-ONLY, see below) XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF
-;     XTRD XTRO (transcript; XTRD is SILICON-ONLY, see below)
+;     SILICON-ONLY, see below)
+;     Transcript left the combined binary: XTRS XTRI XTRE XTRQ XTRL
+;     XTR1 XTR2 XTRF XTRD XTRO now need -XbnTrans, not -XbnAll/-XbnHints/
+;     -XbnClock/-XbnTool, see below.
 ;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
 ;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
 ;     -XbnClock/-XbnTool XHNP aborts at fn 52 and prints "no book", and
@@ -334,12 +336,17 @@
 ;     combined legs) AND are SILICON-ONLY for the same reason as
 ;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
 ;     emulator replay.
-;   XTRD needs the TRANSCRIPT module (-XbnAll and the other combined
-;     legs) AND is SILICON-ONLY for the same reason as XDAT/XRTC:
-;     EXTERN 1 90 leaves mode bit 1 (no-date) clear, so fn 90 calls
-;     SVC_GETDATE. DO NOT TYPE it in an emulator replay. The other
+;   -XbnTrans stages a `toolkit transcript` subset (XTR2 needs toolkit fn
+;     70): XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF XTRD XTRO are
+;     meaningful there. XTRD is SILICON-ONLY for the same reason as
+;     XDAT/XRTC: EXTERN 1 90 leaves mode bit 1 (no-date) clear, so fn 90
+;     calls SVC_GETDATE. DO NOT TYPE it in an emulator replay. The other
 ;     transcript verbs (XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2 XTRF XTRO)
 ;     set mode bit 1 and are emulator-safe.
+;   XTRS typed on -XbnAll or any other collection leg: transcript left
+;     the collection, so fn 90 is foreign and EXTERN passes as a no-op;
+;     the verb does not branch on CF so it still prints "recording" -
+;     that text is not proof recording started, the tap is off.
 ;   XNMU XNMA XNMK XNMP need the PLAYERNAME module (-XbnAll and the other
 ;     combined legs); emulator-safe (tests\xbn\namecheck.py). On a
 ;     combined leg the fixture verbs XREG XSVC XFIO XMSG XABS (fns
@@ -2016,7 +2023,8 @@ CLOAK   22 noun
 > XLD2 _   LOAD    0          ; answer with V2: the harness-staged v2 file
            DONE
 ; XTRS/XTRI/XTRD/XTRE/XTRQ/XTRL/XTR1/XTR2/XTRF - transcript module (fns
-; 90-94), combined-binary legs only (see LEG SCOPE above). Mode bit 1
+; 90-94), -XbnTrans leg only (see LEG SCOPE above); a no-op on the
+; combined-binary legs, transcript left that binary. Mode bit 1
 ; (no-date) is set on XTRS/XTRI so they stay emulator-safe; XTRD leaves
 ; it clear and reaches SVC_GETDATE - SILICON-ONLY, see LEG SCOPE.
 > XTRS _   EXTERN  3 90       ; start, full mode, no-date

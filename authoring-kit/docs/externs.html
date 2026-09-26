@@ -940,7 +940,7 @@ needed.</p>
 </tr>
 <tr>
 <td><code>transcript/</code></td>
-<td>Records every typed line, and optionally everything printed, to <code>TRANS.TXT</code> beside the database - a walkthrough recorder, or a bug report that writes itself. Needs a v0.10.1 interpreter (format 3 header, line and output hooks) - an older interpreter loads the game with the module off</td>
+<td>Records every typed line, and optionally everything printed, to <code>TRANS.TXT</code> beside the database - a walkthrough recorder, or a bug report that writes itself. Needs a v0.10.1 interpreter (format 3 header, line and output hooks) - an older interpreter loads the game with the module off. NOT in <code>externs\all\GAME.XBN</code> - see below</td>
 <td>90 start recording (mode bitmask), 91 stop, 92 condition, 93 write message n as a label line, 94 restrict to window w</td>
 <td>-</td>
 </tr>
@@ -957,8 +957,16 @@ this one.</p>
 <h3 id="one-binary-any-subset">One binary, any subset</h3>
 <p>A game loads ONE <code>GAME.XBN</code>, and you never merge sources by hand:</p>
 <ul>
-<li><code>externs\all\GAME.XBN</code> ships every module in one prebuilt binary.
-  Copy it beside <code>GAME.DDB</code> and use whichever functions you want.</li>
+<li><code>externs\all\GAME.XBN</code> ships every module in this collection EXCEPT
+  transcript, in one prebuilt binary. Copy it beside <code>GAME.DDB</code> and use
+  whichever functions you want. With no hooked module in it, this
+  binary carries a plain format 2 header and needs only API 3, for
+  playername's <code>SVC_GETLINE</code> - the loader never arms the output tap for
+  it, so every printed character costs nothing extra.</li>
+<li><code>externs\transcript\GAME.XBN</code> ships that module alone, or fold it
+  into a subset build below. The loader arms the output tap for ANY
+  binary whose header names one, whether or not the module is
+  recording, so include it only in a game that means to record.</li>
 <li><code>EXTERNS.BAT ticker fade</code> from the kit root builds a binary holding
   only the modules you name, your own included (this route needs
   sjasmplus - see <code>externs\README.md</code> for where it looks).</li>

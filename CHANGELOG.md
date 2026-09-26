@@ -187,8 +187,12 @@ All notable changes to NextDAAD are recorded here.
   on real hardware. Fixture verbs XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2
   XTRF XTRO XTRD (XTRD silicon-only); tests/xbn/transcheck.py (tilemap
   vs file diff), tests/parser/transcript2jsonl.py, tests/xbn/mkv2sav.py,
-  tickcheck.py --grab. The combined collection binary (externs/all) now
-  carries a format 3 header and needs a v0.10.1 interpreter.
+  tickcheck.py --grab. Not part of externs/all: the loader arms the
+  output tap for any binary whose header names one, so a binary with
+  this hook costs every game that loads it on every printed character,
+  recording or not. Ships standalone (externs/transcript/GAME.XBN) or in
+  an EXTERNS.BAT subset; the collection stays a format 2 binary and
+  needs only API 3, for playername's SVC_GETLINE.
 - kit: videnc.exe and vidtune.exe are now one PyInstaller onedir bundle,
   `authoring-kit/tools/vidtools/`, sharing `_internal/`; built from
   `scripts/vidtools.spec` by `scripts/build-vidtools.ps1` (build outside

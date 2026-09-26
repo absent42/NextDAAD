@@ -792,7 +792,7 @@ needed.
 | `timer/` | Three independent countdown timers, counting real seconds or in-game minutes, that expire into a flag your process table can test | 63 arm, 64 stop all three, 65 arm slot p as an in-game-minute deadline | 229-234 remaining (3 pairs), 235-237 state; an armed in-game-minute slot also READS the clock's 224, 225 and 244 |
 | `realtime/` | Reads the Next's real-time clock: date and time fields for the game to print or test, and day stamps kept in `GAME.HST` beside the database so a game can tell how long it has been since the last visit | 66 refresh, 67 field, 68 stamp, 69 days since | 238 result, 239 available |
 | `toolkit/` | Decimal printing, 16-bit flag-pair arithmetic, object queries, a random-without-repeat picker and time formatting. No hook - every function runs to completion inside the EXTERN that calls it; fns 76 and 84 keep their state in the extern state area, restored by LOAD | 70-84: 70 print flag as decimal, 71 print pair as decimal, 72-75 16-bit arithmetic, 76/77 picker, 78-81 object queries, 82 HH:MM, 83 MM:SS, 84 print target window | 248 width, 249 operand, 250 fn 79's high byte, 251 result |
-| `transcript/` | Records every typed line, and optionally everything printed, to `TRANS.TXT` beside the database - a walkthrough recorder, or a bug report that writes itself. Needs a v0.10.1 interpreter (format 3 header, line and output hooks) - an older interpreter loads the game with the module off | 90 start recording (mode bitmask), 91 stop, 92 condition, 93 write message n as a label line, 94 restrict to window w | - |
+| `transcript/` | Records every typed line, and optionally everything printed, to `TRANS.TXT` beside the database - a walkthrough recorder, or a bug report that writes itself. Needs a v0.10.1 interpreter (format 3 header, line and output hooks) - an older interpreter loads the game with the module off. NOT in `externs\all\GAME.XBN` - see below | 90 start recording (mode bitmask), 91 stop, 92 condition, 93 write message n as a label line, 94 restrict to window w | - |
 
 Function codes and flags are disjoint across the whole collection, so
 any subset coexists in one binary. Flags 224-251 are the collection's
@@ -807,8 +807,16 @@ this one.
 
 A game loads ONE `GAME.XBN`, and you never merge sources by hand:
 
-- `externs\all\GAME.XBN` ships every module in one prebuilt binary.
-  Copy it beside `GAME.DDB` and use whichever functions you want.
+- `externs\all\GAME.XBN` ships every module in this collection EXCEPT
+  transcript, in one prebuilt binary. Copy it beside `GAME.DDB` and use
+  whichever functions you want. With no hooked module in it, this
+  binary carries a plain format 2 header and needs only API 3, for
+  playername's `SVC_GETLINE` - the loader never arms the output tap for
+  it, so every printed character costs nothing extra.
+- `externs\transcript\GAME.XBN` ships that module alone, or fold it
+  into a subset build below. The loader arms the output tap for ANY
+  binary whose header names one, whether or not the module is
+  recording, so include it only in a game that means to record.
 - `EXTERNS.BAT ticker fade` from the kit root builds a binary holding
   only the modules you name, your own included (this route needs
   sjasmplus - see `externs\README.md` for where it looks).

@@ -4,11 +4,15 @@ A game loads exactly one `GAME.XBN`. This folder holds every extern in the
 collection built into a single binary, so you can copy one file to your card
 and use any of their functions without an assembler.
 
-The transcript module gives this binary a format 3 header (line and output
-hooks), so it needs a v0.10.1 interpreter - an older one loads the game with
-every module in this binary off. Both hooks are inert until the game arms
-transcript with `EXTERN mode 90`; a game that never calls it pays for the
-header only.
+Transcript is NOT in this binary - it is the one module the collection
+leaves out. The loader arms the output hook tap for any binary whose
+header names one, whether or not the module is recording, so a binary
+carrying that hook costs every game that loads it on every printed
+character. With no hooked module here, this binary carries a plain
+format 2 header, which any interpreter version loads; only playername's
+`SVC_GETLINE` needs API 3, checked by the module itself, not by the
+loader. Ship `../transcript/GAME.XBN` on its own, or fold it into an
+`EXTERNS.BAT` subset, only in a game that means to record.
 
 To use it: copy this folder's `GAME.XBN` next to your `GAME.DDB`, then add the
 DSF lines from whichever module's README you want. Each module documents its
@@ -31,7 +35,6 @@ its flag block stays yours.
 | timer | 63-65 | `../timer/README.md` |
 | realtime | 66-69 | `../realtime/README.md` |
 | toolkit | 70-84 | `../toolkit/README.md` |
-| transcript | 90-94 | `../transcript/README.md` |
 
 If you would rather ship a smaller binary with only the modules you use, run
 `EXTERNS.BAT` from the kit root - see the collection README.

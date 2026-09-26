@@ -99,7 +99,10 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   <a href="externs.html#the-extern-state-area">The extern state area</a>.</li>
 <li><strong>New extern: transcript.</strong> Records every command typed, and
   optionally everything the game prints, to a file on the card - a
-  walkthrough recorder, or a bug report that writes itself. See
+  walkthrough recorder, or a bug report that writes itself. Not part of
+  <code>externs\all\</code>: an output hook costs every game that loads it on every
+  printed character, recording or not, so ship it standalone or in an
+  <code>EXTERNS.BAT</code> subset instead. See
   <a href="externs.html#the-extern-collection">the extern collection</a>.</li>
 <li><strong>videnc and vidtune share one folder.</strong> Both now live in
   <code>tools\vidtools\</code> and run from its <code>_internal\</code>, which halves the

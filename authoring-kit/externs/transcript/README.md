@@ -18,13 +18,22 @@ leave it armed.
 A game ships with this module only when it means to - the file grows
 without bound for as long as recording stays armed.
 
+This module is NOT in `externs\all\GAME.XBN`. A binary with an output
+hook pays a cost on every printed character - two DI-bracketed MMU
+reads, a bank map, the chain call, a restore - whether or not it is
+recording, because the loader arms the tap for any binary whose header
+names an outEntry at all. The collection stays a plain format 2 binary
+so every game using it prints at no such cost; include this module only
+in a game that actually records.
+
 ## How to build
 
 A prebuilt `GAME.XBN` ships in this directory - copy it next to your
-own `GAME.DDB` (or use the combined collection binary, which includes
-it). To rebuild after editing the source (build.ps1 finds sjasmplus via
-its -SjasmPlus parameter, then the kit's tools\sjasmplus\, then PATH;
-https://github.com/z00m128/sjasmplus):
+own `GAME.DDB`. To build a smaller binary that combines it with other
+modules, run `EXTERNS.BAT transcript ...` from the kit root (see the
+collection README). To rebuild after editing the source (build.ps1
+finds sjasmplus via its -SjasmPlus parameter, then the kit's
+tools\sjasmplus\, then PATH; https://github.com/z00m128/sjasmplus):
 
     .\build.ps1
 

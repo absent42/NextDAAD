@@ -78,12 +78,22 @@ with no modules for the usage and the module list.
 
 ## Why all\ exists
 
-`externs\all\` is the whole collection built into one prebuilt binary. It
-exists so an author with no assembler still gets every module: copy that one
-`GAME.XBN` and use whatever functions you want. An unused module costs nothing
-at run time - its share of the frame hook is a single load-and-test and its
-flags stay untouched until the game invokes it - so a game shipping `all\` and
-using only the fade pays for only the fade.
+`externs\all\` is every module in the collection EXCEPT `transcript`, built
+into one prebuilt binary. It exists so an author with no assembler still
+gets every other module: copy that one `GAME.XBN` and use whatever
+functions you want. An unused module costs nothing at run time - its share
+of the frame hook is a single load-and-test and its flags stay untouched
+until the game invokes it - so a game shipping `all\` and using only the
+fade pays for only the fade.
+
+`transcript` is deliberately left out: the loader arms the output hook tap
+for ANY binary whose header names an outEntry, so a binary carrying that
+hook pays a round trip into the extern - two DI-bracketed MMU reads, a
+bank map, the chain call, a restore - on every printed character, whether
+or not the module is recording. With no hooked module left in it, `all.asm`
+carries a plain format 2 header and the tap is never armed. Ship
+`externs\transcript\GAME.XBN` on its own, or fold it into an `EXTERNS.BAT`
+subset, only in a game that means to record.
 
 `all\` follows the same four-file folder contract as every other module: one
 source (`all.asm`), `GAME.XBN`, `README.md`, `build.ps1`.
@@ -94,18 +104,24 @@ This section is for adding a module to the shipped collection. A module
 for your own game needs none of it - `EXTERNS.BAT` generates the same
 wiring.
 
-`all.asm` already carries a format 3 header - `XBN_BEGIN3 all_ext, all_int,
-all_line, all_out` - because the collection includes a hooked module
-(`transcript`). `all_line`/`all_out` chain every hooked module's `line`/`out`
-the same way `all_ext`/`all_int` chain every module's `ext`/`int`:
+`all.asm` currently carries a plain format 2 header - `XBN_BEGIN all_ext,
+all_int` - because none of its included modules declares a line or output
+hook. Adding a hooked module switches this to the format 3 twin,
+`XBN_BEGIN3 all_ext, all_int, all_line, all_out`, and adds `all_line`/
+`all_out` blocks that chain every hooked module's `line`/`out` the same way
+`all_ext`/`all_int` chain every module's `ext`/`int`:
 
     all_line:
         XBN_LINE_ENTER
-        XBN_LINE_CALL transcript.line
+        XBN_LINE_CALL myhookedmod.line
         XBN_LINE_END
     all_out:
-        XBN_OUT_CALL transcript.out
+        XBN_OUT_CALL myhookedmod.out
         ret
+
+Weigh that switch against the cost it was removed for: any binary with an
+outEntry pays the per-character tap cost for every game that loads it,
+whether or not the hook is doing anything.
 
 Adding a module to the combined binary is four edits in `all.asm` and nothing
 else moves:

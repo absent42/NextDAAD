@@ -232,12 +232,12 @@
 #            tests\xbn\xbntest.asm's fixture extern as GAME.XBN (the
 #            XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG/XABS probe verbs, all
 #            live against the interpreter's XBN support as of Task 9).
-#            Six companion switches, all no-ops without -Xbn. Not
+#            Seven companion switches, all no-ops without -Xbn. Not
 #            designed to be combined with each other; the staging code
 #            checks them in this priority order, so if more than one is
 #            given -XbnNoBin wins over -XbnBad over -XbnTicker over
 #            -XbnFade over -XbnAll over -XbnHints over -XbnClock over
-#            -XbnTool:
+#            -XbnTool over -XbnTrans:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN (XABS
 #                              no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated GAME.XBN instead
@@ -284,6 +284,14 @@
 #                              one of its modules), no hint packing, so
 #                              XTKP/XTKA/XTKO/XTKT/XSLT have the toolkit
 #                              fns and CALL slots to drive.
+#              -XbnTrans      stage a `toolkit transcript` subset built by
+#                              xbnbuild.ps1 (XTR2 needs toolkit fn 70) as
+#                              GAME.XBN instead of the fixture, so
+#                              XTRS/XTR1/XTR2/XTRE have the transcript
+#                              module to drive - it left the combined
+#                              collection binary and needs its own build.
+#                              Same scratch-cwd/CSpect-lock pattern as
+#                              -XbnAll, no picture or hint staging.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -375,7 +383,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -585,11 +593,11 @@ finally { Pop-Location }
 # GAME.XBN to the committed all\GAME.XBN - catches both a broken
 # generator and any future divergence between the two paths.
 $xbnDriftOut = "$root\tests\out\xbn-subset-drift.XBN"
-& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer realtime toolkit transcript playername -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
+& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer realtime toolkit playername -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
 $xbnDriftFresh = [IO.File]::ReadAllBytes($xbnDriftOut)
 $xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME.XBN")
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
-    throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit transcript playername DRIFTED from authoring-kit\externs\all\GAME.XBN (format v$($xbnDriftFresh[3]) vs v$($xbnDriftShipped[3])) - generator and all.asm disagree; compare $xbnDriftOut"
+    throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit playername DRIFTED from authoring-kit\externs\all\GAME.XBN (format v$($xbnDriftFresh[3]) vs v$($xbnDriftShipped[3])) - generator and all.asm disagree; compare $xbnDriftOut"
 }
 # The kit-root GAME.XBN is what BUILD.BAT stages into RELEASE; it must be a
 # byte copy of externs\all\GAME.XBN.
@@ -3414,6 +3422,31 @@ if ($Xbn) {
         else {
             "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
+    }
+    elseif ($XbnTrans) {
+        # `toolkit transcript` subset, staged as GAME.XBN INSTEAD of the
+        # fixture, so extern.dsf's XTRS/XTRI/XTRD/XTRE/XTRQ/XTRL/XTR1/XTR2/
+        # XTRF/XTRO verbs have the transcript module to drive (XTR2 needs
+        # toolkit fn 70). Transcript left the combined collection binary,
+        # so this subset is built fresh by xbnbuild.ps1 rather than staged
+        # from all.asm - same scratch-cwd/CSpect-lock pattern as -XbnAll,
+        # no shipped binary to drift-check against, no picture or hint
+        # staging.
+        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+            throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
+        }
+        $transBuildDir = Join-Path $root 'tests\out\xbn\_transbuild'
+        New-Item -ItemType Directory -Force $transBuildDir | Out-Null
+        Push-Location $transBuildDir
+        try {
+            & "$root\authoring-kit\lib\xbnbuild.ps1" toolkit transcript -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out "$root\tests\out\xbn\TRANS.XBN" | Out-Null
+        }
+        finally {
+            Pop-Location
+            Remove-Item $transBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Copy-Item "$root\tests\out\xbn\TRANS.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\TRANS.XBN -> sd\$legName\GAME.XBN (-XbnTrans: toolkit+transcript subset built by xbnbuild.ps1, not the fixture)"
     }
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force

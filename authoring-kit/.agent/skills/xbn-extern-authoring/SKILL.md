@@ -42,10 +42,12 @@ Anything a condact already does, do with the condact.
 
 Check `externs\` first. The kit ships nine ready-made modules - `playername`,
 `ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
-`transcript` - each
-with a prebuilt `GAME.XBN` that needs no assembler, and `externs\all\GAME.XBN`
-holds the lot. If one of them already does the job, wire it into the DSF
-instead of writing code.
+`transcript` - each with a prebuilt `GAME.XBN` that needs no assembler, and
+`externs\all\GAME.XBN` holds every one of them except `transcript`: a binary
+with an output hook (transcript's) costs every game that loads it on every
+printed character, hook armed or not, so it ships standalone instead. If
+one of them already does the job, wire it into the DSF instead of writing
+code.
 
 ## Workflow
 
