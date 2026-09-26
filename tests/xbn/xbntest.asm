@@ -73,6 +73,8 @@ ext_main:
     jp z, fitword_probe          ; SVC_FITWORD probe; past the pad, jp not jr
     cp 50
     jp z, fitflush_probe
+    cp 51
+    jp z, mmu_probe              ; MMU save race probe; runs from slot 7
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -791,6 +793,83 @@ state_r:
     ld (XBN_FLAGS+132), a
     or a
     ret
+
+; fn 51: p1 rounds (0 = 256) of MMU_N SVC_FITWORD(0) calls - the cheapest
+; service bracketed by the svcSaved MMU save. NR $56 is read after each
+; against the entry page; mismatches counted in 137/138 and repaired.
+; 139/140 = frames taken. Code and data sit in slot 7 so a wrong slot 6
+; page cannot unmap them. The R-driven delay keeps the loop from phase-
+; locking to the frame interrupt.
+MMU_N equ 60000
+mmu_probe:
+    ld a, b
+    ld (mmuRounds), a
+    call mmu_rd6
+    ld (mmuExp), a               ; XBN first page, as mapped for the call
+    ld hl, 0
+    ld (XBN_FLAGS+137), hl
+    call SVC_FRAMES
+    ld (mmuT0), hl
+.round:
+    ld de, MMU_N
+.loop:
+    push de
+    ld a, r
+    and $0F
+    ld b, a
+    inc b
+.jit:
+    djnz .jit
+    xor a                        ; length 0: flush only
+    call SVC_FITWORD
+    call mmu_rd6
+    ld hl, mmuExp
+    cp (hl)
+    jr z, .ok
+    ld a, (hl)
+    nextreg $56, a               ; repair slot 6 so the loop continues
+    ld hl, (XBN_FLAGS+137)
+    inc hl
+    ld (XBN_FLAGS+137), hl
+.ok:
+    pop de
+    dec de
+    ld a, d
+    or e
+    jr nz, .loop
+    ld hl, mmuRounds
+    dec (hl)
+    jr nz, .round
+    call SVC_FRAMES
+    ld de, (mmuT0)
+    or a
+    sbc hl, de
+    ld (XBN_FLAGS+139), hl
+    or a                         ; CF discipline: deliberate clear
+    ret
+; A = NR $56. Own IFF2-preserving DI bracket (nr_read idiom): does not use
+; the interpreter routine under test. Corrupts BC, F.
+mmu_rd6:
+    ld a, i
+    jp pe, .on
+    ld a, i
+.on:
+    push af
+    di
+    ld bc, TB_SELECT
+    ld a, $56
+    out (c), a
+    inc b
+    in c, (c)
+    pop af
+    ld a, c
+    ret po
+    ei
+    ret
+mmuExp:    db 0
+mmuRounds: db 0
+mmuT0:     dw 0
+    ASSERT mmu_probe >= $E000    ; slot 7 half of the bank
 
 xbn_end:
 

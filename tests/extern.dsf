@@ -292,10 +292,10 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 34-39 and 42-50 exist: XREG XCAL XTIK XSVC XFIO
+;     where fns 20-29, 34-39 and 42-51 exist: XREG XCAL XTIK XSVC XFIO
 ;     XMSG XMS6 XCND XCNE XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH XPRB
-;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR XFWD XFWF (fns
-;     26-29, 34-39 and 42-50 exist only in xbntest.asm) (on any other leg
+;     XGLN XINJ XLIN XPND XSAV XINE XINL XVOC XSTW XSTZ XSTR XFWD XFWF
+;     XMMU (fns 26-29, 34-39 and 42-51 exist only in xbntest.asm) (on any other leg
 ;     these print unwritten flags - zeros)
 ;   XLOD XRMS XRML XLD2: SAVE/LOAD/RAMSAVE/RAMLOAD are resident
 ;     interpreter condacts, meaningful on any leg with a filesystem, but
@@ -496,6 +496,7 @@ XTTL   219 verb
 XTTB   220 verb
 XTTC   221 verb
 XFWF   222 verb
+XMMU   223 verb
 AND    2   CONJUGATION
 WIDGET  20 noun
 GIZMO   21 noun
@@ -677,19 +678,19 @@ CLOAK   22 noun
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 229 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C3E5 (lsb 229, msb 195) - read
+> XCAL _   CALL 234 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3EA (lsb 234, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C3DF by the fn 50 dispatch code.
+                             ; from $C3E5 by the fn 51 dispatch code.
            PRINT 220         ; expect 119 ($77)
-           CALL 60 230         ; Task 4's owed check: tail_marker, address
-                             ; $E63C (lsb 60, msb 230) - the SECOND 8K page
+           CALL 65 230         ; Task 4's owed check: tail_marker, address
+                             ; $E641 (lsb 65, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E636 by the fn 50 dispatch code.
+                             ; from $E63C by the fn 51 dispatch code.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -2147,6 +2148,21 @@ CLOAK   22 noun
            WINSIZE 12 10
            CLS
            EXTERN  0 50
+           NEWLINE
+           DONE
+; XMMU - fixture fn 51, one round: 60000 SVC_FITWORD(0) calls, NR $56
+;        checked after each against the XBN's first page. Expect "mmu 0/0"
+;        (mismatches lo/hi); "fr" = frames taken lo/hi. Before the MMU
+;        save was DI-bracketed ZEsarUX counted 31-39 per round.
+> XMMU _   EXTERN  1 51
+           MES     "mmu "
+           PRINT   137
+           MES     "/"
+           PRINT   138
+           MES     " fr "
+           PRINT   139
+           MES     "/"
+           PRINT   140
            NEWLINE
            DONE
 ; XTTY - fn 39 vs MES at 30 columns, message 1 (token-compressed). Expect

@@ -223,8 +223,9 @@ im2_isr:
     ;      the selected register, the slot 6/7 mapping, and AF' all survive intact.
     ;  (3) Only one CTC nest is ever live (period >> its ~196T body), +4 bytes of
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
-    ; DI sections: nr_read's bracket ~76T (~2.7us), rng_step's ~162T (~6us)
-    ; and the tick's pointer brackets ~20T stay well under one CTC period
+    ; DI sections: nr_read's bracket ~76T (~2.7us), mmu_save_hl's ~125T,
+    ; rng_step's ~162T (~6us) and the tick's pointer brackets ~20T stay
+    ; well under one CTC period
     ; (~50us at 20kHz); every indefinite-DI
     ; teardown calls audio_init (resets the CTC) first. PLY_AKY_PLAY nests
     ; too: its ret chain runs on akyRetShadow (main.asm) whose guard absorbs
@@ -233,7 +234,8 @@ im2_isr:
     ; in a 5.5k-15k T window every frame (player_aky.asm header).
     ei
     ; Save MMU 6/7 via the register-select port pair. Mainline users of
-    ; $243B/$253B are DI-bracketed (hardware.asm nr_read) or run before
+    ; $243B/$253B are DI-bracketed (hardware.asm nr_read, main.asm
+    ; mmu_save_hl) or run before
     ; im2_init's ei (see the SP7 Task 3 report's port audit), so this
     ; selection cannot race a mainline select. A nested ctc_isr never
     ; touches this pair, so it cannot split the select from the read.

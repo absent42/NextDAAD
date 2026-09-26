@@ -415,8 +415,15 @@ xbn_svc_mmu_save:               ; corrupts A, BC, HL, F; result in svcSaved - fa
     ld hl, svcSaved
 ; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch:
 ; the cell address rides in HL, so the three entries need no lock between
-; them. The $243B select is NOT interrupt-safe here - see the header.
+; them. DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects
+; $243B without restoring it. Entered with interrupts off (ISR), stays off.
 mmu_save_hl:
+    ld a, i
+    jp pe, .sampled             ; P/V = IFF2
+    ld a, i                     ; re-sample: see nr_read
+.sampled:
+    push af
+    di
     ld bc, $243B
     ld a, NR_MMU6
     out (c), a
@@ -430,6 +437,9 @@ mmu_save_hl:
     inc b
     in a, (c)
     ld (hl), a
+    pop af
+    ret po                      ; P/V = 0: interrupts were off
+    ei
     ret
 
 xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
