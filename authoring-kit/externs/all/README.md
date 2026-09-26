@@ -1,8 +1,19 @@
-# All - the whole collection in one GAME.XBN
+# All - the collection in one GAME.XBN
 
 A game loads exactly one `GAME.XBN`. This folder holds every extern in the
-collection built into a single binary, so you can copy one file to your card
-and use any of their functions without an assembler.
+collection except transcript, built into a single binary, so you can copy
+one file to your card and use any of their functions without an assembler.
+
+Transcript is NOT in this binary - it is the one module the collection
+leaves out. The loader arms the output hook tap for any binary whose
+header names one, whether or not the module is recording, so a binary
+carrying that hook costs every game that loads it on every printed
+character. With no hooked module here, this binary carries a plain
+format 2 header, which any interpreter version loads; playername's
+`SVC_GETLINE` and ticker's `SVC_PAIR`/`SVC_FITWORD` need API 3, each
+module checking the version itself, not the loader. Ship
+`../transcript/GAME.XBN` on its own, or fold it into an
+`EXTERNS.BAT` subset, only in a game that means to record.
 
 To use it: copy this folder's `GAME.XBN` next to your `GAME.DDB`, then add the
 DSF lines from whichever module's README you want. Each module documents its
@@ -17,7 +28,8 @@ its flag block stays yours.
 
 | Module | fn codes | README |
 |---|---|---|
-| ticker | 30-38 | `../ticker/README.md` |
+| playername | 20-23 | `../playername/README.md` |
+| ticker | 30-38, 39 type message at cursor | `../ticker/README.md` |
 | fade | 40-43 | `../fade/README.md` |
 | hints | 50-53 | `../hints/README.md` |
 | clock | 60-62 | `../clock/README.md` |

@@ -883,7 +883,9 @@ h_display:
 ;   18 = text width select (NextDAAD-only, no jdaad/DAAD-reference
 ;       analogue; GFX_SUB_TXTMODE, nextdaad.inc). B = 0 selects 80-column
 ;       mode (80x32, boot default), 1 = 40-column mode (40x32). B >= 2 is
-;       a no-op. Triggers clean slate: tilemap cleared, windows reset.
+;       a no-op. A width change clears the map in window 0's attribute
+;       and resets every window's geometry, cursor and line count;
+;       MODE, INK, PAPER and the cached pairs are kept (win_regeom).
 ;       Width is GAME-OWNED state, surviving all RESTART/LOAD/RAMLOAD and
 ;       part switches.
 ;   22-26 = parser cursor (NextDAAD-only; GFX_SUB_CUR_*, nextdaad.inc):
@@ -1104,8 +1106,12 @@ h_gfx:
     cp (hl)
     ret z                        ; already active: no clear, no reset -
                                  ; safe to issue unconditionally at init
-    jp tm_width_apply            ; resident, like tm_font_init above;
-                                 ; game-owned tmCols survives every reset
+    push af                      ; A = width, live into tm_width_core
+    ld a, (winTable+WIN_ATTR)    ; window 0's attribute fills the map
+    ld (tmAttr), a
+    pop af
+    call tm_width_core           ; resident; game-owned tmCols
+    jp win_regeom                ; geometry reset, style kept
 .curglyph:                       ; sub 22: B = tile, 0 = block. Raw, no
     ld a, b                      ; charset shift (ZXDAAD128's DdbCursor).
     ld (curGlyph), a
@@ -1374,6 +1380,36 @@ gfx_pal_ctl:
 .first:
     or PAL_L2_FIRST
     ret
+
+; GFX 18 width change: reset every window's geometry, cursor and line
+; count at the new width; MODE, INK, PAPER and both cached pairs stay.
+; Ends in win_select 0 like windows_init. Corrupts everything.
+    ASSERT WIN_X == 0 && WIN_CURY == 5 && WIN_FLAGS == 6 && WIN_INK == 7
+    ASSERT WIN_PAPER == 8 && WIN_LINES == 9 && WIN_ATTR == 10
+    ASSERT WIN_ATTRINV == 11 && WIN_SIZE == 12
+win_regeom:
+    ld a, (tmCols)
+    ld (winTpl+WIN_W), a         ; resident template, as windows_init does
+    ld de, winTable
+    ld b, WINDOW_COUNT
+.win:
+    push bc
+    ld hl, winTpl
+    ld bc, WIN_FLAGS             ; X, Y, W, H, CURX, CURY
+    ldir
+    ex de, hl                    ; HL -> this record's FLAGS
+    inc hl                       ; keep FLAGS (MODE)
+    inc hl                       ; keep INK
+    inc hl                       ; keep PAPER
+    ld (hl), 0                   ; LINES
+    inc hl
+    inc hl                       ; keep ATTR
+    inc hl                       ; keep ATTRINV
+    ex de, hl                    ; DE -> next record
+    pop bc
+    djnz .win
+    xor a
+    jp win_select
 
  IFDEF DEBUG
 msgGfxUnk: db "GFX? ", 0
@@ -3244,14 +3280,9 @@ zx0DepackSP: dw 0                ; SP snapshot for zx0_fail's rewind
 ; it never competes with the picture cache/numbered-art namespace) and,
 ; if one exists, shows it with music already playing (aud_boot_probe
 ; started it before chaining here - see overlay1.asm) until any key is
-; pressed. Two entry points:
-;   title_present - probe only, for debug.asm's release boot_banner
-;     gate (self-contained: no overlay0/overlay1 dependency, esxDOS is
-;     already up by boot_banner time - see its call site);
-;   title_boot - the full sequence, chained from aud_boot_probe's tail.
-; Both are UNCONDITIONAL (no IFDEF DEBUG): the DEBUG build shows its
-; diagnostics first, then the title; only the release banner's PRINT is
-; gated on title_present, in debug.asm.
+; pressed. Entry point title_boot, chained from aud_boot_probe's tail.
+; UNCONDITIONAL (no IFDEF DEBUG): the DEBUG build shows its diagnostics
+; first, then the title.
 
 TITLE_ROW equ 4                  ; word name ptr + mode byte + compressed byte
 
@@ -3338,49 +3369,6 @@ title_probe:
     or a
     ret
 
-; Boot-banner presence gate (debug.asm's release boot_banner): probes
-; the same 6 DAAD.* names as title_boot but only wants the verdict, so
-; the handle title_probe opens is closed again immediately rather than
-; carried into a load. Out: CF clear = a title is staged for boot (the
-; banner print is skipped - the title itself becomes the first thing
-; the player sees); CF set = none of the 6 exist (boot proceeds exactly
-; as before). Corrupts AF, BC, DE, HL only - IX is saved/restored
-; around title_probe's esxDOS calls so that holds regardless of what
-; esx_fopen/esx_fclose do to it.
-title_present:
-    push ix
-    call title_probe
-    jr c, .none
-    call gfx_close_handle
-    or a
-    jr .ret
-.none:
-    scf
-.ret:
-    pop ix
-    ret
-
-; Probe INTRO\INTRO.DAT (the launcher's compiled show) so the banner
-; stays quiet when an intro ships, the same courtesy a title gets.
-; CF clear = present. Corrupts AF, BC, DE, HL; IX saved around the esxDOS calls.
-intro_present:
-    push ix
-    call esx_getsetdrv
-    jr c, .none
-    ld ix, introDatName
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    jr c, .none
-    call esx_fclose
-    or a
-    jr .ret
-.none:
-    scf
-.ret:
-    pop ix
-    ret
-introDatName: db "INTRO", 92, "INTRO.DAT", 0
-
 ; Full boot title sequence, chained from aud_boot_probe's tail
 ; (overlay1.asm) via the ovl_map_page trampoline, entered with
 ; OVL2_PAGE freshly mapped at MMU7. Probes the 6 DAAD.* names
@@ -3423,7 +3411,7 @@ introDatName: db "INTRO", 92, "INTRO.DAT", 0
 ; in this overlay page and cannot execute while MMU7 holds
 ; pointer_load's OVL0_PAGE.
 ;
-; The release banner and DEBUG diagnostics (debug.asm) render before
+; The DEBUG diagnostics (debug.asm) render before
 ; this point, still in the embedded font by design - interpreter
 ; furniture, not game text; everything from here on uses the custom
 ; font, once loaded.

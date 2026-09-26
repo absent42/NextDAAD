@@ -215,9 +215,8 @@ and is not interchangeable with a location picture), `FONT.TIL` for a
 colour font, and one of `MUSIC.AKY`, `MUSIC.AYS`, `MUSIC.PCM` or
 `MUSIC.NDR` with `NDAW.BIN`. Copy `RELEASE\` to the card as usual and
 launch `<GAME>.NEX`. Launching `nextdaad.nex` directly still works and
-skips the intro. A game shipping an intro boots without the version
-stamp, the same as one shipping a title screen; a game shipping both an
-intro and a title shows the intro, then the title.
+skips the intro. A game shipping both an intro and a title shows the
+intro, then the title.
 
 ## When something is missing
 

@@ -32,6 +32,8 @@ class Knob:
     # (most existing rows have none; the panel is largely self-
     # explanatory from the flag name + videnc's own --help for detail).
     tooltip: str = ""
+    # Row label text; empty = name. name stays the settings/preset key.
+    label: str = ""
 
 
 KNOBS = [
@@ -41,7 +43,8 @@ KNOBS = [
     # (videnc.py:370). An existing --mono in a user's VIDOPTS_NNN falls
     # back to the extra passthrough, preserved verbatim on Accept.
     Knob("dither",        "--dither",        "float",  "0.5",    "basic"),
-    Knob("tile_slack",    "--tile-slack",    "float",  "0.0",    "basic"),
+    Knob("tile_slack",    "--tile-slack",    "float",  "0.0",    "basic",
+         label="tile slack"),
     # prefilter is basic, not advanced: the kit's own docs\video.html
     # makes it Preset 4 and step 3 of the Preset 6 anti-banding ladder -
     # front-line authoring guidance, not an expert knob.
@@ -52,12 +55,16 @@ KNOBS = [
     Knob("start",         "--start",         "str",    None,     "basic"),
     Knob("duration",      "--duration",      "str",    None,     "basic"),
     Knob("retime",        "--retime",        "choice", "blend",  "advanced"),
-    Knob("dither_mode",   "--dither-mode",   "choice", "offset", "advanced"),
+    Knob("dither_mode",   "--dither-mode",   "choice", "offset", "advanced",
+         label="dither mode"),
     Knob("aspect",        "--aspect",        "float",  None,     "advanced"),
     Knob("width",         "--width",         "choice", None,     "advanced"),
-    Knob("stream_budget", "--stream-budget", "float",  None,     "advanced"),
-    Knob("budget_target", "--budget-target", "float",  "0.90",   "advanced"),
-    Knob("byte_cap",      "--byte-cap",      "float",  "0.65",   "advanced"),
+    Knob("stream_budget", "--stream-budget", "float",  None,     "advanced",
+         label="stream budget"),
+    Knob("budget_target", "--budget-target", "float",  "0.90",   "advanced",
+         label="budget target"),
+    Knob("byte_cap",      "--byte-cap",      "float",  "0.65",   "advanced",
+         label="byte cap"),
     Knob("direct",        "--direct",        "flag",   False,    "advanced"),
     # kf_cadence's videnc argparse default is None, but the encoder
     # applies 5.0 internally when untouched - "5.0" here means an
@@ -66,7 +73,8 @@ KNOBS = [
     # cadence) must still emit `--kf-cadence 0` since it differs from
     # the "5.0" reference.
     Knob("kf_cadence",    "--kf-cadence",    "float",  "5.0",    "advanced",
-         tooltip="rolling-refresh window in seconds; 0 disables"),
+         tooltip="rolling-refresh window in seconds; 0 disables",
+         label="keyframe cadence"),
     # Deliberately NOT added: --no-merge (bench-fixture-only; production
     # encodes keep merge-gaps on, this is not an authoring knob) and
     # --direct-transport-factor (expert override for the --direct gate's

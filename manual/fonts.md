@@ -56,6 +56,53 @@ size is an error naming both shapes it accepts.
 Put the resulting `FONT.CHR` (or `FONT1.CHR` to `FONT9.CHR`) in the kit
 folder to ship it.
 
+## Other font formats
+
+The same converter reads fonts drawn for other machines, and the kit
+build picks those up too: a `FONT.fon`, `.psf`, `.psfu`, `.bdf`,
+`.yaff`, `.draw`, `.spr` or `.fnt` in the kit folder (or `FONT1.*` to
+`FONT9.*`) is converted the same way a `.ch8` is. The format is read
+from the file itself, not its extension.
+
+- `.fon` - Windows bitmap fonts. A file holding several faces picks an
+  exact 8x8 face, else the tallest face whose ink fits; `-Face
+  <index|WxH>` chooses one by hand.
+- `.psf` and `.psfu` - Linux console fonts.
+- `.bdf` - X11 bitmap fonts.
+- `.yaff` and `.draw` - the text formats used by
+  [monobit](https://github.com/robhagemans/monobit) and the
+  [hoard of bitfonts](https://github.com/robhagemans/hoard-of-bitfonts),
+  which collects the character sets of most 1980s and 1990s machines in
+  both. Any 8x8 font from that collection converts as it is. A file
+  declaring `encoding: zx-spectrum` is treated as a ZX charset and keeps
+  its own pound and copyright signs; one declaring a 437 codepage lifts
+  its pound from slot 156, like a `.fon` does.
+- `.spr` - a gfx2next `-font` sheet (use `-font`, not `-font-y`).
+- `.fnt` - a raw glyph dump; a length other than 768 or 2048 needs
+  `-First <code>` naming the character its first glyph belongs to.
+
+A source whose ink needs more than an 8x8 cell is refused, with the
+characters named, rather than squeezed - a descender that loses a row
+stops reading as one. Glyphs outside 32 to 127 that do not fit are
+dropped and counted instead. Characters 96 and 127 are a pound and a
+copyright sign on the Next but a grave accent and a house on a PC, so a
+converted font takes those two from the built-in font unless the source
+is a ZX charset; `-Slots Source` keeps the source's own.
+
+For a format not in that list, convert it with monobit first. It reads
+dozens of formats and writes BDF, which carries the character codes:
+
+```
+pip install monobit
+monobit-convert MyFont.xyz to FONT.bdf
+```
+
+Then drop the `FONT.bdf` in the kit folder, or run `fontconv.ps1` on it.
+Fonts from the hoard need no such step - the kit reads them directly.
+The hoard's own licence notes that some of its source folders carry
+their own terms, so check the folder a font came from before shipping
+it in a game.
+
 ## Which glyphs actually get drawn
 
 The whole 256-glyph table is addressable, but ordinary game text only

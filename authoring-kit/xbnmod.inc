@@ -8,6 +8,14 @@ XBN_CALL_SLOTS  equ 8            ; FROZEN at first release. Append only.
 ; absent slots jump to xbn_null_ret. Invoke once per binary.
     MACRO XBN_BEGIN ext_entry, int_entry
         XBN_HEADER ext_entry, int_entry
+        XBN_BEGIN_BODY
+    ENDM
+; Format 3 twin of XBN_BEGIN (xbn.inc's XBN_HEADER3).
+    MACRO XBN_BEGIN3 ext_entry, int_entry, line_entry, out_entry
+        XBN_HEADER3 ext_entry, int_entry, line_entry, out_entry
+        XBN_BEGIN_BODY
+    ENDM
+    MACRO XBN_BEGIN_BODY
 xbn_call_table:
         IFDEF XBN_HAS_TOOLKIT
         jp toolkit.tk_call0
@@ -102,7 +110,13 @@ XBN_TILEMAP     equ $6000
 ;
 ; Claims: hints.asm rdbuf, offset 0, 256 bytes
 ; Claims: fade.asm palStage, offset 256, 512 bytes
-XBN_SCRATCH_FREE equ 768         ; next unclaimed offset - bump when you add a claim
+; Claims: transcript.asm tbuf, offset 768, TRANSCRIPT_RING bytes
+; Claims: ticker.asm tybuf, offset 768 + TRANSCRIPT_RING, 256 bytes
+; Modules outside the collection declare sizes instead (XBN_CLAIM_AT below).
+    IFNDEF TRANSCRIPT_RING
+TRANSCRIPT_RING equ 2048         ; transcript buffer; standalone builds may raise it
+    ENDIF
+XBN_SCRATCH_FREE equ 768 + TRANSCRIPT_RING + 256
 
 ; Sets XBN_SCRATCH and asserts every claim above still fits inside the
 ; mapped bank. Invoke once, right after the top-level file's own
@@ -110,6 +124,33 @@ XBN_SCRATCH_FREE equ 768         ; next unclaimed offset - bump when you add a c
     MACRO XBN_SCRATCH_END
 XBN_SCRATCH equ xbn_end
         ASSERT XBN_SCRATCH + XBN_SCRATCH_FREE <= $10000, scratch RAM claims run past the mapped 16K bank ($FFFF)
+    ENDM
+
+; Extern state area claims (XBN_STATE, saved with the game). Membership
+; rule: only state that must agree with the restored flags.
+;
+; New collection claims grow down from the top, so author claims (from
+; XBN_STATE_FREE up to XBN_STATE_TOP) keep their offsets as it grows.
+;
+; Claims: toolkit.asm pickPool 0 (1), pickUsed 1 (8), tgtWin 9 (1)
+XBN_STATE_FREE  equ 10           ; first offset authors' modules claim from
+; Claims from the top: playername.asm name 111 (17)
+XBN_STATE_TOP   equ 111          ; lowest top claim - lower it past a new one
+    ASSERT XBN_STATE_FREE <= XBN_STATE_TOP
+    ASSERT XBN_STATE_TOP <= XBN_STATE_LEN
+
+; Claims for modules outside the collection: declare SCRATCH_SIZE and/or
+; STATE_SIZE; xbnbuild places them after the two chains above. Invoke
+; inside the module's MODULE block - defines SCRATCH and STATE there.
+    MACRO XBN_CLAIM_AT scr_off, scr_len, st_off, st_len
+SCRATCH equ XBN_SCRATCH + (scr_off)
+STATE   equ XBN_STATE + (st_off)
+        ASSERT XBN_SCRATCH + (scr_off) + (scr_len) <= $10000, scratch claim runs past the mapped 16K bank ($FFFF)
+        ASSERT (st_off) + (st_len) <= XBN_STATE_TOP, extern state claim runs past XBN_STATE_TOP (the collection's own claims)
+    ENDM
+; Standalone build tail: claims start where the collection's end.
+    MACRO XBN_CLAIMS scr_len, st_len
+        XBN_CLAIM_AT XBN_SCRATCH_FREE, scr_len, XBN_STATE_FREE, st_len
     ENDM
 
 ; Dispatch chain shared by all.asm and xbnbuild's generated source - one
@@ -171,4 +212,45 @@ xbn_fnsave:
         db 0
 xbn_cfacc:
         db 0
+    ENDM
+
+; Hook chains (format 3). The interpreter passes HL = line, B = length
+; once; each module gets the contract re-established. The first module
+; that returns CF set consumes the line and ends the chain.
+    MACRO XBN_LINE_ENTER
+        ld (xbn_line_hl), hl
+        ld a, b
+        ld (xbn_line_b), a
+    ENDM
+    MACRO XBN_LINE_CALL target   ; B is recomputed from the NUL: a module
+        call xbn_line_len        ; ahead may have rewritten the line
+        ld ix, XBN_FLAGS
+        call target
+        ret c
+    ENDM
+    MACRO XBN_LINE_END
+        or a
+        ret
+xbn_line_hl:    dw 0
+xbn_line_b:     db 0
+xbn_line_len:                    ; out HL = line, B = its length (to the NUL)
+        ld hl, (xbn_line_hl)
+        ld b, 0
+.l:
+        ld a, (hl)
+        or a
+        jr z, .d
+        inc hl
+        inc b
+        jr .l
+.d:
+        ld hl, (xbn_line_hl)
+        ret
+    ENDM
+; Output chain: C = the character, preserved across modules.
+    MACRO XBN_OUT_CALL target
+        push bc
+        ld ix, XBN_FLAGS
+        call target
+        pop bc
     ENDM

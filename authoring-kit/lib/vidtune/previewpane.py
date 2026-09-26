@@ -11,14 +11,16 @@ than crashing the tool.
 """
 import numpy as np
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSlider,
     QVBoxLayout,
@@ -41,15 +43,75 @@ TRACE_EMPTY = "no clip loaded"
 TRACE_UNENCODED = "no wire data yet - encode to measure"
 
 
-class _ClickableLabel(QLabel):
-    """QLabel with a clicked signal - used for the image view so a
-    click in Flicker mode toggles source/encoded like spacebar does."""
+ZOOMS = (1, 2, 3, 4, 5)
+DEFAULT_ZOOM = 2
+_WHEEL_NOTCH = 120      # angleDelta units per mouse wheel notch
+_ZOOM_KEYS = {Qt.Key_1: 1, Qt.Key_2: 2, Qt.Key_3: 3, Qt.Key_4: 4, Qt.Key_5: 5}
 
-    clicked = Signal()
+
+class _ImageView(QScrollArea):
+    """Scrolling picture view: drag pans, the wheel steps zoom instead
+    of scrolling."""
+
+    zoom_step = Signal(int)     # +1 zoom in, -1 zoom out
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._drag_origin = None
+        self._wheel_accum = 0
+
+    def pannable(self):
+        return (self.horizontalScrollBar().maximum() > 0
+                or self.verticalScrollBar().maximum() > 0)
+
+    def update_cursor(self):
+        if self._drag_origin is not None:
+            self.viewport().setCursor(Qt.ClosedHandCursor)
+        elif self.pannable():
+            self.viewport().setCursor(Qt.OpenHandCursor)
+        else:
+            self.viewport().unsetCursor()
 
     def mousePressEvent(self, event):
-        self.clicked.emit()
+        if event.button() == Qt.LeftButton and self.pannable():
+            self._drag_origin = (event.position(),
+                                 self.horizontalScrollBar().value(),
+                                 self.verticalScrollBar().value())
+            self.update_cursor()
+            event.accept()
+            return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_origin is not None:
+            start, h, v = self._drag_origin
+            delta = event.position() - start
+            self.horizontalScrollBar().setValue(h - round(delta.x()))
+            self.verticalScrollBar().setValue(v - round(delta.y()))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_origin is not None and event.button() == Qt.LeftButton:
+            self._drag_origin = None
+            self.update_cursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        # Accumulated so a touchpad's small deltas still add up to notches.
+        self._wheel_accum += event.angleDelta().y()
+        while abs(self._wheel_accum) >= _WHEEL_NOTCH:
+            step = 1 if self._wheel_accum > 0 else -1
+            self._wheel_accum -= step * _WHEEL_NOTCH
+            self.zoom_step.emit(step)
+        event.accept()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_cursor()
 
 
 class _DecodeWorker(QObject):
@@ -127,9 +189,7 @@ class PreviewPane(QWidget):
         self.showing_source = False
         self.seg_in = None
         self.seg_out = None
-        self.scale = 2          # default; _scale_btn.setChecked(True)
-                                 # below keeps the toggle control and the
-                                 # initial render in sync with this
+        self.scale = DEFAULT_ZOOM
         self._playing = False
         self._heatmap_cache = {}
         self._last_buffer = None
@@ -188,14 +248,34 @@ class PreviewPane(QWidget):
         # exists to judge, so it gets the darkest surface on screen
         # directly behind it - a lighter chrome around a 256-colour
         # still actively misrepresents how that still looks.
-        self._image_label = _ClickableLabel()
+        self._image_label = QLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
         self._image_label.setMinimumSize(64, 64)
-        self._image_label.setStyleSheet(
-            f"background: {theme.SURROUND};"
+        self._image_label.setStyleSheet(f"background: {theme.SURROUND};")
+        self._view = _ImageView()
+        self._view.setWidgetResizable(True)
+        self._view.setAlignment(Qt.AlignCenter)
+        self._view.setMinimumSize(64, 64)
+        self._view.setWidget(self._image_label)
+        self._view.setStyleSheet(
+            f"QScrollArea {{ background: {theme.SURROUND};"
             f"border: 1px solid {theme.EDGE_SOFT};"
-            f"border-radius: {theme.RADIUS_PANEL}px;")
-        self._image_label.clicked.connect(self._on_image_clicked)
+            f"border-radius: {theme.RADIUS_PANEL}px; }}")
+        self._view.zoom_step.connect(lambda step: self.set_scale(self.scale + step))
+
+        self._zoom_buttons = {}
+        zoom_group = QButtonGroup(self)
+        zoom_group.setExclusive(True)
+        for n in ZOOMS:
+            btn = QPushButton(f"{n}x")
+            btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+            btn.setToolTip(f"zoom {n}x - keys 1-5 or the mouse wheel")
+            btn.clicked.connect(lambda checked=False, z=n: self.set_scale(z))
+            zoom_group.addButton(btn)
+            self._zoom_buttons[n] = btn
+        self._zoom_buttons[DEFAULT_ZOOM].setChecked(True)
 
         self._mode_buttons = {}
         mode_group = QButtonGroup(self)
@@ -219,6 +299,8 @@ class PreviewPane(QWidget):
             mode_row.addWidget(btn)
             self._mode_buttons[name] = btn
         mode_row.addStretch(1)
+        for n in ZOOMS:
+            mode_row.addWidget(self._zoom_buttons[n])
         self._mode_buttons["Encoded"].setChecked(True)
         # Enabled state + tooltip for all three are set dynamically by
         # _update_mode_buttons() (called at the end of __init__) - no
@@ -265,28 +347,24 @@ class PreviewPane(QWidget):
         self._segment_label = QLabel("segment: -")
         self._segment_label.setFont(theme.figure_font(9))
         self._segment_label.setStyleSheet(f"color: {theme.INK_FAINT};")
-        self._scale_btn = QPushButton("2x")
-        self._scale_btn.setCheckable(True)
-        self._scale_btn.toggled.connect(self._on_scale_toggled)
-        # Reflect the 2x default on the toggle itself; _on_scale_toggled
-        # re-sets self.scale (redundant with the __init__ default above,
-        # harmless) and calls _render() so the initial render already
-        # honours 2x once frames arrive.
-        self._scale_btn.setChecked(True)
 
         # Same NoFocus reasoning as the mode buttons above - every
         # clickable control in the transport row must give focus back to
         # the pane, not keep it, or Space stops reaching keyPressEvent.
         for btn in (self._play_btn, self._stop_btn, self._step_back_btn,
                     self._step_fwd_btn, self._loop_checkbox,
-                    self._set_in_btn, self._set_out_btn, self._clear_btn,
-                    self._scale_btn):
+                    self._set_in_btn, self._set_out_btn, self._clear_btn):
             btn.setFocusPolicy(Qt.NoFocus)
+        # The scroll area and its scrollbars would otherwise take focus
+        # on a drag or scrollbar click.
+        self._view.setFocusPolicy(Qt.NoFocus)
+        self._view.horizontalScrollBar().setFocusPolicy(Qt.NoFocus)
+        self._view.verticalScrollBar().setFocusPolicy(Qt.NoFocus)
 
         # Two compact rows instead of one wide one: a single row of
         # ~11 buttons/labels would dominate the pane's minimumSizeHint
         # and starve the settings/preview split. Splitting playback
-        # controls from marker/scale controls roughly halves that floor;
+        # controls from marker controls roughly halves that floor;
         # object names and behaviour are unchanged, only the layout.
         playback_row = QHBoxLayout()
         playback_row.setSpacing(theme.GAP_ROW)
@@ -298,7 +376,7 @@ class PreviewPane(QWidget):
         marker_row = QHBoxLayout()
         marker_row.setSpacing(theme.GAP_ROW)
         for w in (self._frame_label, self._set_in_btn, self._set_out_btn,
-                  self._clear_btn, self._segment_label, self._scale_btn):
+                  self._clear_btn, self._segment_label):
             marker_row.addWidget(w)
         marker_row.addStretch(1)
 
@@ -320,7 +398,7 @@ class PreviewPane(QWidget):
         outer.addWidget(self._busy_label)
         outer.addWidget(self._error_label)
         outer.addWidget(self._hint_label)
-        outer.addWidget(self._image_label, 1)
+        outer.addWidget(self._view, 1)
         outer.addLayout(timeline)
         outer.addLayout(playback_row)
         outer.addLayout(marker_row)
@@ -588,10 +666,6 @@ class PreviewPane(QWidget):
         self.showing_source = not self.showing_source
         self._render()
 
-    def _on_image_clicked(self):
-        if self.mode == "Flicker":
-            self.toggle_flicker()
-
     def _update_mode_buttons(self):
         for name, btn in self._mode_buttons.items():
             btn.blockSignals(True)
@@ -717,9 +791,33 @@ class PreviewPane(QWidget):
     def _update_play_button(self):
         self._play_btn.setText("Pause" if self._playing else "Play")
 
-    def _on_scale_toggled(self, checked):
-        self.scale = 2 if checked else 1
+    def set_scale(self, n):
+        """Zoom to n (clamped to ZOOMS), keeping the point at the
+        centre of the view at the centre."""
+        n = max(ZOOMS[0], min(ZOOMS[-1], n))
+        self._zoom_buttons[n].setChecked(True)
+        if n == self.scale:
+            return
+        centre = [self._bar_centre(bar) for bar in self._view_bars()]
+        self.scale = n
         self._render()
+        # Apply the new label size to the scrollbar ranges now, not on
+        # the posted layout request, so the centre can be restored.
+        QApplication.sendEvent(self._view, QEvent(QEvent.LayoutRequest))
+        for bar, frac in zip(self._view_bars(), centre):
+            span = bar.maximum() - bar.minimum() + bar.pageStep()
+            bar.setValue(round(frac * span - bar.pageStep() / 2))
+        self._view.update_cursor()
+
+    def _view_bars(self):
+        return (self._view.horizontalScrollBar(), self._view.verticalScrollBar())
+
+    @staticmethod
+    def _bar_centre(bar):
+        span = bar.maximum() - bar.minimum() + bar.pageStep()
+        if span <= 0 or bar.maximum() <= bar.minimum():
+            return 0.5
+        return (bar.value() + bar.pageStep() / 2) / span
 
     # -- segment markers -------------------------------------------------
 
@@ -837,6 +935,7 @@ class PreviewPane(QWidget):
         frame = self._current_display_frame()
         if frame is None:
             self._image_label.setPixmap(QPixmap())
+            self._image_label.setMinimumSize(64, 64)
             return
         arr = np.ascontiguousarray(frame)
         # Keep the buffer alive for as long as the QImage/QPixmap built
@@ -849,6 +948,9 @@ class PreviewPane(QWidget):
             pixmap = pixmap.scaled(w * self.scale, h * self.scale,
                                     Qt.KeepAspectRatio, Qt.FastTransformation)
         self._image_label.setPixmap(pixmap)
+        # Beyond the view the label outgrows it and the view scrolls.
+        self._image_label.setMinimumSize(max(64, pixmap.width()),
+                                         max(64, pixmap.height()))
 
     # -- keyboard --------------------------------------------------------
 
@@ -858,6 +960,11 @@ class PreviewPane(QWidget):
                 self.toggle_flicker()
             else:
                 self.toggle_play()
+            event.accept()
+            return
+        zoom = _ZOOM_KEYS.get(event.key())
+        if zoom is not None and not event.modifiers() & ~Qt.KeypadModifier:
+            self.set_scale(zoom)
             event.accept()
             return
         super().keyPressEvent(event)

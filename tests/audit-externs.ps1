@@ -9,19 +9,22 @@
 #   2. freshness: the source assembles (sjasmplus, -I = kit root) to a
 #      binary byte-identical to the committed GAME.XBN
 #   3. the XBN header validates by the interpreter's own rules: magic
-#      "XBN", version 2, 14-byte header, size field == file length <=
-#      16384, nonzero entries inside [$C000, $C000+size)
+#      "XBN", version 2 or 3, 14-byte header, size field == file length
+#      <= 16384, nonzero entries inside [$C000, $C000+size) (end clamped
+#      to $FFFF at 16384); bytes 10-13 zero in v2, lineEntry/outEntry
+#      in v3
 #   4. the README documents the interface: mentions EXTERN and at
 #      least one fn code line, and is not a stub
 #   5. house text rules: no em-dash, no emoji in .asm/.md/.ps1
 #
-# Usage: powershell -File tests\audit-externs.ps1 [-SjasmPlus <exe>]
+# Usage: powershell -File tests\audit-externs.ps1 [-SjasmPlus <exe>] [-ExternsDir <dir>]
 # Exit 0 = all externs pass; exit 1 = findings printed per extern.
-param([string]$SjasmPlus = '')
+# -ExternsDir audits another tree (tests\audit-externs-selftest.ps1).
+param([string]$SjasmPlus = '', [string]$ExternsDir = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $kit = Join-Path $root 'authoring-kit'
-$externsDir = Join-Path $kit 'externs'
+$externsDir = if ($ExternsDir) { $ExternsDir } else { Join-Path $kit 'externs' }
 
 if (-not $SjasmPlus) { $SjasmPlus = Join-Path $root 'tools\sjasmplus\sjasmplus.exe' }
 if (-not (Test-Path $SjasmPlus)) {
@@ -88,19 +91,25 @@ foreach ($dir in $dirs) {
         elseif ($b.Length -gt 16384) { $findings += "GAME.XBN exceeds 16384 bytes ($($b.Length))" }
         else {
             if ([Text.Encoding]::ASCII.GetString($b[0..2]) -ne 'XBN') { $findings += "header magic is not 'XBN'" }
-            if ($b[3] -ne 2) { $findings += "header version is $($b[3]), expected 2" }
-            if (($b[10] -bor $b[11] -bor $b[12] -bor $b[13]) -ne 0) { $findings += "reserved header bytes 10-13 must be zero" }
+            $ver = $b[3]
+            if ($ver -ne 2 -and $ver -ne 3) { $findings += "header version is $ver, expected 2 or 3" }
+            if ($ver -eq 2 -and ($b[10] -bor $b[11] -bor $b[12] -bor $b[13]) -ne 0) {
+                $findings += "format 2 reserved header bytes 10-13 must be zero"
+            }
             $size = $b[8] + 256 * $b[9]
             if ($size -ne $b.Length) { $findings += "header size field ($size) does not match file length ($($b.Length))" }
-            $limit = 0xC000 + $b.Length
-            foreach ($entry in @(@('extEntry', ($b[4] + 256 * $b[5])), @('intEntry', ($b[6] + 256 * $b[7])))) {
+            # Loader clamps the end of a full 16K image to $FFFF (16-bit wrap).
+            $limit = [Math]::Min(0xC000 + $b.Length, 0xFFFF)
+            $entries = @(@('extEntry', ($b[4] + 256 * $b[5])), @('intEntry', ($b[6] + 256 * $b[7])))
+            if ($ver -eq 3) { $entries += , @('lineEntry', ($b[10] + 256 * $b[11])); $entries += , @('outEntry', ($b[12] + 256 * $b[13])) }
+            foreach ($entry in $entries) {
                 $v = $entry[1]
                 if ($v -ne 0 -and ($v -lt 0xC000 -or $v -ge $limit)) {
                     $findings += "$($entry[0]) `$$('{0:X4}' -f $v) is outside the binary's extent"
                 }
             }
-            if (($b[4] + 256 * $b[5]) -eq 0 -and ($b[6] + 256 * $b[7]) -eq 0) {
-                $findings += "both entry points are 0 - the extern can never be reached"
+            if (@($entries | Where-Object { $_[1] -ne 0 }).Count -eq 0) {
+                $findings += "every entry point is 0 - the extern can never be reached"
             }
         }
     }

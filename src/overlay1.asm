@@ -1181,54 +1181,8 @@ inp_cursor_cell:
     pop de
     jp tm_putc_at               ; B row, C col, A glyph, E attr
 
-; --- vocabulary ---
-; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
-; Out: CF set = not found; else D = word id, E = word type.
-; Vocab entries are 7 bytes: 5 chars stored 255-complemented (spaces
-; pad short words), id, type. Table ends at raw byte 0.
-voc_find:
-    call data_save
-    ld hl, (ddbHeader+HDR_VOCAB)
-    call rd_seek
-.entry:
-    call rd_next
-    or a
-    jr z, .miss                 ; raw 0 = end of table
-    ; compare 5 encoded chars against inpWord
-    ld hl, inpWord
-    ld b, 5
-.cmp:
-    cpl                         ; decode vocab char
-    cp (hl)
-    jr nz, .skip
-    inc hl
-    djnz .cmpnext
-    jr .matched
-.cmpnext:
-    call rd_next
-    jr .cmp
-.skip:
-    ; consume the rest of this entry: we have read (6-B) chars so far
-    ; including the mismatch; read the remaining (B-1) chars + id + type
-    ld a, b
-    inc a                       ; (B-1)+2 = remaining chars + id + type
-    ld b, a
-.drain:
-    call rd_next
-    djnz .drain
-    jr .entry
-.matched:
-    call rd_next
-    ld d, a                     ; id
-    call rd_next
-    ld e, a                     ; type
-    call data_restore
-    or a
-    ret
-.miss:
-    call data_restore
-    scf
-    ret
+; voc_find lives in main.asm (resident, post-anchor) since SVC_VOCFIND:
+; every primitive it calls was already resident. Contract unchanged.
 
 ; Scan the ASCIIZ order at (inpPtr) for the next word: fills inpWord
 ; (5 chars uppercase space-padded), advances inpPtr past the word.
@@ -1660,16 +1614,22 @@ h_parse:                        ; 73: condition-like. B = option.
     ld a, b
     or a
     jp nz, .quoted              ; PARSE 1+ (B21) lives past .valid
+    ld a, (injPending)          ; SVC_INJECT parked a line: it goes
+    or a                        ; ahead of the pending buffer, no prompt
+    jp nz, .injected
     ; pending buffer empty?
     ld a, (inpPending)
     or a
-    jr nz, .frombuf
+    jp nz, .frombuf
     ; fresh input: prompt, then edit. SP16 B22 - the prompt and the
     ; edit both run in flag 41's window when that flag names one
     ; (jdaad calls PreserveStream BEFORE printing the prompt,
     ; jdaad.js:1352).
     call inp_stream_push
-    xor a
+.reprompt:                      ; line hook CF set re-enters HERE, after
+    xor a                       ; the push (a second push would overwrite
+    ld (inpFresh), a            ; inpWinStash and the pop would then
+                                 ; find the windows equal: no restore)
     ld (inpFromBuf), a
     ld a, (flags+FLAG_PROMPT)
     or a
@@ -1722,6 +1682,14 @@ h_parse:                        ; 73: condition-like. B = option.
     ; selected), then the stream is restored, then bit 4 reprints into
     ; the window the game was using before the input. Neither bit's own
     ; behaviour changes.
+    ld a, (inpLine)
+    or a
+    jr z, .nofresh
+    ld a, 1
+    ld (inpFresh), a            ; non-empty submit: SVC_GETLINE reads fresh
+.nofresh:
+    call xbn_line_hook          ; format 3 line hook (main.asm): may
+    jp c, .reprompt             ; rewrite inpLine; CF set = consumed
     ld a, (flags+FLAG_TIMECTL)
     bit 3, a
     jr z, .nocls
@@ -1735,6 +1703,20 @@ h_parse:                        ; 73: condition-like. B = option.
 .noecho:
     call pager_reset_all        ; after the echo, as jdaad: it does not count
     call ingest_line
+    ld hl, inpPending
+    ld (inpPtr), hl
+    jr .extract
+.injected:
+    xor a
+    ld (injPending), a
+    ld (inpFromBuf), a
+    ld a, (injOpts)
+    bit 0, a
+    jr z, .injnoecho
+    call inp_reprint            ; echo in the current window (not flag 41's)
+.injnoecho:
+    call pager_reset_all
+    call ingest_line             ; overwrites inpPending: replace semantics
     ld hl, inpPending
     ld (inpPtr), hl
     jr .extract
@@ -2006,10 +1988,18 @@ sav_prompt:
     ld (savTimeStash), a
     xor a
     ld (flags+FLAG_TIMEOUT), a
+    ld hl, inpLast               ; stash the recall line: the filename must
+    ld de, savStage               ; not reach inpLast. savStage is idle here
+    ld bc, INP_MAX+1              ; (sav_read_v2 fills it only after this
+    ldir                          ; returns; SVC_GETMSG cannot run mid-prompt)
     ld e, 60                    ; "Type in name of file."
     xor a
     call print_msg
     call inp_edit               ; CF (timeout) impossible: flag 48 = 0
+    ld hl, savStage
+    ld de, inpLast
+    ld bc, INP_MAX+1
+    ldir
     ld a, (savTimeStash)
     ld (flags+FLAG_TIMEOUT), a
     call prn_reset_lines
@@ -2213,6 +2203,25 @@ sav_write_v2:
     ld a, b
     or c                        ; zero only when BC was 1
     jp nz, .errclose
+    ; v3 tail: length byte, then the area - same call shape as above
+    ld a, (savHandle)
+    ld ix, savAreaLen
+    ld bc, 1
+    call esx_fwrite
+    jp c, .errclose
+    dec bc
+    ld a, b
+    or c
+    jp nz, .errclose
+    ld a, (savHandle)
+    ld ix, XBN_STATE
+    ld bc, XBN_STATE_LEN
+    call esx_fwrite
+    jp c, .errclose
+    ld a, c
+    sub XBN_STATE_LEN
+    or b                        ; zero only when BC == XBN_STATE_LEN
+    jp nz, .errclose
     ld a, (savHandle)
     call esx_fclose
     xor a
@@ -2287,6 +2296,10 @@ sav_read_v2:
     ld bc, 1
     call esx_fread
     jp c, .errclose
+    push bc                      ; probe count: 0 = v1 file
+    call sav_area_read           ; v3 tail or zeros -> savAreaStage
+    pop bc
+    jp c, .errclose
     ld a, b
     or c
     jp z, .v1                    ; EOF at exactly N bytes: v1 file
@@ -2298,6 +2311,10 @@ sav_read_v2:
     ; savLocs above, hop to the shared overlay0 entry ---
     ld a, (savHandle)
     call esx_fclose
+    ld hl, savAreaStage+1         ; commit the area now: XBN_STATE is
+    ld de, XBN_STATE              ; resident and the switch keeps it. A
+    ld bc, XBN_STATE_LEN          ; failed probe leaves it restored while
+    ldir                          ; the flags are not (documented)
     ld hl, xpart_load_entry
     push hl
     ld hl, savStage
@@ -2324,6 +2341,10 @@ sav_read_v2:
     ld de, flags
     ld bc, 256
     ldir
+    ld hl, savAreaStage+1
+    ld de, XBN_STATE
+    ld bc, XBN_STATE_LEN
+    ldir
     call sav_scatter_locs         ; resident (file.asm); uses LIVE
                                    ; numObj, which the check just above
                                    ; proved equals the file's own count
@@ -2333,6 +2354,45 @@ sav_read_v2:
     ld a, (savHandle)
     call esx_fclose
 .ioerr:
+    scf
+    ret
+
+; Reads the v3 tail (length byte + area) into savAreaStage, zeroed first
+; so a v1/v2 file restores zeros. A declared length above this build's
+; area reads only what fits. CF set = read error or short read.
+; Corrupts AF, BC, DE, HL, IX.
+sav_area_read:
+    ld hl, savAreaStage
+    ld de, savAreaStage+1
+    ld bc, XBN_STATE_LEN
+    ld (hl), 0
+    ldir
+    ld a, (savHandle)
+    ld ix, savAreaStage
+    ld bc, 1
+    call esx_fread
+    ret c
+    ld a, b
+    or c
+    ret z                        ; EOF: no tail, CF clear
+    ld a, (savAreaStage)
+    or a
+    ret z
+    cp XBN_STATE_LEN+1
+    jr c, .lenok
+    ld a, XBN_STATE_LEN
+.lenok:
+    ld c, a
+    ld b, 0
+    push bc
+    ld a, (savHandle)
+    ld ix, savAreaStage+1
+    call esx_fread
+    pop hl                       ; HL = requested
+    ret c
+    or a
+    sbc hl, bc                   ; zero only when BC == requested
+    ret z
     scf
     ret
 
@@ -2363,6 +2423,10 @@ h_ramsave:                      ; 62: flags + object locations -> buffer
                                   ; cross-part RAMLOAD's swapObjCount
                                   ; (xpart_load_entry, overlay0.asm)
     call sav_gather_to           ; DE = ramSaveBuf+256 from the ldir above
+    ld hl, XBN_STATE
+    ld de, ramSaveArea
+    ld bc, XBN_STATE_LEN
+    ldir
 .mark:
     ld a, (curPart)
     ld (ramSavePart), a          ; SP11 T4: which part this snapshot
@@ -2392,6 +2456,10 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     ld b, 0
     inc bc                      ; BC = arg1 + 1
     ldir
+    ld hl, ramSaveArea           ; unconditional, whatever arg1 says
+    ld de, XBN_STATE
+    ld bc, XBN_STATE_LEN
+    ldir
     xor a                       ; same-part RAMLOAD clears the transient
     call gfx_drawtarget_clear   ; GFX 87/4 draw-target state; the layer
                                 ; order is game-owned and NOT cleared -
@@ -2406,6 +2474,10 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     ; same shared overlay0 entry sav_read_v2's cross-part path uses
     ; (xpart_load_entry, overlay0.asm), staged from ramSaveBuf instead
     ; of savStage/savLocs.
+    ld hl, ramSaveArea             ; commit the area now, same reasoning
+    ld de, XBN_STATE               ; as sav_read_v2's cross-part branch
+    ld bc, XBN_STATE_LEN
+    ldir
     ld hl, xpart_load_entry
     push hl
     ld hl, ramSaveBuf

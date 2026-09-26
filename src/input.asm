@@ -18,6 +18,10 @@ inpLine:    ds INP_MAX+1        ; editor line, ASCIIZ
 ; game does that - SAVE ends the entry - but it is the aliasing's only
 ; observable edge, recorded here rather than discovered later.
 inpQuoted   equ inpLine
+; The same aliasing means SVC_INJECT (main.asm) must not be called
+; between a PARSE 0 and a PARSE 1 of the same order: it parks its text
+; in inpLine and would clobber the quoted section. No collection module
+; does; a rewriter injects from the PARSE entry's remainder, after both.
 inpPending: ds INP_MAX+1        ; orders after a separator, ASCIIZ
 inpLast:    ds INP_MAX+1        ; last submitted order (recall), ASCIIZ
 inpWord:    ds 6                ; current word, 5 chars + NUL, uppercase
@@ -45,3 +49,9 @@ capsLockArmed: db 0             ; transient: set when CAPS+2 is freshly
                                  ; (cleared) at the settled emit so a
                                  ; long hold cannot re-toggle every
                                  ; autorepeat tick
+inpFresh:   db 0                ; 1 = a non-empty line was submitted this
+                                 ; turn; h_parse clears it at a fresh prompt.
+                                 ; SVC_GETLINE's CF (main.asm)
+injPending: db 0                ; 1 = SVC_INJECT parked a line in inpLine;
+                                 ; h_parse consumes it ahead of inpPending
+injOpts:    db 0                ; SVC_INJECT options: bit 0 = echo

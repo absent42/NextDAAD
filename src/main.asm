@@ -20,7 +20,11 @@ main:
     call audio_init
     call im2_init
     call dbg_cls
-    call boot_banner
+ IFDEF DEBUG
+    call boot_banner             ; version + core diagnostics
+ ELSE
+    call txt_init                ; clean tilemap early; Release prints no version
+ ENDIF
     call ram_detect
     call bank_table_init
     call ram_diag
@@ -91,9 +95,10 @@ main:
     call ovl_map_page
     call xms_boot_reset
     call xbn_boot_load
-    call xbn_api_init           ; copy the frozen SVC table to XBN_API;
-                                ; resident (Task 6), so the OVL0_PAGE
-                                ; mapping above is incidental, not required
+    call xbn_api_init           ; copy the frozen SVC table to XBN_API and
+                                ; zero the extern state area (falls through
+                                ; to xbn_state_clear); resident (Task 6), so
+                                ; the OVL0_PAGE mapping above is incidental
     ; SP7 boot autoplay: probe GAME.AKY/GAME.SFB (loaders live in
     ; overlay1; the dispatcher-owned slot 7 is free at boot). Fail-
     ; silent when absent - same esxDOS discipline as every loader.
@@ -410,8 +415,17 @@ xbn_svc_mmu_save:               ; corrupts A, BC, HL, F; result in svcSaved - fa
     ld hl, svcSaved
 ; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch:
 ; the cell address rides in HL, so the three entries need no lock between
-; them. The $243B select is NOT interrupt-safe here - see the header.
+; them. DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects
+; $243B without restoring it. `ret po` restores the caller's own interrupt
+; state: off for the ISR's fast path, on for its audio path, which calls
+; here after its own `ei`.
 mmu_save_hl:
+    ld a, i
+    jp pe, .sampled             ; P/V = IFF2
+    ld a, i                     ; re-sample: see nr_read
+.sampled:
+    push af
+    di
     ld bc, $243B
     ld a, NR_MMU6
     out (c), a
@@ -425,6 +439,9 @@ mmu_save_hl:
     inc b
     in a, (c)
     ld (hl), a
+    pop af
+    ret po                      ; P/V = 0: interrupts were off
+    ei
     ret
 
 xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
@@ -554,6 +571,11 @@ xbn_api_tpl:
     jp svc_palread                ; 13
     jp svc_window                 ; 14
     jp svc_pair                   ; 15 (pair_get, tmpairs.asm - resident)
+    jp svc_getline                ; 16
+    jp svc_getpending             ; 17
+    jp svc_inject                 ; 18
+    jp svc_vocfind                ; 19
+    jp svc_fitword                ; 20
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -562,7 +584,108 @@ xbn_api_init:                    ; boot; table copy is resident-to-resident,
     ld de, XBN_API
     ld bc, XBN_API_ROWS*3
     ldir
+    ; falls through: boot also zeroes the extern state area here
+
+; Boot only: RESTART and part switches keep the extern state area.
+xbn_state_clear:
+    ld hl, XBN_STATE
+    ld de, XBN_STATE+1
+    ld bc, XBN_STATE_LEN-1
+    ld (hl), 0
+    ldir
     ret
+
+savAreaLen:   db XBN_STATE_LEN   ; v3 save tail: length byte written
+                                 ; before the area (overlay1.asm sav_write_v2)
+savAreaStage: ds XBN_STATE_LEN+1 ; sav_area_read (overlay1.asm): length + area
+ramSaveArea:  ds XBN_STATE_LEN   ; RAMSAVE/RAMLOAD carry of the state area,
+                                 ; beside ramSaveBuf (file.asm)
+
+; Format 3 line hook. Called by h_parse (.got) after the editor returns.
+; Out: CF from the hook; CF clear when no hook. Reuses extSaved: PARSE
+; is a condact handler and never runs inside an EXTERN. Corrupts all.
+xbn_line_hook:
+    ld hl, (xbnLine)
+    ld a, h
+    or l
+    ret z                         ; no hook: CF clear
+    ld (lineTarget), hl
+    call xbn_mmu_save
+    call xbn_mmu_map
+    ld hl, inpLine
+    ld a, (inpLen)
+    ld b, a
+    ld ix, flags
+    call .go
+    jp xbn_mmu_restore            ; flag-free: the hook's CF crosses
+.go:
+lineTarget equ $+1
+    jp 0
+
+outSaved:   dw 0                  ; own MMU cell: the tap fires inside
+                                  ; SVC_PUTS with svcSaved and extSaved live
+outChar:    db 0
+; Format 3 output tap. In: C = character. Preserves AF, BC, DE, HL, IX,
+; IY. Gate cleared while the hook runs (no recursion). MMU reads via
+; nr_read's DI bracket: the frame ISR re-selects $243B.
+xbn_out_hook:
+    push af
+    push bc
+    push de
+    push hl
+    push ix
+    push iy
+    xor a
+    ld (outHookOn), a
+    ld a, c
+    ld (outChar), a
+    ld e, NR_MMU6
+    call nr_read                  ; DI-bracketed, IFF2-preserving
+    ld (outSaved), a
+    ld e, NR_MMU7
+    call nr_read
+    ld (outSaved+1), a
+    call xbn_mmu_map
+    ld a, (outChar)
+    ld c, a
+    ld ix, flags
+    call .go
+    ld hl, outSaved
+    call mmu_restore_hl           ; nextreg writes only: no select port
+    ld a, 1
+    ld (outHookOn), a
+    pop iy
+    pop ix
+    pop hl
+    pop de
+    pop bc
+    pop af
+    ret
+.go:
+    ld hl, (xbnOut)
+    jp (hl)
+
+; prn_char's tap gate, out of line: the pre-flags pad cannot hold it.
+xbn_char_gate:
+    ld a, (outHookOn)
+    or a
+    ret z
+    jp xbn_out_hook
+
+; prn_newline's $0D tap, then its flush; out of line for the pre-flags pad.
+xbn_nl_gate:
+    ld a, (wrapLock)
+    or a
+    jr nz, .nl
+    ld a, (outHookOn)
+    or a
+    jr z, .nl
+    push bc
+    ld c, $0D
+    call xbn_out_hook
+    pop bc
+.nl:
+    jp prn_flush
 
 svc_version:
     ld a, 3
@@ -700,6 +823,23 @@ svc_putchar:
     or a                          ; CF clear
     ret
 
+; A = length of the word the extern types next (0 = flush only). Flush
+; pending, then prn_fit's wrap rule. svc_putchar's bracket: the More
+; prompt prn_fit can raise maps DDB pages. Out: A = WIN_W.
+svc_fitword:
+    push af
+    call xbn_svc_mmu_save
+    call prn_flush
+    pop af
+    or a
+    call nz, prn_fit
+    call xbn_svc_mmu_restore
+    ld a, WIN_W
+    call win_field
+    ld a, (hl)
+    or a                          ; CF clear (WIN_W is nonzero)
+    ret
+
 ; HL = ASCIIZ, may live in the extern bank. svc_putchar restores the
 ; extern's own MMU mapping after every character (see svcSaved's
 ; comment), so (HL) stays readable across the loop despite PRINT_ENTRY's
@@ -761,6 +901,155 @@ svc_fseek:
     jp esx_fseek
 
 svc_fclose: jp esx_fclose         ; in A=handle
+
+; Rows 16-18: parser input (design: parser-extern interface). All read
+; resident input.asm state; the caller's bank stays mapped throughout.
+; HL = ASCIIZ -> BC = length, capped at INP_MAX+1 (128 = too long).
+; Corrupts AF, HL. CF clear on exit.
+svc_strlen:
+    ld bc, 0
+.l:
+    ld a, (hl)
+    or a
+    ret z
+    inc hl
+    inc c
+    ld a, c
+    cp INP_MAX+1
+    jr c, .l
+    or a
+    ret
+
+; Row 16: out HL = inpLast, BC = length; CF set when inpFresh = 0.
+svc_getline:
+    ld hl, inpLast
+    call svc_strlen
+    ld hl, inpLast
+    ld a, (inpFresh)
+    sub 1                         ; 0 -> CF set (stale)
+    ret
+
+; Row 17: out HL = inpPending (empty when none), BC = length, CF clear.
+svc_getpending:
+    ld hl, inpPending
+    call svc_strlen
+    ld hl, inpPending
+    or a
+    ret
+
+; Row 18: in HL = ASCIIZ text (caller's bank), A = options (bit 0 echo).
+; Parks the text in inpLine and arms injPending; the next PARSE 0 takes
+; it ahead of the prompt (h_parse .injected, overlay1.asm). CF set +
+; A = $FF: over INP_MAX or a line already parked; nothing written.
+; Corrupts AF, BC, DE, HL.
+svc_inject:
+    ld e, a                       ; stash options; svc_strlen corrupts AF, HL only
+    ld a, (injPending)
+    or a
+    jr nz, .refuse
+    push hl
+    call svc_strlen
+    pop hl
+    ld a, c
+    cp INP_MAX+1
+    jr nc, .refuse                ; 128 = longer than INP_MAX
+    ld a, e
+    ld (injOpts), a               ; only written once the call is accepted
+    ld de, inpLine
+    inc bc                        ; text plus NUL
+    ldir
+    ld a, 1
+    ld (injPending), a
+    or a                          ; CF clear
+    ret
+.refuse:
+    ld a, $FF
+    scf
+    ret
+
+; --- vocabulary ---
+; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
+; Out: CF set = not found; else D = word id, E = word type.
+; Vocab entries are 7 bytes: 5 chars stored 255-complemented (spaces
+; pad short words), id, type. Table ends at raw byte 0.
+voc_find:
+    call data_save
+    ld hl, (ddbHeader+HDR_VOCAB)
+    call rd_seek
+.entry:
+    call rd_next
+    or a
+    jr z, .miss                 ; raw 0 = end of table
+    ; compare 5 encoded chars against inpWord
+    ld hl, inpWord
+    ld b, 5
+.cmp:
+    cpl                         ; decode vocab char
+    cp (hl)
+    jr nz, .skip
+    inc hl
+    djnz .cmpnext
+    jr .matched
+.cmpnext:
+    call rd_next
+    jr .cmp
+.skip:
+    ; consume the rest of this entry: we have read (6-B) chars so far
+    ; including the mismatch; read the remaining (B-1) chars + id + type
+    ld a, b
+    inc a                       ; (B-1)+2 = remaining chars + id + type
+    ld b, a
+.drain:
+    call rd_next
+    djnz .drain
+    jr .entry
+.matched:
+    call rd_next
+    ld d, a                     ; id
+    call rd_next
+    ld e, a                     ; type
+    call data_restore
+    or a
+    ret
+.miss:
+    call data_restore
+    scf
+    ret
+
+; Row 19: in HL = ASCIIZ word (caller's bank); out D = id, E = type,
+; CF clear; CF set = not in the vocabulary. The word is copied into
+; inpWord FIRST: voc_find's rd_seek remaps slot 6 over the caller's
+; bank and data_restore puts it back before the return. Never reach
+; this from the output hook (data_save's cell is live during a print).
+; Corrupts AF, BC, DE, HL.
+svc_vocfind:
+    ld de, inpWord
+    ld b, 5
+.cp:
+    ld a, (hl)
+    or a
+    jr z, .pad
+    inc hl
+    cp 'a'
+    jr c, .st
+    cp 'z'+1
+    jr nc, .st
+    sub 32                        ; uppercase, as word_next produces
+.st:
+    ld (de), a
+    inc de
+    djnz .cp
+    jr .nul
+.pad:
+    ld a, ' '
+.padl:
+    ld (de), a
+    inc de
+    djnz .padl
+.nul:
+    xor a
+    ld (de), a
+    jp voc_find
 
 ; A = user message number (kind 1 = MTX, h_mes's own kind) -> savStage;
 ; out HL = savStage, BC = length (<=256, truncated), CF clear. CF set +
@@ -1107,13 +1396,20 @@ gfx_layer_apply:
     nextreg NR_LAYERS, a
     ret
 
-; A = width in columns (80 or 40). The one composer of NR $6B outside
-; video playback (vid_play saves/restores the register wholesale) and
-; the only writer of tmCols and tmStride. Clean slate per the GFX 18
-; contract: full map blanked, all 8 windows reset at the new width.
-; RESIDENT alongside gfx_layer_apply above (same reason: callable from
-; overlay2). Corrupts everything.
+; A = width in columns (80 or 40). Default clean slate: boot and fatal()
+; via txt_init. GFX 18's keep-style path is overlay2's .txtmode.
+; Corrupts everything.
 tm_width_apply:
+    ld hl, tmAttr
+    ld (hl), TM_ATTR_DEFAULT     ; not through A: A carries the width
+    call tm_width_core
+    jp windows_init              ; all 8 windows full-screen at (tmCols),
+                                 ; cursors homed, window 0 reselected
+
+; A = width in columns (80 or 40). Only composer of NR $6B outside
+; video playback and only writer of tmCols/tmStride. Fills the full
+; map from (tmAttr). RESIDENT so overlay2 can call it. Corrupts everything.
+tm_width_core:
     ld (tmCols), a
     cp 40
     ld d, 80                     ; 40-col: 40*2 bytes/row
@@ -1128,8 +1424,7 @@ tm_width_apply:
     ; map would otherwise return stale on a later widen (display and
     ; pair_reclaim both walk them). Raw fill, not tm_cell_addr - the
     ; stride was just patched.
-    ld a, TM_ATTR_DEFAULT
-    ld (tmAttr), a
+    ld a, (tmAttr)
     ld hl, TM_MAP
     ld (hl), GLYPH_SPACE
     inc hl
@@ -1143,11 +1438,10 @@ tm_width_apply:
     ld a, e
     nextreg NR_TM_CTRL, a        ; width bit flips only after the map is clean
     xor a
-    ld (wrapLen), a              ; discard the pending wrap word: windows_init
-                                 ; falls into win_select, whose prn_flush would
-                                 ; print it onto the cleared screen
-    jp windows_init              ; all 8 windows full-screen at (tmCols),
-                                 ; cursors homed, window 0 reselected
+    ld (wrapLen), a              ; discard the pending wrap word: the window
+                                 ; reset ends in win_select, whose prn_flush
+                                 ; would print it onto the cleared screen
+    ret
 
 ; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
 ; static ret table here every call and runs the chain with SP on it, so an

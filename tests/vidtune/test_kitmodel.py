@@ -19,8 +19,14 @@ def test_parse_config(fixture_kit):
     assert cfg.vid_fps == ""
     assert cfg.vid_opts == ""
     assert cfg.toolsdir == "tools"
+    assert cfg.vidtoolsdir == ""
     assert cfg.per_clip == {"002": "--shape 16:9"}
     assert cfg.vidprofile == ""
+
+
+def test_parse_config_vidtoolsdir(tmp_path):
+    (tmp_path / "CONFIG.BAT").write_text("SET VIDTOOLSDIR=C:\\vt\r\n")
+    assert parse_config(tmp_path / "CONFIG.BAT").vidtoolsdir == "C:\\vt"
 
 
 def test_list_clips(fixture_kit):

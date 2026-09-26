@@ -16,6 +16,7 @@
     DEFINE XBN_HAS_TIMER
     DEFINE XBN_HAS_REALTIME
     DEFINE XBN_HAS_TOOLKIT
+    DEFINE XBN_HAS_PLAYERNAME
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
     ORG XBN_ORG
@@ -47,6 +48,9 @@ all_ext:
     call xbn_setup
     call toolkit.ext
     XBN_CHAIN_CAPTURE
+    call xbn_setup
+    call playername.ext
+    XBN_CHAIN_CAPTURE
     XBN_CHAIN_VERDICT
 
 ; #int chain. IX = flags base is the only documented register; every
@@ -68,6 +72,8 @@ all_int:
     call realtime.int
     ld ix, XBN_FLAGS
     call toolkit.int
+    ld ix, XBN_FLAGS
+    call playername.int
     ret
 
     XBN_CHAIN_SETUP
@@ -79,6 +85,7 @@ all_int:
     INCLUDE "externs/timer/timer.asm"
     INCLUDE "externs/realtime/realtime.asm"
     INCLUDE "externs/toolkit/toolkit.asm"
+    INCLUDE "externs/playername/playername.asm"
 
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

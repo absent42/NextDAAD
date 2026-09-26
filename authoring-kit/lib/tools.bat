@@ -33,8 +33,7 @@ if not defined CSPECTDIR  set "CSPECTDIR=%TOOLSDIR%\CSpect"
 if not defined FFMPEGDIR  set "FFMPEGDIR=%TOOLSDIR%\ffmpeg"
 if not defined SJASMPLUSDIR set "SJASMPLUSDIR=%TOOLSDIR%\sjasmplus"
 if not defined NEXTDAWDIR set "NEXTDAWDIR=%TOOLSDIR%\NextDAW"
-if not defined VIDENCDIR  set "VIDENCDIR=%TOOLSDIR%\videnc"
-if not defined VIDTUNEDIR set "VIDTUNEDIR=%TOOLSDIR%\vidtune"
+if not defined VIDTOOLSDIR set "VIDTOOLSDIR=%TOOLSDIR%\vidtools"
 
 REM ---- executables ----
 REM ndrc is the DAAD compiler, shipped inside the kit's own lib\ rather
@@ -44,8 +43,8 @@ REM CONFIG.local.BAT for compiler work - hence "if not defined".
 if not defined NDRC set "NDRC=%~dp0ndrc.exe"
 set "GFX=%GFXDIR%\gfx2next.exe"
 set "CSPECT=%CSPECTDIR%\CSpect.exe"
-set "VIDENC=%VIDENCDIR%\videnc.exe"
-set "VIDTUNE=%VIDTUNEDIR%\vidtune.exe"
+set "VIDENC=%VIDTOOLSDIR%\videnc.exe"
+set "VIDTUNE=%VIDTOOLSDIR%\vidtune.exe"
 
 REM Arkos Tracker keeps its converters in a tools\ subfolder, so an
 REM install root and the folder holding the .exe files are one level

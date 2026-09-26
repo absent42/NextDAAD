@@ -11,8 +11,40 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
-<h2 id="0101-unreleased">0.10.1 - unreleased</h2>
+<h2 id="0110-unreleased">0.11.0 - unreleased</h2>
 <ul>
+<li><strong>VIDTUNE zooms 1x to 5x.</strong> The preview's single 2x button is now
+  five zoom buttons beside Encoded, Flicker and Heatmap; keys <code>1</code> to <code>5</code>
+  and the mouse wheel also change zoom, and the centre of the view
+  stays put. A picture bigger than the pane scrolls: drag it to pan.
+  Clicking the picture no longer switches Flicker - use Space.</li>
+<li><strong>Switching text width keeps your colours.</strong> <code>GFX 1 18</code> and <code>GFX 0 18</code>
+  now keep every window's <code>INK</code>, <code>PAPER</code> and <code>MODE</code>. The screen still
+  clears and every window still goes back to full screen, but the
+  cleared screen takes window 0's paper, so a blue screen stays blue.
+  If your game relied on a switch to go back to white on black, issue
+  <code>INK 7</code>, <code>PAPER 0</code> and <code>MODE 0</code> in each window you styled before the
+  switch - the screen then clears black. See
+  <a href="graphics.html#40-column-games">40-column games</a>.</li>
+<li><strong>No version stamp at boot.</strong> The interpreter no longer prints its
+  version number and pauses for a second before the game starts; boot
+  goes straight to the title, intro or first location.</li>
+<li><strong>Faster builds.</strong> <code>BUILD.BAT</code> now converts or copies only the
+  pictures, sprite sets, sounds, tunes and video that changed since the
+  last build, and keeps the rest of <code>RELEASE\</code> as it is. A game with a
+  hundred pictures rebuilds in a couple of seconds instead of over a
+  minute. Removing a source still removes its file from <code>RELEASE\</code>.
+  <code>CLEAN.BAT</code> forces everything to convert again. See
+  <a href="getting-started.html#build-and-run">Getting started</a>.</li>
+<li><strong>New extern: playername.</strong> Asks for the player's name, keeps it with
+  saved games and prints it back, and can test it against a message -
+  for example a word that skips the introduction. Part of
+  <code>externs\all\</code>. See <a href="externs.html#playername-the-players-name">Externs</a>.</li>
+<li><strong>Your own externs in EXTERNS.BAT.</strong> <code>EXTERNS.BAT fade ..\mymods\doors</code>
+  builds one <code>GAME.XBN</code> from shipped modules and your own; name your
+  module by its folder. The builder wires in its hooks and places its
+  scratch RAM and saved state for you. See
+  <a href="externs.html#your-own-modules-in-a-subset">Externs</a>.</li>
 <li><strong>Parser cursor.</strong> <code>GFX n 22</code> to <code>26</code> choose the cursor's glyph,
   blink and colours; the default inverse block is unchanged. Typing
   past what the input window can hold is now ignored instead of
@@ -40,11 +72,66 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   the tilemap attribute for any ink and paper, the same way <code>INK</code> and
   <code>PAPER</code> resolve them. The XBN API version is now 3; every existing
   row is unchanged.</li>
+<li><strong>Fonts from the hoard of bitfonts.</strong> <code>lib\fontconv.ps1</code> and the kit
+  build now read monobit's <code>.yaff</code> and <code>.draw</code> text formats, so any 8x8
+  character set from that collection drops in as <code>FONT.yaff</code> or
+  <code>FONT.draw</code> and converts. A YAFF file declaring the ZX charset keeps
+  its own pound and copyright signs. The fonts page now lists every
+  format the converter reads and how to reach the rest through monobit.
+  See <a href="fonts.html#other-font-formats">Fonts</a>.</li>
 <li><strong>Ticker extern.</strong> <code>externs\ticker</code> now takes a row, column and
   width (fns 32-34), ink and paper (35-36), a typewriter or marquee
   mode (37) and a speed (38), all latched by the next <code>EXTERN n 30</code>.
   Arming clears the field first; <code>EXTERN 1 31</code> stops and clears. The
   defaults reproduce the old bottom-row ticker.</li>
+<li><strong>VIDTUNE bulk encode keeps your settings.</strong> Encode All Stale used
+  the settings saved in <code>CONFIG.BAT</code> and ignored changes you had not
+  accepted, so a batch of newly tuned clips encoded at the defaults.
+  The button, now Encode Stale + Edited, encodes each clip with the
+  settings you gave it and saves them to <code>CONFIG.BAT</code> as Accept does.
+  A clip with unsaved changes shows as <code>edited</code> in the clip list, and
+  a new Revert button puts the open clip back to its saved settings.
+  See <a href="video.html#9-encoding-tools">Video</a>.</li>
+<li><strong>Externs can read and drive the parser.</strong> Four new services let your
+  extern see the line the player typed this turn, read text still
+  queued after "and", inject a line as if the player had typed it, and
+  look up a word in your database's own vocabulary - enough to build a
+  name-entry prompt, a password check, a command alias, or a
+  walkthrough player that types for the player. See
+  <a href="externs.html#services">Services</a>.</li>
+<li><strong>Externs can watch every line and every printed character.</strong> A new
+  XBN header format, 3, adds a line hook, called before each line is
+  parsed, and an output hook, called on every character the game
+  prints; either can be left unused. See
+  <a href="externs.html#the-line-hook">The line hook</a> and
+  <a href="externs.html#the-output-hook">The output hook</a>.</li>
+<li><strong>A 128-byte extern state area now travels with your save.</strong> <code>SAVE</code>,
+  <code>LOAD</code>, <code>RAMSAVE</code> and <code>RAMLOAD</code> carry it the same way they carry your
+  flags, so an extern no longer needs a flag of its own just to survive
+  a <code>LOAD</code> - old saves still load, with the area zeroed. See
+  <a href="externs.html#the-extern-state-area">The extern state area</a>.</li>
+<li><strong>New extern: transcript.</strong> Records every command typed, and
+  optionally everything the game prints, to a file on the card - a
+  walkthrough recorder, or a bug report that writes itself. Not part of
+  <code>externs\all\</code>: an output hook costs every game that loads it on every
+  printed character, recording or not, so ship it standalone or in an
+  <code>EXTERNS.BAT</code> subset instead. See
+  <a href="externs.html#the-extern-collection">the extern collection</a>.</li>
+<li><strong>videnc and vidtune share one folder.</strong> Both now live in
+  <code>tools\vidtools\</code> and run from its <code>_internal\</code>, which halves the
+  kit's download. <code>CONFIG.BAT</code>'s <code>VIDENCDIR</code> and <code>VIDTUNEDIR</code> become one
+  setting, <code>VIDTOOLSDIR</code>. The old <code>tools\videnc\</code> and <code>tools\vidtune\</code>
+  folders are no longer used and can be deleted. See
+  <a href="video.html#9-encoding-tools">Video</a>.</li>
+<li><strong>Typed messages.</strong> The ticker extern's new <code>EXTERN n 39</code> types
+  message n at the cursor a letter at a time, wrapping words exactly as
+  <code>MES</code> does. A new extern service, <code>SVC_FITWORD</code>, makes that possible
+  for any extern.</li>
+<li><strong>Fixed: a rare crash or corruption in games using externs with a
+  frame hook.</strong> The interpreter could restore the wrong memory page
+  after an extern or service call if a frame interrupt landed at
+  exactly the wrong moment, occasionally running the wrong code next.
+  That can no longer happen.</li>
 </ul>
 <h2 id="0100-18-september-2026">0.10.0 - 18 September 2026</h2>
 <ul>

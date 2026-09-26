@@ -2,8 +2,8 @@
 """tests/check_frozen_exes.py - fail when a frozen kit exe's bundled code
 drifts from the sources it was built from.
 
-videnc.exe and vidtune.exe are PyInstaller bundles that FREEZE nxv2enc and
-its siblings in. A stale bundle silently emits old-encoder bytes, which has
+videnc.exe and vidtune.exe are the two launchers of one PyInstaller onedir
+bundle (scripts/vidtools.spec); each FREEZES nxv2enc and its siblings in. A stale bundle silently emits old-encoder bytes, which has
 happened twice with nothing to catch it. This unmarshals each bundle's code
 objects and compares their instruction streams with the working tree's.
 Only __doc__ stores are masked: every other string literal, argparse help
@@ -14,6 +14,7 @@ the process's PYTHONHASHSEED, so two honest compiles can print it two
 ways. Exit 1 = stale. Exit 2 = not verified: an exe is missing, an LFS
 pointer or unreadable, nxv2enc or nxv2path was not compared, or the host
 Python minor version differs from the bundle's.
+Optional argument: a bundle folder to check instead of the kit's.
 """
 import dis
 import marshal
@@ -24,8 +25,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "authoring-kit" / "lib"
-EXES = [ROOT / "authoring-kit" / "tools" / "videnc" / "videnc.exe",
-        ROOT / "authoring-kit" / "tools" / "vidtune" / "vidtune.exe"]
+VIDTOOLS = ROOT / "authoring-kit" / "tools" / "vidtools"
+EXES = [VIDTOOLS / "videnc.exe", VIDTOOLS / "vidtune.exe"]
 MAGIC = b"MEI\014\013\012\013\016"
 LFS_POINTER = b"version https://git-lfs"
 REQUIRED = {"nxv2enc", "nxv2path"}   # nxv2path: the walk every frame price runs
@@ -115,6 +116,9 @@ def module_name(path):
 
 
 def main():
+    global EXES
+    if len(sys.argv) > 1:       # a built but undeployed bundle folder
+        EXES = [Path(sys.argv[1], e.name) for e in EXES]
     failed = unverified = False
     host = sys.version_info.major * 100 + sys.version_info.minor
     for exe in EXES:
@@ -161,7 +165,7 @@ def main():
             print(f"check_frozen_exes: NOT VERIFIED {exe.name} - not found in the bundle: "
                   + ", ".join(sorted(REQUIRED - compared)))
     if failed:
-        print("check_frozen_exes: FAIL - rebuild both exes")
+        print("check_frozen_exes: FAIL - rebuild the bundle (scripts/build-vidtools.ps1)")
         return 1
     if unverified:
         print("check_frozen_exes: FAIL - staleness not verified")

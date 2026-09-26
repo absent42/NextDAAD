@@ -2,10 +2,8 @@
 ; and hardware registers. All later modules include this file.
 
 ; --- Version ---
-; Boot-time version stamp: DEBUG's msgTitle and RELEASE's boot_banner
-; (both debug.asm) print this exact string, so update it here only -
-; the two build variants must never drift apart.
-    DEFINE VERSION_STR "NEXTDAAD V0.10.1"
+; Boot-time version stamp, printed by the DEBUG build only (debug.asm msgTitle).
+    DEFINE VERSION_STR "NEXTDAAD V0.11.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
@@ -213,12 +211,17 @@ XBN_HDR_LEN     equ 14       ; "XBN" + version + extEntry + intEntry + size + 4 
 ; poked territory like IM2_STUB/IM2_CTC_STUB above, not part of the
 ; assembled resident image - main.asm's xbn_api_init ldirs the table
 ; template here at boot. Sanity: below IM2_CTC2_STUB ($BEC5-$BEC7) ends
-; clear at $BEC7, so the 16-row table ($BEC8-$BEF7) does not collide;
+; clear at $BEC7, so the 21-row table ($BEC8-$BF06) does not collide;
 ; re-grep src/ for $BEC8-$BFFF literals before every commit that touches
 ; this block (only $BFFD, the AY data I/O port, is expected below $C000).
 XBN_API         equ $BEC8       ; FROZEN from first release with XBN
                                 ; support - see xbn.inc; append-only
-XBN_API_ROWS    equ 16
+XBN_API_ROWS    equ 21
+
+XBN_STATE       equ $BF80       ; FROZEN: 128-byte extern state area,
+XBN_STATE_LEN   equ 128         ; saved after the part byte (save v3),
+                                ; carried by RAMSAVE; zeroed at boot only
+    ASSERT XBN_API + 61*3 <= XBN_STATE   ; service table ceiling: 61 rows
 
 ; --- Error border colours ---
 ERR_BORDER_MISSING  equ 2   ; red
@@ -1261,8 +1264,8 @@ GFX_SUB_LAYER    equ 17          ; NextDAAD: layer order. P1 0 = picture
                                  ; game gets), 1 = text on top. Follows
                                  ; FONT past the classic 0-15 block.
 GFX_SUB_TXTMODE  equ 18          ; NextDAAD: text width. P1 0 = 80x32
-                                 ; (boot default), 1 = 40x32. Clean
-                                 ; slate: map cleared, windows reset.
+                                 ; (boot default), 1 = 40x32. Map
+                                 ; cleared, geometry reset, style kept.
                                  ; Next free number past FONT/LAYER.
 GFX_SUB_SPR_START equ 19    ; GFX n 19: start set n at its baked X,Y
 GFX_SUB_SPR_FLAGS equ 20    ; GFX f 20: set = flag f, X = f+1 (lo) f+2 (hi), Y = f+3

@@ -2,8 +2,68 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.10.1 - unreleased
+## v0.11.0 - unreleased
 
+- vidtune preview zoom 1x-5x: the 2x toggle becomes five exclusive
+  zoom buttons in the mode row; keys 1-5 and the mouse wheel (one step
+  per notch, touchpad deltas accumulated) also set zoom, keeping the
+  view centre. The picture sits in a scroll area (`_ImageView`) that
+  pans by drag once it outgrows the view. Clicking the picture no
+  longer toggles Flicker; Space does. `tests/vidtune/test_gui_smoke.py`
+  gains six tests; the pane-width floor test is measured under the
+  theme. vidtune.exe rebuilt.
+- GFX 18 keeps each window's display style across a width change:
+  MODE, INK, PAPER and the cached attribute pairs survive in all 8
+  windows; geometry, cursors and line counts still reset, and the
+  cleared map takes window 0's attribute (paper 227 clears to
+  transparent). `tm_width_apply` is split: resident `tm_width_core`
+  sets the width and fills from `tmAttr`; boot and `fatal()` keep the
+  default clean slate through `tm_width_apply`; overlay2's
+  `win_regeom` resets geometry only. The parser-cursor reset-site guard
+  throws on a missing label. `tests/txt40.dsf` verbs
+  COLR/COLB/MORE/SAME/TRNS/REKEY and headless check
+  `tests/txt40_dump.py`. Kit interpreter and manual rebuilt.
+- Version stamp is DEBUG-only. Release and kit builds no longer print
+  `VERSION_STR` or hold for 50 frames at boot; the DEBUG build still
+  shows it with its diagnostics. The Release `boot_banner` is removed
+  and `main.asm` calls `txt_init` directly, keeping the early tilemap
+  setup. `title_present` and `intro_present` (overlay2.asm), which
+  only gated that print, are removed. Kit interpreter and manual
+  rebuilt.
+- New collection extern `playername` (fns 20-23): fn 20 captures the
+  last typed line (SVC_GETLINE) as the player's name, trimmed, cut to
+  16 characters, first letter capitalised; fn 21 prints it; fn 22
+  passes while none is stored; fn 23 fails when it equals message p.
+  The name is a fixed extern state claim at the top of the area,
+  offsets 111-127. Collection state claims now grow down from the top
+  (`XBN_STATE_TOP` in `xbnmod.inc`), so authors' own-module claims keep
+  starting at offset 10 and are asserted against `XBN_STATE_TOP`. Wired
+  into `all.asm`, the drift list and the kit-root `GAME.XBN`.
+  `tests/extern.dsf` verbs XNMU/XNMA/XNMK/XNMP and emulator check
+  `tests/xbn/namecheck.py`.
+- `tests/audit-externs.ps1` validates format 3 headers as the loader
+  does: version 2 or 3, bytes 10-13 zero only in v2, `lineEntry`/
+  `outEntry` range-checked in v3, the end of a 16K image clamped to
+  `$FFFF`. `all` and `transcript` now pass. New `-ExternsDir` and
+  `tests/audit-externs-selftest.ps1` (crafted headers).
+- EXTERNS.BAT combines an author's own XBN modules with the kit's. A
+  module is a bare name (`externs\<name>\`) or a folder path, relative
+  to the caller's directory; a path may not reuse a name from
+  `externs\`. `lib\xbnbuild.ps1` scans each `MODULE` block for
+  `ext`/`int`/`line`/`out` labels at column 0 and
+  `SCRATCH_SIZE`/`STATE_SIZE` equates, replacing its fixed module and
+  hook tables; a format 3 header gets `0` for a hook no module has.
+  Declared claims are placed after the collection's by
+  `xbnmod.inc`'s new `XBN_CLAIM_AT`/`XBN_CLAIMS`, with overflow
+  asserts. An entry label or size equate sjasmplus defines outside the
+  scanned file (an `INCLUDE`) is refused. `EXTERNS.BAT` re-quotes its
+  arguments and takes its own folder once, so a trailing `\` and a
+  quoted relative launch path both work. Paths are taken literally
+  (`[` and `]` are not wildcards), `<folder>\<folder>.asm` names its
+  folder, and a non-ASCII module path is refused up front. Errors print
+  one `xbnbuild:` line. New
+  `tests/xbnbuild-selftest.ps1`, fixtures `tests/xbn/usermods/`,
+  emulator check `tests/xbn/hookshape.py`.
 - PROCESS and REDO now reach process tables 128 to 254. The process
   list index was doubled in 8 bits, so a table number above 127 ran
   table n-128 instead. Both references and DRC/NDRC allow 255 tables.
@@ -73,6 +133,130 @@ All notable changes to NextDAAD are recorded here.
   31 p=1 clears, arm clears the field, marquee once/loop, colour via
   SVC_PAIR gated on API 3; xbnmod.inc XBN_TILEMAP; verbs XTPS XTPR
   XTBD XTNR XTLA XTCO XTCD XTC0 XTMQ XTML XTMX XTMW; tickcheck.py.
+- fontconv: reads monobit's YAFF and draw text formats (the
+  hoard-of-bitfonts collection). `lib\fontfmt.ps1` gains Read-FontYaff
+  (0x/decimal/0o codepoint labels, u+XXXX and 'A' labels below 128,
+  shift-up and left-bearing placement against a shared baseline,
+  `encoding:` naming the charset) and Read-FontDraw (hex label, `-`/`#`
+  rows on or below the label line). Both are detected structurally by
+  their row characters, draw first, since a bare hex label also reads
+  as a YAFF decimal. A source declaring the ZX charset keeps its own 96
+  and 127 like a 768-byte `.ch8`. BUILD.BAT auto-converts `FONT.yaff`
+  and `FONT.draw`. `tests/fontconv-selftest.ps1` Y1-Y10 and D1-D3.
+  Manual fonts page gains an "Other font formats" section listing every
+  readable format and the monobit route.
+- vidtune: Encode All Stale encoded every clip with its CONFIG.BAT
+  settings, ignoring unaccepted per-clip edits, so a new clip tuned in
+  the session encoded at the kit defaults. The queue now snapshots each
+  clip's session settings, queues any clip whose settings differ from
+  CONFIG.BAT, and on success writes its VIDOPTS_NNN line the way Accept
+  does (shared `_save_vidopts`), so BUILD.BAT agrees. The button is
+  renamed Encode Stale + Edited. The clip rail shows a new `edited`
+  status (accent colour, outranks `stale`), refreshed on every panel
+  edit. New Revert button drops the open clip's unsaved edits back to
+  CONFIG.BAT. `tests/vidtune/test_gui_smoke.py` gains four tests.
+  vidtune.exe rebuilt.
+- XBN: rows 16-19, all API version 3 and append-only - `SVC_GETLINE`
+  (`XBN_API+48`, out HL/BC = this turn's typed line, CF set = none
+  submitted), `SVC_GETPENDING` (`+51`, out HL/BC = unconsumed
+  conjunction remainder), `SVC_INJECT` (`+54`, in HL/A, queues a line
+  for the next PARSE 0, replacing any pending order, refuses over 127
+  chars or a second injection with nothing written), `SVC_VOCFIND`
+  (`+57`, in HL, out D/E/CF, vocabulary lookup - foreground only, never
+  from the output hook). `XBN_API_ROWS` 16 -> 20. Fixture fns 43-48,
+  verbs XGLN XINJ XLIN XPND XSAV XINE XINL (rows 16-18), XVOC (row 19);
+  fixture prompt pinned to SM2 by flag 42.
+- XBN: format 3 header (version byte 3; offsets 10-11 lineEntry, 12-13
+  outEntry, reusing format 2's reserved bytes - `XBN_HEADER3` /
+  `XBN_BEGIN3`). The line hook runs on extSaved, before the echo and the
+  parse; CF set consumes the line silently, no parse, no each-turn
+  process, no turn advance. The output hook runs on its own cell
+  (outSaved) once per printed character, reads the MMU through
+  `nr_read`'s DI bracket, calls no service, and must preserve
+  AF'/BC'/DE'/HL'. Collection chaining via xbnmod.inc's
+  `XBN_LINE_ENTER`/`XBN_LINE_CALL`/`XBN_LINE_END` and `XBN_OUT_CALL`;
+  every collection module needs an `int` entry even if it is only a
+  `ret`. An older interpreter rejects a format 3 header and the game
+  plays with externs off. Fixture verbs XHKZ XHKS XSWL; harness
+  `-XbnBad` gains `line`, `rsv` now builds a format 2 header.
+- XBN: extern state area at `XBN_STATE` (`$BF80`, 128 bytes, frozen).
+  Save format v3 = v2 + one length byte (128) + the area; v1/v2 files
+  load with it zeroed, a v3 save loads on an older interpreter with the
+  extra bytes ignored. `RAMLOAD n` restores it unconditionally; zeroed
+  at boot only, not on RESTART or a part switch. Claims chained off
+  `xbnmod.inc`'s `XBN_STATE_FREE`; toolkit claims offsets 0-9 (picker
+  pool size, 8-byte used bitmap, print target window) - fns 76 and 84
+  no longer go stale across LOAD/RAMLOAD. A cross-part LOAD whose target
+  part fails to load leaves the area restored while the flags are not.
+  Fixture verbs XSTW XSTZ XSTR XLOD XRMS XRML XLD2, V2.SAV fixture.
+- externs: transcript module (fns 90-94, no flags). fn 90
+  `EXTERN mode 90` starts recording to TRANS.TXT, truncating it - mode
+  bit 0: 1 full (typed lines + printed text), 0 input-only (replayable
+  walkthrough); bit 1: 1 = no date stamp (skips SVC_GETDATE, which some
+  emulators hang on). fn 91 stop (flush + disarm), fn 92 condition (CF
+  clear while recording), fn 93 writes user message n as a `##` label
+  line, fn 94 restricts recording to window w (255 = all, the default).
+  Flush runs at every line hook: open read-write, seek to the running
+  length, write, check the byte count, close - one card round trip per
+  turn before the response. TRANSCRIPT_RING build define (default
+  2048) sizes the buffer; output past the cap becomes one `~` and drops
+  the rest of that turn's output, the next command line is never among
+  the dropped bytes. ZEsarUX's esxDOS emulation keeps only the last
+  write of a reopened file, so multi-turn transcripts are only faithful
+  on real hardware. Fixture verbs XTRS XTRI XTRE XTRQ XTRL XTR1 XTR2
+  XTRF XTRO XTRD (XTRD silicon-only); tests/xbn/transcheck.py (tilemap
+  vs file diff), tests/parser/transcript2jsonl.py, tests/xbn/mkv2sav.py,
+  tickcheck.py --grab. Not part of externs/all: the loader arms the
+  output tap for any binary whose header names one, so a binary with
+  this hook costs every game that loads it on every printed character,
+  recording or not. Ships standalone (externs/transcript/GAME.XBN) or in
+  an EXTERNS.BAT subset; the collection stays a format 2 binary.
+  Playername's SVC_GETLINE and ticker's SVC_PAIR/SVC_FITWORD need API 3,
+  each module checking the version itself.
+- kit: videnc.exe and vidtune.exe are now one PyInstaller onedir bundle,
+  `authoring-kit/tools/vidtools/`, sharing `_internal/`; built from
+  `scripts/vidtools.spec` by `scripts/build-vidtools.ps1` (build outside
+  the repo, check_frozen_exes, mirror-deploy). The two launchers can no
+  longer drift apart. Unused Qt modules (Quick, QML, PDF, Network, SVG,
+  VirtualKeyboard, opengl32sw, translations), Pillow AVIF/WebP/CMS and
+  OpenSSL are excluded: 94 MB of exes becomes a 42 MB zip. Encodes are
+  byte-identical to the previous videnc.exe on both kit clips.
+  VIDENCDIR/VIDTUNEDIR are replaced by VIDTOOLSDIR (tools.bat, video.ps1,
+  VIDTUNE.BAT, vidtune kitmodel). A frozen vidtune runs its sibling
+  videnc.exe first. `LICENSES/` ships the Python, Qt (LGPL-3.0), numpy,
+  Pillow and PyInstaller licences. check_frozen_exes takes an optional
+  bundle folder.
+- kit: BUILD.BAT stages assets incrementally. It no longer clears
+  pictures, sprite sets, audio or video from `RELEASE\`. The new
+  `lib/assets.ps1` (`-Stage Pictures|Audio|Video`) replaces the
+  per-file loops in gfx.bat, audio.bat and video.bat, which are now
+  thin wrappers. Copies (WAV, VID, ready-made pictures and title) are
+  current when size and modified time match the source. Conversions
+  (PNG, AKY, AYS, SFB, ANI) are current when the output's modified
+  time equals the newest source time plus a fingerprint of the sources
+  and converters (name, size, time, including assets.ps1) in the
+  sub-second ticks. That catches edits, older replacements and tool or
+  kit updates, and writes no state files. At the end of each stage,
+  outputs with no source are deleted, so a COMPRESS switch swaps .NX2
+  and .NX2.zx0. Fonts, pointers, hints, XBN, DDB, INTRO\ and PART<n>\
+  are still rebuilt every run. Palette reports and sprite lines print
+  only when a file converts. With 102 pictures a build took 67.8 s
+  before, 5.8 s cold and 2.1 s unchanged. Output is byte-identical to
+  the old scripts. pnginfo.ps1 is removed.
+- XBN: SVC_FITWORD (row 20, XBN_API+60): flush, then prn_fit's wrap
+  rule for a word of length A; out A = the window's width.
+  prn_flush now calls prn_fit. XBN_API_ROWS 21. Ticker fn 39 types
+  message n at the cursor (tybuf scratch claim), a word as wide as
+  the window in chunks of that width as prn_char flushes it. Fixture
+  fns 49/50, XFWD XFWF; verbs XTTY XTTW XTTO XTTA XTTB XTTC XTTM
+  XTTK XTTL.
+- Fixed: the MMU save around extern and service calls (`mmu_save_hl`)
+  read the register-select port pair with interrupts on, so a frame
+  interrupt landing between the select and the read could restore the
+  wrong memory page, rarely returning into the wrong code in a game
+  using externs with a frame hook. The select-then-read is now
+  DI-bracketed like every other user of that pair. Fixture fn 51, verb
+  XMMU.
 
 ## v0.10.0 - 18/09/2026
 

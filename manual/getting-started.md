@@ -127,7 +127,7 @@ are all optional and the build skips whatever is absent.
 | `COLS` | Text columns your game is authored for. Blank = 80 (the default), or `40` for the double-width 40-column mode. Sets the compiler's `-cols` option - the interpreter still boots at 80, so a 40-column game must issue `GFX 1 18` in its init process. See [Graphics](graphics.md). |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
 | `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
-| `VIDENCDIR`, `VIDTUNEDIR` | Same, for the two tools the kit ships. You should not need to set these. |
+| `VIDTOOLSDIR` | Same, for the folder holding `videnc.exe` and `vidtune.exe`, which the kit ships. You should not need to set this. |
 | `NDRCVER` | The `lib\ndrc.exe` version this kit was tested against. `BUILD.BAT` refuses to build with any other - see [When the build fails](#when-the-build-fails). |
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
 | `NEXTDAWDIR` | Your NextDAW install, only for `MUSIC NDR` in a [loader intro](intro.md). |
@@ -150,12 +150,18 @@ with the game.
 - **`RUN.BAT`** - launches CSpect on whatever is already in `RELEASE\`,
   without rebuilding.
 - **`CLEAN.BAT`** - empties `RELEASE\` and clears the compiler's staged
-  intermediates.
+  intermediates. The next build then converts everything from scratch.
 
-The build stops at the first error, with a message naming the cause. It
-clears the converted assets out of `RELEASE\` before it starts, so a
-picture or tune you delete from the kit folder cannot linger there from
-an earlier build.
+The build stops at the first error, with a message naming the cause.
+
+Pictures, sprite sets, sounds, tunes and video are only converted or
+copied when their source has changed since the last build. Everything
+else in `RELEASE\` is left as it is, so a game with hundreds of pictures
+rebuilds in seconds. A file counts as changed when its size or modified
+time differs, including a file replaced by an older copy. Updating the
+kit or a conversion tool also converts everything again. The build
+deletes the output of any picture or tune you remove from the kit
+folder, so nothing lingers on the card from an earlier build.
 
 Your database is compiled as DAAD version 3. If you are bringing in a
 game written for version 2, three behaviours change silently - see

@@ -7,6 +7,5 @@ tools/**/*
 !tools/**/
 !tools/**/.gitkeep
 !tools/README.txt
-!tools/videnc/videnc.exe
-!tools/vidtune/vidtune.exe
+!tools/vidtools/**
 !tools/gfx2next/*

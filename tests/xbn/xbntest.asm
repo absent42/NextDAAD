@@ -6,7 +6,7 @@
     DEVICE ZXSPECTRUMNEXT
     INCLUDE "../../authoring-kit/xbn.inc"
     ORG XBN_ORG
-    XBN_HEADER ext_main, int_tick
+    XBN_HEADER3 ext_main, int_tick, line_probe, out_probe
 
 ext_main:
     ; Contract on entry: A=B=param1, C=fn, HL=flags+param1,
@@ -26,11 +26,11 @@ ext_main:
     ld (XBN_FLAGS+205), a       ; IX low byte - expect $00
     ld a, c
     cp 21
-    jr z, .fn21
+    jp z, .fn21                  ; jr went out of range once fn47/48 grew the chain
     cp 22
-    jr z, .fn22
+    jp z, .fn22                  ; jr went out of range once fn49 grew the chain
     cp 23
-    jr z, .fn23
+    jp z, .fn23                  ; jr went out of range once fn50 grew the chain
     cp 24
     jr z, .fn24
     cp 25
@@ -57,6 +57,24 @@ ext_main:
     jr z, .fn39
     cp 42
     jp z, pair_probe             ; SVC_PAIR probe; sits past the pad, jp not jr
+    cp 43
+    jp z, getline_probe
+    cp 44
+    jp z, inject_probe
+    cp 45
+    jp z, pending_probe
+    cp 46
+    jp z, voc_probe
+    cp 47
+    jp z, state_w
+    cp 48
+    jp z, state_r
+    cp 49
+    jp z, fitword_probe          ; SVC_FITWORD probe; past the pad, jp not jr
+    cp 50
+    jp z, fitflush_probe
+    cp 51
+    jp z, mmu_probe              ; MMU save race probe; runs from slot 7
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
@@ -622,6 +640,241 @@ pair_probe:
     ld (hl), a
     or a                         ; CF discipline: deliberate clear
     ret
+
+; fn 49: SVC_FITWORD with p1 as the length. The DSF reads the effect.
+fitword_probe:
+    ld a, b
+    call SVC_FITWORD
+    or a                         ; CF discipline: deliberate clear
+    ret
+
+; fn 50: SVC_FITWORD must flush a pending word before placing the next:
+; "12345678" held unflushed, then length 5, then "M" (XFWF reads it).
+fitflush_probe:
+    ld hl, ffp_word
+.loop:
+    ld a, (hl)
+    or a
+    jr z, .fit
+    push hl
+    call SVC_PUTCHAR             ; buffered: no flush
+    pop hl
+    inc hl
+    jr .loop
+.fit:
+    ld a, 5
+    call SVC_FITWORD
+    ld hl, ffp_m
+    call SVC_PUTS
+    or a                         ; CF discipline: deliberate clear
+    ret
+ffp_word: db "12345678", 0
+ffp_m:    db "M", 0
+
+; fn 43: SVC_GETLINE -> 120 length, 121 fresh (1/0), 122-125 first 4 chars.
+getline_probe:
+    call SVC_GETLINE
+    ld a, 0
+    adc a, 0                     ; A = CF: 1 = stale
+    xor 1                        ; 1 = fresh
+    ld (XBN_FLAGS+121), a
+    ld a, c
+    ld (XBN_FLAGS+120), a
+    ld de, XBN_FLAGS+122
+    ld bc, 4
+    ldir
+    or a
+    ret
+
+; fn 44: SVC_INJECT. B selects the text: 0/1 = "XLIN" (B = echo bit),
+; 2 = empty, 3 = 127 chars, 4 = 128 chars. 126 = 0 accepted, 1 refused.
+inject_probe:
+    ld a, b
+    cp 2
+    jr c, .xlin
+    ld hl, inj_empty
+    jr z, .go
+    ld hl, inj_127
+    cp 3
+    jr z, .go
+    ld hl, inj_128
+    jr .go
+.xlin:
+    ld hl, inj_xlin
+.go:
+    ld a, b
+    and 1                        ; only B = 1 echoes
+    call SVC_INJECT
+    ld a, 0
+    adc a, 0
+    ld (XBN_FLAGS+126), a
+    or a
+    ret
+inj_xlin:  db "XLIN", 0
+inj_empty: db 0
+inj_127:   ds 127, 'A'
+           db 0
+inj_128:   ds 128, 'A'
+           db 0
+
+; fn 45: SVC_GETPENDING -> 127 length, 128 first byte.
+pending_probe:
+    call SVC_GETPENDING
+    ld a, c
+    ld (XBN_FLAGS+127), a
+    ld a, (hl)
+    ld (XBN_FLAGS+128), a
+    or a
+    ret
+
+; fn 46: SVC_VOCFIND. "xsvc" -> 129 id (104), 130 type (0 = verb);
+; "qqqqq" -> 131 = 1 (CF set).
+voc_probe:
+    ld hl, w_xsvc
+    call SVC_VOCFIND
+    ld a, d
+    ld (XBN_FLAGS+129), a
+    ld a, e
+    ld (XBN_FLAGS+130), a
+    ld hl, w_none
+    call SVC_VOCFIND
+    ld a, 0
+    adc a, 0
+    ld (XBN_FLAGS+131), a
+    or a
+    ret
+w_xsvc: db "xsvc", 0
+w_none: db "qqqqq", 0
+
+; Format 3 line hook probe: 133 = calls, 134 = B (length). A line whose
+; first four letters are XSWL is swallowed (CF set: silent re-prompt).
+line_probe:
+    ld a, (XBN_FLAGS+133)
+    inc a
+    ld (XBN_FLAGS+133), a
+    ld a, b
+    ld (XBN_FLAGS+134), a
+    ld de, sw_text
+    ld b, 4
+.cmp:
+    ld a, (hl)
+    and $DF                      ; case-fold letters
+    ex de, hl
+    cp (hl)
+    ex de, hl
+    jr nz, .keep
+    inc hl
+    inc de
+    djnz .cmp
+    scf
+    ret
+.keep:
+    or a
+    ret
+sw_text: db "XSWL"
+
+; Output tap probe: 135 = characters seen (wraps), 136 = last one.
+out_probe:
+    ld a, (XBN_FLAGS+135)
+    inc a
+    ld (XBN_FLAGS+135), a
+    ld a, c
+    ld (XBN_FLAGS+136), a
+    ret
+
+; fn 47: XBN_STATE[0] = B. fn 48: 132 = XBN_STATE[0].
+state_w:
+    ld a, b
+    ld (XBN_STATE), a
+    or a
+    ret
+state_r:
+    ld a, (XBN_STATE)
+    ld (XBN_FLAGS+132), a
+    or a
+    ret
+
+; fn 51: p1 rounds (0 = 256) of MMU_N SVC_FITWORD(0) calls - the cheapest
+; service bracketed by the svcSaved MMU save. NR $56 is read after each
+; against the entry page; mismatches counted in 137/138 (saturating) and
+; repaired.
+; 139/140 = frames taken. Code and data sit in slot 7 so a wrong slot 6
+; page cannot unmap them. The R-driven delay keeps the loop from phase-
+; locking to the frame interrupt.
+MMU_N equ 60000
+mmu_probe:
+    ld a, b
+    ld (mmuRounds), a
+    call mmu_rd6
+    ld (mmuExp), a               ; XBN first page, as mapped for the call
+    ld hl, 0
+    ld (XBN_FLAGS+137), hl
+    call SVC_FRAMES
+    ld (mmuT0), hl
+.round:
+    ld de, MMU_N
+.loop:
+    push de
+    ld a, r
+    and $0F
+    ld b, a
+    inc b
+.jit:
+    djnz .jit
+    xor a                        ; length 0: flush only
+    call SVC_FITWORD
+    call mmu_rd6
+    ld hl, mmuExp
+    cp (hl)
+    jr z, .ok
+    ld a, (hl)
+    nextreg $56, a               ; repair slot 6 so the loop continues
+    ld hl, (XBN_FLAGS+137)
+    inc hl
+    ld a, h
+    or l
+    jr z, .ok                    ; saturate at $FFFF
+    ld (XBN_FLAGS+137), hl
+.ok:
+    pop de
+    dec de
+    ld a, d
+    or e
+    jr nz, .loop
+    ld hl, mmuRounds
+    dec (hl)
+    jr nz, .round
+    call SVC_FRAMES
+    ld de, (mmuT0)
+    or a
+    sbc hl, de
+    ld (XBN_FLAGS+139), hl
+    or a                         ; CF discipline: deliberate clear
+    ret
+; A = NR $56. Own IFF2-preserving DI bracket (nr_read idiom): does not use
+; the interpreter routine under test. Corrupts BC, F.
+mmu_rd6:
+    ld a, i
+    jp pe, .on
+    ld a, i
+.on:
+    push af
+    di
+    ld bc, TB_SELECT
+    ld a, $56
+    out (c), a
+    inc b
+    in c, (c)
+    pop af
+    ld a, c
+    ret po
+    ei
+    ret
+mmuExp:    db 0
+mmuRounds: db 0
+mmuT0:     dw 0
+    ASSERT mmu_probe >= $E000    ; slot 7 half of the bank
+
 xbn_end:
 
     SAVEBIN "tests/out/xbn/GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

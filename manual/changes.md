@@ -3,8 +3,40 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.10.1 - unreleased
+## 0.11.0 - unreleased
 
+- **VIDTUNE zooms 1x to 5x.** The preview's single 2x button is now
+  five zoom buttons beside Encoded, Flicker and Heatmap; keys `1` to `5`
+  and the mouse wheel also change zoom, and the centre of the view
+  stays put. A picture bigger than the pane scrolls: drag it to pan.
+  Clicking the picture no longer switches Flicker - use Space.
+- **Switching text width keeps your colours.** `GFX 1 18` and `GFX 0 18`
+  now keep every window's `INK`, `PAPER` and `MODE`. The screen still
+  clears and every window still goes back to full screen, but the
+  cleared screen takes window 0's paper, so a blue screen stays blue.
+  If your game relied on a switch to go back to white on black, issue
+  `INK 7`, `PAPER 0` and `MODE 0` in each window you styled before the
+  switch - the screen then clears black. See
+  [40-column games](graphics.md#40-column-games).
+- **No version stamp at boot.** The interpreter no longer prints its
+  version number and pauses for a second before the game starts; boot
+  goes straight to the title, intro or first location.
+- **Faster builds.** `BUILD.BAT` now converts or copies only the
+  pictures, sprite sets, sounds, tunes and video that changed since the
+  last build, and keeps the rest of `RELEASE\` as it is. A game with a
+  hundred pictures rebuilds in a couple of seconds instead of over a
+  minute. Removing a source still removes its file from `RELEASE\`.
+  `CLEAN.BAT` forces everything to convert again. See
+  [Getting started](getting-started.md#build-and-run).
+- **New extern: playername.** Asks for the player's name, keeps it with
+  saved games and prints it back, and can test it against a message -
+  for example a word that skips the introduction. Part of
+  `externs\all\`. See [Externs](externs.md#playername-the-players-name).
+- **Your own externs in EXTERNS.BAT.** `EXTERNS.BAT fade ..\mymods\doors`
+  builds one `GAME.XBN` from shipped modules and your own; name your
+  module by its folder. The builder wires in its hooks and places its
+  scratch RAM and saved state for you. See
+  [Externs](externs.md#your-own-modules-in-a-subset).
 - **Parser cursor.** `GFX n 22` to `26` choose the cursor's glyph,
   blink and colours; the default inverse block is unchanged. Typing
   past what the input window can hold is now ignored instead of
@@ -32,11 +64,66 @@ game behaves, how it builds, or what the kit gives you, it is here.
   the tilemap attribute for any ink and paper, the same way `INK` and
   `PAPER` resolve them. The XBN API version is now 3; every existing
   row is unchanged.
+- **Fonts from the hoard of bitfonts.** `lib\fontconv.ps1` and the kit
+  build now read monobit's `.yaff` and `.draw` text formats, so any 8x8
+  character set from that collection drops in as `FONT.yaff` or
+  `FONT.draw` and converts. A YAFF file declaring the ZX charset keeps
+  its own pound and copyright signs. The fonts page now lists every
+  format the converter reads and how to reach the rest through monobit.
+  See [Fonts](fonts.md#other-font-formats).
 - **Ticker extern.** `externs\ticker` now takes a row, column and
   width (fns 32-34), ink and paper (35-36), a typewriter or marquee
   mode (37) and a speed (38), all latched by the next `EXTERN n 30`.
   Arming clears the field first; `EXTERN 1 31` stops and clears. The
   defaults reproduce the old bottom-row ticker.
+- **VIDTUNE bulk encode keeps your settings.** Encode All Stale used
+  the settings saved in `CONFIG.BAT` and ignored changes you had not
+  accepted, so a batch of newly tuned clips encoded at the defaults.
+  The button, now Encode Stale + Edited, encodes each clip with the
+  settings you gave it and saves them to `CONFIG.BAT` as Accept does.
+  A clip with unsaved changes shows as `edited` in the clip list, and
+  a new Revert button puts the open clip back to its saved settings.
+  See [Video](video.md#9-encoding-tools).
+- **Externs can read and drive the parser.** Four new services let your
+  extern see the line the player typed this turn, read text still
+  queued after "and", inject a line as if the player had typed it, and
+  look up a word in your database's own vocabulary - enough to build a
+  name-entry prompt, a password check, a command alias, or a
+  walkthrough player that types for the player. See
+  [Services](externs.md#services).
+- **Externs can watch every line and every printed character.** A new
+  XBN header format, 3, adds a line hook, called before each line is
+  parsed, and an output hook, called on every character the game
+  prints; either can be left unused. See
+  [The line hook](externs.md#the-line-hook) and
+  [The output hook](externs.md#the-output-hook).
+- **A 128-byte extern state area now travels with your save.** `SAVE`,
+  `LOAD`, `RAMSAVE` and `RAMLOAD` carry it the same way they carry your
+  flags, so an extern no longer needs a flag of its own just to survive
+  a `LOAD` - old saves still load, with the area zeroed. See
+  [The extern state area](externs.md#the-extern-state-area).
+- **New extern: transcript.** Records every command typed, and
+  optionally everything the game prints, to a file on the card - a
+  walkthrough recorder, or a bug report that writes itself. Not part of
+  `externs\all\`: an output hook costs every game that loads it on every
+  printed character, recording or not, so ship it standalone or in an
+  `EXTERNS.BAT` subset instead. See
+  [the extern collection](externs.md#the-extern-collection).
+- **videnc and vidtune share one folder.** Both now live in
+  `tools\vidtools\` and run from its `_internal\`, which halves the
+  kit's download. `CONFIG.BAT`'s `VIDENCDIR` and `VIDTUNEDIR` become one
+  setting, `VIDTOOLSDIR`. The old `tools\videnc\` and `tools\vidtune\`
+  folders are no longer used and can be deleted. See
+  [Video](video.md#9-encoding-tools).
+- **Typed messages.** The ticker extern's new `EXTERN n 39` types
+  message n at the cursor a letter at a time, wrapping words exactly as
+  `MES` does. A new extern service, `SVC_FITWORD`, makes that possible
+  for any extern.
+- **Fixed: a rare crash or corruption in games using externs with a
+  frame hook.** The interpreter could restore the wrong memory page
+  after an extern or service call if a frame interrupt landed at
+  exactly the wrong moment, occasionally running the wrong code next.
+  That can no longer happen.
 
 ## 0.10.0 - 18 September 2026
 

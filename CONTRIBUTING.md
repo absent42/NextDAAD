@@ -12,8 +12,9 @@ The rest of this document is about submitting an extern for the authoring kit.
 
 Externs live in `authoring-kit\externs\`, one folder per extern. Yours
 should do one thing well, be driveable from a handful of DSF lines, and
-be useful beyond a single game. The shipped collection (`ticker`,
-`fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`) is the
+be useful beyond a single game. The shipped collection (`playername`,
+`ticker`, `fade`, `hints`, `clock`, `timer`, `realtime`, `toolkit`,
+`transcript`) is the
 reference for tone, size and documentation, and every folder in it
 follows the combinable module convention below.
 
@@ -80,18 +81,23 @@ Rules that come with it:
 - Your fn codes and flags must be disjoint from every other collection
   module - check the table in `authoring-kit\externs\README.md` and
   add your row to it.
-- Scratch RAM above the saved image is claimed through the
-  `XBN_SCRATCH_FREE` chain in `xbnmod.inc` (see the comment there), so
-  modules never collide.
+- Scratch RAM above the saved image is claimed through the fixed
+  `XBN_SCRATCH_FREE` chain in `xbnmod.inc`, and extern state area
+  bytes from the top of the area by lowering `XBN_STATE_TOP` (see the
+  comments there), so collection modules never collide and authors'
+  own-module offsets never move. The `SCRATCH_SIZE`/`STATE_SIZE`
+  declarations are for a game's own modules and are not used in the
+  collection.
 - Wiring into the combined binary is a `DEFINE XBN_HAS_<NAME>` and an
   `INCLUDE` in `authoring-kit\externs\all\all.asm`, a three-line
   ext-chain entry there (`call xbn_setup / call <name>.ext /
-  XBN_CHAIN_CAPTURE`), an int-chain entry, a row in
-  `authoring-kit\lib\xbnbuild.ps1`'s `$known` table, and a name in
-  `authoring-kit\EXTERNS.BAT`'s usage list. The module's position
-  must be the same in `all.asm` and in the harness's drift list
-  (`tests\build-tests.ps1`). Maintainers do this at acceptance, but
-  your module must be shaped so they can.
+  XBN_CHAIN_CAPTURE`), an int-chain entry, and line/out chain entries
+  for a hooked module. `EXTERNS.BAT` finds your folder and its hooks
+  by itself, from the `ext`, `int`, `line` and `out` labels at column
+  0 inside your `MODULE` block. The module's position must be the same
+  in `all.asm` and in the harness's drift list (`tests\build-tests.ps1`).
+  Maintainers do this at acceptance, but your module must be shaped so
+  they can.
 
 ### The verdict contract
 

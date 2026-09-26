@@ -166,7 +166,7 @@ gfxLayerOrder: db 0   ; 0 = picture on top (Layer 2 above the tilemap,
                       ; gfx_layer_apply wherever the register is pushed.
 
 ; GAME-OWNED like gfxLayerOrder above: text
-; width in columns, 80 or 40. Written ONLY by tm_width_apply
+; width in columns, 80 or 40. Written ONLY by tm_width_core
 ; (main.asm). Survives RESTART/LOAD/RAMLOAD/part switch; the
 ; assembled 80 is the boot default.
 tmCols: db 80

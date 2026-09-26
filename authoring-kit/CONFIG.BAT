@@ -65,9 +65,9 @@ REM (the runtime player cannot be downloaded or redistributed); point at the
 REM folder holding RuntimePlayer\.
 SET NEXTDAWDIR=
 
-REM videnc and vidtune - shipped with the kit; you should not need these.
-SET VIDENCDIR=
-SET VIDTUNEDIR=
+REM videnc and vidtune - shipped with the kit as one folder; you should not
+REM need this. Keep the folder whole: both exes run from its _internal\.
+SET VIDTOOLSDIR=
 
 REM The lib\ndrc.exe version this kit was tested against - BUILD.BAT refuses
 REM to build with any other.

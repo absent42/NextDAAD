@@ -233,17 +233,17 @@
 #            tests\xbn\xbntest.asm's fixture extern as GAME.XBN (the
 #            XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG/XABS probe verbs, all
 #            live against the interpreter's XBN support as of Task 9).
-#            Six companion switches, all no-ops without -Xbn. Not
+#            Seven companion switches, all no-ops without -Xbn. Not
 #            designed to be combined with each other; the staging code
 #            checks them in this priority order, so if more than one is
 #            given -XbnNoBin wins over -XbnBad over -XbnTicker over
 #            -XbnFade over -XbnAll over -XbnHints over -XbnClock over
-#            -XbnTool:
+#            -XbnTool over -XbnTrans:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN (XABS
 #                              no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated GAME.XBN instead
-#                              of the good one: magic|ver|rsv|shorthdr|
-#                              size|trunc (a kind is required). All six
+#                              of the good one: magic|ver|rsv|line|
+#                              shorthdr|size|trunc (a kind is required). All seven
 #                              variants are generated unconditionally
 #                              alongside the good GAME.XBN so a break in
 #                              the generator is caught on a plain run.
@@ -285,6 +285,14 @@
 #                              one of its modules), no hint packing, so
 #                              XTKP/XTKA/XTKO/XTKT/XSLT have the toolkit
 #                              fns and CALL slots to drive.
+#              -XbnTrans      stage a `toolkit transcript` subset built by
+#                              xbnbuild.ps1 (XTR2 needs toolkit fn 70) as
+#                              GAME.XBN instead of the fixture, so
+#                              XTRS/XTR1/XTR2/XTRE have the transcript
+#                              module to drive - it left the combined
+#                              collection binary and needs its own build.
+#                              Same scratch-cwd/CSpect-lock pattern as
+#                              -XbnAll, no picture or hint staging.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -376,7 +384,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -587,18 +595,21 @@ finally { Pop-Location }
 # GAME.XBN to the committed all\GAME.XBN - catches both a broken
 # generator and any future divergence between the two paths.
 $xbnDriftOut = "$root\tests\out\xbn-subset-drift.XBN"
-& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer realtime toolkit -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
+& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer realtime toolkit playername -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
 $xbnDriftFresh = [IO.File]::ReadAllBytes($xbnDriftOut)
 $xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME.XBN")
-# Phase window: xbn.inc's includes emit v2 while the committed collection
-# binaries stay v1 until the phase 2 rework. Skip instead of throwing while
-# the header versions differ; re-arms itself once both sides are v2.
-if ($xbnDriftFresh[3] -ne $xbnDriftShipped[3]) {
-    Write-Host "xbn-subset-drift: SKIPPED - committed all/GAME.XBN is format v$($xbnDriftShipped[3]), includes emit v$($xbnDriftFresh[3]) (phase 2 rebuild pending)"
+if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
+    throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit playername DRIFTED from authoring-kit\externs\all\GAME.XBN (format v$($xbnDriftFresh[3]) vs v$($xbnDriftShipped[3])) - generator and all.asm disagree; compare $xbnDriftOut"
 }
-elseif (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
-    throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit DRIFTED from authoring-kit\externs\all\GAME.XBN - generator and all.asm disagree; compare $xbnDriftOut"
+# The kit-root GAME.XBN is what BUILD.BAT stages into RELEASE; it must be a
+# byte copy of externs\all\GAME.XBN.
+$xbnKitRoot = [IO.File]::ReadAllBytes("$root\authoring-kit\GAME.XBN")
+if (-not [System.Linq.Enumerable]::SequenceEqual($xbnKitRoot, $xbnDriftShipped)) {
+    throw "authoring-kit\GAME.XBN differs from authoring-kit\externs\all\GAME.XBN - copy the combined build to the kit root and commit both together"
 }
+
+& "$PSScriptRoot\xbnbuild-selftest.ps1"
+& "$PSScriptRoot\audit-externs-selftest.ps1"
 
 & "$PSScriptRoot\hintpack-selftest.ps1"
 & "$PSScriptRoot\hintpack-accent-oracle.ps1"
@@ -948,9 +959,10 @@ function Assert-CursorStateWriters {
         throw "src\tmpairs.asm : pair_reclaim must end by marking curAttr's pair unconditionally (ld a,(curAttr) / srl a / jp pair_mark) - the cache outlives a GFX 26 reset"
     }
     if ($reclaim -match 'curColSet') { throw "src\tmpairs.asm : pair_reclaim must not gate the cursor mark on curColSet" }
-    foreach ($site in @(@{ f = 'src\overlay0.asm'; r = 'h_restart' }, @{ f = 'src\engine.asm'; r = 'eng_init_game' }, @{ f = 'src\main.asm'; r = 'gfx_drawtarget_clear' }, @{ f = 'src\main.asm'; r = 'tm_width_apply' })) {
+    foreach ($site in @(@{ f = 'src\overlay0.asm'; r = 'h_restart' }, @{ f = 'src\engine.asm'; r = 'eng_init_game' }, @{ f = 'src\main.asm'; r = 'gfx_drawtarget_clear' }, @{ f = 'src\main.asm'; r = 'tm_width_apply' }, @{ f = 'src\main.asm'; r = 'tm_width_core' }, @{ f = 'src\overlay2.asm'; r = 'win_regeom' })) {
         $t = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root $site.f) -Raw)
         $body = [regex]::Match($t, "(?ms)^$($site.r):.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)").Value
+        if (-not $body) { throw "$($site.f) : $($site.r) not found as a top-level label - the reset-site check would pass on an empty body" }
         foreach ($sym in ($state + $cache)) {
             if ($body -match "\b$sym\b") { throw "$($site.f) : $($site.r) reaches $sym - the parser cursor is game-owned and survives every reset site" }
         }
@@ -1020,6 +1032,38 @@ function Assert-PaletteWriterCensus {
     "palette writer census: overlay2 9, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
 }
 
+function Assert-WidthSwitchKeepsStyle {
+    # GFX 18 keeps each window's MODE, INK, PAPER and cached pairs: the
+    # overlay2 geometry reset must not reach them, and boot/fatal() keep
+    # the default clean slate through tm_width_apply.
+    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
+    $ovl2 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay2.asm') -Raw)
+    $regeom = [regex]::Match($ovl2, '(?ms)^win_regeom:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $regeom) { throw "src\overlay2.asm : win_regeom not found as a top-level label" }
+    if ($regeom -match '\bWIN_(INK|PAPER|ATTR|ATTRINV)\b|\bwindows_init\b|\bwin_attr_resolve\b|\bpair_get\b') {
+        throw "src\overlay2.asm : win_regeom reaches window style - a GFX 18 width switch keeps MODE, INK, PAPER and the cached pairs"
+    }
+    if ($regeom -notmatch 'ld\s+bc,\s*WIN_FLAGS\b') {
+        throw "src\overlay2.asm : win_regeom must ldir with bc = WIN_FLAGS - the geometry reset must copy only offsets 0-5 and store only WIN_LINES"
+    }
+    $hlStores = [regex]::Matches($regeom, 'ld\s+\(hl\),')
+    if ($hlStores.Count -ne 1) {
+        throw "src\overlay2.asm : win_regeom has $($hlStores.Count) (hl) store(s), expected 1 - the geometry reset must copy only offsets 0-5 and store only WIN_LINES"
+    }
+    $hgfx = [regex]::Match($ovl2, '(?ms)^h_gfx:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $hgfx) { throw "src\overlay2.asm : h_gfx not found as a top-level label" }
+    if ($hgfx -notmatch 'call\s+tm_width_core\b' -or $hgfx -notmatch 'jp\s+win_regeom\b' -or $hgfx -match '\btm_width_apply\b') {
+        throw "src\overlay2.asm : h_gfx must call tm_width_core then jp win_regeom, never tm_width_apply - GFX 18 must take the keep-style path"
+    }
+    $tm = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\tilemap.asm') -Raw)
+    $txt = [regex]::Match($tm, '(?ms)^txt_init:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $txt) { throw "src\tilemap.asm : txt_init not found as a top-level label" }
+    if ($txt -notmatch 'jp\s+tm_width_apply\b') {
+        throw "src\tilemap.asm : txt_init must tail-call tm_width_apply - boot and fatal() take the default clean slate, not the keep-style path"
+    }
+    "width switch: win_regeom leaves style alone (single WIN_FLAGS copy, one LINES store), h_gfx's GFX 18 takes tm_width_core+win_regeom, txt_init keeps the default clean slate"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
 Assert-LayerOrderReset
@@ -1028,6 +1072,7 @@ Assert-CycleStopSites
 Assert-CursorStateWriters
 Assert-Slot2Writers
 Assert-PaletteWriterCensus
+Assert-WidthSwitchKeepsStyle
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
@@ -1035,13 +1080,14 @@ Assert-PaletteWriterCensus
 & python "$PSScriptRoot\art\pngchain.py"
 if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-transparency chain is broken" }
 
-# videnc.exe/vidtune.exe are PyInstaller bundles that FREEZE the encoder
-# source in; a stale bundle has silently shipped old-encoder bytes twice.
+# tools\vidtools\ (videnc.exe + vidtune.exe) is a PyInstaller bundle that
+# FREEZES the encoder source in; a stale bundle has silently shipped
+# old-encoder bytes twice.
 # tests\check_frozen_exes.py diffs each bundle against the working tree:
 # exit 1 = stale, exit 2 = not verified (missing, LFS pointer, unreadable,
 # or host Python minor version differs from the bundle's).
 & python "$PSScriptRoot\check_frozen_exes.py"
-if ($LASTEXITCODE -eq 1) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild both" }
+if ($LASTEXITCODE -eq 1) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild with scripts\build-vidtools.ps1" }
 if ($LASTEXITCODE -ne 0) { throw "tests\check_frozen_exes.py could not verify the frozen kit exes - see its NOT VERIFIED lines" }
 
 function Assert-ManualFresh {
@@ -2227,13 +2273,21 @@ foreach ($c in @(
     @{ n = 'GFX 0 18'; b = [byte[]]@(87, 0, 18) },
     @{ n = 'WINAT 2 2'; b = [byte[]]@(82, 2, 2) },
     @{ n = 'WINSIZE 10 36'; b = [byte[]]@(107, 10, 36) },
-    @{ n = 'GFX 1 13 (video)'; b = [byte[]]@(87, 1, 13) }
+    @{ n = 'GFX 1 13 (video)'; b = [byte[]]@(87, 1, 13) },
+    @{ n = 'COLR setup + style'; b = [byte[]]@(87, 0, 18, 78, 1, 66, 0, 65, 4, 81, 1, 78, 0, 66, 6, 65, 1, 81, 0) },
+    @{ n = 'COLB setup + style'; b = [byte[]]@(87, 1, 18, 78, 0, 66, 6, 65, 1, 81, 0, 78, 1, 66, 0, 65, 4, 81, 1) },
+    @{ n = 'MORE setup + MODE 2'; b = [byte[]]@(87, 0, 18, 78, 0, 81, 2) },
+    @{ n = 'SAME setup + style'; b = [byte[]]@(87, 1, 18, 78, 0, 81, 0, 66, 6, 65, 1) },
+    @{ n = 'TRNS setup + paper 227'; b = [byte[]]@(87, 0, 18, 78, 0, 66, 7, 65, 227, 81, 0) },
+    @{ n = 'REKEY style'; b = [byte[]]@(78, 0, 66, 6, 65, 1, 78, 1, 66, 0, 65, 4, 78, 0) },
+    @{ n = 'WINAT 10 0'; b = [byte[]]@(82, 10, 0) },
+    @{ n = 'WINSIZE 4 40'; b = [byte[]]@(107, 4, 40) }
 )) {
     if ((Find-ByteRuns $txt40Bytes $c.b).Count -lt 1) {
         throw "txt40: '$($c.n)' not present in tests\out\txt40.ddb - ndrc did not emit the authored condact"
     }
 }
-"txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, and the from-40-col video play all present as authored"
+"txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, the from-40-col video play and the keep-style verbs' setup/style runs all present as authored"
 
 # --- accents: ndrc's two accent encodings ---
 # Message text is stored complemented (byte = 255 - char; the
@@ -3017,8 +3071,10 @@ $xbnBadMagic = $xbnGood.Clone(); $xbnBadMagic[0] = 0x5A                    # mag
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADMAGIC.XBN", $xbnBadMagic)
 $xbnBadVer = $xbnGood.Clone(); $xbnBadVer[3] = 1                          # version 1: the pre-v2 header, now rejected
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADVER.XBN", $xbnBadVer)
-$xbnBadRsv = $xbnGood.Clone(); $xbnBadRsv[10] = 1                          # reserved byte nonzero
+$xbnBadRsv = $xbnGood.Clone(); $xbnBadRsv[3] = 2; $xbnBadRsv[10] = 1       # format 2 header with a nonzero reserved byte
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADRSV.XBN", $xbnBadRsv)
+$xbnBadLine = $xbnGood.Clone(); $xbnBadLine[10] = 0xFF; $xbnBadLine[11] = 0xFF # format 3, lineEntry $FFFF: outside the binary
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\BADLINE.XBN", $xbnBadLine)
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\SHORTHDR.XBN", $xbnGood[0..11])  # shorter than the 14-byte header
 $xbnBadSize = $xbnGood.Clone(); $xbnBadSize[8] = 0x01; $xbnBadSize[9] = 0x40 # size $4001
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADSIZE.XBN", $xbnBadSize)
@@ -3198,7 +3254,7 @@ if ($Xbn) {
         "staged tests\out\extern.ddb -> sd\$legName\GAME.DDB (no GAME.XBN staged - -XbnNoBin)"
     }
     elseif ($XbnBad) {
-        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; rsv = 'BADRSV.XBN'; shorthdr = 'SHORTHDR.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
+        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; rsv = 'BADRSV.XBN'; line = 'BADLINE.XBN'; shorthdr = 'SHORTHDR.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
         Copy-Item "$root\tests\out\xbn\$xbnBadFile" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\$xbnBadFile -> sd\$legName\GAME.XBN (-XbnBad $XbnBad reject variant)"
     }
@@ -3476,9 +3532,50 @@ if ($Xbn) {
             "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
     }
+    elseif ($XbnTrans) {
+        # `toolkit transcript` subset, staged as GAME.XBN INSTEAD of the
+        # fixture, so extern.dsf's XTRS/XTRI/XTRD/XTRE/XTRQ/XTRL/XTR1/XTR2/
+        # XTRF/XTRO verbs have the transcript module to drive (XTR2 needs
+        # toolkit fn 70). Transcript left the combined collection binary,
+        # so this subset is built fresh by xbnbuild.ps1 rather than staged
+        # from all.asm - same scratch-cwd/CSpect-lock pattern as -XbnAll,
+        # no shipped binary to drift-check against, no picture or hint
+        # staging.
+        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+            throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
+        }
+        $transOut = "$root\tests\out\xbn\TRANS.XBN"
+        Remove-Item $transOut -ErrorAction SilentlyContinue
+        $transBuildDir = Join-Path $root 'tests\out\xbn\_transbuild'
+        New-Item -ItemType Directory -Force $transBuildDir | Out-Null
+        Push-Location $transBuildDir
+        try {
+            $transBuildLog = & "$root\authoring-kit\lib\xbnbuild.ps1" toolkit transcript -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $transOut
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $transOut)) {
+                throw "xbnbuild.ps1 toolkit transcript failed to produce TRANS.XBN (exit $LASTEXITCODE): $($transBuildLog -join "`n")"
+            }
+        }
+        finally {
+            Pop-Location
+            Remove-Item $transBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Copy-Item $transOut "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\TRANS.XBN -> sd\$legName\GAME.XBN (-XbnTrans: toolkit+transcript subset built by xbnbuild.ps1, not the fixture)"
+    }
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\GAME.XBN -> sd\$legName\GAME.XBN"
+        # XLD2: a v2 save file (no state-area tail), committed and staged
+        # unmodified - regenerate with tests\xbn\mkv2sav.py if the
+        # fixture's object list changes.
+        $v2sav = "$root\tests\xbn\V2.SAV"
+        if (Test-Path $v2sav) {
+            Copy-Item $v2sav "$leg\V2.SAV" -Force
+            "staged tests\xbn\V2.SAV -> sd\$legName\V2.SAV"
+        }
+        else {
+            "WARNING: tests\xbn\V2.SAV missing - run tests\xbn\mkv2sav.py, XLD2 will fail to load"
+        }
         # XPAL needs a picture on screen to read back. CSpect-lock: see
         # header.
         $palArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
