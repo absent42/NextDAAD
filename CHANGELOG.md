@@ -4,6 +4,17 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.11.0 - unreleased
 
+- GFX 18 keeps each window's display style across a width change:
+  MODE, INK, PAPER and the cached attribute pairs survive in all 8
+  windows; geometry, cursors and line counts still reset, and the
+  cleared map takes window 0's attribute (paper 227 clears to
+  transparent). `tm_width_apply` is split: resident `tm_width_core`
+  sets the width and fills from `tmAttr`; boot and `fatal()` keep the
+  default clean slate through `tm_width_apply`; overlay2's
+  `win_regeom` resets geometry only. The parser-cursor reset-site guard
+  throws on a missing label. `tests/txt40.dsf` verbs
+  COLR/COLB/MORE/SAME/TRNS/REKEY and headless check
+  `tests/txt40_dump.py`. Kit interpreter and manual rebuilt.
 - Version stamp is DEBUG-only. Release and kit builds no longer print
   `VERSION_STR` or hold for 50 frames at boot; the DEBUG build still
   shows it with its diagnostics. The Release `boot_banner` is removed

@@ -13,6 +13,13 @@
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0110-unreleased">0.11.0 - unreleased</h2>
 <ul>
+<li><strong>Switching text width keeps your colours.</strong> <code>GFX 1 18</code> and <code>GFX 0 18</code>
+  now keep every window's <code>INK</code>, <code>PAPER</code> and <code>MODE</code>. The screen still
+  clears and every window still goes back to full screen, but the
+  cleared screen takes window 0's paper, so a blue screen stays blue.
+  If your game relied on a switch to go back to white on black, issue
+  <code>INK 7</code>, <code>PAPER 0</code> and <code>MODE 0</code> after it. See
+  <a href="graphics.html#40-column-games">40-column games</a>.</li>
 <li><strong>No version stamp at boot.</strong> The interpreter no longer prints its
   version number and pauses for a second before the game starts; boot
   goes straight to the title, intro or first location.</li>

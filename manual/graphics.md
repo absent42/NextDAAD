@@ -293,8 +293,10 @@ Author against your chosen width from the start, not as an afterthought:
   game actually runs at. `-cols=80` is the default and matches the
   interpreter's boot width.
 - **Issue `GFX 1 18` in the init process, before drawing anything.**
-  The switch clears the screen and resets every window, so doing it
-  first avoids drawing at the wrong width and immediately wiping it.
+  The switch clears the screen and resets every window's position and
+  size, so doing it first avoids drawing at the wrong width and
+  immediately wiping it. `INK`, `PAPER` and `MODE` survive the switch,
+  so they can be set before or after it.
 - **Layer 2 hole-cutting moves with the width.** [Transparency](#transparency)
   above gives `left = column x 4, width = width x 4` against a 320-wide
   picture, because one 80-column text cell is 4 picture pixels wide. A
@@ -354,7 +356,7 @@ here.
 | 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Fonts](fonts.md). |
 | 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Text over a picture](#text-over-a-picture) above for the transparent-paper technique this enables. |
-| 18 | Text mode width. `n` 0 selects 80x32 single-width text (the default); `n` 1 selects 40x32 double-width text. A same-width call does nothing. Switching is a clean slate: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue `WINAT`/`WINSIZE` after switching if your game uses custom windows. `n` 2 and above is a no-op. See [40-column games](#40-column-games) below. |
+| 18 | Text mode width. `n` 0 selects 80x32 single-width text (the default); `n` 1 selects 40x32 double-width text. A same-width call does nothing. Switching resets the layout: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue `WINAT`/`WINSIZE` after switching if your game uses custom windows. Every window keeps its `INK`, `PAPER` and `MODE`, and the cleared screen takes window 0's paper, so a blue screen stays blue (`PAPER 227` in window 0 clears to transparent). `n` 2 and above is a no-op. See [40-column games](#40-column-games) below. |
 | 19 | Start animated sprite set `n` (0-254) at the position baked into `NNN.ANI`. A set already running restarts from its first frame. Silently ignored when the file is missing or the set does not fit beside what is already running. See [Animated sprites](sprites.md). |
 | 20 | As 19, taking the set number from flag `n`, X from flags `n+1` (low) and `n+2` (high), Y from flag `n+3`. The flags are read once and never reserved. `n` above 252 is ignored. See [Animated sprites](sprites.md). |
 | 21 | Stop sprite set `n` and free its space; `n` 255 stops every set. Stopping a set that is not running does nothing. See [Animated sprites](sprites.md). |

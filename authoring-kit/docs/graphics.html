@@ -262,8 +262,10 @@ slate, game-owned, same-width no-op).</p>
   game actually runs at. <code>-cols=80</code> is the default and matches the
   interpreter's boot width.</li>
 <li><strong>Issue <code>GFX 1 18</code> in the init process, before drawing anything.</strong>
-  The switch clears the screen and resets every window, so doing it
-  first avoids drawing at the wrong width and immediately wiping it.</li>
+  The switch clears the screen and resets every window's position and
+  size, so doing it first avoids drawing at the wrong width and
+  immediately wiping it. <code>INK</code>, <code>PAPER</code> and <code>MODE</code> survive the switch,
+  so they can be set before or after it.</li>
 <li><strong>Layer 2 hole-cutting moves with the width.</strong> <a href="#transparency">Transparency</a>
   above gives <code>left = column x 4, width = width x 4</code> against a 320-wide
   picture, because one 80-column text cell is 4 picture pixels wide. A
@@ -371,7 +373,7 @@ here.</p>
 </tr>
 <tr>
 <td>18</td>
-<td>Text mode width. <code>n</code> 0 selects 80x32 single-width text (the default); <code>n</code> 1 selects 40x32 double-width text. A same-width call does nothing. Switching is a clean slate: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue <code>WINAT</code>/<code>WINSIZE</code> after switching if your game uses custom windows. <code>n</code> 2 and above is a no-op. See <a href="#40-column-games">40-column games</a> below.</td>
+<td>Text mode width. <code>n</code> 0 selects 80x32 single-width text (the default); <code>n</code> 1 selects 40x32 double-width text. A same-width call does nothing. Switching resets the layout: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue <code>WINAT</code>/<code>WINSIZE</code> after switching if your game uses custom windows. Every window keeps its <code>INK</code>, <code>PAPER</code> and <code>MODE</code>, and the cleared screen takes window 0's paper, so a blue screen stays blue (<code>PAPER 227</code> in window 0 clears to transparent). <code>n</code> 2 and above is a no-op. See <a href="#40-column-games">40-column games</a> below.</td>
 </tr>
 <tr>
 <td>19</td>
