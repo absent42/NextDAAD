@@ -14,9 +14,8 @@ The tools below do not - they are third-party, and some may not be
 redistributed. Download each and extract it into the kit's `tools\`
 folder at the path shown.
 
-The DAAD compiler, [`NDRC`](https://github.com/absent42/DAAD-DSF), needs no download: it ships built in as
-`lib\ndrc.exe`. DAAD Ready and PHP are not required to build a game
-with this kit.
+The DAAD compiler, [`NDRC`](https://condact.xyz/ndrc), needs no download: the Windows version ships built in as
+`lib\ndrc.exe`. However a Linux version of the compiler is available as a seperate download through the previous link.
 
 | Tool | Provides | Extract into | Needed |
 |---|---|---|---|
@@ -57,19 +56,16 @@ language. For that:
 
 - **The [DAAD Ready manual](https://www.ngpaws.com/daadready/doc_en.html)**
   covers the DSF source format, the condact set, the system flags and
-  the symbol tables (its Appendix D is the one these pages cite). It is
-  the reference to write your adventure against.
+  the symbol tables. It is the go-to reference to write your adventure against.
 - **The original DAAD manual** is in the `Docs` folder of the
-  [DAAD project](https://github.com/daad-adventure-writer/daad). It is
+  [DAAD project](https://github.com/daad-adventure-writer/daad) (or a hardcopy is available [here](https://www.lulu.com/shop/tim-gilberts/aventuras-ad-daad/paperback/product-186692n7.html)), it is
   the fuller treatment of the language, worth reading once you know your
-  way around DAAD Ready.
+  way around the DAAD Ready manual.
 
-You do not need DAAD Ready itself
-installed to build - the kit compiles your DSF with its own bundled
-`NDRC` (Next DAAD Reborn Compiler), byte-identical to the [DRC](https://github.com/Utodev/DRC)
-reference pipeline DAAD Ready uses. If a `CONFIG.local.BAT` from an older kit still sets `DAADDIR` or
+The kit compiles your DSF with its own bundled
+`NDRC` (Next DAAD Reborn Compiler). If a `CONFIG.local.BAT` from an older kit still sets `DAADDIR` or
 `DRCDIR`, it is safe to delete those lines - neither setting is read
-any more.
+any more since it migrated from DRC to NDRC.
 
 ## Setting up an editor
 
@@ -79,7 +75,7 @@ easier:
 - **[VS Code](https://code.visualstudio.com/)** is a good general-purpose
   editor for DAAD source - free, cross-platform, and with an extension
   marketplace covering the two tools below.
-- **[DAAD-DSF](https://github.com/absent42/DAAD-DSF)** is a VS Code
+- **[DAAD-DSF](https://condact.xyz/daad-vs)** is a VS Code
   extension for the DSF source format: syntax highlighting for the
   condact set, messages and object definitions, plus checking that flags
   potential compiler and structural problems before you run a
@@ -92,6 +88,9 @@ easier:
 
 None of this is required - the build only reads the files described
 below, however they were written.
+
+For a step-by-step tutorial on setting up a dev environment, please 
+see the [condact.xyz](https://condact.xyz/nextdaad/tutorials/dev-environment) website.
 
 ## Where your files go
 
@@ -194,7 +193,7 @@ folder) to the root of the card. It holds:
 video, so a first build works before you have written anything. It shows
 the Next-specific condacts in use - `PICTURE`/`DISPLAY` for location
 art, `SFX` for music and effects, `BEEP` for tones, `GFX` for cutscenes.
-Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.
+Try the verbs `MUSIC`, `MUTE`, `TUNE`, `BLEEP`, `ZAP`, `SAMPLE`, `MOVIE` and `REEL`.
 
 ## When the build fails
 

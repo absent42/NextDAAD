@@ -133,6 +133,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   after an extern or service call if a frame interrupt landed at
   exactly the wrong moment, occasionally running the wrong code next.
   That can no longer happen.
+- **NDRC v0.2.2** - Entries that differ only in indirection no longer share one compiled
+  body. Entry sharing ignored `@` on either parameter, so `MES @x` could
+  run as `MES x` and `LET a @b` could lose its `INDIR` prefix. This
+  reproduced a bug in the DRC reference that Uto fixed upstream in
+  commit 71df4e5; output stays byte-identical to DRC.
 
 ## 0.10.0 - 18 September 2026
 

@@ -274,6 +274,11 @@ All notable changes to NextDAAD are recorded here.
   using externs with a frame hook. The select-then-read is now
   DI-bracketed like every other user of that pair. Fixture fn 51, verb
   XMMU.
+- NDRC v0.2.2 - Entries that differ only in indirection no longer share one compiled
+  body. Entry sharing ignored `@` on either parameter, so `MES @x` could
+  run as `MES x` and `LET a @b` could lose its `INDIR` prefix. This
+  reproduced a bug in the DRC reference that Uto fixed upstream in
+  commit 71df4e5; output stays byte-identical to DRC.
 
 ## v0.10.0 - 18/09/2026
 

@@ -19,9 +19,8 @@ the result. There is nothing to assemble by hand.</p>
 The tools below do not - they are third-party, and some may not be
 redistributed. Download each and extract it into the kit's <code>tools\</code>
 folder at the path shown.</p>
-<p>The DAAD compiler, <a href="https://github.com/absent42/DAAD-DSF"><code>NDRC</code></a>, needs no download: it ships built in as
-<code>lib\ndrc.exe</code>. DAAD Ready and PHP are not required to build a game
-with this kit.</p>
+<p>The DAAD compiler, <a href="https://condact.xyz/ndrc"><code>NDRC</code></a>, needs no download: the Windows version ships built in as
+<code>lib\ndrc.exe</code>. However a Linux version of the compiler is available as a seperate download through the previous link.</p>
 <table>
 <thead>
 <tr>
@@ -85,19 +84,16 @@ language. For that:</p>
 <ul>
 <li><strong>The <a href="https://www.ngpaws.com/daadready/doc_en.html">DAAD Ready manual</a></strong>
   covers the DSF source format, the condact set, the system flags and
-  the symbol tables (its Appendix D is the one these pages cite). It is
-  the reference to write your adventure against.</li>
+  the symbol tables. It is the go-to reference to write your adventure against.</li>
 <li><strong>The original DAAD manual</strong> is in the <code>Docs</code> folder of the
-  <a href="https://github.com/daad-adventure-writer/daad">DAAD project</a>. It is
+  <a href="https://github.com/daad-adventure-writer/daad">DAAD project</a> (or a hardcopy is available <a href="https://www.lulu.com/shop/tim-gilberts/aventuras-ad-daad/paperback/product-186692n7.html">here</a>), it is
   the fuller treatment of the language, worth reading once you know your
-  way around DAAD Ready.</li>
+  way around the DAAD Ready manual.</li>
 </ul>
-<p>You do not need DAAD Ready itself
-installed to build - the kit compiles your DSF with its own bundled
-<code>NDRC</code> (Next DAAD Reborn Compiler), byte-identical to the <a href="https://github.com/Utodev/DRC">DRC</a>
-reference pipeline DAAD Ready uses. If a <code>CONFIG.local.BAT</code> from an older kit still sets <code>DAADDIR</code> or
+<p>The kit compiles your DSF with its own bundled
+<code>NDRC</code> (Next DAAD Reborn Compiler). If a <code>CONFIG.local.BAT</code> from an older kit still sets <code>DAADDIR</code> or
 <code>DRCDIR</code>, it is safe to delete those lines - neither setting is read
-any more.</p>
+any more since it migrated from DRC to NDRC.</p>
 <h2 id="setting-up-an-editor">Setting up an editor</h2>
 <p>Any text editor can write a <code>.DSF</code> file, but a few tools make the job
 easier:</p>
@@ -105,7 +101,7 @@ easier:</p>
 <li><strong><a href="https://code.visualstudio.com/">VS Code</a></strong> is a good general-purpose
   editor for DAAD source - free, cross-platform, and with an extension
   marketplace covering the two tools below.</li>
-<li><strong><a href="https://github.com/absent42/DAAD-DSF">DAAD-DSF</a></strong> is a VS Code
+<li><strong><a href="https://condact.xyz/daad-vs">DAAD-DSF</a></strong> is a VS Code
   extension for the DSF source format: syntax highlighting for the
   condact set, messages and object definitions, plus checking that flags
   potential compiler and structural problems before you run a
@@ -118,6 +114,8 @@ easier:</p>
 </ul>
 <p>None of this is required - the build only reads the files described
 below, however they were written.</p>
+<p>For a step-by-step tutorial on setting up a dev environment, please 
+see the <a href="https://condact.xyz/nextdaad/tutorials/dev-environment">condact.xyz</a> website.</p>
 <h2 id="where-your-files-go">Where your files go</h2>
 <p>Everything the build reads lives in the kit folder:</p>
 <ul>
@@ -252,7 +250,7 @@ folder) to the root of the card. It holds:</p>
 video, so a first build works before you have written anything. It shows
 the Next-specific condacts in use - <code>PICTURE</code>/<code>DISPLAY</code> for location
 art, <code>SFX</code> for music and effects, <code>BEEP</code> for tones, <code>GFX</code> for cutscenes.
-Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
+Try the verbs <code>MUSIC</code>, <code>MUTE</code>, <code>TUNE</code>, <code>BLEEP</code>, <code>ZAP</code>, <code>SAMPLE</code>, <code>MOVIE</code> and <code>REEL</code>.</p>
 <h2 id="when-the-build-fails">When the build fails</h2>
 <table>
 <thead>
