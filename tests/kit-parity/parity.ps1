@@ -4,7 +4,8 @@ param(
     [string]$ToolsDir = '',
     [string]$FfmpegDir = '',
     [switch]$Capture,
-    [switch]$NoCompare
+    [switch]$NoCompare,
+    [switch]$PrepareOnly
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot)
@@ -57,6 +58,7 @@ $local += "SET GFXDIR=$([IO.Path]::GetFullPath((Join-Path $kit 'tools/gfx2next')
 $local += "SET VIDTOOLSDIR=$([IO.Path]::GetFullPath((Join-Path $kit 'tools/vidtools')))"
 [IO.File]::WriteAllLines((Join-Path $kit 'CONFIG.local.BAT'), $local, [Text.Encoding]::ASCII)
 Remove-Item -LiteralPath (Join-Path $kit 'CONFIG.fixture.BAT')
+if ($PrepareOnly) { Write-Host "parity: prepared $kit"; exit 0 }
 
 # A driver .cmd sidesteps cmd /c quote stripping on a quoted path with
 # spaces (the form tests\xbnbuild-selftest.ps1 uses). < nul defeats pause.
