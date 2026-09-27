@@ -1,7 +1,8 @@
 # rule|path|substring accepted on that line
 
-# CSpect has no non-Windows build; the argument is a mono literal, not a
-# path resolution the kit needs to abstract.
+# CSpect is one .NET build (native on Windows, run under mono on Linux
+# and macOS - see its README); CSpect.exe is the real file name on
+# every platform, so it must not take $ExeSuffix.
 exe-literals|lib/kittools.ps1|CSpect.exe
 
 # Platform conditional: ("ffmpeg.exe" if os.name == "nt" else "ffmpeg").
@@ -16,16 +17,6 @@ exe-literals|lib/vidtune/encoderun.py|videnc.exe
 exe-literals|lib/vidtune/mainwindow.py|videnc.exe
 # until Task 12
 exe-literals|lib/vidtune/mainwindow.py|ffmpeg.exe
-
-# Display strings: RELEASE\ in a Write-Host line is user-facing text,
-# not a path the script resolves - left as-is on both hosts.
-backslash-literals|lib/build.ps1|Write-Host
-backslash-literals|lib/run.ps1|Write-Host
-backslash-literals|lib/clean.ps1|Write-Host
-backslash-literals|lib/vidtune.ps1|Write-Host
-
-# CSpect's own -mmc= argument syntax, not a .NET path.
-backslash-literals|lib/run.ps1|-mmc=
 
 # Regex pattern strings (\s, \r, \n escapes), not path literals - the
 # rule's regex-operation exclusion only covers -match/-replace/-split
