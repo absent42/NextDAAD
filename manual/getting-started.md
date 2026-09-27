@@ -15,7 +15,7 @@ redistributed. Download each and extract it into the kit's `tools\`
 folder at the path shown.
 
 The DAAD compiler, [`NDRC`](https://condact.xyz/ndrc), needs no download: the Windows version ships built in as
-`lib\ndrc.exe`. However a Linux version of the compiler is available as a seperate download through the previous link.
+`lib\ndrc.exe`. However a Linux version of the compiler is available as a separate download through the previous link.
 
 | Tool | Provides | Extract into | Needed |
 |---|---|---|---|
