@@ -39,14 +39,15 @@ if ($Rules -contains 'launchers') {
     foreach ($name in 'BUILD.BAT', 'RUN.BAT', 'CLEAN.BAT', 'EXTERNS.BAT', 'VIDTUNE.BAT', 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh') {
         $p = Join-Path $kit $name
         if (-not (Test-Path -LiteralPath $p)) { continue }
-        $lines = @([IO.File]::ReadAllLines($p) | Where-Object { $_.Trim() -and $_ -notmatch '^\s*(REM|#|@REM)' })
+        $lines = @([IO.File]::ReadAllLines($p) | Where-Object { $_.Trim() -and $_ -notmatch '^\s*(REM\b|@REM\b|::|#)' })
         if ($lines.Count -gt 20) { $failures.Add("launchers: $name has $($lines.Count) code lines (max 20)") }
         $calls = @($lines | Where-Object { $_ -match 'lib[\\/]\w+\.ps1' }).Count
         if ($calls -ne 1) { $failures.Add("launchers: $name invokes lib/<verb>.ps1 $calls times (want 1)") }
     }
 }
 if ($Rules -contains 'python-candidates') {
-    # The three resolvers must agree on the interpreter probe order.
+    # kitplatform.ps1 (shared by video.ps1 and vidtune.ps1) and encoderun.py
+    # must list the same interpreter probe order.
     $ps = [IO.File]::ReadAllText((Join-Path $kit 'lib/kitplatform.ps1'))
     $py = [IO.File]::ReadAllText((Join-Path $kit 'lib/vidtune/encoderun.py'))
     foreach ($tok in "'py', '-3'", "'python3'", "'python'") {
