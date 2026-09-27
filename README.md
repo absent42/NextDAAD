@@ -99,7 +99,7 @@ one combined `GAME.XBN`, no assembler needed. See
 for the catalogue.
 
 The DAAD compiler, [NDRC](https://condact.xyz/ndrc) (Next DAAD Reborn Compiler), ships built in, 
-along with [Gfx2Next](https://www.rustypixels.uk/gfx2next/) for for graphics conversion. The kit still needs a
+along with [Gfx2Next](https://www.rustypixels.uk/gfx2next/) for graphics conversion. The kit still needs a
 few third-party tools it does not redistribute:
 
 - [Arkos Tracker 3](https://www.julien-nevo.com/arkostracker/index.php/download/) - music and sound effects
