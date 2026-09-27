@@ -5,7 +5,8 @@ param(
     [string]$FfmpegDir = '',
     [switch]$Capture,
     [switch]$NoCompare,
-    [switch]$PrepareOnly
+    [switch]$PrepareOnly,
+    [string]$Shell = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot)
@@ -83,11 +84,32 @@ function Invoke-Launcher([string]$name, [string[]]$launchArgs) {
         return $LASTEXITCODE
     } finally { $ErrorActionPreference = $prevEap; Pop-Location }
 }
+# -Shell runs the lib script directly under a chosen PowerShell host,
+# bypassing the launcher .BAT/.sh, to test that host without the shim.
+function Invoke-LibScript([string]$name, [string[]]$scriptArgs) {
+    Push-Location $kit
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $lib = Join-Path (Join-Path $kit 'lib') "$name.ps1"
+        & $Shell -NoProfile -File $lib @scriptArgs 2>&1 | ForEach-Object { "$_" } | Out-Host
+        return $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prevEap; Pop-Location }
+}
 # Externs first: BUILD stages the kit-root GAME.XBN into RELEASE.
-$code = Invoke-Launcher 'EXTERNS' @('ticker', 'hints')
-if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
-$code = Invoke-Launcher 'BUILD' @()
-if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
+if ($Shell) {
+    # -BaseDir must be named: externs.ps1 takes it positionally before the
+    # remaining-argument module list, so a bare word list would shift into it.
+    $code = Invoke-LibScript 'externs' @('-BaseDir', $kit, 'ticker', 'hints')
+    if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
+    $code = Invoke-LibScript 'build' @()
+    if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
+} else {
+    $code = Invoke-Launcher 'EXTERNS' @('ticker', 'hints')
+    if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
+    $code = Invoke-Launcher 'BUILD' @()
+    if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
+}
 
 $rel = Join-Path $kit 'RELEASE'
 $sha = [System.Security.Cryptography.SHA256]::Create()

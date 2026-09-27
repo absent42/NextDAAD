@@ -31,7 +31,7 @@ def resolve_encoder(kit_root, toolsdir, vidtoolsdir=""):
             exe = kit_root / exe
         if exe.is_file() and exe.stat().st_size > _MB:
             return [str(exe)]
-    for cand in (["py", "-3"], ["python"]):
+    for cand in (["py", "-3"], ["python"], ["python3"]):
         try:
             r = subprocess.run(cand + ["-c", "import PIL, numpy"],
                                capture_output=True, timeout=30)
