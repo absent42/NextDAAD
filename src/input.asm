@@ -39,7 +39,6 @@ inpRepFrm:  db 0                ; autorepeat: last seen frame low byte
 inpPtr:     dw 0                ; parser: read cursor into inpPending
 prnSeen:    db 0                ; parser: pronoun already seen this order
 o2Pass:     db 0                ; parser: obj2_resolve pass (1 or 0)
-inpRepFirst: db 0
 capsLock:    db 0               ; caps-lock toggle state (letters only,
                                  ; classic semantics); CAPS+2 flips this
                                  ; in overlay1.asm's kb_char - see that

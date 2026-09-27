@@ -1450,15 +1450,17 @@ tm_width_core:
 ; only). Press edges -> kbQ as code | CAPS<<6 | SYM<<7 (row*5+bit, kbRows
 ; order); kb_char pops. The FPGA latches all 8 rows per scan: reads not torn.
 KB_QMASK        equ 15
-KB_SETTLE       equ 2               ; frames the newest entry keeps taking
-                                    ; live shift bits (a human chord, CSpect)
-kbPrev:         ds 8                ; last frame's masked half-rows
+KB_SETTLE       equ 1               ; frames the newest entry keeps taking
+                                    ; live shift bits after its edge
+kbPrev:         ds 8, $1F           ; last frame's masked half-rows
 kbQ:            ds 16
 kbQw:           db 0                ; ISR writes
 kbQr:           db 0                ; foreground writes
 kbQpend:        db $FF              ; slot still settling, $FF none
 kbQpendN:       db 0
-kbAnyPrev:      db 0                ; any key down last frame
+kbAnyPrev:      db 1                ; any key down last frame; seeded "all
+                                    ; down": a key held at power-on is not a
+                                    ; press edge
 
 ; Row read + edge detect. Flags from `and c` reach the call: ld and inc hl
 ; leave them alone. mask clears the shift key's own bit on its row.
@@ -1478,6 +1480,9 @@ kbAnyPrev:      db 0                ; any key down last frame
     ENDM
 
 kb_tick:
+    ei                              ; ULA source masked while in service; the
+                                    ; CTC feeders nest through this body (AF/HL
+                                    ; only, no shared state) - the .audio argument
     push bc
     push de
     xor a
@@ -1535,6 +1540,7 @@ kb_tick:
 .done:
     pop de
     pop bc
+    di                              ; both ISR paths expect interrupts off
     ret
 
 ; A = new press bits of one row (nonzero), D = the row's bit-0 code, E =
@@ -1580,6 +1586,30 @@ kb_flush:
     ld a, (kbQw)
     ld (kbQr), a
     ret
+
+; Wait for the next frame tick, then flush: a press the foreground saw live
+; may not have been sampled by kb_tick yet. Bounded (65536 polls, over two
+; frames) so a caller with interrupts off cannot hang. Corrupts AF.
+kb_flush_frame:
+    push hl
+    push de
+    push bc
+    ld hl, frameCounter
+    ld c, (hl)                  ; frame byte at entry
+    ld de, 0
+.w:
+    ld a, (hl)
+    cp c
+    jr nz, .go                  ; the tick has run
+    dec de
+    ld a, d
+    or e
+    jr nz, .w
+.go:
+    pop bc
+    pop de
+    pop hl
+    jp kb_flush
 
 ; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
 ; static ret table here every call and runs the chain with SP on it, so an

@@ -2547,8 +2547,9 @@ vid_run:
  IFDEF DEBUG
     call vid_tl_report           ; fully-torn-down print (hot/cold/hot)
  ENDIF
-    call kb_flush                ; the key that ended the clip stays out
-                                 ; of the prompt
+    call kb_flush_frame          ; the key that ended the clip stays out
+                                 ; of the prompt: one tick so it is queued,
+                                 ; then dropped
     ld a, (vidSvMmu6)
     nextreg NR_MMU6, a
     ld a, (vidSvMmu7)

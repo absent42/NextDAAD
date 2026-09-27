@@ -139,8 +139,7 @@ kb_char:
     jr z, .live                 ; queue empty
     ld hl, kbQpend
     cp (hl)
-    jp z, .nochar               ; newest entry still taking shift bits
-                                ; (jp: .nochar is +128 from here, past jr)
+    jr z, .nochar               ; newest entry still taking shift bits
     ld hl, kbQ
     add hl, a                   ; Z80N ADD HL,A
     inc a
@@ -159,7 +158,6 @@ kb_char:
     ld a, 35                    ; delivered = the settle emit: full delay next
     ld (inpRepCnt), a
     xor a
-    ld (inpRepFirst), a
     ld (capsLockArmed), a
     ld a, (frameCounter)
     ld (inpRepFrm), a
@@ -199,16 +197,7 @@ kb_char:
     ld (inpRepCnt), a
     jr nz, .nochar
     ; counter expired: emit, then load the next interval
-    ld a, (inpRepFirst)
-    or a
-    jr z, .rep
-    xor a
-    ld (inpRepFirst), a
-    ld a, 35                    ; settle emit -> full repeat delay next
-    jr .reload
-.rep:
-    ld a, 5                     ; repeating
-.reload:
+    ld a, 5                     ; repeating: the pop armed the 35-frame delay
     ld (inpRepCnt), a
     jr .emit
 .nochar:
@@ -291,7 +280,7 @@ kb_char:
 ; DEBUG-only, no footprint in Release. Called once per engine step;
 ; draws the 8 raw keyboard half-row bytes as binary (true unmasked
 ; state), the kb_raw-decoded matrix/shift, and the kb_char-decoded
-; character (via the real production settle/repeat/decode path), plus
+; character (via the real production queue/repeat/decode path), plus
 ; capsLock. Rendered via the resident dbg_* console (DAAD's own PRINT
 ; is decimal-only). Exit: flags+130 set to 1 when TRUE VIDEO (CAPS+3,
 ; matrix 17) is held; the DSF DONEs on nonzero.

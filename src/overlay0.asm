@@ -1724,9 +1724,14 @@ kwcChar: db 0
 
 ; --- interaction / movement / stub condacts ---
 h_inkey:                        ; 111: condition; key -> flag 60
-; Flushes the typeahead queue first: an INKEY loop is a reader.
-    call kb_flush
+; Flushes the typeahead queue after one frame on a hit: INKEY consumes the key.
     call key_scan
+    or a
+    jr z, .store
+    push af                     ; the tick must sample the press before the
+    call kb_flush_frame         ; flush, or it is queued after it and typed
+    pop af
+.store:
     ; Flag 61 (fKey2, the IBM extended code) is cleared whenever flag
     ; 60 is written, following jDAAD's _INKEY2 (writes both flags on
     ; both the hit and miss path). key_scan returns 0 for "no key", so
