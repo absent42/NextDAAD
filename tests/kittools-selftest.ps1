@@ -54,6 +54,19 @@ try {
     $t3 = Resolve-KitTools @{ TOOLSDIR = 'tools' } $kit
     Assert-Eq (Test-Path -LiteralPath (Join-Path $kit $t3.S2A)) $true 'relative S2A is kit-root relative'
 } finally { Pop-Location }
+# tools.bat:70's for /d has no early exit, so it keeps the LAST matching
+# subfolder in name order. Two versioned folders pin that against a first-match bug.
+$sjkit = "$root/tests/out/kittools/sjasm-multi"
+if (Test-Path $sjkit) { Remove-Item $sjkit -Recurse -Force }
+foreach ($d in 'tools/sjasmplus/sjasmplus-1.23.1', 'tools/sjasmplus/sjasmplus-1.24.0') {
+    New-Item -ItemType Directory -Force "$sjkit/$d" | Out-Null
+    [IO.File]::WriteAllBytes("$sjkit/$d/sjasmplus$x", [byte[]]@(0))
+}
+Push-Location $sjkit
+try {
+    $t4 = Resolve-KitTools @{} $sjkit
+    Assert-Eq $t4.SJASMPLUSBIN (Join-Path (Join-Path 'tools' 'sjasmplus') 'sjasmplus-1.24.0') 'nested sjasmplus folder picks the LAST name, not the first'
+} finally { Pop-Location }
 $real = "$root/authoring-kit/lib/ndrc$x"
 if (Test-Path $real) {
     $banner = Get-NdrcBanner $real

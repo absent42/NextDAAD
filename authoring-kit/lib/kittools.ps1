@@ -62,9 +62,18 @@ function Resolve-KitTools([hashtable]$Config, [string]$KitRoot) {
     $t.NEXFILE = cfg 'NEXFILE'
     $t.SJASMPLUSBIN = $t.SJASMPLUSDIR
     if (-not (Test-Path -LiteralPath (abs (Join-Path $t.SJASMPLUSBIN "sjasmplus$x")))) {
+        # tools.bat:70's for /d has no early exit - it keeps the LAST match in
+        # name order. Sort ordinally (not culture order) so ext4's hash-order
+        # listing still picks the same folder NTFS would.
         $nested = @(Get-ChildItem -LiteralPath (abs $t.SJASMPLUSDIR) -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "sjasmplus$x") })
-        if ($nested.Count -gt 0) { $t.SJASMPLUSBIN = Join-Path $t.SJASMPLUSDIR $nested[0].Name }
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "sjasmplus$x") } |
+            ForEach-Object { $_.Name })
+        if ($nested.Count -gt 0) {
+            $names = New-Object 'System.Collections.Generic.List[string]'
+            foreach ($n in $nested) { $names.Add($n) }
+            $names.Sort([StringComparer]::OrdinalIgnoreCase)
+            $t.SJASMPLUSBIN = Join-Path $t.SJASMPLUSDIR $names[$names.Count - 1]
+        }
     }
     $t.SJASMPLUS = Join-Path $t.SJASMPLUSBIN "sjasmplus$x"
     $env:TOOLSDIR = $t.TOOLSDIR
