@@ -630,3 +630,4 @@ if (-not $NoAssets) {
 }
 [IO.File]::WriteAllBytes((Join-Path $Out 'INTRO.DAT'), $dat[0..($datLen - 1)])
 Write-Host "  script $([IO.Path]::GetFileName($Script)) -> INTRO.DAT ($datLen bytes, $($show.slides.Count) slide(s), $itemsTotal item(s))"
+exit 0
