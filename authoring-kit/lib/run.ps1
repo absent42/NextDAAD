@@ -24,5 +24,9 @@ if (-not $game) {
 }
 $launch = 'RELEASE\nextdaad.nex'
 if ($game -and (Test-Path -LiteralPath (Join-Path $kitRoot "RELEASE\$game.NEX") -PathType Leaf)) { $launch = "RELEASE\$game.NEX" }
-Start-Process -FilePath $t.CSPECT -ArgumentList @('-w3', '-zxnext', '-esc', '-mmc=RELEASE\', $launch) -Wait
+# The call operator passes each array element as one argument (quoted
+# correctly on both hosts) and waits for CSpect to exit, per R16.
+# Start-Process -ArgumentList joins the array into one string and does not
+# re-quote elements containing spaces under 5.1 or pwsh.
+& $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null
 exit 0
