@@ -1,0 +1,3 @@
+# One line per pinned tool. Read by lib\kittools.ps1.
+NDRCVER=0.2.2
+GFX2NEXT_VER=1.1.24
