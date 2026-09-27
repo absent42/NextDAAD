@@ -25,12 +25,18 @@ HOLD_L = "FFFFFFFFFFFFFDFF00"      # row 6 bit 1 = L
 HOLD_O = "FFFFFFFFFFFDFFFF00"      # row 5 bit 1 = O
 HOLD_OK = "FFFFFFFFFFFDFBFF00"     # O held, K (row 6 bit 2) added
 FAILS = []
+INCONCLUSIVE = []
 
 
 def check(name, ok, detail=""):
     print(("PASS " if ok else "FAIL ") + name + ("" if ok else " - " + detail))
     if not ok:
         FAILS.append(name)
+
+
+def inconclusive(name, detail):
+    print("INCONCLUSIVE " + name + " - " + detail)
+    INCONCLUSIVE.append(name)
 
 
 def launch():
@@ -155,11 +161,16 @@ def main():
         z.send_keys("long")
         z.enter(wait=0.3)
         z.send_keys("look")
+        still_paused = not bottom(screen(z)).startswith(">")
         z.enter(wait=6.0)
         rows = screen(z)
-        check("early: LOOK typed inside the pause is received",
-              last_echo(rows) == ">look" and echo_reply(rows) == LAB,
-              "echo %r, reply %r" % (last_echo(rows), echo_reply(rows)))
+        if not still_paused:
+            inconclusive("early", "the prompt was back before ENTER (host too slow "
+                         "to type inside the pause) - echo %r" % last_echo(rows))
+        else:
+            check("early: LOOK typed inside the pause is received",
+                  last_echo(rows) == ">look" and echo_reply(rows) == LAB,
+                  "echo %r, reply %r" % (last_echo(rows), echo_reply(rows)))
 
         # 2. typed late: after the prompt is back (the unchanged case)
         z.send_keys("long")
@@ -228,9 +239,14 @@ def main():
         z.enter(wait=0.3)
         tap(z, HOLD_L, 0.1, 0.3)
         tap(z, HOLD_L, 0.1, 0.3)
+        still_paused = not bottom(screen(z)).startswith(">")
         z.enter(wait=6.0)
         rows = screen(z)
-        check("double tap in the pause: ll", last_echo(rows) == ">ll", "echo %r" % last_echo(rows))
+        if not still_paused:
+            inconclusive("double tap", "the prompt was back before ENTER (host too "
+                         "slow for two taps inside the pause) - echo %r" % last_echo(rows))
+        else:
+            check("double tap in the pause: ll", last_echo(rows) == ">ll", "echo %r" % last_echo(rows))
 
         # 4d. overflow: 18 taps in one pause keep the first 15. Valid only
         #     if the prompt was still away after the last tap; ENTER goes
@@ -250,8 +266,8 @@ def main():
         z.enter(wait=1.5)
         rows = screen(z)
         if not still_paused:
-            print("INCONCLUSIVE overflow: the prompt was back before the last tap "
-                  "(host too slow for 18 taps inside the pause) - echo %r" % last_echo(rows))
+            inconclusive("overflow", "the prompt was back before the last tap "
+                         "(host too slow for 18 taps inside the pause) - echo %r" % last_echo(rows))
         else:
             check("overflow: 15 of 18 taps kept", last_echo(rows) == ">" + "l" * 15,
                   "echo %r" % last_echo(rows))
@@ -291,6 +307,23 @@ def main():
         z.enter(wait=1.5)
         rows = screen(z)
         check("getk: consumed key is not typed", last_echo(rows) == ">ook", "echo %r" % last_echo(rows))
+
+        # 8. INKEY consumes its key: the INKY loop polls INKEY until L
+        z.send_keys("inky")
+        z.enter(wait=1.0)
+        rows = screen(z)
+        check("inky: prompt for a key shown", any("press a key for inkey" in r for r in rows))
+        z.send_keys("l")
+        time.sleep(1.0)
+        rows = screen(z)
+        k = _echo_index(rows)
+        below = [r.strip() for r in rows[k + 1:]]
+        check("inky: key code 108 printed below the inky echo, no 13", "108" in below and "13" not in below,
+              "rows below echo %r" % below[:6])
+        z.send_keys("ook")
+        z.enter(wait=1.5)
+        rows = screen(z)
+        check("inky: consumed key is not typed", last_echo(rows) == ">ook", "echo %r" % last_echo(rows))
     finally:
         if z is not None:
             try:
@@ -298,10 +331,19 @@ def main():
             except Exception:
                 pass
         if proc is not None:
-            proc.kill()
-            proc.wait()
+            proc.terminate()
+            try:
+                proc.wait(10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            if sys.platform == "win32":             # last resort: no detached child survives
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
     if FAILS:
         sys.exit("typeahead_run: %d check(s) failed: %s" % (len(FAILS), ", ".join(FAILS)))
+    if INCONCLUSIVE:
+        print("typeahead_run: %d check(s) inconclusive: %s" % (len(INCONCLUSIVE), ", ".join(INCONCLUSIVE)))
+        sys.exit(2)
     print("typeahead_run: all checks passed")
 
 

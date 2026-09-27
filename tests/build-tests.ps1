@@ -1552,7 +1552,7 @@ finally {
     Pop-Location
 }
 
-# tests\kblog.dsf: the DEBUG keystroke log lab. Compiled on every run;
+# tests\kblog.dsf: the typeahead lab. Compiled on every run;
 # its bytes are asserted below whether or not -KbLog is given.
 $kblogWork = Join-Path $root 'tests\out\kblog-work'
 Remove-Item $kblogWork -Recurse -Force -ErrorAction SilentlyContinue
@@ -2197,12 +2197,13 @@ $kblogBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\kblog.ddb")
 foreach ($c in @(@{ n = 'LET 42 34';                   b = [byte[]]@(51, 42, 34) },
                  @{ n = 'PAUSE 125 / DONE (LONG, compiled)'; b = [byte[]]@(35, 125, 22) },
                  @{ n = 'MESSAGE 3 / ANYKEY / MESSAGE 4'; b = [byte[]]@(38, 3, 24, 38, 4) },
-                 @{ n = 'PAUSE 0 / PRINT 60';          b = [byte[]]@(35, 0, 53, 60) })) {
+                 @{ n = 'PAUSE 0 / PRINT 60';          b = [byte[]]@(35, 0, 53, 60) },
+                 @{ n = 'INKEY / PRINT 60';            b = [byte[]]@(111, 53, 60) })) {
     if ((Find-ByteRuns $kblogBytes $c.b).Count -lt 1) {
         throw "kblog: '$($c.n)' not present in tests\out\kblog.ddb - DRC did not emit the authored condact run"
     }
 }
-"kblog.ddb: LET 42, LONG's PAUSE, ANYKEY and GETKEY stimuli present as authored"
+"kblog.ddb: LET 42, LONG's PAUSE, ANYKEY, GETKEY and INKEY stimuli present as authored"
 
 # --- spraud: four sets under music and samples ---
 # SFX is opcode 18 ($12), two parameters. The music loop (6 7), the COMPLETE
