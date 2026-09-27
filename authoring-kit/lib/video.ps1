@@ -273,7 +273,7 @@ foreach ($src in $sources) {
     } elseif (-not (Test-Path $sidecar)) {
         $stale = $true
     } else {
-        $prevHash = (Get-Content -Raw -ErrorAction SilentlyContinue $sidecar)
+        $prevHash = (Get-Content -Raw -Encoding ASCII -ErrorAction SilentlyContinue -LiteralPath $sidecar)
         if (-not $prevHash -or $prevHash.Trim() -ne $hash) { $stale = $true }
     }
     if ($stale) {
@@ -348,6 +348,6 @@ foreach ($item in $plan) {
         if (Test-Path $item.Sidecar) { Remove-Item $item.Sidecar -Force }
         exit 1
     }
-    Set-Content -Path $item.Sidecar -Value $item.Hash -NoNewline
+    [IO.File]::WriteAllText($item.Sidecar, $item.Hash, [Text.Encoding]::ASCII)
 }
 exit 0

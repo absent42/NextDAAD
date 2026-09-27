@@ -23,3 +23,13 @@ exe-literals|lib/vidtune/mainwindow.py|ffmpeg.exe
 # lines, not a plain string assignment used elsewhere.
 backslash-literals|lib/fontfmt.ps1|YaffDetect
 backslash-literals|lib/kitconfig.ps1|KitConfigLineRegex
+
+# numeric sort: keys are colours.Count/f/c (anipack.ps1:129, all ints from
+# array .Count and integer loop counters $f/$c) - no culture sensitivity.
+sort-ordinal|lib/anipack.ps1|Sort-Object { -$_.colours.Count }, { $_.f }, { $_.c }
+# numeric sort: $union's keys are $col9[] values, an int[] (anipack.ps1:88).
+sort-ordinal|lib/anipack.ps1|$union.Keys | Sort-Object
+# numeric sort: $cs.colours is @($set.Keys) of the same int col9 values.
+sort-ordinal|lib/anipack.ps1|$cs.colours | Sort-Object
+# numeric sort: Height/Width/Index are all [int] (fontfmt.ps1:236-240).
+sort-ordinal|lib/fontfmt.ps1|Sort-Object @{E={$_.Height};D=$true}, @{E={$_.Width};D=$true}, @{E={$_.Index}}
