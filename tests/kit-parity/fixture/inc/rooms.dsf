@@ -1,0 +1,2 @@
+; Included by PARITY.DSF. Exists so the include path is exercised.
+#define fParityInclude      60
