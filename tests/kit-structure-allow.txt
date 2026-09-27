@@ -8,15 +8,9 @@ exe-literals|lib/kittools.ps1|CSpect.exe
 # Platform conditional: ("ffmpeg.exe" if os.name == "nt" else "ffmpeg").
 exe-literals|lib/videnc.py|os.name
 
-# lib/vidtune/ is owned by Task 12; these literals are its current
-# state, not fixed here. Remove once Task 12 adds an os/sys.platform
-# conditional like videnc.py's, above.
-# until Task 12
-exe-literals|lib/vidtune/encoderun.py|videnc.exe
-# until Task 12
-exe-literals|lib/vidtune/mainwindow.py|videnc.exe
-# until Task 12
-exe-literals|lib/vidtune/mainwindow.py|ffmpeg.exe
+# Platform conditionals, same style as videnc.py's os.name above.
+exe-literals|lib/vidtune/encoderun.py|sys.platform
+exe-literals|lib/vidtune/mainwindow.py|sys.platform
 
 # Regex pattern strings (\s, \r, \n escapes), not path literals - the
 # rule's regex-operation exclusion only covers -match/-replace/-split

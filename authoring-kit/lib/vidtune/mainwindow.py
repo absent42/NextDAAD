@@ -8,6 +8,7 @@ previewpane.py and is re-exported here so
 `from vidtune.mainwindow import PreviewPane` keeps working.
 """
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -50,7 +51,7 @@ from PySide6.QtWidgets import (
 from . import ICON_PATH, __version__, presets, settingsmodel, theme
 from .presetrow import LadderPanel, RouteMenuButton
 from .configwrite import ConfigConflict, write_sidecar, write_vidopts_line
-from .encoderun import EncodeJob, resolve_encoder, summarize_report
+from .encoderun import EncodeJob, resolve_encoder, summarize_report, videnc_names
 from .kitmodel import clip_state, list_clips, parse_config, read_generation_stamp
 from .preview import extract_source
 from .previewpane import PreviewPane, SOURCE_PREVIEW_HINT
@@ -914,8 +915,8 @@ class MainWindow(QMainWindow):
                 "lib/video.ps1 stamp not found - staleness tracking unreliable"))
         if self.encoder_argv is None:
             self.statusBar().addPermanentWidget(QLabel(
-                "no encoder found - videnc.exe missing and no Python 3 with "
-                "Pillow + numpy; encode actions are disabled"))
+                f"no encoder found - {videnc_names()[0]} missing and no "
+                "Python 3 with Pillow + numpy; encode actions are disabled"))
             self.preview_button.setEnabled(False)
             self.encode_button.setEnabled(False)
             self.encode_all_button.setEnabled(False)
@@ -997,10 +998,15 @@ class MainWindow(QMainWindow):
         self._splitter.setSizes([clip_width, preview_width, panel_width])
 
     def _resolve_ffmpeg(self):
-        p = Path(self.cfg.toolsdir, "ffmpeg", "bin", "ffmpeg.exe")
-        if not p.is_absolute():
-            p = self.kit_root / p
-        return p
+        # Same shapes lib/kittools.ps1 probes: FFMPEGDIR root or bin/, else TOOLSDIR/ffmpeg/bin.
+        exe = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+        base = Path(self.cfg.ffmpegdir) if self.cfg.ffmpegdir else Path(self.cfg.toolsdir, "ffmpeg")
+        if not base.is_absolute():
+            base = self.kit_root / base
+        for p in (base / exe, base / "bin" / exe):
+            if p.is_file():
+                return p
+        return base / "bin" / exe
 
     def closeEvent(self, event):
         if self._job is not None:
@@ -1306,7 +1312,7 @@ class MainWindow(QMainWindow):
     def _start_job(self, kind, num3, clip, output, argv):
         if self.encoder_argv is None:
             QMessageBox.critical(self, "vidtune",
-                "No encoder available - videnc.exe not found and no "
+                f"No encoder available - {videnc_names()[0]} not found and no "
                 "Python 3 with Pillow + numpy on PATH.")
             return
         job = EncodeJob(self.encoder_argv, str(self.ffmpeg))

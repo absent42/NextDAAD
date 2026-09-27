@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .settingsmodel import build_arg_vector
 
-_SET_RE = re.compile(r"^\s*set\s+([A-Za-z0-9_]+)=(.*)$", re.IGNORECASE)
+_SET_RE = re.compile(r'^\s*set\s+"?([A-Za-z0-9_]+)=(.*?)"?\s*$', re.IGNORECASE)
 
 
 def find_kit_root(start):
@@ -30,19 +30,29 @@ class KitConfig:
     vidtoolsdir: str = ""
     per_clip: dict = field(default_factory=dict)
     vidprofile: str = ""
+    ffmpegdir: str = ""
 
 
-def parse_config(config_path):
-    cfg = KitConfig()
-    seen = set()
-    for line in Path(config_path).read_text(errors="replace").splitlines():
+def _read_sets(path, into):
+    p = Path(path)
+    if not p.is_file():
+        return
+    for line in p.read_text(errors="replace").splitlines():
         m = _SET_RE.match(line)
-        if not m:
-            continue
-        name, value = m.group(1).upper(), m.group(2).strip()
-        if name in seen:
-            continue
-        seen.add(name)
+        if m:
+            into[m.group(1).upper()] = m.group(2).strip()
+
+
+def parse_config(config_path, local_path=None):
+    # Last-wins within and across files, as cmd's SET is. lib/kitconfig.ps1
+    # implements the same grammar; tests/kitconfig-selftest.ps1 pins it.
+    vals = {}
+    _read_sets(config_path, vals)
+    if local_path is None:
+        local_path = Path(config_path).with_name("CONFIG.local.BAT")
+    _read_sets(local_path, vals)
+    cfg = KitConfig()
+    for name, value in vals.items():
         if name == "VIDASPECT":
             cfg.vid_aspect = value
         elif name == "VIDFPS":
@@ -53,6 +63,8 @@ def parse_config(config_path):
             cfg.toolsdir = value or "tools"
         elif name == "VIDTOOLSDIR":
             cfg.vidtoolsdir = value
+        elif name == "FFMPEGDIR":
+            cfg.ffmpegdir = value
         elif name == "VIDPROFILE":
             cfg.vidprofile = value
         elif name.startswith("VIDOPTS_"):

@@ -49,7 +49,8 @@ def write_vidopts_line(config_path, num3, opts, expected_mtime=None):
     path.with_suffix(".BAT.bak").write_bytes(raw)
     path.write_bytes(eol.join(lines))
 
-    got = parse_config(path).per_clip.get(num3, "")
+    # Verification reads CONFIG.BAT alone, not CONFIG.local.BAT.
+    got = parse_config(path, local_path=path.with_name("no.local")).per_clip.get(num3, "")
     if got != opts:
         raise RuntimeError(
             f"CONFIG.BAT verification failed: VIDOPTS_{num3} reads back as "
