@@ -1724,7 +1724,10 @@ kwcChar: db 0
 
 ; --- interaction / movement / stub condacts ---
 h_inkey:                        ; 111: condition; key -> flag 60
-; Flushes the typeahead queue after one frame on a hit: INKEY consumes the key.
+; Flushes the typeahead queue on every poll, and once more one frame after a
+; hit: INKEY consumes its key (the reference's LASTK).
+    call kb_flush                ; a key tapped between two INKEY polls is
+                                  ; queued by the tick and seen by none
     call key_scan
     or a
     jr z, .store
