@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.11.0 - unreleased
+## v0.11.0 - 27/09/2026
 
 - Typeahead. The frame ISR (`kb_tick`, main.asm) reads the keyboard
   matrix once per frame and queues each press edge (matrix code plus

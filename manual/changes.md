@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.11.0 - unreleased
+## 0.11.0 - 27 September 2026
 
 - **Type ahead.** Keys pressed while the game is still printing,
   pausing or drawing are kept and appear at the next prompt, in order,

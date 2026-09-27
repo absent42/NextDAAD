@@ -7,9 +7,9 @@ the Next's extended instruction set.
 In addition to the standard DAAD features it adds Layer 2 location pictures 
 up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
 sampled sound effects across the Turbo Sound Next's three chips and DACs,
-40 and 80-column runtime switchable tilemap based text display with switchable fonts and paper/ink 
-colours from the full ZX Next palette, mouse input, and games that can span 
-several databases with runtime switching.
+40 and 80-column runtime switchable tilemap based text display with switchable fonts 
+and paper/ink colours from the full ZX Next palette, mouse input, and games that can 
+span several databases with runtime switching.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
 for NextDAAD means just editing your DSF source and double-clicking one batch 
@@ -27,7 +27,8 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
   cutscenes need 2MB of RAM and a real machine, and so does a sampled
   effect longer than 24K - everything else, including shorter effects,
   runs under emulation.
-- A DAAD DSF source file and game assets. The authoring kit builds the DAAD database from source and converts your game assets for you.
+- A DAAD DSF source file and game assets. The authoring kit builds the DAAD database 
+  from source and converts your game assets for you.
 - Windows Powershell if you want to use the automated batch builders of the authroing kit.
 
 ## Features
@@ -57,6 +58,8 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
   `POINTER.SPR` and the interpreter picks them up at boot, and a game
   can switch between up to ten of each while it runs
+- **Custom parser cursor** - modify the parser cursor colours, glyph 
+  and blink speed
 - **Mouse input** - Kempston mouse with a hardware sprite pointer
 - **64KB databases** - DAAD game databases up to 64KB in size
 - **Multi-part games** - switch between databases at runtime with flags
@@ -68,8 +71,9 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 - **DAAD engine** - all 128 condacts, the eight-window system, the
   vocabulary parser with multi-command sentences, the object model,
   `SAVE`/`LOAD` and `RAMSAVE` to the card, and the DDB text reader
-- **EXTERN support** - load and run external machine code binaries up 
-  to 16KB in size, either once or on an interrupt, passing flags, object table, message text etc
+- **EXTERN support and API** - load and run external machine code binaries up 
+  to 16KB in size, either once or on an interrupt, passing flags, object 
+  table, message text etc
 - **The Next's memory** - RAM detection and an 8K bank allocator across
   the extended memory map
 
@@ -86,9 +90,9 @@ A **manual** covering the specifics of creating a game for NextDAAD is included 
 you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
 The kit ships a **collection of ready-made externs** in
-`authoring-kit\externs\` - a news ticker, Layer 2 palette fades, an
+`authoring-kit\externs\` - a text ticker, Layer 2 palette fades, an
 SD-card hint book, an in-game clock, countdown timers, a real-time
-clock reader and a toolkit of printing, arithmetic and object
+clock reader, player name input/recall, transcripts for producing walkthoughs, and a toolkit of printing, arithmetic and object
 queries - each as source plus a prebuilt binary, shipped prebuilt as
 one combined `GAME.XBN`, no assembler needed. See
 [`authoring-kit\externs\README.md`](authoring-kit/externs/README.md)
@@ -154,6 +158,7 @@ the Markdown, never the generated HTML.
 - em00k for [playwav32](https://github.com/em00k/playwav32) which informed the sample sound playback method
 - Rusty Pixels for [Gfx2Next](https://www.rustypixels.uk/gfx2next/)
 - Mike Dailly for [CSpect](https://mdf200.itch.io/cspect)
+- Cesar Hernandez Baño for [ZEsarUX](https://github.com/chernandezba/zesarux)
 - z00m for [sjasmplus](https://github.com/z00m128/sjasmplus)
 - Stefan Vogt for [The Curse of Rabenstein](https://github.com/ByteProject/Rabenstein) which was used during development testing
 - tadaskay for the [mouse pointer sprite](https://tadaskay.itch.io/pixelated-cursors-16x16)
