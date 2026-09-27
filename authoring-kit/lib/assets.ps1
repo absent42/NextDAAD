@@ -19,6 +19,7 @@ param(
     [string]$S2E = ''
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'kitplatform.ps1')
 
 $root = (Get-Location).Path
 $rel = Join-Path $root 'RELEASE'
@@ -126,7 +127,7 @@ function Get-PngWidth([string]$Path) {
 function Remove-Orphans([string[]]$Patterns) {
     if (-not (Test-Path -LiteralPath $rel -PathType Container)) { return }
     $n = 0
-    foreach ($f in Get-ChildItem -LiteralPath $rel -File) {
+    foreach ($f in Get-KitFiles $rel '*') {
         $owned = $false
         foreach ($p in $Patterns) { if ($f.Name -like $p) { $owned = $true } }
         if ($owned -and -not $produced.ContainsKey($f.Name.ToUpperInvariant())) {
@@ -183,7 +184,7 @@ function Invoke-Pictures {
 
         # Numbered art: the first digit run in the name is the picture number.
         $count = 0
-        foreach ($f in Get-ChildItem -LiteralPath $images -Filter *.png -File) {
+        foreach ($f in Get-KitFiles $images 'png') {
             if ($f.Name -eq 'DAAD.png' -or $pointers -contains $f.Name) { continue }
             $m = [regex]::Match($f.BaseName, '\d+')
             if (-not $m.Success) { Fail "$($f.Name) - no picture number (expected a 320 or 256 wide PNG named with a picture number)" }
@@ -244,7 +245,7 @@ function Invoke-Pictures {
         if (Test-Path -LiteralPath $sprites -PathType Container) {
             $aniSig = Get-Sig @($script:gfxExe, $anipack, $PSCommandPath)
             $packed = 0
-            $sheets = @(Get-ChildItem -LiteralPath $sprites -Filter *.png -File) + @(Get-ChildItem -LiteralPath $sprites -Filter *.spr -File)
+            $sheets = @(Get-KitFiles $sprites 'png') + @(Get-KitFiles $sprites 'spr')
             foreach ($f in $sheets) {
                 $m = [regex]::Match($f.BaseName, '\d+')
                 if (-not $m.Success -or [int]$m.Value -gt 254) { Fail "$($f.Name) - sprite files are named by set number, 000-254" }
@@ -303,7 +304,7 @@ function Invoke-Pictures {
     if ($hasImages) {
         $done = @{}
         foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI') {
-            foreach ($f in Get-ChildItem -LiteralPath $images -Filter "*.$ext" -File) {
+            foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) {
                 $rmNum = $f.Name.Split('.')[0]
                 if ($rmNum -notmatch '^[0-9]{1,3}$') {
                     Fail "IMAGES\$($f.Name) - not a picture number (a ready-made picture is NNN.NX2 or NNN.NXI, or a compressed NNN.NX2.ZX0/NNN.N2Z/NNN.NXI.ZX0/NNN.NXZ; a ready-made title screen belongs in the kit folder root as DAAD.*)"
@@ -352,14 +353,14 @@ function Invoke-Audio {
     }
 
     # Samples: NNN.wav (PCM mono 8-bit) copied as-is.
-    foreach ($f in Get-ChildItem -LiteralPath $audio -Filter *.wav -File) {
+    foreach ($f in Get-KitFiles $audio 'wav') {
         if ($f.BaseName -notmatch '^[0-9]+$') { continue }
         $num = '{0:D3}' -f [int]$f.BaseName
         if (Copy-Staged $f.FullName "$num.WAV") { Write-Host "  sample $num -> $num.WAV" }
     }
 
     # Name tests are case-sensitive, as the findstr tests they replace were.
-    $aks = @(Get-ChildItem -LiteralPath $audio -Filter *.aks -File)
+    $aks = @(Get-KitFiles $audio 'aks')
     $hasAky = @($aks | Where-Object { $_.BaseName -cnotmatch '^STREAM_' }).Count -gt 0
     if ($hasAky) {
         $script:s2aExe = Resolve-Tool $S2A
@@ -367,9 +368,9 @@ function Invoke-Audio {
             Fail "SongToAky not found at $S2A - install Arkos Tracker 3, or set ARKOSDIR in CONFIG.BAT to an existing install"
         }
         $script:akySig = Get-Sig @($script:s2aExe, $PSCommandPath)
-        $music = Join-Path $audio "$Game.aks"
-        if (Test-Path -LiteralPath $music -PathType Leaf) {
-            if (Convert-Aky $music 'GAME.AKY') { Write-Host '  music -> GAME.AKY' }
+        $music = $aks | Where-Object { $_.Name -eq "$Game.aks" } | Select-Object -First 1
+        if ($music) {
+            if (Convert-Aky $music.FullName 'GAME.AKY') { Write-Host '  music -> GAME.AKY' }
         }
         foreach ($f in $aks) {
             if ($f.BaseName -cnotmatch '^[0-9]+$') { continue }
@@ -411,21 +412,21 @@ function Invoke-Audio {
 
     # Effects bank: <GAME>_FX.aks -> GAME.SFB at 0xD000, 2048 bytes max.
     # Non-fatal: a skipped bank leaves no GAME.SFB.
-    $fx = Join-Path $audio "$($Game)_FX.aks"
-    if (Test-Path -LiteralPath $fx -PathType Leaf) {
+    $fx = $aks | Where-Object { $_.Name -eq "$($Game)_FX.aks" } | Select-Object -First 1
+    if ($fx) {
         $s2eExe = Resolve-Tool $S2E
         if (-not (Test-Path -LiteralPath $s2eExe)) {
             Write-Host '  WARNING: SongToSoundEffects not found - effects bank skipped'
             return
         }
         $out = Join-Path $rel 'GAME.SFB'
-        $stamp = New-Stamp @($fx) (Get-Sig @($s2eExe, $PSCommandPath))
+        $stamp = New-Stamp @($fx.FullName) (Get-Sig @($s2eExe, $PSCommandPath))
         if (Test-Current $out $stamp) {
             Add-Produced 'GAME.SFB'
             $script:kept++
             return
         }
-        if ((Invoke-Native $s2eExe @('-bin', '--encodingAddress', '0xD000', $fx, $out)) -ne 0) {
+        if ((Invoke-Native $s2eExe @('-bin', '--encodingAddress', '0xD000', $fx.FullName, $out)) -ne 0) {
             Write-Host '  WARNING: effects bank skipped - SongToSoundEffects failed (recipe not yet pinned)'
             Remove-IfExists $out
             return
@@ -450,7 +451,7 @@ function Invoke-Video {
         Write-Host '  no VIDEO\ - skipping video cutscenes'
         return
     }
-    foreach ($f in Get-ChildItem -LiteralPath $video -Filter *.vid -File) {
+    foreach ($f in Get-KitFiles $video 'vid') {
         if ($f.BaseName -notmatch '^[0-9]+$') { continue }
         $num = '{0:D3}' -f [int]$f.BaseName
         if (Copy-Staged $f.FullName "$num.VID") { Write-Host "  video $num -> $num.VID" }

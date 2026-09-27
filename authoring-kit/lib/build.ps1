@@ -14,6 +14,19 @@ function Fail([string[]]$Lines) { foreach ($l in $Lines) { Write-Host $l }; exit
 # cmd's del ... 2>nul: a file that will not go is left, silently.
 function Remove-Quiet([string]$p) { if (Test-Path -LiteralPath $p -PathType Leaf) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }
 
+# Two names differing only by case cannot coexist on Windows and would be
+# two files on Linux; refuse so both platforms see one kit. tools\ and
+# RELEASE\ are excluded: third-party tool folders and build output are
+# not author files.
+$seenCi = @{}
+foreach ($f in Get-ChildItem -LiteralPath $kitRoot -File -Recurse) {
+    $relPath = $f.FullName.Substring($kitRoot.Length + 1)
+    if ($relPath -match '^(RELEASE|tools)[\\/]') { continue }
+    $k = ($relPath -replace '[\\/]', '/').ToUpperInvariant()
+    if ($seenCi.ContainsKey($k)) { Fail "ERROR: $($seenCi[$k]) and $relPath differ only by case - keep one" }
+    $seenCi[$k] = $relPath
+}
+
 # Native tools write to stderr; under Stop that would terminate 5.1.
 function Invoke-Native([string]$Exe, [string[]]$Arguments) {
     $eap = $ErrorActionPreference
@@ -37,7 +50,8 @@ if (-not $game) {
     if ($dsfs.Count -ne 1) { Fail "ERROR: set GAME in CONFIG.BAT (found $($dsfs.Count) .DSF files here, need exactly one)" }
     $game = $dsfs[0].BaseName
 }
-if (-not (Test-Path -LiteralPath "$game.DSF")) { Fail "ERROR: $game.DSF not found in this folder" }
+$dsfFile = Find-KitFile $kitRoot "$game.DSF"
+if (-not $dsfFile) { Fail "ERROR: $game.DSF not found in this folder" }
 
 $t = Resolve-KitTools $cfg $kitRoot
 $drTarget = 'nextdaad'
@@ -73,19 +87,21 @@ foreach ($i in 2..9) { Remove-Quiet (Join-Path $rel "GAME$i.DDB"); Remove-OutDir
 Write-Host "Building $game ..."
 
 # ---- DDB: one .DSF into a DDB; ndrc writes 0.XMB into the cwd ----
-function Invoke-Ddb([string]$Game, [string]$DdbOut, [string]$XmbDir) {
+# $DsfPath is the resolved on-disk name (exact case, extension included):
+# a hardcoded ".DSF" suffix would miss a lowercase-extension source on Linux.
+function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir) {
     if (-not (Test-Path -LiteralPath $XmbDir)) { New-Item -ItemType Directory $XmbDir | Out-Null }
     Remove-Quiet '0.XMB'
     Remove-Quiet (Join-Path $XmbDir '0.XMB')
     # $ndrcArgs, not $args: $args is PowerShell's automatic variable.
-    $ndrcArgs = @($drTarget, 'EN', "$Game.DSF", $DdbOut, '-v3', '-auto-tokens')
+    $ndrcArgs = @($drTarget, 'EN', $DsfPath, $DdbOut, '-v3', '-auto-tokens')
     if ($cols) { $ndrcArgs += "-cols=$cols" }
     $code = Invoke-Native $t.NDRC $ndrcArgs
     # Any non-zero code fails, negative Windows crash codes (0xC0000005) included.
     if ($code -ne 0) {
         Remove-Quiet $DdbOut
         Remove-Quiet '0.XMB'
-        Write-Host "ERROR: ndrc failed compiling $Game.DSF - see the message above"; return 1
+        Write-Host "ERROR: ndrc failed compiling $DsfPath - see the message above"; return 1
     }
     if (-not (Test-Path -LiteralPath $DdbOut)) {
         Remove-Quiet '0.XMB'
@@ -105,7 +121,7 @@ function Invoke-Ddb([string]$Game, [string]$DdbOut, [string]$XmbDir) {
     }
     return 0
 }
-if ((Invoke-Ddb $game (Join-Path 'RELEASE' 'GAME.DDB') 'RELEASE') -ne 0) { exit 1 }
+if ((Invoke-Ddb $dsfFile.Name (Join-Path 'RELEASE' 'GAME.DDB') 'RELEASE') -ne 0) { exit 1 }
 
 # ---- pictures, audio, video ----
 if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress }) -ne 0) { exit 1 }
@@ -121,7 +137,8 @@ catch { Fail "ERROR: could not copy interpreter $nexFile" }
 Write-Host '  interpreter -> RELEASE\nextdaad.nex'
 
 # ---- loader intro: INTRO.TXT into RELEASE\INTRO\ plus RELEASE\<GAME>.NEX ----
-if (Test-Path -LiteralPath 'INTRO.TXT') {
+$introFile = Find-KitFile $kitRoot 'INTRO.TXT'
+if ($introFile) {
     # introc.ps1 runs gfx2next from inside RELEASE\INTRO\, so GFX goes absolute.
     $gfxAbs = if ([IO.Path]::IsPathRooted($t.GFX)) { $t.GFX } else { Join-Path $kitRoot $t.GFX }
     $gfxAbs = [IO.Path]::GetFullPath($gfxAbs)
@@ -129,7 +146,7 @@ if (Test-Path -LiteralPath 'INTRO.TXT') {
     if (-not (Test-Path -LiteralPath $t.INTRONEX)) { Fail "ERROR: launcher $($t.INTRONEX) not found - the kit is incomplete" }
     # Preflight only the tool the script's MUSIC line needs.
     $mkind = ''
-    foreach ($line in [IO.File]::ReadAllLines((Join-Path $kitRoot 'INTRO.TXT'), [Text.Encoding]::GetEncoding(28591))) {
+    foreach ($line in [IO.File]::ReadAllLines($introFile.FullName, [Text.Encoding]::GetEncoding(28591))) {
         if ($line -match '^\s*MUSIC\s+([^\s;"]+)') { $mkind = $Matches[1].ToUpperInvariant(); break }
     }
     switch ($mkind) {
@@ -140,7 +157,7 @@ if (Test-Path -LiteralPath 'INTRO.TXT') {
     }
     Write-Host 'Compiling intro ...'
     $introParams = @{
-        Script = 'INTRO.TXT'; Root = $kitRoot; Out = (Join-Path 'RELEASE' 'INTRO'); Cols = $cols; Gfx = $gfxAbs
+        Script = $introFile.FullName; Root = $kitRoot; Out = (Join-Path 'RELEASE' 'INTRO'); Cols = $cols; Gfx = $gfxAbs
         S2A = $t.S2A; S2Y = $t.S2Y; Ffmpeg = $t.FFMPEG; NdawBin = $t.NDAWBIN
         Palcheck = (Join-Path $lib 'palcheck.ps1'); Aysconv = (Join-Path $lib 'aysconv.ps1')
         Launcher = $t.INTRONEX; LauncherOut = (Join-Path 'RELEASE' "$game.NEX")
@@ -156,7 +173,8 @@ foreach ($slot in $slots) {
     $src = ''; $dup = ''
     foreach ($ext in $fontExts) {
         $cand = "FONT$slot.$ext"
-        if (Test-Path -LiteralPath $cand) { if ($src) { $dup = $cand } else { $src = $cand } }
+        $f = Find-KitFile $kitRoot $cand
+        if ($f) { if ($src) { $dup = $f.Name } else { $src = $f.Name } }
     }
     if ($dup) {
         Fail @("ERROR: both $src and $dup could be converted to FONT$slot.CHR.",
@@ -172,17 +190,19 @@ foreach ($slot in $slots) {
 # ---- ready-made fonts, then pointers, staged as-is ----
 # BUILD.BAT's copy /Y >nul was unchecked: a failure shows and the build goes on.
 function Copy-AsIs([string]$Name, [string]$What, [string]$Note) {
-    if (-not (Test-Path -LiteralPath $Name)) { return }
-    Copy-Item -LiteralPath $Name -Destination (Join-Path $rel $Name) -Force -ErrorAction Continue
+    $f = Find-KitFile $kitRoot $Name
+    if (-not $f) { return }
+    Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel $Name) -Force -ErrorAction Continue
     Write-Host "  $What $Name -> RELEASE\$Name ($Note)"
 }
 foreach ($slot in $slots) { Copy-AsIs "FONT$slot.CHR" 'font' 'ready-made, staged as-is' }
 foreach ($slot in $slots) { Copy-AsIs "POINTER$slot.SPR" 'pointer' 'ready-made, staged as-is' }
 
 # ---- hints and extern ----
-if (Test-Path -LiteralPath 'HINTS.TXT') {
-    if ((Invoke-Stage 'hintpack.ps1' @{ In = 'HINTS.TXT'; Out = (Join-Path 'RELEASE' 'GAME.HNT') }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
-    Write-Host '  hints HINTS.TXT -> RELEASE\GAME.HNT'
+$hintsFile = Find-KitFile $kitRoot 'HINTS.TXT'
+if ($hintsFile) {
+    if ((Invoke-Stage 'hintpack.ps1' @{ In = $hintsFile.Name; Out = (Join-Path 'RELEASE' 'GAME.HNT') }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
+    Write-Host "  hints $($hintsFile.Name) -> RELEASE\GAME.HNT"
 }
 Copy-AsIs 'GAME.XBN' 'extern' 'staged as-is'
 
@@ -195,9 +215,9 @@ foreach ($n in 2..9) {
     if ($pdsfs.Count -ne 1) { Fail "ERROR: PART$n\ has $($pdsfs.Count) .DSF files - keep exactly one game source per part folder" }
     $pgame = $pdsfs[0].BaseName
     Write-Host "Building part $n ($pgame) ..."
-    if ((Invoke-Ddb (Join-Path $part $pgame) (Join-Path 'RELEASE' "GAME$n.DDB") (Join-Path 'RELEASE' $part)) -ne 0) { exit 1 }
+    if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path 'RELEASE' "GAME$n.DDB") (Join-Path 'RELEASE' $part)) -ne 0) { exit 1 }
     $count = 0
-    foreach ($f in @(Get-ChildItem -LiteralPath $part -File)) {
+    foreach ($f in Get-KitFiles $part '*') {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
         try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel "PART$n") -Force }
         catch {

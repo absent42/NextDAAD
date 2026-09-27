@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Stop'
 $kitRoot = (Get-Location).Path
 $cfg = Read-KitConfig $kitRoot
 Export-KitConfig $cfg
-if (-not (Test-Path -LiteralPath (Join-Path $kitRoot (Join-Path 'RELEASE' 'nextdaad.nex')) -PathType Leaf)) {
+$relDir = Join-Path $kitRoot 'RELEASE'
+if (-not (Find-KitFile $relDir 'nextdaad.nex')) {
     Write-Host "ERROR: nothing built yet - run $BuildLauncherName first"; exit 1
 }
 $t = Resolve-KitTools $cfg $kitRoot
@@ -19,11 +20,14 @@ if (-not (Test-Path -LiteralPath $t.CSPECT -PathType Leaf)) {
 }
 $game = if ($cfg.ContainsKey('GAME')) { [string]$cfg['GAME'] } else { '' }
 if (-not $game) {
-    $dsfs = @(Get-ChildItem -LiteralPath $kitRoot -File | Where-Object { $_.Name -match '(?i)\.DSF$' })
+    # Ordinal order (Get-KitFiles), not directory enumeration order: the
+    # "last" .DSF must be the same file on NTFS and ext4.
+    $dsfs = @(Get-KitFiles $kitRoot 'DSF')
     if ($dsfs.Count -gt 0) { $game = $dsfs[$dsfs.Count - 1].BaseName }
 }
 $launch = Join-Path 'RELEASE' 'nextdaad.nex'
-if ($game -and (Test-Path -LiteralPath (Join-Path $kitRoot (Join-Path 'RELEASE' "$game.NEX")) -PathType Leaf)) { $launch = Join-Path 'RELEASE' "$game.NEX" }
+$nexFile = if ($game) { Find-KitFile $relDir "$game.NEX" } else { $null }
+if ($nexFile) { $launch = Join-Path 'RELEASE' $nexFile.Name }
 # The call operator passes each array element as one argument (quoted
 # correctly on both hosts) and waits for CSpect to exit, per R16.
 # Start-Process -ArgumentList joins the array into one string and does not
