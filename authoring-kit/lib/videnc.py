@@ -70,11 +70,12 @@ ceiling. The whole-line rung floor is not reachable from it at any
 value.
 
 Requires: Python 3, Pillow, numpy. An ffmpeg binary is required at run
-time (default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe,
+time (default: the project's own tools/ffmpeg/bin/ffmpeg,
 override with --ffmpeg).
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -88,7 +89,7 @@ except ImportError:
     sys.exit(1)
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+DEFAULT_FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
 
 # Source-rate retiming. See retime_plan for the filter strings.
 RETIME_MODES = ("blend", "drop", "mci")

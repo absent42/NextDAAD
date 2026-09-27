@@ -5,7 +5,7 @@ param([string[]]$Rules = @())
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $kit = Join-Path $root 'authoring-kit'
-$DefaultRules = @('launchers', 'python-candidates')
+$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals')
 if (-not $Rules) { $Rules = $DefaultRules }
 $allow = @{}
 foreach ($l in Get-Content -LiteralPath (Join-Path $PSScriptRoot 'kit-structure-allow.txt') -Encoding ASCII) {

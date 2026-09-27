@@ -5,24 +5,26 @@
 # Order: -SjasmPlus param, then the kit's tools\sjasmplus\ (root or one
 # nested subfolder, as a zip extract can leave it), then PATH.
 
+. (Join-Path $PSScriptRoot 'kitplatform.ps1')
+
 function Resolve-SjasmPlus {
     param(
         [string]$SjasmPlus = '',
         [Parameter(Mandatory = $true)][string]$KitRoot
     )
     if (-not $SjasmPlus) {
-        $dir = Join-Path $KitRoot 'tools\sjasmplus'
-        $bundled = Join-Path $dir 'sjasmplus.exe'
+        $dir = Join-Path $KitRoot (Join-Path 'tools' 'sjasmplus')
+        $bundled = Join-Path $dir "sjasmplus$ExeSuffix"
         if (Test-Path $bundled) { $SjasmPlus = $bundled }
         else {
             $nested = Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
-                      ForEach-Object { Join-Path $_.FullName 'sjasmplus.exe' } |
+                      ForEach-Object { Join-Path $_.FullName "sjasmplus$ExeSuffix" } |
                       Where-Object { Test-Path $_ } | Select-Object -First 1
             if ($nested) { $SjasmPlus = $nested }
         }
     }
     if (-not $SjasmPlus) {
-        $onPath = Get-Command sjasmplus.exe -ErrorAction SilentlyContinue
+        $onPath = Get-Command "sjasmplus$ExeSuffix" -ErrorAction SilentlyContinue
         if ($onPath) { $SjasmPlus = $onPath.Source }
     }
     if (-not $SjasmPlus -or -not (Test-Path $SjasmPlus)) {

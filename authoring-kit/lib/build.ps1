@@ -105,7 +105,7 @@ function Invoke-Ddb([string]$Game, [string]$DdbOut, [string]$XmbDir) {
     }
     return 0
 }
-if ((Invoke-Ddb $game 'RELEASE\GAME.DDB' 'RELEASE') -ne 0) { exit 1 }
+if ((Invoke-Ddb $game (Join-Path 'RELEASE' 'GAME.DDB') 'RELEASE') -ne 0) { exit 1 }
 
 # ---- pictures, audio, video ----
 if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress }) -ne 0) { exit 1 }
@@ -140,10 +140,10 @@ if (Test-Path -LiteralPath 'INTRO.TXT') {
     }
     Write-Host 'Compiling intro ...'
     $introParams = @{
-        Script = 'INTRO.TXT'; Root = $kitRoot; Out = 'RELEASE\INTRO'; Cols = $cols; Gfx = $gfxAbs
+        Script = 'INTRO.TXT'; Root = $kitRoot; Out = (Join-Path 'RELEASE' 'INTRO'); Cols = $cols; Gfx = $gfxAbs
         S2A = $t.S2A; S2Y = $t.S2Y; Ffmpeg = $t.FFMPEG; NdawBin = $t.NDAWBIN
         Palcheck = (Join-Path $lib 'palcheck.ps1'); Aysconv = (Join-Path $lib 'aysconv.ps1')
-        Launcher = $t.INTRONEX; LauncherOut = "RELEASE\$game.NEX"
+        Launcher = $t.INTRONEX; LauncherOut = (Join-Path 'RELEASE' "$game.NEX")
     }
     if ((Invoke-Stage 'introc.ps1' $introParams) -ne 0) { Fail 'ERROR: intro compile failed - see the message above' }
     Write-Host "  intro -> RELEASE\INTRO\ and RELEASE\$game.NEX (launch this file)"
@@ -164,7 +164,7 @@ foreach ($slot in $slots) {
                "       FONT$slot.CHR, which always wins over a converted source.")
     }
     if ($src) {
-        if ((Invoke-Stage 'fontconv.ps1' @{ In = $src; Out = "RELEASE\FONT$slot.CHR" }) -ne 0) { Fail "ERROR: fontconv failed converting $src" }
+        if ((Invoke-Stage 'fontconv.ps1' @{ In = $src; Out = (Join-Path 'RELEASE' "FONT$slot.CHR") }) -ne 0) { Fail "ERROR: fontconv failed converting $src" }
         Write-Host "  font $src -> RELEASE\FONT$slot.CHR (converted)"
     }
 }
@@ -181,7 +181,7 @@ foreach ($slot in $slots) { Copy-AsIs "POINTER$slot.SPR" 'pointer' 'ready-made, 
 
 # ---- hints and extern ----
 if (Test-Path -LiteralPath 'HINTS.TXT') {
-    if ((Invoke-Stage 'hintpack.ps1' @{ In = 'HINTS.TXT'; Out = 'RELEASE\GAME.HNT' }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
+    if ((Invoke-Stage 'hintpack.ps1' @{ In = 'HINTS.TXT'; Out = (Join-Path 'RELEASE' 'GAME.HNT') }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
     Write-Host '  hints HINTS.TXT -> RELEASE\GAME.HNT'
 }
 Copy-AsIs 'GAME.XBN' 'extern' 'staged as-is'
@@ -195,12 +195,14 @@ foreach ($n in 2..9) {
     if ($pdsfs.Count -ne 1) { Fail "ERROR: PART$n\ has $($pdsfs.Count) .DSF files - keep exactly one game source per part folder" }
     $pgame = $pdsfs[0].BaseName
     Write-Host "Building part $n ($pgame) ..."
-    if ((Invoke-Ddb "PART$n\$pgame" "RELEASE\GAME$n.DDB" "RELEASE\PART$n") -ne 0) { exit 1 }
+    if ((Invoke-Ddb (Join-Path $part $pgame) (Join-Path 'RELEASE' "GAME$n.DDB") (Join-Path 'RELEASE' $part)) -ne 0) { exit 1 }
     $count = 0
     foreach ($f in @(Get-ChildItem -LiteralPath $part -File)) {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
         try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel "PART$n") -Force }
-        catch { Fail "ERROR: could not stage PART$n\$($f.Name) into RELEASE\PART$n" }
+        catch {
+            Fail "ERROR: could not stage PART$n\$($f.Name) into RELEASE\PART$n"
+        }
         $count++
     }
     Write-Host "  $count asset(s) staged -> RELEASE\PART$n\"

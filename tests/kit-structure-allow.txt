@@ -1,1 +1,34 @@
 # rule|path|substring accepted on that line
+
+# CSpect has no non-Windows build; the argument is a mono literal, not a
+# path resolution the kit needs to abstract.
+exe-literals|lib/kittools.ps1|CSpect.exe
+
+# Platform conditional: ("ffmpeg.exe" if os.name == "nt" else "ffmpeg").
+exe-literals|lib/videnc.py|os.name
+
+# lib/vidtune/ is owned by Task 12; these literals are its current
+# state, not fixed here. Remove once Task 12 adds an os/sys.platform
+# conditional like videnc.py's, above.
+# until Task 12
+exe-literals|lib/vidtune/encoderun.py|videnc.exe
+# until Task 12
+exe-literals|lib/vidtune/mainwindow.py|videnc.exe
+# until Task 12
+exe-literals|lib/vidtune/mainwindow.py|ffmpeg.exe
+
+# Display strings: RELEASE\ in a Write-Host line is user-facing text,
+# not a path the script resolves - left as-is on both hosts.
+backslash-literals|lib/build.ps1|Write-Host
+backslash-literals|lib/run.ps1|Write-Host
+backslash-literals|lib/clean.ps1|Write-Host
+backslash-literals|lib/vidtune.ps1|Write-Host
+
+# CSpect's own -mmc= argument syntax, not a .NET path.
+backslash-literals|lib/run.ps1|-mmc=
+
+# Regex pattern strings (\s, \r, \n escapes), not path literals - the
+# rule's regex-operation exclusion only covers -match/-replace/-split
+# lines, not a plain string assignment used elsewhere.
+backslash-literals|lib/fontfmt.ps1|YaffDetect
+backslash-literals|lib/kitconfig.ps1|KitConfigLineRegex

@@ -97,12 +97,12 @@ foreach ($arg in $Modules) {
             }
             $dir = $parent
         }
-        if (Test-Path -LiteralPath $dir -PathType Container) { $dir = (Get-Item -LiteralPath $dir).FullName.TrimEnd('\') }
+        if (Test-Path -LiteralPath $dir -PathType Container) { $dir = (Get-Item -LiteralPath $dir).FullName.TrimEnd('\', '/') }
         $name = Split-Path $dir -Leaf
         $kitDir = Join-Path $externsDir $name
         if ($kitModules -contains $name) {
             # A path to the kit's own module folder is that module.
-            if ((Test-Path -LiteralPath $kitDir) -and ((Get-Item -LiteralPath $kitDir).FullName.TrimEnd('\') -eq $dir)) {
+            if ((Test-Path -LiteralPath $kitDir) -and ((Get-Item -LiteralPath $kitDir).FullName.TrimEnd('\', '/') -eq $dir)) {
                 $inKit = $true
                 $name = ($kitModules | Where-Object { $_ -eq $name })
             } else {

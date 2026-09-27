@@ -250,7 +250,9 @@ function Invoke-Pictures {
                 if (-not $m.Success -or [int]$m.Value -gt 254) { Fail "$($f.Name) - sprite files are named by set number, 000-254" }
                 $num = '{0:D3}' -f [int]$m.Value
                 $txt = Join-Path $sprites ($f.BaseName + '.txt')
-                if (-not (Test-Path -LiteralPath $txt -PathType Leaf)) { Fail "$($f.Name) has no sidecar IMAGES\SPRITES\$($f.BaseName).txt" }
+                if (-not (Test-Path -LiteralPath $txt -PathType Leaf)) {
+                    Fail "$($f.Name) has no sidecar IMAGES\SPRITES\$($f.BaseName).txt"
+                }
                 $isPng = ($f.Extension -eq '.png')
                 if ($isPng -and (Test-Path -LiteralPath (Join-Path $sprites ($f.BaseName + '.spr')) -PathType Leaf)) {
                     Fail "both $($f.BaseName).png and $($f.BaseName).spr exist in IMAGES\SPRITES - keep one"
@@ -395,7 +397,7 @@ function Invoke-Audio {
             $out = Join-Path $rel $name
             $stamp = New-Stamp @($f.FullName) $aysSig
             if (Test-Current $out $stamp) { $script:kept++; continue }
-            if (Invoke-KitScript $aysconv @{ Song = $f.FullName; Out = "RELEASE\$name"; SongToYm = $s2yExe }) {
+            if (Invoke-KitScript $aysconv @{ Song = $f.FullName; Out = (Join-Path 'RELEASE' $name); SongToYm = $s2yExe }) {
                 [System.IO.File]::SetLastWriteTimeUtc($out, $stamp)
                 Write-Host "  stream $num -> $name"
             } else {

@@ -2,8 +2,8 @@
 # Assembler resolution: -SjasmPlus, then the kit's tools\sjasmplus\, then PATH.
 param([string]$SjasmPlus = '')
 $ErrorActionPreference = 'Stop'
-$kitRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-. (Join-Path $kitRoot 'lib\resolve-sjasmplus.ps1')
+$kitRoot = Resolve-Path (Join-Path (Join-Path $PSScriptRoot '..') '..')
+. (Join-Path (Join-Path $kitRoot 'lib') 'resolve-sjasmplus.ps1')
 $SjasmPlus = Resolve-SjasmPlus -SjasmPlus $SjasmPlus -KitRoot $kitRoot
 Push-Location $PSScriptRoot
 try {

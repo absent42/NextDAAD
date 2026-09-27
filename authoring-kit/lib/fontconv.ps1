@@ -107,7 +107,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. "$scriptDir\fontfmt.ps1"
+. (Join-Path $scriptDir 'fontfmt.ps1')
 
 $script:AssemblyNote = ''
 

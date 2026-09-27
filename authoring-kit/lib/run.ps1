@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $kitRoot = (Get-Location).Path
 $cfg = Read-KitConfig $kitRoot
 Export-KitConfig $cfg
-if (-not (Test-Path -LiteralPath (Join-Path $kitRoot 'RELEASE\nextdaad.nex') -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath (Join-Path $kitRoot (Join-Path 'RELEASE' 'nextdaad.nex')) -PathType Leaf)) {
     Write-Host "ERROR: nothing built yet - run $BuildLauncherName first"; exit 1
 }
 $t = Resolve-KitTools $cfg $kitRoot
@@ -22,8 +22,8 @@ if (-not $game) {
     $dsfs = @(Get-ChildItem -LiteralPath $kitRoot -File | Where-Object { $_.Name -match '(?i)\.DSF$' })
     if ($dsfs.Count -gt 0) { $game = $dsfs[$dsfs.Count - 1].BaseName }
 }
-$launch = 'RELEASE\nextdaad.nex'
-if ($game -and (Test-Path -LiteralPath (Join-Path $kitRoot "RELEASE\$game.NEX") -PathType Leaf)) { $launch = "RELEASE\$game.NEX" }
+$launch = Join-Path 'RELEASE' 'nextdaad.nex'
+if ($game -and (Test-Path -LiteralPath (Join-Path $kitRoot (Join-Path 'RELEASE' "$game.NEX")) -PathType Leaf)) { $launch = Join-Path 'RELEASE' "$game.NEX" }
 # The call operator passes each array element as one argument (quoted
 # correctly on both hosts) and waits for CSpect to exit, per R16.
 # Start-Process -ArgumentList joins the array into one string and does not

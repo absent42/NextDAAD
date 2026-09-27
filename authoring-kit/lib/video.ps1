@@ -69,7 +69,11 @@
 # (tools\ffmpeg\bin\ffmpeg.exe - see tools\README.txt); nothing here
 # is needed unless numeric-named .mp4 files exist in VIDEO\.
 
-$sources = @(Get-ChildItem 'VIDEO\*.mp4' -ErrorAction SilentlyContinue |
+. (Join-Path $PSScriptRoot 'kitplatform.ps1')
+
+$videoDir = Join-Path (Get-Location).Path 'VIDEO'
+$sources = @(Get-ChildItem -LiteralPath $videoDir -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '(?i)\.mp4$' } |
     Where-Object { $_.BaseName -match '^\d+$' })
 if (-not $sources) { exit 0 }
 
@@ -285,7 +289,7 @@ if (-not $plan) { exit 0 }
 # its bin\ subfolder. Take its answer rather than repeating the probe here
 # and drifting from it; the fallback only matters if this script is run
 # directly rather than from BUILD.BAT.
-$ffmpeg = if ($env:FFMPEG) { $env:FFMPEG } else { Join-Path $env:TOOLSDIR 'ffmpeg\bin\ffmpeg.exe' }
+$ffmpeg = if ($env:FFMPEG) { $env:FFMPEG } else { Join-KitPath @($env:TOOLSDIR, 'ffmpeg', 'bin', "ffmpeg$ExeSuffix") }
 if (-not (Test-Path $ffmpeg)) {
     Write-Host "ERROR: ffmpeg not found at $ffmpeg (needed to encode VIDEO\*.mp4)"
     Write-Host "       Download it - see tools\README.txt - or set FFMPEGDIR in"
@@ -307,8 +311,8 @@ if (-not (Test-Path $ffmpeg)) {
 $kitRoot = Split-Path -Parent $PSScriptRoot
 $enc = $null
 $exeCandidates = @(
-    $(if ($env:VIDENC) { $env:VIDENC } else { Join-Path $env:TOOLSDIR 'vidtools\videnc.exe' }),
-    (Join-Path $kitRoot 'tools\vidtools\videnc.exe')
+    $(if ($env:VIDENC) { $env:VIDENC } else { Join-KitPath @($env:TOOLSDIR, 'vidtools', "videnc$ExeSuffix") }),
+    (Join-KitPath @($kitRoot, 'tools', 'vidtools', "videnc$ExeSuffix"))
 ) | Where-Object { $_ } | Select-Object -Unique
 foreach ($exe in $exeCandidates) {
     # >1MB check: a clone made without git-lfs leaves a tiny text
@@ -317,12 +321,8 @@ foreach ($exe in $exeCandidates) {
     if ((Test-Path $exe) -and (Get-Item $exe).Length -gt 1MB) { $enc = @($exe); break }
 }
 if (-not $enc) {
-    foreach ($cand in @(@('py', '-3'), @('python'))) {
-        try {
-            & $cand[0] $cand[1..($cand.Length)] -c 'import PIL, numpy' *> $null
-            if ($LASTEXITCODE -eq 0) { $enc = $cand + 'lib\videnc.py'; break }
-        } catch {}
-    }
+    $py = Find-Python @('PIL', 'numpy')
+    if ($py) { $enc = @($py) + @((Join-Path $PSScriptRoot 'videnc.py')) }
 }
 if (-not $enc) {
     Write-Host 'ERROR: no encoder for VIDEO\*.mp4 - videnc.exe not found and no Python 3 with Pillow + numpy'
