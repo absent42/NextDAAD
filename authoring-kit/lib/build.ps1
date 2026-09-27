@@ -22,7 +22,9 @@ function Invoke-Native([string]$Exe, [string[]]$Arguments) {
     finally { $ErrorActionPreference = $eap }
 }
 # Stage scripts run in-process; their exit N returns here as $LASTEXITCODE.
+# Each starts at a fresh -File process's 'Continue'; stages wanting Stop set it.
 function Invoke-Stage([string]$Script, [hashtable]$Params) {
+    $ErrorActionPreference = 'Continue'
     $global:LASTEXITCODE = 0
     try { & (Join-Path $lib $Script) @Params | Out-Host } catch { Write-Host "ERROR: $($_.Exception.Message)"; return 1 }
     return $LASTEXITCODE
@@ -79,8 +81,8 @@ function Invoke-Ddb([string]$Game, [string]$DdbOut, [string]$XmbDir) {
     $ndrcArgs = @($drTarget, 'EN', "$Game.DSF", $DdbOut, '-v3', '-auto-tokens')
     if ($cols) { $ndrcArgs += "-cols=$cols" }
     $code = Invoke-Native $t.NDRC $ndrcArgs
-    # cmd's "if errorlevel 1": a negative code falls through to the checks below.
-    if ($code -ge 1) {
+    # Any non-zero code fails, negative Windows crash codes (0xC0000005) included.
+    if ($code -ne 0) {
         Remove-Quiet $DdbOut
         Remove-Quiet '0.XMB'
         Write-Host "ERROR: ndrc failed compiling $Game.DSF - see the message above"; return 1
