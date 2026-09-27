@@ -10,17 +10,19 @@ All notable changes to NextDAAD are recorded here.
   polls live, so keys typed while a response prints, pauses or draws
   reach the next prompt, one-frame taps are kept, and a key pressed
   while another is held is no longer masked by scan order. `wait_key`,
-  `wait_key_timeout`, `key_wait_char`, `INKEY`, the clip teardown and
-  the Layer 2 screen exit flush the queue, so a dismiss key is never
-  typed. The two-frame new-key settle moves from `kb_char` into the ISR
-  (`KB_SETTLE`: the newest entry keeps taking live shift bits for two
-  frames, so delivery latency at the prompt is unchanged); the CAPS+2
-  lock toggle and the 35/5-frame autorepeat are unchanged. `kb_tick`
-  runs inside an `ei`/`di` bracket in `im2_isr`, so the CTC sample
-  feeders nest through it as they do through the audio path. Regression:
-  `tests\typeahead_run.py` on the `-KbLog` lab (LONG now pauses 2.5 s).
-  The DEBUG keystroke-log instrument used to diagnose the fault is
-  removed.
+  `wait_key_timeout`, `key_wait_char` and the Layer 2 screen exit flush
+  the queue after their release wait; `INKEY` (on a hit) and the clip
+  teardown wait one frame tick first (`kb_flush_frame`) so the press is
+  queued before it is dropped. Presses inside one frame are queued in
+  matrix-row order. The two-frame new-key settle moves from `kb_char`
+  into the ISR (`KB_SETTLE` = 1: the newest entry takes live shift bits
+  for one more frame, so a key is delivered two frame ticks after it is
+  first seen, as before); the CAPS+2 lock toggle and the 35/5-frame
+  autorepeat are unchanged. `kb_tick` runs its own `ei`/`di` bracket
+  inside `im2_isr`, so the CTC sample feeders nest through it as they do
+  through the audio path. Regression: `tests\typeahead_run.py` on the
+  `-KbLog` lab (LONG now pauses 2.5 s). The DEBUG keystroke-log
+  instrument used to diagnose the fault is removed.
 - vidtune preview zoom 1x-5x: the 2x toggle becomes five exclusive
   zoom buttons in the mode row; keys 1-5 and the mouse wheel (one step
   per notch, touchpad deltas accumulated) also set zoom, keeping the
