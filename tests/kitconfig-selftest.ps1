@@ -23,7 +23,7 @@ $cfg = @(
     '  SET   SPACED = x '
 )
 [IO.File]::WriteAllLines("$work/CONFIG.BAT", $cfg, [Text.Encoding]::ASCII)
-[IO.File]::WriteAllLines("$work\CONFIG.local.BAT", @('SET TOOLSDIR=..\tools', 'SET RUN=0'), [Text.Encoding]::ASCII)
+[IO.File]::WriteAllLines("$work/CONFIG.local.BAT", @('SET TOOLSDIR=..\tools', 'SET RUN=0'), [Text.Encoding]::ASCII)
 $c = Read-KitConfig $work
 Assert-Eq $c['GAME'] 'SECOND' 'last-wins within a file'
 if ($OnWindows) {
