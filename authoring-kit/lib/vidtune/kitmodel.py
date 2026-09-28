@@ -40,7 +40,9 @@ def _read_sets(path, into):
     for line in p.read_text(errors="replace").splitlines():
         m = _SET_RE.match(line)
         if m:
-            into[m.group(1).upper()] = m.group(2).strip()
+            # No strip: cmd's SET keeps a leading space after '='; the
+            # regex's trailing \s*$ already drops trailing whitespace.
+            into[m.group(1).upper()] = m.group(2)
 
 
 def parse_config(config_path, local_path=None):
