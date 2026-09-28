@@ -5,7 +5,7 @@ param([string[]]$Rules = @())
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $kit = Join-Path $root 'authoring-kit'
-$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals', 'encodings', 'sort-ordinal')
+$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals', 'encodings', 'sort-ordinal', 'banners')
 if (-not $Rules) { $Rules = $DefaultRules }
 $allow = @{}
 foreach ($l in Get-Content -LiteralPath (Join-Path $PSScriptRoot 'kit-structure-allow.txt') -Encoding ASCII) {
@@ -92,6 +92,12 @@ if ($Rules -contains 'sort-ordinal') {
     # Anchored like the other rules: unanchored, the skip's ^ lookahead never
     # matches when the engine retries mid-line, so the skip silently fails.
     Scan 'sort-ordinal' $libPs ("^(?!$skipLine).*" + 'Sort-Object(?!.*(Ordinal|-Property\s+\{))') 'Sort-Object without an ordinal comparer'
+}
+if ($Rules -contains 'banners') {
+    # Pins, committed ELF digests and the host ndrc banner agree; the byte
+    # checks live in tests/kit-binaries-selftest.ps1 (it throws on failure).
+    try { & (Join-Path $PSScriptRoot 'kit-binaries-selftest.ps1') *> $null }
+    catch { $failures.Add("banners: $($_.Exception.Message)") }
 }
 if ($failures.Count) {
     $failures | ForEach-Object { Write-Host $_ }
