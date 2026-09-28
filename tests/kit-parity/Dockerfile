@@ -18,6 +18,7 @@ RUN mkdir -p /opt/kittools/sjasmplus \
  && unzip -q /tmp/arkos.zip 'ArkosTracker3/tools/*' -d /opt/kittools \
  && chmod +x /opt/kittools/ArkosTracker3/tools/* && rm /tmp/arkos.zip
 COPY --from=sjasm /opt/sjasmplus /opt/kittools/sjasmplus/sjasmplus
+ENV NEXTDAAD_TOOLS=/opt/kittools
 COPY repo/ /work/
 COPY exec-list.txt /work/exec-list.txt
 # COPY assigns its own modes to a Windows context: clear them all, then apply

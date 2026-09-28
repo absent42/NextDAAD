@@ -10,6 +10,12 @@ $steps = @(
     @('kitconfig', 'pwsh', @('-NoProfile', '-File', 'tests/kitconfig-selftest.ps1')),
     @('kittools', 'pwsh', @('-NoProfile', '-File', 'tests/kittools-selftest.ps1')),
     @('assets-order', 'pwsh', @('-NoProfile', '-File', 'tests/assets-order-selftest.ps1')),
+    @('anipack', 'pwsh', @('-NoProfile', '-File', 'tests/anipack-selftest.ps1')),
+    @('intro', 'pwsh', @('-NoProfile', '-File', 'tests/intro-selftest.ps1')),
+    @('xbnbuild', 'pwsh', @('-NoProfile', '-File', 'tests/xbnbuild-selftest.ps1')),
+    @('audit-externs-selftest', 'pwsh', @('-NoProfile', '-File', 'tests/audit-externs-selftest.ps1')),
+    @('audit-externs', 'pwsh', @('-NoProfile', '-File', 'tests/audit-externs.ps1')),
+    @('hintpack-accent-oracle', 'pwsh', @('-NoProfile', '-File', 'tests/hintpack-accent-oracle.ps1')),
     @('structure', 'pwsh', @('-NoProfile', '-File', 'tests/kit-structure.ps1')),
     @('pytest-grammar', 'python', @('-m', 'pytest', 'tests/vidtune/test_kitmodel_grammar.py', 'tests/vidtune/test_config_grammar_parity.py', '-q'))
 )

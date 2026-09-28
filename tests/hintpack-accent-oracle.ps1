@@ -7,8 +7,9 @@
 #   pwsh -NoProfile -File tests\hintpack-accent-oracle.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$ndrc = "$root\authoring-kit\lib\ndrc.exe"
-$pack = "$root\authoring-kit\lib\hintpack.ps1"
+. (Join-Path $root 'tests/testtools.ps1')
+$ndrc = "$root/authoring-kit/lib/ndrc$TestExe"
+$pack = "$root/authoring-kit/lib/hintpack.ps1"
 $enc  = [Text.Encoding]::GetEncoding(28591)
 $tmp  = Join-Path ([System.IO.Path]::GetTempPath()) ("hintpack-oracle-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -54,12 +55,12 @@ $sb.Append("/CON`r`n/0`r`n/1`r`n") | Out-Null
 $sb.Append("/OBJ`r`n/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _`r`n") | Out-Null
 $sb.Append("/PRO 0`r`n> _ _   AT 0`r`n        MESSAGE 0`r`n        DONE`r`n") | Out-Null
 $sb.Append("> _ _     PARSE 0`r`n          REDO`r`n/END`r`n") | Out-Null
-[IO.File]::WriteAllBytes("$tmp\ORACLE.DSF", $enc.GetBytes($sb.ToString()))
+[IO.File]::WriteAllBytes("$tmp/ORACLE.DSF", $enc.GetBytes($sb.ToString()))
 
 # ---- build matching HINTS.TXT: topic i, single level = the same text. ----
 $hb = New-Object Text.StringBuilder
 for ($i = 0; $i -lt $cases.Count; $i++) { $hb.Append("[$i]`r`n$($cases[$i].s)`r`n`r`n") | Out-Null }
-[IO.File]::WriteAllBytes("$tmp\HINTS.TXT", $enc.GetBytes($hb.ToString()))
+[IO.File]::WriteAllBytes("$tmp/HINTS.TXT", $enc.GetBytes($hb.ToString()))
 
 # ---- compile the oracle DSF ----
 Push-Location $tmp
@@ -70,7 +71,7 @@ try {
 finally { Pop-Location }
 
 # ---- pack the matching hints ----
-& $pack -In "$tmp\HINTS.TXT" -Out "$tmp\GAME.HNT" | Out-Null
+& $pack -In "$tmp/HINTS.TXT" -Out "$tmp/GAME.HNT" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "hintpack.ps1 failed packing the oracle hints" }
 
 # ---- decode a DDB user message: NDRC's ndrc.exe emits FILE-RELATIVE
@@ -120,8 +121,8 @@ function Get-HntLevelBytes([byte[]]$p, [int]$seed, [int]$topic, [int]$level) {
     return , $p[$to..($to + $tl - 1)]
 }
 
-$ddbBytes = [IO.File]::ReadAllBytes("$tmp\ORACLE.DDB")
-$hntRaw = [IO.File]::ReadAllBytes("$tmp\GAME.HNT")
+$ddbBytes = [IO.File]::ReadAllBytes("$tmp/ORACLE.DDB")
+$hntRaw = [IO.File]::ReadAllBytes("$tmp/GAME.HNT")
 $seed = $hntRaw[4]
 $hntPlain = $hntRaw.Clone()
 for ($o = 6; $o -lt $hntPlain.Length; $o++) { $hntPlain[$o] = $hntPlain[$o] -bxor (Key $o $seed) }

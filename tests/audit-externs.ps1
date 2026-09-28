@@ -23,10 +23,11 @@
 param([string]$SjasmPlus = '', [string]$ExternsDir = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
+. (Join-Path $root 'tests/testtools.ps1')
 $kit = Join-Path $root 'authoring-kit'
 $externsDir = if ($ExternsDir) { $ExternsDir } else { Join-Path $kit 'externs' }
 
-if (-not $SjasmPlus) { $SjasmPlus = Join-Path $root 'tools\sjasmplus\sjasmplus.exe' }
+if (-not $SjasmPlus) { $SjasmPlus = Get-RepoTool 'sjasmplus' }
 if (-not (Test-Path $SjasmPlus)) {
     throw "sjasmplus not found at '$SjasmPlus' - pass -SjasmPlus or populate tools\sjasmplus\ (CI downloads a pinned release; see .github\workflows\extern-audit.yml)"
 }
@@ -44,7 +45,7 @@ foreach ($dir in $dirs) {
     $findings = @()
 
     # --- 1. required files, and only those four -----------------------
-    $asms = @(Get-ChildItem $dir.FullName -Filter '*.asm')
+    $asms = @(Get-KitFiles $dir.FullName 'asm')
     if ($asms.Count -ne 1) { $findings += "expected exactly one .asm source, found $($asms.Count)" }
     foreach ($req in 'GAME.XBN', 'README.md', 'build.ps1') {
         if (-not (Test-Path (Join-Path $dir.FullName $req))) { $findings += "missing required file: $req" }
@@ -60,17 +61,19 @@ foreach ($dir in $dirs) {
         New-Item -ItemType Directory -Force $scratch | Out-Null
         Push-Location $scratch
         try {
-            # cmd /c: sjasmplus banners on stderr, which strict-mode
-            # PowerShell would otherwise promote to a terminating error
-            cmd /c "`"$SjasmPlus`" --msg=war -I `"$kit`" `"$($asms[0].FullName)`" 2>&1" | Out-Null
+            # sjasmplus banners on stderr, which strict-mode PowerShell
+            # would otherwise promote to a terminating error
+            $eap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & $SjasmPlus --msg=war -I $kit $asms[0].FullName 2>&1 | Out-Null } finally { $ErrorActionPreference = $eap }
             if ($LASTEXITCODE -ne 0) {
                 $findings += "source does not assemble against xbn.inc (sjasmplus exit $LASTEXITCODE)"
             }
-            elseif (-not (Test-Path "$scratch\GAME.XBN")) {
+            elseif (-not (Test-Path "$scratch/GAME.XBN")) {
                 $findings += "assembly produced no GAME.XBN - is the SAVEBIN line present and unmodified?"
             }
             else {
-                $fresh = [IO.File]::ReadAllBytes("$scratch\GAME.XBN")
+                $fresh = [IO.File]::ReadAllBytes("$scratch/GAME.XBN")
                 $shipped = [IO.File]::ReadAllBytes((Join-Path $dir.FullName 'GAME.XBN'))
                 if (-not [System.Linq.Enumerable]::SequenceEqual($fresh, $shipped)) {
                     $findings += "committed GAME.XBN is STALE - it does not match a fresh assembly of the source; run the folder's build.ps1 and commit both together"

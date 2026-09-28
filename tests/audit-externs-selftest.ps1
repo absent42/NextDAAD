@@ -4,8 +4,9 @@
 #   pwsh -NoProfile -File tests\audit-externs-selftest.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$sj   = "$root\tools\sjasmplus\sjasmplus.exe"
-$work = "$root\tests\out\audit-selftest"
+. (Join-Path $root 'tests/testtools.ps1')
+$sj   = Get-RepoTool 'sjasmplus'
+$work = "$root/tests/out/audit-selftest"
 $checks = 0
 
 # 14-byte header + padding to $len; entries are absolute addresses.
@@ -15,8 +16,8 @@ function New-Xbn([string]$name, [int]$ver, [int]$ext, [int]$int, [int]$line, [in
     $b[3] = $ver
     $i = 4
     foreach ($w in $ext, $int, $len, $line, $out) { $b[$i] = $w -band 0xFF; $b[$i + 1] = ($w -shr 8) -band 0xFF; $i += 2 }
-    New-Item -ItemType Directory -Force "$work\$name" | Out-Null
-    [IO.File]::WriteAllBytes("$work\$name\GAME.XBN", $b)
+    New-Item -ItemType Directory -Force "$work/$name" | Out-Null
+    [IO.File]::WriteAllBytes("$work/$name/GAME.XBN", $b)
 }
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -31,7 +32,7 @@ New-Xbn 'v3none'    3 0 0 0 0
 New-Xbn 'v4'        4 0xC00E 0xC010 0 0
 New-Xbn 'full'      3 0xC00E 0xC010 0 0xFFFF 16384
 
-$text = (& powershell -NoProfile -File "$root\tests\audit-externs.ps1" -SjasmPlus $sj -ExternsDir $work 2>&1 | ForEach-Object { "$_" }) -join "`n"
+$text = (& $TestPsHost -NoProfile -File "$root/tests/audit-externs.ps1" -SjasmPlus $sj -ExternsDir $work 2>&1 | ForEach-Object { "$_" }) -join "`n"
 $found = @{}
 $cur = $null
 foreach ($l in $text -split "`n") {

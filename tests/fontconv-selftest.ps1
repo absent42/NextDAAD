@@ -10,8 +10,8 @@
 # neither is the only proof of anything.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$conv = "$root\authoring-kit\lib\fontconv.ps1"
-$base = "$root\authoring-kit\lib\default.chr"
+$conv = "$root/authoring-kit/lib/fontconv.ps1"
+$base = "$root/authoring-kit/lib/default.chr"
 $tmp  = Join-Path ([System.IO.Path]::GetTempPath()) ("fontconv-selftest-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $tmp | Out-Null
 $checks = 0
@@ -51,7 +51,7 @@ try {
     $ch8 = New-Object byte[] 768
     $pat = [byte[]](0x18,0x24,0x42,0x7E,0x42,0x42,0x42,0x00)
     [System.Array]::Copy($pat, 0, $ch8, (65-32)*8, 8)
-    $in768 = "$tmp\g1.ch8"; $out768 = "$tmp\g1.CHR"
+    $in768 = "$tmp/g1.ch8"; $out768 = "$tmp/g1.CHR"
     [System.IO.File]::WriteAllBytes($in768, $ch8)
     & $conv -In $in768 -Out $out768 | Out-Null
     $g1 = [System.IO.File]::ReadAllBytes($out768)
@@ -64,7 +64,7 @@ try {
     $full = New-Object byte[] 2048
     for ($i = 0; $i -lt 2048; $i++) { $full[$i] = [byte](($i * 7) % 251) }
     for ($i = 0; $i -lt 8; $i++) { $full[32*8 + $i] = 0 }   # keep glyph 32 blank
-    $inFull = "$tmp\g2.chr"; $outFull = "$tmp\g2.CHR"
+    $inFull = "$tmp/g2.chr"; $outFull = "$tmp/g2.CHR"
     [System.IO.File]::WriteAllBytes($inFull, $full)
     & $conv -In $inFull -Out $outFull | Out-Null
     Assert-Bytes ([System.IO.File]::ReadAllBytes($outFull)) $full 'G2 full table passthrough'
@@ -74,7 +74,7 @@ try {
     $raw = New-Object byte[] 896
     $mark = [byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0x81,0xFF)
     [System.Array]::Copy($mark, 0, $raw, (65-16)*8, 8)
-    $inRaw = "$tmp\g3.fnt"; $outRaw = "$tmp\g3.CHR"
+    $inRaw = "$tmp/g3.fnt"; $outRaw = "$tmp/g3.CHR"
     [System.IO.File]::WriteAllBytes($inRaw, $raw)
     Assert-Throws { & $conv -In $inRaw -Out $outRaw } 'First' 'G3 raw of unknown length demands -First'
     & $conv -In $inRaw -Out $outRaw -First 16 | Out-Null
@@ -89,19 +89,19 @@ try {
     $solid = New-Object byte[] 768
     for ($i = 0; $i -lt 768; $i++) { $solid[$i] = 0xFF }
     for ($i = 0; $i -lt 8; $i++) { $solid[$i] = 0 }        # keep glyph 32 blank
-    $inSolid = "$tmp\g4.ch8"
+    $inSolid = "$tmp/g4.ch8"
     [System.IO.File]::WriteAllBytes($inSolid, $solid)
-    & $conv -In $inSolid -Out "$tmp\g4.CHR" | Out-Null
-    Assert-Bytes ([System.IO.File]::ReadAllBytes("$tmp\g4.CHR"))[520..527] `
+    & $conv -In $inSolid -Out "$tmp/g4.CHR" | Out-Null
+    Assert-Bytes ([System.IO.File]::ReadAllBytes("$tmp/g4.CHR"))[520..527] `
         ([byte[]](0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF)) 'G4 a full 8x8 cell is accepted intact'
 
     # --- G5 glyph 32 must still be warned about, not refused ---
     $spacey = New-Object byte[] 768
     $spacey[0] = 0x01
-    $inSp = "$tmp\g5.ch8"
+    $inSp = "$tmp/g5.ch8"
     [System.IO.File]::WriteAllBytes($inSp, $spacey)
-    $warn = & $conv -In $inSp -Out "$tmp\g5.CHR" 3>&1 2>&1 | Out-String
-    Assert-Eq ((Get-Item "$tmp\g5.CHR").Length) 2048 'G5 non-blank glyph 32 still converts'
+    $warn = & $conv -In $inSp -Out "$tmp/g5.CHR" 3>&1 2>&1 | Out-String
+    Assert-Eq ((Get-Item "$tmp/g5.CHR").Length) 2048 'G5 non-blank glyph 32 still converts'
     $script:checks++
     if ($warn -notmatch 'glyph 32') { throw "G5 : expected a glyph 32 warning, got: $warn" }
 
@@ -115,10 +115,10 @@ try {
     $zx = New-Object byte[] 768
     [System.Array]::Copy($ch96,  0, $zx, (96-32)*8,  8)
     [System.Array]::Copy($ch127, 0, $zx, (127-32)*8, 8)
-    $inZx = "$tmp\g6.ch8"
+    $inZx = "$tmp/g6.ch8"
     [System.IO.File]::WriteAllBytes($inZx, $zx)
-    $g6msg = & $conv -In $inZx -Out "$tmp\g6.CHR" | Out-String
-    $g6 = [System.IO.File]::ReadAllBytes("$tmp\g6.CHR")
+    $g6msg = & $conv -In $inZx -Out "$tmp/g6.CHR" | Out-String
+    $g6 = [System.IO.File]::ReadAllBytes("$tmp/g6.CHR")
     Assert-Bytes $g6[768..775]   $ch96  'G6 glyph 96 kept from the source, not the base font'
     Assert-Bytes $g6[1016..1023] $ch127 'G6 glyph 127 kept from the source, not the base font'
     Assert-Bytes $g6[1792..1799] $ch96  'G6 glyph 224 mirrors the source pound'
@@ -131,10 +131,10 @@ try {
     # pound, not the fixture's marker.
     $raw7 = New-Object byte[] 896
     [System.Array]::Copy($ch96, 0, $raw7, (96-16)*8, 8)
-    $inRaw7 = "$tmp\g7.fnt"
+    $inRaw7 = "$tmp/g7.fnt"
     [System.IO.File]::WriteAllBytes($inRaw7, $raw7)
-    $g7msg = & $conv -In $inRaw7 -Out "$tmp\g7.CHR" -First 16 | Out-String
-    $g7 = [System.IO.File]::ReadAllBytes("$tmp\g7.CHR")
+    $g7msg = & $conv -In $inRaw7 -Out "$tmp/g7.CHR" -First 16 | Out-String
+    $g7 = [System.IO.File]::ReadAllBytes("$tmp/g7.CHR")
     Assert-Bytes $g7[768..775]   $baseBytes[768..775]   'G7 a raw dump at another length still takes glyph 96 from the base font'
     Assert-Bytes $g7[1016..1023] $baseBytes[1016..1023] 'G7 the same for glyph 127'
     $script:checks++
@@ -143,8 +143,8 @@ try {
     # --- G8 -Slots Source keeps the PC glyphs at 96 and 127 ---
     # G7's fixture, with -Slots Source as the only difference - the
     # escape hatch on a shape that is not exempt.
-    $g8msg = & $conv -In $inRaw7 -Out "$tmp\g8.CHR" -First 16 -Slots Source | Out-String
-    $g8 = [System.IO.File]::ReadAllBytes("$tmp\g8.CHR")
+    $g8msg = & $conv -In $inRaw7 -Out "$tmp/g8.CHR" -First 16 -Slots Source | Out-String
+    $g8 = [System.IO.File]::ReadAllBytes("$tmp/g8.CHR")
     Assert-Bytes $g8[768..775] $ch96 'G8 -Slots Source keeps the source glyph 96'
     # The Source path must name itself in the output line too, same as ZX.
     $script:checks++
@@ -227,7 +227,7 @@ try {
     # Expected bytes were read from the file itself, not recalled.
     $cga = "$env:WINDIR\Fonts\cga80woa.fon"
     if (Test-Path $cga) {
-        $outF = "$tmp\f1.CHR"
+        $outF = "$tmp/f1.CHR"
         & $conv -In $cga -Out $outF | Out-Null
         $f1 = [System.IO.File]::ReadAllBytes($outF)
         Assert-Eq $f1.Length 2048 'F1 output size'
@@ -250,12 +250,12 @@ try {
     # 8x14 face, ink on row 8. Refused for the ink overrun, not the
     # height declaration alone - F6 is the twin with ink kept in 8 rows,
     # which must convert.
-    $inTall = "$tmp\f2.fon"
+    $inTall = "$tmp/f2.fon"
     [System.IO.File]::WriteAllBytes($inTall, (New-FonBytes @(
         @{ Height = 14; Charset = 0x00; First = 33; Last = 127; Rows = (New-FonTextRows 14 0xFF) })))
-    Assert-Throws { & $conv -In $inTall -Out "$tmp\f2.CHR" } 'ink that fits an 8x8 cell' `
+    Assert-Throws { & $conv -In $inTall -Out "$tmp/f2.CHR" } 'ink that fits an 8x8 cell' `
         'F2 a 14-row face whose ink overruns the cell is refused'
-    Assert-Throws { & $conv -In $inTall -Out "$tmp\f2.CHR" } '8x14' `
+    Assert-Throws { & $conv -In $inTall -Out "$tmp/f2.CHR" } '8x14' `
         'F2 the refusal lists the declared cell of every face'
 
     # Bonus check on a real 14-row face, if this machine has the font
@@ -263,7 +263,7 @@ try {
     $pack = "D:\Urban Upstart\fonts\oldschool_pc_font_pack_v2.2_FULL\fon - Bm (windows bitmap)"
     $tall = Join-Path $pack 'Bm437_IBM_EGA_8x14.FON'
     if (Test-Path $tall) {
-        Assert-Throws { & $conv -In $tall -Out "$tmp\f2pack.CHR" } 'does not fit|8x8' `
+        Assert-Throws { & $conv -In $tall -Out "$tmp/f2pack.CHR" } 'does not fit|8x8' `
             'F2 a real 14-row face is refused'
     }
     else {
@@ -282,9 +282,9 @@ try {
         $bb[100] = 0xFF; $bb[101] = 0xFF                # rsrcRel: resource table way past EOF
         return $bb
     }
-    $inTrunc = "$tmp\f3.fon"
+    $inTrunc = "$tmp/f3.fon"
     [System.IO.File]::WriteAllBytes($inTrunc, (New-TruncatedFonBytes))
-    Assert-Throws { & $conv -In $inTrunc -Out "$tmp\f3.CHR" } 'fontconv:' `
+    Assert-Throws { & $conv -In $inTrunc -Out "$tmp/f3.CHR" } 'fontconv:' `
         'F3 a truncated FON is refused, not an unhandled exception'
 
     # --- F4/F5 a glyph the source declares wider than 8px: refused
@@ -314,15 +314,15 @@ try {
         return $bb
     }
 
-    $inWide = "$tmp\f4.fon"
+    $inWide = "$tmp/f4.fon"
     [System.IO.File]::WriteAllBytes($inWide, (New-OverWideFonBytes 65))
-    Assert-Throws { & $conv -In $inWide -Out "$tmp\f4.CHR" } '65' `
+    Assert-Throws { & $conv -In $inWide -Out "$tmp/f4.CHR" } '65' `
         'F4 an over-width glyph inside 32-127 is refused, naming the code'
 
-    $inWideDeco = "$tmp\f5.fon"
+    $inWideDeco = "$tmp/f5.fon"
     [System.IO.File]::WriteAllBytes($inWideDeco, (New-OverWideFonBytes 200))
-    $f5msg = & $conv -In $inWideDeco -Out "$tmp\f5.CHR" | Out-String
-    Assert-Eq ((Get-Item "$tmp\f5.CHR").Length) 2048 'F5 an over-width glyph outside 32-127 still converts'
+    $f5msg = & $conv -In $inWideDeco -Out "$tmp/f5.CHR" | Out-String
+    Assert-Eq ((Get-Item "$tmp/f5.CHR").Length) 2048 'F5 an over-width glyph outside 32-127 still converts'
     $script:checks++
     if ($f5msg -notmatch 'decorative glyph') { throw "F5 : expected a dropped-glyph note, got: $f5msg" }
 
@@ -330,11 +330,11 @@ try {
     #     cell ---
     # F2's twin: same over-height declaration (9 rows) but ink stops at
     # row 7, so this one must convert. Measured, not declared.
-    $inFits = "$tmp\f6.fon"
+    $inFits = "$tmp/f6.fon"
     [System.IO.File]::WriteAllBytes($inFits, (New-FonBytes @(
         @{ Height = 9; Charset = 0x00; First = 33; Last = 127; Rows = (New-FonTextRows 9 0x00) })))
-    $f6msg = & $conv -In $inFits -Out "$tmp\f6.CHR" | Out-String
-    $f6 = [System.IO.File]::ReadAllBytes("$tmp\f6.CHR")
+    $f6msg = & $conv -In $inFits -Out "$tmp/f6.CHR" | Out-String
+    $f6 = [System.IO.File]::ReadAllBytes("$tmp/f6.CHR")
     Assert-Eq $f6.Length 2048 'F6 a 9-row face whose ink fits 8 rows is accepted'
     Assert-Bytes $f6[520..527]   $fonPat 'F6 glyph 65 taken from the top 8 rows'
     Assert-Bytes $f6[1544..1551] $fonPat 'F6 glyph 193 mirrored'
@@ -345,34 +345,34 @@ try {
     # Two faces: 0 (8x14, unusable) and 1 (8x9, usable). Auto-selection
     # must find face 1, so the negative -Face checks below must target
     # face 0 to be meaningful - selecting nothing would look like a pass.
-    $inTwo = "$tmp\f7.fon"
+    $inTwo = "$tmp/f7.fon"
     [System.IO.File]::WriteAllBytes($inTwo, (New-FonBytes @(
         @{ Height = 14; Charset = 0x00; First = 33; Last = 127; Rows = (New-FonTextRows 14 0xFF) },
         @{ Height =  9; Charset = 0x00; First = 33; Last = 127; Rows = (New-FonTextRows 9 0x00) })))
-    $f7msg = & $conv -In $inTwo -Out "$tmp\f7.CHR" | Out-String
-    Assert-Bytes ([System.IO.File]::ReadAllBytes("$tmp\f7.CHR"))[520..527] $fonPat `
+    $f7msg = & $conv -In $inTwo -Out "$tmp/f7.CHR" | Out-String
+    Assert-Bytes ([System.IO.File]::ReadAllBytes("$tmp/f7.CHR"))[520..527] $fonPat `
         'F7 with no -Face the usable face is found even though the taller one is declared first'
     $script:checks++
     if ($f7msg -notmatch 'cell=8x9') { throw "F7 : expected face 1 to be chosen, got: $f7msg" }
 
     # The index form, on the face that works.
-    & $conv -In $inTwo -Out "$tmp\f7i.CHR" -Face 1 | Out-Null
-    Assert-Bytes ([System.IO.File]::ReadAllBytes("$tmp\f7i.CHR"))[520..527] $fonPat `
+    & $conv -In $inTwo -Out "$tmp/f7i.CHR" -Face 1 | Out-Null
+    Assert-Bytes ([System.IO.File]::ReadAllBytes("$tmp/f7i.CHR"))[520..527] $fonPat `
         'F7 -Face 1 selects face 1 by index'
     # Both forms now target the unusable face - the refusal proves each
     # form reached it.
-    Assert-Throws { & $conv -In $inTwo -Out "$tmp\f7x.CHR" -Face 0 } 'does not fit' `
+    Assert-Throws { & $conv -In $inTwo -Out "$tmp/f7x.CHR" -Face 0 } 'does not fit' `
         'F7 -Face 0 selects the unusable face by index rather than falling back'
-    Assert-Throws { & $conv -In $inTwo -Out "$tmp\f7x.CHR" -Face 8x14 } 'does not fit' `
+    Assert-Throws { & $conv -In $inTwo -Out "$tmp/f7x.CHR" -Face 8x14 } 'does not fit' `
         'F7 -Face 8x14 selects the unusable face by cell size'
     # A -Face matching nothing lists what was on offer.
-    Assert-Throws { & $conv -In $inTwo -Out "$tmp\f7x.CHR" -Face 9x9 } 'matches nothing' `
+    Assert-Throws { & $conv -In $inTwo -Out "$tmp/f7x.CHR" -Face 9x9 } 'matches nothing' `
         'F7 -Face 9x9 matches nothing and says so'
-    Assert-Throws { & $conv -In $inTwo -Out "$tmp\f7x.CHR" -Face 9x9 } '0: 8x14; 1: 8x9' `
+    Assert-Throws { & $conv -In $inTwo -Out "$tmp/f7x.CHR" -Face 9x9 } '0: 8x14; 1: 8x9' `
         'F7 the -Face refusal lists every face with its index'
     # An out-of-range index is a fontconv: refusal, not a raw .NET
     # exception - same treatment as BDF header numbers (B5).
-    Assert-Throws { & $conv -In $inTwo -Out "$tmp\f7x.CHR" -Face 99999999999999 } 'fontconv:' `
+    Assert-Throws { & $conv -In $inTwo -Out "$tmp/f7x.CHR" -Face 99999999999999 } 'fontconv:' `
         'F7 an out-of-range -Face index is refused with a fontconv: message'
 
     # --- F8 a FON whose glyph data runs past the end of the file ---
@@ -382,11 +382,11 @@ try {
     $truncBytes = New-FonBytes @(
         @{ Height = 9; Charset = 0x00; First = 65; Last = 66; Rows = @{ 65 = (New-FonGlyph 9 0x00); 66 = (New-FonGlyph 9 0x00) } })
     Set-U16 $truncBytes (1024 + 118 + 2) (4090)          # code 65's geOffset, 9 rows from there run off the end
-    $inTrunc2 = "$tmp\f8.fon"
+    $inTrunc2 = "$tmp/f8.fon"
     [System.IO.File]::WriteAllBytes($inTrunc2, $truncBytes)
-    Assert-Throws { & $conv -In $inTrunc2 -Out "$tmp\f8.CHR" } 'truncated' `
+    Assert-Throws { & $conv -In $inTrunc2 -Out "$tmp/f8.CHR" } 'truncated' `
         'F8 a FON glyph running past the end of the file is refused, not silently left as the base font'
-    Assert-Throws { & $conv -In $inTrunc2 -Out "$tmp\f8.CHR" } '65' `
+    Assert-Throws { & $conv -In $inTrunc2 -Out "$tmp/f8.CHR" } '65' `
         'F8 the truncation refusal names the code'
 
     # --- F9 the same truncation outside 32-127 is decorative: dropped
@@ -394,10 +394,10 @@ try {
     $truncDeco = New-FonBytes @(
         @{ Height = 9; Charset = 0x00; First = 200; Last = 201; Rows = @{ 200 = (New-FonGlyph 9 0x00); 201 = (New-FonGlyph 9 0x00) } })
     Set-U16 $truncDeco (1024 + 118 + 2) (4090)
-    $inTruncDeco = "$tmp\f9.fon"
+    $inTruncDeco = "$tmp/f9.fon"
     [System.IO.File]::WriteAllBytes($inTruncDeco, $truncDeco)
-    $f9msg = & $conv -In $inTruncDeco -Out "$tmp\f9.CHR" | Out-String
-    Assert-Eq ((Get-Item "$tmp\f9.CHR").Length) 2048 'F9 a truncated glyph outside 32-127 still converts'
+    $f9msg = & $conv -In $inTruncDeco -Out "$tmp/f9.CHR" | Out-String
+    Assert-Eq ((Get-Item "$tmp/f9.CHR").Length) 2048 'F9 a truncated glyph outside 32-127 still converts'
     $script:checks++
     if ($f9msg -notmatch 'dropped') { throw "F9 : expected a dropped-glyph note, got: $f9msg" }
 
@@ -407,11 +407,11 @@ try {
     # and clipped into glyph 96; the base font's pound is used instead.
     $lift = @{}
     $lift[156] = (New-FonGlyph 9 0xFF)
-    $inPound = "$tmp\f10.fon"
+    $inPound = "$tmp/f10.fon"
     [System.IO.File]::WriteAllBytes($inPound, (New-FonBytes @(
         @{ Height = 9; Charset = 0xFF; First = 156; Last = 156; Rows = $lift })))
-    $f10msg = & $conv -In $inPound -Out "$tmp\f10.CHR" | Out-String
-    $f10 = [System.IO.File]::ReadAllBytes("$tmp\f10.CHR")
+    $f10msg = & $conv -In $inPound -Out "$tmp/f10.CHR" | Out-String
+    $f10 = [System.IO.File]::ReadAllBytes("$tmp/f10.CHR")
     Assert-Bytes $f10[768..775] $baseBytes[768..775] `
         'F10 a slot 156 whose ink overruns the cell is not lifted, clipped, into glyph 96'
     $script:checks++
@@ -422,17 +422,17 @@ try {
     # --- F11 a JSJ SINTAC font is recognised and refused by name ---
     # Per-character width tables, not a fixed cell - nothing to copy
     # across, so it must be named and refused rather than mis-read raw.
-    $inSintac = "$tmp\f11.fnt"
+    $inSintac = "$tmp/f11.fnt"
     [System.IO.File]::WriteAllBytes($inSintac, [System.Text.Encoding]::ASCII.GetBytes('JSJ SINTAC'))
-    Assert-Throws { & $conv -In $inSintac -Out "$tmp\f11.CHR" } 'SINTAC' `
+    Assert-Throws { & $conv -In $inSintac -Out "$tmp/f11.CHR" } 'SINTAC' `
         'F11 a JSJ SINTAC font is refused by name'
-    Assert-Throws { & $conv -In $inSintac -Out "$tmp\f11.CHR" } 'AD8x8' `
+    Assert-Throws { & $conv -In $inSintac -Out "$tmp/f11.CHR" } 'AD8x8' `
         'F11 the SINTAC refusal names the ready-made table to use instead'
 
     # --- R1 a raw dump placed where the table draws nothing from it ---
     # -First 300 puts all glyphs at 300-411, outside every range the slot
     # map draws from - must refuse rather than report a false success.
-    Assert-Throws { & $conv -In $inRaw -Out "$tmp\r1.CHR" -First 300 } '16-31, 32-127 and 128-159' `
+    Assert-Throws { & $conv -In $inRaw -Out "$tmp/r1.CHR" -First 300 } '16-31, 32-127 and 128-159' `
         'R1 a -First that lands no glyph in 16-159 is refused, not a silent no-op'
 
     # R1's other half: the slot map also draws 16-31 and 128-159 from a
@@ -442,26 +442,26 @@ try {
     $rmk = [byte[]](0x7E,0x81,0xA5,0x81,0xBD,0x99,0x81,0x7E)
     [System.Array]::Copy($rmk, 0, $r16, 0, 8)             # the first glyph
     [System.Array]::Copy($rmk, 0, $r16, 15 * 8, 8)        # and the last
-    $inR16 = "$tmp\r1b.fnt"
+    $inR16 = "$tmp/r1b.fnt"
     [System.IO.File]::WriteAllBytes($inR16, $r16)
-    & $conv -In $inR16 -Out "$tmp\r1b.CHR" -First 16 | Out-Null
-    $rb16 = [System.IO.File]::ReadAllBytes("$tmp\r1b.CHR")
+    & $conv -In $inR16 -Out "$tmp/r1b.CHR" -First 16 | Out-Null
+    $rb16 = [System.IO.File]::ReadAllBytes("$tmp/r1b.CHR")
     Assert-Bytes $rb16[128..135] $rmk 'R1 -First 16 places the first glyph at code 16'
     Assert-Bytes $rb16[248..255] $rmk 'R1 -First 16 places the last glyph at code 31'
-    & $conv -In $inR16 -Out "$tmp\r1c.CHR" -First 128 | Out-Null
-    $rb128 = [System.IO.File]::ReadAllBytes("$tmp\r1c.CHR")
+    & $conv -In $inR16 -Out "$tmp/r1c.CHR" -First 128 | Out-Null
+    $rb128 = [System.IO.File]::ReadAllBytes("$tmp/r1c.CHR")
     Assert-Bytes $rb128[1024..1031] $rmk 'R1 -First 128 places the first glyph at code 128'
     Assert-Bytes $rb128[1144..1151] $rmk 'R1 -First 128 places the last glyph at code 143'
 
     # --- R2 a length that is not a multiple of 8 is diagnosed first ---
     # 901 bytes can never be a glyph table - refused for length before
     # -First is ever suggested.
-    $in901 = "$tmp\r2.fnt"
+    $in901 = "$tmp/r2.fnt"
     [System.IO.File]::WriteAllBytes($in901, (New-Object byte[] 901))
-    Assert-Throws { & $conv -In $in901 -Out "$tmp\r2.CHR" } 'multiple of 8' `
+    Assert-Throws { & $conv -In $in901 -Out "$tmp/r2.CHR" } 'multiple of 8' `
         'R2 a 901-byte raw file is refused for its length, not sent away for -First'
     # And the glyph count in the -First message is whole, not 112.625.
-    Assert-Throws { & $conv -In $inRaw -Out "$tmp\r2.CHR" } '\(112 glyphs\)' `
+    Assert-Throws { & $conv -In $inRaw -Out "$tmp/r2.CHR" } '\(112 glyphs\)' `
         'R2 the -First message counts whole glyphs'
 
     # --- P1 PSF1, generated here from known bytes ---
@@ -470,10 +470,10 @@ try {
     $p1 = New-Object byte[] (4 + 256*8)
     $p1[0] = 0x36; $p1[1] = 0x04; $p1[2] = 0x00; $p1[3] = 0x08
     [System.Array]::Copy($mk, 0, $p1, 4 + 65*8, 8)
-    $inP1 = "$tmp\p1.psf"
+    $inP1 = "$tmp/p1.psf"
     [System.IO.File]::WriteAllBytes($inP1, $p1)
-    & $conv -In $inP1 -Out "$tmp\p1.CHR" | Out-Null
-    $rp1 = [System.IO.File]::ReadAllBytes("$tmp\p1.CHR")
+    & $conv -In $inP1 -Out "$tmp/p1.CHR" | Out-Null
+    $rp1 = [System.IO.File]::ReadAllBytes("$tmp/p1.CHR")
     Assert-Bytes $rp1[520..527]   $mk 'P1 PSF1 glyph 65'
     Assert-Bytes $rp1[1544..1551] $mk 'P1 PSF1 glyph 193 mirrored'
 
@@ -488,10 +488,10 @@ try {
     [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p2, 24, 4)  # height
     [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p2, 28, 4)  # width
     [System.Array]::Copy($mk, 0, $p2, 32 + 65*8, 8)
-    $inP2 = "$tmp\p2.psfu"
+    $inP2 = "$tmp/p2.psfu"
     [System.IO.File]::WriteAllBytes($inP2, $p2)
-    & $conv -In $inP2 -Out "$tmp\p2.CHR" | Out-Null
-    $rp2 = [System.IO.File]::ReadAllBytes("$tmp\p2.CHR")
+    & $conv -In $inP2 -Out "$tmp/p2.CHR" | Out-Null
+    $rp2 = [System.IO.File]::ReadAllBytes("$tmp/p2.CHR")
     Assert-Bytes $rp2[520..527]   $mk 'P2 PSF2 glyph 65'
     Assert-Bytes $rp2[1544..1551] $mk 'P2 PSF2 glyph 193 mirrored'
 
@@ -501,9 +501,9 @@ try {
     [System.Array]::Copy([BitConverter]::GetBytes([int]16), 0, $p3, 20, 4)
     [System.Array]::Copy([BitConverter]::GetBytes([int]16), 0, $p3, 24, 4)
     for ($c = 32; $c -lt 128; $c++) { $p3[32 + $c*16 + 12] = 0xFF }   # ink on row 12
-    $inP3 = "$tmp\p3.psfu"
+    $inP3 = "$tmp/p3.psfu"
     [System.IO.File]::WriteAllBytes($inP3, $p3)
-    Assert-Throws { & $conv -In $inP3 -Out "$tmp\p3.CHR" } 'does not fit' 'P3 a 16-row PSF2 is refused'
+    Assert-Throws { & $conv -In $inP3 -Out "$tmp/p3.CHR" } 'does not fit' 'P3 a 16-row PSF2 is refused'
 
     # --- P4 the gate measures ink, it does not read the header ---
     # P3's twin: same 16-row declaration, ink stops at row 7, so this
@@ -514,10 +514,10 @@ try {
         if ($c -eq 32) { continue }                       # glyph 32 stays blank
         [System.Array]::Copy($mk, 0, $p4, 32 + $c*16, 8)  # ink in rows 0-7 only
     }
-    $inP4 = "$tmp\p4.psfu"
+    $inP4 = "$tmp/p4.psfu"
     [System.IO.File]::WriteAllBytes($inP4, $p4)
-    & $conv -In $inP4 -Out "$tmp\p4.CHR" | Out-Null
-    $rp4 = [System.IO.File]::ReadAllBytes("$tmp\p4.CHR")
+    & $conv -In $inP4 -Out "$tmp/p4.CHR" | Out-Null
+    $rp4 = [System.IO.File]::ReadAllBytes("$tmp/p4.CHR")
     Assert-Eq $rp4.Length 2048 'P4 a 16-row declaration whose ink fits 8 rows is accepted'
     Assert-Bytes $rp4[520..527]   $mk 'P4 glyph 65 taken from the top 8 rows'
     Assert-Bytes $rp4[1544..1551] $mk 'P4 glyph 193 mirrored'
@@ -535,9 +535,9 @@ try {
     [System.Array]::Copy([BitConverter]::GetBytes([int]16),  0, $p5, 20, 4)  # charsize
     [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p5, 24, 4)  # height
     [System.Array]::Copy([BitConverter]::GetBytes([int]16),  0, $p5, 28, 4)  # width
-    $inP5 = "$tmp\p5.psfu"
+    $inP5 = "$tmp/p5.psfu"
     [System.IO.File]::WriteAllBytes($inP5, $p5)
-    Assert-Throws { & $conv -In $inP5 -Out "$tmp\p5.CHR" } 'declares a cell 16 pixels wide' `
+    Assert-Throws { & $conv -In $inP5 -Out "$tmp/p5.CHR" } 'declares a cell 16 pixels wide' `
         'P5 a PSF2 wider than 8px is refused, not cropped'
     # P2 above already proves width 8 still converts - not duplicated here.
 
@@ -546,19 +546,19 @@ try {
     # glyphs and must be refused, naming 512.
     $p6short = New-Object byte[] (4 + 256*8)
     $p6short[0] = 0x36; $p6short[1] = 0x04; $p6short[2] = 0x01; $p6short[3] = 0x08
-    $inP6s = "$tmp\p6short.psf"
+    $inP6s = "$tmp/p6short.psf"
     [System.IO.File]::WriteAllBytes($inP6s, $p6short)
-    Assert-Throws { & $conv -In $inP6s -Out "$tmp\p6short.CHR" } '512' `
+    Assert-Throws { & $conv -In $inP6s -Out "$tmp/p6short.CHR" } '512' `
         'P6a mode bit 0 requires 512 glyphs; a 256-glyph file is refused'
 
     # P6b: the full-size twin, 512 glyphs - must convert exactly as P1 did.
     $p6 = New-Object byte[] (4 + 512*8)
     $p6[0] = 0x36; $p6[1] = 0x04; $p6[2] = 0x01; $p6[3] = 0x08
     [System.Array]::Copy($mk, 0, $p6, 4 + 65*8, 8)
-    $inP6 = "$tmp\p6.psf"
+    $inP6 = "$tmp/p6.psf"
     [System.IO.File]::WriteAllBytes($inP6, $p6)
-    & $conv -In $inP6 -Out "$tmp\p6.CHR" | Out-Null
-    $rp6 = [System.IO.File]::ReadAllBytes("$tmp\p6.CHR")
+    & $conv -In $inP6 -Out "$tmp/p6.CHR" | Out-Null
+    $rp6 = [System.IO.File]::ReadAllBytes("$tmp/p6.CHR")
     Assert-Bytes $rp6[520..527]   $mk 'P6b 512-glyph PSF1 glyph 65'
     Assert-Bytes $rp6[1544..1551] $mk 'P6b 512-glyph PSF1 glyph 193 mirrored'
 
@@ -605,10 +605,10 @@ BITMAP
 ENDCHAR
 ENDFONT
 '@
-    $inB = "$tmp\b1.bdf"
+    $inB = "$tmp/b1.bdf"
     Set-Content -LiteralPath $inB -Value $bdf -Encoding ascii
-    & $conv -In $inB -Out "$tmp\b1.CHR" | Out-Null
-    $rb = [System.IO.File]::ReadAllBytes("$tmp\b1.CHR")
+    & $conv -In $inB -Out "$tmp/b1.CHR" | Out-Null
+    $rb = [System.IO.File]::ReadAllBytes("$tmp/b1.CHR")
     Assert-Bytes $rb[520..527] ([byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0xFF,0x00)) 'B1 A on the baseline, rows 0-6'
     Assert-Bytes $rb[824..831] ([byte[]](0x00,0x3C,0x42,0x42,0x3C,0x02,0x02,0x3C)) 'B1 g dropped one row, rows 1-7'
     Assert-Bytes $rb[1544..1551] ([byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0xFF,0x00)) 'B1 glyph 193 mirrors A'
@@ -645,14 +645,14 @@ ENDCHAR
 ENDFONT
 "@
     }
-    $inB2 = "$tmp\b2.bdf"
+    $inB2 = "$tmp/b2.bdf"
     Set-Content -LiteralPath $inB2 -Value (New-WideBdf 65) -Encoding ascii
-    Assert-Throws { & $conv -In $inB2 -Out "$tmp\b2.CHR" } '65' `
+    Assert-Throws { & $conv -In $inB2 -Out "$tmp/b2.CHR" } '65' `
         'B2 a 12-wide glyph at code 65 is refused, naming the code'
-    $inB3 = "$tmp\b3.bdf"
+    $inB3 = "$tmp/b3.bdf"
     Set-Content -LiteralPath $inB3 -Value (New-WideBdf 200) -Encoding ascii
-    $b3out = & $conv -In $inB3 -Out "$tmp\b3.CHR" | Out-String
-    Assert-Eq ((Get-Item "$tmp\b3.CHR").Length) 2048 'B3 a 12-wide glyph at code 200 still converts'
+    $b3out = & $conv -In $inB3 -Out "$tmp/b3.CHR" | Out-String
+    Assert-Eq ((Get-Item "$tmp/b3.CHR").Length) 2048 'B3 a 12-wide glyph at code 200 still converts'
     $script:checks++
     if ($b3out -notmatch 'dropped') { throw "B3 : expected the dropped-glyph note, got: $b3out" }
 
@@ -699,9 +699,9 @@ FF
 ENDCHAR
 ENDFONT
 '@
-    $inB4 = "$tmp\b4.bdf"
+    $inB4 = "$tmp/b4.bdf"
     Set-Content -LiteralPath $inB4 -Value $bdfNoBbx -Encoding ascii
-    Assert-Throws { & $conv -In $inB4 -Out "$tmp\b4.CHR" } '66' `
+    Assert-Throws { & $conv -In $inB4 -Out "$tmp/b4.CHR" } '66' `
         'B4 a glyph missing its own BBX is refused, naming the code, not inherited from the previous glyph'
 
     # --- B5 an implausible FONT_ASCENT is refused with a fontconv:
@@ -734,9 +734,9 @@ FF
 ENDCHAR
 ENDFONT
 '@
-    $inB5 = "$tmp\b5.bdf"
+    $inB5 = "$tmp/b5.bdf"
     Set-Content -LiteralPath $inB5 -Value $bdfBigAscent -Encoding ascii
-    Assert-Throws { & $conv -In $inB5 -Out "$tmp\b5.CHR" } 'fontconv:' `
+    Assert-Throws { & $conv -In $inB5 -Out "$tmp/b5.CHR" } 'fontconv:' `
         'B5 an implausible FONT_ASCENT is refused with a fontconv: message'
 
     # --- B6 a malformed BITMAP row is refused rather than silently
@@ -767,9 +767,9 @@ FF
 ENDCHAR
 ENDFONT
 '@
-    $inB6 = "$tmp\b6.bdf"
+    $inB6 = "$tmp/b6.bdf"
     Set-Content -LiteralPath $inB6 -Value $bdfBadRow -Encoding ascii
-    Assert-Throws { & $conv -In $inB6 -Out "$tmp\b6.CHR" } 'fontconv:.*malformed BITMAP row' `
+    Assert-Throws { & $conv -In $inB6 -Out "$tmp/b6.CHR" } 'fontconv:.*malformed BITMAP row' `
         'B6 a malformed BITMAP row is refused, not read as a blank row'
 
     # --- S1 a gfx2next -font .spr needs no parser of its own ---
@@ -781,10 +781,10 @@ ENDFONT
     [System.Array]::Copy($baseBytes, 32*8, $spr, 0, 768)
     [System.Array]::Copy($sprMark,   0, $spr, (65-32)*8, 8)
     [System.Array]::Copy($poundMark, 0, $spr, (96-32)*8, 8)
-    $inSpr = "$tmp\s1.spr"
+    $inSpr = "$tmp/s1.spr"
     [System.IO.File]::WriteAllBytes($inSpr, $spr)
-    & $conv -In $inSpr -Out "$tmp\s1.CHR" | Out-Null
-    $s1 = [System.IO.File]::ReadAllBytes("$tmp\s1.CHR")
+    & $conv -In $inSpr -Out "$tmp/s1.CHR" | Out-Null
+    $s1 = [System.IO.File]::ReadAllBytes("$tmp/s1.CHR")
     Assert-Eq $s1.Length 2048 'S1 a 768-byte gfx2next .spr converts'
     Assert-Bytes $s1[520..527]   $sprMark   'S1 glyph 65 from the .spr'
     Assert-Bytes $s1[1544..1551] $sprMark   'S1 glyph 193 mirrored'
@@ -802,9 +802,9 @@ ENDFONT
             }
         }
     }
-    $inY = "$tmp\s2.spr"
+    $inY = "$tmp/s2.spr"
     [System.IO.File]::WriteAllBytes($inY, $yorder)
-    $yWarn = & $conv -In $inY -Out "$tmp\s2.CHR" 3>&1 2>&1 | Out-String
+    $yWarn = & $conv -In $inY -Out "$tmp/s2.CHR" 3>&1 2>&1 | Out-String
     $script:checks++
     if ($yWarn -notmatch 'glyph 32') { throw "S2 : expected the glyph 32 warning on a Y-ordered .spr, got: $yWarn" }
     $script:checks++
@@ -843,10 +843,10 @@ u+0041:
     .@...@..
     ........
 '@
-    $inY1 = "$tmp\y1.yaff"
+    $inY1 = "$tmp/y1.yaff"
     Set-Content -LiteralPath $inY1 -Value $yaff -Encoding utf8
-    $y1msg = & $conv -In $inY1 -Out "$tmp\y1.CHR" 3>&1 2>&1 | Out-String
-    $y1 = [System.IO.File]::ReadAllBytes("$tmp\y1.CHR")
+    $y1msg = & $conv -In $inY1 -Out "$tmp/y1.CHR" 3>&1 2>&1 | Out-String
+    $y1 = [System.IO.File]::ReadAllBytes("$tmp/y1.CHR")
     $yA = [byte[]](0x38,0x44,0x44,0x7C,0x44,0x44,0x44,0x00)
     Assert-Eq $y1.Length 2048 'Y1 output size'
     Assert-Bytes $y1[520..527]   $yA 'Y1 glyph 65 from the YAFF rows'
@@ -903,19 +903,19 @@ encoding: $encoding
     $box  = [byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0x81,0xFF)
     $full = [byte[]](0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF)
     $lb   = [byte[]](0x18,0x24,0x20,0x78,0x20,0x20,0x7C,0x00)
-    $inY2 = "$tmp\y2.yaff"
+    $inY2 = "$tmp/y2.yaff"
     Set-Content -LiteralPath $inY2 -Value (New-SlotYaff 'zx-spectrum') -Encoding utf8
-    $y2msg = & $conv -In $inY2 -Out "$tmp\y2.CHR" | Out-String
-    $y2 = [System.IO.File]::ReadAllBytes("$tmp\y2.CHR")
+    $y2msg = & $conv -In $inY2 -Out "$tmp/y2.CHR" | Out-String
+    $y2 = [System.IO.File]::ReadAllBytes("$tmp/y2.CHR")
     Assert-Bytes $y2[768..775]   $box  'Y2 zx-spectrum: glyph 96 kept from the source'
     Assert-Bytes $y2[1016..1023] $full 'Y2 zx-spectrum: glyph 127 kept from the source'
     $script:checks++
     if ($y2msg -notmatch 'kept from the source') { throw "Y2 : expected the ZX charset note, got: $y2msg" }
 
-    $inY3 = "$tmp\y3.yaff"
+    $inY3 = "$tmp/y3.yaff"
     Set-Content -LiteralPath $inY3 -Value (New-SlotYaff 'cp437') -Encoding utf8
-    $y3msg = & $conv -In $inY3 -Out "$tmp\y3.CHR" | Out-String
-    $y3 = [System.IO.File]::ReadAllBytes("$tmp\y3.CHR")
+    $y3msg = & $conv -In $inY3 -Out "$tmp/y3.CHR" | Out-String
+    $y3 = [System.IO.File]::ReadAllBytes("$tmp/y3.CHR")
     Assert-Bytes $y3[768..775]   $lb 'Y3 cp437: glyph 96 lifted from the source''s slot 156'
     Assert-Bytes $y3[1016..1023] $baseBytes[1016..1023] 'Y3 cp437: glyph 127 from the base font'
     $script:checks++
@@ -993,10 +993,10 @@ u+0089:
     ........
     ........
 '@
-    $inY4 = "$tmp\y4.yaff"
+    $inY4 = "$tmp/y4.yaff"
     Set-Content -LiteralPath $inY4 -Value $yaffLabels -Encoding utf8
-    & $conv -In $inY4 -Out "$tmp\y4.CHR" | Out-Null
-    $y4 = [System.IO.File]::ReadAllBytes("$tmp\y4.CHR")
+    & $conv -In $inY4 -Out "$tmp/y4.CHR" | Out-Null
+    $y4 = [System.IO.File]::ReadAllBytes("$tmp/y4.CHR")
     Assert-Eq $y4[66*8] 0xFF 'Y4 u+0042 alone lands at 66'
     Assert-Eq $y4[67*8] 0x7F "Y4 'C' literal lands at 67"
     Assert-Eq $y4[68*8] 0x3F 'Y4 decimal 68 lands at 68'
@@ -1048,10 +1048,10 @@ descent: 1
     left-bearing: 3
     right-bearing: 1
 '@
-    $inY5 = "$tmp\y5.yaff"
+    $inY5 = "$tmp/y5.yaff"
     Set-Content -LiteralPath $inY5 -Value $yaffProp -Encoding utf8
-    & $conv -In $inY5 -Out "$tmp\y5.CHR" | Out-Null
-    $y5 = [System.IO.File]::ReadAllBytes("$tmp\y5.CHR")
+    & $conv -In $inY5 -Out "$tmp/y5.CHR" | Out-Null
+    $y5 = [System.IO.File]::ReadAllBytes("$tmp/y5.CHR")
     Assert-Bytes $y5[520..527] ([byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0xFF,0x00)) 'Y5 A on the baseline, rows 0-6'
     Assert-Bytes $y5[824..831] ([byte[]](0x00,0x3C,0x42,0x42,0x3C,0x02,0x02,0x3C)) 'Y5 g dropped one row by shift-up -1'
     Assert-Bytes $y5[840..847] ([byte[]](0x08,0x00,0x18,0x08,0x08,0x08,0x1C,0x00)) 'Y5 i shifted right by left-bearing 3'
@@ -1086,13 +1086,13 @@ ${label}:
     left-bearing: 4
 "@
     }
-    $inY6 = "$tmp\y6.yaff"
+    $inY6 = "$tmp/y6.yaff"
     Set-Content -LiteralPath $inY6 -Value (New-WideYaff '0x42') -Encoding utf8
-    Assert-Throws { & $conv -In $inY6 -Out "$tmp\y6.CHR" } 'wider than 8 pixels' 'Y6 a 4+5 wide glyph at 66 is refused, not clipped'
-    $inY7 = "$tmp\y7.yaff"
+    Assert-Throws { & $conv -In $inY6 -Out "$tmp/y6.CHR" } 'wider than 8 pixels' 'Y6 a 4+5 wide glyph at 66 is refused, not clipped'
+    $inY7 = "$tmp/y7.yaff"
     Set-Content -LiteralPath $inY7 -Value (New-WideYaff '0x88') -Encoding utf8
-    $y7msg = & $conv -In $inY7 -Out "$tmp\y7.CHR" | Out-String
-    $y7 = [System.IO.File]::ReadAllBytes("$tmp\y7.CHR")
+    $y7msg = & $conv -In $inY7 -Out "$tmp/y7.CHR" | Out-String
+    $y7 = [System.IO.File]::ReadAllBytes("$tmp/y7.CHR")
     Assert-Eq $y7[136*8] $baseBytes[136*8] 'Y7 the same glyph at 136 is dropped, base glyph stands'
     $script:checks++
     if ($y7msg -notmatch '1 decorative glyph') { throw "Y7 : expected the dropped count, got: $y7msg" }
@@ -1114,9 +1114,9 @@ cell-size: 8x9
     @......@
     @@@@@@@@
 '@
-    $inY8 = "$tmp\y8.yaff"
+    $inY8 = "$tmp/y8.yaff"
     Set-Content -LiteralPath $inY8 -Value $yaffTall -Encoding utf8
-    Assert-Throws { & $conv -In $inY8 -Out "$tmp\y8.CHR" } 'does not fit an 8x8 cell' 'Y8 a 9-row glyph with ink on row 8 is refused'
+    Assert-Throws { & $conv -In $inY8 -Out "$tmp/y8.CHR" } 'does not fit an 8x8 cell' 'Y8 a 9-row glyph with ink on row 8 is refused'
 
     # --- Y9 ragged rows are a malformed glyph, not blank pixels ---
     $yaffRagged = @'
@@ -1127,26 +1127,26 @@ name: Ragged
     @.....@
     @@@@@@@@
 '@
-    $inY9 = "$tmp\y9.yaff"
+    $inY9 = "$tmp/y9.yaff"
     Set-Content -LiteralPath $inY9 -Value $yaffRagged -Encoding utf8
-    Assert-Throws { & $conv -In $inY9 -Out "$tmp\y9.CHR" } 'fontconv:.*glyph 65' 'Y9 rows of unequal length refused with a fontconv: message'
+    Assert-Throws { & $conv -In $inY9 -Out "$tmp/y9.CHR" } 'fontconv:.*glyph 65' 'Y9 rows of unequal length refused with a fontconv: message'
 
     # --- Y10 a UTF-8 BOM and a yaff: version line are both accepted ---
     $yaffBom = "yaff: 1.0.4`nname: Bom`n`n0x41:`n    @@@@@@@@`n    ........`n    ........`n    ........`n    ........`n    ........`n    ........`n    ........`n"
-    $inY10 = "$tmp\y10.yaff"
+    $inY10 = "$tmp/y10.yaff"
     [System.IO.File]::WriteAllBytes($inY10, ([byte[]](0xEF,0xBB,0xBF)) + [System.Text.Encoding]::UTF8.GetBytes($yaffBom))
-    & $conv -In $inY10 -Out "$tmp\y10.CHR" | Out-Null
-    $y10 = [System.IO.File]::ReadAllBytes("$tmp\y10.CHR")
+    & $conv -In $inY10 -Out "$tmp/y10.CHR" | Out-Null
+    $y10 = [System.IO.File]::ReadAllBytes("$tmp/y10.CHR")
     Assert-Eq $y10[65*8] 0xFF 'Y10 glyph 65 read through a BOM and a yaff: header'
 
     # --- D1 a hoard-shaped .draw file converts ---
     # Hex label, first row on the label line after a tab, '-' paper and
     # '#' ink, remaining rows tab-indented.
     $draw = "# test draw`n#`n`n41:`t--###---`n`t-#---#--`n`t-#---#--`n`t-#####--`n`t-#---#--`n`t-#---#--`n`t-#---#--`n`t--------`n`n7f:`t########`n`t########`n`t########`n`t########`n`t########`n`t########`n`t########`n`t########`n"
-    $inD1 = "$tmp\d1.draw"
+    $inD1 = "$tmp/d1.draw"
     Set-Content -LiteralPath $inD1 -Value $draw -Encoding ascii -NoNewline
-    $d1msg = & $conv -In $inD1 -Out "$tmp\d1.CHR" | Out-String
-    $d1 = [System.IO.File]::ReadAllBytes("$tmp\d1.CHR")
+    $d1msg = & $conv -In $inD1 -Out "$tmp/d1.CHR" | Out-String
+    $d1 = [System.IO.File]::ReadAllBytes("$tmp/d1.CHR")
     Assert-Bytes $d1[520..527]   $yA 'D1 glyph 65 from the draw rows'
     Assert-Bytes $d1[1544..1551] $yA 'D1 glyph 193 mirrored'
     Assert-Bytes $d1[1016..1023] $baseBytes[1016..1023] 'D1 glyph 127 from the base font (a draw file declares no charset)'
@@ -1155,19 +1155,19 @@ name: Ragged
 
     # --- D2 a draw glyph with ink past row 7 is refused ---
     $drawTall = "41:`t########`n`t--------`n`t--------`n`t--------`n`t--------`n`t--------`n`t--------`n`t--------`n`t########`n"
-    $inD2 = "$tmp\d2.draw"
+    $inD2 = "$tmp/d2.draw"
     Set-Content -LiteralPath $inD2 -Value $drawTall -Encoding ascii -NoNewline
-    Assert-Throws { & $conv -In $inD2 -Out "$tmp\d2.CHR" } 'does not fit an 8x8 cell' 'D2 a 9-row draw glyph with ink on row 8 is refused'
+    Assert-Throws { & $conv -In $inD2 -Out "$tmp/d2.CHR" } 'does not fit an 8x8 cell' 'D2 a 9-row draw glyph with ink on row 8 is refused'
 
     # --- D3 a draw file whose rows start on the line after the label
     #     is still draw: hex labels, not YAFF decimal ---
     # The hoard's sam_coupe.draw has this shape; '41:' must land at 65,
     # and a six-wide raster is left-aligned.
     $drawNext = "# next-line rows`n`n41:`n`t--##--`n`t-#--#-`n`t-#--#-`n`t-####-`n`t-#--#-`n`t-#--#-`n`t-#--#-`n`t------`n"
-    $inD3 = "$tmp\d3.draw"
+    $inD3 = "$tmp/d3.draw"
     Set-Content -LiteralPath $inD3 -Value $drawNext -Encoding ascii -NoNewline
-    $d3msg = & $conv -In $inD3 -Out "$tmp\d3.CHR" | Out-String
-    $d3 = [System.IO.File]::ReadAllBytes("$tmp\d3.CHR")
+    $d3msg = & $conv -In $inD3 -Out "$tmp/d3.CHR" | Out-String
+    $d3 = [System.IO.File]::ReadAllBytes("$tmp/d3.CHR")
     Assert-Bytes $d3[520..527] ([byte[]](0x30,0x48,0x48,0x78,0x48,0x48,0x48,0x00)) 'D3 41: is hex 65 in a draw file, six-wide raster left-aligned'
     Assert-Eq $d3[41*8] $baseBytes[41*8] 'D3 nothing landed at decimal 41'
     $script:checks++

@@ -5,7 +5,7 @@
 # install and nothing to keep in sync.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$pack = "$root\authoring-kit\lib\hintpack.ps1"
+$pack = "$root/authoring-kit/lib/hintpack.ps1"
 $tmp  = Join-Path ([System.IO.Path]::GetTempPath()) ("hintpack-selftest-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $tmp | Out-Null
 $checks = 0
@@ -70,10 +70,10 @@ $accented
 
 Stray y-diaeresis: $yDieresis here.
 "@
-$src = "$tmp\HINTS.TXT"
+$src = "$tmp/HINTS.TXT"
 [IO.File]::WriteAllBytes($src, $srcEnc.GetBytes($srcText))
 
-$out = "$tmp\GAME.HNT"
+$out = "$tmp/GAME.HNT"
 $packWarnings = $null
 & $pack -In $src -Out $out -WarningVariable packWarnings -WarningAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) { throw "hintpack exited $LASTEXITCODE" }
@@ -172,8 +172,8 @@ $checks++
 # Drift guard: the shipped HINTS.TXT decides how many levels each topic
 # has, and the fixture states those counts for the bench. They have gone
 # out of step repeatedly, so pack the real file and compare.
-$kitHints = Join-Path $root 'authoring-kit\HINTS.TXT'
-$kitOut = "$tmp\KIT.HNT"
+$kitHints = Join-Path $root 'authoring-kit/HINTS.TXT'
+$kitOut = "$tmp/KIT.HNT"
 & $pack -In $kitHints -Out $kitOut -WarningAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) { throw "hintpack exited $LASTEXITCODE on the kit HINTS.TXT" }
 $kb = [IO.File]::ReadAllBytes($kitOut)
@@ -188,7 +188,7 @@ for ($t = 0; $t -le $kb[5]; $t++) {
 }
 
 # The fixture carries the canonical line, e.g. "; HINTLEVELS 0=2 1=5".
-$dsf = Get-Content (Join-Path $root 'tests\extern.dsf') -Raw
+$dsf = Get-Content (Join-Path $root 'tests/extern.dsf') -Raw
 $m = [regex]::Match($dsf, '(?m)^;\s*HINTLEVELS\s+(?<pairs>(\d+=\d+\s*)+)')
 if (-not $m.Success) {
     throw 'tests\extern.dsf has no "; HINTLEVELS t=n ..." line - the bench has no stated level counts to check against'
@@ -215,7 +215,7 @@ foreach ($t in ($stated.Keys | Sort-Object)) {
 }
 
 # The run sheet is gitignored, so check it only where it exists.
-$sheet = Join-Path $root 'docs\xbn-v2-rc-silicon-run-sheet.md'
+$sheet = Join-Path $root 'docs/xbn-v2-rc-silicon-run-sheet.md'
 if (Test-Path $sheet) {
     $b9 = @(Get-Content $sheet | Where-Object { $_ -match '^\| B9 ' })
     if ($b9.Count -gt 0) {

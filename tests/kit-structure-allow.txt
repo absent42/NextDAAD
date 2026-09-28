@@ -30,3 +30,58 @@ sort-ordinal|lib/anipack.ps1|$union.Keys | Sort-Object
 sort-ordinal|lib/anipack.ps1|$cs.colours | Sort-Object
 # numeric sort: Height/Width/Index are all [int] (fontfmt.ps1:236-240).
 sort-ordinal|lib/fontfmt.ps1|Sort-Object @{E={$_.Height};D=$true}, @{E={$_.Width};D=$true}, @{E={$_.Index}}
+
+# tests-hazards: display text naming a Windows exe, not a path construction.
+tests-hazards|tests/hintpack-accent-oracle.ps1|ndrc.exe failed compiling
+tests-hazards|tests/kitconfig-selftest.ps1|$ExeSuffix -eq '.exe'
+tests-hazards|tests/xbnbuild-selftest.ps1|cmd.exe batch launcher
+
+# tests-hazards: intro-selftest.ps1's Windows PowerShell 5.1 leg, guarded by
+# if ($OnWindows) and Skip-Leg on Linux - genuine Windows paths kept as-is.
+tests-hazards|tests/intro-selftest.ps1|WindowsPowerShell\v1.0\powershell.exe
+tests-hazards|tests/intro-selftest.ps1|$out5 = "$work\out-001-ps5"
+tests-hazards|tests/intro-selftest.ps1|-Script "$work\001-min.txt"
+tests-hazards|tests/intro-selftest.ps1|$d5 = [IO.File]::ReadAllBytes("$out5\INTRO.DAT")
+tests-hazards|tests/intro-selftest.ps1|$d7 = [IO.File]::ReadAllBytes("$work\out-001-min\INTRO.DAT")
+# tests-hazards: the literal a Windows user types in their own kit config,
+# host-branched at runtime - not a portability bug.
+tests-hazards|tests/intro-selftest.ps1|$gfxRel = if ($OnWindows)
+
+# tests-hazards: xbnbuild-selftest.ps1's EXTERNS.BAT/cmd.exe leg, guarded by
+# if ($OnWindows) and Skip-Leg on Linux - cmd.exe requires backslash paths.
+tests-hazards|tests/xbnbuild-selftest.ps1|$kc = "$work\kit copy"
+tests-hazards|tests/xbnbuild-selftest.ps1|New-Item -ItemType Directory -Force "$kc\lib"
+tests-hazards|tests/xbnbuild-selftest.ps1|Copy-Item "$kit\EXTERNS.BAT"
+tests-hazards|tests/xbnbuild-selftest.ps1|Copy-Item "$kit\lib\kitplatform.ps1"
+tests-hazards|tests/xbnbuild-selftest.ps1|Copy-Item "$kit\externs" "$kc\externs"
+tests-hazards|tests/xbnbuild-selftest.ps1|WriteAllText("$work\$name.cmd"
+tests-hazards|tests/xbnbuild-selftest.ps1|Remove-Item "$kc\GAME.XBN"
+tests-hazards|tests/xbnbuild-selftest.ps1|& cmd /c "$work\$name.cmd"
+tests-hazards|tests/xbnbuild-selftest.ps1|@('fade', "$work\with space\ua"
+tests-hazards|tests/xbnbuild-selftest.ps1|Invoke-Driver 'argquote'
+tests-hazards|tests/xbnbuild-selftest.ps1|'EXTERNS.BAT passes a trailing-backslash argument
+tests-hazards|tests/xbnbuild-selftest.ps1|Invoke-Driver 'relbat'
+tests-hazards|tests/xbnbuild-selftest.ps1|'EXTERNS.BAT launched by a quoted relative path'
+
+# tests-hazards: fontconv-selftest.ps1 bonus checks, already Test-Path
+# gated - a real Windows system font and a developer machine font pack.
+tests-hazards|tests/fontconv-selftest.ps1|$cga = "$env:WINDIR\Fonts\cga80woa.fon"
+tests-hazards|tests/fontconv-selftest.ps1|$pack = "D:\Urban Upstart\fonts\
+
+# tests-hazards: kitconfig-selftest.ps1 pins that a Windows-style CONFIG.BAT
+# value is preserved on Windows and normalised on Linux - genuine test data.
+tests-hazards|tests/kitconfig-selftest.ps1|ARKOSDIR=C:\Program Files\Arkos Tracker 3
+tests-hazards|tests/kitconfig-selftest.ps1|SET TOOLSDIR=..\tools
+tests-hazards|tests/kitconfig-selftest.ps1|$c['TOOLSDIR'] '..\tools'
+tests-hazards|tests/kitconfig-selftest.ps1|$c['ARKOSDIR'] 'C:\Program Files\Arkos Tracker 3'
+tests-hazards|tests/kitconfig-selftest.ps1|SET CSPECTDIR=C:\Emulators\CSpect
+tests-hazards|tests/kitconfig-selftest.ps1|SET VIDOPTS=a\b
+tests-hazards|tests/kitconfig-selftest.ps1|$sep['CSPECTDIR'] 'C:\Emulators\CSpect'
+tests-hazards|tests/kitconfig-selftest.ps1|$sep['VIDOPTS'] 'a\b'
+
+# tests-hazards: kittools-selftest.ps1 pins that Resolve-KitTools passes an
+# override value through unchanged - genuine test data, not a real path.
+tests-hazards|tests/kittools-selftest.ps1|NDRC is lib\ndrc beside kittools.ps1
+tests-hazards|tests/kittools-selftest.ps1|FFMPEGDIR = 'alt\ff'; NDRCVER
+tests-hazards|tests/kittools-selftest.ps1|Join-Path 'alt\ff' "ffmpeg$x"
+tests-hazards|tests/kittools-selftest.ps1|$t2.NDRC 'my\ndrc'

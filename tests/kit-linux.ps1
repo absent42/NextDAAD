@@ -13,7 +13,7 @@ function Sha([string]$p) { $h = [Security.Cryptography.SHA256]::Create(); try { 
 $ctx = Join-Path $root 'tests/out/docker-context'
 if (Test-Path -LiteralPath $ctx) { Remove-Item -LiteralPath $ctx -Recurse -Force }
 New-Item -ItemType Directory -Force "$ctx/repo", "$ctx/context" | Out-Null
-foreach ($rel in (& git -C $root ls-files -- authoring-kit tests manual scripts .gitattributes)) {
+foreach ($rel in (& git -C $root ls-files -- authoring-kit tests manual scripts .gitattributes src/font.chr)) {
     if ($rel -like 'tests/out/*') { continue }
     $dst = Join-Path "$ctx/repo" $rel
     New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
