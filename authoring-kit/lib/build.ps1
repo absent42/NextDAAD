@@ -70,10 +70,61 @@ if (-not "$banner ".Contains("NDRC $($t.NDRCVER) ")) {
 }
 if (@(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count -gt 0) { Fail 'ERROR: CSpect is running - close it before building' }
 
+# NDRC opens include names verbatim, case-sensitively, relative to the
+# PROCESS working directory (include.c:197-208), which the kit makes the
+# kit root for every DSF, part DSFs included. A name that matches only
+# case-insensitively builds on Windows and fails on Linux: warn here,
+# error there. Two grammars: "#include <name>" takes column 10 onward,
+# cut at ';', trimmed, quotes kept (include.c:121-139); "#incbin" is a
+# token followed by a quoted string, anywhere in the process section,
+# quotes stripped (sintactic.c:1349-1356).
+function Test-DsfIncludes([string]$DsfPath) {
+    $problems = @()
+    $names = @()
+    foreach ($line in [IO.File]::ReadAllLines($DsfPath, [Text.Encoding]::GetEncoding(28591))) {
+        if ($line -match '^#include\b') {
+            $name = if ($line.Length -gt 9) { $line.Substring(9) } else { '' }
+            $semi = $name.IndexOf(';'); if ($semi -ge 0) { $name = $name.Substring(0, $semi) }
+            $name = $name.Trim()
+            if ($name) { $names += , @($line, $name) }
+        }
+        foreach ($m in [regex]::Matches($line, '#incbin\s+"([^"]*)"', 'IgnoreCase')) {
+            $names += , @($line, $m.Groups[1].Value)
+        }
+    }
+    foreach ($pair in $names) {
+        $line = $pair[0]; $name = $pair[1]
+        $target = Join-Path $kitRoot ($name -replace '\\', '/')
+        $parent = Split-Path -Parent $target
+        $leaf = Split-Path -Leaf $target
+        $exact = @(Get-ChildItem -LiteralPath $parent -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ceq $leaf })
+        $loose = @(Get-ChildItem -LiteralPath $parent -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $leaf })
+        if ($exact.Count -eq 0 -and $loose.Count -gt 0) { $problems += "$line -> on disk as $($loose[0].Name) (case differs; Linux cannot open it)" }
+        if ($name -match '\\') { $problems += "$line -> uses \ (Linux needs /)" }
+    }
+    return $problems
+}
+foreach ($p in (Test-DsfIncludes $dsfFile.FullName)) {
+    if ($OnWindows) { Write-Host "WARNING: $p" } else { Fail "ERROR: $p" }
+}
+
 # ---- prepare RELEASE\ : outputs rebuilt every run are removed ----
 # Pictures, sprite sets, audio and video are left to assets.ps1.
 $rel = Join-Path $kitRoot 'RELEASE'
 if (-not (Test-Path -LiteralPath $rel)) { New-Item -ItemType Directory $rel | Out-Null }
+
+# assets.ps1 stamps outputs with 100 ns mtime ticks; a coarse filesystem
+# (FAT, exFAT, 9p, drvfs) would rebuild everything or keep stale outputs.
+function Test-MtimeResolution([string]$Dir) {
+    $probe = Join-Path $Dir '.mtime-probe'
+    try {
+        [IO.File]::WriteAllBytes($probe, [byte[]]@(0))
+        $want = New-Object DateTime (630000000001234567L), ([DateTimeKind]::Utc)
+        [IO.File]::SetLastWriteTimeUtc($probe, $want)
+        return ([IO.File]::GetLastWriteTimeUtc($probe).Ticks -eq $want.Ticks)
+    } finally { if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath $probe -Force } }
+}
+if (-not (Test-MtimeResolution $rel)) { Fail "ERROR: $rel does not keep sub-microsecond file times - build on a local NTFS or ext4 folder, not a network, FAT or container bind mount" }
 function Remove-OutDir([string]$name) {
     $p = Join-Path $rel $name
     if (Test-Path -LiteralPath $p -PathType Container) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Continue }
@@ -215,6 +266,11 @@ foreach ($n in 2..9) {
     if ($pdsfs.Count -ne 1) { Fail "ERROR: PART$n\ has $($pdsfs.Count) .DSF files - keep exactly one game source per part folder" }
     $pgame = $pdsfs[0].BaseName
     Write-Host "Building part $n ($pgame) ..."
+    # NDRC resolves this part's includes against the kit root too (the
+    # process cwd), not PART$n\: the lint must match.
+    foreach ($p in (Test-DsfIncludes $pdsfs[0].FullName)) {
+        if ($OnWindows) { Write-Host "WARNING: $p" } else { Fail "ERROR: $p" }
+    }
     if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path 'RELEASE' "GAME$n.DDB") (Join-Path 'RELEASE' $part)) -ne 0) { exit 1 }
     $count = 0
     foreach ($f in Get-KitFiles $part '*') {

@@ -8,3 +8,4 @@ font-duplicate|copy FONT.psf FONT.bdf|could be converted to FONT.CHR.
 intro-tool-missing|set ARKOSDIR=nosuch|ERROR: SongToAky not found at
 part-two-dsf|copy PART2/PART2.DSF PART2/OTHER.DSF|ERROR: PART2/ has 2 .DSF files - keep exactly one game source per part folder
 run-on-fail|remove nextdaad.nex; set RUN=1|ERROR: required tool missing: nextdaad.nex
+include-case|rename inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf

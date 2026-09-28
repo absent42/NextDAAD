@@ -28,6 +28,17 @@ function Apply-Setup([string]$setup) {
         $s = $step.Trim()
         if ($s -match '^remove (.+)$') { Remove-Item -LiteralPath (Join-Path $kit $Matches[1]) -Force -Recurse }
         elseif ($s -match '^copy (\S+) (\S+)$') { Copy-Item -LiteralPath (Join-Path $kit $Matches[1]) -Destination (Join-Path $kit $Matches[2]) }
+        elseif ($s -match '^rename (\S+) (\S+)$') {
+            # A case-only rename is refused by some hosts; a temporary
+            # name in between always succeeds.
+            $src = Join-Path $kit $Matches[1]
+            try { Rename-Item -LiteralPath $src -NewName $Matches[2] }
+            catch {
+                $tmp = "$($Matches[2]).renametmp"
+                Rename-Item -LiteralPath $src -NewName $tmp
+                Rename-Item -LiteralPath (Join-Path (Split-Path $src) $tmp) -NewName $Matches[2]
+            }
+        }
         elseif ($s -match '^set (\w+)=(.*)$') { Set-Config $Matches[1] $Matches[2] }
         elseif ($s -eq 'stub-ndrc') {
             $stub = Join-Path $kit 'ndrc-stub'
@@ -90,8 +101,10 @@ foreach ($case in $cases) {
     $r = Run-Build
     $after = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
     $want = $expect.Replace('{sep}', "$sep").Replace('{build}', $buildName) -replace '[\\/]', '/'
+    $wantWarn = $want.StartsWith('WARN:')
+    if ($wantWarn) { $want = $want.Substring(5) }
     $got = $r.Out -replace '[\\/]', '/'
-    $ok = ($r.Code -eq 1) -and ($got.Contains($want)) -and ($after -eq $before)
+    $ok = (($wantWarn -and $r.Code -eq 0) -or (-not $wantWarn -and $r.Code -eq 1)) -and $got.Contains($want) -and ($after -eq $before)
     if ($ok) { Write-Host "negative: $name ok" }
     else {
         $failed++
