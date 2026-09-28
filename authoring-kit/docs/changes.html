@@ -11,7 +11,7 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
-<h2 id="unreleased">Unreleased</h2>
+<h2 id="0111-unreleased">0.11.1 - Unreleased</h2>
 <ul>
 <li><strong>Kit build steps moved into scripts.</strong> <code>BUILD.BAT</code>, <code>RUN.BAT</code> and
   <code>CLEAN.BAT</code> still work the same way from the command line; the
@@ -50,9 +50,17 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   The skills folder is renamed from <code>.agent</code> to <code>.agents</code>, and a new
   <code>AGENTS.md</code> at the kit root points assistants at both skills.</li>
 <li><strong>Output is unchanged.</strong> Existing games build to the same bytes as
-  before.</li>
+  before; only the interpreter, <code>nextdaad.nex</code>, differs, for the
+  <code>DOALL</code> change below.</li>
 <li><strong>The Linux kit is not released yet.</strong> The Getting Started guide's
   Linux section describes the coming release.</li>
+<li><strong><code>DOALL</code> now matches the original interpreter.</strong> Flag 50 holds the
+  location a <code>DOALL</code> is searching, not the object it has reached. The
+  object on each pass is now the referenced object - flag 51, with its
+  details in flags 54-59 - so <code>_</code> in a message and <code>HASAT</code> inside the
+  loop refer to it. A game that read the object from flag 50 should
+  read flag 51. See
+  <a href="known-differences.html#flag-50-holds-the-doall-location-not-the-object">Known differences</a>.</li>
 </ul>
 <h2 id="0110-27-september-2026">0.11.0 - 27 September 2026</h2>
 <ul>

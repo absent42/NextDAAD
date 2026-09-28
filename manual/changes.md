@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## Unreleased
+## 0.11.1 - Unreleased
 
 - **Kit build steps moved into scripts.** `BUILD.BAT`, `RUN.BAT` and
   `CLEAN.BAT` still work the same way from the command line; the
@@ -42,9 +42,17 @@ game behaves, how it builds, or what the kit gives you, it is here.
   The skills folder is renamed from `.agent` to `.agents`, and a new
   `AGENTS.md` at the kit root points assistants at both skills.
 - **Output is unchanged.** Existing games build to the same bytes as
-  before.
+  before; only the interpreter, `nextdaad.nex`, differs, for the
+  `DOALL` change below.
 - **The Linux kit is not released yet.** The Getting Started guide's
   Linux section describes the coming release.
+- **`DOALL` now matches the original interpreter.** Flag 50 holds the
+  location a `DOALL` is searching, not the object it has reached. The
+  object on each pass is now the referenced object - flag 51, with its
+  details in flags 54-59 - so `_` in a message and `HASAT` inside the
+  loop refer to it. A game that read the object from flag 50 should
+  read flag 51. See
+  [Known differences](known-differences.md#flag-50-holds-the-doall-location-not-the-object).
 
 ## 0.11.0 - 27 September 2026
 
