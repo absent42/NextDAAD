@@ -5,7 +5,7 @@ param([string[]]$Rules = @())
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $kit = Join-Path $root 'authoring-kit'
-$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals', 'encodings', 'sort-ordinal', 'banners', 'tests-hazards')
+$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals', 'encodings', 'sort-ordinal', 'banners', 'tests-hazards', 'kitfiles')
 if (-not $Rules) { $Rules = $DefaultRules }
 $allow = @{}
 foreach ($l in Get-Content -LiteralPath (Join-Path $PSScriptRoot 'kit-structure-allow.txt') -Encoding ASCII) {
@@ -111,6 +111,13 @@ if ($Rules -contains 'banners') {
     # checks live in tests/kit-binaries-selftest.ps1 (it throws on failure).
     try { & (Join-Path $PSScriptRoot 'kit-binaries-selftest.ps1') *> $null }
     catch { $failures.Add("banners: $($_.Exception.Message)") }
+}
+if ($Rules -contains 'kitfiles') {
+    # Every tracked kit file must match exactly one lib/kitfiles.txt line.
+    # Runs in a child process of whichever host (5.1/7) is running this test.
+    $exe = (Get-Process -Id $PID).Path
+    $kf = & $exe -NoProfile -File (Join-Path $root 'scripts/kit-files.ps1') -Check 2>&1
+    if ($LASTEXITCODE -ne 0) { $kf | ForEach-Object { $failures.Add("kitfiles: $_") } }
 }
 if ($failures.Count) {
     $failures | ForEach-Object { Write-Host $_ }
