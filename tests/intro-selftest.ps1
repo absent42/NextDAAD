@@ -3,9 +3,10 @@
 #   pwsh -NoProfile -File tests\intro-selftest.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$gfx  = "$root\tools\gfx2next\gfx2next.exe"
-$comp = "$root\authoring-kit\lib\introc.ps1"
-$work = "$root\tests\out\intro"
+. (Join-Path $root 'tests/testtools.ps1')
+$gfx  = Get-RepoTool 'gfx2next'
+$comp = "$root/authoring-kit/lib/introc.ps1"
+$work = "$root/tests/out/intro"
 $checks = 0
 if (-not (Test-Path $gfx)) { throw "intro-selftest: gfx2next not found at $gfx" }
 
@@ -37,9 +38,9 @@ function Expected-Tile([byte[]]$chr, [int]$code) {
     }
     return $t
 }
-$fontChr = [IO.File]::ReadAllBytes("$root\src\font.chr")
+$fontChr = [IO.File]::ReadAllBytes("$root/src/font.chr")
 function Compile([string]$name, [string[]]$extra, [string]$suffix = '') {
-    $out = "$work\out-$name$suffix"
+    $out = "$work/out-$name$suffix"
     Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
     # array splatting binds positionally, not by name: turn -Name [value]
     # pairs into a hashtable, which splats by parameter name.
@@ -50,33 +51,33 @@ function Compile([string]$name, [string[]]$extra, [string]$suffix = '') {
         if ($i + 1 -lt $extra.Count -and -not $extra[$i + 1].StartsWith('-')) { $named[$key] = $extra[$i + 1]; $i += 2 }
         else { $named[$key] = $true; $i += 1 }
     }
-    & $comp -Script "$work\$name.txt" -Root $work -Out $out @named | Out-Null
-    return [IO.File]::ReadAllBytes("$out\INTRO.DAT")
+    & $comp -Script "$work/$name.txt" -Root $work -Out $out @named | Out-Null
+    return [IO.File]::ReadAllBytes("$out/INTRO.DAT")
 }
-function Write-Script([string]$name, [string]$text) { [IO.File]::WriteAllText("$work\$name.txt", $text, [Text.Encoding]::GetEncoding(28591)) }
+function Write-Script([string]$name, [string]$text) { [IO.File]::WriteAllText("$work/$name.txt", $text, [Text.Encoding]::GetEncoding(28591)) }
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $work | Out-Null
-& python "$root\tests\art\mkintro.py" $work
+& python "$root/tests/art/mkintro.py" $work
 if ($LASTEXITCODE -ne 0) { throw "intro-selftest: mkintro.py failed" }
-Copy-Item "$PSScriptRoot\intro\fixtures\*.txt" $work
-[IO.File]::WriteAllBytes("$work\theme.aks", [byte[]](1..32))     # existence only in this task
+Copy-Item "$PSScriptRoot/intro/fixtures/*.txt" $work
+[IO.File]::WriteAllBytes("$work/theme.aks", [byte[]](1..32))     # existence only in this task
 
 # ---- Probe 1: -bitmap-y -pal-embed is column-major with the palette first.
 Push-Location $work
 try { & $gfx -bitmap-y -pal-embed p320a.png | Out-Null } finally { Pop-Location }
-$nx = [IO.File]::ReadAllBytes("$work\p320a.nxi")
+$nx = [IO.File]::ReadAllBytes("$work/p320a.nxi")
 Assert-Eq $nx.Length 82432 'probe: 320x256 -bitmap-y is 512 + 81920 bytes'
 Assert-Eq $nx[512 + 5 * 256 + 7] ((5 + 7) -band 255) 'probe: pixel (5,7) at 512 + x*256 + y'
 Assert-Eq $nx[512 + 319 * 256 + 255] ((319 + 255) -band 255) 'probe: last pixel column-major'
 # ---- Probe 2: default tile mode, 4-bit, 8x8: 8192 bytes, scan order, left pixel high nibble.
 Push-Location $work
 try { & $gfx -colors-4bit -tile-size=8x8 -pal-none font.png | Out-Null } finally { Pop-Location }
-$tl = [IO.File]::ReadAllBytes("$work\font.nxt")
+$tl = [IO.File]::ReadAllBytes("$work/font.nxt")
 Assert-Eq $tl.Length 8192 'probe: 256 tiles of 32 bytes'
 Assert-Eq (Hex $tl[(0)..(31)]) (Hex (Expected-Tile $fontChr 0)) 'probe: glyph 0 (NUL, blank in font.chr) is all zero'
 Assert-Eq (Hex $tl[(65 * 32)..(65 * 32 + 31)]) (Hex (Expected-Tile $fontChr 65)) 'probe: glyph 65 (A) matches font.chr under the row-striped 4-bit layout'
-Assert-Eq (Test-Path "$work\font.nxm") $true 'probe: a .nxm map is written beside the tiles (discarded by the compiler)'
+Assert-Eq (Test-Path "$work/font.nxm") $true 'probe: a .nxm map is written beside the tiles (discarded by the compiler)'
 
 # ---- 001 minimal: one CUT slide, no music, no items.
 $d = Compile '001-min' @('-NoAssets')
@@ -204,15 +205,15 @@ Assert-Eq $d[553] 224 'a SCROLL with exactly 224 LINEs compiles (NITEM byte)'
 $gfxArgs = @('-Gfx', $gfx)
 $gfxNamed = @{ Gfx = $gfx }    # array splatting binds @gfxArgs positionally: direct calls need a hashtable to pass -Gfx by name
 $d = Compile '005-assets' $gfxArgs
-$o = "$work\out-005-assets"
-Assert-Eq (Test-Path "$o\001.NXC") $true '005 picture 001 is NXC'
-Assert-Eq (Test-Path "$o\004.NXC") $true '005 ready-made NX2 became 004.NXC'
-Assert-Eq (Test-Path "$o\005.NXI") $true '005 the 256-wide picture is 005.NXI'
-Assert-Eq ([IO.File]::ReadAllBytes("$o\001.NXC")).Length 82432 '005 NXC length'
-$c1 = [IO.File]::ReadAllBytes("$o\001.NXC"); $c4 = [IO.File]::ReadAllBytes("$o\004.NXC")
+$o = "$work/out-005-assets"
+Assert-Eq (Test-Path "$o/001.NXC") $true '005 picture 001 is NXC'
+Assert-Eq (Test-Path "$o/004.NXC") $true '005 ready-made NX2 became 004.NXC'
+Assert-Eq (Test-Path "$o/005.NXI") $true '005 the 256-wide picture is 005.NXI'
+Assert-Eq ([IO.File]::ReadAllBytes("$o/001.NXC")).Length 82432 '005 NXC length'
+$c1 = [IO.File]::ReadAllBytes("$o/001.NXC"); $c4 = [IO.File]::ReadAllBytes("$o/004.NXC")
 Assert-Eq $c4[512 + 10 * 256 + 20] ((10 + 20) -band 255) '005 transposed NX2 pixel (10,20)'
 Assert-Eq $c1[512 + 10 * 256 + 20] $c4[512 + 10 * 256 + 20] '005 PNG and NX2 of the same art agree after conversion'
-$til = [IO.File]::ReadAllBytes("$o\FONT.TIL")
+$til = [IO.File]::ReadAllBytes("$o/FONT.TIL")
 Assert-Eq $til.Length 8192 '005 FONT.TIL length'
 Assert-Eq (Hex $til[(0)..(31)]) (Hex (Expected-Tile $fontChr 0)) '005 tile 0 (glyph NUL, blank in font.chr) is all zero'
 Assert-Eq (Hex $til[(65 * 32)..(65 * 32 + 31)]) (Hex (Expected-Tile $fontChr 65)) "005 tile 65 ('A') matches font.chr under the row-striped 4-bit layout"
@@ -228,68 +229,71 @@ Assert-Eq $d[32 + 17 * 2] 224 '005 block 1 entry 1 is 224'
 Assert-Eq $d[32 + 32 * 2] 0xE3 '005 block 2 unset copies block 0'
 Assert-Eq $d[1571] 16 '005 TEXT BLOCK 1 -> attribute $10'
 # ---- 006 palette warning fires for p320a -> p320b (WIPE) and p320b -> p320c (DISSOLVE): different palettes each time.
-$outText = & $comp -Script "$work\005-assets.txt" -Root $work -Out "$work\out-006" @gfxNamed *>&1 | Out-String
+$outText = & $comp -Script "$work/005-assets.txt" -Root $work -Out "$work/out-006" @gfxNamed *>&1 | Out-String
 $script:checks++
 if ($outText -notmatch 'WARNING: slides at lines 3 and 5 differ') { throw "intro-selftest: 006 expected a palette warning for the WIPE between p320a and p320b, got: $outText" }
 if ($outText -notmatch 'WARNING: slides at lines 5 and 6 differ') { throw 'intro-selftest: 006 expected a warning for the DISSOLVE between p320b and p320c' }
 # ---- 007 no warning when palettes are shared: p320a -> p320c under WIPE.
 Write-Script '007-shared' "SLIDE p320a.png IN CUT HOLD 1.0`nSLIDE p320c.png IN WIPE RIGHT 0.5 HOLD 1.0`nEND CUT"
-$outText = & $comp -Script "$work\007-shared.txt" -Root $work -Out "$work\out-007" @gfxNamed *>&1 | Out-String
+$outText = & $comp -Script "$work/007-shared.txt" -Root $work -Out "$work/out-007" @gfxNamed *>&1 | Out-String
 $script:checks++
 if ($outText -match 'WARNING') { throw "intro-selftest: 007 shared palette must not warn: $outText" }
 # ---- 008 font sheet without magenta is refused.
-& python -c "import sys; sys.path.insert(0, r'$root\tests\art'); import mkanisheets as m; m.write_png(r'$work\nomag.png', 128, 128, [(i,i,i) for i in range(16)], [[1]*128 for _ in range(128)])"
+& python -c "import sys; sys.path.insert(0, r'$root/tests/art'); import mkanisheets as m; m.write_png(r'$work/nomag.png', 128, 128, [(i,i,i) for i in range(16)], [[1]*128 for _ in range(128)])"
 Write-Script '008-nomag' "FONT nomag.png`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile '008-nomag' $gfxArgs } 'has no magenta' '008 font sheet needs magenta'
 
 # ---- 009 PCM through ffmpeg when present; skipped (not failed) without it.
-$ff = "$root\tools\ffmpeg\bin\ffmpeg.exe"
+$ff = Get-RepoTool 'ffmpeg'
 if (Test-Path $ff) {
     Write-Script '009-pcm' "MUSIC PCM tone.wav`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
     $d = Compile '009-pcm' ($gfxArgs + @('-Ffmpeg', $ff))
-    $pcm = [IO.File]::ReadAllBytes("$work\out-009-pcm\MUSIC.PCM")
+    $pcm = [IO.File]::ReadAllBytes("$work/out-009-pcm/MUSIC.PCM")
     Assert-Eq $pcm.Length 62500 '009 two seconds of stereo 15625 Hz = 62500 bytes'
     Assert-Eq $d[6] 3 '009 music kind PCM'
     Assert-Eq ($pcm[0] -ge 96 -and $pcm[0] -le 160) $true '009 unsigned samples centre near 128'
 } else { Write-Host "intro-selftest: ffmpeg absent, 009 skipped" }
 # ---- 010 AKY through SongToAky when present.
-$s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
+$s2a = Get-RepoTool 'SongToAky'
 if (Test-Path $s2a) {
-    Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$work\theme.aks" -Force
+    Copy-Item "$root/authoring-kit/AUDIO/STARTER.aks" "$work/theme.aks" -Force
     Write-Script '010-aky' "MUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
     $d = Compile '010-aky' ($gfxArgs + @('-S2A', $s2a))
-    $aky = [IO.File]::ReadAllBytes("$work\out-010-aky\MUSIC.AKY")
+    $aky = [IO.File]::ReadAllBytes("$work/out-010-aky/MUSIC.AKY")
     Assert-Eq $aky[1] 9 '010 nine-channel export'
     Assert-Eq ($aky.Length -le 16384) $true '010 within the 16K slot'
 } else { Write-Host "intro-selftest: SongToAky absent, 010 skipped" }
 # ---- 011 NDR stages the player and the song when tools\NextDAW is present.
-$ndaw = "$root\tools\NextDAW\RuntimePlayer\NextDAW_RuntimePlayer_E000.bin"
-$ndr = "$root\tools\NextDAW\DemoCode\z88dk_asm\Silver-Surfer.NDR"
+$ndaw = "$root/tools/NextDAW/RuntimePlayer/NextDAW_RuntimePlayer_E000.bin"
+$ndr = "$root/tools/NextDAW/DemoCode/z88dk_asm/Silver-Surfer.NDR"
 if ((Test-Path $ndaw) -and (Test-Path $ndr)) {
-    Copy-Item $ndr "$work\song.ndr" -Force
+    Copy-Item $ndr "$work/song.ndr" -Force
     Write-Script '011-ndr' "MUSIC NDR song.ndr`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
     $d = Compile '011-ndr' ($gfxArgs + @('-NdawBin', $ndaw))
-    Assert-Eq ([IO.File]::ReadAllBytes("$work\out-011-ndr\NDAW.BIN")).Length 7519 '011 player copied'
-    Assert-Eq (Test-Path "$work\out-011-ndr\MUSIC.NDR") $true '011 song copied'
+    Assert-Eq ([IO.File]::ReadAllBytes("$work/out-011-ndr/NDAW.BIN")).Length 7519 '011 player copied'
+    Assert-Eq (Test-Path "$work/out-011-ndr/MUSIC.NDR") $true '011 song copied'
     Assert-Eq $d[6] 4 '011 music kind NDR'
-    Remove-Item "$work\out-011-ndr\NDAW.BIN", "$work\song.ndr" -Force
-} else { Write-Host "intro-selftest: tools\NextDAW absent, 011 skipped" }
+    Remove-Item "$work/out-011-ndr/NDAW.BIN", "$work/song.ndr" -Force
+} else { Write-Host "intro-selftest: tools/NextDAW absent, 011 skipped" }
 # ---- 011c a player build with the wrong load address (JP table not into
 # ---- $E000+) is rejected with a named error. Synthetic bytes - no real
 # ---- NextDAW file needed, so this runs unconditionally.
-$badPlayer = "$work\bad-player.bin"
+$badPlayer = "$work/bad-player.bin"
 $badBytes = [byte[]]::new(39)
 for ($bi = 0; $bi -lt 13; $bi++) { $badBytes[$bi * 3] = 0xC3; $badBytes[$bi * 3 + 2] = 0xC0 }
 [IO.File]::WriteAllBytes($badPlayer, $badBytes)
-[IO.File]::WriteAllBytes("$work\stub.ndr", [byte[]](1..4))     # existence only; never read
+[IO.File]::WriteAllBytes("$work/stub.ndr", [byte[]](1..4))     # existence only; never read
 Write-Script '011c-badplayer' "MUSIC NDR stub.ndr`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile '011c-badplayer' ($gfxArgs + @('-NdawBin', $badPlayer)) } 'JP table entry' '011c wrong-address player rejected'
-Remove-Item $badPlayer, "$work\stub.ndr" -Force
+Remove-Item $badPlayer, "$work/stub.ndr" -Force
 # ---- a relative -Gfx path resolves through introc.ps1's own absolute-path
 # fix, the same as an absolute one: identical INTRO.DAT bytes either way.
 $dAbs = Compile '005-assets' $gfxArgs '-abs2'
+# The literal a user would type in their own kit config: a relative path in
+# the host's own tool layout, resolved from $root (Push-Location below).
+$gfxRel = if ($OnWindows) { 'tools/gfx2next/gfx2next.exe' } else { 'authoring-kit/tools/gfx2next/gfx2next' }
 Push-Location $root
-try { $dRel = Compile '005-assets' @('-Gfx', 'tools\gfx2next\gfx2next.exe') '-relgfx' }
+try { $dRel = Compile '005-assets' @('-Gfx', $gfxRel) '-relgfx' }
 finally { Pop-Location }
 Assert-Eq ([Convert]::ToBase64String($dRel)) ([Convert]::ToBase64String($dAbs)) 'relative -Gfx matches absolute -Gfx'
 # ---- a relative -Root and -Out resolve the same way (the Push-Location
@@ -298,21 +302,21 @@ Assert-Eq ([Convert]::ToBase64String($dRel)) ([Convert]::ToBase64String($dAbs)) 
 $dAbsRoot = Compile '001-min' @('-NoAssets')
 Push-Location $root
 try {
-    $relOut = 'tests\out\intro\out-001-min-relroot'
-    & $comp -Script 'tests\out\intro\001-min.txt' -Root 'tests\out\intro' -Out $relOut -NoAssets | Out-Null
-    $dRelRoot = [IO.File]::ReadAllBytes("$root\$relOut\INTRO.DAT")
+    $relOut = 'tests/out/intro/out-001-min-relroot'
+    & $comp -Script 'tests/out/intro/001-min.txt' -Root 'tests/out/intro' -Out $relOut -NoAssets | Out-Null
+    $dRelRoot = [IO.File]::ReadAllBytes("$root/$relOut/INTRO.DAT")
 }
 finally { Pop-Location }
 Assert-Eq ([Convert]::ToBase64String($dRelRoot)) ([Convert]::ToBase64String($dAbsRoot)) 'relative -Root/-Out matches absolute -Root/-Out'
 # ---- 011b MUSIC STREAM through SongToYm and aysconv when present; skipped
 # (not failed) without it. Task 12 uses case number 012.
-$s2y = "$root\tools\ArkosTracker3\tools\SongToYm.exe"
+$s2y = Get-RepoTool 'SongToYm'
 if (Test-Path $s2y) {
-    Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$work\stream.aks" -Force
+    Copy-Item "$root/authoring-kit/AUDIO/STARTER.aks" "$work/stream.aks" -Force
     Write-Script '011b-stream' "MUSIC STREAM stream.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
-    $aysconv = "$root\authoring-kit\lib\aysconv.ps1"
+    $aysconv = "$root/authoring-kit/lib/aysconv.ps1"
     $d = Compile '011b-stream' ($gfxArgs + @('-S2Y', $s2y, '-Aysconv', $aysconv))
-    $ays = [IO.File]::ReadAllBytes("$work\out-011b-stream\MUSIC.AYS")
+    $ays = [IO.File]::ReadAllBytes("$work/out-011b-stream/MUSIC.AYS")
     Assert-Eq ($ays.Length -gt 0) $true '011b AYS stream non-empty'
     Assert-Eq ($ays.Length -le 393216) $true '011b AYS within the 393216 (48 page) ceiling'
     Assert-Eq ([Text.Encoding]::ASCII.GetString($ays, 0, 4)) 'AYS1' '011b AYS magic'
@@ -325,18 +329,20 @@ if (Test-Path $s2y) {
 
 # ---- Windows PowerShell 5.1 is what BUILD.BAT runs: the same script must
 # ---- produce the same bytes there.
-$ps5 = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-if (Test-Path $ps5) {
-    $out5 = "$work\out-001-ps5"
-    & $ps5 -NoProfile -ExecutionPolicy Bypass -File $comp -Script "$work\001-min.txt" -Root $work -Out $out5 -NoAssets | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'intro-selftest: introc.ps1 failed under Windows PowerShell 5.1' }
-    $d5 = [IO.File]::ReadAllBytes("$out5\INTRO.DAT")
-    $d7 = [IO.File]::ReadAllBytes("$work\out-001-min\INTRO.DAT")
-    Assert-Eq ([Convert]::ToBase64String($d5)) ([Convert]::ToBase64String($d7)) 'ps5: identical INTRO.DAT under Windows PowerShell 5.1'
-} else { Write-Host "intro-selftest: Windows PowerShell 5.1 absent, ps5 probe skipped" }
+if ($OnWindows) {
+    $ps5 = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (Test-Path $ps5) {
+        $out5 = "$work\out-001-ps5"
+        & $ps5 -NoProfile -ExecutionPolicy Bypass -File $comp -Script "$work\001-min.txt" -Root $work -Out $out5 -NoAssets | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'intro-selftest: introc.ps1 failed under Windows PowerShell 5.1' }
+        $d5 = [IO.File]::ReadAllBytes("$out5\INTRO.DAT")
+        $d7 = [IO.File]::ReadAllBytes("$work\out-001-min\INTRO.DAT")
+        Assert-Eq ([Convert]::ToBase64String($d5)) ([Convert]::ToBase64String($d7)) 'ps5: identical INTRO.DAT under Windows PowerShell 5.1'
+    } else { Write-Host "intro-selftest: Windows PowerShell 5.1 absent, ps5 probe skipped" }
+} else { Skip-Leg 'ps5 leg skipped - Windows PowerShell 5.1 is not present on this host' }
 
 # ---- 012 font sheet with an opaque space cell is refused.
-& python -c "import sys; sys.path.insert(0, r'$root\tests\art'); import mkanisheets as m; m.write_png(r'$work\nospace.png', 128, 128, [(255,0,255)] + [(i*16,i*16,i*16) for i in range(1,16)], [[1]*128 for _ in range(128)])"
+& python -c "import sys; sys.path.insert(0, r'$root/tests/art'); import mkanisheets as m; m.write_png(r'$work/nospace.png', 128, 128, [(255,0,255)] + [(i*16,i*16,i*16) for i in range(1,16)], [[1]*128 for _ in range(128)])"
 Write-Script '012-nospace' "FONT nospace.png`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile '012-nospace' $gfxArgs } 'cell 32' '012 space cell must be transparent'
 

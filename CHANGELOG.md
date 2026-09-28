@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## Unreleased
+## v0.11.1 Unreleased
 
 - kit: build orchestration moved from the .BAT files into
   lib\build.ps1, lib\run.ps1, lib\clean.ps1, lib\externs.ps1 and
@@ -28,10 +28,29 @@ All notable changes to NextDAAD are recorded here.
 - kit: CONFIG.BAT is read by the build scripts rather than run by cmd,
   so %VAR% references in it are no longer expanded.
 - Outputs are unchanged: tests\kit-parity pins the RELEASE bytes
-  against v0.11.0.
-- manual: getting started has Windows and Linux setup sections. The
-  Linux kit itself is not released yet; the Linux section describes
-  the coming release.
+  against v0.11.0, apart from nextdaad.nex (the DOALL change below).
+- kit: new agent skill `daad-game-authoring` for AI assistants writing
+  games: SKILL.md plus references for DSF source, condacts, flags and
+  objects, process patterns, NextDAAD features, the kit workflow and
+  pitfalls. Engine rules stated from src: any action except SKIP/REDO
+  marks a table done (a pre-move entry ends NOTDONE), process 4 re-runs
+  after every RESTART, the boot theme loops.
+- kit: skills folder renamed `.agent` to `.agents` (xbn-extern-authoring
+  moved with it); new `AGENTS.md` at the kit root names both skills.
+  README.txt and the externs manual page point there.
+- DOALL matches the original ZX interpreter: flag 50 holds the loop
+  location (255 resolved to the player's location, set even when
+  nothing is found) and is read back on every pass, where it held the
+  object number. Each taken object sets the referenced object (flags
+  51, 54-59); Noun1/Adjective1 are set before the ALL EXCEPT test.
+  Nested DOALL still raises error 4.
+- kit: the Linux authoring kit ships, building byte-identical output to
+  the Windows kit from the same inputs, with the same ffmpeg build for
+  video and PCM audio. Getting started gains a Linux setup section.
+  CONFIG.BAT gains CSPECTCMD (Linux only, default mono) to name the
+  program that runs CSpect.exe.
+- video: VIDEO\NNN.mkv is accepted as a cutscene source alongside
+  VIDEO\NNN.mp4.
 
 ## v0.11.0 - 27/09/2026
 

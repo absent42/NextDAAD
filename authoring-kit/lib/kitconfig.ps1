@@ -1,13 +1,18 @@
 # kitconfig.ps1 - dot-source. Reads CONFIG.BAT and CONFIG.local.BAT with
 # cmd's semantics (last-wins). Grammar shared with lib\vidtune\kitmodel.py.
+if ($null -eq (Get-Variable OnWindows -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'kitplatform.ps1') }
 $KitConfigLineRegex = '^\s*set\s+"?([A-Za-z0-9_]+)=(.*?)"?\s*$'
+$KitConfigPathKeys = '^(TOOLSDIR|GFXDIR|ARKOSDIR|CSPECTDIR|FFMPEGDIR|SJASMPLUSDIR|NEXTDAWDIR|VIDTOOLSDIR|NDRC|NEXFILE|INTRONEX)$'
 
 function Read-KitConfigFile([string]$Path, [hashtable]$Into) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
     foreach ($line in [IO.File]::ReadAllLines($Path, [Text.Encoding]::GetEncoding(28591))) {
         $m = [regex]::Match($line, $KitConfigLineRegex, 'IgnoreCase')
         if (-not $m.Success) { continue }
-        $Into[$m.Groups[1].Value.ToUpperInvariant()] = $m.Groups[2].Value
+        $k = $m.Groups[1].Value.ToUpperInvariant(); $v = $m.Groups[2].Value
+        # Non-Windows hosts: a CONFIG written on Windows keeps working (spec 4.2).
+        if (-not $OnWindows -and $k -match $KitConfigPathKeys) { $v = $v -replace '\\', '/' }
+        $Into[$k] = $v
     }
 }
 

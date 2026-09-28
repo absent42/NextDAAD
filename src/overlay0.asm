@@ -202,8 +202,15 @@ h_doall:                        ; 85: B = location (255 = here). Error
     ; call and eng_v3f53 preserves it.
     ld de, F53_DOALLNONE<<8 | $FF
     call eng_v3f53
+    ; Flag 50 = the location with 255 resolved, set even when nothing is
+    ; found - measured on the original ZX interpreter; the manual's "value
+    ; following DOALL". eng_doall_next reads it as the loop location.
     ld a, b
-    ld (doallLoc), a
+    cp LOC_HERE
+    jr nz, .locset
+    ld a, (flags+FLAG_PLAYER)
+.locset:
+    ld (flags+FLAG_DOALL), a
     ld a, (procSP)
     ld (doallLevel), a
     call eng_top_ix

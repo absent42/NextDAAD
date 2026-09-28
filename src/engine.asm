@@ -584,8 +584,10 @@ eng_v3f53:
     ret
 
 ; --- DOALL ---
-; Started by the DOALL handler (stores doallLoc, doallLevel, resets
-; doallObj to $FF then falls into next-object search).
+; Started by the DOALL handler (stores the resolved location in flag
+; 50, doallLevel, resets doallObj to $FF then falls into next-object
+; search). Flag 50 is read live on every pass, so LET 50 n moves the
+; loop - measured on the original ZX interpreter (DS48IE3).
 eng_doall_next:
     ld a, (doallObj)
     inc a                       ; start after the previous object
@@ -598,16 +600,19 @@ eng_doall_next:
     push bc
     call obj_ptr
     pop bc
-    ld a, (doallLoc)
-    cp LOC_HERE
-    jr nz, .fixed
-    ld a, (flags+FLAG_PLAYER)
-.fixed:
+    ld a, (flags+FLAG_DOALL)
     cp (hl)
     jr nz, .next
-    ; ALL EXCEPT: skip when noun+adj match Noun2/Adject2
     push hl
     pop iy
+    ; Manual step 2 order: convert to Noun1/Adjective1 first, THEN the
+    ; EXCEPT test, so an excepted candidate leaves its words in 34/35
+    ; (measured on the original ZX interpreter).
+    ld a, (iy+4)
+    ld (flags+FLAG_NOUN1), a
+    ld a, (iy+5)
+    ld (flags+FLAG_ADJ1), a
+    ; ALL EXCEPT: skip when noun+adj match Noun2/Adject2
     ld a, (flags+FLAG_NOUN2)
     cp (iy+4)
     jr nz, .take
@@ -615,6 +620,13 @@ eng_doall_next:
     cp (iy+5)
     jr z, .next
 .take:
+    ; A taken object becomes the referenced object (flags 51, 54-59); an
+    ; excepted one does not (original ZX, measured). obj_set_refs is
+    ; overlay0 code and eng_step reaches this walker with any overlay
+    ; mapped; every caller re-maps MMU7 before relying on it.
+    nextreg NR_MMU7, OVL0_PAGE
+    ld a, b
+    call obj_set_refs           ; preserves B and IY
     ; V3 flag 53 bit 0: both references write it at TWO sites - SET at
     ; DOALL entry (h_doall), CLEAR here on first object found (msx2daad
     ; daad_condacts.c:2280/:2255, PCDAAD condacts.pas:1460/1467). A
@@ -624,11 +636,6 @@ eng_doall_next:
     call eng_v3f53
     ld a, b
     ld (doallObj), a
-    ld (flags+FLAG_DOALL), a
-    ld a, (iy+4)
-    ld (flags+FLAG_NOUN1), a
-    ld a, (iy+5)
-    ld (flags+FLAG_ADJ1), a
     ; restart the DOALL level's table at its stored resume point
     ; (entry AND condact pointers, so a REDO/SKIP position mid-entry
     ; survives across DOALL iterations)
@@ -647,7 +654,7 @@ eng_doall_next:
     ; Both references split the exhausted DOALL into two cases;
     ; NextDAAD reaches both through this label, discriminated by the
     ; ENTRY value of doallObj: h_doall resets it to $FF before the
-    ; initial scan (overlay0.asm:218), eng_pop_proc's step-4 re-entry
+    ; initial scan (overlay0.asm:225), eng_pop_proc's step-4 re-entry
     ; only reaches here when it is NOT $FF (:327-329). Only .take
     ; writes it, and .take returns.
     ;   caso A - INITIAL scan found nothing: NEWTEXT then NOTDONE.
@@ -975,7 +982,6 @@ xbnOut:     dw 0            ; format 3 header outEntry (0 = none)
 outHookOn:  db 0            ; 1 = outEntry armed; prn_char/prn_newline gate
                             ; (print.asm); cleared while the hook runs
 doallObj:   db $FF
-doallLoc:   db 0
 doallLevel: db 0
 doallResE:  dw 0
 doallResC:  dw 0

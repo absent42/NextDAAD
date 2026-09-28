@@ -73,7 +73,7 @@
 
 $videoDir = Join-Path (Get-Location).Path 'VIDEO'
 $sources = @(Get-ChildItem -LiteralPath $videoDir -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '(?i)\.mp4$' } |
+    Where-Object { $_.Name -match '(?i)\.(mp4|mkv)$' } |
     Where-Object { $_.BaseName -match '^\d+$' })
 if (-not $sources) { exit 0 }
 

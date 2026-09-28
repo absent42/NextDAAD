@@ -4,6 +4,7 @@ Mirrors lib/video.ps1's reading of the same file - that script is the
 authority; on any divergence, video.ps1 wins and this module is wrong.
 """
 import hashlib
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,12 @@ from pathlib import Path
 from .settingsmodel import build_arg_vector
 
 _SET_RE = re.compile(r'^\s*set\s+"?([A-Za-z0-9_]+)=(.*?)"?\s*$', re.IGNORECASE)
+
+PATH_KEYS = {
+    "TOOLSDIR", "GFXDIR", "ARKOSDIR", "CSPECTDIR", "FFMPEGDIR",
+    "SJASMPLUSDIR", "NEXTDAWDIR", "VIDTOOLSDIR", "NDRC", "NEXFILE",
+    "INTRONEX",
+}
 
 
 def find_kit_root(start):
@@ -46,7 +53,12 @@ def _read_sets(path, into):
         if m:
             # No strip: cmd's SET keeps a leading space after '='; the
             # regex's trailing \s*$ already drops trailing whitespace.
-            into[m.group(1).upper()] = m.group(2)
+            name = m.group(1).upper()
+            value = m.group(2)
+            # Non-Windows hosts: a CONFIG written on Windows keeps working.
+            if os.name != "nt" and name in PATH_KEYS:
+                value = value.replace("\\", "/")
+            into[name] = value
 
 
 def parse_config(config_path, local_path=None):
@@ -90,7 +102,8 @@ class Clip:
 
 def list_clips(kit_root):
     clips = []
-    for mp4 in sorted(Path(kit_root, "VIDEO").glob("*.mp4")):
+    sources = sorted(list(Path(kit_root, "VIDEO").glob("*.mp4")) + list(Path(kit_root, "VIDEO").glob("*.mkv")))
+    for mp4 in sources:
         if not mp4.stem.isdigit():
             continue
         vid = mp4.with_suffix(".vid")

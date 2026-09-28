@@ -29,7 +29,7 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
   runs under emulation.
 - A DAAD DSF source file and game assets. The authoring kit builds the DAAD database 
   from source and converts your game assets for you.
-- Windows Powershell if you want to use the automated batch builders of the authroing kit.
+- Windows or Linux, to run the automated build scripts of the authoring kit.
 
 ## Features
 

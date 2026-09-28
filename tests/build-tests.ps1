@@ -73,7 +73,8 @@
 # debug marker, compiled twice with/without -d and asserted in bytes)
 # with ndrc, and generates corrupt/oversize variants from the template.
 # -Suite makes the suite DDB active GAME.DDB; -Err4 makes doallnest
-# active (deliberate error 4: nested DOALL on the same process); -GMode
+# active (deliberate error 4: DOALL in a sub-process called from inside
+# a live DOALL); -GMode
 # makes gmodegate active and stages the single Layer 2 picture it needs
 # (see its own block below); -V3 makes v3probe active (V3 condacts;
 # most fixtures compile -v3 now) together with the 0.XMB its XMES probe

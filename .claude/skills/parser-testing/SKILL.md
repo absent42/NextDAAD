@@ -35,8 +35,8 @@ Both mechanisms are gone now:
   turn's capture may include stale rows" by checking for that caveat,
   rather than the harness deciding for them by hiding the difference.
 - `state_rank`/`text_rank` are tracked per CHANNEL, not globally. A flag
-  that diverges every turn - flag 29 used to, flag 50 permanently does
-  on any game that nests PROCESS around a DOALL - no longer drags
+  that diverges every turn - flag 29 used to, flag 50 still does on a
+  game that nests PROCESS around a DOALL away from location 0 - no longer drags
   every later, unrelated text divergence down to `downstream` just
   because it happened after some earlier flag divergence - a text
   finding's rank depends on whether it is the first TEXT divergence.
@@ -512,26 +512,28 @@ Use the minimal repro, not the full script, so this stays cheap.
 run, originating in the fixture's boot self-test. Running the harness
 against it does not, and should not, come back clean.
 
-The baseline has shrunk to ONE flag. It was flags 29/50/53 plus objects
+The baseline is now EMPTY of flags. It was flags 29/50/53 plus objects
 1/2; flag 48 and the objects were RETRACTED as harness-manufactured
 artefacts (see entry 5's retraction note and `nleg.py`'s `objloc` - the
 object table is a 6-byte struct array, not a flat location array, and
 the old reader mis-strided it), flag 29 was fixed in SP16 Task 1 and
-flag 53 in Task 4. **Flag 50 remains, and it is RULED - permanently:**
-jDAAD saves and restores flag 50 (FDOALL) per process-stack level
-(`jdaad.js` `stackPush`/`stackPop`), while NextDAAD keeps it global -
-and so does msx2daad. The owner ruled on 2026-08-01 that NextDAAD keeps
-the msx2daad model, because msx2daad shares NextDAAD's operating
-environment where jDAAD is a browser interpreter; jDAAD's per-level
-save/restore is THE deviation. No code change was made and none will
-be - it is a permanent reference-deviation of class NOT-A-BUG
-(`docs/parser-bugs.md` entry 5).
+flag 53 in Task 4. The one finding left on `smoke.json` is the `"?N"`
+confirmation turn's echoed reply (see the capture note above), which
+the selftest matches exactly: the Next leg's text must be the reply
+character plus jDAAD's text.
 
-So the flag 50 rows are here to stay. Do not chase them, do not mask
-them, and do not "fix" flag 50 in either direction. The selftest pin is
-not a mask: the rows keep appearing in every findings.json on purpose,
-and the pin asserts that flag 50 is the ONLY flag that ever diverges,
-so a second one joining it still fails loudly.
+**Flag 50's per-level ruling still stands:** jDAAD saves and restores
+flag 50 (FDOALL) per process-stack level (`jdaad.js`
+`stackPush`/`stackPop`), while NextDAAD keeps it global - and so does
+msx2daad. The owner ruled on 2026-08-01 that NextDAAD keeps the msx2daad
+model; jDAAD's per-level save/restore is THE deviation, NOT-A-BUG
+(`docs/parser-bugs.md` entry 5). Do not "fix" it in either direction.
+It stopped showing on condacts on 2026-09-28 (entry 43): DOALL now
+writes its LOCATION to flag 50, as the original ZX interpreter does,
+and the fixture's last DOALL is at location 0 - the same value jDAAD
+restores. Games whose last DOALL is elsewhere (Dracula `lamp`: 5 after
+GET ALL, 254 after DROP ALL) still show flag 50 rows, and they are
+EXPECTED.
 
 The end-to-end selftest case (`t11_clean_run_matches_known_divergence_baseline`
 in `tests/parser/parser_selftest.py`) therefore asserts the run matches a
@@ -558,14 +560,27 @@ something the changer must explain; neither is allowed to pass quietly.
 
 | replay | game + script | turns / findings | hash |
 | --- | --- | --- | --- |
-| condacts smoke | `tests/condacts.dsf` + `scripts/condacts/smoke.json` | 13 / 13 | `928a594e261f644b` |
-| condacts full | `tests/condacts.dsf` + `scripts/condacts/full.json` | 18 / 18 | `7d9acce5f86ebb2b` (non-DEBUG build) |
-| " | " | " | `7af45d63c52b8820` (DEBUG build - see the build-variant note below) |
-| dracula lamp | `tools/test-games/Dracula Part 1/dracula1.dsf` + `scripts/dracula/lamp.json` | 21 / 7 | `752950ee121abf2a` |
-| dracula compound | same game + `scripts/dracula/compound.json` | 17 / 4 | `2f403989f005cfc2` |
-| rabenstein d1 | `tools/Rabenstein-master/nextdaad/rabenstein.dsf` + `scripts/rabenstein/d1.json` | 6 / 6 | `6ed0e38dfc7e88eb` |
+| condacts smoke | `tests/condacts.dsf` + `scripts/condacts/smoke.json` | 13 / 1 | `2621ec4729236b69` |
+| condacts full | `tests/condacts.dsf` + `scripts/condacts/full.json` | 18 / 11 | `09e4bf14b9b1fb51` (non-DEBUG build) |
+| " | " | " | `154db0ae4bdca7f9` (DEBUG build - see the build-variant note below) |
+| dracula lamp | `tools/test-games/Dracula Part 1/dracula1.dsf` + `scripts/dracula/lamp.json` | 21 / 5 | `2d66c39b6f6899b8` |
+| dracula compound | same game + `scripts/dracula/compound.json` | 17 / 2 | `b776c8756365f40f` |
+| rabenstein d1 | `tools/Rabenstein-master/nextdaad/rabenstein.dsf` + `scripts/rabenstein/d1.json` | 6 / 6 | `ca024fdf40c790f8` |
 | prochi | `tests/prochi.dsf` + `scripts/prochi/hi.json` | 2 / 0 | `c0d5305e2f729d46` |
 | putinsp | `tests/putinsp.dsf` + `scripts/putinsp/run.json` | 1 / 1 | `019c6964994cd304` (the one finding is the RULED jDAAD deviation: jDAAD inserts a space before the container name, NextDAAD and both ZX originals do not) |
+
+RE-BASELINED 2026-09-28 for DOALL flag 50 = location (entry 43), each
+pair reproduced from a rebuilt pre-change image first. smoke
+`928a594e261f644b` -> `2621ec4729236b69`: the twelve flag-50 rows went,
+the `"?N"` echo row stays. full `7d9acce5f86ebb2b` (non-DEBUG) and
+`7af45d63c52b8820` (DEBUG): only flag 50 rows moved, every other flag
+and all text identical. lamp: only its flag 50 values moved
+(`8568bc5e94c3754e` pre-change). compound and rabenstein d1 were
+unaffected by that change. lamp, compound and rabenstein d1 had ALREADY
+drifted from their old pins (`752950ee121abf2a`, `2f403989f005cfc2`,
+`6ed0e38dfc7e88eb`) before it - lamp 7 -> 5 findings, compound 4 -> 2,
+rabenstein same count, different text; the cause of that older drift
+was not traced (the superseded findings were not kept).
 
 The condacts full pins were RE-BASELINED AGAIN on 2026-09-22: the
 PUTIN/TAKEOUT composite lost its leading inserted space (owner ruling
@@ -595,8 +610,9 @@ capture and the boot settle parking on an ANYKEY, are both closed.
 
 `scripts/condacts/smoke.json` (13 turns) is the REGRESSION PIN. It is a
 generic script that reaches checks 50-60 and stops; its value is that its
-`findings.json` has hashed to `928a594e261f644b` across every harness
-change since SP16. Do not edit it.
+`findings.json` hashed to `928a594e261f644b` across every harness change
+from SP16 until the 2026-09-28 flag 50 change, and to `2621ec4729236b69`
+since. Do not edit it.
 
 `scripts/condacts/full.json` (18 turns) is the COVERAGE script. It answers
 the fixture's own "TYPE:" prompts word for word and drives it end to end:
@@ -613,7 +629,7 @@ not. It is the only script that drives handlers carrying `IFDEF DEBUG`
 diagnostics (SFX, XMESSAGE, GFX, and the E03 tail), and on a DEBUG build
 those land on the screen the harness captures - "65 OK  SFX? 12",
 "E03 P0C V64 N38 C4B" and so on - so the transcript, and the hash,
-change. Compare against `7d9acce5f86ebb2b` only with a non-DEBUG
+change. Compare against `09e4bf14b9b1fb51` only with a non-DEBUG
 `build/nextdaad.nex`, or it will "fail" for a reason that has nothing to
 do with the harness. Confirm which variant you actually built before
 believing a comparison - `build.ps1` prints the resident headroom, and

@@ -6,7 +6,8 @@ NextDAAD's own NXV format.
 Drop a video source in `VIDEO\`, named by video number. `VIDEO\001.mp4`
 is encoded by the build to `VIDEO\001.vid` and staged as
 `RELEASE\001.VID`; a pre-encoded `VIDEO\001.vid` with no `.mp4` beside
-it is staged as it is.
+it is staged as it is. `.mkv` sources are accepted the same way, with
+the same numeric naming (`VIDEO\001.mkv`).
 
 Your game plays one with `GFX n 13` (play once) or `GFX n 14` (loop
 until any key), where `n` is the video number - `GFX 3 13` plays

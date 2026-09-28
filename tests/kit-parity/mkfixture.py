@@ -36,23 +36,36 @@ def wav_u8_mono(path, rate, hz, nbytes):
     with open(path, "wb") as f:
         f.write(hdr + pcm)
 
-def glyph_rows(code):
-    # 8x8 box with the low three bits of the code as a bar pattern: distinct per glyph.
-    return [0xFF] + [0x81 | ((code & 7) << 3)] * 6 + [0xFF]
+def builtin_font():
+    # The interpreter's built-in font (src/font.chr, 256 glyphs x 8 rows): the
+    # fixture fonts are variants of it, legible on silicon.
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, "..", "..", "src", "font.chr"), "rb") as f:
+        data = f.read()
+    if len(data) != 2048:
+        raise SystemExit("src/font.chr is %d bytes, expected 2048" % len(data))
+    return data
 
-def write_psf1(path):
+def bold(font):
+    # Every row OR-ed with itself shifted right: readable, and distinct from the base.
+    return bytes(b | (b >> 1) for b in font)
+
+def underlined(font):
+    # Row 7 (blank for letters without descenders) set solid; space stays blank,
+    # which the tilemap driver needs (lib/fontconv.ps1 glyph 32 note).
+    return bytes(0xFF if i % 8 == 7 and i // 8 != 32 else b for i, b in enumerate(font))
+
+def write_psf1(path, font):
     # PSF1: magic 36 04, mode 0, charsize 8, then 256 glyphs of 8 bytes.
     with open(path, "wb") as f:
-        f.write(bytes([0x36, 0x04, 0, 8]))
-        for c in range(256):
-            f.write(bytes(glyph_rows(c)))
+        f.write(bytes([0x36, 0x04, 0, 8]) + font)
 
-def write_bdf(path):
+def write_bdf(path, font):
     lines = ["STARTFONT 2.1", "FONT -parity-fixed-medium-r-normal--8-80-75-75-c-80-iso8859-1",
              "SIZE 8 75 75", "FONTBOUNDINGBOX 8 8 0 0", "CHARS 96"]
     for c in range(32, 128):
         lines += ["STARTCHAR U+%04X" % c, "ENCODING %d" % c, "SWIDTH 500 0", "DWIDTH 8 0",
-                  "BBX 8 8 0 0", "BITMAP"] + ["%02X" % b for b in glyph_rows(c)] + ["ENDCHAR"]
+                  "BBX 8 8 0 0", "BITMAP"] + ["%02X" % b for b in font[c * 8:c * 8 + 8]] + ["ENDCHAR"]
     lines.append("ENDFONT")
     with open(path, "w", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
@@ -65,6 +78,29 @@ def write_mp4(path, ffmpeg, frames_dir):
            "-i", os.path.join(frames_dir, "f%03d.png"), "-c:v", "libx264rgb", "-qp", "0",
            "-pix_fmt", "rgb24", "-an", path]
     subprocess.run(cmd, check=True)
+
+def write_mkv(path, ffmpeg, frames_dir):
+    # ffv1 rgb24 + pcm_u8 stereo 15625 Hz: what videnc asks ffmpeg for, so
+    # decode, scale and resample are identity and the encoder alone is measured.
+    # Audio is computed here: lavfi sine samples differ between ffmpeg builds.
+    for i in range(50):
+        gradient_png(os.path.join(frames_dir, "g%03d.png" % i), 320, 256, 7 + i * 3)
+    wav = os.path.join(frames_dir, "tone.wav")
+    wav_u8_stereo(wav, 15625, 440, 31250)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", "25",
+           "-i", os.path.join(frames_dir, "g%03d.png"), "-i", wav,
+           "-c:v", "ffv1", "-pix_fmt", "rgb24", "-c:a", "pcm_u8", path]
+    subprocess.run(cmd, check=True)
+
+def wav_u8_stereo(path, rate, hz, nframes):
+    # Intro MUSIC PCM cue already at the target format (swresample passthrough).
+    cycles = round(hz * nframes / rate)
+    mono = [min(255, max(0, int(math.floor(128 + 127 * math.sin(2 * math.pi * cycles * n / nframes) + 0.5)))) for n in range(nframes)]
+    pcm = bytes(v for s in mono for v in (s, s))
+    hdr = (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 2, rate, rate * 2, 2, 8)
+           + b"data" + struct.pack("<I", len(pcm)))
+    with open(path, "wb") as f:
+        f.write(hdr + pcm)
 
 def make_sprites(out, sprites):
     # mkanisheets.main also writes 008 (must-fail) and 015 (palette conflict),
@@ -93,17 +129,24 @@ def main(argv):
     os.makedirs(sprites, exist_ok=True)
     os.makedirs(os.path.join(out, "AUDIO"), exist_ok=True)
     os.makedirs(os.path.join(out, "VIDEO"), exist_ok=True)
+    os.makedirs(os.path.join(out, "INTRO"), exist_ok=True)
     gradient_png(os.path.join(out, "IMAGES", "DAAD.png"), 320, 256, 1)
-    gradient_png(os.path.join(out, "IMAGES", "001.png"), 320, 256, 2)
+    # 106 lines: PARITY.DSF's text window starts at row 14 below the art.
+    gradient_png(os.path.join(out, "IMAGES", "001.png"), 320, 106, 2)
     gradient_png(os.path.join(out, "IMAGES", "002.png"), 256, 192, 3)
+    # A slide is 320x256 or 256x192 only (lib/introc.ps1 Get-PictureShape).
+    gradient_png(os.path.join(out, "INTRO", "INTRO.png"), 320, 256, 2)
     pointer_png(os.path.join(out, "IMAGES", "POINTER.png"))
     make_sprites(out, sprites)
     wav_u8_mono(os.path.join(out, "AUDIO", "001.wav"), 15625, 440, 15625)
-    write_psf1(os.path.join(out, "FONT.psf"))
-    write_bdf(os.path.join(out, "FONT1.bdf"))
+    wav_u8_stereo(os.path.join(out, "AUDIO", "cue.wav"), 15625, 330, 15625)
+    font = builtin_font()
+    write_psf1(os.path.join(out, "FONT.psf"), bold(font))
+    write_bdf(os.path.join(out, "FONT1.bdf"), underlined(font))
     frames = os.path.join(out, "_frames")
     os.makedirs(frames, exist_ok=True)
     write_mp4(os.path.join(out, "VIDEO", "001.mp4"), ffmpeg, frames)
+    write_mkv(os.path.join(out, "VIDEO", "002.mkv"), ffmpeg, frames)
     for n in os.listdir(frames):
         os.remove(os.path.join(frames, n))
     os.rmdir(frames)

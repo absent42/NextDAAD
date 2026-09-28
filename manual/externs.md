@@ -1148,5 +1148,6 @@ the root of the NextDAAD repository:
 https://github.com/absent42/NextDAAD
 
 The kit also ships an agent skill for writing externs -
-`.agent\skills\xbn-extern-authoring\` at the kit root - that any AI
-coding assistant can load.
+`.agents\skills\xbn-extern-authoring\` at the kit root - that any AI
+coding assistant can load. `AGENTS.md` at the kit root points assistants
+at it.

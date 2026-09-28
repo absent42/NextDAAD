@@ -18,7 +18,8 @@ function Find-Python([string[]]$Imports) {
             $rest = @()
             if ($cand.Length -gt 1) { $rest = $cand[1..($cand.Length - 1)] }
             & $exe @rest -c $probe *> $null
-            if ($LASTEXITCODE -eq 0) { return [string[]]$cand }
+            # Unary comma: a one-element array would otherwise unroll to a string.
+            if ($LASTEXITCODE -eq 0) { return ,([string[]]$cand) }
         } catch {}
     }
     return $null

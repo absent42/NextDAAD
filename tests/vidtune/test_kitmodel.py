@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 
 from vidtune.kitmodel import find_kit_root, parse_config, list_clips, arg_hash, clip_state, read_generation_stamp
@@ -26,7 +27,9 @@ def test_parse_config(fixture_kit):
 
 def test_parse_config_vidtoolsdir(tmp_path):
     (tmp_path / "CONFIG.BAT").write_text("SET VIDTOOLSDIR=C:\\vt\r\n")
-    assert parse_config(tmp_path / "CONFIG.BAT").vidtoolsdir == "C:\\vt"
+    # VIDTOOLSDIR is a path key: backslashes normalised off Windows.
+    expected = "C:\\vt" if os.name == "nt" else "C:/vt"
+    assert parse_config(tmp_path / "CONFIG.BAT").vidtoolsdir == expected
 
 
 def test_list_clips(fixture_kit):

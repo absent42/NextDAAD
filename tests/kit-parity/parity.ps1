@@ -6,7 +6,8 @@ param(
     [switch]$Capture,
     [switch]$NoCompare,
     [switch]$PrepareOnly,
-    [string]$Shell = ''
+    [string]$Shell = '',
+    [ValidateSet('', 'compress')][string]$Variant = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot)
@@ -22,9 +23,8 @@ if (-not (Test-Path -LiteralPath $ffmpeg)) { $ffmpeg = Join-Path $FfmpegDir "ffm
 foreach ($need in @($ffmpeg, (Join-Path $ToolsDir "ArkosTracker3/tools/SongToAky$exe"), (Join-Path $ToolsDir "sjasmplus/sjasmplus$exe"))) {
     if (-not (Test-Path -LiteralPath $need)) { Write-Host "parity: tool missing: $need"; exit 2 }
 }
-$py = if ($onWindows) { 'python' } else { 'python3' }
-& $py -c 'import PIL, numpy' *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "parity: $py lacks PIL/numpy"; exit 2 }
+. (Join-Path $kitSrc 'lib/kitplatform.ps1')
+$pyc = Find-Python @('PIL', 'numpy'); if (-not $pyc) { Write-Host 'parity: no python with PIL/numpy'; exit 2 }
 
 $work = Join-Path $root 'tests/out/kit parity'
 $kit = Join-Path $work 'kit'
@@ -46,19 +46,30 @@ foreach ($drop in 'IMAGES', 'AUDIO', 'VIDEO', 'HINTS.TXT', 'STARTER.DSF', 'INTRO
 # Fixture: committed text, generated binaries, and the kit's own demo songs.
 $fix = Join-Path $PSScriptRoot 'fixture'
 Copy-Item -Path "$fix/*" -Destination $kit -Recurse -Force
-& $py (Join-Path $PSScriptRoot 'mkfixture.py') $kit --ffmpeg $ffmpeg
+$pyRest = @(); if ($pyc.Length -gt 1) { $pyRest = $pyc[1..($pyc.Length - 1)] }; & $pyc[0] @pyRest (Join-Path $PSScriptRoot 'mkfixture.py') $kit --ffmpeg $ffmpeg
 if ($LASTEXITCODE -ne 0) { throw 'mkfixture.py failed' }
 Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/PARITY.aks')
 Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER_FX.aks') -Destination (Join-Path $kit 'AUDIO/PARITY_FX.aks')
 Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/STREAM_001.aks')
+# Variant selects which fixture CONFIG/intro pair the kit copy keeps -
+# the other variant's files are removed so the copy holds exactly what
+# an author would have (never both intros or both CONFIG.fixture*.BAT).
+$configName = if ($Variant -eq 'compress') { 'CONFIG.fixture2.BAT' } else { 'CONFIG.fixture.BAT' }
+if ($Variant -eq 'compress') {
+    Copy-Item -LiteralPath (Join-Path $kit 'INTRO2.TXT') -Destination (Join-Path $kit 'INTRO.TXT') -Force
+    Remove-Item -LiteralPath (Join-Path $kit 'CONFIG.fixture.BAT')
+} else {
+    Remove-Item -LiteralPath (Join-Path $kit 'CONFIG.fixture2.BAT')
+}
+Remove-Item -LiteralPath (Join-Path $kit 'INTRO2.TXT')
 # CONFIG.local.BAT: fixture settings plus absolute tool dirs.
-$local = @(Get-Content -LiteralPath (Join-Path $kit 'CONFIG.fixture.BAT') -Encoding ASCII)
+$local = @(Get-Content -LiteralPath (Join-Path $kit $configName) -Encoding ASCII)
 $local += "SET TOOLSDIR=$ToolsDir"
 $local += "SET FFMPEGDIR=$FfmpegDir"
 $local += "SET GFXDIR=$([IO.Path]::GetFullPath((Join-Path $kit 'tools/gfx2next')))"
 $local += "SET VIDTOOLSDIR=$([IO.Path]::GetFullPath((Join-Path $kit 'tools/vidtools')))"
 [IO.File]::WriteAllLines((Join-Path $kit 'CONFIG.local.BAT'), $local, [Text.Encoding]::ASCII)
-Remove-Item -LiteralPath (Join-Path $kit 'CONFIG.fixture.BAT')
+Remove-Item -LiteralPath (Join-Path $kit $configName)
 if ($PrepareOnly) { Write-Host "parity: prepared $kit"; exit 0 }
 
 # A driver .cmd sidesteps cmd /c quote stripping on a quoted path with
@@ -122,11 +133,12 @@ $lines = foreach ($f in (Get-ChildItem -LiteralPath $rel -File -Recurse)) {
 $sorted = New-Object System.Collections.Generic.List[string]
 $sorted.AddRange([string[]]$lines)
 $sorted.Sort([StringComparer]::Ordinal)
-$manifest = Join-Path $work 'manifest.txt'
+$manifestName = if ($Variant -eq 'compress') { 'manifest-compress.txt' } else { 'manifest.txt' }
+$manifest = Join-Path $work $manifestName
 [IO.File]::WriteAllText($manifest, (($sorted -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
 Write-Host "parity: $($sorted.Count) files -> $manifest"
 
-$golden = Join-Path $PSScriptRoot 'golden/manifest.txt'
+$golden = Join-Path $PSScriptRoot "golden/$manifestName"
 if ($Capture) {
     New-Item -ItemType Directory -Force (Split-Path $golden) | Out-Null
     [IO.File]::Copy($manifest, $golden, $true)

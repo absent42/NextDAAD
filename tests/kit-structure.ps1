@@ -5,7 +5,7 @@ param([string[]]$Rules = @())
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $kit = Join-Path $root 'authoring-kit'
-$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals', 'encodings', 'sort-ordinal')
+$DefaultRules = @('launchers', 'python-candidates', 'exe-literals', 'backslash-literals', 'encodings', 'sort-ordinal', 'banners', 'tests-hazards', 'kitfiles')
 if (-not $Rules) { $Rules = $DefaultRules }
 $allow = @{}
 foreach ($l in Get-Content -LiteralPath (Join-Path $PSScriptRoot 'kit-structure-allow.txt') -Encoding ASCII) {
@@ -21,9 +21,9 @@ function Allowed([string]$rule, [string]$path, [string]$line) {
     }
     return $false
 }
-function Scan([string]$rule, [string[]]$files, [string]$pattern, [string]$why) {
+function Scan([string]$rule, [string[]]$files, [string]$pattern, [string]$why, [string]$base = $kit) {
     foreach ($f in $files) {
-        $rel = $f.Substring($kit.Length + 1) -replace '\\', '/'
+        $rel = $f.Substring($base.Length + 1) -replace '\\', '/'
         $n = 0
         foreach ($line in [IO.File]::ReadAllLines($f)) {
             $n++
@@ -43,6 +43,17 @@ if ($Rules -contains 'launchers') {
         if ($lines.Count -gt 20) { $failures.Add("launchers: $name has $($lines.Count) code lines (max 20)") }
         $calls = @($lines | Where-Object { $_ -match 'lib[\\/]\w+\.ps1' }).Count
         if ($calls -ne 1) { $failures.Add("launchers: $name invokes lib/<verb>.ps1 $calls times (want 1)") }
+    }
+    # Every .sh launcher exists, is executable in the index, is LF, and
+    # refuses cleanly when pwsh is missing (the manual promises that line).
+    foreach ($sh in 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh') {
+        $p = Join-Path $kit $sh
+        if (-not (Test-Path -LiteralPath $p)) { $failures.Add("launchers: $sh missing"); continue }
+        $mode = ((& git -C $kit ls-files -s -- $sh) -split '\s+')[0]
+        if ($mode -ne '100755') { $failures.Add("launchers: $sh index mode is $mode (want 100755)") }
+        $text = [IO.File]::ReadAllText($p)
+        if ($text -notmatch 'command -v pwsh') { $failures.Add("launchers: $sh has no pwsh guard") }
+        if ($text.Contains("`r")) { $failures.Add("launchers: $sh has CRLF line endings") }
     }
     $page = [IO.File]::ReadAllText((Join-Path $root 'manual/getting-started.md'))
     foreach ($m in [regex]::Matches($page, '`\./(\w+\.sh)`')) {
@@ -73,6 +84,19 @@ if ($Rules -contains 'backslash-literals') {
     # line that is not a regex operation; '\d', '[\\/]' and '\\' are not matched.
     Scan 'backslash-literals' ($libPs + $externPs) ('^(?!' + $skipLine + ')(?!.*(-c?(not)?match|-replace|\[regex\]|-split)).*["''][^"'']*[A-Za-z0-9_.$}]\\[A-Za-z0-9_$*{][^"'']*["'']') 'backslash inside a path literal'
 }
+if ($Rules -contains 'tests-hazards') {
+    # Selftests must run inside the Linux parity rig too: no hardcoded
+    # Windows tool suffix, no Windows-only backslash path literal, no
+    # direct Windows PowerShell 5.1 invocation, no Get-ChildItem -Filter.
+    $testDir = Join-Path $root 'tests'
+    $testFiles = @(Get-ChildItem -LiteralPath $testDir -Filter '*-selftest.ps1' -File | ForEach-Object { $_.FullName })
+    $testFiles += Join-Path $testDir 'audit-externs.ps1'
+    $testFiles += Join-Path $testDir 'hintpack-accent-oracle.ps1'
+    Scan 'tests-hazards' $testFiles "^(?!$skipLine).*\.exe\b" 'hardcoded .exe suffix' $root
+    Scan 'tests-hazards' $testFiles ('^(?!' + $skipLine + ')(?!.*(-c?(not)?match|-replace|\[regex\]|-split)).*["''][^"'']*[A-Za-z0-9_.$}]\\[A-Za-z0-9_$*{][^"'']*["'']') 'backslash inside a path literal' $root
+    Scan 'tests-hazards' $testFiles "^(?!$skipLine).*\bpowershell\b\s+-" 'direct Windows PowerShell 5.1 invocation' $root
+    Scan 'tests-hazards' $testFiles "^(?!$skipLine).*-Filter\b" 'Get-ChildItem -Filter is not portable' $root
+}
 if ($Rules -contains 'encodings') {
     Scan 'encodings' $libPs ("^(?!$skipLine).*" + '\b(Get-Content|Set-Content|Out-File|Add-Content)\b(?!.*-Encoding)') 'text cmdlet without -Encoding'
     Scan 'encodings' $libPs ("^(?!$skipLine).*" + '-Encoding\s+(Byte|utf8NoBOM)\b') 'encoding name that only one host accepts'
@@ -81,6 +105,19 @@ if ($Rules -contains 'sort-ordinal') {
     # Anchored like the other rules: unanchored, the skip's ^ lookahead never
     # matches when the engine retries mid-line, so the skip silently fails.
     Scan 'sort-ordinal' $libPs ("^(?!$skipLine).*" + 'Sort-Object(?!.*(Ordinal|-Property\s+\{))') 'Sort-Object without an ordinal comparer'
+}
+if ($Rules -contains 'banners') {
+    # Pins, committed ELF digests and the host ndrc banner agree; the byte
+    # checks live in tests/kit-binaries-selftest.ps1 (it throws on failure).
+    try { & (Join-Path $PSScriptRoot 'kit-binaries-selftest.ps1') *> $null }
+    catch { $failures.Add("banners: $($_.Exception.Message)") }
+}
+if ($Rules -contains 'kitfiles') {
+    # Every tracked kit file must match exactly one lib/kitfiles.txt line.
+    # Runs in a child process of whichever host (5.1/7) is running this test.
+    $exe = (Get-Process -Id $PID).Path
+    $kf = & $exe -NoProfile -File (Join-Path $root 'scripts/kit-files.ps1') -Check 2>&1
+    if ($LASTEXITCODE -ne 0) { $kf | ForEach-Object { $failures.Add("kitfiles: $_") } }
 }
 if ($failures.Count) {
     $failures | ForEach-Object { Write-Host $_ }

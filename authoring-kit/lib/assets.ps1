@@ -139,8 +139,9 @@ function Remove-Orphans([string[]]$Patterns) {
 }
 
 # ---- pictures ----
-# gfx2next takes only an input path and writes <base>.nxi (<base>.nxi.zx0
-# with -zx0) to the cwd, so each output is moved to its RELEASE\ name.
+# gfx2next gets a bare dstfile, written to the cwd (kit root) on both hosts:
+# Windows drops a dst directory, Linux writes beside the source without a
+# dst. -zx0 appends .zx0. Each output is moved to its RELEASE\ name.
 function Convert-Bitmap([System.IO.FileInfo]$Src, [string]$Name) {
     Add-Produced $Name
     $out = Join-Path $rel $Name
@@ -151,7 +152,7 @@ function Convert-Bitmap([System.IO.FileInfo]$Src, [string]$Name) {
     Remove-IfExists $tmpRaw; Remove-IfExists "$tmpRaw.zx0"
     $argv = @('-bitmap', '-pal-embed')
     if ($script:zsuf) { $argv += '-zx0' }
-    $argv += $Src.FullName
+    $argv += @($Src.FullName, [System.IO.Path]::GetFileName($tmpRaw))
     if ((Invoke-Native $script:gfxExe $argv -Quiet) -ne 0) {
         Remove-IfExists $tmpRaw; Remove-IfExists "$tmpRaw.zx0"
         Fail "gfx2next failed on $($Src.Name) - must be a paletted 8-bit PNG (max 256 colours)"
@@ -224,7 +225,7 @@ function Invoke-Pictures {
             $base = [System.IO.Path]::GetFileNameWithoutExtension($pn)
             $tmp = Join-Path $root "$base.spr"
             Remove-IfExists $tmp
-            if ((Invoke-Native $script:gfxExe @('-sprites', '-pal-std', '-pal-none', $p) -Quiet) -ne 0) {
+            if ((Invoke-Native $script:gfxExe @('-sprites', '-pal-std', '-pal-none', $p, "$base.spr") -Quiet) -ne 0) {
                 Remove-IfExists $tmp
                 Fail "gfx2next failed on $pn - must be a paletted 8-bit 16x16 PNG"
             }
@@ -266,7 +267,7 @@ function Invoke-Pictures {
                 if ($isPng) {
                     $tmp = Join-Path $root ($f.BaseName + '.spr')
                     Remove-IfExists $tmp
-                    if ((Invoke-Native $script:gfxExe @('-sprites', '-pal-none', $f.FullName) -Quiet) -ne 0) {
+                    if ((Invoke-Native $script:gfxExe @('-sprites', '-pal-none', $f.FullName, ($f.BaseName + '.spr')) -Quiet) -ne 0) {
                         Remove-IfExists $tmp
                         Fail "gfx2next failed on $($f.Name) - must be a paletted 8-bit PNG"
                     }

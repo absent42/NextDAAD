@@ -23,13 +23,21 @@ $cfg = @(
     '  SET   SPACED = x '
 )
 [IO.File]::WriteAllLines("$work/CONFIG.BAT", $cfg, [Text.Encoding]::ASCII)
-[IO.File]::WriteAllLines("$work\CONFIG.local.BAT", @('SET TOOLSDIR=..\tools', 'SET RUN=0'), [Text.Encoding]::ASCII)
+[IO.File]::WriteAllLines("$work/CONFIG.local.BAT", @('SET TOOLSDIR=..\tools', 'SET RUN=0'), [Text.Encoding]::ASCII)
 $c = Read-KitConfig $work
 Assert-Eq $c['GAME'] 'SECOND' 'last-wins within a file'
-Assert-Eq $c['TOOLSDIR'] '..\tools' 'local overrides base'
+if ($OnWindows) {
+    Assert-Eq $c['TOOLSDIR'] '..\tools' 'local overrides base'
+} else {
+    Assert-Eq $c['TOOLSDIR'] '../tools' 'local overrides base, path key normalised'
+}
 Assert-Eq $c['RUN'] '0' 'local-only key present'
 Assert-Eq $c['VIDOPTS'] '--dither=0.3 --fps 12.5' 'value keeps its own = signs'
-Assert-Eq $c['ARKOSDIR'] 'C:\Program Files\Arkos Tracker 3' 'quoted set "NAME=value" form'
+if ($OnWindows) {
+    Assert-Eq $c['ARKOSDIR'] 'C:\Program Files\Arkos Tracker 3' 'quoted set "NAME=value" form'
+} else {
+    Assert-Eq $c['ARKOSDIR'] 'C:/Program Files/Arkos Tracker 3' 'quoted set "NAME=value" form, path key normalised'
+}
 Assert-Eq $c.ContainsKey('EMPTY') $true 'empty value is recorded'
 Assert-Eq $c['EMPTY'] '' 'empty value is blank'
 Assert-Eq $c.ContainsKey('SPACED') $false 'a space before = is not a SET (cmd would name the var "SPACED ")'
@@ -41,6 +49,19 @@ Assert-Eq ([string]$env:EMPTY) '' 'empty value removes the env var'
 Assert-Eq (Test-Path (Join-Path $work 'CONFIG.local.BAT')) $true 'fixture intact'
 $none = Read-KitConfig "$work/nosuch"
 Assert-Eq $none.Count 0 'missing files read as empty'
+$sepWork = "$root/tests/out/kitconfig-sep"
+New-Item -ItemType Directory -Force $sepWork | Out-Null
+[IO.File]::WriteAllLines("$sepWork/CONFIG.BAT", @(
+    'SET CSPECTDIR=C:\Emulators\CSpect',
+    'SET VIDOPTS=a\b'
+), [Text.Encoding]::ASCII)
+$sep = Read-KitConfig $sepWork
+if ($OnWindows) {
+    Assert-Eq $sep['CSPECTDIR'] 'C:\Emulators\CSpect' 'path key unchanged on Windows'
+} else {
+    Assert-Eq $sep['CSPECTDIR'] 'C:/Emulators/CSpect' 'path key normalised on non-Windows'
+}
+Assert-Eq $sep['VIDOPTS'] 'a\b' 'non-path key backslash unchanged on both hosts'
 Assert-Eq ($OnWindows -is [bool]) $true 'OnWindows is a bool'
 Assert-Eq ($ExeSuffix -eq '.exe' -or $ExeSuffix -eq '') $true 'ExeSuffix'
 $cands = @(Get-PythonCandidates)

@@ -70,42 +70,64 @@ paths the build checks for.</p>
 <p>Double-click <code>BUILD.BAT</code> to build, <code>RUN.BAT</code> to play the result in
 CSpect, <code>CLEAN.BAT</code> to start over.</p>
 <h3 id="linux-setup">Linux setup</h3>
-<blockquote>
-<p>The Linux kit is in preparation. This section describes its first
-release; until that release is published, only the Windows kit above
-is available.</p>
-</blockquote>
 <p>x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
-36 and later. Install:</p>
-<ul>
-<li><strong>PowerShell 7</strong> (<code>pwsh</code>), which runs the build scripts. Microsoft
-  publishes packages for every major distribution:
-  https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux</li>
-<li><strong>Python 3.11 or newer</strong> with <code>Pillow</code> and <code>numpy</code>, for video
-  cutscenes only: <code>python3 -m pip install Pillow numpy</code>. The tuning GUI
-  also needs <code>PySide6</code>.</li>
-<li><strong>ffmpeg</strong> from your distribution (<code>sudo apt install ffmpeg</code>), for
-  video cutscenes and <code>MUSIC PCM</code> intros only.</li>
-<li><strong>Arkos Tracker 3</strong> Linux release from https://www.julien-nevo.com/arkostracker/,
-  for <code>.aks</code> music only. Extract it into <code>tools/ArkosTracker3/</code> so that
-  <code>tools/ArkosTracker3/tools/SongToAky</code> exists, or set <code>ARKOSDIR</code>.</li>
-<li><strong>CSpect</strong> Linux build from https://mdf200.itch.io/cspect plus mono
-  (<code>sudo apt install mono-devel</code>), to play the result. Extract into
-  <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>.</li>
-<li><strong>sjasmplus</strong> (<code>sudo apt install sjasmplus</code>, or build it from
-  https://github.com/z00m128/sjasmplus), only to rebuild an extern with
-  <code>externs.sh</code>.</li>
-</ul>
+36 and later. Follow the steps below in order, in a terminal. First the
+programs the later steps use:</p>
+<pre><code>sudo apt install unzip wget ca-certificates
+</code></pre>
+<p>Then install <strong>PowerShell 7.4 or newer</strong> (<code>pwsh</code>), which runs the build
+scripts. Microsoft publishes packages for every major distribution:
+https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux</p>
+<p>Unzip the kit into its own folder and go into it. Every command from
+here on runs in that folder:</p>
+<pre><code>unzip NextDAAD-AuthoringKit-&lt;version&gt;-linux.zip -d NextDAAD-AuthoringKit
+cd NextDAAD-AuthoringKit
+</code></pre>
 <p>The interpreter, the compiler (<code>lib/ndrc</code>) and Gfx2Next
 (<code>tools/gfx2next/gfx2next</code>) ship in the Linux kit. A tool that is on
 your <code>PATH</code> is found without any setting; a tool under <code>tools/</code> is
-found there; <code>CONFIG.BAT</code> points anywhere else.</p>
-<p>Unzip the kit, then in a terminal:</p>
-<pre><code>cd NextDAAD-AuthoringKit
-chmod +x *.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
+found there; <code>CONFIG.BAT</code> points anywhere else. Install only the
+optional tools your game uses:</p>
+<ul>
+<li><strong>Arkos Tracker 3</strong> Linux release from https://www.julien-nevo.com/arkostracker/,
+  for <code>.aks</code> music only. Extract the Arkos zip into <code>tools/</code>: its own
+  top folder is <code>ArkosTracker3/</code>, giving
+  <code>tools/ArkosTracker3/tools/SongToAky</code>. Or set <code>ARKOSDIR</code>.</li>
+<li><strong>ffmpeg</strong> from your distribution (<code>sudo apt install ffmpeg</code>), for
+  video cutscenes and <code>MUSIC PCM</code> intros only.</li>
+<li><strong>CSpect</strong> Linux build from https://mdf200.itch.io/cspect plus mono
+  (<code>sudo apt install mono-devel</code>), to play the result. Extract into
+  <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>, or set
+  <code>CSPECTCMD</code> in <code>CONFIG.BAT</code> to run it some other way (Linux only,
+  ignored on Windows).</li>
+<li><strong>sjasmplus</strong>, only to rebuild an extern with <code>externs.sh</code>: a
+  distribution package where one exists (<code>sudo apt install sjasmplus</code>
+  on Debian), otherwise build it from
+  https://github.com/z00m128/sjasmplus.</li>
+<li><strong>Python 3.11 or newer</strong> with <code>Pillow</code> and <code>numpy</code>, for video cutscenes
+  only, in a virtual environment - see below.</li>
+</ul>
+<p>Debian and Ubuntu do not allow pip to install into the system Python,
+and <code>python3 -m venv</code> needs the <code>python3-venv</code> package, so create a
+virtual environment once, from inside the kit folder:</p>
+<pre><code>sudo apt install python3 python3-venv
+python3 -m venv ~/nextdaad-venv
+~/nextdaad-venv/bin/pip install -r lib/requirements.txt
+. ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
+</code></pre>
+<p><code>lib/requirements.txt</code> pins the <code>Pillow</code> and <code>numpy</code> versions the kit
+is tested with. The build uses the <code>python3</code> on your PATH, which the
+activation makes the venv's. The tuning GUI also needs
+<code>~/nextdaad-venv/bin/pip install PySide6</code>. Ubuntu 22.04 ships Python
+3.10: use 24.04, Debian 12, or a newer Python from the deadsnakes PPA.</p>
+<p>Then build and play:</p>
+<pre><code>chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
 ./build.sh
 ./run.sh
 </code></pre>
+<p>The shipped <code>CONFIG.BAT</code> has <code>RUN=1</code>, so until CSpect is installed each
+build ends with <code>ERROR: CSpect not found</code> after the build succeeds; set
+<code>RUN=0</code> to build without an emulator.</p>
 <p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code> and <code>vidtune.sh</code> are the
 Linux names of the five <code>.BAT</code> launchers and take the same arguments.</p>
 <p>Two things differ from Windows:</p>
@@ -185,8 +207,8 @@ see the <a href="https://condact.xyz/nextdaad/tutorials/dev-environment">condact
   the art rules.</li>
 <li><strong><code>AUDIO\</code></strong> - Arkos <code>.aks</code> music and effects, and <code>.wav</code> samples. See
   <a href="audio.html">Audio</a>.</li>
-<li><strong><code>VIDEO\</code></strong> - cutscene sources as <code>001.mp4</code> (or a pre-encoded
-  <code>001.vid</code>). See <a href="video.html">Video</a>.</li>
+<li><strong><code>VIDEO\</code></strong> - cutscene sources as <code>001.mp4</code> or <code>001.mkv</code> (or a
+  pre-encoded <code>001.vid</code>). See <a href="video.html">Video</a>.</li>
 <li><strong>Ready-made files in the kit folder itself</strong> - a <code>FONT.CHR</code> custom
   font (see <a href="fonts.html">Fonts</a>) or a <code>POINTER.SPR</code> mouse pointer (see
   <a href="mouse.html">Mouse</a>), or already-converted title art. These

@@ -56,8 +56,15 @@ function Apply-Setup([string]$setup) {
         elseif ($s -eq 'cspect') {
             # Stand-in process named CSpect, outside the kit and tools\.
             $fake = [IO.Path]::GetFullPath((Join-Path (Split-Path $kit) 'CSpect.exe'))
-            Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32/PING.EXE') -Destination $fake -Force
-            $script:spawned = Start-Process -FilePath $fake -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+            if ($onWindows) {
+                Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32/PING.EXE') -Destination $fake -Force
+                $script:spawned = Start-Process -FilePath $fake -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+            } else {
+                # Copy-Item does not promise to keep the mode; set it explicitly.
+                Copy-Item -LiteralPath '/bin/sleep' -Destination $fake -Force
+                & chmod +x $fake
+                $script:spawned = Start-Process -FilePath $fake -ArgumentList '600' -PassThru
+            }
         }
         elseif ($s -eq 'bigdsf') {
             # Fill /MTX to ndrc's 255-entry ceiling with GUID text, which
@@ -100,15 +107,15 @@ function Run-Build {
 $skipped = 0
 foreach ($case in $cases) {
     $name, $setup, $expect = $case.Split('|', 3)
-    if (-not $onWindows -and $setup -match '(^|;)\s*cspect\s*($|;)') { $skipped++; Write-Host "negative: $name skipped (Windows only)"; continue }
     $script:spawned = $null
     try {
         Prepare
         Apply-Setup $setup
         # Counted after setup: a case's own stand-in CSpect is in both counts.
-        $before = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
+        # Linux names the process CSpect.exe (its command line, via Test-CSpectRunning's pgrep match).
+        $before = @(Get-Process -Name 'CSpect*' -ErrorAction SilentlyContinue).Count
         $r = Run-Build
-        $after = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
+        $after = @(Get-Process -Name 'CSpect*' -ErrorAction SilentlyContinue).Count
     } finally {
         if ($script:spawned) { Stop-Process -Id $script:spawned.Id -Force -ErrorAction SilentlyContinue; $script:spawned.WaitForExit() }
     }

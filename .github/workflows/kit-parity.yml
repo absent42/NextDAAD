@@ -1,0 +1,104 @@
+name: Kit parity
+
+on:
+  pull_request:
+    paths: ['authoring-kit/**', 'tests/**', 'scripts/**', '.github/workflows/kit-parity.yml', '.gitattributes']
+  push:
+    branches: [main]
+    paths: ['authoring-kit/**', 'tests/**', 'scripts/**', '.github/workflows/kit-parity.yml', '.gitattributes']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { lfs: true }
+      - shell: pwsh
+        run: ./tests/kit-structure.ps1
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { lfs: true }
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.13' }
+      - run: python -m pip install -r authoring-kit/lib/requirements.txt
+      - name: Pins
+        shell: pwsh
+        run: |
+          . ./authoring-kit/lib/kitplatform.ps1
+          . ./authoring-kit/lib/kittools.ps1
+          $p = Read-ToolVersions "$PWD/authoring-kit/lib"
+          foreach ($k in 'SJASMPLUS_VER', 'ARKOS_VER', 'ARKOS_WINDOWS_URL', 'ARKOS_WINDOWS_SHA256', 'SJASMPLUS_WINDOWS_SHA256') { "$k=$($p[$k])" >> $env:GITHUB_ENV }
+      - uses: actions/cache@v5
+        id: tools
+        with:
+          path: citools
+          key: citools-win-${{ hashFiles('authoring-kit/lib/toolversions.txt') }}
+      - name: Fetch pinned tools (flat layout parity.ps1 expects)
+        if: steps.tools.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force citools/sjasmplus, citools/ArkosTracker3, dl | Out-Null
+          Invoke-WebRequest "https://github.com/z00m128/sjasmplus/releases/download/v$env:SJASMPLUS_VER/sjasmplus-$env:SJASMPLUS_VER.win.zip" -OutFile dl/sj.zip
+          if ((Get-FileHash dl/sj.zip -Algorithm SHA256).Hash.ToLower() -ne $env:SJASMPLUS_WINDOWS_SHA256) { throw 'sjasmplus archive digest mismatch' }
+          Expand-Archive dl/sj.zip -DestinationPath dl/sj
+          $exe = Get-ChildItem dl/sj -Recurse -Filter sjasmplus.exe | Select-Object -First 1
+          Copy-Item $exe.FullName citools/sjasmplus/sjasmplus.exe
+          Invoke-WebRequest $env:ARKOS_WINDOWS_URL -OutFile dl/arkos.zip
+          if ((Get-FileHash dl/arkos.zip -Algorithm SHA256).Hash.ToLower() -ne $env:ARKOS_WINDOWS_SHA256) { throw 'Arkos archive digest mismatch' }
+          Expand-Archive dl/arkos.zip -DestinationPath dl/arkos
+          $tools = Get-ChildItem dl/arkos -Recurse -Directory -Filter tools | Where-Object { Test-Path (Join-Path $_.FullName 'SongToAky.exe') } | Select-Object -First 1
+          New-Item -ItemType Directory -Force citools/ArkosTracker3/tools | Out-Null
+          Copy-Item "$($tools.FullName)/*" citools/ArkosTracker3/tools/
+      - run: choco install ffmpeg -y --no-progress
+      - name: Parity under Windows PowerShell 5.1 and pwsh
+        shell: pwsh
+        run: |
+          $ff = Split-Path (Get-Command ffmpeg).Source
+          $t = "$PWD/citools"
+          $runs = @(
+            @('tests/kit-parity/parity.ps1', '-ToolsDir', $t, '-FfmpegDir', $ff),
+            @('tests/kit-parity/parity.ps1', '-ToolsDir', $t, '-FfmpegDir', $ff, '-Variant', 'compress'),
+            @('tests/kit-parity/parity.ps1', '-ToolsDir', $t, '-FfmpegDir', $ff, '-Shell', 'pwsh'),
+            @('tests/kit-parity/parity.ps1', '-ToolsDir', $t, '-FfmpegDir', $ff, '-Shell', 'powershell'),
+            @('tests/kit-parity/negative.ps1', '-ToolsDir', $t, '-FfmpegDir', $ff),
+            @('tests/kit-parity/tools-ab.ps1', '-ToolsDir', $t, '-FfmpegDir', $ff, '-Out', 'tools-ab-windows.txt')
+          )
+          foreach ($r in $runs) {
+            & powershell -NoProfile -File @r
+            if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: $($r -join ' ')"; exit $LASTEXITCODE }
+          }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: windows-results, path: tools-ab-windows.txt }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { lfs: true }
+      - uses: actions/cache@v5
+        with:
+          path: tests/out/tool-cache
+          key: arkos-linux-${{ hashFiles('authoring-kit/lib/toolversions.txt') }}
+      - name: Rig (downloads Arkos into tests/out/tool-cache when the cache is cold)
+        shell: pwsh
+        run: ./tests/kit-linux.ps1 -NoWindows
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: linux-results, path: tests/out/kit-linux/*.txt }
+
+  compare:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+      - name: Cross-platform tool hashes must match
+        run: diff windows-results/tools-ab-windows.txt linux-results/tools-ab.txt

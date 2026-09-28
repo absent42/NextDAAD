@@ -16,3 +16,5 @@ authoring-kit/**/*.sample text eol=crlf
 authoring-kit/**/*.sh text eol=lf
 authoring-kit/**/*.ps1 text eol=lf
 authoring-kit/**/*.py text eol=lf
+authoring-kit/lib/ndrc binary
+authoring-kit/tools/gfx2next/gfx2next binary

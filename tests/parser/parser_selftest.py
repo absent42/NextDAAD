@@ -29,7 +29,7 @@ def t1_symbols_known_addresses():
     syms = symbols.load_symbols(ROOT / "build" / "nextdaad.map")
     assert syms["FLAGS"] == 0xA200, hex(syms["FLAGS"])
     assert syms["OBJTABLE"] == 0xA300, hex(syms["OBJTABLE"])
-    assert syms["RNGSTATE"] == 0xA948, hex(syms["RNGSTATE"])
+    assert syms["RNGSTATE"] == 0xA94D, hex(syms["RNGSTATE"])
 
 
 @case
@@ -1916,13 +1916,13 @@ def t10_transcript_absent_when_no_findings():
 # harness produces no FALSE positives and catches NEW divergences - not
 # that tests/condacts.dsf is bug-free, which it demonstrably is not.
 #
-# tests/condacts.dsf's own self-test suite has one confirmed, permanent
-# reference-deviation: flag 50 (FDOALL). jDAAD saves/restores it per
-# process-stack level; NextDAAD and msx2daad keep it global (ruled
-# 2026-08-01: accept, NextDAAD follows msx2daad's model). The pin below
-# asserts flag 50 is the ONLY flag that ever diverges on a clean run - if
-# a second one joins it, this assertion must fail so someone looks.
-KNOWN_DIVERGENT_FLAGS = {50}
+# No flag diverges on a clean run. Flag 50 (FDOALL) did until 2026-09-28:
+# jDAAD saves/restores it per process-stack level while NextDAAD keeps it
+# global (ruled 2026-08-01, unchanged). Since DOALL writes its LOCATION to
+# flag 50, as the original ZX interpreter does, this fixture's last DOALL
+# (DOALL 0) leaves 0 - the same value jDAAD restores. The per-level
+# difference still shows on games whose last DOALL is not at location 0.
+KNOWN_DIVERGENT_FLAGS = set()
 # Re-baselined (objtable-stride-fix): nleg.py's objloc() previously read
 # obj_count CONSECUTIVE BYTES starting at OBJTABLE, but objTable
 # (src/engine.asm) is a 6-byte-per-record STRUCT ARRAY (OBJ_SIZE in
@@ -1990,7 +1990,14 @@ def t11_clean_run_matches_known_divergence_baseline():
         # a flag nor an object cause means state matched perfectly yet a
         # divergence was still reported - a genuine new text-channel
         # fault the two checks above cannot see at all, since they only
-        # look at what a finding blames, not whether one exists.
+        # look at what a finding blames, not whether one exists. The one
+        # exemption is the confirmation turn's echoed reply (see
+        # t11_text_channel_known_limitation_pin), matched exactly: the
+        # Next leg's text is the reply character plus jDAAD's text.
+        if (not flags_here and not objects_here
+                and f["command"].startswith("?")
+                and f["actual"] == f["command"][1:] + f["expected"]):
+            continue
         assert flags_here or objects_here, (
             "turn %d has a divergence with no flag or object cause at "
             "all (a new, purely textual divergence) - not covered by the "
@@ -2018,8 +2025,8 @@ def t11_clean_run_matches_known_divergence_baseline():
 @case
 def t11_text_channel_known_limitation_pin():
     """CAPTURE-SYMMETRY PIN: this fixture's text channel must agree on all
-    13 turns, apart from the one "?" turn checked below - the only flag
-    left in the findings is 50 (see KNOWN_DIVERGENT_FLAGS above). Any text
+    13 turns, apart from the one "?" turn checked below - no flag is left
+    in the findings (see KNOWN_DIVERGENT_FLAGS above). Any text
     finding that appears here is pointed evidence about a specific turn,
     not the two capture models disagreeing on every turn alike.
 
@@ -2096,12 +2103,13 @@ def t11_text_channel_known_limitation_pin():
     # the boot settle does not always stop AT the prompt. See the "?"
     # branch in nleg.play for the two measured attempts.
     #
-    # So: state-only everywhere, plus at most one "both" and only on a
-    # "?" turn. Anything else is news.
+    # So: state-only everywhere, plus at most one "both" or "text-only"
+    # (text-only once no flag diverges on that turn), and only on a "?"
+    # turn. Anything else is news.
     findings = json.loads(
         (out / "findings.json").read_text(encoding="utf-8"))["findings"]
     classes = {f["class"] for f in findings}
-    assert classes <= {"state-only", "both"}, (
+    assert classes <= {"state-only", "both", "text-only"}, (
         "expected every finding in this fixture to be state-only, or the "
         "confirmation turn's known echo difference - got %s. A text "
         "divergence appeared where the text channel previously agreed; "

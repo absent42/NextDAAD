@@ -3,6 +3,11 @@ name: Release authoring kit
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to name the zips after (dry run: artifacts only, no upload)"
+        required: true
 
 permissions:
   contents: write
@@ -11,20 +16,37 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           lfs: true
-
-      - name: Zip authoring kit (contents at archive root)
+      - name: Resolve tag
+        env:
+          TAG_IN: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+        run: echo "TAG=$TAG_IN" >> "$GITHUB_ENV"
+      - name: Verify the file classification
+        shell: pwsh
+        run: ./scripts/kit-files.ps1 -Check
+      - name: Zip both kits (modes from git; .BAT/.TXT CRLF and .sh LF from .gitattributes)
+        shell: bash
         run: |
+          set -euo pipefail
           cd authoring-kit
-          zip -r "../NextDAAD-AuthoringKit-${{ github.event.release.tag_name }}.zip" . -x ".gitignore"
-
-      - name: Attach the kit to the release
+          pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform windows | zip -q -@ "../NextDAAD-AuthoringKit-$TAG.zip"
+          pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform linux   | zip -q -@ "../NextDAAD-AuthoringKit-$TAG-linux.zip"
+          cd ..
+          # Counts, not negated greps: under pipefail a -q grep that exits early
+          # makes unzip fail with SIGPIPE and "!" would turn that into success.
+          x=$(unzip -Z "NextDAAD-AuthoringKit-$TAG-linux.zip" build.sh clean.sh externs.sh run.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "$x" = 7 ]
+          # CONFIG.BAT ships on both platforms (kitfiles.txt: both); exclude it, not a Windows launcher.
+          n=$(unzip -l "NextDAAD-AuthoringKit-$TAG-linux.zip" | grep -v ' CONFIG\.BAT$' | grep -cE '\.(BAT|exe|dll)$' || true); [ "$n" = 0 ]
+          n=$(unzip -l "NextDAAD-AuthoringKit-$TAG.zip" | grep -cE '(\.sh|lib/ndrc)$' || true); [ "$n" = 0 ]
+          n=$(unzip -l "NextDAAD-AuthoringKit-$TAG.zip" | grep -c '\.gitignore' || true); [ "$n" = 0 ]
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kits-${{ env.TAG }}
+          path: NextDAAD-AuthoringKit-*.zip
+      - name: Attach the kits to the release
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            "NextDAAD-AuthoringKit-${{ github.event.release.tag_name }}.zip" \
-            --clobber
+        run: gh release upload "$TAG" NextDAAD-AuthoringKit-*.zip --clobber
