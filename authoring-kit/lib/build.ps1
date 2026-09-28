@@ -61,13 +61,16 @@ $nexFile = $t.NEXFILE
 foreach ($need in @($t.NDRC, $nexFile)) {
     if (-not $need -or -not (Test-Path -LiteralPath $need)) { Fail "ERROR: required tool missing: $need" }
 }
-# Linux: an unzip that dropped execute bits leaves a kit that cannot run
-# its own compiler; say what to do instead of failing the banner check.
+# Linux: an unzip that dropped every execute bit leaves a kit that cannot
+# run its own compiler; say what to do instead of failing the banner check.
 function Test-Executable([string]$Path) {
     if ($OnWindows) { return $true }
     # PWSH_MIN is 7.4, so GetUnixFileMode exists; no process spawn needed.
     $mode = [IO.File]::GetUnixFileMode($Path)
-    return (($mode -band [IO.UnixFileMode]::UserExecute) -ne 0)
+    # Runnable by the current user via owner, group or other execute bit -
+    # a file owned by a different uid with g+x/o+x still runs.
+    $x = [IO.UnixFileMode]::UserExecute -bor [IO.UnixFileMode]::GroupExecute -bor [IO.UnixFileMode]::OtherExecute
+    return (($mode -band $x) -ne 0)
 }
 foreach ($need in @($t.NDRC, $t.GFX)) {
     if ((Test-Path -LiteralPath $need -PathType Leaf) -and -not (Test-Executable $need)) {
