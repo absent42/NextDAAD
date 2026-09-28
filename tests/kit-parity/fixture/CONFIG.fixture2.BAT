@@ -3,3 +3,4 @@ SET COMPRESS=1
 SET RUN=0
 SET COLS=
 SET VIDOPTS_001=--dither 0.25
+SET VIDOPTS_002=--dither 0.0 --tile-slack 0.5
