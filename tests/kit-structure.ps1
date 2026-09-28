@@ -44,6 +44,17 @@ if ($Rules -contains 'launchers') {
         $calls = @($lines | Where-Object { $_ -match 'lib[\\/]\w+\.ps1' }).Count
         if ($calls -ne 1) { $failures.Add("launchers: $name invokes lib/<verb>.ps1 $calls times (want 1)") }
     }
+    # Every .sh launcher exists, is executable in the index, is LF, and
+    # refuses cleanly when pwsh is missing (the manual promises that line).
+    foreach ($sh in 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh') {
+        $p = Join-Path $kit $sh
+        if (-not (Test-Path -LiteralPath $p)) { $failures.Add("launchers: $sh missing"); continue }
+        $mode = ((& git -C $kit ls-files -s -- $sh) -split '\s+')[0]
+        if ($mode -ne '100755') { $failures.Add("launchers: $sh index mode is $mode (want 100755)") }
+        $text = [IO.File]::ReadAllText($p)
+        if ($text -notmatch 'command -v pwsh') { $failures.Add("launchers: $sh has no pwsh guard") }
+        if ($text.Contains("`r")) { $failures.Add("launchers: $sh has CRLF line endings") }
+    }
     $page = [IO.File]::ReadAllText((Join-Path $root 'manual/getting-started.md'))
     foreach ($m in [regex]::Matches($page, '`\./(\w+\.sh)`')) {
         if ('build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh' -notcontains $m.Groups[1].Value) { $failures.Add("launchers: getting-started.md names unknown launcher $($m.Groups[1].Value)") }
