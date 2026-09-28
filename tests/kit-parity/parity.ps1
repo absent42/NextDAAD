@@ -24,8 +24,7 @@ foreach ($need in @($ffmpeg, (Join-Path $ToolsDir "ArkosTracker3/tools/SongToAky
     if (-not (Test-Path -LiteralPath $need)) { Write-Host "parity: tool missing: $need"; exit 2 }
 }
 . (Join-Path $kitSrc 'lib/kitplatform.ps1')
-# @(): Find-Python's one-element candidate unrolls to a bare string.
-$pyc = @(Find-Python @('PIL', 'numpy') | Where-Object { $_ }); if ($pyc.Count -eq 0) { Write-Host 'parity: no python with PIL/numpy'; exit 2 }
+$pyc = Find-Python @('PIL', 'numpy'); if (-not $pyc) { Write-Host 'parity: no python with PIL/numpy'; exit 2 }
 
 $work = Join-Path $root 'tests/out/kit parity'
 $kit = Join-Path $work 'kit'

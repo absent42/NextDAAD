@@ -5,9 +5,8 @@ $root = Split-Path (Split-Path $PSScriptRoot)
 . (Join-Path $root 'authoring-kit/lib/kitplatform.ps1')
 $ffmpeg = Join-Path $root "authoring-kit/tools/ffmpeg/bin/ffmpeg$ExeSuffix"
 if (-not (Test-Path -LiteralPath $ffmpeg)) { Write-Host "mkfixture-selftest: no ffmpeg at $ffmpeg"; exit 2 }
-# @(): Find-Python's one-element candidate unrolls to a bare string.
-$pyc = @(Find-Python @('PIL', 'numpy') | Where-Object { $_ })
-if ($pyc.Count -eq 0) { Write-Host 'mkfixture-selftest: no python with PIL/numpy'; exit 2 }
+$pyc = Find-Python @('PIL', 'numpy')
+if (-not $pyc) { Write-Host 'mkfixture-selftest: no python with PIL/numpy'; exit 2 }
 $pyRest = @(); if ($pyc.Length -gt 1) { $pyRest = $pyc[1..($pyc.Length - 1)] }
 $out = Join-Path $root 'tests/out/kit parity/fixture-gen'
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
