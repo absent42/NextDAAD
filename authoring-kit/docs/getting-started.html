@@ -18,6 +18,10 @@ the result. There is nothing to assemble by hand.</p>
 and the picture converter ship in the kit; the emulator, the music
 converters, ffmpeg and the assembler are third-party downloads. Pick
 your platform below, then read <a href="#already-have-some-of-these">Already have some of these?</a>.</p>
+<p>On either platform, keep the kit folder on a local drive: NTFS on
+Windows; ext4, btrfs or xfs on Linux. A FAT or exFAT USB stick, a
+network share or a Docker bind mount cannot keep the precise file times
+the incremental build relies on, and the build refuses to run there.</p>
 <h3 id="windows-setup">Windows setup</h3>
 <p>Windows 10 or 11. Windows PowerShell, which is part of Windows, runs the
 build; nothing else needs installing for a text-only game.</p>
@@ -104,16 +108,12 @@ chmod +x *.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped th
 </code></pre>
 <p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code> and <code>vidtune.sh</code> are the
 Linux names of the five <code>.BAT</code> launchers and take the same arguments.</p>
-<p>Three things differ from Windows:</p>
+<p>Two things differ from Windows:</p>
 <ul>
 <li><strong>File names are case-sensitive.</strong> Use the names this manual shows:
   <code>IMAGES/</code>, <code>AUDIO/</code>, <code>VIDEO/</code>, <code>001.png</code>, <code>STARTER.DSF</code>, <code>FONT.CHR</code>.
-  A <code>#include</code> in your source must match the file's case exactly and
-  use <code>/</code> between folders.</li>
-<li><strong>Build on a local Linux filesystem</strong> (ext4, btrfs, xfs). A FAT or
-  exFAT USB stick, a network share or a Docker bind mount of a Windows
-  folder cannot keep the file times the incremental build relies on,
-  and the build refuses to run there.</li>
+  An <code>#include</code> or <code>#incbin</code> in your source must match the file's case
+  exactly and use <code>/</code> between folders.</li>
 <li><strong><code>CONFIG.BAT</code> keeps its name.</strong> It is a plain settings file of
   <code>SET NAME=value</code> lines that the scripts read; nothing executes it.
   Paths in it may use <code>/</code>.</li>
@@ -350,8 +350,8 @@ Try the verbs <code>MUSIC</code>, <code>MUTE</code>, <code>TUNE</code>, <code>BL
 <td>The compiler rejected your source. Its own output above the message names the line.</td>
 </tr>
 <tr>
-<td><code>WARNING: #include ... case differs</code></td>
-<td>The included file exists, but its name on disk is spelled with different capitals from the <code>#include</code> line. Windows opens it anyway; Linux will not. Match the case.</td>
+<td><code>WARNING: ... -&gt; on disk as ... (case differs; Linux cannot open it)</code> / <code>WARNING: ... -&gt; uses \ (Linux needs /)</code></td>
+<td>An <code>#include</code> or <code>#incbin</code> line names a file whose name on disk is spelled with different capitals, or separates folders with <code>\</code>. Windows builds it anyway; on Linux the same line is an <code>ERROR:</code> and the build stops. Match the case and use <code>/</code>.</td>
 </tr>
 <tr>
 <td><code>GAME.DDB is N bytes, over the 65535 limit</code></td>

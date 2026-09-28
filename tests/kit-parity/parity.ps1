@@ -98,9 +98,9 @@ function Invoke-LibScript([string]$name, [string[]]$scriptArgs) {
 }
 # Externs first: BUILD stages the kit-root GAME.XBN into RELEASE.
 if ($Shell) {
-    # -BaseDir must be named: externs.ps1 takes it positionally before the
-    # remaining-argument module list, so a bare word list would shift into it.
-    $code = Invoke-LibScript 'externs' @('-BaseDir', $kit, 'ticker', 'hints')
+    # Bare module list, no -BaseDir: the golden GAME.XBN fails if
+    # externs.ps1 binds the first module to -BaseDir by position.
+    $code = Invoke-LibScript 'externs' @('ticker', 'hints')
     if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
     $code = Invoke-LibScript 'build' @()
     if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
@@ -137,9 +137,10 @@ if ($NoCompare) { exit 0 }
 if (-not (Test-Path -LiteralPath $golden)) { Write-Host 'parity: no golden - run with -Capture'; exit 2 }
 $a = [IO.File]::ReadAllText($golden)
 $b = [IO.File]::ReadAllText($manifest)
-if ($a -eq $b) { Write-Host 'parity: PASS (identical to golden)'; exit 0 }
+if ($a -ceq $b) { Write-Host 'parity: PASS (identical to golden)'; exit 0 }
 Write-Host 'parity: FAIL - manifest differs from golden'
 $ga = [IO.File]::ReadAllLines($golden); $gb = [IO.File]::ReadAllLines($manifest)
+if (($ga -join "`n") -ceq ($gb -join "`n")) { Write-Host 'parity: manifest differs only in line endings'; exit 1 }
 foreach ($l in $ga) { if ($gb -notcontains $l) { Write-Host "- $l" } }
 foreach ($l in $gb) { if ($ga -notcontains $l) { Write-Host "+ $l" } }
 exit 1

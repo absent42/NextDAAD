@@ -10,3 +10,5 @@ part-two-dsf|copy PART2/PART2.DSF PART2/OTHER.DSF|ERROR: PART2/ has 2 .DSF files
 run-on-fail|remove nextdaad.nex; set RUN=1|ERROR: required tool missing: nextdaad.nex
 include-case|rename inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf
 include-folder-case|rename inc INC|WARN:on disk as INC (case differs
+ndrc-missing|set NDRC=nosuch|ERROR: required tool missing: nosuch
+cspect-running|cspect|ERROR: CSpect is running - close it before building

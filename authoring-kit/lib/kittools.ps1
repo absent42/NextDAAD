@@ -1,7 +1,6 @@
-# kittools.ps1 - dot-source after kitplatform.ps1. Resolves every tool
-# path from the config, exactly as lib\tools.bat did: blank per-tool dir
-# means under TOOLSDIR; Arkos tools\, ffmpeg bin\ and a nested sjasmplus
-# folder are probed; values stay relative to the kit root.
+# kittools.ps1 - dot-source after kitplatform.ps1. Paths as v0.11.0 tools.bat:
+# blank per-tool dir = under TOOLSDIR; Arkos tools\, ffmpeg bin\ and a nested
+# sjasmplus folder are probed; values stay relative to the kit root.
 
 function Read-ToolVersions([string]$LibDir) {
     $v = @{}

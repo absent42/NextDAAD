@@ -53,11 +53,15 @@ function Apply-Setup([string]$setup) {
                 Set-Config 'NDRC' $stubPath
             }
         }
+        elseif ($s -eq 'cspect') {
+            # Stand-in process named CSpect, outside the kit and tools\.
+            $fake = [IO.Path]::GetFullPath((Join-Path (Split-Path $kit) 'CSpect.exe'))
+            Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32/PING.EXE') -Destination $fake -Force
+            $script:spawned = Start-Process -FilePath $fake -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+        }
         elseif ($s -eq 'bigdsf') {
-            # Fill /MTX to ndrc's 255-entry ceiling (message numbers 0-254)
-            # with GUID text: no repeated tokens for -auto-tokens to find,
-            # so this needs 20 GUIDs per entry (not 10) to clear 65535
-            # bytes even after -auto-tokens' character-level compression.
+            # Fill /MTX to ndrc's 255-entry ceiling with GUID text, which
+            # -auto-tokens cannot compress: 20 GUIDs per entry clear 65535 bytes.
             $dsf = Join-Path $kit 'PARITY.DSF'
             $lines = [IO.File]::ReadAllLines($dsf, [Text.Encoding]::GetEncoding(28591))
             $mtx = -1; $otx = -1
@@ -93,25 +97,35 @@ function Run-Build {
         return @{ Code = $LASTEXITCODE; Out = $out }
     } finally { $ErrorActionPreference = $prevEap; Pop-Location }
 }
+$skipped = 0
 foreach ($case in $cases) {
     $name, $setup, $expect = $case.Split('|', 3)
-    Prepare
-    Apply-Setup $setup
-    $before = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
-    $r = Run-Build
-    $after = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
+    if (-not $onWindows -and $setup -match '(^|;)\s*cspect\s*($|;)') { $skipped++; Write-Host "negative: $name skipped (Windows only)"; continue }
+    $script:spawned = $null
+    try {
+        Prepare
+        Apply-Setup $setup
+        # Counted after setup: a case's own stand-in CSpect is in both counts.
+        $before = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
+        $r = Run-Build
+        $after = @(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count
+    } finally {
+        if ($script:spawned) { Stop-Process -Id $script:spawned.Id -Force -ErrorAction SilentlyContinue; $script:spawned.WaitForExit() }
+    }
     $want = $expect.Replace('{sep}', "$sep").Replace('{build}', $buildName) -replace '[\\/]', '/'
     $wantWarn = $want.StartsWith('WARN:')
     if ($wantWarn) { $want = $want.Substring(5) }
+    # A WARN case builds on Windows; elsewhere build.ps1 fails with ERROR: and the same text.
+    $wantCode = if ($wantWarn -and $onWindows) { 0 } else { 1 }
     $got = $r.Out -replace '[\\/]', '/'
-    $ok = (($wantWarn -and $r.Code -eq 0) -or (-not $wantWarn -and $r.Code -eq 1)) -and $got.Contains($want) -and ($after -eq $before)
+    $ok = ($r.Code -eq $wantCode) -and $got.Contains($want) -and ($after -eq $before)
     if ($ok) { Write-Host "negative: $name ok" }
     else {
         $failed++
-        Write-Host "negative: $name FAILED (exit $($r.Code), expected substring: $want)"
+        Write-Host "negative: $name FAILED (exit $($r.Code), expected exit $wantCode and substring: $want)"
         Write-Host $r.Out
     }
 }
 if ($failed) { Write-Host "negative: $failed case(s) failed"; exit 1 }
-Write-Host "negative: $($cases.Count) cases passed"
+Write-Host "negative: $(@($cases).Count - $skipped) cases passed, $skipped skipped"
 exit 0

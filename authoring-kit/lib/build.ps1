@@ -14,10 +14,8 @@ function Fail([string[]]$Lines) { foreach ($l in $Lines) { Write-Host $l }; exit
 # cmd's del ... 2>nul: a file that will not go is left, silently.
 function Remove-Quiet([string]$p) { if (Test-Path -LiteralPath $p -PathType Leaf) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }
 
-# Two names differing only by case cannot coexist on Windows and would be
-# two files on Linux; refuse so both platforms see one kit. tools\ and
-# RELEASE\ are excluded: third-party tool folders and build output are
-# not author files.
+# Case-only name pairs are one file on Windows, two on Linux: refuse.
+# tools\ and RELEASE\ are not author files.
 $seenCi = @{}
 foreach ($f in Get-ChildItem -LiteralPath $kitRoot -File -Recurse) {
     $relPath = $f.FullName.Substring($kitRoot.Length + 1)
@@ -70,19 +68,14 @@ if (-not "$banner ".Contains("NDRC $($t.NDRCVER) ")) {
 }
 if (@(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count -gt 0) { Fail 'ERROR: CSpect is running - close it before building' }
 
-# NDRC opens include names verbatim, case-sensitively, relative to the
-# PROCESS working directory (include.c:197-208), which the kit makes the
-# kit root for every DSF, part DSFs included. A name that matches only
-# case-insensitively builds on Windows and fails on Linux: warn here,
-# error there. Two grammars: "#include <name>" takes column 10 onward,
-# cut at ';', trimmed, quotes kept (include.c:121-139); "#incbin" is a
-# token followed by a quoted string, anywhere in the process section,
-# quotes stripped (sintactic.c:1349-1356).
+# NDRC opens names verbatim, case-sensitively, from the cwd = kit root
+# (include.c:197-208). #include: column 10 on, cut at ';', trimmed
+# (include.c:121-139); #incbin: quoted token (sintactic.c:1349-1356).
 function Test-DsfIncludes([string]$DsfPath) {
     $problems = @()
     $names = @()
     foreach ($line in [IO.File]::ReadAllLines($DsfPath, [Text.Encoding]::GetEncoding(28591))) {
-        if ($line -match '^#include\b') {
+        if ($line -cmatch '^#include\b') {
             $name = if ($line.Length -gt 9) { $line.Substring(9) } else { '' }
             $semi = $name.IndexOf(';'); if ($semi -ge 0) { $name = $name.Substring(0, $semi) }
             $name = $name.Trim()
@@ -303,10 +296,14 @@ foreach ($n in 2..9) {
 
 Write-Host 'BUILD OK: RELEASE\ is ready to copy to an SD card'
 if ((cfg 'RUN') -eq '1') {
-    # BUILD.BAT exited 0 after RUN.BAT whatever it returned.
+    # BUILD.BAT exited 0 after RUN.BAT whatever it returned. On Windows a
+    # failed run pauses so its error stays readable in a double-clicked console.
     $runScript = Join-Path $lib 'run.ps1'
     if (Test-Path -LiteralPath $runScript) {
-        try { & $runScript | Out-Host } catch { Write-Host "ERROR: $($_.Exception.Message)" }
+        $global:LASTEXITCODE = 0
+        $runCode = 0
+        try { & $runScript | Out-Host; $runCode = $LASTEXITCODE } catch { Write-Host "ERROR: $($_.Exception.Message)"; $runCode = 1 }
+        if ($runCode -ne 0 -and $OnWindows) { & cmd /c pause }
     }
 }
 exit 0

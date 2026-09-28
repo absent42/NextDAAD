@@ -28,9 +28,7 @@ if (-not $game) {
 $launch = Join-Path 'RELEASE' 'nextdaad.nex'
 $nexFile = if ($game) { Find-KitFile $relDir "$game.NEX" } else { $null }
 if ($nexFile) { $launch = Join-Path 'RELEASE' $nexFile.Name }
-# The call operator passes each array element as one argument (quoted
-# correctly on both hosts) and waits for CSpect to exit, per R16.
-# Start-Process -ArgumentList joins the array into one string and does not
-# re-quote elements containing spaces under 5.1 or pwsh.
+# The call operator quotes each argument on both hosts (Start-Process
+# -ArgumentList does not); piping to Out-Null waits for CSpect to exit.
 & $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null
 exit 0

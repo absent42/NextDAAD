@@ -37,7 +37,11 @@ def _read_sets(path, into):
     p = Path(path)
     if not p.is_file():
         return
-    for line in p.read_text(errors="replace").splitlines():
+    # Latin-1 and \r, \n, \r\n breaks only, as kitconfig.ps1's ReadAllLines
+    # (str.splitlines would also split on \x85 and other controls).
+    with p.open(encoding="latin-1", newline=None) as f:
+        lines = f.read().split("\n")
+    for line in lines:
         m = _SET_RE.match(line)
         if m:
             # No strip: cmd's SET keeps a leading space after '='; the

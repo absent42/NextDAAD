@@ -12,6 +12,11 @@ and the picture converter ship in the kit; the emulator, the music
 converters, ffmpeg and the assembler are third-party downloads. Pick
 your platform below, then read [Already have some of these?](#already-have-some-of-these).
 
+On either platform, keep the kit folder on a local drive: NTFS on
+Windows; ext4, btrfs or xfs on Linux. A FAT or exFAT USB stick, a
+network share or a Docker bind mount cannot keep the precise file times
+the incremental build relies on, and the build refuses to run there.
+
 ### Windows setup
 
 Windows 10 or 11. Windows PowerShell, which is part of Windows, runs the
@@ -77,16 +82,12 @@ Unzip the kit, then in a terminal:
 `build.sh`, `run.sh`, `clean.sh`, `externs.sh` and `vidtune.sh` are the
 Linux names of the five `.BAT` launchers and take the same arguments.
 
-Three things differ from Windows:
+Two things differ from Windows:
 
 - **File names are case-sensitive.** Use the names this manual shows:
   `IMAGES/`, `AUDIO/`, `VIDEO/`, `001.png`, `STARTER.DSF`, `FONT.CHR`.
-  A `#include` in your source must match the file's case exactly and
-  use `/` between folders.
-- **Build on a local Linux filesystem** (ext4, btrfs, xfs). A FAT or
-  exFAT USB stick, a network share or a Docker bind mount of a Windows
-  folder cannot keep the file times the incremental build relies on,
-  and the build refuses to run there.
+  An `#include` or `#incbin` in your source must match the file's case
+  exactly and use `/` between folders.
 - **`CONFIG.BAT` keeps its name.** It is a plain settings file of
   `SET NAME=value` lines that the scripts read; nothing executes it.
   Paths in it may use `/`.
@@ -273,7 +274,7 @@ Try the verbs `MUSIC`, `MUTE`, `TUNE`, `BLEEP`, `ZAP`, `SAMPLE`, `MOVIE` and `RE
 | `wrong DAAD compiler version` | The banner `lib\ndrc.exe` prints does not match the version pinned in `lib\toolversions.txt`. This should not happen with the kit as shipped; if you have replaced `ndrc.exe` yourself, set `NDRCVER` in `CONFIG.local.BAT` to match. |
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
 | `ndrc failed compiling` | The compiler rejected your source. Its own output above the message names the line. |
-| `WARNING: #include ... case differs` | The included file exists, but its name on disk is spelled with different capitals from the `#include` line. Windows opens it anyway; Linux will not. Match the case. |
+| `WARNING: ... -> on disk as ... (case differs; Linux cannot open it)` / `WARNING: ... -> uses \ (Linux needs /)` | An `#include` or `#incbin` line names a file whose name on disk is spelled with different capitals, or separates folders with `\`. Windows builds it anyway; on Linux the same line is an `ERROR:` and the build stops. Match the case and use `/`. |
 | `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |
 | `uses #classic, which NextDAAD does not support` | Remove the `#classic` line from your source. It tells the compiler to imitate the original pre-DRC DAAD compiler, for the benefit of interpreters that cannot read a NextDAAD database in any case; here it only makes the database bigger. |
 | `gfx2next not found` | Install Gfx2Next, or fix `TOOLSDIR`. |

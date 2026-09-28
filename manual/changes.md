@@ -23,11 +23,19 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - **VIDTUNE reads your local settings too.** VIDTUNE now reads
   `CONFIG.local.BAT` and honours an `FFMPEGDIR` setting, matching the
   main build.
-- **Case-only name differences are caught early.** A kit whose folder
-  or file names differ only by letter case from what a game's
-  `#include` expects is now refused with a clear message rather than
-  failing later; a genuine case mismatch between an `#include` and
-  the file on disk is warned about.
+- **Case-only name differences are caught early.** Two files in the
+  kit folder whose names differ only by letter case are now refused
+  with a clear message. An `#include` or `#incbin` whose name differs
+  from the file on disk only by case, or which uses `\` between
+  folders, prints a `WARNING` on Windows; both fail on Linux.
+- **Kit folders need precise file times.** The build now refuses a kit
+  folder on a filesystem that cannot keep precise file times - FAT,
+  exFAT or a network share - because the incremental build relies on
+  them to tell what has changed. Move the kit to a local NTFS drive.
+- **`CONFIG.BAT` is read, not run.** The build scripts now read its
+  `SET NAME=value` lines instead of running it with cmd, so a `%VAR%`
+  reference in a value is no longer expanded; write the value out in
+  full.
 - **Output is unchanged.** Existing games build to the same bytes as
   before.
 - **The Linux kit is not released yet.** The Getting Started guide's

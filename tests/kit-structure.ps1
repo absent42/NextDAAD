@@ -60,10 +60,8 @@ if ($Rules -contains 'python-candidates') {
         if (-not $py.Contains($pyTok)) { $failures.Add("python-candidates: encoderun.py lacks $pyTok") }
     }
 }
-# Comment lines and message lines are not code paths: skipped by every rule.
-# The skip is a negative lookahead, so each pattern that uses it starts with ^;
-# unanchored, the engine would retry at column 1 where ^ cannot match and the
-# lookahead would pass.
+# Comment and message lines are skipped by every rule. The skip is a ^
+# lookahead: a pattern using it must start with ^ or a mid-line retry passes it.
 $skipLine = '^\s*(#|REM\b|Write-(Host|Output|Error|Warning)\b|throw\b|Fail\b)'
 if ($Rules -contains 'exe-literals') {
     # Platform conditionals in Python ("ffmpeg.exe" if os.name == "nt") are the

@@ -8,7 +8,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Keys are ints; ordinal on their string form is what every host agrees on.
+# Keys are ints, sorted numerically: one topic order on every host.
 function Sort-Ordinal($keys) {
     $l = New-Object System.Collections.Generic.List[int]
     foreach ($k in $keys) { $l.Add([int]$k) }

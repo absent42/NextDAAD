@@ -1,7 +1,5 @@
-# externs.ps1 - EXTERNS.BAT / externs.sh body: resolve sjasmplus, then hand
-# the module list to xbnbuild.ps1 with -Out at the kit root. cwd = kit root.
-# PositionalBinding off: without it, a bare first argument binds to
-# -BaseDir by position instead of joining the module list.
+# externs.ps1 - EXTERNS.BAT / externs.sh body; cwd = kit root.
+# PositionalBinding off: a bare first module must not bind to -BaseDir.
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$BaseDir = '',

@@ -18,8 +18,15 @@ All notable changes to NextDAAD are recorded here.
 - kit: a DAAD compiler that crashes now always fails the build;
   Windows crash codes are negative and slipped past the old check.
 - vidtune: reads CONFIG.local.BAT and honours FFMPEGDIR.
-- kit: kit-root names that differ only by case are refused; #include
-  targets whose case differs from disk are warned about.
+- kit: two kit files whose names differ only by case are refused. An
+  #include or #incbin whose name differs from the file on disk only by
+  case, or which uses \ between folders, prints a WARNING on Windows
+  (an ERROR on Linux, where it cannot be opened).
+- kit: the build refuses a kit folder on a filesystem that cannot keep
+  precise file times (FAT, exFAT, network shares): the incremental
+  build compares them to find changed inputs.
+- kit: CONFIG.BAT is read by the build scripts rather than run by cmd,
+  so %VAR% references in it are no longer expanded.
 - Outputs are unchanged: tests\kit-parity pins the RELEASE bytes
   against v0.11.0.
 - manual: getting started has Windows and Linux setup sections. The

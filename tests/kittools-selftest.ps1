@@ -21,7 +21,7 @@ if (Test-Path $kit) { Remove-Item $kit -Recurse -Force }
 foreach ($d in 'lib', 'tools/ArkosTracker3/tools', 'tools/ffmpeg/bin', 'tools/sjasmplus/sjasmplus-1.23.1', 'alt/ff') {
     New-Item -ItemType Directory -Force "$kit/$d" | Out-Null
 }
-Copy-Item "$lib/toolversions.txt" "$kit/lib\"
+Copy-Item "$lib/toolversions.txt" "$kit/lib"
 $x = $ExeSuffix
 foreach ($f in "tools/ArkosTracker3/tools/SongToAky$x", "tools/ffmpeg/bin/ffmpeg$x", "tools/sjasmplus/sjasmplus-1.23.1/sjasmplus$x", "alt/ff/ffmpeg$x") {
     [IO.File]::WriteAllBytes("$kit/$f", [byte[]]@(0))
