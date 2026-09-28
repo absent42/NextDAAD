@@ -26,10 +26,18 @@ $cfg = @(
 [IO.File]::WriteAllLines("$work\CONFIG.local.BAT", @('SET TOOLSDIR=..\tools', 'SET RUN=0'), [Text.Encoding]::ASCII)
 $c = Read-KitConfig $work
 Assert-Eq $c['GAME'] 'SECOND' 'last-wins within a file'
-Assert-Eq $c['TOOLSDIR'] '..\tools' 'local overrides base'
+if ($OnWindows) {
+    Assert-Eq $c['TOOLSDIR'] '..\tools' 'local overrides base'
+} else {
+    Assert-Eq $c['TOOLSDIR'] '../tools' 'local overrides base, path key normalised'
+}
 Assert-Eq $c['RUN'] '0' 'local-only key present'
 Assert-Eq $c['VIDOPTS'] '--dither=0.3 --fps 12.5' 'value keeps its own = signs'
-Assert-Eq $c['ARKOSDIR'] 'C:\Program Files\Arkos Tracker 3' 'quoted set "NAME=value" form'
+if ($OnWindows) {
+    Assert-Eq $c['ARKOSDIR'] 'C:\Program Files\Arkos Tracker 3' 'quoted set "NAME=value" form'
+} else {
+    Assert-Eq $c['ARKOSDIR'] 'C:/Program Files/Arkos Tracker 3' 'quoted set "NAME=value" form, path key normalised'
+}
 Assert-Eq $c.ContainsKey('EMPTY') $true 'empty value is recorded'
 Assert-Eq $c['EMPTY'] '' 'empty value is blank'
 Assert-Eq $c.ContainsKey('SPACED') $false 'a space before = is not a SET (cmd would name the var "SPACED ")'
