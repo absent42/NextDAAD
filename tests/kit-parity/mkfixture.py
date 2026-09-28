@@ -69,12 +69,14 @@ def write_mp4(path, ffmpeg, frames_dir):
 def write_mkv(path, ffmpeg, frames_dir):
     # ffv1 rgb24 + pcm_u8 stereo 15625 Hz: what videnc asks ffmpeg for, so
     # decode, scale and resample are identity and the encoder alone is measured.
+    # Audio is computed here: lavfi sine samples differ between ffmpeg builds.
     for i in range(50):
         gradient_png(os.path.join(frames_dir, "g%03d.png" % i), 320, 256, 7 + i * 3)
+    wav = os.path.join(frames_dir, "tone.wav")
+    wav_u8_stereo(wav, 15625, 440, 31250)
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", "25",
-           "-i", os.path.join(frames_dir, "g%03d.png"),
-           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=15625", "-t", "2",
-           "-c:v", "ffv1", "-pix_fmt", "rgb24", "-c:a", "pcm_u8", "-ac", "2", "-ar", "15625", path]
+           "-i", os.path.join(frames_dir, "g%03d.png"), "-i", wav,
+           "-c:v", "ffv1", "-pix_fmt", "rgb24", "-c:a", "pcm_u8", path]
     subprocess.run(cmd, check=True)
 
 def wav_u8_stereo(path, rate, hz, nframes):
