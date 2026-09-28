@@ -47,6 +47,11 @@ All notable changes to NextDAAD are recorded here.
   object number. Each taken object sets the referenced object (flags
   51, 54-59); Noun1/Adjective1 are set before the ALL EXCEPT test.
   Nested DOALL still raises error 4.
+- kit: the Linux authoring kit ships, building byte-identical output to
+  the Windows kit. CONFIG.BAT gains CSPECTCMD (Linux only, default
+  mono) to name the program that runs CSpect.exe.
+- video: VIDEO\NNN.mkv is accepted as a cutscene source alongside
+  VIDEO\NNN.mp4.
 
 ## v0.11.0 - 27/09/2026
 

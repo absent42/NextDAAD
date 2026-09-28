@@ -53,6 +53,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   loop refer to it. A game that read the object from flag 50 should
   read flag 51. See
   [Known differences](known-differences.md#flag-50-holds-the-doall-location-not-the-object).
+- **The Linux authoring kit ships.** It builds the same bytes as the
+  Windows kit. `CONFIG.BAT` gains `CSPECTCMD`, the program that runs
+  `CSpect.exe` on Linux (default `mono`).
+- **Video cutscenes accept `.mkv` sources.** `VIDEO\NNN.mkv` works
+  alongside `VIDEO\NNN.mp4`.
 
 ## 0.11.0 - 27 September 2026
 

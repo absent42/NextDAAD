@@ -55,6 +55,15 @@ After extracting, these paths must exist:
   tools\vidtools\vidtune.exe (only needed for interactive per-clip tuning)
 
 
+On Linux, the build checks these paths instead:
+  tools/ArkosTracker3/tools/SongToAky (SongToSoundEffects, SongToYm beside it)
+  tools/CSpect/CSpect.exe (run under mono)
+  tools/sjasmplus/sjasmplus
+  ffmpeg - not looked for under tools/; found on PATH
+A tool missing from its path above (ffmpeg, SongToAky, sjasmplus,
+gfx2next) is also looked for on PATH. Gfx2Next and the DAAD compiler
+(lib/ndrc) ship with the Linux kit, same as the Windows one.
+
 Already have one of these installed?
 -------------------------------------
 The paths above are the default: one tools\ folder holding everything.

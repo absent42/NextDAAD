@@ -42,19 +42,26 @@ CSpect, `CLEAN.BAT` to start over.
 
 ### Linux setup
 
-> The Linux kit is in preparation. This section describes its first
-> release; until that release is published, only the Windows kit above
-> is available.
-
 x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
 36 and later. Install:
 
 - **PowerShell 7** (`pwsh`), which runs the build scripts. Microsoft
   publishes packages for every major distribution:
   https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux
-- **Python 3.11 or newer** with `Pillow` and `numpy`, for video
-  cutscenes only: `python3 -m pip install Pillow numpy`. The tuning GUI
-  also needs `PySide6`.
+- **Python 3.11 or newer** with `Pillow` and `numpy`, for video cutscenes
+  only, in a virtual environment (Debian and Ubuntu do not allow pip to
+  install into the system Python, and `python3 -m venv` needs the
+  `python3-venv` package):
+
+      sudo apt install python3 python3-venv
+      python3 -m venv ~/nextdaad-venv
+      ~/nextdaad-venv/bin/pip install Pillow numpy
+      . ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
+
+  The build uses the `python3` on your PATH, which the activation makes the
+  venv's. The tuning GUI also needs `~/nextdaad-venv/bin/pip install PySide6`.
+  Ubuntu 22.04 ships Python 3.10: use 24.04, Debian 12, or a newer Python
+  from the deadsnakes PPA.
 - **ffmpeg** from your distribution (`sudo apt install ffmpeg`), for
   video cutscenes and `MUSIC PCM` intros only.
 - **Arkos Tracker 3** Linux release from https://www.julien-nevo.com/arkostracker/,
@@ -62,7 +69,9 @@ x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
   `tools/ArkosTracker3/tools/SongToAky` exists, or set `ARKOSDIR`.
 - **CSpect** Linux build from https://mdf200.itch.io/cspect plus mono
   (`sudo apt install mono-devel`), to play the result. Extract into
-  `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`.
+  `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`, or set
+  `CSPECTCMD` in `CONFIG.BAT` to run it some other way (Linux only,
+  ignored on Windows).
 - **sjasmplus** (`sudo apt install sjasmplus`, or build it from
   https://github.com/z00m128/sjasmplus), only to rebuild an extern with
   `externs.sh`.
@@ -75,7 +84,7 @@ found there; `CONFIG.BAT` points anywhere else.
 Unzip the kit, then in a terminal:
 
     cd NextDAAD-AuthoringKit
-    chmod +x *.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
+    chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
     ./build.sh
     ./run.sh
 
@@ -168,8 +177,8 @@ Everything the build reads lives in the kit folder:
   the art rules.
 - **`AUDIO\`** - Arkos `.aks` music and effects, and `.wav` samples. See
   [Audio](audio.md).
-- **`VIDEO\`** - cutscene sources as `001.mp4` (or a pre-encoded
-  `001.vid`). See [Video](video.md).
+- **`VIDEO\`** - cutscene sources as `001.mp4` or `001.mkv` (or a
+  pre-encoded `001.vid`). See [Video](video.md).
 - **Ready-made files in the kit folder itself** - a `FONT.CHR` custom
   font (see [Fonts](fonts.md)) or a `POINTER.SPR` mouse pointer (see
   [Mouse](mouse.md)), or already-converted title art. These
