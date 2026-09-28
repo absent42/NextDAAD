@@ -88,18 +88,35 @@ function Test-DsfIncludes([string]$DsfPath) {
             $name = $name.Trim()
             if ($name) { $names += , @($line, $name) }
         }
-        foreach ($m in [regex]::Matches($line, '#incbin\s+"([^"]*)"', 'IgnoreCase')) {
+        # NDRC's lexer drops ';' to end of line before tokenising; cut here
+        # too (unless the ';' is inside a quoted string) so a commented-out
+        # #incbin is not linted.
+        $code = $line; $inQuote = $false
+        for ($i = 0; $i -lt $line.Length; $i++) {
+            if ($line[$i] -eq '"') { $inQuote = -not $inQuote }
+            elseif ($line[$i] -eq ';' -and -not $inQuote) { $code = $line.Substring(0, $i); break }
+        }
+        foreach ($m in [regex]::Matches($code, '#incbin\s+"([^"]*)"', 'IgnoreCase')) {
             $names += , @($line, $m.Groups[1].Value)
         }
     }
     foreach ($pair in $names) {
         $line = $pair[0]; $name = $pair[1]
-        $target = Join-Path $kitRoot ($name -replace '\\', '/')
-        $parent = Split-Path -Parent $target
-        $leaf = Split-Path -Leaf $target
-        $exact = @(Get-ChildItem -LiteralPath $parent -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ceq $leaf })
-        $loose = @(Get-ChildItem -LiteralPath $parent -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $leaf })
-        if ($exact.Count -eq 0 -and $loose.Count -gt 0) { $problems += "$line -> on disk as $($loose[0].Name) (case differs; Linux cannot open it)" }
+        # Walk one path component at a time from the kit root: a wrong-case
+        # FOLDER (not just the leaf) must be caught too. Report the first
+        # component whose case differs.
+        $parts = @(($name -replace '\\', '/').Split('/') | Where-Object { $_ })
+        $cur = $kitRoot
+        $mismatch = $null
+        foreach ($part in $parts) {
+            $entries = @(Get-ChildItem -LiteralPath $cur -ErrorAction SilentlyContinue)
+            $exact = @($entries | Where-Object { $_.Name -ceq $part })
+            if ($exact.Count -gt 0) { $cur = $exact[0].FullName; continue }
+            $loose = @($entries | Where-Object { $_.Name -eq $part })
+            if ($loose.Count -gt 0) { $mismatch = $loose[0].Name }
+            break
+        }
+        if ($mismatch) { $problems += "$line -> on disk as $mismatch (case differs; Linux cannot open it)" }
         if ($name -match '\\') { $problems += "$line -> uses \ (Linux needs /)" }
     }
     return $problems
