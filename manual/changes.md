@@ -44,8 +44,6 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - **Output is unchanged.** Existing games build to the same bytes as
   before; only the interpreter, `nextdaad.nex`, differs, for the
   `DOALL` change below.
-- **The Linux kit is not released yet.** The Getting Started guide's
-  Linux section describes the coming release.
 - **`DOALL` now matches the original interpreter.** Flag 50 holds the
   location a `DOALL` is searching, not the object it has reached. The
   object on each pass is now the referenced object - flag 51, with its
@@ -54,8 +52,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
   read flag 51. See
   [Known differences](known-differences.md#flag-50-holds-the-doall-location-not-the-object).
 - **The Linux authoring kit ships.** It builds the same bytes as the
-  Windows kit. `CONFIG.BAT` gains `CSPECTCMD`, the program that runs
-  `CSpect.exe` on Linux (default `mono`).
+  Windows kit. The Getting Started guide gains a Linux setup section.
+  `CONFIG.BAT` gains `CSPECTCMD`, the program that runs `CSpect.exe`
+  on Linux (default `mono`).
 - **Video cutscenes accept `.mkv` sources.** `VIDEO\NNN.mkv` works
   alongside `VIDEO\NNN.mp4`.
 

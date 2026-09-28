@@ -59,7 +59,7 @@ On Linux, the build checks these paths instead:
   tools/ArkosTracker3/tools/SongToAky (SongToSoundEffects, SongToYm beside it)
   tools/CSpect/CSpect.exe (run under mono)
   tools/sjasmplus/sjasmplus
-  ffmpeg - not looked for under tools/; found on PATH
+  tools/ffmpeg/ffmpeg, or tools/ffmpeg/bin/ffmpeg
 A tool missing from its path above (ffmpeg, SongToAky, sjasmplus,
 gfx2next) is also looked for on PATH. Gfx2Next and the DAAD compiler
 (lib/ndrc) ship with the Linux kit, same as the Windows one.

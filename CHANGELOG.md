@@ -29,9 +29,6 @@ All notable changes to NextDAAD are recorded here.
   so %VAR% references in it are no longer expanded.
 - Outputs are unchanged: tests\kit-parity pins the RELEASE bytes
   against v0.11.0, apart from nextdaad.nex (the DOALL change below).
-- manual: getting started has Windows and Linux setup sections. The
-  Linux kit itself is not released yet; the Linux section describes
-  the coming release.
 - kit: new agent skill `daad-game-authoring` for AI assistants writing
   games: SKILL.md plus references for DSF source, condacts, flags and
   objects, process patterns, NextDAAD features, the kit workflow and
@@ -48,8 +45,9 @@ All notable changes to NextDAAD are recorded here.
   51, 54-59); Noun1/Adjective1 are set before the ALL EXCEPT test.
   Nested DOALL still raises error 4.
 - kit: the Linux authoring kit ships, building byte-identical output to
-  the Windows kit. CONFIG.BAT gains CSPECTCMD (Linux only, default
-  mono) to name the program that runs CSpect.exe.
+  the Windows kit. Getting started gains a Linux setup section.
+  CONFIG.BAT gains CSPECTCMD (Linux only, default mono) to name the
+  program that runs CSpect.exe.
 - video: VIDEO\NNN.mkv is accepted as a cutscene source alongside
   VIDEO\NNN.mp4.
 

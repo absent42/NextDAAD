@@ -76,34 +76,35 @@ CSpect, <code>CLEAN.BAT</code> to start over.</p>
 <li><strong>PowerShell 7</strong> (<code>pwsh</code>), which runs the build scripts. Microsoft
   publishes packages for every major distribution:
   https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux</li>
-<li>
-<p><strong>Python 3.11 or newer</strong> with <code>Pillow</code> and <code>numpy</code>, for video cutscenes
-  only, in a virtual environment (Debian and Ubuntu do not allow pip to
-  install into the system Python, and <code>python3 -m venv</code> needs the
-  <code>python3-venv</code> package):</p>
-<p>sudo apt install python3 python3-venv
-  python3 -m venv ~/nextdaad-venv
-  ~/nextdaad-venv/bin/pip install Pillow numpy
-  . ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal</p>
-</li>
-</ul>
-<p>The build uses the <code>python3</code> on your PATH, which the activation makes the
-  venv's. The tuning GUI also needs <code>~/nextdaad-venv/bin/pip install PySide6</code>.
-  Ubuntu 22.04 ships Python 3.10: use 24.04, Debian 12, or a newer Python
-  from the deadsnakes PPA.
-- <strong>ffmpeg</strong> from your distribution (<code>sudo apt install ffmpeg</code>), for
-  video cutscenes and <code>MUSIC PCM</code> intros only.
-- <strong>Arkos Tracker 3</strong> Linux release from https://www.julien-nevo.com/arkostracker/,
+<li><strong>Python 3.11 or newer</strong> with <code>Pillow</code> and <code>numpy</code>, for video cutscenes
+  only, in a virtual environment - see below.</li>
+<li><strong>ffmpeg</strong> from your distribution (<code>sudo apt install ffmpeg</code>), for
+  video cutscenes and <code>MUSIC PCM</code> intros only.</li>
+<li><strong>Arkos Tracker 3</strong> Linux release from https://www.julien-nevo.com/arkostracker/,
   for <code>.aks</code> music only. Extract it into <code>tools/ArkosTracker3/</code> so that
-  <code>tools/ArkosTracker3/tools/SongToAky</code> exists, or set <code>ARKOSDIR</code>.
-- <strong>CSpect</strong> Linux build from https://mdf200.itch.io/cspect plus mono
+  <code>tools/ArkosTracker3/tools/SongToAky</code> exists, or set <code>ARKOSDIR</code>.</li>
+<li><strong>CSpect</strong> Linux build from https://mdf200.itch.io/cspect plus mono
   (<code>sudo apt install mono-devel</code>), to play the result. Extract into
   <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>, or set
   <code>CSPECTCMD</code> in <code>CONFIG.BAT</code> to run it some other way (Linux only,
-  ignored on Windows).
-- <strong>sjasmplus</strong> (<code>sudo apt install sjasmplus</code>, or build it from
-  https://github.com/z00m128/sjasmplus), only to rebuild an extern with
-  <code>externs.sh</code>.</p>
+  ignored on Windows).</li>
+<li><strong>sjasmplus</strong>, only to rebuild an extern with <code>externs.sh</code>: a
+  distribution package where one exists (<code>sudo apt install sjasmplus</code>
+  on Debian), otherwise build it from
+  https://github.com/z00m128/sjasmplus.</li>
+</ul>
+<p>Debian and Ubuntu do not allow pip to install into the system Python,
+and <code>python3 -m venv</code> needs the <code>python3-venv</code> package, so create a
+virtual environment once:</p>
+<pre><code>sudo apt install python3 python3-venv
+python3 -m venv ~/nextdaad-venv
+~/nextdaad-venv/bin/pip install Pillow numpy
+. ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
+</code></pre>
+<p>The build uses the <code>python3</code> on your PATH, which the activation makes
+the venv's. The tuning GUI also needs
+<code>~/nextdaad-venv/bin/pip install PySide6</code>. Ubuntu 22.04 ships Python
+3.10: use 24.04, Debian 12, or a newer Python from the deadsnakes PPA.</p>
 <p>The interpreter, the compiler (<code>lib/ndrc</code>) and Gfx2Next
 (<code>tools/gfx2next/gfx2next</code>) ship in the Linux kit. A tool that is on
 your <code>PATH</code> is found without any setting; a tool under <code>tools/</code> is

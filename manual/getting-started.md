@@ -49,19 +49,7 @@ x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
   publishes packages for every major distribution:
   https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux
 - **Python 3.11 or newer** with `Pillow` and `numpy`, for video cutscenes
-  only, in a virtual environment (Debian and Ubuntu do not allow pip to
-  install into the system Python, and `python3 -m venv` needs the
-  `python3-venv` package):
-
-      sudo apt install python3 python3-venv
-      python3 -m venv ~/nextdaad-venv
-      ~/nextdaad-venv/bin/pip install Pillow numpy
-      . ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
-
-  The build uses the `python3` on your PATH, which the activation makes the
-  venv's. The tuning GUI also needs `~/nextdaad-venv/bin/pip install PySide6`.
-  Ubuntu 22.04 ships Python 3.10: use 24.04, Debian 12, or a newer Python
-  from the deadsnakes PPA.
+  only, in a virtual environment - see below.
 - **ffmpeg** from your distribution (`sudo apt install ffmpeg`), for
   video cutscenes and `MUSIC PCM` intros only.
 - **Arkos Tracker 3** Linux release from https://www.julien-nevo.com/arkostracker/,
@@ -72,9 +60,24 @@ x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
   `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`, or set
   `CSPECTCMD` in `CONFIG.BAT` to run it some other way (Linux only,
   ignored on Windows).
-- **sjasmplus** (`sudo apt install sjasmplus`, or build it from
-  https://github.com/z00m128/sjasmplus), only to rebuild an extern with
-  `externs.sh`.
+- **sjasmplus**, only to rebuild an extern with `externs.sh`: a
+  distribution package where one exists (`sudo apt install sjasmplus`
+  on Debian), otherwise build it from
+  https://github.com/z00m128/sjasmplus.
+
+Debian and Ubuntu do not allow pip to install into the system Python,
+and `python3 -m venv` needs the `python3-venv` package, so create a
+virtual environment once:
+
+    sudo apt install python3 python3-venv
+    python3 -m venv ~/nextdaad-venv
+    ~/nextdaad-venv/bin/pip install Pillow numpy
+    . ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
+
+The build uses the `python3` on your PATH, which the activation makes
+the venv's. The tuning GUI also needs
+`~/nextdaad-venv/bin/pip install PySide6`. Ubuntu 22.04 ships Python
+3.10: use 24.04, Debian 12, or a newer Python from the deadsnakes PPA.
 
 The interpreter, the compiler (`lib/ndrc`) and Gfx2Next
 (`tools/gfx2next/gfx2next`) ship in the Linux kit. A tool that is on
