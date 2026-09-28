@@ -16,13 +16,18 @@ if ($LASTEXITCODE -ne 0) { throw 'mkfixture.py failed' }
 $checks = 0
 function Assert-True($cond, $what) { $script:checks++; if (-not $cond) { throw "mkfixture-selftest: $what" } }
 function PngWidth($p) { $b = [IO.File]::ReadAllBytes($p); return ([int]$b[16] -shl 24) -bor ([int]$b[17] -shl 16) -bor ([int]$b[18] -shl 8) -bor [int]$b[19] }
+function PngHeight($p) { $b = [IO.File]::ReadAllBytes($p); return ([int]$b[20] -shl 24) -bor ([int]$b[21] -shl 16) -bor ([int]$b[22] -shl 8) -bor [int]$b[23] }
 Assert-True (PngWidth "$out/IMAGES/DAAD.png" -eq 320) 'DAAD.png is 320 wide'
 Assert-True (PngWidth "$out/IMAGES/001.png" -eq 320) '001.png is 320 wide'
+Assert-True (PngHeight "$out/IMAGES/001.png" -eq 106) '001.png is 106 high (text window from row 14)'
+Assert-True ((PngWidth "$out/INTRO/INTRO.png" -eq 320) -and (PngHeight "$out/INTRO/INTRO.png" -eq 256)) 'INTRO.png is a 320x256 slide'
 Assert-True (PngWidth "$out/IMAGES/002.png" -eq 256) '002.png is 256 wide'
 Assert-True (PngWidth "$out/IMAGES/POINTER.png" -eq 16) 'POINTER.png is 16 wide'
 Assert-True ((Get-ChildItem "$out/IMAGES/SPRITES" -Filter *.png).Count -ge 1) 'sprite sheets present'
 Assert-True ((Get-Item "$out/AUDIO/001.wav").Length -eq 15669) '001.wav is 44 + 15625 bytes'
 Assert-True ((Get-Item "$out/FONT.psf").Length -eq 2052) 'FONT.psf is 4 + 2048 bytes'
+$psf = [IO.File]::ReadAllBytes("$out/FONT.psf"); $chr = [IO.File]::ReadAllBytes((Join-Path $root 'src/font.chr'))
+Assert-True ((($psf[4..2051]) -join ',') -eq ($chr -join ',')) 'FONT.psf glyphs are src/font.chr'
 Assert-True ((Get-Content "$out/FONT1.bdf" -TotalCount 1) -eq 'STARTFONT 2.1') 'FONT1.bdf header'
 Assert-True ((Get-Item "$out/VIDEO/001.mp4").Length -gt 1000) '001.mp4 written'
 Assert-True (-not (Test-Path "$out/_frames")) 'frame scratch removed'
