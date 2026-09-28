@@ -27,6 +27,11 @@ function Run([string]$Tool, [string]$Case, [string]$Exe, [string[]]$ToolArgs, [s
     if (Test-Path -LiteralPath $p) { $lines.Add("$Tool $Case $(Sha $p)") } else { $lines.Add("$Tool $Case MISSING") }
 }
 $gfx = Abs $t.GFX; $s2a = Abs $t.S2A; $s2e = Abs $t.S2E; $s2y = Abs $t.S2Y; $ndrc = Abs $t.NDRC
+$missing = @(@($gfx, $s2a, $s2e, $s2y, $ndrc) | Where-Object { -not (Test-Path -LiteralPath $_) })
+if ($missing.Count -gt 0) {
+    foreach ($p in $missing) { Write-Host "tools-ab: tool missing: $p" }
+    exit 2
+}
 Run 'gfx2next' 'bitmap' $gfx @('-bitmap', '-pal-embed', (Join-Path $kit 'IMAGES/001.png')) $work '001.nxi'
 Run 'gfx2next' 'bitmap-zx0' $gfx @('-bitmap', '-pal-embed', '-zx0', (Join-Path $kit 'IMAGES/002.png')) $work '002.nxi.zx0'
 Run 'gfx2next' 'pointer' $gfx @('-sprites', '-pal-std', '-pal-none', (Join-Path $kit 'IMAGES/POINTER.png')) $work 'POINTER.spr'
