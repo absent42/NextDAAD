@@ -10,6 +10,7 @@ Quick start:
   2. Edit CONFIG.BAT if your tool paths differ
   3. Run BUILD.BAT
   4. Run RUN.BAT to play the result
+  On Linux the launchers are ./build.sh and ./run.sh.
 
 STARTER.DSF contains some examples of NextDAAD features and externs. Type HINT to get some pointers.
 

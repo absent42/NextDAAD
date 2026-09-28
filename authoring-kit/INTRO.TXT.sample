@@ -1,4 +1,4 @@
-; Sample loader intro. Rename this file to INTRO.TXT and BUILD.BAT stages
+; Sample loader intro. Rename this file to INTRO.TXT and BUILD.BAT (build.sh on Linux) stages
 ; RELEASE\<GAME>.NEX, the file to launch. Paths are relative to this folder.
 ; Point SLIDE at your own 320x256 PNG or NX2 files instead of DAAD.NX2.
 MUSIC AKY AUDIO\STARTER.aks

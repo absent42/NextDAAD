@@ -40,6 +40,10 @@ run from its _internal\ subfolder. Keep the folder whole: an exe copied
 out of it on its own will not start. tools\vidtools\LICENSES\ holds the
 licences of the libraries bundled inside it.
 
+videnc.exe and vidtune.exe ship in the Windows kit only. On Linux the
+video steps need Python 3.11 or newer with the virtual environment from
+"Getting started" (Linux setup).
+
 The DAAD compiler, NDRC, needs no download: it ships built-in as
 ..\lib\ndrc.exe. DAAD Ready and PHP are not required to build a game
 for this kit.
@@ -61,7 +65,7 @@ On Linux, the build checks these paths instead:
   tools/sjasmplus/sjasmplus
   tools/ffmpeg/ffmpeg, or tools/ffmpeg/bin/ffmpeg
 A tool missing from its path above (ffmpeg, SongToAky, sjasmplus,
-gfx2next) is also looked for on PATH. Gfx2Next and the DAAD compiler
+gfx2next, CSpect.exe) is also looked for on PATH. Gfx2Next and the DAAD compiler
 (lib/ndrc) ship with the Linux kit, same as the Windows one.
 
 Already have one of these installed?
@@ -92,7 +96,7 @@ format, caching the result as VIDEO\NNN.vid (re-encoded only when the
 .mp4 changes). A pre-encoded NXV v2 VIDEO\NNN.vid is staged as-is.
 Encoding needs ffmpeg (table above) plus videnc.exe (shipped, no
 Python required) - neither matters for a text/graphics/audio-only
-game, so ffmpeg is the ONLY extra download for video authoring. If
+game, so on Windows ffmpeg is the ONLY extra download for video authoring. If
 videnc.exe is ever missing the build falls back to ..\lib\videnc.py,
 the script it is built from (needs Python 3 + Pillow + numpy, pip
 install Pillow numpy). The encode shape and options are VIDASPECT,

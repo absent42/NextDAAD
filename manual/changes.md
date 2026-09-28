@@ -52,7 +52,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   read flag 51. See
   [Known differences](known-differences.md#flag-50-holds-the-doall-location-not-the-object).
 - **The Linux authoring kit ships.** It builds the same bytes as the
-  Windows kit. The Getting Started guide gains a Linux setup section.
+  Windows kit from the same inputs, with the same ffmpeg build for video
+  and PCM audio. The Getting Started guide gains a Linux setup section.
   `CONFIG.BAT` gains `CSPECTCMD`, the program that runs `CSpect.exe`
   on Linux (default `mono`).
 - **Video cutscenes accept `.mkv` sources.** `VIDEO\NNN.mkv` works

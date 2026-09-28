@@ -60,7 +60,7 @@ pwsh -NoProfile -File scripts/kit-files.ps1 -Check
 cd authoring-kit
 pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform linux | zip -q -@ /k/kit.zip
 cd /k
-x=`$(unzip -Z kit.zip build.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "`$x" = 3 ]
+x=`$(unzip -Z kit.zip build.sh clean.sh externs.sh run.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "`$x" = 7 ]
 n=`$(unzip -l kit.zip | grep -v ' CONFIG\.BAT`$' | grep -cE '\.(BAT|exe|dll)`$' || true); [ "`$n" = 0 ]
 echo "zip: `$(unzip -l kit.zip | tail -n 1)"
 cp kit.zip /w/kit.zip
@@ -69,7 +69,7 @@ cp kit.zip /w/kit.zip
     if ($code -ne 0) { Write-Host 'install-test: zip cut or its assertions FAILED'; exit 1 }
     Move-Item -LiteralPath (Join-Path $cut 'kit.zip') -Destination $dryZip -Force
     Remove-Item -LiteralPath $cut -Recurse -Force
-    Write-Host "install-test: $dryZip (three 0755 entries, no .BAT but CONFIG.BAT, no .exe/.dll)"
+    Write-Host "install-test: $dryZip (seven 0755 entries, no .BAT but CONFIG.BAT, no .exe/.dll)"
 }
 
 if (-not $Zip) { $Zip = $dryZip }
@@ -118,7 +118,7 @@ if ($passes -contains '2') {
     Copy-Item -LiteralPath $mkv -Destination (Join-Path $in '003.mkv')
 }
 
-# Page order: prerequisites, pwsh, [python venv, ffmpeg], unzip + cd, Arkos, build.
+# Page order: prerequisites, pwsh, unzip -d + cd, Arkos, [ffmpeg, venv], build.
 $head = @'
 exec 2>&1
 set -e
@@ -126,33 +126,32 @@ export DEBIAN_FRONTEND=noninteractive
 . /etc/os-release
 echo "== $PRETTY_NAME, $(ldd --version | head -n 1)"
 set -x
-# Not on the page: a bare image has no CA certificates, wget or unzip.
+# A bare image has empty package lists; the page's commands run as root, so no sudo.
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends ca-certificates wget unzip >/dev/null
-# Page: PowerShell 7 from the Microsoft repo for this release.
+apt install -y unzip wget ca-certificates >/dev/null
+# Page: PowerShell 7.4 or newer from the Microsoft repo for this release.
 wget -qO /tmp/ms.deb "https://packages.microsoft.com/config/ubuntu/$VERSION_ID/packages-microsoft-prod.deb"
 dpkg -i /tmp/ms.deb >/dev/null
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends powershell >/dev/null
 pwsh --version
 '@
-$py = @'
-# Page: the venv recipe verbatim and in order (root, so no sudo), then ffmpeg.
-apt install -y python3 python3-venv >/dev/null
-python3 -m venv ~/nextdaad-venv
-~/nextdaad-venv/bin/pip install Pillow numpy >/dev/null
-. ~/nextdaad-venv/bin/activate
-apt install -y ffmpeg >/dev/null
-'@
 $kit = @'
 cd /root
 cp /in/kit.zip .
-# The zip has no top folder: unzip into the folder the page cds into.
 unzip -q kit.zip -d NextDAAD-AuthoringKit
 cd NextDAAD-AuthoringKit
-# Page: Arkos so that tools/ArkosTracker3/tools/SongToAky exists.
+# Page: the Arkos zip extracted into tools/.
 unzip -q /in/arkos.zip -d tools
 test -x tools/ArkosTracker3/tools/SongToAky
+'@
+$py = @'
+# Page: ffmpeg, then the venv recipe verbatim and in order, inside the kit folder.
+apt install -y ffmpeg >/dev/null
+apt install -y python3 python3-venv >/dev/null
+python3 -m venv ~/nextdaad-venv
+~/nextdaad-venv/bin/pip install -r lib/requirements.txt >/dev/null
+. ~/nextdaad-venv/bin/activate
 '@
 $modesKept = @'
 # unzip kept the execute bits, so the page's chmod line is skipped.
@@ -198,7 +197,7 @@ set -x
 $def = @{
     '1' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID'; Body = ($head, $kit, $modesKept, $build)
         Proves = 'ubuntu:22.04 (oldest Ubuntu at the glibc 2.34 floor): pwsh + Arkos only, STARTER text/graphics/audio build' }
-    '2' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID STARTER.NEX INTRO/INTRO.DAT'; Body = ($head, $py, $kit, $modesKept, $pass2Extra, $build)
+    '2' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID STARTER.NEX INTRO/INTRO.DAT'; Body = ($head, $kit, $py, $modesKept, $pass2Extra, $build)
         Proves = 'ubuntu:24.04: page venv recipe + ffmpeg, VIDEO/003.mkv encoded and INTRO.TXT compiled' }
     '3' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID'; Body = ($head, $kit, $pass3Extra, $build)
         Proves = 'ubuntu:22.04 with execute bits dropped: shell refuses ./build.sh, sh build.sh prints the chmod line, that line fixes the kit' }

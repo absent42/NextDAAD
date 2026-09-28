@@ -43,18 +43,33 @@ CSpect, `CLEAN.BAT` to start over.
 ### Linux setup
 
 x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
-36 and later. Install:
+36 and later. Follow the steps below in order, in a terminal. First the
+programs the later steps use:
 
-- **PowerShell 7** (`pwsh`), which runs the build scripts. Microsoft
-  publishes packages for every major distribution:
-  https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux
-- **Python 3.11 or newer** with `Pillow` and `numpy`, for video cutscenes
-  only, in a virtual environment - see below.
+    sudo apt install unzip wget ca-certificates
+
+Then install **PowerShell 7.4 or newer** (`pwsh`), which runs the build
+scripts. Microsoft publishes packages for every major distribution:
+https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux
+
+Unzip the kit into its own folder and go into it. Every command from
+here on runs in that folder:
+
+    unzip NextDAAD-AuthoringKit-<version>-linux.zip -d NextDAAD-AuthoringKit
+    cd NextDAAD-AuthoringKit
+
+The interpreter, the compiler (`lib/ndrc`) and Gfx2Next
+(`tools/gfx2next/gfx2next`) ship in the Linux kit. A tool that is on
+your `PATH` is found without any setting; a tool under `tools/` is
+found there; `CONFIG.BAT` points anywhere else. Install only the
+optional tools your game uses:
+
+- **Arkos Tracker 3** Linux release from https://www.julien-nevo.com/arkostracker/,
+  for `.aks` music only. Extract the Arkos zip into `tools/`: its own
+  top folder is `ArkosTracker3/`, giving
+  `tools/ArkosTracker3/tools/SongToAky`. Or set `ARKOSDIR`.
 - **ffmpeg** from your distribution (`sudo apt install ffmpeg`), for
   video cutscenes and `MUSIC PCM` intros only.
-- **Arkos Tracker 3** Linux release from https://www.julien-nevo.com/arkostracker/,
-  for `.aks` music only. Extract it into `tools/ArkosTracker3/` so that
-  `tools/ArkosTracker3/tools/SongToAky` exists, or set `ARKOSDIR`.
 - **CSpect** Linux build from https://mdf200.itch.io/cspect plus mono
   (`sudo apt install mono-devel`), to play the result. Extract into
   `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`, or set
@@ -64,32 +79,33 @@ x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
   distribution package where one exists (`sudo apt install sjasmplus`
   on Debian), otherwise build it from
   https://github.com/z00m128/sjasmplus.
+- **Python 3.11 or newer** with `Pillow` and `numpy`, for video cutscenes
+  only, in a virtual environment - see below.
 
 Debian and Ubuntu do not allow pip to install into the system Python,
 and `python3 -m venv` needs the `python3-venv` package, so create a
-virtual environment once:
+virtual environment once, from inside the kit folder:
 
     sudo apt install python3 python3-venv
     python3 -m venv ~/nextdaad-venv
-    ~/nextdaad-venv/bin/pip install Pillow numpy
+    ~/nextdaad-venv/bin/pip install -r lib/requirements.txt
     . ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
 
-The build uses the `python3` on your PATH, which the activation makes
-the venv's. The tuning GUI also needs
+`lib/requirements.txt` pins the `Pillow` and `numpy` versions the kit
+is tested with. The build uses the `python3` on your PATH, which the
+activation makes the venv's. The tuning GUI also needs
 `~/nextdaad-venv/bin/pip install PySide6`. Ubuntu 22.04 ships Python
 3.10: use 24.04, Debian 12, or a newer Python from the deadsnakes PPA.
 
-The interpreter, the compiler (`lib/ndrc`) and Gfx2Next
-(`tools/gfx2next/gfx2next`) ship in the Linux kit. A tool that is on
-your `PATH` is found without any setting; a tool under `tools/` is
-found there; `CONFIG.BAT` points anywhere else.
+Then build and play:
 
-Unzip the kit, then in a terminal:
-
-    cd NextDAAD-AuthoringKit
     chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
     ./build.sh
     ./run.sh
+
+The shipped `CONFIG.BAT` has `RUN=1`, so until CSpect is installed each
+build ends with `ERROR: CSpect not found` after the build succeeds; set
+`RUN=0` to build without an emulator.
 
 `build.sh`, `run.sh`, `clean.sh`, `externs.sh` and `vidtune.sh` are the
 Linux names of the five `.BAT` launchers and take the same arguments.
