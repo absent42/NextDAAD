@@ -85,7 +85,8 @@ if (-not "$banner ".Contains("NDRC $($t.NDRCVER) ")) {
 # Windows: the process is CSpect. Linux: it is mono, so match the command line.
 function Test-CSpectRunning {
     if ($OnWindows) { return (@(Get-Process -Name CSpect -ErrorAction SilentlyContinue).Count -gt 0) }
-    $pg = Get-Command pgrep -CommandType Application -ErrorAction SilentlyContinue
+    # First match only: usrmerge hosts list both /usr/bin/pgrep and /bin/pgrep.
+    $pg = Get-Command pgrep -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $pg) { Write-Host 'note: pgrep not found - the running-CSpect check is skipped'; return $false }
     & $pg.Source -f 'CSpect\.exe' *> $null
     return ($LASTEXITCODE -eq 0)
