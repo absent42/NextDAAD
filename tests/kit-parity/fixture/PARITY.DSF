@@ -165,6 +165,10 @@ SPEAK   31      verb
 HINT    32      verb
 TIME    33      verb
 BLINK   34      verb
+FONTS   68      verb
+SPRIT   69      verb
+POINT   70      verb
+HIDE    71      verb
 
 ;                               Adjectives
 SMALL   2       adjective
@@ -533,6 +537,38 @@ $pictureOK
 > BLINK   _     EXTERN  0 40                ; Fade out
                 EXTERN  0 43                ; Wait for the fade
                 EXTERN  0 41                ; Fade in
+
+; Silicon checks for the fonts, sprite sets and pointer (kit docs fonts.html,
+; sprites.html, mouse.html). Everything sits inside the 106-line picture band.
+> FONTS   _     GFX     1 16                ; install FONT1.CHR (underlined)
+                MESSAGE "Font 1: underlined."
+                ANYKEY
+                GFX     0 16                ; back to the base font (FONT.CHR, bold)
+                MESSAGE "Font 0: bold."
+                DONE
+
+> SPRIT   _     LET     150 2               ; GFX f 20: set = flag f, X = f+1 (lo)
+                LET     151 200             ; f+2 (hi), Y = f+3
+                LET     152 0
+                LET     153 40
+                GFX     150 20              ; set 2 (8-bit) at (200,40)
+                LET     150 6
+                LET     151 248
+                GFX     150 20              ; set 6 (4-bit) at (248,40)
+                MESSAGE "Two sprite sets running."
+                DONE
+
+> POINT   _     MOUSE   0 0                 ; RESETMS: (160,128), hotspot (0,0)
+                MOUSE   88 7                ; DELTAYMS 88: arrow drawn at (160,40)
+                MOUSE   0 1                 ; SHOWMS
+                MESSAGE "Pointer shown."
+                DONE
+
+> HIDE    _     GFX     255 21              ; stop every sprite set
+                MOUSE   0 2                 ; HIDEMS
+                MOUSE   0 0                 ; RESETMS: hotspot back to (0,0)
+                MESSAGE "Sprites hidden."
+                DONE
 
 > LOOK    _     CLS
                 RESTART

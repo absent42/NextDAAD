@@ -37,14 +37,23 @@ def wav_u8_mono(path, rate, hz, nbytes):
         f.write(hdr + pcm)
 
 def builtin_font():
-    # The interpreter's built-in font (src/font.chr, 256 glyphs x 8 rows), so
-    # the fixture's converted fonts stay legible on silicon.
+    # The interpreter's built-in font (src/font.chr, 256 glyphs x 8 rows): the
+    # fixture fonts are variants of it, legible on silicon.
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "..", "..", "src", "font.chr"), "rb") as f:
         data = f.read()
     if len(data) != 2048:
         raise SystemExit("src/font.chr is %d bytes, expected 2048" % len(data))
     return data
+
+def bold(font):
+    # Every row OR-ed with itself shifted right: readable, and distinct from the base.
+    return bytes(b | (b >> 1) for b in font)
+
+def underlined(font):
+    # Row 7 (blank for letters without descenders) set solid; space stays blank,
+    # which the tilemap driver needs (lib/fontconv.ps1 glyph 32 note).
+    return bytes(0xFF if i % 8 == 7 and i // 8 != 32 else b for i, b in enumerate(font))
 
 def write_psf1(path, font):
     # PSF1: magic 36 04, mode 0, charsize 8, then 256 glyphs of 8 bytes.
@@ -132,8 +141,8 @@ def main(argv):
     wav_u8_mono(os.path.join(out, "AUDIO", "001.wav"), 15625, 440, 15625)
     wav_u8_stereo(os.path.join(out, "AUDIO", "cue.wav"), 15625, 330, 15625)
     font = builtin_font()
-    write_psf1(os.path.join(out, "FONT.psf"), font)
-    write_bdf(os.path.join(out, "FONT1.bdf"), font)
+    write_psf1(os.path.join(out, "FONT.psf"), bold(font))
+    write_bdf(os.path.join(out, "FONT1.bdf"), underlined(font))
     frames = os.path.join(out, "_frames")
     os.makedirs(frames, exist_ok=True)
     write_mp4(os.path.join(out, "VIDEO", "001.mp4"), ffmpeg, frames)
