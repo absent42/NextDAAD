@@ -18,7 +18,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 $lines = New-Object System.Collections.Generic.List[string]
 function Sha([string]$p) { $h = [Security.Cryptography.SHA256]::Create(); try { return (-join ($h.ComputeHash([IO.File]::ReadAllBytes($p)) | ForEach-Object { $_.ToString('x2') })) } finally { $h.Dispose() } }
 function Abs([string]$p) { if ([IO.Path]::IsPathRooted($p)) { return $p } else { return Join-Path $kit $p } }
-# Runs in $Cwd (gfx2next writes beside the cwd; ndrc resolves #include from it).
+# Runs in $Cwd: gfx2next gets a bare dstfile (as assets.ps1 passes it); ndrc resolves #include from the cwd.
 function Run([string]$Tool, [string]$Case, [string]$Exe, [string[]]$ToolArgs, [string]$Cwd, [string]$Produced) {
     $eap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -32,11 +32,11 @@ if ($missing.Count -gt 0) {
     foreach ($p in $missing) { Write-Host "tools-ab: tool missing: $p" }
     exit 2
 }
-Run 'gfx2next' 'bitmap' $gfx @('-bitmap', '-pal-embed', (Join-Path $kit 'IMAGES/001.png')) $work '001.nxi'
-Run 'gfx2next' 'bitmap-zx0' $gfx @('-bitmap', '-pal-embed', '-zx0', (Join-Path $kit 'IMAGES/002.png')) $work '002.nxi.zx0'
-Run 'gfx2next' 'pointer' $gfx @('-sprites', '-pal-std', '-pal-none', (Join-Path $kit 'IMAGES/POINTER.png')) $work 'POINTER.spr'
-Run 'gfx2next' 'sheet' $gfx @('-sprites', '-pal-none', (Join-Path $kit 'IMAGES/SPRITES/002.png')) $work '002.spr'
-Run 'gfx2next' 'font-tiles' $gfx @('-colors-4bit', '-tile-size=8x8', '-pal-none', (Join-Path $kit 'IMAGES/001.png')) $work '001.nxt'
+Run 'gfx2next' 'bitmap' $gfx @('-bitmap', '-pal-embed', (Join-Path $kit 'IMAGES/001.png'), '001.nxi') $work '001.nxi'
+Run 'gfx2next' 'bitmap-zx0' $gfx @('-bitmap', '-pal-embed', '-zx0', (Join-Path $kit 'IMAGES/002.png'), '002.nxi') $work '002.nxi.zx0'
+Run 'gfx2next' 'pointer' $gfx @('-sprites', '-pal-std', '-pal-none', (Join-Path $kit 'IMAGES/POINTER.png'), 'POINTER.spr') $work 'POINTER.spr'
+Run 'gfx2next' 'sheet' $gfx @('-sprites', '-pal-none', (Join-Path $kit 'IMAGES/SPRITES/002.png'), '002.spr') $work '002.spr'
+Run 'gfx2next' 'font-tiles' $gfx @('-colors-4bit', '-tile-size=8x8', '-pal-none', (Join-Path $kit 'IMAGES/001.png'), '001.nxt') $work '001.nxt'
 Run 'SongToAky' 'd800' $s2a @('-bin', '--encodingAddress', '0xD800', (Join-Path $kit 'AUDIO/PARITY.aks'), (Join-Path $work 'song.aky')) $work 'song.aky'
 Run 'SongToAky' 'c000' $s2a @('-bin', '--encodingAddress', '0xC000', (Join-Path $kit 'AUDIO/PARITY.aks'), (Join-Path $work 'intro.aky')) $work 'intro.aky'
 Run 'SongToSoundEffects' 'd000' $s2e @('-bin', '--encodingAddress', '0xD000', (Join-Path $kit 'AUDIO/PARITY_FX.aks'), (Join-Path $work 'fx.sfb')) $work 'fx.sfb'

@@ -476,16 +476,17 @@ $datLen = 4628 + $pool.Count
 
 # ---- assets and output ----
 function Invoke-Gfx2Next([string[]]$cmdArgs, [string]$expect) {
-    # gfx2next writes <base>.<ext> into the CWD; run it inside $Out and check
-    # the file it should have produced exists, since its exit code is unreliable.
+    # $expect is passed as the bare dstfile, run inside $Out: Windows gfx2next
+    # drops a dst directory, Linux writes beside the source without a dst.
+    # The exit code is unreliable, so the file itself is checked.
     # ($cmdArgs, not $args: $args is PowerShell's automatic variable.)
     Push-Location $Out
-    try { & $Gfx @cmdArgs 2>&1 | Out-Null } finally { Pop-Location }
+    try { & $Gfx @cmdArgs $expect 2>&1 | Out-Null } finally { Pop-Location }
     if (-not (Test-Path -LiteralPath (Join-Path $Out $expect))) { throw "gfx2next produced no $expect - is the source an 8-bit paletted PNG?" }
 }
 function Convert-Picture([string]$file, [int]$num, $shape) {
     $src = Kit-File $file
-    $base = [IO.Path]::GetFileNameWithoutExtension($file)
+    $base = [IO.Path]::GetFileNameWithoutExtension($src)
     $dst = Join-Path $Out ('{0:D3}.{1}' -f $num, $(if ($shape.mode -eq 1) { 'NXC' } else { 'NXI' }))
     switch ($shape.kind) {
         'png' {
@@ -520,7 +521,7 @@ function Get-PicturePalette([int]$num, [int]$mode) {
 }
 function Convert-Font {
     $src = Kit-File $show.fontFile
-    $base = [IO.Path]::GetFileNameWithoutExtension($show.fontFile)
+    $base = [IO.Path]::GetFileNameWithoutExtension($src)
     Remove-Item (Join-Path $Out "$base.nxt"), (Join-Path $Out "$base.nxm") -ErrorAction SilentlyContinue
     Invoke-Gfx2Next @('-colors-4bit', '-tile-size=8x8', '-pal-none', $src) "$base.nxt"
     Remove-Item (Join-Path $Out "$base.nxm") -ErrorAction SilentlyContinue
