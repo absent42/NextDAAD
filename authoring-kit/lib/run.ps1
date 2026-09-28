@@ -35,5 +35,5 @@ if ($nexFile) { $launch = Join-Path 'RELEASE' $nexFile.Name }
 # The call operator quotes each argument on both hosts (Start-Process
 # -ArgumentList does not); piping to Out-Null waits for CSpect to exit.
 if ($OnWindows) { & $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null }
-else { & $t.CSPECTCMD $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null }
+else { & $t.CSPECTCMD $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE/' $launch | Out-Null }
 exit 0

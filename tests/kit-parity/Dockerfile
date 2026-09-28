@@ -2,8 +2,10 @@
 # Ubuntu 24.04 has no sjasmplus package: built from the pinned source tarball.
 FROM ubuntu:24.04 AS sjasm
 ARG SJASMPLUS_VER
+ARG SJASMPLUS_SRC_SHA256
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential xz-utils ca-certificates wget \
  && wget -qO /tmp/s.tar.xz "https://github.com/z00m128/sjasmplus/releases/download/v${SJASMPLUS_VER}/sjasmplus-${SJASMPLUS_VER}-src.tar.xz" \
+ && echo "${SJASMPLUS_SRC_SHA256}  /tmp/s.tar.xz" | sha256sum -c - \
  && mkdir /tmp/s && tar -xJf /tmp/s.tar.xz -C /tmp/s --strip-components=1 \
  && make -C /tmp/s -j"$(nproc)" && install -m755 /tmp/s/sjasmplus /opt/sjasmplus
 

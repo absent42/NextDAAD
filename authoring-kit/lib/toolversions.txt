@@ -10,3 +10,5 @@ ARKOS_LINUX_URL=https://www.julien-nevo.com/arkostracker/release/3.6/linux64/Ark
 ARKOS_LINUX_SHA256=7772b6a8ed99274c4d6ea816fb618abd6931a4cba6f73e55fdba2e578ad8ee6c
 ARKOS_WINDOWS_URL=https://www.julien-nevo.com/arkostracker/release/3.6/windows/ArkosTracker-windows-3.6.zip
 ARKOS_WINDOWS_SHA256=5de31d63d438c6d210e2d06efe392d5052525967c5515a1ea395cf63e1da6b4b
+SJASMPLUS_WINDOWS_SHA256=fa0ca77e6e6dcdad77b2c64607b325dd6366844ab6438bfc97661fdfbc29aa35
+SJASMPLUS_SRC_SHA256=0203a01199b16660027fbe04b0a87dc5aff299401b5e3e49bff8468a3801cc54

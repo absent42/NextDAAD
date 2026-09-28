@@ -20,9 +20,14 @@ function To-Regex([string]$pat) {
     return $sb.ToString()
 }
 $rules = @()
-foreach ($line in [IO.File]::ReadAllLines((Join-Path $kit 'lib/kitfiles.txt'), [Text.Encoding]::ASCII)) {
+$lines = [IO.File]::ReadAllLines((Join-Path $kit 'lib/kitfiles.txt'), [Text.Encoding]::ASCII)
+for ($n = 0; $n -lt $lines.Count; $n++) {
+    $line = $lines[$n]
     if (-not $line.Trim() -or $line.StartsWith('#')) { continue }
     $set, $pat = $line.Trim() -split '\s+', 2
+    if (@('both', 'windows', 'linux', 'none') -cnotcontains $set) {
+        Write-Host "kit-files: authoring-kit/lib/kitfiles.txt:$($n + 1): unknown set '$set'"; exit 1
+    }
     $rules += [pscustomobject]@{ Set = $set; Pattern = $pat; Regex = (To-Regex $pat) }
 }
 $tracked = @(& git -C $kit ls-files)

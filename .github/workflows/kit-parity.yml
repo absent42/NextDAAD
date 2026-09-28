@@ -8,6 +8,9 @@ on:
     paths: ['authoring-kit/**', 'tests/**', 'scripts/**', '.github/workflows/kit-parity.yml', '.gitattributes']
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   structure:
     runs-on: ubuntu-latest
@@ -31,12 +34,12 @@ jobs:
           . ./authoring-kit/lib/kitplatform.ps1
           . ./authoring-kit/lib/kittools.ps1
           $p = Read-ToolVersions "$PWD/authoring-kit/lib"
-          foreach ($k in 'SJASMPLUS_VER', 'ARKOS_VER', 'ARKOS_WINDOWS_URL', 'ARKOS_WINDOWS_SHA256') { "$k=$($p[$k])" >> $env:GITHUB_ENV }
+          foreach ($k in 'SJASMPLUS_VER', 'ARKOS_VER', 'ARKOS_WINDOWS_URL', 'ARKOS_WINDOWS_SHA256', 'SJASMPLUS_WINDOWS_SHA256') { "$k=$($p[$k])" >> $env:GITHUB_ENV }
       - uses: actions/cache@v5
         id: tools
         with:
           path: citools
-          key: citools-win-${{ env.SJASMPLUS_VER }}-${{ env.ARKOS_VER }}
+          key: citools-win-${{ hashFiles('authoring-kit/lib/toolversions.txt') }}
       - name: Fetch pinned tools (flat layout parity.ps1 expects)
         if: steps.tools.outputs.cache-hit != 'true'
         shell: pwsh
@@ -44,6 +47,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force citools/sjasmplus, citools/ArkosTracker3, dl | Out-Null
           Invoke-WebRequest "https://github.com/z00m128/sjasmplus/releases/download/v$env:SJASMPLUS_VER/sjasmplus-$env:SJASMPLUS_VER.win.zip" -OutFile dl/sj.zip
+          if ((Get-FileHash dl/sj.zip -Algorithm SHA256).Hash.ToLower() -ne $env:SJASMPLUS_WINDOWS_SHA256) { throw 'sjasmplus archive digest mismatch' }
           Expand-Archive dl/sj.zip -DestinationPath dl/sj
           $exe = Get-ChildItem dl/sj -Recurse -Filter sjasmplus.exe | Select-Object -First 1
           Copy-Item $exe.FullName citools/sjasmplus/sjasmplus.exe
@@ -72,6 +76,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: $($r -join ' ')"; exit $LASTEXITCODE }
           }
       - uses: actions/upload-artifact@v7
+        if: always()
         with: { name: windows-results, path: tools-ab-windows.txt }
 
   linux:
@@ -87,6 +92,7 @@ jobs:
         shell: pwsh
         run: ./tests/kit-linux.ps1 -NoWindows
       - uses: actions/upload-artifact@v7
+        if: always()
         with: { name: linux-results, path: tests/out/kit-linux/*.txt }
 
   compare:

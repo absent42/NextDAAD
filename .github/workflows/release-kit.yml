@@ -20,7 +20,9 @@ jobs:
         with:
           lfs: true
       - name: Resolve tag
-        run: echo "TAG=${{ github.event.release.tag_name || github.event.inputs.tag }}" >> "$GITHUB_ENV"
+        env:
+          TAG_IN: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+        run: echo "TAG=$TAG_IN" >> "$GITHUB_ENV"
       - name: Verify the file classification
         shell: pwsh
         run: ./scripts/kit-files.ps1 -Check
@@ -34,7 +36,7 @@ jobs:
           cd ..
           # Counts, not negated greps: under pipefail a -q grep that exits early
           # makes unzip fail with SIGPIPE and "!" would turn that into success.
-          x=$(unzip -Z "NextDAAD-AuthoringKit-$TAG-linux.zip" build.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "$x" = 3 ]
+          x=$(unzip -Z "NextDAAD-AuthoringKit-$TAG-linux.zip" build.sh clean.sh externs.sh run.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "$x" = 7 ]
           # CONFIG.BAT ships on both platforms (kitfiles.txt: both); exclude it, not a Windows launcher.
           n=$(unzip -l "NextDAAD-AuthoringKit-$TAG-linux.zip" | grep -v ' CONFIG\.BAT$' | grep -cE '\.(BAT|exe|dll)$' || true); [ "$n" = 0 ]
           n=$(unzip -l "NextDAAD-AuthoringKit-$TAG.zip" | grep -cE '(\.sh|lib/ndrc)$' || true); [ "$n" = 0 ]

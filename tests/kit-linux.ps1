@@ -36,7 +36,8 @@ Copy-Item -LiteralPath $src -Destination "$ctx/context/$arkos"
 
 $img = 'nextdaad-kit-linux'
 $buildArgs = @('build', '-t', $img, '-f', (Join-Path $root 'tests/kit-parity/Dockerfile'),
-    '--build-arg', "SJASMPLUS_VER=$($pins['SJASMPLUS_VER'])", '--build-arg', "ARKOS_VER=$($pins['ARKOS_VER'])")
+    '--build-arg', "SJASMPLUS_VER=$($pins['SJASMPLUS_VER'])", '--build-arg', "SJASMPLUS_SRC_SHA256=$($pins['SJASMPLUS_SRC_SHA256'])",
+    '--build-arg', "ARKOS_VER=$($pins['ARKOS_VER'])")
 if ($Rebuild) { $buildArgs += '--no-cache' }
 & docker @buildArgs $ctx
 if ($LASTEXITCODE -ne 0) { Write-Host 'kit-linux: docker build failed'; exit 1 }

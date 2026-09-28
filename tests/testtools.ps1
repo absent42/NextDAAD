@@ -1,18 +1,13 @@
-# testtools.ps1 - dot-source. Shared host resolution for tests/*-selftest.ps1
-# so a selftest runs unmodified under Windows PowerShell 5.1, pwsh on
-# Windows, and pwsh in the Linux parity rig.
-# Forward-slash only: a selftest that appends "/literal/segments" to $root
-# must never end up with a MIXED-separator string, which gfx2next.exe's own
-# output-filename logic (not a normal path API) gets wrong on Windows.
+# testtools.ps1 - dot-source. Selftest host resolution for 5.1, pwsh and the Linux rig.
+# $root is forward-slash only: gfx2next.exe mis-derives output names from
+# mixed-separator paths on Windows.
 $root = (Split-Path $PSScriptRoot) -replace '\\', '/'
 . (Join-Path $root 'authoring-kit/lib/kitplatform.ps1')
 $TestExe = $ExeSuffix
 $TestPsHost = if ($OnWindows) { 'powershell' } else { 'pwsh' }
 
-# The repo's own tools\ tree on Windows. On Linux: $env:NEXTDAAD_TOOLS's
-# layout (the parity rig sets it) for sjasmplus and the Arkos tools, PATH
-# for ffmpeg, and the kit's own committed authoring-kit/tools/gfx2next
-# copy for gfx2next - none of those three live under $env:NEXTDAAD_TOOLS.
+# Windows: the repo tools\ tree. Linux: $env:NEXTDAAD_TOOLS for sjasmplus and
+# Arkos, PATH for ffmpeg, the committed authoring-kit/tools/gfx2next for gfx2next.
 function Get-RepoTool([string]$Name) {
     if ($OnWindows) {
         $map = @{
@@ -43,10 +38,8 @@ function Get-RepoTool([string]$Name) {
     return $Name
 }
 
-# Prints "<selftest>: <why>" and returns; the caller wraps the unportable
-# leg in if ($OnWindows) { <leg> } else { Skip-Leg '<leg> skipped - ...' }.
-# $MyInvocation.PSCommandPath inside a dot-sourced function is the CALLING
-# script's path, not testtools.ps1's own.
+# Prints "<selftest>: <why>". $MyInvocation.PSCommandPath here is the
+# calling script's path, not testtools.ps1's.
 function Skip-Leg([string]$Why) {
     $name = [IO.Path]::GetFileNameWithoutExtension($MyInvocation.PSCommandPath)
     Write-Host "${name}: $Why"
