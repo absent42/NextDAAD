@@ -1,5 +1,6 @@
 """kitmodel.py's CONFIG reader and kitconfig.ps1's Read-KitConfig must
 parse the same Latin-1 bytes into the same name->value dict."""
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,6 +26,8 @@ CONFIG_BAT = (
     "SET DUP=second\r\n"
     "SET ACCENT=C:\\Jeux\\Donn\xe9es\r\n"
     "SET NEL=a\x85b\r\n"
+    "SET FFMPEGDIR=tools\\ffmpeg\\bin\r\n"
+    "SET VIDOPTS=--x=a\\b\r\n"
 )
 
 CONFIG_LOCAL_BAT = (
@@ -76,8 +79,12 @@ def test_kitmodel_matches_kitconfig_ps1(tmp_path):
     assert py_vals["DUP"] == "third"             # last-wins across files
     assert py_vals["LEADSPACE"] == " leading"     # leading space kept
     assert py_vals["QUOTED"] == "a b"
-    assert py_vals["VIDOPTS"] == "--dither=0.3"   # '=' inside the value
     assert py_vals["BLANK"] == ""
     assert py_vals["LOCALONLY"] == "present"
     assert py_vals["ACCENT"] == "C:\\Jeux\\Donn\xe9es"  # Latin-1 byte 0xE9
     assert py_vals["NEL"] == "a\x85b"  # 0x85 is not a line break
+    assert py_vals["VIDOPTS"] == "--x=a\\b"  # not a path key: backslash kept on both hosts
+    if os.name == "nt":
+        assert py_vals["FFMPEGDIR"] == "tools\\ffmpeg\\bin"
+    else:
+        assert py_vals["FFMPEGDIR"] == "tools/ffmpeg/bin"  # path key: normalised off Windows

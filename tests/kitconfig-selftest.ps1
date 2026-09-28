@@ -41,6 +41,19 @@ Assert-Eq ([string]$env:EMPTY) '' 'empty value removes the env var'
 Assert-Eq (Test-Path (Join-Path $work 'CONFIG.local.BAT')) $true 'fixture intact'
 $none = Read-KitConfig "$work/nosuch"
 Assert-Eq $none.Count 0 'missing files read as empty'
+$sepWork = "$root/tests/out/kitconfig-sep"
+New-Item -ItemType Directory -Force $sepWork | Out-Null
+[IO.File]::WriteAllLines("$sepWork/CONFIG.BAT", @(
+    'SET CSPECTDIR=C:\Emulators\CSpect',
+    'SET VIDOPTS=a\b'
+), [Text.Encoding]::ASCII)
+$sep = Read-KitConfig $sepWork
+if ($OnWindows) {
+    Assert-Eq $sep['CSPECTDIR'] 'C:\Emulators\CSpect' 'path key unchanged on Windows'
+} else {
+    Assert-Eq $sep['CSPECTDIR'] 'C:/Emulators/CSpect' 'path key normalised on non-Windows'
+}
+Assert-Eq $sep['VIDOPTS'] 'a\b' 'non-path key backslash unchanged on both hosts'
 Assert-Eq ($OnWindows -is [bool]) $true 'OnWindows is a bool'
 Assert-Eq ($ExeSuffix -eq '.exe' -or $ExeSuffix -eq '') $true 'ExeSuffix'
 $cands = @(Get-PythonCandidates)
