@@ -36,6 +36,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   `SET NAME=value` lines instead of running it with cmd, so a `%VAR%`
   reference in a value is no longer expanded; write the value out in
   full.
+- **A skill for AI assistants writing games.** The kit ships a second
+  agent skill, `.agents\skills\daad-game-authoring\`, covering DSF
+  source, the standard process tables, NextDAAD's extras and the build.
+  The skills folder is renamed from `.agent` to `.agents`, and a new
+  `AGENTS.md` at the kit root points assistants at both skills.
 - **Output is unchanged.** Existing games build to the same bytes as
   before.
 - **The Linux kit is not released yet.** The Getting Started guide's

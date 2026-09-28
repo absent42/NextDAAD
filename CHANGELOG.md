@@ -32,6 +32,15 @@ All notable changes to NextDAAD are recorded here.
 - manual: getting started has Windows and Linux setup sections. The
   Linux kit itself is not released yet; the Linux section describes
   the coming release.
+- kit: new agent skill `daad-game-authoring` for AI assistants writing
+  games: SKILL.md plus references for DSF source, condacts, flags and
+  objects, process patterns, NextDAAD features, the kit workflow and
+  pitfalls. Engine rules stated from src: any action except SKIP/REDO
+  marks a table done (a pre-move entry ends NOTDONE), process 4 re-runs
+  after every RESTART, the boot theme loops.
+- kit: skills folder renamed `.agent` to `.agents` (xbn-extern-authoring
+  moved with it); new `AGENTS.md` at the kit root names both skills.
+  README.txt and the externs manual page point there.
 
 ## v0.11.0 - 27/09/2026
 
