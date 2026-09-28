@@ -14,13 +14,17 @@ onto an SD card. It compiles the database, converts your artwork and
 audio, stages the interpreter beside them, and can launch an emulator on
 the result. There is nothing to assemble by hand.</p>
 <h2 id="what-you-need">What you need</h2>
-<p>Windows: the build scripts are Windows batch files.</p>
-<p>The interpreter itself, <code>nextdaad.nex</code>, already sits in the kit folder.
-The tools below do not - they are third-party, and some may not be
-redistributed. Download each and extract it into the kit's <code>tools\</code>
-folder at the path shown.</p>
-<p>The DAAD compiler, <a href="https://condact.xyz/ndrc"><code>NDRC</code></a>, needs no download: the Windows version ships built in as
-<code>lib\ndrc.exe</code>. However a Linux version of the compiler is available as a separate download through the previous link.</p>
+<p>The kit runs on Windows and on Linux. The build scripts, the compiler
+and the picture converter ship in the kit; the emulator, the music
+converters, ffmpeg and the assembler are third-party downloads. Pick
+your platform below, then read <a href="#already-have-some-of-these">Already have some of these?</a>.</p>
+<h3 id="windows-setup">Windows setup</h3>
+<p>Windows 10 or 11. Windows PowerShell, which is part of Windows, runs the
+build; nothing else needs installing for a text-only game.</p>
+<p>The interpreter, <code>nextdaad.nex</code>, and the DAAD compiler,
+<a href="https://condact.xyz/ndrc"><code>NDRC</code></a>, as <code>lib\ndrc.exe</code>, are in the kit.
+Gfx2Next and the video encoder are too. Download the rest and extract
+each into the kit's <code>tools\</code> folder at the path shown:</p>
 <table>
 <thead>
 <tr>
@@ -31,12 +35,6 @@ folder at the path shown.</p>
 </tr>
 </thead>
 <tbody>
-<tr>
-<td>Gfx2Next</td>
-<td>PNG to Layer 2 picture conversion</td>
-<td><code>tools\gfx2next\</code></td>
-<td>only with an <code>IMAGES\</code> folder</td>
-</tr>
 <tr>
 <td>Arkos Tracker 3</td>
 <td><code>SongToAky.exe</code>, <code>SongToSoundEffects.exe</code>, <code>SongToYm.exe</code></td>
@@ -55,28 +53,88 @@ folder at the path shown.</p>
 <td><code>tools\ffmpeg\</code></td>
 <td>only when encoding an <code>.mp4</code> cutscene</td>
 </tr>
+<tr>
+<td>sjasmplus</td>
+<td>Z80 assembler</td>
+<td><code>tools\sjasmplus\</code></td>
+<td>only to rebuild an extern with <code>EXTERNS.BAT</code></td>
+</tr>
 </tbody>
 </table>
 <p><code>tools\README.txt</code> lists the download addresses and the exact executable
-paths the build checks for. The video encoder ships with the kit, so
-ffmpeg is the only extra download cutscenes need.</p>
-<p>If you keep your tools somewhere else, point <code>TOOLSDIR</code> in <code>CONFIG.BAT</code>
-at that folder instead.</p>
-<p><strong>Already have some of these?</strong> Arkos Tracker, CSpect and ffmpeg are
-general-purpose tools you may well have installed already, and there is
-no need for a second copy. <code>CONFIG.BAT</code> has a directory setting per
-tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code>, <code>GFXDIR</code> - and each one you
-set is used instead of the folder under <code>TOOLSDIR</code>. Anything you leave
-blank still comes from <code>TOOLSDIR</code>, so mixing the two is fine: keep the
-small stuff in <code>tools\</code> and point the
-big installs wherever they already are. Absolute paths, including ones
-with spaces, are fine:</p>
+paths the build checks for.</p>
+<p>Double-click <code>BUILD.BAT</code> to build, <code>RUN.BAT</code> to play the result in
+CSpect, <code>CLEAN.BAT</code> to start over.</p>
+<h3 id="linux-setup">Linux setup</h3>
+<blockquote>
+<p>The Linux kit is in preparation. This section describes its first
+release; until that release is published, only the Windows kit above
+is available.</p>
+</blockquote>
+<p>x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
+36 and later. Install:</p>
+<ul>
+<li><strong>PowerShell 7</strong> (<code>pwsh</code>), which runs the build scripts. Microsoft
+  publishes packages for every major distribution:
+  https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux</li>
+<li><strong>Python 3.11 or newer</strong> with <code>Pillow</code> and <code>numpy</code>, for video
+  cutscenes only: <code>python3 -m pip install Pillow numpy</code>. The tuning GUI
+  also needs <code>PySide6</code>.</li>
+<li><strong>ffmpeg</strong> from your distribution (<code>sudo apt install ffmpeg</code>), for
+  video cutscenes and <code>MUSIC PCM</code> intros only.</li>
+<li><strong>Arkos Tracker 3</strong> Linux release from https://www.julien-nevo.com/arkostracker/,
+  for <code>.aks</code> music only. Extract it into <code>tools/ArkosTracker3/</code> so that
+  <code>tools/ArkosTracker3/tools/SongToAky</code> exists, or set <code>ARKOSDIR</code>.</li>
+<li><strong>CSpect</strong> Linux build from https://mdf200.itch.io/cspect plus mono
+  (<code>sudo apt install mono-devel</code>), to play the result. Extract into
+  <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>.</li>
+<li><strong>sjasmplus</strong> (<code>sudo apt install sjasmplus</code>, or build it from
+  https://github.com/z00m128/sjasmplus), only to rebuild an extern with
+  <code>externs.sh</code>.</li>
+</ul>
+<p>The interpreter, the compiler (<code>lib/ndrc</code>) and Gfx2Next
+(<code>tools/gfx2next/gfx2next</code>) ship in the Linux kit. A tool that is on
+your <code>PATH</code> is found without any setting; a tool under <code>tools/</code> is
+found there; <code>CONFIG.BAT</code> points anywhere else.</p>
+<p>Unzip the kit, then in a terminal:</p>
+<pre><code>cd NextDAAD-AuthoringKit
+chmod +x *.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
+./build.sh
+./run.sh
+</code></pre>
+<p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code> and <code>vidtune.sh</code> are the
+Linux names of the five <code>.BAT</code> launchers and take the same arguments.</p>
+<p>Three things differ from Windows:</p>
+<ul>
+<li><strong>File names are case-sensitive.</strong> Use the names this manual shows:
+  <code>IMAGES/</code>, <code>AUDIO/</code>, <code>VIDEO/</code>, <code>001.png</code>, <code>STARTER.DSF</code>, <code>FONT.CHR</code>.
+  A <code>#include</code> in your source must match the file's case exactly and
+  use <code>/</code> between folders.</li>
+<li><strong>Build on a local Linux filesystem</strong> (ext4, btrfs, xfs). A FAT or
+  exFAT USB stick, a network share or a Docker bind mount of a Windows
+  folder cannot keep the file times the incremental build relies on,
+  and the build refuses to run there.</li>
+<li><strong><code>CONFIG.BAT</code> keeps its name.</strong> It is a plain settings file of
+  <code>SET NAME=value</code> lines that the scripts read; nothing executes it.
+  Paths in it may use <code>/</code>.</li>
+</ul>
+<h3 id="already-have-some-of-these">Already have some of these?</h3>
+<p>Arkos Tracker, CSpect and ffmpeg are general-purpose tools you may well
+have installed already, and there is no need for a second copy.
+<code>CONFIG.BAT</code> has a directory setting per tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>,
+<code>FFMPEGDIR</code>, <code>GFXDIR</code>, <code>SJASMPLUSDIR</code> - and each one you set is used
+instead of the folder under <code>TOOLSDIR</code>. Anything you leave blank still
+comes from <code>TOOLSDIR</code>, so mixing the two is fine: keep the small stuff
+in <code>tools\</code> and point the big installs wherever they already are.
+Absolute paths, including ones with spaces, are fine:</p>
 <pre><code>SET CSPECTDIR=C:\Emulators\CSpect
 SET ARKOSDIR=C:\Program Files\Arkos Tracker 3
+SET FFMPEGDIR=/usr/bin
 </code></pre>
 <p>Point each at the folder the tool was installed into. Arkos Tracker and
 ffmpeg keep their programs in a subfolder (<code>tools\</code> and <code>bin\</code>); either
-the install root or that subfolder is accepted.</p>
+the install root or that subfolder is accepted. If you keep every tool
+somewhere else, point <code>TOOLSDIR</code> at that folder instead.</p>
 <h2 id="learning-daad-itself">Learning DAAD itself</h2>
 <p>This manual covers what is specific to the Next: the kit, the build,
 and how each condact behaves on this target. It does not teach the DAAD
@@ -172,11 +230,11 @@ are all optional and the build skips whatever is absent.</p>
 </tr>
 <tr>
 <td><code>VIDTOOLSDIR</code></td>
-<td>Same, for the folder holding <code>videnc.exe</code> and <code>vidtune.exe</code>, which the kit ships. You should not need to set this.</td>
+<td>Same, for the folder holding <code>videnc.exe</code> and <code>vidtune.exe</code>, which the kit ships. You should not need to set this. On Linux the encoder runs from <code>lib\videnc.py</code> and this setting is unused.</td>
 </tr>
 <tr>
 <td><code>NDRCVER</code></td>
-<td>The <code>lib\ndrc.exe</code> version this kit was tested against. <code>BUILD.BAT</code> refuses to build with any other - see <a href="#when-the-build-fails">When the build fails</a>.</td>
+<td>Normally unset: the compiler version the kit was tested against is pinned in <code>lib\toolversions.txt</code> and the build refuses any other. Set it only alongside your own <code>NDRC</code> override.</td>
 </tr>
 <tr>
 <td><code>NEXFILE</code></td>
@@ -204,15 +262,18 @@ a different <code>TOOLSDIR</code>, or <code>RUN=0</code> for an unattended build
 with the game.</p>
 <h2 id="build-and-run">Build and run</h2>
 <ul>
-<li><strong><code>BUILD.BAT</code></strong> - double-click it. It compiles the database, converts
+<li><strong><code>BUILD.BAT</code></strong> (Linux: <code>./build.sh</code>) - compiles the database, converts
   graphics and audio, encodes any new video, copies the interpreter,
   and launches CSpect if <code>RUN=1</code>. It finishes with
   <code>BUILD OK: RELEASE\ is ready to copy to an SD card</code>.</li>
-<li><strong><code>RUN.BAT</code></strong> - launches CSpect on whatever is already in <code>RELEASE\</code>,
-  without rebuilding.</li>
-<li><strong><code>CLEAN.BAT</code></strong> - empties <code>RELEASE\</code> and clears the compiler's staged
-  intermediates. The next build then converts everything from scratch.</li>
+<li><strong><code>RUN.BAT</code></strong> (<code>./run.sh</code>) - launches CSpect on whatever is already in
+  <code>RELEASE\</code>, without rebuilding.</li>
+<li><strong><code>CLEAN.BAT</code></strong> (<code>./clean.sh</code>) - empties <code>RELEASE\</code>. The next build
+  then converts everything from scratch.</li>
 </ul>
+<p>Each launcher is a few lines that start the matching script in <code>lib\</code>
+(<code>build.ps1</code>, <code>run.ps1</code>, <code>clean.ps1</code>); the build itself is the same
+code on both platforms.</p>
 <p>The build stops at the first error, with a message naming the cause.</p>
 <p>Pictures, sprite sets, sounds, tunes and video are only converted or
 copied when their source has changed since the last build. Everything
@@ -265,12 +326,20 @@ Try the verbs <code>MUSIC</code>, <code>MUTE</code>, <code>TUNE</code>, <code>BL
 <td>The kit folder holds no <code>.DSF</code>, or more than one. Set <code>GAME</code> to the base name of the one you want.</td>
 </tr>
 <tr>
+<td><code>differ only by case - keep one</code></td>
+<td>Two files in the kit folder have names that differ only in letter case. Windows treats them as one file and Linux as two; rename one.</td>
+</tr>
+<tr>
+<td><code>does not keep sub-microsecond file times</code></td>
+<td>The kit folder is on a FAT, exFAT, network or bind-mounted drive. Move it to a local NTFS or ext4 folder.</td>
+</tr>
+<tr>
 <td><code>required tool missing</code></td>
 <td>The named path does not exist. Install that tool there, or fix <code>TOOLSDIR</code> / <code>NEXFILE</code>.</td>
 </tr>
 <tr>
 <td><code>wrong DAAD compiler version</code></td>
-<td>The banner <code>lib\ndrc.exe</code> prints does not match <code>NDRCVER</code> in <code>CONFIG.BAT</code>. This should not happen with the kit as shipped; if you have replaced <code>ndrc.exe</code> yourself, update <code>NDRCVER</code> to match.</td>
+<td>The banner <code>lib\ndrc.exe</code> prints does not match the version pinned in <code>lib\toolversions.txt</code>. This should not happen with the kit as shipped; if you have replaced <code>ndrc.exe</code> yourself, set <code>NDRCVER</code> in <code>CONFIG.local.BAT</code> to match.</td>
 </tr>
 <tr>
 <td><code>CSpect is running - close it before building</code></td>
@@ -279,6 +348,10 @@ Try the verbs <code>MUSIC</code>, <code>MUTE</code>, <code>TUNE</code>, <code>BL
 <tr>
 <td><code>ndrc failed compiling</code></td>
 <td>The compiler rejected your source. Its own output above the message names the line.</td>
+</tr>
+<tr>
+<td><code>WARNING: #include ... case differs</code></td>
+<td>The included file exists, but its name on disk is spelled with different capitals from the <code>#include</code> line. Windows opens it anyway; Linux will not. Match the case.</td>
 </tr>
 <tr>
 <td><code>GAME.DDB is N bytes, over the 65535 limit</code></td>
@@ -354,7 +427,7 @@ power-cycle to try again.</p>
 </tr>
 <tr>
 <td><code>NextDAAD: DDB wrong machine - E4</code></td>
-<td><code>GAME.DDB</code> is a perfectly good database, but it was compiled for a different computer - CPC, C64, MSX, PC or another. Recompile it for the Spectrum: the kit's own <code>ddb.bat</code> already does, so this normally means a <code>.DDB</code> arrived from somewhere else. Spanish and English databases are both fine; it is the machine that is wrong, not the language.</td>
+<td><code>GAME.DDB</code> is a perfectly good database, but it was compiled for a different computer - CPC, C64, MSX, PC or another. Recompile it for the Spectrum: the kit's own build already does, so this normally means a <code>.DDB</code> arrived from somewhere else. Spanish and English databases are both fine; it is the machine that is wrong, not the language.</td>
 </tr>
 <tr>
 <td><code>NextDAAD: RUNTIME ERROR - E&lt;n&gt;</code></td>

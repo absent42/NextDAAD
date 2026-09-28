@@ -44,6 +44,10 @@ if ($Rules -contains 'launchers') {
         $calls = @($lines | Where-Object { $_ -match 'lib[\\/]\w+\.ps1' }).Count
         if ($calls -ne 1) { $failures.Add("launchers: $name invokes lib/<verb>.ps1 $calls times (want 1)") }
     }
+    $page = [IO.File]::ReadAllText((Join-Path $root 'manual/getting-started.md'))
+    foreach ($m in [regex]::Matches($page, '`\./(\w+\.sh)`')) {
+        if ('build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh' -notcontains $m.Groups[1].Value) { $failures.Add("launchers: getting-started.md names unknown launcher $($m.Groups[1].Value)") }
+    }
 }
 if ($Rules -contains 'python-candidates') {
     # kitplatform.ps1 (shared by video.ps1 and vidtune.ps1) and encoderun.py
