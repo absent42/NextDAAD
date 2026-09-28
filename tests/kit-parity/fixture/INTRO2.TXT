@@ -1,0 +1,6 @@
+; Parity fixture intro, PCM variant.
+MUSIC PCM AUDIO\cue.wav
+SKIP ANY 1.0
+SLIDE IMAGES\001.png IN FADE 1.0 HOLD 2.0
+  TEXT 30 CENTRE "Parity fixture" INK 255
+END FADE 1.0

@@ -102,7 +102,8 @@ class Clip:
 
 def list_clips(kit_root):
     clips = []
-    for mp4 in sorted(Path(kit_root, "VIDEO").glob("*.mp4")):
+    sources = sorted(list(Path(kit_root, "VIDEO").glob("*.mp4")) + list(Path(kit_root, "VIDEO").glob("*.mkv")))
+    for mp4 in sources:
         if not mp4.stem.isdigit():
             continue
         vid = mp4.with_suffix(".vid")

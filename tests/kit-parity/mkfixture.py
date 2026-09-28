@@ -66,6 +66,27 @@ def write_mp4(path, ffmpeg, frames_dir):
            "-pix_fmt", "rgb24", "-an", path]
     subprocess.run(cmd, check=True)
 
+def write_mkv(path, ffmpeg, frames_dir):
+    # ffv1 rgb24 + pcm_u8 stereo 15625 Hz: what videnc asks ffmpeg for, so
+    # decode, scale and resample are identity and the encoder alone is measured.
+    for i in range(50):
+        gradient_png(os.path.join(frames_dir, "g%03d.png" % i), 320, 256, 7 + i * 3)
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", "25",
+           "-i", os.path.join(frames_dir, "g%03d.png"),
+           "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=15625", "-t", "2",
+           "-c:v", "ffv1", "-pix_fmt", "rgb24", "-c:a", "pcm_u8", "-ac", "2", "-ar", "15625", path]
+    subprocess.run(cmd, check=True)
+
+def wav_u8_stereo(path, rate, hz, nframes):
+    # Intro MUSIC PCM cue already at the target format (swresample passthrough).
+    cycles = round(hz * nframes / rate)
+    mono = [min(255, max(0, int(math.floor(128 + 127 * math.sin(2 * math.pi * cycles * n / nframes) + 0.5)))) for n in range(nframes)]
+    pcm = bytes(v for s in mono for v in (s, s))
+    hdr = (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 2, rate, rate * 2, 2, 8)
+           + b"data" + struct.pack("<I", len(pcm)))
+    with open(path, "wb") as f:
+        f.write(hdr + pcm)
+
 def make_sprites(out, sprites):
     # mkanisheets.main also writes 008 (must-fail) and 015 (palette conflict),
     # negative fixtures for another test that would break this kit build.
@@ -99,11 +120,13 @@ def main(argv):
     pointer_png(os.path.join(out, "IMAGES", "POINTER.png"))
     make_sprites(out, sprites)
     wav_u8_mono(os.path.join(out, "AUDIO", "001.wav"), 15625, 440, 15625)
+    wav_u8_stereo(os.path.join(out, "AUDIO", "cue.wav"), 15625, 330, 15625)
     write_psf1(os.path.join(out, "FONT.psf"))
     write_bdf(os.path.join(out, "FONT1.bdf"))
     frames = os.path.join(out, "_frames")
     os.makedirs(frames, exist_ok=True)
     write_mp4(os.path.join(out, "VIDEO", "001.mp4"), ffmpeg, frames)
+    write_mkv(os.path.join(out, "VIDEO", "002.mkv"), ffmpeg, frames)
     for n in os.listdir(frames):
         os.remove(os.path.join(frames, n))
     os.rmdir(frames)
