@@ -11,6 +11,44 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li><strong>Kit build steps moved into scripts.</strong> <code>BUILD.BAT</code>, <code>RUN.BAT</code> and
+  <code>CLEAN.BAT</code> still work the same way from the command line; the
+  separate <code>.BAT</code> files they used to call are gone, replaced by shared
+  scripts. A customised copy of one of those old files no longer has
+  any effect.</li>
+<li><strong>Tool settings come only from <code>CONFIG.BAT</code>.</strong> Set your tool paths
+  and versions in <code>CONFIG.BAT</code> or <code>CONFIG.local.BAT</code>. Setting <code>NDRC</code>
+  or <code>NDRCVER</code> as an environment variable is no longer read; move
+  that setting into <code>CONFIG.local.BAT</code>.</li>
+<li><strong>The loader intro's music check is fixed.</strong> It now looks at the
+  <code>MUSIC</code> line in <code>INTRO.TXT</code> to decide whether a music tool is
+  needed; before, it checked the wrong line and rarely ran.</li>
+<li><strong>A crashing DAAD compiler now stops the build.</strong> Previously a
+  compiler crash on Windows could slip through unnoticed and the
+  build would carry on as if nothing had gone wrong.</li>
+<li><strong>VIDTUNE reads your local settings too.</strong> VIDTUNE now reads
+  <code>CONFIG.local.BAT</code> and honours an <code>FFMPEGDIR</code> setting, matching the
+  main build.</li>
+<li><strong>Case-only name differences are caught early.</strong> Two files in the
+  kit folder whose names differ only by letter case are now refused
+  with a clear message. An <code>#include</code> or <code>#incbin</code> whose name differs
+  from the file on disk only by case, or which uses <code>\</code> between
+  folders, prints a <code>WARNING</code> on Windows; both fail on Linux.</li>
+<li><strong>Kit folders need precise file times.</strong> The build now refuses a kit
+  folder on a filesystem that cannot keep precise file times - FAT,
+  exFAT or a network share - because the incremental build relies on
+  them to tell what has changed. Move the kit to a local NTFS drive.</li>
+<li><strong><code>CONFIG.BAT</code> is read, not run.</strong> The build scripts now read its
+  <code>SET NAME=value</code> lines instead of running it with cmd, so a <code>%VAR%</code>
+  reference in a value is no longer expanded; write the value out in
+  full.</li>
+<li><strong>Output is unchanged.</strong> Existing games build to the same bytes as
+  before.</li>
+<li><strong>The Linux kit is not released yet.</strong> The Getting Started guide's
+  Linux section describes the coming release.</li>
+</ul>
 <h2 id="0110-27-september-2026">0.11.0 - 27 September 2026</h2>
 <ul>
 <li><strong>Type ahead.</strong> Keys pressed while the game is still printing,

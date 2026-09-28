@@ -19,19 +19,28 @@ _RETIME_RE = re.compile(r"retime:\s+(.*)")
 _SLACK_RE = re.compile(r"tile-slack:\s+(.*)")
 
 
+def videnc_names():
+    return ["videnc.exe"] if sys.platform == "win32" else ["videnc"]
+
+
+def python_candidates():
+    return [["py", "-3"], ["python"]] if sys.platform == "win32" else [["python3"], ["python"]]
+
+
 def resolve_encoder(kit_root, toolsdir, vidtoolsdir=""):
     kit_root = Path(kit_root)
-    cands = [Path(vidtoolsdir or Path(toolsdir, "vidtools"), "videnc.exe"),
-             kit_root / "tools" / "vidtools" / "videnc.exe"]
+    name = videnc_names()[0]
+    cands = [Path(vidtoolsdir or Path(toolsdir, "vidtools"), name),
+             kit_root / "tools" / "vidtools" / name]
     if getattr(sys, "frozen", False):
-        # the videnc.exe frozen in the same build: previews and encodes agree
-        cands.insert(0, Path(sys.executable).with_name("videnc.exe"))
+        # the videnc built in the same bundle: previews and encodes agree
+        cands.insert(0, Path(sys.executable).with_name(name))
     for exe in cands:
         if not exe.is_absolute():
             exe = kit_root / exe
         if exe.is_file() and exe.stat().st_size > _MB:
             return [str(exe)]
-    for cand in (["py", "-3"], ["python"]):
+    for cand in python_candidates():
         try:
             r = subprocess.run(cand + ["-c", "import PIL, numpy"],
                                capture_output=True, timeout=30)

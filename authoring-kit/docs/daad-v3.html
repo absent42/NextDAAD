@@ -68,7 +68,7 @@ runtime error 5. The compiler will not emit them into a version 2
 database in the first place, so ordinary authoring never reaches that
 error - it matters only if you are producing DDBs by some other route.</p>
 <h2 id="compiling-version-2-instead">Compiling version 2 instead</h2>
-<p>Remove <code>-v3</code> from the ndrc line in <code>lib\ddb.bat</code>. Both the main game and
+<p>Remove <code>-v3</code> from the ndrc line in <code>Invoke-Ddb</code> in <code>lib\build.ps1</code>. Both the main game and
 every <code>PART&lt;n&gt;\</code> compile through that one line, so this covers every
 part too.</p>
 <p><strong>Every part the same dialect.</strong> A

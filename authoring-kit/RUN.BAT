@@ -1,23 +1,8 @@
 @echo off
-setlocal EnableExtensions
+REM Launcher only. The logic is lib\run.ps1.
+setlocal
 cd /d "%~dp0"
-call "%~dp0CONFIG.BAT"
-if exist "%~dp0CONFIG.local.BAT" call "%~dp0CONFIG.local.BAT"
-if not exist "RELEASE\nextdaad.nex" (
-    echo ERROR: nothing built yet - run BUILD.BAT first
-    pause
-    exit /b 1
-)
-call "%~dp0lib\tools.bat"
-if not exist "%CSPECT%" (
-    echo ERROR: CSpect not found at %CSPECT%
-    echo        Install CSpect there, or set CSPECTDIR in CONFIG.BAT to an
-    echo        existing install.
-    pause
-    exit /b 1
-)
-set "LAUNCH=RELEASE\nextdaad.nex"
-if "%GAME%"=="" for %%F in (*.DSF) do set "GAME=%%~nF"
-if exist "RELEASE\%GAME%.NEX" set "LAUNCH=RELEASE\%GAME%.NEX"
-"%CSPECT%" -w3 -zxnext -esc -mmc=RELEASE\ "%LAUNCH%"
-endlocal
+powershell -NoProfile -ExecutionPolicy Bypass -File "lib\run.ps1"
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" pause
+exit /b %RC%

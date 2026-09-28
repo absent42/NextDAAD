@@ -1,0 +1,14 @@
+no-dsf|remove PARITY.DSF; set GAME=|ERROR: set GAME in CONFIG.BAT (found 0 .DSF files here, need exactly one)
+two-dsf|copy PARITY.DSF SECOND.DSF; set GAME=|ERROR: set GAME in CONFIG.BAT (found 2 .DSF files here, need exactly one)
+named-dsf-missing|set GAME=NOSUCH|ERROR: NOSUCH.DSF not found in this folder
+nexfile-missing|remove nextdaad.nex|ERROR: required tool missing: nextdaad.nex
+ndrc-banner|stub-ndrc|ERROR: wrong DAAD compiler version.
+ddb-too-big|bigdsf|over the 65535 memory address boundary
+font-duplicate|copy FONT.psf FONT.bdf|could be converted to FONT.CHR.
+intro-tool-missing|set ARKOSDIR=nosuch|ERROR: SongToAky not found at
+part-two-dsf|copy PART2/PART2.DSF PART2/OTHER.DSF|ERROR: PART2/ has 2 .DSF files - keep exactly one game source per part folder
+run-on-fail|remove nextdaad.nex; set RUN=1|ERROR: required tool missing: nextdaad.nex
+include-case|rename inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf
+include-folder-case|rename inc INC|WARN:on disk as INC (case differs
+ndrc-missing|set NDRC=nosuch|ERROR: required tool missing: nosuch
+cspect-running|cspect|ERROR: CSpect is running - close it before building

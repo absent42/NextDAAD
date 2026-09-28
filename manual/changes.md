@@ -3,6 +3,44 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## Unreleased
+
+- **Kit build steps moved into scripts.** `BUILD.BAT`, `RUN.BAT` and
+  `CLEAN.BAT` still work the same way from the command line; the
+  separate `.BAT` files they used to call are gone, replaced by shared
+  scripts. A customised copy of one of those old files no longer has
+  any effect.
+- **Tool settings come only from `CONFIG.BAT`.** Set your tool paths
+  and versions in `CONFIG.BAT` or `CONFIG.local.BAT`. Setting `NDRC`
+  or `NDRCVER` as an environment variable is no longer read; move
+  that setting into `CONFIG.local.BAT`.
+- **The loader intro's music check is fixed.** It now looks at the
+  `MUSIC` line in `INTRO.TXT` to decide whether a music tool is
+  needed; before, it checked the wrong line and rarely ran.
+- **A crashing DAAD compiler now stops the build.** Previously a
+  compiler crash on Windows could slip through unnoticed and the
+  build would carry on as if nothing had gone wrong.
+- **VIDTUNE reads your local settings too.** VIDTUNE now reads
+  `CONFIG.local.BAT` and honours an `FFMPEGDIR` setting, matching the
+  main build.
+- **Case-only name differences are caught early.** Two files in the
+  kit folder whose names differ only by letter case are now refused
+  with a clear message. An `#include` or `#incbin` whose name differs
+  from the file on disk only by case, or which uses `\` between
+  folders, prints a `WARNING` on Windows; both fail on Linux.
+- **Kit folders need precise file times.** The build now refuses a kit
+  folder on a filesystem that cannot keep precise file times - FAT,
+  exFAT or a network share - because the incremental build relies on
+  them to tell what has changed. Move the kit to a local NTFS drive.
+- **`CONFIG.BAT` is read, not run.** The build scripts now read its
+  `SET NAME=value` lines instead of running it with cmd, so a `%VAR%`
+  reference in a value is no longer expanded; write the value out in
+  full.
+- **Output is unchanged.** Existing games build to the same bytes as
+  before.
+- **The Linux kit is not released yet.** The Getting Started guide's
+  Linux section describes the coming release.
+
 ## 0.11.0 - 27 September 2026
 
 - **Type ahead.** Keys pressed while the game is still printing,

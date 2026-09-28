@@ -2,6 +2,37 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## Unreleased
+
+- kit: build orchestration moved from the .BAT files into
+  lib\build.ps1, lib\run.ps1, lib\clean.ps1, lib\externs.ps1 and
+  lib\vidtune.ps1; the .BAT files are launchers. lib\tools.bat and
+  lib\*.bat stages removed.
+- kit: CONFIG.BAT is read by the scripts (last value wins, quoted SET
+  accepted); NDRCVER now lives in lib\toolversions.txt. An NDRC or
+  NDRCVER set in the environment is no longer read; put it in
+  CONFIG.local.BAT instead.
+- kit: the loader intro's MUSIC tool check now reads the MUSIC line of
+  INTRO.TXT; the old check read the script's first line, so it rarely
+  ran.
+- kit: a DAAD compiler that crashes now always fails the build;
+  Windows crash codes are negative and slipped past the old check.
+- vidtune: reads CONFIG.local.BAT and honours FFMPEGDIR.
+- kit: two kit files whose names differ only by case are refused. An
+  #include or #incbin whose name differs from the file on disk only by
+  case, or which uses \ between folders, prints a WARNING on Windows
+  (an ERROR on Linux, where it cannot be opened).
+- kit: the build refuses a kit folder on a filesystem that cannot keep
+  precise file times (FAT, exFAT, network shares): the incremental
+  build compares them to find changed inputs.
+- kit: CONFIG.BAT is read by the build scripts rather than run by cmd,
+  so %VAR% references in it are no longer expanded.
+- Outputs are unchanged: tests\kit-parity pins the RELEASE bytes
+  against v0.11.0.
+- manual: getting started has Windows and Linux setup sections. The
+  Linux kit itself is not released yet; the Linux section describes
+  the coming release.
+
 ## v0.11.0 - 27/09/2026
 
 - Typeahead. The frame ISR (`kb_tick`, main.asm) reads the keyboard

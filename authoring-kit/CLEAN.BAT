@@ -1,13 +1,6 @@
 @echo off
-setlocal EnableExtensions
+REM Launcher only. The logic is lib\clean.ps1.
+setlocal
 cd /d "%~dp0"
-call "%~dp0CONFIG.BAT"
-if exist "%~dp0CONFIG.local.BAT" call "%~dp0CONFIG.local.BAT"
-if exist "RELEASE" (
-    del /Q "RELEASE\*" 2>nul
-    if exist "RELEASE\INTRO" rd /S /Q "RELEASE\INTRO"
-    echo cleaned RELEASE\
-) else (
-    echo nothing to clean
-)
-endlocal
+powershell -NoProfile -ExecutionPolicy Bypass -File "lib\clean.ps1"
+exit /b %ERRORLEVEL%

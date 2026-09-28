@@ -1,5 +1,5 @@
 # introc.ps1 - compile INTRO.TXT into RELEASE\INTRO\INTRO.DAT plus the show's
-# assets, and stage the launcher. Called by lib\intro.bat; pinned by
+# assets, and stage the launcher. Called by lib\build.ps1; pinned by
 # tests\intro-selftest.ps1. Paths in the script are relative to -Root.
 param(
     [Parameter(Mandatory = $true)][string]$Script,
@@ -34,6 +34,9 @@ if (Test-Path -LiteralPath $Script) { $Script = (Resolve-Path -LiteralPath $Scri
 if (Test-Path -LiteralPath $Root) { $Root = (Resolve-Path -LiteralPath $Root).Path }
 $Out = [IO.Path]::GetFullPath([IO.Path]::Combine($PWD.Path, $Out))
 $enc = [Text.Encoding]::GetEncoding(28591)
+
+# Author paths may use \ (the sample does); .NET on Unix does not translate it.
+function Kit-File([string]$file) { return Join-Path $Root ($file -replace '\\', '/') }
 
 function Fail([int]$line, [string]$msg) {
     if ($line -gt 0) { throw "INTRO.TXT line ${line}: $msg" }
@@ -114,7 +117,7 @@ function Read-PngInfo([string]$path) {
 
 # ---- picture identity: width from a PNG header or a ready-made file's size ----
 function Get-PictureShape([string]$file, [int]$line) {
-    $path = Join-Path $Root $file
+    $path = Kit-File $file
     if (-not (Test-Path -LiteralPath $path)) { Fail $line "picture not found: $file" }
     $ext = [IO.Path]::GetExtension($file).ToUpperInvariant()
     if ($ext -eq '.PNG') {
@@ -187,7 +190,7 @@ for ($ln = 0; $ln -lt $lines.Count; $ln++) {
             $k = Word $t[1]
             if ($null -eq $k -or -not $kinds.ContainsKey($k)) { Fail $line 'MUSIC kind must be AKY, STREAM, PCM or NDR' }
             $show.music = @{ kind = $kinds[$k]; file = $t[2].v }
-            if (-not (Test-Path -LiteralPath (Join-Path $Root $t[2].v))) { Fail $line "music file not found: $($t[2].v)" }
+            if (-not (Test-Path -LiteralPath (Kit-File $t[2].v))) { Fail $line "music file not found: $($t[2].v)" }
         }
         'FONT' {
             if (-not $inHeader) { Fail $line 'FONT must come before the first SLIDE' }
@@ -195,7 +198,7 @@ for ($ln = 0; $ln -lt $lines.Count; $ln++) {
             if ((Word $t[1]) -eq 'GAME') { $show.fontFile = ''; $show.fontKind = 0 }
             else {
                 $show.fontFile = $t[1].v; $show.fontKind = 1
-                $fp = Join-Path $Root $t[1].v
+                $fp = Kit-File $t[1].v
                 if (-not (Test-Path -LiteralPath $fp)) { Fail $line "font sheet not found: $($t[1].v)" }
                 $fi = Read-PngInfo $fp
                 if ($null -eq $fi -or $fi.depth -ne 8 -or $fi.ctype -ne 3) { Fail $line 'a font sheet is an 8-bit paletted PNG' }
@@ -481,7 +484,7 @@ function Invoke-Gfx2Next([string[]]$cmdArgs, [string]$expect) {
     if (-not (Test-Path -LiteralPath (Join-Path $Out $expect))) { throw "gfx2next produced no $expect - is the source an 8-bit paletted PNG?" }
 }
 function Convert-Picture([string]$file, [int]$num, $shape) {
-    $src = Join-Path $Root $file
+    $src = Kit-File $file
     $base = [IO.Path]::GetFileNameWithoutExtension($file)
     $dst = Join-Path $Out ('{0:D3}.{1}' -f $num, $(if ($shape.mode -eq 1) { 'NXC' } else { 'NXI' }))
     switch ($shape.kind) {
@@ -516,7 +519,7 @@ function Get-PicturePalette([int]$num, [int]$mode) {
     return $b[0..511]
 }
 function Convert-Font {
-    $src = Join-Path $Root $show.fontFile
+    $src = Kit-File $show.fontFile
     $base = [IO.Path]::GetFileNameWithoutExtension($show.fontFile)
     Remove-Item (Join-Path $Out "$base.nxt"), (Join-Path $Out "$base.nxm") -ErrorAction SilentlyContinue
     Invoke-Gfx2Next @('-colors-4bit', '-tile-size=8x8', '-pal-none', $src) "$base.nxt"
@@ -564,7 +567,7 @@ function Invoke-Assets {
 function Convert-Music {
     $m = $show.music
     if ($m.kind -eq 0) { return }
-    $src = Join-Path $Root $m.file
+    $src = Kit-File $m.file
     switch ($m.kind) {
         1 {
             if (-not $S2A -or -not (Test-Path -LiteralPath $S2A)) { throw "SongToAky not found at '$S2A' (MUSIC AKY needs Arkos Tracker 3)" }
@@ -597,7 +600,9 @@ function Convert-Music {
             Write-Host "  music $($m.file) -> MUSIC.PCM ($len bytes, $([math]::Round($len / 31250, 1)) s)"
         }
         4 {
-            if (-not $NdawBin -or -not (Test-Path -LiteralPath $NdawBin)) { throw "NextDAW runtime player not found at '$NdawBin' - set NEXTDAWDIR in CONFIG.BAT to your NextDAW install (RuntimePlayer\NextDAW_RuntimePlayer_E000.bin)" }
+            if (-not $NdawBin -or -not (Test-Path -LiteralPath $NdawBin)) {
+                throw "NextDAW runtime player not found at '$NdawBin' - set NEXTDAWDIR in CONFIG.BAT to your NextDAW install (RuntimePlayer\NextDAW_RuntimePlayer_E000.bin)"
+            }
             $blen = (Get-Item -LiteralPath $NdawBin).Length
             if ($blen -lt 39 -or $blen -gt 8192) { throw "$NdawBin is $blen bytes; the E000 runtime player is expected between 39 and 8192" }
             # 39 bytes is exactly 13 JP-table entries (3 bytes each); every
@@ -630,3 +635,4 @@ if (-not $NoAssets) {
 }
 [IO.File]::WriteAllBytes((Join-Path $Out 'INTRO.DAT'), $dat[0..($datLen - 1)])
 Write-Host "  script $([IO.Path]::GetFileName($Script)) -> INTRO.DAT ($datLen bytes, $($show.slides.Count) slide(s), $itemsTotal item(s))"
+exit 0

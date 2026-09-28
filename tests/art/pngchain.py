@@ -59,7 +59,7 @@ def build_png(path, transparent_slot):
 
 
 def convert(png_path, out_name):
-    """Run gfx2next exactly as authoring-kit/lib/gfx.bat does."""
+    """Run gfx2next exactly as authoring-kit/lib/build.ps1 does."""
     out_path = os.path.join(WORK, out_name)
     if os.path.exists(out_path):
         os.unlink(out_path)

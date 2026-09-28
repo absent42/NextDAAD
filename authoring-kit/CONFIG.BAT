@@ -69,11 +69,11 @@ REM videnc and vidtune - shipped with the kit as one folder; you should not
 REM need this. Keep the folder whole: both exes run from its _internal\.
 SET VIDTOOLSDIR=
 
-REM The lib\ndrc.exe version this kit was tested against - BUILD.BAT refuses
-REM to build with any other.
-SET NDRCVER=0.2.2
+REM The compiler version this kit was tested against lives in
+REM lib\toolversions.txt. Set NDRCVER here only with a matching NDRC override.
+REM SET NDRCVER=
 
-REM Blank means lib\ndrc.exe - set to use a different ndrc build, and update NDRCVER above to match.
+REM Blank means lib\ndrc.exe - set to use a different ndrc build, and set NDRCVER above to match.
 REM SET NDRC=
 
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.

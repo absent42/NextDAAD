@@ -77,7 +77,7 @@ error - it matters only if you are producing DDBs by some other route.
 
 ## Compiling version 2 instead
 
-Remove `-v3` from the ndrc line in `lib\ddb.bat`. Both the main game and
+Remove `-v3` from the ndrc line in `Invoke-Ddb` in `lib\build.ps1`. Both the main game and
 every `PART<n>\` compile through that one line, so this covers every
 part too.
 

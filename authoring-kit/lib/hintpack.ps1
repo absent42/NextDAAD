@@ -8,6 +8,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Keys are ints, sorted numerically: one topic order on every host.
+function Sort-Ordinal($keys) {
+    $l = New-Object System.Collections.Generic.List[int]
+    foreach ($k in $keys) { $l.Add([int]$k) }
+    $l.Sort()
+    return $l.ToArray()
+}
+
 if (-not (Test-Path $In)) { Write-Error "hint source not found: $In"; exit 1 }
 # Fixed, not random: the seed is PLAINTEXT at GAME.HNT offset 4, so it adds
 # no protection; random would churn GAME.HNT and, since GAME.HPR shares the
@@ -103,7 +111,7 @@ $textStart = 6 + $dirBytes + $tableBytes
 $text = New-Object Collections.Generic.List[byte]
 $tableAt = @{}
 $cursor = 6 + $dirBytes
-foreach ($k in ($topics.Keys | Sort-Object)) { $tableAt[$k] = $cursor; $cursor += 4 * $topics[$k].Count }
+foreach ($k in (Sort-Ordinal $topics.Keys)) { $tableAt[$k] = $cursor; $cursor += 4 * $topics[$k].Count }
 
 # Named $buf, not $out: PowerShell variable names are case-insensitive, so
 # a local $out here would alias the [string]$Out parameter and get coerced
@@ -122,7 +130,7 @@ for ($t = 0; $t -le $maxTopic; $t++) {
     $buf[$o + 2] = $topics[$t].Count
 }
 
-foreach ($t in ($topics.Keys | Sort-Object)) {
+foreach ($t in (Sort-Ordinal $topics.Keys)) {
     $e = $tableAt[$t]
     $lvlNum = 0
     foreach ($level in $topics[$t]) {

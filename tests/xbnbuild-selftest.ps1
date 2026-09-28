@@ -213,7 +213,7 @@ Assert-Eq (Test-Path $x) $false 'no refused build wrote its output'
 $kc = "$work\kit copy"
 New-Item -ItemType Directory -Force "$kc\lib" | Out-Null
 Copy-Item "$kit\EXTERNS.BAT", "$kit\CONFIG.BAT", "$kit\xbn.inc", "$kit\xbnmod.inc" $kc
-Copy-Item "$kit\lib\tools.bat", "$kit\lib\xbnbuild.ps1", "$kit\lib\resolve-sjasmplus.ps1" "$kc\lib"
+Copy-Item "$kit\lib\kitplatform.ps1", "$kit\lib\kitconfig.ps1", "$kit\lib\kittools.ps1", "$kit\lib\toolversions.txt", "$kit\lib\externs.ps1", "$kit\lib\xbnbuild.ps1", "$kit\lib\resolve-sjasmplus.ps1" "$kc\lib"
 Copy-Item "$kit\externs" "$kc\externs" -Recurse
 function Invoke-Driver([string]$name, [string]$callLine) {
     [IO.File]::WriteAllText("$work\$name.cmd", "@cd /d `"%~dp0`"`r`n@call $callLine`r`n@exit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)

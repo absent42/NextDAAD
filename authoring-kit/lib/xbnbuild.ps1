@@ -22,10 +22,14 @@ function Fail([string]$msg) {
     exit 1
 }
 
-# Bare-name modules: externs\<d>\<d>.asm, minus the prebuilt all\.
-$kitModules = @(Get-ChildItem -LiteralPath $externsDir -Directory |
-    Where-Object { $_.Name -ne 'all' -and (Test-Path -LiteralPath (Join-Path $_.FullName "$($_.Name).asm")) } |
-    ForEach-Object { $_.Name })
+# Bare-name modules: externs\<d>\<d>.asm, minus the prebuilt all\. Sorted
+# ordinal: directory enumeration order is not the same on NTFS and ext4.
+$kitModulesList = New-Object System.Collections.Generic.List[string]
+foreach ($d in Get-ChildItem -LiteralPath $externsDir -Directory) {
+    if ($d.Name -ne 'all' -and (Test-Path -LiteralPath (Join-Path $d.FullName "$($d.Name).asm"))) { $kitModulesList.Add($d.Name) }
+}
+$kitModulesList.Sort([StringComparer]::Ordinal)
+$kitModules = [string[]]$kitModulesList
 
 if (-not $Modules) {
     Write-Output 'Usage: EXTERNS.BAT module [module ...]'
@@ -97,12 +101,12 @@ foreach ($arg in $Modules) {
             }
             $dir = $parent
         }
-        if (Test-Path -LiteralPath $dir -PathType Container) { $dir = (Get-Item -LiteralPath $dir).FullName.TrimEnd('\') }
+        if (Test-Path -LiteralPath $dir -PathType Container) { $dir = (Get-Item -LiteralPath $dir).FullName.TrimEnd('\', '/') }
         $name = Split-Path $dir -Leaf
         $kitDir = Join-Path $externsDir $name
         if ($kitModules -contains $name) {
             # A path to the kit's own module folder is that module.
-            if ((Test-Path -LiteralPath $kitDir) -and ((Get-Item -LiteralPath $kitDir).FullName.TrimEnd('\') -eq $dir)) {
+            if ((Test-Path -LiteralPath $kitDir) -and ((Get-Item -LiteralPath $kitDir).FullName.TrimEnd('\', '/') -eq $dir)) {
                 $inKit = $true
                 $name = ($kitModules | Where-Object { $_ -eq $name })
             } else {

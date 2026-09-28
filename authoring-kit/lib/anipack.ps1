@@ -22,7 +22,7 @@ if ($Spr -match '\.zx0$') { throw "anipack: $Spr is compressed - sprite sheets m
 
 # ---- sidecar
 $keys = @{}
-foreach ($line in Get-Content $Txt) {
+foreach ($line in (Get-Content -LiteralPath $Txt -Encoding UTF8)) {
     $l = ($line -replace ';.*$', '').Trim()
     if ($l -eq '') { continue }
     if ($l -notmatch '^(\w+)\s*=\s*(.+)$') { throw "anipack: $Txt - cannot parse '$line'" }
