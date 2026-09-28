@@ -1,7 +1,7 @@
 # Converts and stages pictures, sprite sets, audio and video into RELEASE\,
 # skipping outputs that are already current, then deletes any output of
-# the stage that no source produced this run. Called by gfx.bat, audio.bat
-# and video.bat with cwd = kit root.
+# the stage that no source produced this run. Called by build.ps1
+# with cwd = kit root.
 #
 # Current means: a copy whose size and modified time match its source, or
 # a conversion whose modified time equals New-Stamp - the newest source

@@ -1,5 +1,5 @@
 # introc.ps1 - compile INTRO.TXT into RELEASE\INTRO\INTRO.DAT plus the show's
-# assets, and stage the launcher. Called by lib\intro.bat; pinned by
+# assets, and stage the launcher. Called by lib\build.ps1; pinned by
 # tests\intro-selftest.ps1. Paths in the script are relative to -Root.
 param(
     [Parameter(Mandatory = $true)][string]$Script,

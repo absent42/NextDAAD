@@ -51,7 +51,7 @@ automatically - see below). Two limits to know:
 
 `0.XMB` is staged into `RELEASE\` automatically, right after `GAME.DDB`,
 whenever your DSF uses XMESSAGE or XMES. ndrc writes `0.XMB` into the
-current working directory during the DDB compile step; `lib\ddb.bat`
+current working directory during the DDB compile step; `lib\build.ps1`
 then moves it to `RELEASE\0.XMB` (or `RELEASE\PART<n>\0.XMB` for a
 part - see [Multi-part games](../multi-part-games.md)), where it must
 sit alongside `GAME.DDB` on the SD card - without it, XMESSAGE/XMES

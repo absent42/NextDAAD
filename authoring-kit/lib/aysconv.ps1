@@ -3,7 +3,7 @@
 # Converts an Arkos Tracker 3 song (.aks) into a NextDAAD AYS stream: a
 # flat per-frame AY-register-diff stream, DMA-streamed from SD card, for
 # songs too big for the AKY song slot (10208 bytes at $D800 - see
-# lib/audio.bat). AYS files are routinely larger than an AKY encoding of
+# build.ps1). AYS files are routinely larger than an AKY encoding of
 # the same song; that trade is intentional, not a regression.
 #
 # ---------------------------------------------------------------------
@@ -138,7 +138,7 @@ $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("aysconv_" + [System.Guid]::
 New-Item -ItemType Directory -Force $tmp | Out-Null
 try {
     # SongToYm's own stdout/stderr is deliberately left unredirected (not
-    # 2>&1-merged) and just prints straight through, same as audio.bat's
+    # 2>&1-merged) and just prints straight through, same as build.ps1's
     # other tool calls (SongToAky/SongToSoundEffects) - merging stderr
     # into the pipeline while $ErrorActionPreference='Stop' is active
     # turns every stderr line into a terminating NativeCommandError,

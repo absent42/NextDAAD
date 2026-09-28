@@ -390,7 +390,7 @@ $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
 
 # ---- which compiler builds the fixtures ----------------------------
-# ndrc.exe is what the authoring kit ships (authoring-kit\lib\ddb.bat),
+# ndrc.exe is what the authoring kit ships (authoring-kit\lib\build.ps1),
 # so the harness compiles what users compile. DRC is resolved too but
 # is needed only by -DrcDiff.
 $drcRoot = if ($env:NEXTDAAD_DRC) { $env:NEXTDAAD_DRC } else { Join-Path $root 'tools\DRC' }
@@ -3720,7 +3720,7 @@ if ($Part) {
     try {
         # Work dir is wiped at block start: a 0.XMB left by a run that
         # threw before the Move-Item must not be reused if this DSF ever
-        # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
+        # loses its XMESSAGE/XMES step (SP10 lesson, build.ps1/4a68620).
         & $ndrc @drcTarget EN NDPARTA.DSF NDPARTA.DDB -v3 -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (NDPARTA)" }
         Move-Item NDPARTA.DDB "$leg\GAME.DDB" -Force
@@ -3745,7 +3745,7 @@ if ($Part) {
     try {
         # Work dir is wiped at block start: a 0.XMB left by a run that
         # threw before the Move-Item must not be reused if this DSF ever
-        # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
+        # loses its XMESSAGE/XMES step (SP10 lesson, build.ps1/4a68620).
         & $ndrc @drcTarget EN NDPARTB.DSF NDPARTB.DDB -v3 -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (NDPARTB)" }
         Move-Item NDPARTB.DDB "$leg\GAME2.DDB" -Force
@@ -4359,7 +4359,7 @@ if ($AudLad) {
     # Rung R - the REAL material. The kit's own 9-channel tune, which is
     # what both parked SP14b sightings were actually heard on: the kit
     # builds RELEASE\GAME.AKY and RELEASE\001.AKY from the same source
-    # (AUDIO\1.aks == AUDIO\STARTER.aks, lib\audio.bat), so they are
+    # (AUDIO\1.aks == AUDIO\STARTER.aks, lib\build.ps1), so they are
     # byte-identical, and boot autoplay + MUSIC 1 played the same bytes
     # at the 2026-07-23 STOPM sighting.
     #

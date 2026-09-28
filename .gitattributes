@@ -6,3 +6,11 @@ authoring-kit/tools/vidtools/**/*.pyd filter=lfs diff=lfs merge=lfs -text
 authoring-kit/tools/vidtools/**/*.zip filter=lfs diff=lfs merge=lfs -text
 demo/NextDAAD-demo.zip filter=lfs diff=lfs merge=lfs -text
 tests/kit-parity/fixture/** -text
+authoring-kit/**/*.BAT text eol=crlf
+authoring-kit/**/*.bat text eol=crlf
+authoring-kit/**/*.TXT text eol=crlf
+authoring-kit/**/*.txt text eol=crlf
+authoring-kit/**/*.sample text eol=crlf
+authoring-kit/**/*.sh text eol=lf
+authoring-kit/**/*.ps1 text eol=lf
+authoring-kit/**/*.py text eol=lf

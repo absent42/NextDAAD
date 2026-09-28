@@ -20,7 +20,7 @@ function Assert-Throws([scriptblock]$sb, [string]$pattern, $what) {
     if (-not $threw) { throw "anipack-selftest: $what - did not fail" }
 }
 function Convert-Sheet([string]$png, [string[]]$extra) {
-    # gfx2next writes <base>.spr into the CWD, exactly as lib\gfx.bat runs it.
+    # gfx2next writes <base>.spr into the CWD, exactly as lib\build.ps1 runs it.
     $base = [IO.Path]::GetFileNameWithoutExtension($png)
     Remove-Item "$work\$base.spr", "$work\$base.spr.zx0" -ErrorAction SilentlyContinue
     Push-Location $work

@@ -1,5 +1,5 @@
 # NextDAAD authoring kit - video cutscene encode pass (NXV v2, SP15).
-# Called by lib\video.bat (cwd = kit root) BEFORE its staging pass.
+# Called by lib\build.ps1 (cwd = kit root) BEFORE its staging pass.
 # Encodes VIDEO\NNN.mp4 -> VIDEO\NNN.vid via lib\videnc whenever the
 # .vid is stale: missing, older than its .mp4, or its cached ARGUMENT
 # VECTOR (shape/fps/options - see below) no longer matches the current
@@ -285,7 +285,7 @@ foreach ($src in $sources) {
 }
 if (-not $plan) { exit 0 }
 
-# lib\tools.bat resolved ffmpeg already, probing both an install root and
+# lib\kittools.ps1 resolved ffmpeg already, probing both an install root and
 # its bin\ subfolder. Take its answer rather than repeating the probe here
 # and drifting from it; the fallback only matters if this script is run
 # directly rather than from BUILD.BAT.

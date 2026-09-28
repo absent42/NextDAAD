@@ -116,7 +116,7 @@ python lib\videnc.py source.mp4 VIDEO\001.vid --shape 16:9 --start 00:00:02 --du
 ```
 
 In the kit, BUILD.BAT runs this automatically for any numeric-named
-`VIDEO\NNN.mp4` (see `lib\video.bat` / `lib\video.ps1`; configured by
+`VIDEO\NNN.mp4` (see `lib\build.ps1` / `lib\video.ps1`; configured by
 `VIDASPECT`/`VIDFPS`/`VIDOPTS`/`VIDOPTS_NNN` in `CONFIG.BAT`); run it
 by hand for per-file control or clipping.
 

@@ -3,6 +3,36 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## Unreleased
+
+- **Kit build steps moved into scripts.** `BUILD.BAT`, `RUN.BAT` and
+  `CLEAN.BAT` still work the same way from the command line; the
+  separate `.BAT` files they used to call are gone, replaced by shared
+  scripts. A customised copy of one of those old files no longer has
+  any effect.
+- **Tool settings come only from `CONFIG.BAT`.** Set your tool paths
+  and versions in `CONFIG.BAT` or `CONFIG.local.BAT`. Setting `NDRC`
+  or `NDRCVER` as an environment variable is no longer read; move
+  that setting into `CONFIG.local.BAT`.
+- **The loader intro's music check is fixed.** It now looks at the
+  `MUSIC` line in `INTRO.TXT` to decide whether a music tool is
+  needed; before, it checked the wrong line and rarely ran.
+- **A crashing DAAD compiler now stops the build.** Previously a
+  compiler crash on Windows could slip through unnoticed and the
+  build would carry on as if nothing had gone wrong.
+- **VIDTUNE reads your local settings too.** VIDTUNE now reads
+  `CONFIG.local.BAT` and honours an `FFMPEGDIR` setting, matching the
+  main build.
+- **Case-only name differences are caught early.** A kit whose folder
+  or file names differ only by letter case from what a game's
+  `#include` expects is now refused with a clear message rather than
+  failing later; a genuine case mismatch between an `#include` and
+  the file on disk is warned about.
+- **Output is unchanged.** Existing games build to the same bytes as
+  before.
+- **The Linux kit is not released yet.** The Getting Started guide's
+  Linux section describes the coming release.
+
 ## 0.11.0 - 27 September 2026
 
 - **Type ahead.** Keys pressed while the game is still printing,
