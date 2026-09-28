@@ -23,9 +23,9 @@ if (-not (Test-Path -LiteralPath $ffmpeg)) { $ffmpeg = Join-Path $FfmpegDir "ffm
 foreach ($need in @($ffmpeg, (Join-Path $ToolsDir "ArkosTracker3/tools/SongToAky$exe"), (Join-Path $ToolsDir "sjasmplus/sjasmplus$exe"))) {
     if (-not (Test-Path -LiteralPath $need)) { Write-Host "parity: tool missing: $need"; exit 2 }
 }
-$py = if ($onWindows) { 'python' } else { 'python3' }
-& $py -c 'import PIL, numpy' *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host "parity: $py lacks PIL/numpy"; exit 2 }
+. (Join-Path $kitSrc 'lib/kitplatform.ps1')
+# @(): Find-Python's one-element candidate unrolls to a bare string.
+$pyc = @(Find-Python @('PIL', 'numpy') | Where-Object { $_ }); if ($pyc.Count -eq 0) { Write-Host 'parity: no python with PIL/numpy'; exit 2 }
 
 $work = Join-Path $root 'tests/out/kit parity'
 $kit = Join-Path $work 'kit'
@@ -47,7 +47,7 @@ foreach ($drop in 'IMAGES', 'AUDIO', 'VIDEO', 'HINTS.TXT', 'STARTER.DSF', 'INTRO
 # Fixture: committed text, generated binaries, and the kit's own demo songs.
 $fix = Join-Path $PSScriptRoot 'fixture'
 Copy-Item -Path "$fix/*" -Destination $kit -Recurse -Force
-& $py (Join-Path $PSScriptRoot 'mkfixture.py') $kit --ffmpeg $ffmpeg
+$pyRest = @(); if ($pyc.Length -gt 1) { $pyRest = $pyc[1..($pyc.Length - 1)] }; & $pyc[0] @pyRest (Join-Path $PSScriptRoot 'mkfixture.py') $kit --ffmpeg $ffmpeg
 if ($LASTEXITCODE -ne 0) { throw 'mkfixture.py failed' }
 Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/PARITY.aks')
 Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER_FX.aks') -Destination (Join-Path $kit 'AUDIO/PARITY_FX.aks')

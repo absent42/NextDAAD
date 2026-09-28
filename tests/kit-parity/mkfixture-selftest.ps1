@@ -2,14 +2,17 @@
 # with the headers the kit expects. Exit 2 when ffmpeg or Python is missing.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot)
-$ffmpeg = Join-Path $root 'authoring-kit/tools/ffmpeg/bin/ffmpeg.exe'
+. (Join-Path $root 'authoring-kit/lib/kitplatform.ps1')
+$ffmpeg = Join-Path $root "authoring-kit/tools/ffmpeg/bin/ffmpeg$ExeSuffix"
 if (-not (Test-Path -LiteralPath $ffmpeg)) { Write-Host "mkfixture-selftest: no ffmpeg at $ffmpeg"; exit 2 }
-& python -c 'import PIL, numpy' *> $null
-if ($LASTEXITCODE -ne 0) { Write-Host 'mkfixture-selftest: python lacks PIL/numpy'; exit 2 }
+# @(): Find-Python's one-element candidate unrolls to a bare string.
+$pyc = @(Find-Python @('PIL', 'numpy') | Where-Object { $_ })
+if ($pyc.Count -eq 0) { Write-Host 'mkfixture-selftest: no python with PIL/numpy'; exit 2 }
+$pyRest = @(); if ($pyc.Length -gt 1) { $pyRest = $pyc[1..($pyc.Length - 1)] }
 $out = Join-Path $root 'tests/out/kit parity/fixture-gen'
 if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
 New-Item -ItemType Directory -Force $out | Out-Null
-& python (Join-Path $PSScriptRoot 'mkfixture.py') $out --ffmpeg $ffmpeg
+& $pyc[0] @pyRest (Join-Path $PSScriptRoot 'mkfixture.py') $out --ffmpeg $ffmpeg
 if ($LASTEXITCODE -ne 0) { throw 'mkfixture.py failed' }
 $checks = 0
 function Assert-True($cond, $what) { $script:checks++; if (-not $cond) { throw "mkfixture-selftest: $what" } }
