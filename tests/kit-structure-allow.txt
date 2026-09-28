@@ -5,6 +5,9 @@
 # every platform, so it must not take $ExeSuffix.
 exe-literals|lib/kittools.ps1|CSpect.exe
 
+# pgrep matches mono's command line, which names the real CSpect.exe file.
+exe-literals|lib/build.ps1|CSpect\.exe
+
 # Platform conditional: ("ffmpeg.exe" if os.name == "nt" else "ffmpeg").
 exe-literals|lib/videnc.py|os.name
 

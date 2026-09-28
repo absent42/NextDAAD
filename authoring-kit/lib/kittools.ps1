@@ -20,6 +20,15 @@ function Get-NdrcBanner([string]$Ndrc) {
     return $lines[0]
 }
 
+# Linux only: a tool absent from its folder may be on PATH (apt ffmpeg, a
+# system Arkos install). Windows keeps the v0.11.0 folders-only rule.
+function Find-OnPath([string]$Name) {
+    if ($OnWindows) { return '' }
+    $c = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    return ''
+}
+
 function Resolve-KitTools([hashtable]$Config, [string]$KitRoot) {
     $lib = $PSScriptRoot
     $x = $ExeSuffix
@@ -75,6 +84,19 @@ function Resolve-KitTools([hashtable]$Config, [string]$KitRoot) {
         }
     }
     $t.SJASMPLUS = Join-Path $t.SJASMPLUSBIN "sjasmplus$x"
+    if (-not (Test-Path -LiteralPath (abs $t.FFMPEG))) {
+        $p = Find-OnPath 'ffmpeg'
+        if ($p) { $t.FFMPEG = $p; $t.FFMPEGBIN = Split-Path -Parent $p }
+    }
+    if (-not (Test-Path -LiteralPath (abs $t.S2A))) {
+        $p = Find-OnPath 'SongToAky'
+        if ($p) { $t.ARKOSBIN = Split-Path -Parent $p; $t.S2A = $p; $t.S2E = Join-Path $t.ARKOSBIN 'SongToSoundEffects'; $t.S2Y = Join-Path $t.ARKOSBIN 'SongToYm' }
+    }
+    if (-not (Test-Path -LiteralPath (abs $t.SJASMPLUS))) { $p = Find-OnPath 'sjasmplus'; if ($p) { $t.SJASMPLUS = $p; $t.SJASMPLUSBIN = Split-Path -Parent $p } }
+    if (-not (Test-Path -LiteralPath (abs $t.GFX))) { $p = Find-OnPath 'gfx2next'; if ($p) { $t.GFX = $p } }
+    if (-not (Test-Path -LiteralPath (abs $t.CSPECT))) { $p = Find-OnPath 'CSpect.exe'; if ($p) { $t.CSPECT = $p } }
+    $t.CSPECTCMD = ''
+    if (-not $OnWindows) { $t.CSPECTCMD = or (cfg 'CSPECTCMD') 'mono' }
     $env:TOOLSDIR = $t.TOOLSDIR
     $env:FFMPEG = $t.FFMPEG
     $env:VIDENC = $t.VIDENC

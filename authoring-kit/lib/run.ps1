@@ -18,6 +18,10 @@ if (-not (Test-Path -LiteralPath $t.CSPECT -PathType Leaf)) {
     Write-Host '       existing install.'
     exit 1
 }
+if (-not $OnWindows -and -not (Get-Command $t.CSPECTCMD -CommandType Application -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: $($t.CSPECTCMD) not found - CSpect needs mono on Linux (sudo apt install mono-devel), or set CSPECTCMD in CONFIG.BAT"
+    exit 1
+}
 $game = if ($cfg.ContainsKey('GAME')) { [string]$cfg['GAME'] } else { '' }
 if (-not $game) {
     # Ordinal order (Get-KitFiles), not directory enumeration order: the
@@ -30,5 +34,6 @@ $nexFile = if ($game) { Find-KitFile $relDir "$game.NEX" } else { $null }
 if ($nexFile) { $launch = Join-Path 'RELEASE' $nexFile.Name }
 # The call operator quotes each argument on both hosts (Start-Process
 # -ArgumentList does not); piping to Out-Null waits for CSpect to exit.
-& $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null
+if ($OnWindows) { & $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null }
+else { & $t.CSPECTCMD $t.CSPECT '-w3' '-zxnext' '-esc' '-mmc=RELEASE\' $launch | Out-Null }
 exit 0

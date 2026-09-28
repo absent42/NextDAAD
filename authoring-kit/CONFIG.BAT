@@ -53,6 +53,9 @@ SET ARKOSDIR=
 REM CSpect - the emulator BUILD.BAT and RUN.BAT launch.
 SET CSPECTDIR=
 
+REM Linux only: the program that runs CSpect.exe (default mono). Ignored on Windows.
+SET CSPECTCMD=
+
 REM ffmpeg - reads your .mp4 cutscene sources.
 SET FFMPEGDIR=
 

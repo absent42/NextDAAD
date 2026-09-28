@@ -72,4 +72,28 @@ if (Test-Path $real) {
     $banner = Get-NdrcBanner $real
     Assert-Eq ($banner -like 'NDRC * --from-json') $true "banner shape ($banner)"
 }
+# Linux PATH fallback: a missing folder tool resolves to the PATH copy; on
+# Windows the folder rule stands and Find-OnPath is always ''.
+$fakeBin = "$root/tests/out/kittools/bin"
+New-Item -ItemType Directory -Force $fakeBin | Out-Null
+$fakeFf = "$fakeBin/ffmpeg$x"
+[IO.File]::WriteAllText($fakeFf, "#!/bin/sh`nexit 0`n")
+if (-not $OnWindows) { & chmod +x $fakeFf }
+$oldPath = $env:PATH
+$env:PATH = $fakeBin + [IO.Path]::PathSeparator + $env:PATH
+try {
+    $t4 = Resolve-KitTools @{ FFMPEGDIR = 'nosuch' } $kit
+    if ($OnWindows) {
+        Assert-Eq $t4.FFMPEG (Join-Path 'nosuch' "ffmpeg$x") 'Windows: no PATH fallback'
+        Assert-Eq (Find-OnPath 'ffmpeg') '' 'Windows: Find-OnPath is empty'
+        Assert-Eq $t4.CSPECTCMD '' 'Windows: CSPECTCMD unused'
+    } else {
+        Assert-Eq ([IO.Path]::GetFullPath($t4.FFMPEG)) ([IO.Path]::GetFullPath($fakeFf)) 'Linux: ffmpeg from PATH'
+        Assert-Eq $t4.CSPECTCMD 'mono' 'Linux: CSPECTCMD defaults to mono'
+    }
+} finally { $env:PATH = $oldPath }
+$t5 = Resolve-KitTools @{ CSPECTCMD = 'dotnet' } $kit
+$wantCmd = ''
+if (-not $OnWindows) { $wantCmd = 'dotnet' }
+Assert-Eq $t5.CSPECTCMD $wantCmd 'CSPECTCMD override (Linux only)'
 Write-Output "kittools-selftest: $checks checks passed"
