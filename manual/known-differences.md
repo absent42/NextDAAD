@@ -77,22 +77,25 @@ NextDAAD.
 
 ## Flags
 
-### Flag 50 does not survive a `PROCESS` call
+### Flag 50 holds the `DOALL` location, not the object
 
-Flag 50 holds the object a `DOALL` is currently working on, and it is a
-plain global here. After `PROCESS n`, where process n ran a `DOALL` of
-its own, flag 50 holds the last object that `DOALL` touched rather than
-whatever you left in it. Some interpreters save and restore it around
-the call.
+As on the original ZX interpreter, flag 50 holds the location a `DOALL`
+is searching, with 255 already turned into the player's location. It
+is set even when the `DOALL` finds nothing and keeps its value after
+the loop ends. The loop reads its location back from flag 50 on every
+pass, so writing flag 50 inside the loop moves the rest of the loop to
+that location.
 
-Do not carry a value in flag 50 across a `PROCESS` call. Use one of the
-general-purpose flags for anything you need to survive.
+The object on the current pass is the referenced object: flag 51, with
+its location, weight, container and wearable state and attributes in
+flags 54-59, as after `GET` or `WHATO`. Read the object from flag 51,
+which the original ZX interpreter and jDAAD also set on every pass.
+jDAAD and msx2daad keep the object number in flag 50 instead.
 
-### Flag 55 is not set while a `DOALL` runs
-
-The weight of the object a `DOALL` has just reached is not published
-into flag 55. If you need it inside the loop, ask for it directly with
-`WEIGH @50 n`.
+Flag 50 is a plain global. After `PROCESS n`, where process n ran a
+`DOALL` of its own, flag 50 holds that `DOALL`'s location. jDAAD saves
+and restores it around the call. Do not carry a value in flag 50 across
+a `PROCESS` call.
 
 ### Flags 25-27 and 39-40 are not free
 
