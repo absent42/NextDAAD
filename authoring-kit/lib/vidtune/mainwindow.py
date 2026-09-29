@@ -345,7 +345,7 @@ class _ClipDelegate(QStyledItemDelegate):
     painting changes."""
 
     STATUS_COLOURS = {
-        "edited": theme.ACCENT,      # unsaved settings differ from CONFIG.BAT
+        "edited": theme.ACCENT,      # unsaved settings differ from saved settings
         "stale": theme.PHOSPHOR,     # needs a re-encode
         "tuned": theme.HEADROOM,     # has per-clip settings, up to date
         "default": theme.INK_FAINT,  # riding the kit defaults
@@ -874,7 +874,7 @@ class MainWindow(QMainWindow):
         self.preview_button = QPushButton("Preview Segment")
         self.encode_button = QPushButton("Encode Full")
         # Accept is the one action that commits - it writes VIDOPTS_NNN
-        # into CONFIG.BAT and copies the encode into place. Everything
+        # into CONFIG.local.BAT and copies the encode into place. Everything
         # else on this row is reversible experimentation, so Accept is
         # the single primary and the rest stay quiet.
         self.accept_button = QPushButton("Accept")
@@ -1052,7 +1052,7 @@ class MainWindow(QMainWindow):
 
     def _has_unsaved_edits(self, num3, settings=None):
         """True when the clip's session settings would encode differently
-        from CONFIG.BAT, i.e. Encode Stale + Edited will re-encode and save it."""
+        from saved settings, i.e. Encode Stale + Edited will re-encode and save it."""
         if settings is None:
             settings = self._current_settings(num3)
         return self._argv_for_settings(settings) != \
@@ -1222,7 +1222,7 @@ class MainWindow(QMainWindow):
         the live panel widgets for whichever clip is open (session
         edits are not written back to self.session_edits until
         select_clip switches away from it), otherwise the last-saved
-        session edit or, failing that, CONFIG.BAT's effective
+        session edit or, failing that, the saved effective
         settings."""
         if num3 == self._current_clip:
             return self.settings_panel.get_settings()
