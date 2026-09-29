@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           cd authoring-kit
-          pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform windows | zip -q -@ "../NextDAAD-AuthoringKit-$TAG.zip"
+          pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform windows | zip -q -@ "../NextDAAD-AuthoringKit-$TAG-windows.zip"
           pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform linux   | zip -q -@ "../NextDAAD-AuthoringKit-$TAG-linux.zip"
           cd ..
           # Counts, not negated greps: under pipefail a -q grep that exits early
