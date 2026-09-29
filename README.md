@@ -68,14 +68,15 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 - **Loader intro** - the authoring kit includes an optional loader 
   intro that can feature a layer 2 slideshow with wipes, scrolling text 
   credits, AY music, stereo digitised music, or NextDAW music
+- **The Next's memory** - RAM detection and an 8K bank allocator across
+  the extended memory map
 - **DAAD engine** - all 128 condacts, the eight-window system, the
   vocabulary parser with multi-command sentences, the object model,
   `SAVE`/`LOAD` and `RAMSAVE` to the card, and the DDB text reader
 - **EXTERN support and API** - load and run external machine code binaries up 
   to 16KB in size, either once or on an interrupt, passing flags, object 
   table, message text etc
-- **The Next's memory** - RAM detection and an 8K bank allocator across
-  the extended memory map
+- Skills for AI assistants to aid in writing Z80 externs, and DAAD games
 
 ## For authors
 
