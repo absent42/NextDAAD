@@ -166,7 +166,8 @@ used exactly as you made it.
 
 **In the tuner.** `VIDTUNE.BAT` puts the same settings behind a preview
 window; when you accept an encode it saves the matching `VIDOPTS_NNN`
-line into `CONFIG.local.BAT` (created on the first accept) and never
+line into `CONFIG.local.BAT` (created on the first accept, or by Encode
+Stale + Edited when it saves a clip) and never
 edits `CONFIG.BAT`, so the settings survive a kit update. That local
 line overrides any `VIDOPTS_NNN` line for the same video in
 `CONFIG.BAT`. Resetting a clip whose setting comes from `CONFIG.BAT`
@@ -176,7 +177,11 @@ writes an empty `SET VIDOPTS_NNN=` to the local file, which clears it.
 read the `VIDOPTS_NNN` lines already in `CONFIG.BAT`.** Those were
 written for the demo clips that ship with the kit. Options that suited
 a cartoon will not suit your footage, and they apply silently to
-whatever file you put in that slot. Delete or replace them.
+whatever file you put in that slot. Editing `CONFIG.BAT` does not last,
+because a kit update brings the lines back. Instead reset the clip in
+the tuner, which writes an empty `SET VIDOPTS_001=` to `CONFIG.local.BAT`
+to mask the line, or write that empty line there yourself. The local
+file survives kit updates.
 
 ### The build's own encode settings
 
@@ -583,14 +588,14 @@ around it.
 
 Per-clip tuning has a GUI too: run `VIDTUNE.BAT`. Pick a clip, preview a
 segment, adjust shape, frame rate, dither and the other knobs above,
-encode and accept - the settings land in `VIDOPTS_NNN` in `CONFIG.BAT`,
-so the next build reproduces the same encode.
+encode and accept - the settings land in `VIDOPTS_NNN` in
+`CONFIG.local.BAT`, so the next build reproduces the same encode.
 
 A clip whose settings you have changed but not saved shows as `edited`
 in the clip list. Revert throws those changes away and goes back to
-what `CONFIG.BAT` holds. Encode Stale + Edited encodes every stale or edited
-clip with the settings you gave it, and saves them to `CONFIG.BAT` the
-same way Accept does.
+the saved settings. Encode Stale + Edited encodes every stale or edited
+clip with the settings you gave it, and saves them to `CONFIG.local.BAT`
+the same way Accept does.
 
 ## The starter game's demo clips
 

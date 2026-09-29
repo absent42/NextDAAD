@@ -192,7 +192,8 @@ overwrite it on the next build. A <code>.vid</code> with no <code>.mp4</code> be
 used exactly as you made it.</p>
 <p><strong>In the tuner.</strong> <code>VIDTUNE.BAT</code> puts the same settings behind a preview
 window; when you accept an encode it saves the matching <code>VIDOPTS_NNN</code>
-line into <code>CONFIG.local.BAT</code> (created on the first accept) and never
+line into <code>CONFIG.local.BAT</code> (created on the first accept, or by Encode
+Stale + Edited when it saves a clip) and never
 edits <code>CONFIG.BAT</code>, so the settings survive a kit update. That local
 line overrides any <code>VIDOPTS_NNN</code> line for the same video in
 <code>CONFIG.BAT</code>. Resetting a clip whose setting comes from <code>CONFIG.BAT</code>
@@ -201,7 +202,11 @@ writes an empty <code>SET VIDOPTS_NNN=</code> to the local file, which clears it
 read the <code>VIDOPTS_NNN</code> lines already in <code>CONFIG.BAT</code>.</strong> Those were
 written for the demo clips that ship with the kit. Options that suited
 a cartoon will not suit your footage, and they apply silently to
-whatever file you put in that slot. Delete or replace them.</p>
+whatever file you put in that slot. Editing <code>CONFIG.BAT</code> does not last,
+because a kit update brings the lines back. Instead reset the clip in
+the tuner, which writes an empty <code>SET VIDOPTS_001=</code> to <code>CONFIG.local.BAT</code>
+to mask the line, or write that empty line there yourself. The local
+file survives kit updates.</p>
 <h3 id="the-builds-own-encode-settings">The build's own encode settings</h3>
 <table>
 <thead>
@@ -645,13 +650,13 @@ loaded and played, and what happens to the screen and to game audio
 around it.</p>
 <p>Per-clip tuning has a GUI too: run <code>VIDTUNE.BAT</code>. Pick a clip, preview a
 segment, adjust shape, frame rate, dither and the other knobs above,
-encode and accept - the settings land in <code>VIDOPTS_NNN</code> in <code>CONFIG.BAT</code>,
-so the next build reproduces the same encode.</p>
+encode and accept - the settings land in <code>VIDOPTS_NNN</code> in
+<code>CONFIG.local.BAT</code>, so the next build reproduces the same encode.</p>
 <p>A clip whose settings you have changed but not saved shows as <code>edited</code>
 in the clip list. Revert throws those changes away and goes back to
-what <code>CONFIG.BAT</code> holds. Encode Stale + Edited encodes every stale or edited
-clip with the settings you gave it, and saves them to <code>CONFIG.BAT</code> the
-same way Accept does.</p>
+the saved settings. Encode Stale + Edited encodes every stale or edited
+clip with the settings you gave it, and saves them to <code>CONFIG.local.BAT</code>
+the same way Accept does.</p>
 <h2 id="the-starter-games-demo-clips">The starter game's demo clips</h2>
 <p><code>VIDEO\001.mp4</code> and <code>VIDEO\002.mp4</code> build with the kit so the video
 condacts work out of the box. 001 encodes at the <code>full</code> 320x256 default;
