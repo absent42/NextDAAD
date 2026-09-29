@@ -3,11 +3,8 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.11.1 - Unreleased
+## 0.11.1 - 29 September 2026
 
-- **vidtune saves to `CONFIG.local.BAT`.** Per-video settings are saved
-  there, so they survive kit updates. Existing `VIDOPTS_NNN` lines in
-  `CONFIG.BAT` still apply and are overridden by the local file.
 - **The Linux authoring kit** It builds the same bytes as the
   Windows kit from the same inputs, with the same ffmpeg build for video
   and PCM audio. The Getting Started guide gains a Linux setup section.
@@ -66,6 +63,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
   point after its start could return with wrong notes.
 - **Video cutscenes accept `.mkv` sources.** `VIDEO\NNN.mkv` works
   alongside `VIDEO\NNN.mp4`.
+- **vidtune saves to `CONFIG.local.BAT`.** Per-video settings are saved
+  there, so they survive kit updates. Existing `VIDOPTS_NNN` lines in
+  `CONFIG.BAT` still apply and are overridden by the local file.
 
 ## 0.11.0 - 27 September 2026
 

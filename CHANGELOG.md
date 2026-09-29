@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.11.1 Unreleased
+## v0.11.1 29/09/2026
 
 - kit: build orchestration moved from the .BAT files into
   lib\build.ps1, lib\run.ps1, lib\clean.ps1, lib\externs.ps1 and
