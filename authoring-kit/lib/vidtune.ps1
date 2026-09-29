@@ -20,16 +20,44 @@ if (-not $Src) {
         }
     }
 }
-$py = Find-Python @('PySide6', 'numpy', 'PIL')
+# QtWidgets, not PySide6 alone: only it loads Qt's system libraries.
+$py = Find-Python @('PySide6.QtWidgets', 'numpy', 'PIL')
 if ($py) {
     $rest = @()
     if ($py.Length -gt 1) { $rest = $py[1..($py.Length - 1)] }
     Start-Process -FilePath $py[0] -ArgumentList ($rest + @('-m', 'vidtune')) -WorkingDirectory $kitRoot | Out-Null
     exit 0
 }
-Write-Host 'ERROR: vidtune not found. Looked for:'
-Write-Host "         $($t.VIDTUNE)"
-Write-Host "         $kitExe"
-Write-Host '       See tools\README.txt, or set VIDTOOLSDIR in CONFIG.BAT'
-Write-Host '       or Python 3 with: pip install PySide6 numpy Pillow'
+# vidtune itself always ships (lib/vidtune); only its Python packages can be
+# missing, so name each Python tried and its import error.
+$missingLib = $false
+Write-Host 'ERROR: vidtune (lib/vidtune) cannot start: no Python 3 here can load PySide6, numpy and Pillow.'
+foreach ($cand in (Get-PythonCandidates)) {
+    $rest = @()
+    if ($cand.Length -gt 1) { $rest = $cand[1..($cand.Length - 1)] }
+    $cmd = Get-Command $cand[0] -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $cmd) { Write-Host "       $($cand -join ' '): not found"; continue }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $err = @(& $cmd.Source @rest -c 'import PySide6.QtWidgets, numpy, PIL' 2>&1 | ForEach-Object { "$_" }) | Select-Object -Last 1
+    $ErrorActionPreference = $prevEap
+    Write-Host "       $($cand -join ' ') ($($cmd.Source)): $err"
+    if ("$err" -match '\.so') { $missingLib = $true }
+}
+if ($OnWindows) {
+    if ($Src) { Write-Host '       (-Src: the standalone vidtune was not tried)' }
+    else {
+        Write-Host '       The standalone vidtune was not found either:'
+        Write-Host "         $($t.VIDTUNE)"
+        Write-Host "         $kitExe"
+        Write-Host '       See tools\README.txt, or set VIDTOOLSDIR in CONFIG.BAT.'
+    }
+    Write-Host '       To run it from Python instead: pip install -r lib/requirements-vidtune.txt'
+} elseif ($missingLib) {
+    Write-Host '       The packages are installed but Qt needs system libraries. On Debian/Ubuntu:'
+    Write-Host '         sudo apt install libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0'
+} else {
+    Write-Host '       Set up the venv from docs/getting-started.html (Linux setup), then install them:'
+    Write-Host '         ~/nextdaad-venv/bin/pip install -r lib/requirements-vidtune.txt'
+}
 exit 1

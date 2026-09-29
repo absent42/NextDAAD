@@ -1006,6 +1006,11 @@ class MainWindow(QMainWindow):
         for p in (base / exe, base / "bin" / exe):
             if p.is_file():
                 return p
+        # Non-Windows only, after the folders: PATH (apt ffmpeg), as kittools.ps1 Find-OnPath.
+        if sys.platform != "win32":
+            found = shutil.which("ffmpeg")
+            if found:
+                return Path(found)
         return base / "bin" / exe
 
     def closeEvent(self, event):

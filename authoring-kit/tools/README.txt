@@ -41,7 +41,7 @@ out of it on its own will not start. tools\vidtools\LICENSES\ holds the
 licences of the libraries bundled inside it.
 
 videnc.exe and vidtune.exe ship in the Windows kit only. On Linux the
-video steps need Python 3.11 or newer with the virtual environment from
+video steps need Python 3.10 or newer with the virtual environment from
 "Getting started" (Linux setup).
 
 The DAAD compiler, NDRC, needs no download: it ships built-in as

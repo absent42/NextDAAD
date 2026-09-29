@@ -3,7 +3,7 @@
 # -BuildZip cuts the zip from HEAD as release-kit.yml does (kit-files.ps1 | zip -@).
 param(
     [string]$Zip = '',
-    [ValidateSet('1', '2', '3', 'all')][string]$Pass = 'all',
+    [ValidateSet('1', '2', '3', '4', 'all')][string]$Pass = 'all',
     [ValidateSet('', 'ubuntu:22.04', 'ubuntu:24.04')][string]$Base = '',
     [switch]$BuildZip,
     [string]$Python = 'python'
@@ -81,9 +81,9 @@ if ($Zip -match '^https?://') {
 }
 if (-not (Test-Path -LiteralPath $Zip -PathType Leaf)) { Write-Host "install-test: no zip at $Zip (use -Zip, or -BuildZip for a dry run)"; exit 2 }
 
-$passes = @('1', '2', '3')
+$passes = @('1', '2', '3', '4')
 if ($Base -eq 'ubuntu:22.04') { $passes = @('1', '3') }
-elseif ($Base -eq 'ubuntu:24.04') { $passes = @('2') }
+elseif ($Base -eq 'ubuntu:24.04') { $passes = @('2', '4') }
 elseif ($Pass -ne 'all') { $passes = @($Pass) }
 
 # Arkos: a pinned copy, never written under tools\.
@@ -106,7 +106,7 @@ if (Test-Path -LiteralPath $in) { Remove-Item -LiteralPath $in -Recurse -Force }
 New-Item -ItemType Directory -Force $in | Out-Null
 Copy-Item -LiteralPath $Zip -Destination (Join-Path $in 'kit.zip')
 Copy-Item -LiteralPath $ark -Destination (Join-Path $in 'arkos.zip')
-if ($passes -contains '2') {
+if (@($passes | Where-Object { '1', '2', '4' -contains $_ }).Count) {
     $mkv = Join-Path $work '003.mkv'
     if (-not (Test-Path -LiteralPath $mkv)) {
         $frames = Join-Path $work 'frames'
@@ -151,7 +151,17 @@ apt install -y ffmpeg >/dev/null
 apt install -y python3 python3-venv >/dev/null
 python3 -m venv ~/nextdaad-venv
 ~/nextdaad-venv/bin/pip install -r lib/requirements.txt >/dev/null
+'@
+$activate = @'
+# Page: the optional activate line.
 . ~/nextdaad-venv/bin/activate
+'@
+# Not activated and the system python3 lacks numpy: a video build proves
+# Find-Python reached ~/nextdaad-venv on its own.
+$noActivate = @'
+[ -z "${VIRTUAL_ENV:-}" ]
+if python3 -c 'import numpy' 2>/dev/null; then echo "== the system python3 has numpy"; exit 1; fi
+cp /in/003.mkv VIDEO/003.mkv
 '@
 $modesKept = @'
 # unzip kept the execute bits, so the page's chmod line is skipped.
@@ -169,7 +179,88 @@ for f in $CHECK; do
     [ -f "RELEASE/$f" ] || { echo "== MISSING RELEASE/$f"; exit 1; }
     echo "== found RELEASE/$f"
 done
-echo INSTALL-TEST-OK
+set -x
+'@
+$ok = 'echo INSTALL-TEST-OK'
+# Pass 4: the page's tuning-window packages and Qt libraries, still no
+# activation, no FFMPEGDIR. The launcher must leave vidtune running; then
+# vt4.py drives Encode Full and Accept offscreen.
+$pass4Vidtune = @'
+~/nextdaad-venv/bin/pip install -r lib/requirements-vidtune.txt >/dev/null
+apt install -y libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 >/dev/null
+if grep -qiE '^SET FFMPEGDIR=[^[:space:]]' CONFIG.BAT; then echo "== CONFIG.BAT sets FFMPEGDIR"; exit 1; fi
+rm -f VIDEO/003.vid VIDEO/003.vid.args
+set +e
+QT_QPA_PLATFORM=offscreen ./vidtune.sh
+vc=$?
+set -e
+echo "== ./vidtune.sh exit $vc"
+[ "$vc" = 0 ]
+sleep 8
+set +x
+pids=''
+for p in /proc/[0-9]*; do
+    c=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null || true)
+    case "$c" in *"-m vidtune"*) echo "== running: ${p#/proc/} $c"; pids="$pids ${p#/proc/}" ;; esac
+done
+[ -n "$pids" ] || { echo "== no -m vidtune process after ./vidtune.sh"; exit 1; }
+kill $pids
+set -x
+QT_QPA_PLATFORM=offscreen ~/nextdaad-venv/bin/python3 /in/vt4.py
+[ -f VIDEO/003.vid ]
+'@
+$vt4 = @'
+# Pass 4: vidtune on the unzipped kit, offscreen. ffmpeg must come from PATH
+# and videnc must run under vidtune's own Python; Encode Full then Accept.
+import sys, time
+from pathlib import Path
+kit = Path.cwd()
+sys.path.insert(0, str(kit / "lib"))
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+app = QApplication(sys.argv)
+from vidtune.mainwindow import MainWindow
+w = MainWindow(kit)
+vid = kit / "VIDEO" / "003.vid"
+fails = []
+print("== ffmpeg", w.ffmpeg)
+print("== encoder", w.encoder_argv)
+if str(w.ffmpeg) != "/usr/bin/ffmpeg":
+    fails.append("ffmpeg is not /usr/bin/ffmpeg")
+if not w.encoder_argv or w.encoder_argv[0] != sys.executable:
+    fails.append("videnc does not run under vidtune's own Python")
+t0 = time.time()
+def start():
+    w.select_clip("003")
+    w.on_encode_full()
+    if w._job is None:
+        fails.append("Encode Full did not start")
+        finish()
+    else:
+        QTimer.singleShot(2000, poll)
+def poll():
+    if w._job is None:
+        print("== encode finished:", w.statusBar().currentMessage())
+        if w.accept_button.isEnabled():
+            w.on_accept()
+        else:
+            fails.append("Accept not enabled after Encode Full")
+        finish()
+    elif time.time() - t0 > 1200:
+        fails.append("Encode Full timed out")
+        finish()
+    else:
+        QTimer.singleShot(2000, poll)
+def finish():
+    print("== VIDEO/003.vid", vid.stat().st_size if vid.is_file() else "missing", "after", int(time.time() - t0), "s")
+    if not vid.is_file():
+        fails.append("VIDEO/003.vid missing after Accept")
+    for f in fails:
+        print("== FAIL", f)
+    w.close()   # closeEvent waits for preview decode threads
+    app.exit(1 if fails else 0)
+QTimer.singleShot(0, start)
+sys.exit(app.exec())
 '@
 $pass2Extra = @'
 cp /in/003.mkv VIDEO/003.mkv
@@ -195,13 +286,16 @@ sh -c "$fix"
 set -x
 '@
 $def = @{
-    '1' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID'; Body = ($head, $kit, $modesKept, $build)
-        Proves = 'ubuntu:22.04 (oldest Ubuntu at the glibc 2.34 floor): pwsh + Arkos only, STARTER text/graphics/audio build' }
-    '2' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID STARTER.NEX INTRO/INTRO.DAT'; Body = ($head, $kit, $py, $modesKept, $pass2Extra, $build)
-        Proves = 'ubuntu:24.04: page venv recipe + ffmpeg, VIDEO/003.mkv encoded and INTRO.TXT compiled' }
-    '3' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID'; Body = ($head, $kit, $pass3Extra, $build)
+    '1' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID 003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $ok)
+        Proves = 'ubuntu:22.04 (oldest Ubuntu at the glibc 2.34 floor): page venv on Python 3.10, not activated, STARTER plus VIDEO/003.mkv' }
+    '2' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID STARTER.NEX INTRO/INTRO.DAT'; Body = ($head, $kit, $py, $activate, $modesKept, $pass2Extra, $build, $ok)
+        Proves = 'ubuntu:24.04: page venv recipe (activated) + ffmpeg, VIDEO/003.mkv encoded and INTRO.TXT compiled' }
+    '3' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID'; Body = ($head, $kit, $pass3Extra, $build, $ok)
         Proves = 'ubuntu:22.04 with execute bits dropped: shell refuses ./build.sh, sh build.sh prints the chmod line, that line fixes the kit' }
+    '4' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $pass4Vidtune, $ok)
+        Proves = 'ubuntu:24.04: apt ffmpeg, no FFMPEGDIR, venv not activated; build encodes 003, vidtune.sh starts, Encode Full + Accept write VIDEO/003.vid' }
 }
+Write-Lf (Join-Path $in 'vt4.py') $vt4
 $results = @()
 foreach ($p in $passes) {
     $d = $def[$p]

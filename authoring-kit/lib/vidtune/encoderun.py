@@ -24,7 +24,13 @@ def videnc_names():
 
 
 def python_candidates():
-    return [["py", "-3"], ["python"]] if sys.platform == "win32" else [["python3"], ["python"]]
+    # vidtune's own interpreter first (never a frozen exe), then kitplatform.ps1's order.
+    cands = []
+    if sys.executable and not getattr(sys, "frozen", False):
+        cands.append([sys.executable])
+    if sys.platform == "win32":
+        return cands + [["py", "-3"], ["python"]]
+    return cands + [["python3"], ["python"], [str(Path.home() / "nextdaad-venv" / "bin" / "python3")]]
 
 
 def resolve_encoder(kit_root, toolsdir, vidtoolsdir=""):

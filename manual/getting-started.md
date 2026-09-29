@@ -79,7 +79,7 @@ optional tools your game uses:
   distribution package where one exists (`sudo apt install sjasmplus`
   on Debian), otherwise build it from
   https://github.com/z00m128/sjasmplus.
-- **Python 3.11 or newer** with `Pillow` and `numpy`, for video cutscenes
+- **Python 3.10 or newer** with `Pillow` and `numpy`, for video cutscenes
   only, in a virtual environment - see below.
 
 Debian and Ubuntu do not allow pip to install into the system Python,
@@ -89,13 +89,22 @@ virtual environment once, from inside the kit folder:
     sudo apt install python3 python3-venv
     python3 -m venv ~/nextdaad-venv
     ~/nextdaad-venv/bin/pip install -r lib/requirements.txt
-    . ~/nextdaad-venv/bin/activate      # before ./build.sh, in each new terminal
+    . ~/nextdaad-venv/bin/activate      # optional: only to run python3 yourself
 
 `lib/requirements.txt` pins the `Pillow` and `numpy` versions the kit
-is tested with. The build uses the `python3` on your PATH, which the
-activation makes the venv's. The tuning GUI also needs
-`~/nextdaad-venv/bin/pip install PySide6`. Ubuntu 22.04 ships Python
-3.10: use 24.04, Debian 12, or a newer Python from the deadsnakes PPA.
+is tested with. The scripts find `~/nextdaad-venv` on their own, so
+activating it is optional; a `python3` on your PATH that already has
+the packages is used first.
+
+The video tuning window (`./vidtune.sh`) also needs PySide6. Install it
+into the same venv, from inside the kit folder:
+
+    ~/nextdaad-venv/bin/pip install -r lib/requirements-vidtune.txt
+
+A minimal install may lack the system libraries Qt needs; on Debian
+and Ubuntu, add them with:
+
+    sudo apt install libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0
 
 Then build and play:
 
