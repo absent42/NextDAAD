@@ -1430,7 +1430,7 @@ class MainWindow(QMainWindow):
         self._update_accept_enabled()
 
     def on_revert(self):
-        """Drops the open clip's unsaved edits, reloading its CONFIG.BAT
+        """Drops the open clip's unsaved edits, reloading its saved
         settings into the panel."""
         num3 = self._current_clip
         if num3 is None or self._job is not None:

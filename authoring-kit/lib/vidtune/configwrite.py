@@ -17,7 +17,7 @@ NEW_LOCAL_HEADER = (b"@echo off\r\n"
 
 
 def _line_re(num3):
-    return re.compile(rb"^\s*set\s+VIDOPTS_" + num3.encode() + rb"=.*$",
+    return re.compile(rb'^\s*set\s+"?VIDOPTS_' + num3.encode() + rb"=.*$",
                       re.IGNORECASE)
 
 
@@ -32,6 +32,24 @@ def config_stamp(config_path):
             loc.stat().st_mtime if loc.is_file() else None)
 
 
+def _split_lines(raw, default_eol):
+    """[[text, ending], ...]; each line keeps its own ending, and a final
+    line without one gets default_eol."""
+    parts = raw.split(b"\n")
+    unterminated = parts[-1] != b""
+    if not unterminated:
+        parts.pop()
+    lines = []
+    for i, ln in enumerate(parts):
+        if i == len(parts) - 1 and unterminated:
+            lines.append([ln, default_eol])
+        elif ln.endswith(b"\r"):
+            lines.append([ln[:-1], b"\r\n"])
+        else:
+            lines.append([ln, b"\n"])
+    return lines
+
+
 def write_vidopts_line(config_path, num3, opts, expected_stamp=None):
     config_path = Path(config_path)
     if expected_stamp is not None and config_stamp(config_path) != expected_stamp:
@@ -43,29 +61,30 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None):
                         ).per_clip.get(num3, "")
     existed = loc.is_file()
     raw = loc.read_bytes() if existed else NEW_LOCAL_HEADER
-    eol = b"\r\n" if (not existed or b"\r\n" in raw) else b"\n"
-    lines = raw.split(eol)
-    if lines[-1] == b"":
-        lines.pop()
+    default_eol = b"\r\n" if (not existed or b"\r\n" in raw) else b"\n"
+    lines = _split_lines(raw, default_eol)
     target = _line_re(num3)
-    any_vidopts = re.compile(rb"^\s*set\s+VIDOPTS", re.IGNORECASE)
-    new_line = b"SET VIDOPTS_%s=%s" % (num3.encode(), opts.encode())
+    any_vidopts = re.compile(rb'^\s*set\s+"?VIDOPTS', re.IGNORECASE)
+    new_text = b"SET VIDOPTS_%s=%s" % (num3.encode(), opts.encode())
 
-    idx = next((i for i, ln in enumerate(lines) if target.match(ln)), None)
+    idx = next((i for i, ln in enumerate(lines) if target.match(ln[0])), None)
+    changed = True
     if idx is not None:
         if opts or base:
-            lines[idx] = new_line
+            lines[idx][0] = new_text
         else:
             del lines[idx]
     elif opts or base:
-        last = [i for i, ln in enumerate(lines) if any_vidopts.match(ln)]
-        lines.insert(max(last) + 1 if last else len(lines), new_line)
+        last = [i for i, ln in enumerate(lines) if any_vidopts.match(ln[0])]
+        at = max(last) + 1 if last else len(lines)
+        lines.insert(at, [new_text, default_eol])
     else:
-        return
+        changed = False
 
-    if existed:
-        loc.with_name("CONFIG.local.BAT.bak").write_bytes(raw)
-    loc.write_bytes(eol.join(lines) + eol)
+    if changed:
+        if existed:
+            loc.with_name("CONFIG.local.BAT.bak").write_bytes(raw)
+        loc.write_bytes(b"".join(t + e for t, e in lines))
 
     got = parse_config(config_path).per_clip.get(num3, "")
     if got != opts:

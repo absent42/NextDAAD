@@ -75,3 +75,53 @@ def test_insert_with_no_vidopts_anchor(tmp_path):
 
     assert loc.read_bytes() == original + b"SET VIDOPTS_005=--direct\r\n"
     assert parse_config(cfg).per_clip["005"] == "--direct"
+
+
+def test_noop_reset_verifies_readback(fixture_kit, monkeypatch):
+    import vidtune.configwrite as cw
+    monkeypatch.setattr(cw, "parse_config", _lying_parse(cw.parse_config))
+    with pytest.raises(RuntimeError):
+        write_vidopts_line(fixture_kit / CFG, "009", "")
+
+
+def _lying_parse(real):
+    def parse(*a, **k):
+        cfg = real(*a, **k)
+        if k.get("local_path") is None:
+            cfg.per_clip["009"] = "--ghost"
+        return cfg
+    return parse
+
+
+def test_quoted_local_line_replaced(fixture_kit):
+    (fixture_kit / LOC).write_bytes(b'SET "VIDOPTS_005=--old"\r\n')
+    write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    assert (fixture_kit / LOC).read_bytes() == b"SET VIDOPTS_005=--direct\r\n"
+    assert parse_config(fixture_kit / CFG).per_clip["005"] == "--direct"
+
+
+def test_quoted_local_only_reset_removes_it(fixture_kit):
+    (fixture_kit / LOC).write_bytes(b'@echo off\r\nSET "VIDOPTS_005=--old"\r\n')
+    write_vidopts_line(fixture_kit / CFG, "005", "")
+    assert b"VIDOPTS_005" not in (fixture_kit / LOC).read_bytes()
+    assert "005" not in parse_config(fixture_kit / CFG).per_clip
+
+
+def test_mixed_eol_reset_and_replace(fixture_kit):
+    (fixture_kit / LOC).write_bytes(b"SET RUN=0\nSET VIDOPTS_005=--direct\r\n")
+    write_vidopts_line(fixture_kit / CFG, "005", "--shape scope")
+    assert (fixture_kit / LOC).read_bytes() == \
+        b"SET RUN=0\nSET VIDOPTS_005=--shape scope\r\n"
+    write_vidopts_line(fixture_kit / CFG, "005", "")
+    assert (fixture_kit / LOC).read_bytes() == b"SET RUN=0\n"
+    assert "005" not in parse_config(fixture_kit / CFG).per_clip
+
+
+def test_stamp_conflict_when_config_changes(fixture_kit):
+    import os
+    stamp = config_stamp(fixture_kit / CFG)
+    st = (fixture_kit / CFG).stat()
+    os.utime(fixture_kit / CFG, (st.st_atime, st.st_mtime + 10))
+    with pytest.raises(ConfigConflict):
+        write_vidopts_line(fixture_kit / CFG, "005", "--direct", expected_stamp=stamp)
+    assert not (fixture_kit / LOC).exists()
