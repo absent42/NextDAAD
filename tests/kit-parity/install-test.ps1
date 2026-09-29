@@ -188,7 +188,7 @@ $ok = 'echo INSTALL-TEST-OK'
 $pass4Vidtune = @'
 ~/nextdaad-venv/bin/pip install -r lib/requirements-vidtune.txt >/dev/null
 apt install -y libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 >/dev/null
-if grep -qE 'FFMPEGDIR=[^[:space:]]' CONFIG.BAT; then echo "== CONFIG.BAT sets FFMPEGDIR"; exit 1; fi
+if grep -qiE '^SET FFMPEGDIR=[^[:space:]]' CONFIG.BAT; then echo "== CONFIG.BAT sets FFMPEGDIR"; exit 1; fi
 rm -f VIDEO/003.vid VIDEO/003.vid.args
 set +e
 QT_QPA_PLATFORM=offscreen ./vidtune.sh
