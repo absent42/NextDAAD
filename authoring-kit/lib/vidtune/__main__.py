@@ -1,8 +1,12 @@
 # authoring-kit/lib/vidtune/__main__.py
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # lib siblings
+
+from vidtune import quiet_wayland_textinput
+quiet_wayland_textinput(os.environ)  # before any Qt import reads the rules
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
