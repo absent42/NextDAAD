@@ -169,14 +169,19 @@ footage decides which failure you would rather have.</p>
 </ol>
 <h2 id="3-where-these-settings-go">3. Where these settings go</h2>
 <p>Three ways to apply them, all equivalent.</p>
-<p><strong>Per video, in <code>CONFIG.BAT</code>.</strong> Set <code>VIDOPTS_NNN</code> for the video number,
-and the next build re-encodes that clip:</p>
+<p><strong>Per video, with <code>VIDOPTS_NNN</code>.</strong> Set it for the video number, and the
+next build re-encodes that clip:</p>
 <pre><code>SET VIDOPTS_001=--direct --shape full --fps 12.5
 </code></pre>
 <p>This is the normal place for anything in this document, because these
 are per-clip decisions - one cutscene may want one route and the next
 another. <code>VIDASPECT</code>, <code>VIDFPS</code> and <code>VIDOPTS</code> apply to <em>every</em> clip in
 the game, so use those only for something you genuinely want everywhere.</p>
+<p>A <code>VIDOPTS_NNN</code> line works in <code>CONFIG.BAT</code> or in <code>CONFIG.local.BAT</code>.
+Any setting in <code>CONFIG.local.BAT</code> overrides the same setting in
+<code>CONFIG.BAT</code> (every key, last wins, and an empty <code>SET NAME=</code> clears it),
+so a <code>VIDOPTS_NNN</code> line in the local file masks the same-numbered line in
+<code>CONFIG.BAT</code>. Lines you write by hand in <code>CONFIG.BAT</code> stay valid.</p>
 <p><strong>By hand</strong>, for a one-off encode or to cut a clip from a longer source:</p>
 <pre><code>tools\vidtools\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
 </code></pre>
@@ -186,8 +191,12 @@ a <code>VIDEO\001.mp4</code> sitting next to your hand-made <code>VIDEO\001.vid<
 overwrite it on the next build. A <code>.vid</code> with no <code>.mp4</code> beside it is
 used exactly as you made it.</p>
 <p><strong>In the tuner.</strong> <code>VIDTUNE.BAT</code> puts the same settings behind a preview
-window; when you accept an encode it writes the matching <code>VIDOPTS_NNN</code>
-line into <code>CONFIG.BAT</code> for you.</p>
+window; when you accept an encode it saves the matching <code>VIDOPTS_NNN</code>
+line into <code>CONFIG.local.BAT</code> (created on the first accept) and never
+edits <code>CONFIG.BAT</code>, so the settings survive a kit update. That local
+line overrides any <code>VIDOPTS_NNN</code> line for the same video in
+<code>CONFIG.BAT</code>. Resetting a clip whose setting comes from <code>CONFIG.BAT</code>
+writes an empty <code>SET VIDOPTS_NNN=</code> to the local file, which clears it.</p>
 <p><strong>Before you drop your own footage into <code>VIDEO\001.mp4</code> or <code>002.mp4</code>,
 read the <code>VIDOPTS_NNN</code> lines already in <code>CONFIG.BAT</code>.</strong> Those were
 written for the demo clips that ship with the kit. Options that suited

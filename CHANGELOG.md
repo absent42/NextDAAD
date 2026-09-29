@@ -18,6 +18,9 @@ All notable changes to NextDAAD are recorded here.
 - kit: a DAAD compiler that crashes now always fails the build;
   Windows crash codes are negative and slipped past the old check.
 - vidtune: reads CONFIG.local.BAT and honours FFMPEGDIR.
+- vidtune: per-video settings are saved to CONFIG.local.BAT, so they
+  survive kit updates. Existing VIDOPTS_NNN lines in CONFIG.BAT still
+  apply and are overridden by the local file.
 - kit: two kit files whose names differ only by case are refused. An
   #include or #incbin whose name differs from the file on disk only by
   case, or which uses \ between folders, prints a WARNING on Windows

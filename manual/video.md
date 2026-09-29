@@ -134,8 +134,8 @@ Answer these in order and stop at the first one that fits.
 
 Three ways to apply them, all equivalent.
 
-**Per video, in `CONFIG.BAT`.** Set `VIDOPTS_NNN` for the video number,
-and the next build re-encodes that clip:
+**Per video, with `VIDOPTS_NNN`.** Set it for the video number, and the
+next build re-encodes that clip:
 
 ```
 SET VIDOPTS_001=--direct --shape full --fps 12.5
@@ -145,6 +145,12 @@ This is the normal place for anything in this document, because these
 are per-clip decisions - one cutscene may want one route and the next
 another. `VIDASPECT`, `VIDFPS` and `VIDOPTS` apply to *every* clip in
 the game, so use those only for something you genuinely want everywhere.
+
+A `VIDOPTS_NNN` line works in `CONFIG.BAT` or in `CONFIG.local.BAT`.
+Any setting in `CONFIG.local.BAT` overrides the same setting in
+`CONFIG.BAT` (every key, last wins, and an empty `SET NAME=` clears it),
+so a `VIDOPTS_NNN` line in the local file masks the same-numbered line in
+`CONFIG.BAT`. Lines you write by hand in `CONFIG.BAT` stay valid.
 
 **By hand**, for a one-off encode or to cut a clip from a longer source:
 
@@ -159,8 +165,12 @@ overwrite it on the next build. A `.vid` with no `.mp4` beside it is
 used exactly as you made it.
 
 **In the tuner.** `VIDTUNE.BAT` puts the same settings behind a preview
-window; when you accept an encode it writes the matching `VIDOPTS_NNN`
-line into `CONFIG.BAT` for you.
+window; when you accept an encode it saves the matching `VIDOPTS_NNN`
+line into `CONFIG.local.BAT` (created on the first accept) and never
+edits `CONFIG.BAT`, so the settings survive a kit update. That local
+line overrides any `VIDOPTS_NNN` line for the same video in
+`CONFIG.BAT`. Resetting a clip whose setting comes from `CONFIG.BAT`
+writes an empty `SET VIDOPTS_NNN=` to the local file, which clears it.
 
 **Before you drop your own footage into `VIDEO\001.mp4` or `002.mp4`,
 read the `VIDOPTS_NNN` lines already in `CONFIG.BAT`.** Those were

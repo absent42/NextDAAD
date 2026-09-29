@@ -115,7 +115,8 @@ SET VIDOPTS=
 REM Per-video overrides: VIDOPTS_NNN (3-digit video number) appends options
 REM for that video only, after VIDOPTS, and wins over it - including for
 REM the shape, whichever of --shape/--width/--aspect you set. The encode
-REM pass echoes each VIDOPTS_NNN it applies.
+REM pass echoes each VIDOPTS_NNN it applies. vidtune saves its per-video
+REM overrides to CONFIG.local.BAT, which wins over this file.
 REM The encoder derives each clip's data budget and prints what it chose;
 REM set --stream-budget only to override that - see
 REM docs\reference\video-delivery.html "Streaming, resident and direct delivery".

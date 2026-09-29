@@ -882,7 +882,7 @@ class MainWindow(QMainWindow):
         self.accept_button.setEnabled(False)
         self.revert_button = QPushButton("Revert")
         self.revert_button.setToolTip(
-            "discard this clip's unsaved edits - back to CONFIG.BAT")
+            "discard this clip's unsaved edits - back to the saved settings")
         self.revert_button.setEnabled(False)
         self.encode_all_button = QPushButton("Encode Stale + Edited")
 
