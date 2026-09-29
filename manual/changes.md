@@ -5,6 +5,16 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.11.1 - Unreleased
 
+- **The Linux authoring kit** It builds the same bytes as the
+  Windows kit from the same inputs, with the same ffmpeg build for video
+  and PCM audio. The Getting Started guide gains a Linux setup section.
+  `CONFIG.BAT` gains `CSPECTCMD`, the program that runs `CSpect.exe`
+  on Linux (default `mono`).
+- **A skill for AI assistants writing games.** The kit ships a second
+  agent skill, `.agents\skills\daad-game-authoring\`, covering DSF
+  source, the standard process tables, NextDAAD's extras and the build.
+  The skills folder is renamed from `.agent` to `.agents`, and a new
+  `AGENTS.md` at the kit root points assistants at both skills.
 - **Kit build steps moved into scripts.** `BUILD.BAT`, `RUN.BAT` and
   `CLEAN.BAT` still work the same way from the command line; the
   separate `.BAT` files they used to call are gone, replaced by shared
@@ -14,7 +24,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   and versions in `CONFIG.BAT` or `CONFIG.local.BAT`. Setting `NDRC`
   or `NDRCVER` as an environment variable is no longer read; move
   that setting into `CONFIG.local.BAT`.
-- **The loader intro's music check is fixed.** It now looks at the
+- **The loader intro's music check** It now looks at the
   `MUSIC` line in `INTRO.TXT` to decide whether a music tool is
   needed; before, it checked the wrong line and rarely ran.
 - **A crashing DAAD compiler now stops the build.** Previously a
@@ -36,14 +46,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
   `SET NAME=value` lines instead of running it with cmd, so a `%VAR%`
   reference in a value is no longer expanded; write the value out in
   full.
-- **A skill for AI assistants writing games.** The kit ships a second
-  agent skill, `.agents\skills\daad-game-authoring\`, covering DSF
-  source, the standard process tables, NextDAAD's extras and the build.
-  The skills folder is renamed from `.agent` to `.agents`, and a new
-  `AGENTS.md` at the kit root points assistants at both skills.
 - **Output is unchanged.** Existing games build to the same bytes as
   before; only the interpreter, `nextdaad.nex`, differs, for the
-  `DOALL` change below.
+  `DOALL` and streamed-music changes below.
 - **`DOALL` now matches the original interpreter.** Flag 50 holds the
   location a `DOALL` is searching, not the object it has reached. The
   object on each pass is now the referenced object - flag 51, with its
@@ -51,11 +56,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   loop refer to it. A game that read the object from flag 50 should
   read flag 51. See
   [Known differences](known-differences.md#flag-50-holds-the-doall-location-not-the-object).
-- **The Linux authoring kit ships.** It builds the same bytes as the
-  Windows kit from the same inputs, with the same ffmpeg build for video
-  and PCM audio. The Getting Started guide gains a Linux setup section.
-  `CONFIG.BAT` gains `CSPECTCMD`, the program that runs `CSpect.exe`
-  on Linux (default `mono`).
+- **Streamed music keeps all its voices.** After a sound effect, a
+  `BEEP`, a stopped effect or a video, `.AYS` music now carries on as
+  written. Before, some voices could stay silent or play a wrong note
+  until the tune next changed them, and a tune that loops back to a
+  point after its start could return with wrong notes.
 - **Video cutscenes accept `.mkv` sources.** `VIDEO\NNN.mkv` works
   alongside `VIDEO\NNN.mp4`.
 

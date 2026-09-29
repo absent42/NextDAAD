@@ -3,7 +3,7 @@
 ; engine + AY period table + state block. Mapped at $C000-$FFFF only
 ; inside the ISR and the mainline audio-load brackets - never
 ; resident. Layout per the AUD_* equates in nextdaad.inc:
-;   $C000 AUD_PLAYER_ORG  player, aud_tick, BEEP engine, period table
+;   $C000 AUD_PLAYER_ORG  player, aud_tick, BEEP engine, stream engine
 ;   $D000 AUD_SFB_ORG     sound-effects bank (2K)
 ;   $D800 AUD_SONG_ORG    current song (AUD_SONG_MAX bytes)
 ;   $FFE0 AUD_STATE       audFlags / beep state / song number
@@ -76,6 +76,13 @@ aud_tick:
     call aud_ays_start
     ld hl, audRequest2
 .no2start:
+    bit 4, (hl)                     ; bit 4: the video park overwrote the
+    jr z, .no2sync                  ; stream's PSGs - resend them
+    res 4, (hl)
+    ld a, (aysResync)
+    or AYS_RESEND
+    ld (aysResync), a
+.no2sync:
     ; bits 2/3: SAMPLE CHANNEL 2 stop/start (SP18 item 7 Task 11), the
     ; exact mirror of audRequest bits 7/6 for channel 1 below - same
     ; stop-before-start rule, same single-res consumption, same
@@ -169,12 +176,15 @@ aud_tick:
     ; when audFlags still has music (bit 0) or effect (bit 2) set - an
     ; effect-only stop drops audFlags to 0 and aud_tick returns before
     ; the play gate, leaving the effect's last registers ringing. Mirror
-    ; the effect-end watch's no-music branch, but unconditionally: PSG 3
-    ; ($FD) carries only music channels 7-9, so this cannot dent channels
-    ; 1-6 (PSG 1/2), and when music IS playing the same-frame play gate
-    ; overwrites this with the correct music state.
+    ; the effect-end watch's no-music branch, but unconditionally: this
+    ; cannot dent PSG 1/2, AKY music rewrites PSG 3 in the same-frame
+    ; play gate, and an AYS stream resends PSG 3 (R13 too, the effect
+    ; may have written it) later in this same tick.
     ld a, $FD
     call aud_psg_silence
+    ld a, (aysResync)
+    or AYS_RESEND | AYS_R13_PSG3
+    ld (aysResync), a
     ld hl, audRequest
 .no2:
     ; bit 1: play effect audReqSfx on PSG 3 channel 0, full volume
@@ -209,13 +219,7 @@ aud_tick:
     jr nz, .noreq                   ; aud_beep_start's own bit-2 guard:
                                     ; this copy also skips the stale
                                     ; audFlags/audBeepFrames writes
-    ld a, (audReqIdx)
-    add a, a
-    ld hl, audPeriods
-    add hl, a
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
+    ld de, (audReqPer)
     call aud_beep_start
     ld hl, audFlags
     set 3, (hl)
@@ -278,6 +282,11 @@ aud_tick:
     ld a, (audFlags)
     bit 2, a
     jr z, .beep
+    ; the player just wrote all three PSGs from the silence song: an AYS
+    ; stream resends its registers on its next tick
+    ld a, (aysResync)
+    or AYS_RESEND | AYS_R13_PSG3
+    ld (aysResync), a
     ld hl, (PLY_AKY_CHANNEL1_SOUNDEFFECTDATA)
     ld a, h
     or l
@@ -305,6 +314,9 @@ aud_tick:
     ret nz
     ld hl, audFlags
     res 3, (hl)                     ; bit 3 is read only from this ISR chain: order-free
+    ld a, (aysResync)               ; the beep held PSG 3: resend a stream's
+    or AYS_RESEND
+    ld (aysResync), a
     jp aud_beep_silence
 
 ; Stop the music: re-point the player at the built-in silence song
@@ -1153,7 +1165,9 @@ sfxWin1:
 ; song never coexist - documented invariant, asserted nowhere): the stream
 ; loader's stop-wait halts any AKY song before this start bit is filed, and
 ; aud_load_song (T3 F1 fix) stops a playing stream before loading an AKY song.
-; Runs in ISR context. Corrupts AF, HL.
+; The shadow starts at the encoder's baseline and is resent on the first
+; tick, so nothing left on the chips leaks into the stream.
+; Runs in ISR context. Corrupts AF, BC, DE, HL.
 aud_ays_start:
     xor a
     ld (aysTabIdx), a
@@ -1166,9 +1180,23 @@ aud_ays_start:
     ld a, (audReq2Loop)
     and 1
     add a, a                    ; -> bit 1 (loop)
-    or 1                        ; bit 0 (active)
+    or 1                        ; bit 0 (active); bit 2 (snapshot) clear
     ld (aysFlags), a
+    ld de, aysShadow
+    ld a, 3
+.base:
+    ld hl, aysBaseRow
+    ld bc, 14
+    ldir
+    dec a
+    jr nz, .base
+    ld a, AYS_RESEND
+    ld (aysResync), a
     ret
+
+; aysconv.ps1's baseline: all zero, mixer off, R13 never written ($FF).
+aysBaseRow:
+    db 0, 0, 0, 0, 0, 0, 0, $3F, 0, 0, 0, 0, 0, $FF
 
 ; aud_ays_stop: stop the stream and silence the PSGs it drove, respecting
 ; PSG-3 ownership exactly as aud_music_stop does (an effect or beep owning
@@ -1195,12 +1223,46 @@ aud_ays_stop:
 ;   [slot7=page49] remain -= consumed (24-bit); on 0: loop (reload the
 ;                  precomputed aysLoop* position/remain) or stop.
 ; Worst-case frame = 3*(2+14) = 48 bytes read + up to 42 register writes,
-; well within the ISR budget (the AKY player writes similar volumes).
+; plus 42 more on a resend tick, well within the ISR budget (the AKY
+; player writes similar volumes).
+;
+; The stream writes only changed registers, so aysShadow holds what every
+; PSG should hold. Code that writes or parks the chips behind the stream's
+; back (effects, beep, effect stop, video park) sets AYS_RESEND: the next
+; tick resends R0-R12 of each unsuppressed PSG from the shadow before the
+; frame's changes, and R13 where its aysResync bit is set (R13 is resent
+; only then: every R13 write retriggers the envelope).
 ; Corrupts everything.
 aud_ays_tick:
     ld a, (aysFlags)
     bit 0, a
     ret z                       ; no stream active
+    ; first time the loop frame comes up: keep the state its delta was
+    ; encoded against, for the wrap to restore
+    bit 2, a
+    jr nz, .snapped
+    ld a, (aysTabIdx)
+    ld hl, aysLoopIdx
+    cp (hl)
+    jr nz, .snapped
+    ld hl, (aysOff)
+    ld de, (aysLoopInPage)
+    or a
+    sbc hl, de
+    jr nz, .snapped
+    ld hl, aysShadow
+    ld de, aysLoopSnap
+    ld bc, AYS_SHADOW_LEN
+    ldir
+    ld hl, aysFlags
+    set 2, (hl)
+.snapped:
+    ; keep the AKY player off PSG 1/2 R13: its send writes R13 only when
+    ; the shape differs from the retrig cell, which aud_env_arm poisons
+    ld a, (PLY_AKY_PSG1REGISTER13)
+    ld (PLY_AKY_PSG1RETRIG), a
+    ld a, (PLY_AKY_PSG2HARDWAREREGISTERARRAY+2)
+    ld (PLY_AKY_PSG2HARDWAREREGISTERARRAY+3), a
     ; snapshot PSG-3 suppression state while page 49 is still in slot 7
     ld a, (audFlags)
     and %00001100               ; effect (bit 2) or beep (bit 3) owns PSG 3
@@ -1218,6 +1280,9 @@ aud_ays_tick:
     ld (aysPsgLeft), a          ; live stream, so never 0 here)
     ld a, $FF                   ; PSG 1 select ($FF), then $FE, then $FD
     ld (aysSel), a
+    ld a, AYS_R13_PSG1          ; this PSG's aysResync R13 bit
+    ld (aysPsgBit), a
+    ld iy, aysShadow            ; this PSG's R0, advanced per register
 .psg:
     ld a, (aysSel)
     call aud_psg3_select        ; select this PSG chip (I/O only)
@@ -1227,12 +1292,30 @@ aud_ays_tick:
     ld (aysSkip), a
     ld a, (aysSel)
     cp $FD
-    jr nz, .mask
+    jr nz, .live
     ld a, (aysSup)
     or a
-    jr z, .mask
+    jr z, .live
     ld a, 1
     ld (aysSkip), a
+    jr .mask
+.live:
+    ld a, (aysResync)
+    rla                         ; CF = AYS_RESEND
+    call c, aud_ays_resend
+    ld a, (aysPsgBit)
+    ld hl, aysResync
+    and (hl)
+    jr z, .mask                 ; no R13 owed on this PSG
+    xor (hl)
+    ld (hl), a                  ; clear its bit
+    ld a, (iy+13)
+    inc a
+    jr z, .mask                 ; $FF: the stream never set a shape
+    dec a
+    ld c, a
+    ld b, 13
+    call aud_psg3_write
 .mask:
     call aud_ays_rdb            ; mask low byte
     ld e, a
@@ -1246,24 +1329,37 @@ aud_ays_tick:
     jr nc, .regnext             ; DE >>= 1 (bit 0 = register 0 first)
     call aud_ays_rdb            ; read the value byte (consumed regardless)
     ld c, a                     ; C = value
+    ld (iy+0), a                ; shadow, suppressed or not
     ld a, (aysSkip)
     or a
-    jr nz, .regnext             ; suppressed: byte consumed, no write
+    jr z, .write
+    ld a, (aysReg)              ; suppressed: byte consumed, no write; a
+    cp 13                       ; held R13 is owed on PSG 3's release
+    jr nz, .regnext
+    ld hl, aysResync
+    set 2, (hl)                 ; AYS_R13_PSG3 (only PSG 3 is suppressed)
+    jr .regnext
+.write:
     ld a, (aysReg)
     ld b, a                     ; B = register number
     call aud_psg3_write         ; out reg B = value C on the selected PSG
 .regnext:
+    inc iy
     ld hl, aysReg
     inc (hl)
     ld a, (hl)
     cp 14
     jr c, .reg
+    ld hl, aysPsgBit
+    sla (hl)
     ld a, (aysSel)
     dec a                       ; $FF -> $FE -> $FD for the next PSG
     ld (aysSel), a
     ld hl, aysPsgLeft
     dec (hl)
     jp nz, .psg
+    ld hl, aysResync            ; resend done (a held PSG 3 gets its own
+    res 7, (hl)                 ; on release)
     ; frame read complete: slot 7 back to the state page BEFORE any $FFE0
     ; access (aud_ays_stop below reads audFlags there)
     nextreg $57, AUD_PAGE_HI
@@ -1288,7 +1384,35 @@ aud_ays_tick:
     ld a, (aysFlags)
     bit 1, a
     jp z, aud_ays_stop          ; play-once: end in silence (out of jr range)
-    ; loop: reload the precomputed loop position and remaining count
+    ; loop: the chips hold the last frame, but the loop frame's delta was
+    ; encoded against the frame before it - restore that state and
+    ; resend, owing R13 wherever the shape differs
+    bit 2, a
+    jr z, .nosnap               ; loop offset never met (malformed file)
+    ld hl, aysLoopSnap+13
+    ld de, aysShadow+13
+    ld bc, (3 << 8) | AYS_R13_PSG1  ; B = 3 PSGs, C = R13 bit
+.wrap13:
+    ld a, (de)
+    cp (hl)
+    jr z, .same13
+    ld a, (aysResync)
+    or c
+    ld (aysResync), a
+.same13:
+    ld a, 14
+    add hl, a
+    add de, a
+    sla c
+    djnz .wrap13
+    ld hl, aysLoopSnap
+    ld de, aysShadow
+    ld bc, AYS_SHADOW_LEN
+    ldir
+    ld hl, aysResync
+    set 7, (hl)
+.nosnap:
+    ; reload the precomputed loop position and remaining count
     ld a, (aysLoopIdx)
     ld (aysTabIdx), a
     ld hl, (aysLoopInPage)
@@ -1297,6 +1421,23 @@ aud_ays_tick:
     ld (aysRemain), hl
     ld a, (aysLoopRemHi)
     ld (aysRemainHi), a
+    ret
+
+; aud_ays_resend: write R0-R12 of the selected PSG from (IY+0..12).
+; Corrupts AF, BC, E, HL. Preserves IY.
+aud_ays_resend:
+    push iy
+    pop hl
+    ld e, 0
+.reg:
+    ld b, e
+    ld c, (hl)
+    call aud_psg3_write
+    inc hl
+    inc e
+    ld a, e
+    cp 13
+    jr c, .reg
     ret
 
 ; aud_ays_rdb: read one stream byte -> A, advancing the position
@@ -1367,13 +1508,27 @@ aysReg:       db 0             ; current register number 0..13
 aysSkip:      db 0             ; nonzero: suppress this PSG's writes
 aysSup:       db 0             ; audFlags bits 2/3 snapshot (PSG-3 owner)
 aysByte:      db 0             ; aud_ays_rdb return-byte stash across a cross
+aysResync:    db 0             ; bit 7 AYS_RESEND, bits 0-2 R13 owed on PSG 1-3
+aysPsgBit:    db 0             ; current PSG's aysResync R13 bit
 aysPageTab:   ds AUD_STRTAB_MAX
 aysPageCnt:   db 0
+
+AYS_RESEND     equ $80
+AYS_R13_PSG1   equ $01
+AYS_R13_PSG3   equ $04
+AYS_SHADOW_LEN equ 3*14
+; Shadow (R0-R13 per PSG, R13 $FF = never set) and its loop-frame copy
+; live at the head of the AKY song area: page 48, mapped for the whole
+; tick, and idle while a stream plays - every AKY load stop-waits the
+; stream before writing here (aud_load_song).
+aysShadow     equ AUD_SONG_ORG
+aysLoopSnap   equ AUD_SONG_ORG + AYS_SHADOW_LEN
+    ASSERT aysLoopSnap + AYS_SHADOW_LEN <= $E000
 
 ; --- BEEP tone engine ------------------------------------------------
 
 ; Program PSG 3: tone A on channel A(0) of PSG 3, volume 15.
-; DE = AY period (from audPeriods). Returns without touching the
+; DE = AY period (audReqPer). Returns without touching the
 ; registers when a sound effect is active on PSG 3 (audFlags bit 2) -
 ; the effect-priority rule. Caller sets audFlags bit 3 and
 ; audBeepFrames; aud_tick counts down and silences.
@@ -1638,13 +1793,6 @@ aud_dbg_cells:
     ASSERT AUD_DBG_LEN <= AUD_STAGE_RING
  ENDIF
 
-; --- AY period table -------------------------------------------------
-
-; jdaad FREQ_TABLE periods, AY clock 1773400 Hz (see the generator in
-; the SP7 plan). The lowest notes' true periods exceed the AY's
-; 12-bit tone range and clamp to 4095, exactly as jdaad's table does.
-    include "aud_periods.inc"
-
 ; --- built-in silence song -------------------------------------------
 
 ; A minimal, always-resident AKY song whose every frame programs
@@ -1684,7 +1832,7 @@ audSilenceEnd:                      ; aud_tick's terminal watch treats
                                     ; [audSilenceSong, audSilenceEnd)
                                     ; as "the song is over"
 
-    ASSERT $ <= AUD_SFB_ORG          ; player+tick+beep+table fit 4K
+    ASSERT $ <= AUD_SFB_ORG          ; page-48 code fits 4K
     DISPLAY "page 48 ends at ", $, " headroom ", /D, AUD_SFB_ORG - $
 
 ; --- effects bank / song / state ------------------------------------

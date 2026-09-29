@@ -28,7 +28,8 @@ All notable changes to NextDAAD are recorded here.
 - kit: CONFIG.BAT is read by the build scripts rather than run by cmd,
   so %VAR% references in it are no longer expanded.
 - Outputs are unchanged: tests\kit-parity pins the RELEASE bytes
-  against v0.11.0, apart from nextdaad.nex (the DOALL change below).
+  against v0.11.0, apart from nextdaad.nex (the DOALL and AYS stream
+  changes below).
 - kit: new agent skill `daad-game-authoring` for AI assistants writing
   games: SKILL.md plus references for DSF source, condacts, flags and
   objects, process patterns, NextDAAD features, the kit workflow and
@@ -44,6 +45,11 @@ All notable changes to NextDAAD are recorded here.
   object number. Each taken object sets the referenced object (flags
   51, 54-59); Noun1/Adjective1 are set before the ALL EXCEPT test.
   Nested DOALL still raises error 4.
+- audio: streamed .AYS music keeps all its voices after an AY sound
+  effect, a BEEP, a stopped effect or a video, and when it loops. Before,
+  a voice could stay silent or play a wrong note until the tune next
+  changed it. Existing .AYS files need no re-conversion. While an AY
+  effect plays, the music on the first two AY chips is still silent.
 - kit: the Linux authoring kit ships, building byte-identical output to
   the Windows kit from the same inputs, with the same ffmpeg build for
   video and PCM audio. Getting started gains a Linux setup section.

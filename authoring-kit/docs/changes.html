@@ -13,6 +13,16 @@
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0111-unreleased">0.11.1 - Unreleased</h2>
 <ul>
+<li><strong>The Linux authoring kit</strong> It builds the same bytes as the
+  Windows kit from the same inputs, with the same ffmpeg build for video
+  and PCM audio. The Getting Started guide gains a Linux setup section.
+  <code>CONFIG.BAT</code> gains <code>CSPECTCMD</code>, the program that runs <code>CSpect.exe</code>
+  on Linux (default <code>mono</code>).</li>
+<li><strong>A skill for AI assistants writing games.</strong> The kit ships a second
+  agent skill, <code>.agents\skills\daad-game-authoring\</code>, covering DSF
+  source, the standard process tables, NextDAAD's extras and the build.
+  The skills folder is renamed from <code>.agent</code> to <code>.agents</code>, and a new
+  <code>AGENTS.md</code> at the kit root points assistants at both skills.</li>
 <li><strong>Kit build steps moved into scripts.</strong> <code>BUILD.BAT</code>, <code>RUN.BAT</code> and
   <code>CLEAN.BAT</code> still work the same way from the command line; the
   separate <code>.BAT</code> files they used to call are gone, replaced by shared
@@ -22,7 +32,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   and versions in <code>CONFIG.BAT</code> or <code>CONFIG.local.BAT</code>. Setting <code>NDRC</code>
   or <code>NDRCVER</code> as an environment variable is no longer read; move
   that setting into <code>CONFIG.local.BAT</code>.</li>
-<li><strong>The loader intro's music check is fixed.</strong> It now looks at the
+<li><strong>The loader intro's music check</strong> It now looks at the
   <code>MUSIC</code> line in <code>INTRO.TXT</code> to decide whether a music tool is
   needed; before, it checked the wrong line and rarely ran.</li>
 <li><strong>A crashing DAAD compiler now stops the build.</strong> Previously a
@@ -44,14 +54,9 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   <code>SET NAME=value</code> lines instead of running it with cmd, so a <code>%VAR%</code>
   reference in a value is no longer expanded; write the value out in
   full.</li>
-<li><strong>A skill for AI assistants writing games.</strong> The kit ships a second
-  agent skill, <code>.agents\skills\daad-game-authoring\</code>, covering DSF
-  source, the standard process tables, NextDAAD's extras and the build.
-  The skills folder is renamed from <code>.agent</code> to <code>.agents</code>, and a new
-  <code>AGENTS.md</code> at the kit root points assistants at both skills.</li>
 <li><strong>Output is unchanged.</strong> Existing games build to the same bytes as
   before; only the interpreter, <code>nextdaad.nex</code>, differs, for the
-  <code>DOALL</code> change below.</li>
+  <code>DOALL</code> and streamed-music changes below.</li>
 <li><strong><code>DOALL</code> now matches the original interpreter.</strong> Flag 50 holds the
   location a <code>DOALL</code> is searching, not the object it has reached. The
   object on each pass is now the referenced object - flag 51, with its
@@ -59,11 +64,11 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   loop refer to it. A game that read the object from flag 50 should
   read flag 51. See
   <a href="known-differences.html#flag-50-holds-the-doall-location-not-the-object">Known differences</a>.</li>
-<li><strong>The Linux authoring kit ships.</strong> It builds the same bytes as the
-  Windows kit from the same inputs, with the same ffmpeg build for video
-  and PCM audio. The Getting Started guide gains a Linux setup section.
-  <code>CONFIG.BAT</code> gains <code>CSPECTCMD</code>, the program that runs <code>CSpect.exe</code>
-  on Linux (default <code>mono</code>).</li>
+<li><strong>Streamed music keeps all its voices.</strong> After a sound effect, a
+  <code>BEEP</code>, a stopped effect or a video, <code>.AYS</code> music now carries on as
+  written. Before, some voices could stay silent or play a wrong note
+  until the tune next changed them, and a tune that loops back to a
+  point after its start could return with wrong notes.</li>
 <li><strong>Video cutscenes accept <code>.mkv</code> sources.</strong> <code>VIDEO\NNN.mkv</code> works
   alongside <code>VIDEO\NNN.mp4</code>.</li>
 </ul>

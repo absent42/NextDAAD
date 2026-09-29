@@ -7693,8 +7693,10 @@ vid_run_entry_body:
     ; once at beep-start; aud_tick only counts audBeepFrames down
     ; and calls aud_beep_silence at zero, it never reprograms the
     ; tone - so the park's silence sticks for the rest of the beep's
-    ; nominal duration. An AYS stream rewrites its registers each
-    ; tick. DI-bracketed ($FFFD select latch must not interleave).
+    ; nominal duration. An AYS stream writes only changed registers,
+    ; so audRequest2 bit 4 asks its first tick after the video to
+    ; resend them. DI-bracketed ($FFFD select latch must not
+    ; interleave).
     di
     ld a, $FF                    ; Turbo Sound select: music PSG 1
     call .psgpark
@@ -7702,6 +7704,8 @@ vid_run_entry_body:
     call .psgpark
     ld a, $FD                    ; PSG 3: music channels 7-9 + beep/
     call .psgpark                ; effect/stream - all frozen too
+    ld hl, audRequest2
+    set 4, (hl)
     ei
     ret                          ; 3c: plain return to the orchestrator
 

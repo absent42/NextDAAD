@@ -503,7 +503,7 @@ cardBusy:  db 0             ; nonzero while mainline is inside an esxDOS
 ; 4 start-music, 5 init-effects, 6 start-sample, 7 stop-sample.
 ; The byte is now fully allocated - no further audio triggers planned.
 audRequest: db 0
-audReqIdx:  db 0            ; beep: period table index 0..107 (SP16 A4)
+audReqPer:  dw 0            ; beep: AY tone period (h_beep's audPeriods lookup)
 audReqDur:  db 0            ; beep: duration in frames
 audReqSfx:  db 0            ; play-effect: effect number (>= 1)
 audReqLoop: db 0            ; start-music: 1 = loop, 0 = play once
@@ -530,6 +530,7 @@ sfbCount:       db 0        ; GAME.SFB effect count ((table[0]-$D000)/2);
 ; audRequest2 bits:
 ;   0 = stop stream          2 = stop sample channel 2
 ;   1 = start stream         3 = start sample channel 2
+;   4 = resend the stream's registers (the video park overwrote them)
 ; Bits 2/3 are the exact mirror of audRequest bits 7/6 (channel 1's
 ; stop/start), consumed stop-before-start in the same pass, and are
 ; equally safe to halt-wait on from mainline - video.asm's entry abort

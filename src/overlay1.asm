@@ -2503,9 +2503,14 @@ h_beep:                         ; 64: B = arg1 = tone, C = arg2 = duration (cs)
     or a
     ret z
     ld a, b
-    sub 24
-    srl a
-    ld (audReqIdx), a           ; period table index 0..107
+    sub 24                      ; tone even: tone-24 = byte offset of
+    ld hl, audPeriods           ; entry (tone-24)/2
+    add hl, a
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    ld (audReqPer), hl          ; written before the request bit below
     ld a, c                     ; centiseconds -> frames at 50Hz:
     srl a                       ; (C+1)/2, minimum 1
     adc a, 0
@@ -2527,6 +2532,11 @@ h_beep:                         ; 64: B = arg1 = tone, C = arg2 = duration (cs)
     sbc hl, de
     jr c, .wait
     ret
+
+; jdaad FREQ_TABLE periods, AY clock 1773400 Hz. The lowest notes' true
+; periods exceed the AY's 12-bit tone range and clamp to 4095, exactly
+; as jdaad's table does.
+    include "audio/aud_periods.inc"
 
 h_sfx:                          ; 18: B = n, C = sub-command
     ld a, c

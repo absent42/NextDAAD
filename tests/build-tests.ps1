@@ -25,6 +25,7 @@
 #   -SfxDi               sd\SFXDI\     tests\sfxdi.dsf
 #   -SfxLong             sd\SFXLONG\   tests\sfxlong.dsf
 #   -Sfx2                sd\SFX2\      tests\sfx2.dsf
+#   -AysReg              sd\AYSREG\    tests\aysreg.dsf
 #   -L2Holes             sd\L2HOLES\   tests\l2holes.dsf
 #   -TmOver              sd\TMOVER\    tests\tmover.dsf
 #   -TileSlack           sd\TILESLK\   tests\tileslack.dsf
@@ -193,6 +194,13 @@
 #            emulation after SFX_FAIL_LIMIT ticks (expected, does not
 #            affect the steal verb's proof). Alternative to
 #            -Aud/-AudLad/-SfxDi/-SfxLong.
+#   -AysReg  AYS stream register-loss fixture, sd\AYSREG\: make
+#            tests\aysreg.dsf active AND stage the two generated streams
+#            (tests\audio\mkays.py) as 001.AYS (steady) and 002.AYS
+#            (loop-wrap probe), GAME.SFB converted from the kit's
+#            STARTER_FX.aks, and the smallest cached -Vid encode as
+#            001.VID if one exists. No 001.WAV, so SFX 1 1 is AY
+#            effect 1. Headless check: tests\audio\aysreg_check.py.
 #   -L2Holes Layer 2 transparency/punch-out fixture, sd\L2HOLES\: make
 #            tests\l2holes.dsf active AND stage the punch-out card
 #            (tests\art\mkl2holes.py) as 001.NXI (256x192, opaque with
@@ -385,7 +393,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -419,7 +427,7 @@ $sd = Join-Path $root 'sd'
 if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
     $otherLegSwitches = @(
         'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
-        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'L2Holes', 'TmOver',
+        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn'
     ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
@@ -448,6 +456,7 @@ if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
 if ($SfxLong)          { $legName = 'SFXLONG' }
 if ($Sfx2)             { $legName = 'SFX2' }
+if ($AysReg)           { $legName = 'AYSREG' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
 if ($TmOver)           { $legName = 'TMOVER' }
 if ($TileSlack)        { $legName = 'TILESLK' }
@@ -483,7 +492,7 @@ function Reset-LegDir {
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
-               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
@@ -1373,6 +1382,22 @@ try {
     & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfx2)" }
     Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
+# AYS stream register-loss fixture; only -AysReg makes it active
+# (sd\AYSREG\).
+$aysRegWork = Join-Path $root 'tests\out\aysreg-work'
+Remove-Item $aysRegWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $aysRegWork | Out-Null
+Copy-Item "$PSScriptRoot\aysreg.dsf" "$aysRegWork\NDAYSREG.DSF" -Force
+Push-Location $aysRegWork
+try {
+    & $ndrc @drcTarget EN NDAYSREG.DSF NDAYSREG.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (aysreg)" }
+    Copy-Item NDAYSREG.DDB "$root\tests\out\aysreg.ddb" -Force
 }
 finally {
     Pop-Location
@@ -2505,6 +2530,22 @@ if ($loop1Hits -lt 2) {
 # SFX sub-command would ship a fixture that silently tests the old
 # single-channel behaviour instead. SFX is opcode 18 = $12, two
 # parameters, so each call is three bytes.
+$aysRegBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\aysreg.ddb")
+# --- aysreg: every stimulus condact as compiled. BEEP 100 120 arrives
+# tone first, duration halved by NDRC (64 120 50).
+foreach ($s in @(@{ n = 'SFX 1 7 (STEADY)'; b = [byte[]]@(18, 1, 7) },
+                 @{ n = 'SFX 2 7 (WRAP)';   b = [byte[]]@(18, 2, 7) },
+                 @{ n = 'SFX 1 1 (ZAP)';    b = [byte[]]@(18, 1, 1) },
+                 @{ n = 'BEEP 100 120 (BLEEP)'; b = [byte[]]@(64, 120, 50) },
+                 @{ n = 'SFX 0 5 (STOPFX)'; b = [byte[]]@(18, 0, 5) },
+                 @{ n = 'SFX 0 8 (STOPM)';  b = [byte[]]@(18, 0, 8) },
+                 @{ n = 'SFX 1 9 (MOVIE)';  b = [byte[]]@(18, 1, 9) })) {
+    if ((Find-ByteRuns $aysRegBytes $s.b).Count -ne 1) {
+        throw "aysreg: '$($s.n)' not present exactly once in tests\out\aysreg.ddb - DRC did not emit the authored condact"
+    }
+}
+"aysreg.ddb: v$($aysRegBytes[0]), SFX 1 7 / 2 7 / 1 1 / 0 5 / 0 8 / 1 9 and BEEP (64 120 50) each present once"
+
 $sfx2Bytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfx2.ddb")
 if ($sfx2Bytes[0] -ne 3) {
     throw "sfx2: DDB header version byte is $($sfx2Bytes[0]), expected 3 - the fixture is compiled WITH -v3"
@@ -4677,6 +4718,44 @@ if ($Sfx2) {
     $sfx2Active = $true
 }
 
+$aysRegActive = $false
+if ($AysReg) {
+    # AYS stream register-loss leg. Stages the fixture DDB, the two
+    # generated streams, an AY effects bank and (optionally) a video.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\aysreg.ddb" "$leg\GAME.DDB" -Force
+    $aysOut = "$root\tests\out\aysreg"
+    & python "$root\tests\audio\mkays.py" $aysOut
+    if ($LASTEXITCODE -ne 0) { throw "mkays.py failed" }
+    Copy-Item "$aysOut\aysreg_steady.ays" "$leg\001.AYS" -Force
+    Copy-Item "$aysOut\aysreg_wrap.ays" "$leg\002.AYS" -Force
+    "staged tests\out\aysreg\aysreg_steady.ays -> sd\$legName\001.AYS, aysreg_wrap.ays -> 002.AYS"
+    # Effects bank from the TRACKED kit source, converted exactly as
+    # authoring-kit\lib\assets.ps1 does; written to tests\out, never into
+    # the kit. Without it SFX 1 1 is a no-op and ZAP proves nothing.
+    $fxSrc = "$root\authoring-kit\AUDIO\STARTER_FX.aks"
+    $fxOut = "$root\tests\out\aysreg_fx.sfb"
+    $s2e = "$root\tools\ArkosTracker3\tools\SongToSoundEffects.exe"
+    & $s2e -bin --encodingAddress 0xD000 $fxSrc $fxOut | Out-Null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $fxOut)) { throw "SongToSoundEffects failed on $fxSrc" }
+    if ((Get-Item $fxOut).Length -gt 2048) { throw "$fxOut exceeds the 2048-byte effects bank" }
+    Copy-Item $fxOut "$leg\GAME.SFB" -Force
+    "staged $fxOut -> sd\$legName\GAME.SFB  $((Get-Item $fxOut).Length) bytes"
+    # 001.VID for the MOVIE verb (silicon only), same source rule as
+    # -SfxLong: the smallest cached -Vid leg encode.
+    $vidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
+    if ($vidSrc) {
+        Copy-Item $vidSrc.FullName "$leg\001.VID" -Force
+        "staged tests\out\$($vidSrc.Name) -> sd\$legName\001.VID  $($vidSrc.Length) bytes (MOVIE verb)"
+    }
+    else {
+        "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged (run 'tests\build-tests.ps1 -Vid' once); MOVIE is a clean miss"
+    }
+    $aysRegActive = $true
+}
+
 $l2holesActive = $false
 if ($L2Holes) {
     # Layer 2 TRANSPARENCY / punch-out leg. Two jobs, both owned entirely
@@ -5374,6 +5453,7 @@ elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-s
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture)" }
 elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixture - SP18 item 7 Task 7)" }
 elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
+elseif ($aysRegActive) { "active: aysreg (AYS stream register-loss fixture)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture)" }
 elseif ($tmoverActive) { "active: tmover (transparent tilemap paper / layer order fixture - four PAPER/INK bands over a full-frame card, four timed layer-order states)" }
 elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs)" }
