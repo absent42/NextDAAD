@@ -1,6 +1,7 @@
 """Accept-time writes: the VIDOPTS_NNN line and the .vid.args sidecar.
 Writes the VIDOPTS_NNN line to CONFIG.local.BAT; CONFIG.BAT is never
 modified."""
+import os
 import re
 from pathlib import Path
 
@@ -61,7 +62,7 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None):
                         ).per_clip.get(num3, "")
     existed = loc.is_file()
     raw = loc.read_bytes() if existed else NEW_LOCAL_HEADER
-    default_eol = b"\r\n" if (not existed or b"\r\n" in raw) else b"\n"
+    default_eol = b"\r\n" if (not raw or b"\r\n" in raw) else b"\n"
     lines = _split_lines(raw, default_eol)
     target = _line_re(num3)
     any_vidopts = re.compile(rb'^\s*set\s+"?VIDOPTS', re.IGNORECASE)
@@ -81,16 +82,29 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None):
     else:
         changed = False
 
+    wrote_bak = False
     if changed:
         if existed:
             loc.with_name("CONFIG.local.BAT.bak").write_bytes(raw)
-        loc.write_bytes(b"".join(t + e for t, e in lines))
+            wrote_bak = True
+        tmp = loc.with_name("CONFIG.local.BAT.tmp")
+        try:
+            tmp.write_bytes(b"".join(t + e for t, e in lines))
+            os.replace(tmp, loc)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     got = parse_config(config_path).per_clip.get(num3, "")
     if got != opts:
+        hint = ""
+        if wrote_bak:
+            hint = " - restore from CONFIG.local.BAT.bak"
+        elif changed and not existed:
+            hint = " - delete the new CONFIG.local.BAT"
         raise RuntimeError(
             f"CONFIG.local.BAT verification failed: VIDOPTS_{num3} reads back "
-            f"as '{got}', expected '{opts}' - restore from CONFIG.local.BAT.bak")
+            f"as '{got}', expected '{opts}'{hint}")
 
 
 def write_sidecar(sidecar, stamp, args):

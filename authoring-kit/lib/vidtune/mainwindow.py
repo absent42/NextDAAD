@@ -765,7 +765,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.kit_root = Path(kit_root)
         self.cfg = parse_config(self.kit_root / "CONFIG.BAT")
-        self.cfg_mtime = config_stamp(self.kit_root / "CONFIG.BAT")
+        self.cfg_stamp = config_stamp(self.kit_root / "CONFIG.BAT")
         self.stamp = read_generation_stamp(self.kit_root)
         self.clips = list_clips(self.kit_root)
         try:
@@ -1452,7 +1452,7 @@ class MainWindow(QMainWindow):
         config_path = self.kit_root / "CONFIG.BAT"
         try:
             write_vidopts_line(config_path, num3, " ".join(dev),
-                               expected_stamp=self.cfg_mtime)
+                               expected_stamp=self.cfg_stamp)
         except ConfigConflict:
             choice = QMessageBox.warning(
                 self, "vidtune",
@@ -1469,14 +1469,14 @@ class MainWindow(QMainWindow):
         # Sidecar args come from the SAVED config state, not the live
         # settings, so the hash matches what BUILD.BAT computes.
         self.cfg = parse_config(config_path)
-        self.cfg_mtime = config_stamp(config_path)
+        self.cfg_stamp = config_stamp(config_path)
         self.kit_base = settingsmodel._kit_base(self.cfg)
         return self._guarded(settingsmodel.build_arg_vector, self.cfg, num3)
 
     def _reload_config(self):
         config_path = self.kit_root / "CONFIG.BAT"
         self.cfg = parse_config(config_path)
-        self.cfg_mtime = config_stamp(config_path)
+        self.cfg_stamp = config_stamp(config_path)
         self.stamp = read_generation_stamp(self.kit_root)
         self.kit_base = settingsmodel._kit_base(self.cfg)
         self._populate_clip_list()

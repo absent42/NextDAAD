@@ -125,3 +125,53 @@ def test_stamp_conflict_when_config_changes(fixture_kit):
     with pytest.raises(ConfigConflict):
         write_vidopts_line(fixture_kit / CFG, "005", "--direct", expected_stamp=stamp)
     assert not (fixture_kit / LOC).exists()
+
+
+def test_atomic_write_failure_keeps_original(fixture_kit, monkeypatch):
+    import os
+    import vidtune.configwrite as cw
+    loc = fixture_kit / LOC
+    original = b"@echo off\r\nSET VIDOPTS_005=--old\r\n"
+    loc.write_bytes(original)
+
+    def boom(*a, **k):
+        raise OSError("replace failed")
+    monkeypatch.setattr(cw.os, "replace", boom)
+    with pytest.raises(OSError):
+        write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    assert loc.read_bytes() == original
+    assert not list(fixture_kit.glob("*.tmp"))
+
+
+def test_zero_byte_local_gets_crlf_and_no_header(fixture_kit):
+    before = (fixture_kit / CFG).read_bytes()
+    (fixture_kit / LOC).write_bytes(b"")
+    write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    assert (fixture_kit / LOC).read_bytes() == b"SET VIDOPTS_005=--direct\r\n"
+    assert (fixture_kit / CFG).read_bytes() == before
+
+
+def _wrong_read(real):
+    def parse(*a, **k):
+        cfg = real(*a, **k)
+        if k.get("local_path") is None:
+            cfg.per_clip["005"] = "--ghost"
+        return cfg
+    return parse
+
+
+def test_verify_error_created_this_call(fixture_kit, monkeypatch):
+    import vidtune.configwrite as cw
+    monkeypatch.setattr(cw, "parse_config", _wrong_read(cw.parse_config))
+    with pytest.raises(RuntimeError) as ei:
+        write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    msg = str(ei.value)
+    assert "delete the new CONFIG.local.BAT" in msg and ".bak" not in msg
+
+
+def test_verify_error_with_bak(fixture_kit, monkeypatch):
+    import vidtune.configwrite as cw
+    (fixture_kit / LOC).write_bytes(b"SET VIDOPTS_005=--old\r\n")
+    monkeypatch.setattr(cw, "parse_config", _wrong_read(cw.parse_config))
+    with pytest.raises(RuntimeError, match="restore from CONFIG.local.BAT.bak"):
+        write_vidopts_line(fixture_kit / CFG, "005", "--direct")
