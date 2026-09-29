@@ -50,7 +50,8 @@ from PySide6.QtWidgets import (
 
 from . import ICON_PATH, __version__, presets, settingsmodel, theme
 from .presetrow import LadderPanel, RouteMenuButton
-from .configwrite import ConfigConflict, write_sidecar, write_vidopts_line
+from .configwrite import (ConfigConflict, config_stamp, write_sidecar,
+                          write_vidopts_line)
 from .encoderun import EncodeJob, resolve_encoder, summarize_report, videnc_names
 from .kitmodel import clip_state, list_clips, parse_config, read_generation_stamp
 from .preview import extract_source
@@ -764,7 +765,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.kit_root = Path(kit_root)
         self.cfg = parse_config(self.kit_root / "CONFIG.BAT")
-        self.cfg_mtime = (self.kit_root / "CONFIG.BAT").stat().st_mtime
+        self.cfg_mtime = config_stamp(self.kit_root / "CONFIG.BAT")
         self.stamp = read_generation_stamp(self.kit_root)
         self.clips = list_clips(self.kit_root)
         try:
@@ -1444,19 +1445,19 @@ class MainWindow(QMainWindow):
 
     def _save_vidopts(self, num3, settings, action):
         """Writes settings' deviations as VIDOPTS_NNN and returns the
-        argv re-read from the saved CONFIG.BAT, or None on failure."""
+        argv re-read from the saved config, or None on failure."""
         dev = self._guarded(settingsmodel.deviations, settings, self.cfg)
         if dev is None:
             return None
         config_path = self.kit_root / "CONFIG.BAT"
         try:
             write_vidopts_line(config_path, num3, " ".join(dev),
-                               expected_mtime=self.cfg_mtime)
+                               expected_stamp=self.cfg_mtime)
         except ConfigConflict:
             choice = QMessageBox.warning(
                 self, "vidtune",
-                "CONFIG.BAT changed on disk since it was loaded - reload "
-                f"and try {action} again?",
+                "CONFIG.BAT or CONFIG.local.BAT changed on disk since it "
+                f"was loaded - reload and try {action} again?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if choice == QMessageBox.Yes:
                 self._reload_config()
@@ -1468,14 +1469,14 @@ class MainWindow(QMainWindow):
         # Sidecar args come from the SAVED config state, not the live
         # settings, so the hash matches what BUILD.BAT computes.
         self.cfg = parse_config(config_path)
-        self.cfg_mtime = config_path.stat().st_mtime
+        self.cfg_mtime = config_stamp(config_path)
         self.kit_base = settingsmodel._kit_base(self.cfg)
         return self._guarded(settingsmodel.build_arg_vector, self.cfg, num3)
 
     def _reload_config(self):
         config_path = self.kit_root / "CONFIG.BAT"
         self.cfg = parse_config(config_path)
-        self.cfg_mtime = config_path.stat().st_mtime
+        self.cfg_mtime = config_stamp(config_path)
         self.stamp = read_generation_stamp(self.kit_root)
         self.kit_base = settingsmodel._kit_base(self.cfg)
         self._populate_clip_list()
