@@ -33,3 +33,10 @@ def test_missing_local_is_fine(tmp_path):
     cfg = write(tmp_path, "CONFIG.BAT", "SET TOOLSDIR=tools\n")
     c = kitmodel.parse_config(cfg, tmp_path / "CONFIG.local.BAT")
     assert c.toolsdir == "tools"
+
+def test_empty_local_vidopts_clears_config_value(tmp_path):
+    cfg = write(tmp_path, "CONFIG.BAT", "SET VIDOPTS_001=--direct\nSET VIDOPTS_002=--dither 0.1\n")
+    write(tmp_path, "CONFIG.local.BAT", "SET VIDOPTS_001=\n")
+    c = kitmodel.parse_config(cfg)
+    assert "001" not in c.per_clip
+    assert c.per_clip["002"] == "--dither 0.1"

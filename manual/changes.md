@@ -5,6 +5,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.11.1 - Unreleased
 
+- **vidtune saves to `CONFIG.local.BAT`.** Per-video settings are saved
+  there, so they survive kit updates. Existing `VIDOPTS_NNN` lines in
+  `CONFIG.BAT` still apply and are overridden by the local file.
 - **The Linux authoring kit** It builds the same bytes as the
   Windows kit from the same inputs, with the same ffmpeg build for video
   and PCM audio. The Getting Started guide gains a Linux setup section.

@@ -87,8 +87,11 @@ def parse_config(config_path, local_path=None):
             cfg.vidprofile = value
         elif name.startswith("VIDOPTS_"):
             suffix = name[len("VIDOPTS_"):]
-            if suffix.isdigit() and len(suffix) == 3 and value:
-                cfg.per_clip[suffix] = value
+            if suffix.isdigit() and len(suffix) == 3:
+                if value:
+                    cfg.per_clip[suffix] = value
+                else:
+                    cfg.per_clip.pop(suffix, None)   # SET X= deletes, as cmd
     return cfg
 
 
