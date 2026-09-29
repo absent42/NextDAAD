@@ -57,8 +57,7 @@ if ($OnWindows) {
     Write-Host '       The packages are installed but Qt needs system libraries. On Debian/Ubuntu:'
     Write-Host '         sudo apt install libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0'
 } else {
-    Write-Host '       Activate the venv from docs/getting-started.html (Linux setup), then install them:'
-    Write-Host '         . ~/nextdaad-venv/bin/activate'
-    Write-Host '         pip install -r lib/requirements-vidtune.txt'
+    Write-Host '       Set up the venv from docs/getting-started.html (Linux setup), then install them:'
+    Write-Host '         ~/nextdaad-venv/bin/pip install -r lib/requirements-vidtune.txt'
 }
 exit 1

@@ -70,6 +70,8 @@ if ($Rules -contains 'python-candidates') {
         if (-not $ps.Contains($tok)) { $failures.Add("python-candidates: kitplatform.ps1 lacks $tok") }
         if (-not $py.Contains($pyTok)) { $failures.Add("python-candidates: encoderun.py lacks $pyTok") }
     }
+    if (-not $ps.Contains('nextdaad-venv')) { $failures.Add('python-candidates: kitplatform.ps1 lacks the nextdaad-venv candidate') }
+    if (-not $py.Contains('"nextdaad-venv"')) { $failures.Add('python-candidates: encoderun.py lacks the nextdaad-venv candidate') }
 }
 # Comment and message lines are skipped by every rule. The skip is a ^
 # lookahead: a pattern using it must start with ^ or a mid-line retry passes it.

@@ -6,7 +6,8 @@ $BuildLauncherName = if ($OnWindows) { 'BUILD.BAT' } else { 'build.sh' }
 
 function Get-PythonCandidates {
     if ($OnWindows) { return @(, [string[]]@('py', '-3')) + @(, [string[]]@('python')) }
-    return @(, [string[]]@('python3')) + @(, [string[]]@('python'))
+    # Last: the manual's venv, so a build works without activating it.
+    return @(, [string[]]@('python3')) + @(, [string[]]@('python')) + @(, [string[]]@((Join-Path $HOME 'nextdaad-venv/bin/python3')))
 }
 
 # Returns the first candidate whose interpreter imports every module, or $null.

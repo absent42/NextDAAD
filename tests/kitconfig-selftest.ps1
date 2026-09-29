@@ -66,5 +66,22 @@ Assert-Eq ($OnWindows -is [bool]) $true 'OnWindows is a bool'
 Assert-Eq ($ExeSuffix -eq '.exe' -or $ExeSuffix -eq '') $true 'ExeSuffix'
 $cands = @(Get-PythonCandidates)
 Assert-Eq ($cands.Count -ge 2) $true 'at least two python candidates'
+if ($OnWindows) {
+    Assert-Eq (($cands | ForEach-Object { $_ -join ' ' }) -join ',') 'py -3,python' 'Windows python candidates'
+} else {
+    Assert-Eq (($cands | ForEach-Object { $_ -join ' ' }) -join ',') "python3,python,$(Join-Path $HOME 'nextdaad-venv/bin/python3')" 'Linux python candidates end with ~/nextdaad-venv'
+    # Find-Python reaches the venv with no activation: a fake one under a
+    # temp HOME is the only interpreter that passes the probe.
+    $fakeHome = "$work/home"
+    New-Item -ItemType Directory -Force "$fakeHome/nextdaad-venv/bin" | Out-Null
+    $fakePy = "$fakeHome/nextdaad-venv/bin/python3"
+    [IO.File]::WriteAllText($fakePy, "#!/bin/sh`nexit 0`n")
+    & chmod +x $fakePy
+    $oldHome = $env:HOME
+    $env:HOME = $fakeHome
+    try { $found = & pwsh -NoProfile -Command ". '$root/authoring-kit/lib/kitplatform.ps1'; (Find-Python @('nextdaad_selftest_no_such_module')) -join ' '" }
+    finally { $env:HOME = $oldHome }
+    Assert-Eq $found $fakePy 'Find-Python falls back to ~/nextdaad-venv'
+}
 Assert-Eq (Join-KitPath @('a', 'b', 'c.txt')) (Join-Path (Join-Path 'a' 'b') 'c.txt') 'Join-KitPath'
 Write-Output "kitconfig-selftest: $checks checks passed"
