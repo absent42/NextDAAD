@@ -1,48 +1,60 @@
 import pytest
 
-from vidtune.configwrite import ConfigConflict, write_sidecar, write_vidopts_line
+from vidtune.configwrite import (ConfigConflict, config_stamp, write_sidecar,
+                                 write_vidopts_line)
 from vidtune.kitmodel import arg_hash, parse_config
 
-
-def config_bytes(kit):
-    return (kit / "CONFIG.BAT").read_bytes()
+CFG, LOC = "CONFIG.BAT", "CONFIG.local.BAT"
 
 
-def test_update_existing_line_preserves_rest(fixture_kit):
-    before = config_bytes(fixture_kit)
-    write_vidopts_line(fixture_kit / "CONFIG.BAT", "002", "--shape scope")
-    after = config_bytes(fixture_kit)
-    assert b"SET VIDOPTS_002=--shape scope\r\n" in after
-    # only that one line differs
-    changed = [(a, b) for a, b in
-               zip(before.split(b"\r\n"), after.split(b"\r\n")) if a != b]
-    assert changed == [(b"SET VIDOPTS_002=--shape 16:9",
-                        b"SET VIDOPTS_002=--shape scope")]
-    assert (fixture_kit / "CONFIG.BAT.bak").read_bytes() == before
+def test_creates_local_and_leaves_config_untouched(fixture_kit):
+    before = (fixture_kit / CFG).read_bytes()
+    write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    assert (fixture_kit / CFG).read_bytes() == before
+    loc = (fixture_kit / LOC).read_bytes()
+    assert loc.endswith(b"SET VIDOPTS_005=--direct\r\n") and b"\r\n\r\n" not in loc
+    assert parse_config(fixture_kit / CFG).per_clip["005"] == "--direct"
+    assert not (fixture_kit / "CONFIG.local.BAT.bak").exists()
 
 
-def test_insert_new_line_after_last_vidopts(fixture_kit):
-    write_vidopts_line(fixture_kit / "CONFIG.BAT", "005", "--direct")
-    cfg = parse_config(fixture_kit / "CONFIG.BAT")
-    assert cfg.per_clip["005"] == "--direct"
-    assert cfg.per_clip["002"] == "--shape 16:9"   # untouched
-    text = config_bytes(fixture_kit)
-    assert text.index(b"VIDOPTS_002") < text.index(b"VIDOPTS_005")
+def test_override_of_config_line_goes_local(fixture_kit):
+    write_vidopts_line(fixture_kit / CFG, "002", "--shape scope")
+    assert b"--shape 16:9" in (fixture_kit / CFG).read_bytes()
+    assert parse_config(fixture_kit / CFG).per_clip["002"] == "--shape scope"
 
 
-def test_empty_opts_removes_line(fixture_kit):
-    write_vidopts_line(fixture_kit / "CONFIG.BAT", "002", "")
-    cfg = parse_config(fixture_kit / "CONFIG.BAT")
-    assert "002" not in cfg.per_clip
-    assert b"VIDOPTS_002" not in config_bytes(fixture_kit)
+def test_reset_of_config_value_writes_empty_mask(fixture_kit):
+    write_vidopts_line(fixture_kit / CFG, "002", "")
+    assert b"SET VIDOPTS_002=\r\n" in (fixture_kit / LOC).read_bytes()
+    assert "002" not in parse_config(fixture_kit / CFG).per_clip
 
 
-def test_mtime_conflict_refused(fixture_kit):
-    path = fixture_kit / "CONFIG.BAT"
-    stale_mtime = path.stat().st_mtime - 100
+def test_reset_of_local_only_value_deletes_line(fixture_kit):
+    write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    write_vidopts_line(fixture_kit / CFG, "005", "")
+    assert b"VIDOPTS_005" not in (fixture_kit / LOC).read_bytes()
+
+
+def test_reset_with_nothing_anywhere_creates_no_file(fixture_kit):
+    write_vidopts_line(fixture_kit / CFG, "009", "")
+    assert not (fixture_kit / LOC).exists()
+
+
+def test_existing_local_preserved_lf_no_trailing_newline(fixture_kit):
+    (fixture_kit / LOC).write_bytes(b"SET RUN=0\nSET TOOLSDIR=..\\tools")
+    write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+    got = (fixture_kit / LOC).read_bytes()
+    assert got.startswith(b"SET RUN=0\nSET TOOLSDIR=..\\tools\n")
+    assert b"SET VIDOPTS_005=--direct" in got and b"\r" not in got
+    assert (fixture_kit / "CONFIG.local.BAT.bak").read_bytes() == b"SET RUN=0\nSET TOOLSDIR=..\\tools"
+
+
+def test_stamp_conflict_refused_on_either_file(fixture_kit):
+    stamp = config_stamp(fixture_kit / CFG)
+    (fixture_kit / LOC).write_bytes(b"SET RUN=0\r\n")   # appears after load
     with pytest.raises(ConfigConflict):
-        write_vidopts_line(path, "002", "--direct", expected_mtime=stale_mtime)
-    assert b"--shape 16:9" in config_bytes(fixture_kit)   # unchanged
+        write_vidopts_line(fixture_kit / CFG, "005", "--direct", expected_stamp=stamp)
+    assert b"VIDOPTS_005" not in (fixture_kit / LOC).read_bytes()
 
 
 def test_write_sidecar(tmp_path):
@@ -52,19 +64,14 @@ def test_write_sidecar(tmp_path):
 
 
 def test_insert_with_no_vidopts_anchor(tmp_path):
-    """Insert new VIDOPTS when no VIDOPTS* line exists anywhere.
-    Regression test: must not inject spurious blank line or lose trailing newline."""
-    cfg = tmp_path / "CONFIG.BAT"
-    original = b'@echo off\r\nSET GAME=\r\n'
-    cfg.write_bytes(original)
+    """Existing local without VIDOPTS lines gains the new line at the end."""
+    cfg = tmp_path / CFG
+    cfg.write_bytes(b"@echo off\r\n")
+    loc = tmp_path / LOC
+    original = b"@echo off\r\nSET RUN=0\r\n"
+    loc.write_bytes(original)
 
     write_vidopts_line(cfg, "005", "--direct")
-    after = cfg.read_bytes()
 
-    # Should be original + new line with CRLF, no blank line injected
-    expected = original + b'SET VIDOPTS_005=--direct\r\n'
-    assert after == expected, f"Expected {expected!r}, got {after!r}"
-
-    # Verify parse_config reads it correctly
-    parsed = parse_config(cfg)
-    assert parsed.per_clip["005"] == "--direct"
+    assert loc.read_bytes() == original + b"SET VIDOPTS_005=--direct\r\n"
+    assert parse_config(cfg).per_clip["005"] == "--direct"
