@@ -117,7 +117,9 @@ namespace NextDAADDebug
         {
             Log.Open(Path.Combine(folder, "debugger.log"));
             Log.Write("NextDAAD debugger " + typeof(DebugPlugin).Assembly.GetName().Version + ", folder " + folder);
-            interactive = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_NOWINDOW") != "1";
+            bool windowPossible = typeof(iCSpect).GetMethod("OpenWindow") != null;
+            if (!windowPossible) Log.Write("NextDAAD debugger needs CSpect 3.4.0 or later - no window, breakpoints off, trace mode only");
+            interactive = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_NOWINDOW") != "1" && windowPossible;
             string sdir = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_SETTINGS");
             settingsPath = Path.Combine(string.IsNullOrEmpty(sdir) ? folder : sdir, "DEBUGGER.local.TXT");
             settings = Settings.Load(settingsPath);
