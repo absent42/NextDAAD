@@ -93,6 +93,7 @@ namespace NextDAADDebug
         Settings settings = new Settings();
         string settingsPath, folder, problem;
         bool disarmed, interactive;
+        WindowHost host;
 
         public List<sIO> Init(iCSpect _CSpect)
         {
@@ -148,6 +149,11 @@ namespace NextDAADDebug
                 list.Add(new sIO(sym.Hook("err_raise").Address, eAccess.Memory_EXE, IdError));
                 Log.Write("armed: build " + sym.Build + " " + sym.Variant + (map == null ? ", no source map" : ", source map loaded"));
             }
+            if (interactive)
+            {
+                try { host = new WindowHost(cs, settings, settingsPath, folder); }
+                catch (Exception ex) { Log.Write("window disabled: " + ex.Message); }
+            }
         }
 
         void Post(Command c)
@@ -187,22 +193,40 @@ namespace NextDAADDebug
 
         public void Tick()
         {
-            if (session == null || disarmed) return;
-            try { session.Pump(); }
-            catch (Exception ex) { Disarm(ex); }
+            if (session != null && !disarmed)
+            {
+                try { session.Pump(); }
+                catch (Exception ex) { Disarm(ex); }
+            }
+            if (host != null && !PlatformFacts.WindowFromOSTick) Frame();
         }
 
         public void OSTick()
         {
-            if (session == null || disarmed || PlatformFacts.TickRunsWhileHalted || !session.Halted) return;
-            try { session.Pump(); }
-            catch (Exception ex) { Disarm(ex); }
+            if (session != null && !disarmed && !PlatformFacts.TickRunsWhileHalted && session.Halted)
+            {
+                try { session.Pump(); }
+                catch (Exception ex) { Disarm(ex); }
+            }
+            if (host != null && PlatformFacts.WindowFromOSTick) Frame();
+        }
+
+        // A UI failure turns the window off; the hooks and trace keep running.
+        void Frame()
+        {
+            try { host.Frame(Current(), Post); }
+            catch (Exception ex)
+            {
+                Log.Write("window disabled: " + ex);
+                host = null;
+            }
         }
 
         public bool KeyPressed(int id)
         {
             switch (id)
             {
+                case KeyToggle: if (host != null) host.Toggle(); break;
                 case KeyBreak: Post(Command.Of(CommandKind.Break)); break;
                 case KeyStep: Post(Command.Of(CommandKind.Step)); break;
                 case KeyRun: Post(Command.Of(CommandKind.Run)); break;
@@ -218,6 +242,8 @@ namespace NextDAADDebug
 
         public void Quit()
         {
+            try { if (host != null) host.Close(); }
+            catch (Exception ex) { Log.Write("quit: " + ex.Message); }
             try { if (trace != null) trace.Dispose(); }
             catch (Exception ex) { Log.Write("quit: " + ex.Message); }
             try { Log.Close(); } catch { }
