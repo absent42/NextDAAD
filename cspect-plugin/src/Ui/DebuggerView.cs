@@ -21,7 +21,7 @@ namespace NextDAADDebug
         bool wasHalted;
         Popup popup;
         Action<Popup, PopupResult> onPopup;
-        Breakpoint[] lastBps = new Breakpoint[0];
+        Breakpoint[] lastBps;
         string lastSaved;
         Ddb rowsDdb;
         int rowsTab = -1;
@@ -41,7 +41,8 @@ namespace NextDAADDebug
             bool newHalt = s.Halted && !wasHalted;
             wasHalted = s.Halted;
             if (newHalt || level < 0 || level >= s.Stack.Length) level = s.Stack.Length - 1;
-            ui.Blocked = popup != null;
+            bool hadPopup = popup != null;
+            ui.Blocked = hadPopup;
             Toolbar(ui, s, post);
             StatusLine(ui, s);
             StackPane(ui, s);
@@ -63,7 +64,7 @@ namespace NextDAADDebug
             }
             if (popup != null)
             {
-                ui.Blocked = false;
+                ui.Blocked = !hadPopup;      // a popup opened this frame gets no input until the next
                 var p = popup;
                 var r = p.Draw(ui);
                 if (r != PopupResult.Open)
@@ -86,7 +87,7 @@ namespace NextDAADDebug
 
         public void SaveIfChanged()
         {
-            if (settingsPath == null) return;
+            if (settingsPath == null || lastBps == null) return;
             string text = settings.Serialize(lastBps);
             if (text == lastSaved) return;
             lastSaved = text;
@@ -251,6 +252,7 @@ namespace NextDAADDebug
             for (int r = 0; r < lh && watchTop + r < n; r++)
             {
                 var w = settings.Watches[watchTop + r];
+                if (w.Number < 0 || w.Number > 255) continue;
                 string text;
                 bool changed;
                 if (w.IsObject)
@@ -275,7 +277,18 @@ namespace NextDAADDebug
             ui.S.Text(0, y0, " w  flag name                 value", Theme.Accent, Theme.Bg);
             if (ui.Button(Cols - 10, y0, "Go to #")) Ask(new DigitPad("Go to flag", flagTop, 0, 255), (p, r) => { if (r == PopupResult.Ok) flagTop = ((DigitPad)p).Value; });
             int y = y0 + 1, lh = h - 1;
-            int hit = ui.List(ref flagTop, 0, y, Cols, lh, 256);
+            int wheel = ui.Wheel(29, y, 5, lh);
+            int hit;
+            if (wheel != 0 && s.Halted)
+            {
+                int wf = flagTop + (ui.In.Row - y);
+                if (wf < 256) post(Command.Of(CommandKind.SetFlag, wf, Math.Max(0, Math.Min(255, s.Flags[wf] + wheel))));
+                int saved = ui.In.Wheel;
+                ui.In.Wheel = 0;                  // the list must not scroll for this event
+                hit = ui.List(ref flagTop, 0, y, Cols, lh, 256);
+                ui.In.Wheel = saved;
+            }
+            else hit = ui.List(ref flagTop, 0, y, Cols, lh, 256);
             if (hit >= 0)
             {
                 int col = ui.In.Col, f = hit;
@@ -298,6 +311,7 @@ namespace NextDAADDebug
         {
             ui.S.Text(0, y0, " w   obj name             loc  where               wt C W attrs", Theme.Accent, Theme.Bg);
             int n = s.NumObjects > 0 ? s.NumObjects : s.Ddb != null ? s.Ddb.NumObjects : 0;
+            n = Math.Min(n, s.ObjTable.Length / 6);
             if (ui.Button(Cols - 10, y0, "Go to #")) Ask(new DigitPad("Go to object", objTop, 0, Math.Max(0, n - 1)), (p, r) => { if (r == PopupResult.Ok) objTop = ((DigitPad)p).Value; });
             int y = y0 + 1, lh = h - 1;
             int hit = ui.List(ref objTop, 0, y, Cols, lh, n);

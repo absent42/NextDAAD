@@ -15,6 +15,14 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void OutOfRangeWatchesDropped()
+        {
+            string path = Path.GetTempFileName();
+            File.WriteAllText(path, Settings.Magic + "\t1\nwatch\tflag\t300\nwatch\tobject\t-2\nwatch\tflag\t5\n");
+            Assert.Single(Settings.Load(path).Watches);
+        }
+
+        [Fact]
         public void RoundTrip()
         {
             string path = Path.GetTempFileName();

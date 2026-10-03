@@ -148,6 +148,69 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void ClickOpeningPopupDoesNotActivateIt()
+        {
+            var s = Snap();
+            Click(s, " Objects ");
+            ui.Begin(UiDriver.At(30, 24));
+            Draw(ui, s);
+            Assert.True(view.PopupOpen);
+            Assert.Empty(posted);
+        }
+
+        [Fact]
+        public void SymbolButtonOpensWithoutPicking()
+        {
+            var settings = Settings.Defaults();
+            var v = new DebuggerView(settings, null, ".");
+            var s = Snap();
+            var u = UiDriver.NewUi();
+            u.Begin(UiDriver.At(25, 23));
+            v.Draw(u, s, c => { });
+            Assert.True(v.PopupOpen);
+            Assert.Empty(settings.Watches);
+        }
+
+        [Fact]
+        public void SaveBeforeDrawWritesNothing()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "nodraw-" + Guid.NewGuid() + ".txt");
+            new DebuggerView(Settings.Defaults(), path, ".").SaveIfChanged();
+            Assert.False(File.Exists(path));
+        }
+
+        [Fact]
+        public void OutOfRangeWatchesDoNotThrow()
+        {
+            var settings = Settings.Defaults();
+            settings.Watches.Add(new Watch { Number = 300 });
+            settings.Watches.Add(new Watch { IsObject = true, Number = -1 });
+            var v = new DebuggerView(settings, null, ".");
+            var u = UiDriver.NewUi();
+            u.Begin(new UiInput());
+            v.Draw(u, Snap(), c => { });
+        }
+
+        [Fact]
+        public void WheelOverFlagValueAdjusts()
+        {
+            var s = Snap();
+            Click(s, " Flags ");
+            int x, y;
+            Click(s, "Go to #");
+            Pad(s, " 1 "); Pad(s, " 0 "); Pad(s, " 0 "); Pad(s, " OK ");
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Assert.True(ui.S.Find(" 100 fCounter", out x, out y));
+            ui.Begin(new UiInput { Col = 31, Row = y, Wheel = 1, HasEvent = true });
+            Draw(ui, s);
+            Assert.Contains(posted, c => c.Kind == CommandKind.SetFlag && c.A == 100 && c.B == 8);
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Assert.True(OnScreen(" 100 fCounter"));       // list did not scroll
+        }
+
+        [Fact]
         public void SavesSettingsWhenChanged()
         {
             string path = Path.GetTempFileName();

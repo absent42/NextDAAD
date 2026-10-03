@@ -46,7 +46,10 @@ namespace NextDAADDebug
                             Op = (CompareOp)Enum.Parse(typeof(CompareOp), f[6]),
                         });
                     else if (f[0] == "watch" && f.Length >= 3)
-                        s.Watches.Add(new Watch { IsObject = f[1] == "object", Number = RecordFile.Dec(f[2], "watch") });
+                    {
+                        int wn = RecordFile.Dec(f[2], "watch");
+                        if (wn >= 0 && wn <= 255) s.Watches.Add(new Watch { IsObject = f[1] == "object", Number = wn });
+                    }
                     else if (f[0] == "window" && f.Length >= 3)
                     {
                         s.WinX = RecordFile.Dec(f[1], "x");
