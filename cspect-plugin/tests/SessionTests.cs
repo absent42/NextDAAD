@@ -43,6 +43,20 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void ReleaseHaltResumesOnce()
+        {
+            var r = new Rig();
+            r.Exec(0, 0, 0);
+            r.Run(CommandKind.Break);
+            r.Exec(0, 0, 1);
+            Assert.True(r.S.Halted);
+            r.S.ReleaseHalt();
+            r.S.ReleaseHalt();
+            Assert.False(r.S.Halted);
+            Assert.Equal(1, r.H.Resumes);
+        }
+
+        [Fact]
         public void RunResumes()
         {
             var r = new Rig();

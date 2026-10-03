@@ -24,6 +24,7 @@ namespace NextDAADDebug
         }
     }
 
+#pragma warning disable CS0162
     static class Halters
     {
         public static IHalter Create(iCSpect cs, Action pump)
@@ -36,6 +37,8 @@ namespace NextDAADDebug
             }
         }
     }
+
+#pragma warning restore CS0162
 
     // CSpect's debugger stops before the hooked instruction; SetRemote hides its screen.
     sealed class DebuggerHalter : IHalter
@@ -96,13 +99,27 @@ namespace NextDAADDebug
             cs = _CSpect;
             folder = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG");
             if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return null;
+            var list = new List<sIO>();
+            try
+            {
+                InitCore(list);
+            }
+            catch (Exception ex)
+            {
+                problem = "init failed: " + ex.Message;
+                try { Log.Write("init failed: " + ex); } catch { }
+            }
+            return list;
+        }
+
+        void InitCore(List<sIO> list)
+        {
             Log.Open(Path.Combine(folder, "debugger.log"));
             Log.Write("NextDAAD debugger " + typeof(DebugPlugin).Assembly.GetName().Version + ", folder " + folder);
             interactive = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_NOWINDOW") != "1";
             string sdir = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_SETTINGS");
             settingsPath = Path.Combine(string.IsNullOrEmpty(sdir) ? folder : sdir, "DEBUGGER.local.TXT");
             settings = Settings.Load(settingsPath);
-            var list = new List<sIO>();
             if (interactive)
             {
                 list.Add(new sIO("<ctrl><alt>a", eAccess.KeyPress, KeyToggle));
@@ -131,7 +148,6 @@ namespace NextDAADDebug
                 list.Add(new sIO(sym.Hook("err_raise").Address, eAccess.Memory_EXE, IdError));
                 Log.Write("armed: build " + sym.Build + " " + sym.Variant + (map == null ? ", no source map" : ", source map loaded"));
             }
-            return list;
         }
 
         void Post(Command c)
@@ -147,8 +163,10 @@ namespace NextDAADDebug
             Log.Write("disarmed: " + ex);
             if (session != null)
             {
-                session.Problem = "debugger error, disarmed - see debugger.log: " + ex.Message;
-                session.ForcePublish();
+                try { session.Problem = "debugger error, disarmed - see debugger.log: " + ex.Message; session.ForcePublish(); }
+                catch (Exception ex2) { Log.Write("publish failed: " + ex2.Message); }
+                try { session.ReleaseHalt(); }
+                catch (Exception ex2) { Log.Write("release failed: " + ex2.Message); }
             }
         }
 
@@ -194,13 +212,15 @@ namespace NextDAADDebug
 
         public void Reset()
         {
-            if (session != null) session.Reset();
+            try { if (session != null) session.Reset(); }
+            catch (Exception ex) { Disarm(ex); }
         }
 
         public void Quit()
         {
-            if (trace != null) trace.Dispose();
-            Log.Close();
+            try { if (trace != null) trace.Dispose(); }
+            catch (Exception ex) { Log.Write("quit: " + ex.Message); }
+            try { Log.Close(); } catch { }
         }
     }
 }

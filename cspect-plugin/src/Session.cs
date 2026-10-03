@@ -274,6 +274,15 @@ namespace NextDAADDebug
             Volatile.Write(ref latest, s);
         }
 
+        // Releases the emulator when the plugin disarms while halted.
+        public void ReleaseHalt()
+        {
+            if (!halted) return;
+            halted = false;
+            status = "disarmed";
+            halter.Resume();
+        }
+
         public void Reset()
         {
             guardPassed = halted = false;
