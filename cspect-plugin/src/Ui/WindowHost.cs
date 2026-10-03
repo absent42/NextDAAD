@@ -79,19 +79,22 @@ namespace NextDAADDebug
         readonly byte[] font;
         readonly uint[] palette;
         readonly bool supported;
+        readonly bool closeWorks;
+        bool warnedNoClose;
         ISurface surface;
         bool wanted = true;
         long lastSerial = -1;
 
         public WindowHost(iCSpect cs, Settings settings, string settingsPath, string sourceRoot)
-            : this((Func<ISurface>)null, settings, settingsPath, sourceRoot)
+            : this((Func<ISurface>)null, settings, settingsPath, sourceRoot, PlatformFacts.WindowCloseWorks)
         {
             this.cs = cs;
             supported = typeof(iCSpect).GetMethod("OpenWindow") != null;
         }
 
-        internal WindowHost(Func<ISurface> opener, Settings settings, string settingsPath, string sourceRoot)
+        internal WindowHost(Func<ISurface> opener, Settings settings, string settingsPath, string sourceRoot, bool closeWorks = true)
         {
+            this.closeWorks = closeWorks;
             this.opener = opener;
             this.settings = settings;
             supported = opener != null;
@@ -122,7 +125,11 @@ namespace NextDAADDebug
             if (toggleRequested)
             {
                 toggleRequested = false;
-                if (wanted) { CloseLocked(); wanted = false; }
+                if (surface != null && !closeWorks)
+                {
+                    if (!warnedNoClose) { warnedNoClose = true; Log.Write("window cannot be closed under mono - Ctrl+Alt+A ignored while it is open"); }
+                }
+                else if (wanted) { CloseLocked(); wanted = false; }
                 else wanted = true;
             }
             if (!supported || !wanted) return;

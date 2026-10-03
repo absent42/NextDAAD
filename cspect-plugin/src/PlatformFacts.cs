@@ -8,6 +8,7 @@ namespace NextDAADDebug
     public static class PlatformFacts
     {
         public static readonly bool IsMono = Type.GetType("Mono.Runtime") != null;
+        public static readonly bool WindowCloseWorks = !IsMono;     // S8: iWindow.Close() is a no-op under mono
         public const HaltMethod Halt = HaltMethod.DebuggerEnter;   // S2: halts one instruction after the hook, debugger screen hidden
         public const bool TickRunsWhileHalted = true;               // S3
         public const bool RefireOnResume = false;                   // S4

@@ -42,5 +42,21 @@ namespace NextDAADDebug.Tests
             host.Frame(snap, c => { });
             Assert.Equal(2, opens);
         }
+
+        [Fact]
+        public void ToggleIgnoredWhenCloseCannotWork()
+        {
+            var surf = new FakeSurface();
+            int opens = 0;
+            var host = new WindowHost(() => { opens++; return surf; }, Settings.Defaults(), null, ".", false);
+            var snap = new Snapshot();
+            host.Frame(snap, c => { });
+            host.Toggle();
+            host.Frame(snap, c => { });
+            host.Toggle();
+            host.Frame(snap, c => { });
+            Assert.Equal(1, opens);
+            Assert.Equal(0, surf.Closes);
+        }
     }
 }
