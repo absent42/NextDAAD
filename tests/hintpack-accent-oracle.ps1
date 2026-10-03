@@ -74,10 +74,9 @@ finally { Pop-Location }
 & $pack -In "$tmp/HINTS.TXT" -Out "$tmp/GAME.HNT" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "hintpack.ps1 failed packing the oracle hints" }
 
-# ---- decode a DDB user message: NDRC's ndrc.exe emits FILE-RELATIVE
-# pointers (base 0, not the Z80 runtime load address) - measured against
-# ORACLE.DDB directly (tests\decode-ddb.ps1's 0x8400 base is for the
-# upstream DRC/DRB toolchain's output, not ndrc.exe's). Message bytes are
+# ---- decode a DDB user message: pointers are FILE-RELATIVE (base 0),
+# as in tests\decode-ddb.ps1, but this reads ORACLE.DDB from $tmp rather
+# than a staged sd\ leg, and returns bytes, not text. Message bytes are
 # stored complemented (byte = 255 - char); bytes >=128 after complementing
 # select a compression token, expanded from the token table at W(8). ----
 function Get-DdbMessageBytes([byte[]]$b, [int]$number) {

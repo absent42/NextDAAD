@@ -25,19 +25,21 @@ else {
     "# reading $ddb" | Write-Host
 }
 $b = [IO.File]::ReadAllBytes($ddb)
-$base = 0x8400
+# Pointers are plain file offsets (base 0). Like ddb_load, refuse any
+# machine nibble but NextDAAD's $C - classic DDBs use other bases.
+if (($b[1] -band 0xF0) -ne 0xC0) { throw ('machine nibble {0:X} is not NextDAAD (C) - not a NextDAAD database' -f ($b[1] -shr 4)) }
 function W($o) { $b[$o] + 256 * $b[$o+1] }
 $countOff = @{ system = 6; user = 5; location = 4; object = 3 }[$Kind]
 $tableOff = @{ system = 0x12; user = 0x10; location = 0x0E; object = 0x0C }[$Kind]
 if ($Number -ge $b[$countOff]) { throw "message $Number out of range (count $($b[$countOff]))" }
-$tokPos = (W 8) - $base
+$tokPos = W 8
 $entries = @(); $p = $tokPos
 while ($entries.Count -lt 129) {
     $s = ''
     while ($true) { $ch = $b[$p]; $p++; $s += [char]($ch -band 0x7F); if ($ch -band 0x80) { break } }
     $entries += $s
 }
-$msgPtr = (W ((W $tableOff) - $base + 2 * $Number)) - $base
+$msgPtr = W ((W $tableOff) + 2 * $Number)
 $out = ''; $p = $msgPtr
 while ($true) {
     $c = 255 - $b[$p]; $p++
