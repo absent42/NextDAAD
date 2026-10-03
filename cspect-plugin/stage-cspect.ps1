@@ -7,11 +7,12 @@ $repo = Split-Path $PSScriptRoot
 if (-not $Dest) { $Dest = Join-Path $repo 'build\cspect-dbg' }
 & dotnet build (Join-Path $PSScriptRoot 'NextDAADDebug.csproj') -c Release "-p:CSpectDir=$CSpectDir" | Out-Host
 if ($LASTEXITCODE) { throw 'plugin build failed' }
-if ($Fresh -and (Test-Path -LiteralPath $Dest)) {
-    $root = [IO.Path]::GetFullPath((Join-Path $repo 'build')).TrimEnd('') + ''
-    $full = [IO.Path]::GetFullPath($Dest).TrimEnd('') + ''
-    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $full.Length -eq $root.Length) { throw "-Fresh refused: $Dest is not under $root" }
-    Remove-Item -LiteralPath $Dest -Recurse -Force
+if ($Fresh) {
+    $sep = [string][IO.Path]::DirectorySeparatorChar
+    $root = [IO.Path]::GetFullPath((Join-Path $repo 'build')).TrimEnd($sep) + $sep
+    $full = [IO.Path]::GetFullPath($Dest).TrimEnd($sep) + $sep
+    if ($full -eq $root -or -not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw "-Fresh refused: $Dest is not under $root" }
+    if (Test-Path -LiteralPath $Dest) { Remove-Item -LiteralPath $Dest -Recurse -Force }
 }
 if (-not (Test-Path -LiteralPath (Join-Path $Dest 'CSpect.exe'))) {
     New-Item -ItemType Directory -Force $Dest | Out-Null

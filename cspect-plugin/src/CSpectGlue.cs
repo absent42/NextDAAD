@@ -90,7 +90,7 @@ namespace NextDAADDebug
         iCSpect cs;
         DebugSession session;
         TraceWriter trace;
-        Settings settings;
+        Settings settings = new Settings();
         string settingsPath, folder, problem;
         bool disarmed, interactive;
 
