@@ -35,6 +35,9 @@ try {
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"
+    $variant = if ($Release -or $Kit) { 'Release' } else { 'DEBUG' }
+    $hash = (& git -C $root rev-parse --short HEAD 2>$null)
+    & "$root\scripts\make-sym.ps1" -Sld "$root\build\nextdaad.sld" -Nex "$root\build\nextdaad.nex" -Root $root -Out "$root\build\NEXTDAAD.SYM" -Variant $variant -Build "$hash"
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\intro.sld" @defs "src/intro/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "intro assembly failed" }
     Write-Host "built build\intro.nex"
