@@ -4,7 +4,7 @@ namespace NextDAADDebug
 {
     public enum HaltMethod { DebuggerEnter, Block, Pause }
 
-    // CSpect 3.4.0.0 behaviour not in its documentation, measured on Windows; mono not yet measured.
+    // CSpect 3.4.0.0 behaviour not in its documentation, measured on Windows and under mono (identical except S8).
     public static class PlatformFacts
     {
         public static readonly bool IsMono = Type.GetType("Mono.Runtime") != null;
