@@ -103,7 +103,9 @@ NORTH 0
         DEBUG
         PROCESS 1
 > _ _   PARSE 0
-        PROCESS 2
+        SYSMESS 6
+        REDO
+> _ _   PROCESS 2
         REDO
 /PRO 1
 > _ _   CLS
@@ -118,6 +120,7 @@ NORTH 0
 > DROP LAMP DROP 0
             DONE
 > OPEN KEY  PROCESS 3
+            DONE
 > _ _   SYSMESS 8
         DONE
 /PRO 3

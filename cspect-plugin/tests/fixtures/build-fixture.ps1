@@ -65,6 +65,7 @@ $out = New-Object Text.StringBuilder
 [void]$out.Append(("ddb`t{0:X8}`t{1:X}`n" -f [FixCrc]::Compute($b), $b.Length))
 [void]$out.Append("file`t0`tDBGFIX.DSF`n")
 $procList = W 10
+$seen = @{}
 for ($p = 0; $p -lt $b[7]; $p++) {
     [void]$out.Append("proc`t$p`t0`t$($procLine[$p])`n")
     $e = W ($procList + 2 * $p); $k = 0
@@ -77,6 +78,8 @@ for ($p = 0; $p -lt $b[7]; $p++) {
             if ($raw -eq 0xFF) { break }
             if ($n -ge $src.Conds.Count) { throw "PRO $p entry $k has more DDB condacts than DSF lines" }
             $sl = $src.Conds[$n]
+            if ($seen.ContainsKey($c)) { throw ("DDB offset {0:X4} has two cond records: lines {1} and {2} (DRB tail sharing)" -f $c, $seen[$c], $sl.Line) }
+            $seen[$c] = $sl.Line
             [void]$out.Append(("cond`t{0:X4}`t0`t{1}`t{2}`n" -f $c, $sl.Line, $sl.Col))
             $n++
             if ($raw -eq 0xDC) { $c++; continue }

@@ -7,7 +7,8 @@ namespace NextDAADDebug.Tests
     public class SessionTests
     {
         // DBGFIX PRO 0 entry 0: LET 100 7 / LET @100 3 / DEBUG / PROCESS 1 / (end)
-        //          PRO 0 entry 1: PARSE 0 / PROCESS 2 / REDO
+        //          PRO 0 entry 1: PARSE 0 / SYSMESS 6 / REDO
+        //          PRO 0 entry 2: PROCESS 2 / REDO
         //          PRO 1 entry 0: CLS / DESC @38 / DONE
         //          PRO 2 entry 1: GET 0 / DONE (GET LAMP)
 
@@ -129,7 +130,7 @@ namespace NextDAADDebug.Tests
             r.Run(CommandKind.RunToParse);
             r.Exec(0, 1, 0);                               // PARSE itself does not stop
             Assert.Equal(1, r.H.Halts);
-            r.Exec(0, 1, 1);
+            r.Exec(0, 2, 0);                               // valid PARSE falls to entry 2: PROCESS 2
             Assert.Equal(2, r.H.Halts);
             Assert.Contains("after PARSE", r.Snap().Status);
         }

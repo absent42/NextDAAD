@@ -31,13 +31,16 @@ function Seed([string[]]$records) {
 }
 
 # List order is priority when two breakpoints match one condact.
-# GET = 40; DBGFIX.DSF line 121 is "SYSMESS 8".
+# GET = 40; the SourceLine breakpoint targets the DBGFIX.DSF line of "SYSMESS 8".
+$sysmessLine = @(Select-String -LiteralPath "$fx\DBGFIX.DSF" -Pattern '^\s*(>.*\s)?SYSMESS 8\s*$' | ForEach-Object LineNumber)
+if ($sysmessLine.Count -ne 1) { throw 'expected exactly one SYSMESS 8 line in DBGFIX.DSF' }
+$sysmessLine = $sysmessLine[0]
 $seedFull = Seed @(
     'bp|DebugMarker|1|0|-1|-1|Eq',
     'bp|RuntimeError|1|0|-1|-1|Eq',
     'bp|Process|1|2|21|50|Eq',
     'bp|Condact|1|40|-1|-1|Eq',
-    'bp|SourceLine|1|0|121|-1|Eq',
+    "bp|SourceLine|1|0|$sysmessLine|-1|Eq",
     'bp|FlagCompare|1|38|1|-1|Eq',
     'bp|FlagChange|1|38|-1|-1|Eq',
     'bp|ObjectMoved|1|0|-1|-1|Eq',
@@ -49,7 +52,7 @@ $seedFull = Seed @(
 $seedStale = Seed @(
     'bp|DebugMarker|1|0|-1|-1|Eq',
     'bp|RuntimeError|1|0|-1|-1|Eq',
-    'bp|SourceLine|1|0|121|-1|Eq',
+    "bp|SourceLine|1|0|$sysmessLine|-1|Eq",
     'watch|flag|38',
     'window|-1|-1')
 
@@ -57,6 +60,8 @@ function New-Leg([string]$name, [string]$cspectSrc, [string]$seed) {
     $leg = Join-Path $repo "sd\$name"
     if (Test-Path -LiteralPath $leg) {
         if (-not (Test-Path -LiteralPath (Join-Path $leg $marker))) { throw "refusing: $leg has no $marker" }
+        $rp = Get-ChildItem -LiteralPath $leg -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1
+        if ($rp) { throw "refusing: $($rp.FullName) is a reparse point inside $leg" }
         Remove-Item -LiteralPath $leg -Recurse -Force
     }
     New-Item -ItemType Directory -Force "$leg\cspect" | Out-Null
@@ -66,7 +71,7 @@ function New-Leg([string]$name, [string]$cspectSrc, [string]$seed) {
     Copy-Item "$fx\DBGFIX.DSF" $leg
     Copy-Item "$repo\build\nextdaad.nex" $leg
     Copy-Item "$repo\build\NEXTDAAD.SYM" $leg
-    & robocopy $cspectSrc "$leg\cspect" /E /XF *.mmc /NFL /NDL /NJH /NJS | Out-Null
+    & robocopy $cspectSrc "$leg\cspect" /E /XJ /XF *.mmc /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
     Copy-Item $dll "$leg\cspect" -Force
     if ($seed) { [IO.File]::WriteAllText("$leg\DEBUGGER.seed.TXT", $seed, (New-Object Text.UTF8Encoding($false))) }

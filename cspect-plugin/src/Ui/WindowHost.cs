@@ -85,7 +85,6 @@ namespace NextDAADDebug
             this.cs = cs;
             this.settings = settings;
             supported = typeof(iCSpect).GetMethod("OpenWindow") != null;
-            if (!supported) Log.Write("NextDAAD debugger needs CSpect 3.4.0 or later - no window (trace mode still works)");
             font = Font.Load();
             palette = Theme.Palette(PlatformFacts.ScreenIsArgb);
             ui = new Ui(screen);
@@ -129,7 +128,9 @@ namespace NextDAADDebug
             {
                 input = mouse.Next(surface.MouseX, surface.MouseY, surface.Buttons, surface.Wheel, Cols, Rows, CellW, CellH,
                     PlatformFacts.LeftButtonMask, PlatformFacts.RightButtonMask, PlatformFacts.WheelIsTotal, PlatformFacts.WheelUpPositive);
+#pragma warning disable CS0162
                 if (!PlatformFacts.WheelIsTotal) surface.ResetWheel();
+#pragma warning restore CS0162
             }
             else input = new UiInput();
             if (!input.HasEvent && snap.Serial == lastSerial) return;
