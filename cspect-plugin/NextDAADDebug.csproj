@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net452</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>NextDAADDebug</AssemblyName>
+    <RootNamespace>NextDAADDebug</RootNamespace>
+    <Version>0.1.0</Version>
+    <CSpectDir Condition="'$(CSpectDir)'==''">D:\ZXNextDev\cspect</CSpectDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <None Remove="tests\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="Plugin">
+      <HintPath>$(CSpectDir)\Plugin.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
