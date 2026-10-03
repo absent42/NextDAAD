@@ -56,6 +56,15 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void DisplayOnlyHintReplacesHotkeyText()
+        {
+            ui.Begin(new UiInput());
+            view.Draw(ui, Snap(), posted.Add, false);
+            Assert.True(OnScreen("display only - Ctrl+Alt+B/N/R"));
+            Assert.False(OnScreen("Ctrl+Alt+A/B/N/R"));
+        }
+
+        [Fact]
         public void StepPostsCommand()
         {
             Click(Snap(), " Step ");

@@ -36,14 +36,14 @@ namespace NextDAADDebug
 
         public bool PopupOpen => popup != null;
 
-        public void Draw(Ui ui, Snapshot s, Action<Command> post)
+        public void Draw(Ui ui, Snapshot s, Action<Command> post, bool inputAvailable = true)
         {
             bool newHalt = s.Halted && !wasHalted;
             wasHalted = s.Halted;
             if (newHalt || level < 0 || level >= s.Stack.Length) level = s.Stack.Length - 1;
             bool hadPopup = popup != null;
             ui.Blocked = hadPopup;
-            Toolbar(ui, s, post);
+            Toolbar(ui, s, post, inputAvailable);
             StatusLine(ui, s);
             StackPane(ui, s);
             int tab = ui.Tabs(RightX, TopY, TopTabs, topTab);
@@ -95,7 +95,7 @@ namespace NextDAADDebug
             catch (Exception ex) { Log.Write("settings not saved: " + ex.Message); }
         }
 
-        void Toolbar(Ui ui, Snapshot s, Action<Command> post)
+        void Toolbar(Ui ui, Snapshot s, Action<Command> post, bool inputAvailable)
         {
             bool h = s.Halted;
             int x = 0;
@@ -105,7 +105,8 @@ namespace NextDAADDebug
             x = Btn(ui, x, "Step entry", h, () => post(Command.Of(CommandKind.StepEntry)));
             x = Btn(ui, x, "Step out", h, () => post(Command.Of(CommandKind.StepOut)));
             Btn(ui, x, "Run to PARSE", h, () => post(Command.Of(CommandKind.RunToParse)));
-            ui.S.Text(Cols - 22, 0, "Ctrl+Alt+A/B/N/R", Theme.Dim, Theme.Bg);
+            if (inputAvailable) ui.S.Text(Cols - 22, 0, "Ctrl+Alt+A/B/N/R", Theme.Dim, Theme.Bg);
+            else ui.S.Text(Cols - 30, 0, "display only - Ctrl+Alt+B/N/R", Theme.Dim, Theme.Bg);
         }
 
         static int Btn(Ui ui, int x, string label, bool enabled, Action act)
