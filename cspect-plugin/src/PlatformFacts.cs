@@ -10,7 +10,7 @@ namespace NextDAADDebug
         public static readonly bool IsMono = Type.GetType("Mono.Runtime") != null;
         public const HaltMethod Halt = HaltMethod.DebuggerEnter;   // S10
         public const bool TickRunsWhileHalted = true;               // S3
-        public const bool RefireOnResume = false;                   // S4
+        public const bool RefireOnResume = true;                    // S4: safe direction until measured
         public const bool WindowFromOSTick = true;                  // S5
         public const bool ScreenIsArgb = true;                      // S6: 0xFFFF0000 shows red
         public const int LeftButtonMask = 1;                        // S7

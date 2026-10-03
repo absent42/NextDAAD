@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 & "$repo\cspect-plugin\stage-cspect.ps1" | Out-Host
 $leg = Join-Path $repo 'tests\out\dbgwin'
+$outRoot = [IO.Path]::GetFullPath((Join-Path $repo 'tests\out')).TrimEnd('\') + '\'
+if (-not [IO.Path]::GetFullPath($leg).StartsWith($outRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to clear $leg" }
 if (Test-Path -LiteralPath $leg) { Remove-Item -LiteralPath $leg -Recurse -Force }
 New-Item -ItemType Directory -Force $leg | Out-Null
 Copy-Item "$PSScriptRoot\fixtures\DBGFIX.DDB" "$leg\GAME.DDB"

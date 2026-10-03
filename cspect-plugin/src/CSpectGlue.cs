@@ -226,13 +226,17 @@ namespace NextDAADDebug
 
         public bool KeyPressed(int id)
         {
-            switch (id)
+            try
             {
-                case KeyToggle: if (host != null) host.Toggle(); break;
-                case KeyBreak: Post(Command.Of(CommandKind.Break)); break;
-                case KeyStep: Post(Command.Of(CommandKind.Step)); break;
-                case KeyRun: Post(Command.Of(CommandKind.Run)); break;
+                switch (id)
+                {
+                    case KeyToggle: if (host != null) host.Toggle(); break;
+                    case KeyBreak: Post(Command.Of(CommandKind.Break)); break;
+                    case KeyStep: Post(Command.Of(CommandKind.Step)); break;
+                    case KeyRun: Post(Command.Of(CommandKind.Run)); break;
+                }
             }
+            catch (Exception ex) { Log.Write("key " + id + ": " + ex.Message); }
             return true;
         }
 

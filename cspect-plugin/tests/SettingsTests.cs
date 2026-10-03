@@ -23,6 +23,29 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void InvalidBreakpointsDropped()
+        {
+            string path = Path.GetTempFileName();
+            File.WriteAllText(path, Settings.Magic + "\t1\n"
+                + "bp\tFlagChange\t1\t300\t-1\t-1\tEq\n"
+                + "bp\t99\t1\t0\t-1\t-1\tEq\n"
+                + "bp\tObjectMoved\t1\t-1\t-1\t-1\tEq\n"
+                + "bp\tCondact\t1\t128\t-1\t-1\tEq\n"
+                + "bp\tProcess\t1\t3\t256\t-1\tEq\n"
+                + "bp\tSourceLine\t1\t0\t0\t-1\tEq\n"
+                + "bp\tFlagCompare\t1\t5\t300\t-1\tEq\n"
+                + "bp\tFlagCompare\t1\t5\t7\t-1\t9\n"
+                + "bp\tFlagChange\t1\t40\t-1\t-1\tEq\n"
+                + "bp\tProcess\t1\t2\t-1\t-1\tEq\n"
+                + "bp\tSourceLine\t1\t0\t12\t-1\tEq\n");
+            var s = Settings.Load(path);
+            Assert.Equal(3, s.Breakpoints.Count);
+            Assert.Equal(BreakKind.FlagChange, s.Breakpoints[0].Kind);
+            Assert.Equal(BreakKind.Process, s.Breakpoints[1].Kind);
+            Assert.Equal(12, s.Breakpoints[2].B);
+        }
+
+        [Fact]
         public void RoundTrip()
         {
             string path = Path.GetTempFileName();

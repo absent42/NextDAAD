@@ -20,6 +20,9 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="NextDAADDebug.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <EmbeddedResource Include="src\Resources\vga8x16.bin" LogicalName="NextDAADDebug.vga8x16.bin" />
   </ItemGroup>
 </Project>

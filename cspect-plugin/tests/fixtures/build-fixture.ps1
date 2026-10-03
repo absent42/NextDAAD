@@ -5,7 +5,9 @@ $here = $PSScriptRoot
 $repo = (Resolve-Path "$here\..\..\..").Path
 $ndrc = if ($env:NEXTDAAD_NDRC) { $env:NEXTDAAD_NDRC } else { Join-Path $repo 'authoring-kit\lib\ndrc.exe' }
 $work = Join-Path $repo 'tests\out\dbgfix'
-if (Test-Path $work) { Remove-Item $work -Recurse -Force }
+$outRoot = [IO.Path]::GetFullPath((Join-Path $repo 'tests\out')).TrimEnd('\') + '\'
+if (-not [IO.Path]::GetFullPath($work).StartsWith($outRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to clear $work" }
+if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
 New-Item -ItemType Directory -Force $work | Out-Null
 Copy-Item "$here\DBGFIX.DSF" $work
 Push-Location $work

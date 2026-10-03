@@ -10,7 +10,7 @@ namespace NextDAADDebug
         public static List<string[]> Parse(string text, string magic, int major)
         {
             if (string.IsNullOrEmpty(text)) throw new FormatException("empty file");
-            if (text[0] == '﻿') text = text.Substring(1);
+            if (text[0] == '\uFEFF') text = text.Substring(1);
             string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
             var records = new List<string[]>();
             bool header = false;

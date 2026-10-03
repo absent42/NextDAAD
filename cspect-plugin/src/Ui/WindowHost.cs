@@ -67,6 +67,9 @@ namespace NextDAADDebug
     {
         const int Cols = 100, Rows = 40, CellW = 8, CellH = 16;
         readonly iCSpect cs;
+        readonly Func<ISurface> opener;
+        readonly object gate = new object();
+        volatile bool toggleRequested;
         readonly Settings settings;
         readonly CellScreen screen = new CellScreen(Cols, Rows);
         readonly Ui ui;
@@ -81,10 +84,17 @@ namespace NextDAADDebug
         long lastSerial = -1;
 
         public WindowHost(iCSpect cs, Settings settings, string settingsPath, string sourceRoot)
+            : this((Func<ISurface>)null, settings, settingsPath, sourceRoot)
         {
             this.cs = cs;
-            this.settings = settings;
             supported = typeof(iCSpect).GetMethod("OpenWindow") != null;
+        }
+
+        internal WindowHost(Func<ISurface> opener, Settings settings, string settingsPath, string sourceRoot)
+        {
+            this.opener = opener;
+            this.settings = settings;
+            supported = opener != null;
             font = Font.Load();
             palette = Theme.Palette(PlatformFacts.ScreenIsArgb);
             ui = new Ui(screen);
@@ -94,18 +104,27 @@ namespace NextDAADDebug
         [MethodImpl(MethodImplOptions.NoInlining)]
         ISurface OpenSurface()
         {
+            if (opener != null) return opener();
             iWindow w = cs.OpenWindow("NextDAAD debugger", Cols * CellW, Rows * CellH);
             return w == null ? null : new NativeSurface(w);
         }
 
-        public void Toggle()
-        {
-            if (wanted) Close();
-            wanted = !wanted;
-        }
+        // Any thread: only records the request; Frame acts on it.
+        public void Toggle() { toggleRequested = true; }
 
         public void Frame(Snapshot snap, Action<Command> post)
         {
+            lock (gate) FrameLocked(snap, post);
+        }
+
+        void FrameLocked(Snapshot snap, Action<Command> post)
+        {
+            if (toggleRequested)
+            {
+                toggleRequested = false;
+                if (wanted) { CloseLocked(); wanted = false; }
+                else wanted = true;
+            }
             if (!supported || !wanted) return;
             if (surface != null && surface.Closed)
             {
@@ -150,6 +169,11 @@ namespace NextDAADDebug
         }
 
         public void Close()
+        {
+            lock (gate) CloseLocked();
+        }
+
+        void CloseLocked()
         {
             if (surface == null) return;
             SavePosition();

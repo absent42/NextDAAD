@@ -10,7 +10,7 @@ namespace NextDAADDebug.Tests
         public static string Sym(string nl = "\n", bool bom = false, string version = "1", string dropHook = null, string flagsAddr = "A200")
         {
             var sb = new StringBuilder();
-            if (bom) sb.Append('﻿');
+            if (bom) sb.Append('\uFEFF');
             sb.Append("NEXTDAAD-SYM\t" + version + nl);
             sb.Append("# comment" + nl);
             sb.Append("build\tabc1234\tRelease  " + nl);
@@ -53,7 +53,7 @@ namespace NextDAADDebug.Tests
             Assert.Equal(a["cprops"], b["cprops"]);
             Assert.Equal(a.Hook("err_raise").Check, b.Hook("err_raise").Check);
             var m1 = SourceMap.Parse(Dsm("\n"));
-            var m2 = SourceMap.Parse("﻿" + Dsm("\r\n"));
+            var m2 = SourceMap.Parse("\uFEFF" + Dsm("\r\n"));
             Assert.Equal(m1.DdbCrc, m2.DdbCrc);
             Assert.Equal(m1.Files[0], m2.Files[0]);
             Assert.Equal(m1.Condacts.Count, m2.Condacts.Count);

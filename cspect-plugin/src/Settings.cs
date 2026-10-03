@@ -36,7 +36,8 @@ namespace NextDAADDebug
                 foreach (string[] f in RecordFile.Parse(File.ReadAllText(path), Magic, 1))
                 {
                     if (f[0] == "bp" && f.Length >= 7)
-                        s.Breakpoints.Add(new Breakpoint
+                    {
+                        var bp = new Breakpoint
                         {
                             Kind = (BreakKind)Enum.Parse(typeof(BreakKind), f[1]),
                             Enabled = f[2] == "1",
@@ -44,7 +45,10 @@ namespace NextDAADDebug
                             B = RecordFile.Dec(f[4], "b"),
                             C = RecordFile.Dec(f[5], "c"),
                             Op = (CompareOp)Enum.Parse(typeof(CompareOp), f[6]),
-                        });
+                        };
+                        if (Valid(bp)) s.Breakpoints.Add(bp);
+                        else Log.Write("settings: dropped invalid breakpoint: " + string.Join(" ", f));
+                    }
                     else if (f[0] == "watch" && f.Length >= 3)
                     {
                         int wn = RecordFile.Dec(f[2], "watch");
@@ -63,6 +67,23 @@ namespace NextDAADDebug
                 Log.Write("settings ignored (" + path + "): " + ex.Message);
                 return Defaults();
             }
+        }
+
+        static bool In(int v, int lo, int hi) => v >= lo && v <= hi;
+
+        static bool Valid(Breakpoint b)
+        {
+            if (!Enum.IsDefined(typeof(BreakKind), b.Kind) || !Enum.IsDefined(typeof(CompareOp), b.Op)) return false;
+            switch (b.Kind)
+            {
+                case BreakKind.Process: return In(b.A, 0, 255) && In(b.B, -1, 255) && In(b.C, -1, 255);
+                case BreakKind.Condact: return In(b.A, 0, 127);
+                case BreakKind.FlagChange: return In(b.A, 0, 255);
+                case BreakKind.FlagCompare: return In(b.A, 0, 255) && In(b.B, 0, 255);
+                case BreakKind.ObjectMoved: return In(b.A, 0, 255);
+                case BreakKind.SourceLine: return b.A >= 0 && b.B >= 1;
+            }
+            return true;
         }
 
         public string Serialize(IEnumerable<Breakpoint> bps)

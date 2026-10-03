@@ -51,6 +51,22 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void MessageExpandsToken()
+        {
+            var img = new byte[44];
+            img[5] = 1;                 // NumMessages
+            img[8] = 34;                // TokensPtr
+            img[16] = 39;               // MsgList
+            // tokens: placeholder string 0, then "the " (bit 7 on the last char)
+            img[34] = 0xF8; img[35] = (byte)'t'; img[36] = (byte)'h'; img[37] = (byte)'e'; img[38] = (byte)(' ' | 0x80);
+            img[39] = 41;               // message 0 at 41
+            img[41] = 0x80 ^ 0xFF;      // token 0
+            img[42] = (byte)('!' ^ 0xFF);
+            img[43] = 0x0A ^ 0xFF;
+            Assert.Equal("the !", new Ddb(img).Message(0));
+        }
+
+        [Fact]
         public void Vocabulary()
         {
             var d = Fix();
