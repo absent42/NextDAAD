@@ -6,7 +6,8 @@ land, fade back up. A classic storytelling device; this extern adds it to any Ne
 
 ## Use from DSF
 
-    LET 241 0          ; frames per fade step: 0 = default (about 1s)
+    LET 241 0          ; frames per fade step: 0 = default (about 1s),
+                       ; 255 = instant (see below)
     EXTERN 0 40        ; fade out to black (any RRRGGGBB byte works:
                        ; 255 = white, 224 = red, 3 = deep blue ...)
     EXTERN 0 43        ; block until the fade finishes
@@ -36,6 +37,51 @@ by then.
 already holds the Layer 2 palette. Nothing fades, and flag 240 is set
 to 1 so `EXTERN 0 43` returns at once instead of waiting for a
 completion that will never come; `EXTERN 0 41` is then a no-op.
+
+## Flags
+
+- 241 - speed, frames per fade step. You set it; the extern only reads
+  it. 0 = the default of 6 (8 steps x 6 frames, about one second), 1-254
+  = that many frames per step, 255 = instant (below). It is read when
+  `EXTERN c 40` or `EXTERN 0 41` is called, so changing it mid-fade does
+  not affect the running fade, and fade-out and fade-in can use
+  different speeds.
+- 240 - done. The extern writes it: 0 when a fade starts, 1 when it
+  finishes. An instant fade, or a fade-out refused because another
+  extern holds the palette, sets it to 1 before the call returns. Calls
+  that are ignored (mid-fade, or in the wrong state) leave it as it
+  was, and like every flag it starts at 0, so only poll it after a fade
+  that actually started. See "Waiting for a fade" below.
+
+`EXTERN 0 42` and `EXTERN 0 43` neither read nor write either flag.
+
+## Instant fades
+
+Flag 241 = 255 makes a fade instant: `EXTERN c 40` puts the solid
+colour on screen, and `EXTERN 0 41` puts the picture back, before the
+call returns. There are no steps, flag 240 is already 1 when the call
+returns, and `EXTERN 0 43` returns at once. Every other rule is
+unchanged - fade-out still only acts when the picture is fully in,
+fade-in only when fully out. The slowest timed fade is therefore 254
+frames per step.
+
+An example use is a video clip that should end on black and fade up
+to a location picture. A clip copies the Layer 2 picture and palette 
+when it starts and puts them back when it ends, so whatever is on 
+screen at `GFX n 13` is what returns. An instant fade-out first means 
+the clip returns to black:
+
+    LET 241 255
+    EXTERN 0 40        ; black now - no wait needed
+    GFX 1 13           ; play video 1
+    LET 241 0          ; back to a timed fade
+    EXTERN 0 41        ; fade up to the picture
+    EXTERN 0 43
+
+Reset flag 241 before `EXTERN 0 41`, or the fade-in is instant too. If
+the picture is different after the video, use the buffered sequence
+below instead of the plain `EXTERN 0 41`; the screen is already black,
+so nothing shows.
 
 ## Waiting for a fade
 

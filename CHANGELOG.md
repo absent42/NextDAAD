@@ -2,6 +2,16 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.11.2 unreleased
+
+- externs/fade: flag 241 = 255 makes `EXTERN c 40` and `EXTERN 0 41`
+  instant - the end state is written before the call returns, flag 240
+  is set and no steps run. An instant fade-out before a video clip
+  means the clip's exit restores the solid colour, so the picture can
+  fade up from black without a timed fade-out first. Timed fades now
+  top out at 254 frames per step. README gains a Flags section and an
+  instant-fade section; fade, all and kit-root GAME.XBN rebuilt.
+
 ## v0.11.1 29/09/2026
 
 - kit: build orchestration moved from the .BAT files into

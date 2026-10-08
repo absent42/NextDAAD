@@ -3,6 +3,18 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.11.2 - unreleased
+
+- **Instant fades, for fading up after a video.** In `externs/fade`,
+  setting flag 241 to 255 makes `EXTERN c 40` and `EXTERN 0 41` take
+  effect at once: the colour or the picture is on screen before the
+  call returns, and flag 240 already reads 1. Fade to black instantly
+  before playing a video clip and the clip returns to a black screen,
+  ready for `EXTERN 0 41` to fade the picture up - no visible fade-out
+  first. Set flag 241 back to a timed value before the fade-in. Timed
+  fades now go up to 254 frames per step. The extern's `README.md`
+  now also explains both of its flags.
+
 ## 0.11.1 - 29 September 2026
 
 - **The Linux authoring kit** It builds the same bytes as the
