@@ -228,7 +228,7 @@ condition-extern a fallthrough entry that handles the "no". With no
 | 4 | built in | `EXTERN n 4` switches to part n of a multi-part game |
 | 20-23 | playername | 20 capture the last typed line (condition), 21 print it, 22 "no name yet" (condition), 23 compare with message p |
 | 30-39 | ticker | Scrolling one-line message strip: 30 arm, 31 stop, 32-38 row/col/width/ink/paper/mode/speed, 39 type message n at the cursor |
-| 40-43 | fade | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade to finish |
+| 40-43 | fade | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade to finish; flag 241 = frames per step, 255 = instant (e.g. black before a video, fade up after) |
 | 50-53 | hints | `EXTERN n 50` prints topic n's next hint from `HINTS.TXT` (condition, fails when none left); 51 level count; `0 52` preflight; `0 53` reset |
 | 60-62 | clock | In-game clock in flags 224 h, 225 m: 60 start, 61 stop, 62 advance p minutes |
 | 63-65 | timer | Countdowns: 63 arm, 64 stop, `d 65` set an in-game-minute deadline |

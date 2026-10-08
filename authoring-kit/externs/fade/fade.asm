@@ -16,9 +16,14 @@
 ;   EXTERN 0 43        block until the running fade finishes
 ;   flag 241           frames per fade step, 0 = default (6, so a fade
 ;                      is 8 steps x 6 frames, roughly one second) -
-;                      the pass-parameters-via-flags idiom
+;                      the pass-parameters-via-flags idiom. 255 =
+;                      instant: fn 40/41 reach the end state before
+;                      returning, with no steps. Used before a video
+;                      clip, so the clip's exit restores the solid
+;                      colour and fn 41 can fade up from it
 ;   flag 240           completion flag: cleared when a fade starts,
-;                      set to 1 by the interrupt hook when it finishes.
+;                      set to 1 by the interrupt hook when it finishes
+;                      (by the call itself for an instant fade).
 ;                      fn 43 waits on it for you; poll it yourself only
 ;                      when the fade should overlap other work
 ;
@@ -160,6 +165,8 @@
 FLAG_DONE       equ 240          ; 1 = fade complete, 0 = running
 FLAG_SPEED      equ 241          ; frames per step, 0 = DEF_SPEED
 DEF_SPEED       equ 6
+INSTANT         equ 255          ; flag 241 value: jump to the end state
+                                 ; inside the EXTERN call, no steps
 STEPS           equ 8            ; 3-bit channels: 8 steps is full
                                  ; resolution, more would repeat frames
 
@@ -249,7 +256,7 @@ ext:
     cp 41
     jr z, .fadein
     cp 42
-    jr z, .resnap
+    jp z, .resnap                ; jp: beyond jr range of the dispatch
     cp 43
     jp z, wait_fade
 .notmine:
@@ -290,6 +297,8 @@ ext:
     ld (dir), a                  ; 1 = stepping UP towards step 8
 .go:
     ld a, (XBN_FLAGS+FLAG_SPEED)
+    cp INSTANT
+    jr z, .instant
     or a
     jr nz, .spdok
     ld a, DEF_SPEED
@@ -300,6 +309,31 @@ ext:
     ld (XBN_FLAGS+FLAG_DONE), a
     inc a
     ld (active), a               ; arm LAST - int reads this first
+    ret
+.instant:
+    ; flag 241 = INSTANT: stream the end table from the foreground and
+    ; finish here. active stays 0, so the hook is idle throughout. An
+    ; instant fade out puts the solid colour on screen before a following
+    ; video captures the picture, so the video's exit restores it solid.
+    ld a, (dir)
+    or a
+    jr z, .instin
+    ld a, STEPS
+    ld (step), a
+    call apply                   ; solid end, 8-bit as in int
+    jr .instdone
+.instin:
+    xor a
+    ld (step), a
+    call apply9                  ; A = 0: the snapshot, exact
+    xor a
+    ld (valid), a                ; forget the snapshot, as int does
+    inc a
+    call xbn_pal_release
+.instdone:
+    ld a, 1
+    ld (XBN_FLAGS+FLAG_DONE), a
+    or a                         ; CF clear: an action
     ret
 .refused:
     ; Palette held by another module. Still an ACTION, and flag 240 must
