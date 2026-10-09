@@ -3354,10 +3354,6 @@ gfx_pos_clip:
     scf
     ret
 
-; DISPLAY 0 on a positioned entry, or on a plain one under an armed
-; override: draw only the rectangle into the front and back surfaces, no
-; flip, palette range only. Buffer mode writes the back surface and bank 2
-; and arms the GFX 0/2 reveal. Consumes the override. Corrupts everything.
 gfx_pos_skip:                    ; buffer mode cannot switch the surface mode
  IFDEF DEBUG
     ld b, 29
@@ -3372,6 +3368,9 @@ gfx_pos_consume:
  IFDEF DEBUG
 msgPosMode: db "POS mode", 0
  ENDIF
+; DISPLAY 0, positioned or override: draw the rectangle into front and back
+; (buffer mode: back + bank 2, arm the GFX 0/2 reveal), no flip, palette
+; range only. Consumes the override. Corrupts everything.
 gfx_blit_pos:
     ld a, (stagedMode)
     ld hl, l2Mode
@@ -3381,6 +3380,7 @@ gfx_blit_pos:
     ld a, (gfxDrawTarget)
     or a
     jr nz, gfx_pos_skip
+    ld (gfxRevealPend), a        ; A = 0: the switch discards a pending reveal
     ld (hl), b                   ; l2Mode first: it sizes both clears
     call l2_clear
     call l2_clear_back
@@ -3462,10 +3462,11 @@ gfx_frame_gate:
     jr nz, .w
     ret
 
-; A = first 8K page of the target surface. Rewind the source to the
+; A = first 16K bank of the target surface. Rewind the source to the
 ; entry's pixel rows, discard gfxRectSrcY rows, then write gfxRectH rows
 ; (0 = 256) from row gfxRectY. Corrupts everything.
 gfx_pos_rows:
+    add a, a                     ; bank -> first 8K page
     ld (gfxPosSurf), a
     call gfx_pal_rewind          ; source = run start, HL = DATA_WINDOW
     inc h
@@ -3481,10 +3482,12 @@ gfx_pos_rows:
     pop bc
     djnz .skip
 .top:
-    ld a, (gfxRectY)
-    ld (gfxRowY), a              ; 0..255 after the clip
     ld a, (gfxRectH)
-    ld (gfxRowsLeft), a
+    ld h, a
+    ld a, (gfxRectY)             ; 0..255 after the clip
+    ld l, a
+    ld (gfxRowY), hl             ; and gfxRowsLeft
+    ASSERT gfxRowsLeft == gfxRowY+1
 .row:
     call gfx_row_fetch
     ld a, (l2Mode)
@@ -3497,7 +3500,7 @@ gfx_pos_rows:
 .next:
     ld hl, gfxRowY
     inc (hl)
-    ld hl, gfxRowsLeft
+    inc hl                       ; gfxRowsLeft
     dec (hl)
     jr nz, .row
     ret
@@ -3506,13 +3509,14 @@ gfx_pos_rows:
 ; X + W <= 256, so a row never crosses a page. Corrupts AF, BC, DE, HL.
 gfx_pos_row_write256:
     ld a, (gfxRowY)
+    ld b, a
     ld e, a
     ld d, 8
     mul d, e                     ; D = y >> 5
     ld a, (gfxPosSurf)
     add a, d
     call data_map_page
-    ld a, (gfxRowY)
+    ld a, b
     and 31
     or high DATA_WINDOW
     ld d, a
