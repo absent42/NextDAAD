@@ -2570,16 +2570,18 @@ gfx_dsp_fail:
     ld (palLock), a
     ld (palBusy), a
     ld (gfxPalBank2Only), a
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST    ; a half pass leaves the edit on bank 2
     call gfx_close_handle
     call data_restore
     scf
     ret
 
-; gfx_direct_stream for NXP (rows needed twice, no seek back): resolve
-; from a header row image, palette range into hidden bank 2 (R20), then
-; one read per row written front then back - may tear for one frame.
-; Out: CF clear = drawn, skipped or empty; CF set = failed. Handle closed
-; on every path. Corrupts everything.
+; gfx_direct_stream for NXP (rows needed twice, no seek back): resolve from
+; a header row image, palette range as gfx_blit_pos (screen: both banks live
+; at the reads), then one read per row written front then back - the front
+; surface paints progressively while rows stream. Out: CF clear = drawn,
+; skipped or empty; CF set = failed. Handle closed on every path.
+; Corrupts everything.
 gfx_direct_stream_pos:
     ld a, (gfxMode)
     call gfx_pos_mode
@@ -2592,8 +2594,9 @@ gfx_direct_stream_pos:
     call gfx_pos_resolve_hl
     jr c, gfx_dsp_consume        ; empty rectangle
     call data_save
+    ld a, (gfxDrawTarget)
+    ld (gfxPalBank2Only), a      ; buffer mode: hidden bank only
     ld a, 1
-    ld (gfxPalBank2Only), a
     ld (palBusy), a
     ld d, 0                      ; halves: entries 0-127, then 128-255
 .pal:
@@ -2630,13 +2633,11 @@ gfx_direct_stream_pos:
     ld h, a
     ld (gfxRowY), hl             ; and gfxRowsLeft
     ASSERT gfxRowsLeft == gfxRowY+1
-    call .read                   ; first row before anything is shown
+    call .read                   ; first row read before the gate
     jr c, gfx_dsp_fail
     ld a, (gfxDrawTarget)
     or a
-    jr nz, .row
-    call gfx_frame_gate
-    nextreg NR_PAL_CTRL, PAL_L2_SECOND   ; show the new range
+    call z, gfx_frame_gate
 .row:
     ld a, (gfxDrawTarget)
     or a
@@ -2646,24 +2647,15 @@ gfx_direct_stream_pos:
 .back:
     ld a, (l2BackBank)
     call .write
-    or a                         ; CF clear for the last-row exit
     ld hl, gfxRowY
     inc (hl)
     inc hl                       ; gfxRowsLeft
     dec (hl)
-    jr z, .end
+    jr z, .done
     call .read
     jr nc, .row
-.end:                            ; CF = a row read failed
-    push af
-    ld a, (gfxDrawTarget)
-    or a
-    jr nz, .nomirror
-    call l2_pal_mirror21         ; bank 2 is displayed: refill bank 1
-    nextreg NR_PAL_CTRL, PAL_L2_FIRST
-.nomirror:
-    pop af
-    jp c, gfx_dsp_fail
+    jp gfx_dsp_fail
+.done:
     call gfx_close_handle
     call data_restore
     xor a
