@@ -860,6 +860,8 @@ h_display:
     or a
     jp z, gfx_blit
     call l2_clear_back
+    xor a
+    ld (gfxPosOvr), a           ; DISPLAY n cancels a position override
     ld a, (gfxDrawTarget)
     or a
     ret nz                      ; buffer mode: the clear is a buffer
@@ -925,8 +927,10 @@ h_display:
 ;       documented at each sub above.
 ;   11/12 = colour cycling start/stop (.cycstart/.cycstop below, tick
 ;       in sprites.asm)
-;   7/8/15 = no NextDAAD analogue (text-buffer split, split screen);
-;       documented no-op; 27 and up = unknown
+;   7 = clear both surfaces (.clearboth); 8 = X override B*8 px,
+;       15 = Y override B px: arm a position for the next DISPLAY 0
+;       (.posx/.posy); 27 = cancel it and zero both axes (.poscancel);
+;       DISPLAY n (n != 0) also cancels. 26 and 28 up = unknown
 ;   16 = install font B (0 = base - the embedded table, then FONT.CHR
 ;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
 ;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
@@ -983,14 +987,14 @@ h_gfx:
     ld h, (hl)
     ld l, a
     jp (hl)
-.tab:                           ; sub 0-26; holes 7, 8, 15 -> .unk
+.tab:                           ; sub 0-27; slots 7, 8, 15, 27 are the position subs
     dw .backfront, .frontback, .swap, .toscreen, .tobuffer
-    dw l2_clear, l2_clear_back, .unk, .unk, .palset, .palget
+    dw l2_clear, l2_clear_back, .clearboth, .posx, .palset, .palget
     dw .cycstart, .cycstop
     ASSERT $ - .tab == 2*GFX_SUB_VID_ONCE
     dw .vidonce
     ASSERT $ - .tab == 2*GFX_SUB_VID_LOOP
-    dw .vidloop, .unk
+    dw .vidloop, .posy
     ASSERT $ - .tab == 2*GFX_SUB_FONT
     dw .font
     ASSERT $ - .tab == 2*GFX_SUB_LAYER
@@ -1005,13 +1009,14 @@ h_gfx:
     dw .sprstop
     ASSERT $ - .tab == 2*GFX_SUB_CUR_GLYPH
     dw .curglyph, .curblink, .curink, .curpaper, .curreset
-    dw .unk
+    dw .poscancel
     ASSERT $ - .tab == 56
     ; Offset ASSERTs miss a swapped label: read every slot back.
     ASSERT {.tab+2*0} == .backfront && {.tab+2*1} == .frontback && {.tab+2*2} == .swap
     ASSERT {.tab+2*3} == .toscreen && {.tab+2*4} == .tobuffer
     ASSERT {.tab+2*5} == l2_clear && {.tab+2*6} == l2_clear_back
-    ASSERT {.tab+2*7} == .unk && {.tab+2*8} == .unk && {.tab+2*15} == .unk
+    ASSERT {.tab+2*GFX_SUB_CLEAR_BOTH} == .clearboth && {.tab+2*GFX_SUB_POS_X} == .posx
+    ASSERT {.tab+2*GFX_SUB_POS_Y} == .posy
     ASSERT {.tab+2*9} == .palset && {.tab+2*10} == .palget
     ASSERT {.tab+2*11} == .cycstart && {.tab+2*12} == .cycstop
     ASSERT {.tab+2*GFX_SUB_VID_ONCE} == .vidonce && {.tab+2*GFX_SUB_VID_LOOP} == .vidloop
@@ -1023,7 +1028,32 @@ h_gfx:
     ASSERT {.tab+2*GFX_SUB_CUR_GLYPH} == .curglyph && {.tab+2*GFX_SUB_CUR_BLINK} == .curblink
     ASSERT {.tab+2*GFX_SUB_CUR_INK} == .curink && {.tab+2*GFX_SUB_CUR_PAPER} == .curpaper
     ASSERT {.tab+2*GFX_SUB_CUR_RESET} == .curreset
-    ASSERT {.tab+2*27} == .unk
+    ASSERT {.tab+2*GFX_SUB_POS_CANCEL} == .poscancel
+.clearboth:                      ; sub 7: clear front and back
+    call l2_clear
+    jp l2_clear_back
+.posx:                           ; sub 8: X = B*8 pixels, arm override
+    ld l, b
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    ld (gfxPosOvrX), hl
+    jr .arm
+.posy:                           ; sub 15: Y = B pixels, arm override
+    ld a, b
+    ld (gfxPosOvrY), a
+.arm:
+    ld a, 1
+    ld (gfxPosOvr), a
+    ret
+.poscancel:                      ; sub 27: disarm, axes back to 0
+    xor a
+    ld (gfxPosOvr), a
+    ld (gfxPosOvrX), a
+    ld (gfxPosOvrX+1), a
+    ld (gfxPosOvrY), a
+    ret
 .unk:
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
