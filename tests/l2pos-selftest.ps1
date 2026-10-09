@@ -53,4 +53,70 @@ Assert-Eq $h[5] 1 'hdr flags floating'; Assert-Eq $h[9] 64 'hdr W 320 lo'; Asser
 Assert-Throws { New-NxpHeader (Read-PosSidecar "$work/a.txt") 0 256 192 } 'does not fit' 'hdr: 8,16 + 256x192 off screen'
 Assert-Throws { New-NxpHeader (Read-PosSidecar "$work/a.txt") 0 64 200 } 'does not fit' 'hdr: 200 rows in 256 mode'
 
+# folded review cases
+Set-Content "$work/f.txt" "at=300,0"
+$h = New-NxpHeader (Read-PosSidecar "$work/f.txt") 1 20 10
+Assert-Eq $h[6] 44 'f: X 300 lo'; Assert-Eq $h[7] 1 'f: X 300 hi'
+Set-Content "$work/g.txt" "at=320,0"
+Assert-Throws { Read-PosSidecar "$work/g.txt" } 'X must be' 'g: X > 319'
+Set-Content "$work/g.txt" "at=0,256"
+Assert-Throws { Read-PosSidecar "$work/g.txt" } 'Y 0-255' 'g: Y > 255'
+Set-Content "$work/g.txt" "at=0,0`nmode=512"
+Assert-Throws { Read-PosSidecar "$work/g.txt" } 'mode=' 'g: bad mode'
+Set-Content "$work/g.txt" "at=0,0`npalete=none"
+Assert-Throws { Read-PosSidecar "$work/g.txt" } "unknown key 'palete'" 'g: unknown key'
+Set-Content "$work/g.txt" "at=0,99999999999999999999"
+Assert-Throws { Read-PosSidecar "$work/g.txt" } 'at=' 'g: huge number'
+Set-Content "$work/g.txt" "at=0,0`npalette=0-99999999999999999999"
+Assert-Throws { Read-PosSidecar "$work/g.txt" } 'palette=' 'g: huge palette'
+
+# ---- Part 2: end-to-end staging through assets.ps1
+& python "$root/tests/art/mkl2pos.py" "$work/kit/IMAGES" --png
+if ($LASTEXITCODE -ne 0) { throw 'l2pos-selftest: mkl2pos.py --png failed' }
+function Stage([string]$compress) {
+    Push-Location "$work/kit"
+    try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress $compress | Out-Null; return $LASTEXITCODE }
+    finally { Pop-Location }
+}
+Assert-Eq (Stage '0') 0 'stage raw exit code'
+Assert-Eq (Test-Path "$work/kit/RELEASE/001.NXI") $true '001 plain stays NXI'
+Assert-Eq (Test-Path "$work/kit/RELEASE/002.NXP") $true '002 positioned -> NXP'
+$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/002.NXP")
+Assert-Eq $b.Length (16 + 512 + 256 * 96) '002 length'
+Assert-Eq ([Text.Encoding]::ASCII.GetString($b, 0, 3)) 'NXP' '002 magic'
+Assert-Eq $b[4] 0 '002 mode inferred 256'; Assert-Eq $b[12] 0 '002 pal first'; Assert-Eq $b[13] 100 '002 pal last'
+$nxi = [IO.File]::ReadAllBytes("$work/kit/RELEASE/001.NXI")
+Assert-Eq $b[16] $nxi[0] '002 palette byte 0 follows the header'
+$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/005.NXP")
+Assert-Eq $b[5] 1 '005 floating flag'; Assert-Eq $b[9] 64 '005 W'; Assert-Eq $b[11] 32 '005 H'; Assert-Eq $b[12] 1 '005 none first'; Assert-Eq $b[13] 0 '005 none last'
+$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/006.NXP")
+Assert-Eq $b[6] 8 '006 X'; Assert-Eq $b[8] 160 '006 Y'; Assert-Eq $b[9] 32 '006 W'
+# compressed: header stays raw, payload is ZX0
+Assert-Eq (Stage '1') 0 'stage zx0 exit code'
+Assert-Eq (Test-Path "$work/kit/RELEASE/002.NXP.ZX0") $true '002 zx0 name'
+Assert-Eq (Test-Path "$work/kit/RELEASE/002.NXP") $false '002 raw removed as orphan'
+$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/002.NXP.ZX0")
+Assert-Eq ([Text.Encoding]::ASCII.GetString($b, 0, 3)) 'NXP' '002.zx0 header raw'
+Assert-Eq ($b.Length -lt (16 + 512 + 256 * 96)) $true '002.zx0 smaller than raw'
+# ready-made NXP staged as-is; bad header refused
+Stage '0' | Out-Null
+Copy-Item "$work/kit/RELEASE/006.NXP" "$work/kit/IMAGES/007.NXP"
+Assert-Eq (Stage '0') 0 'ready-made stage'
+Assert-Eq (Test-Path "$work/kit/RELEASE/007.NXP") $true '007 ready-made staged'
+$bad = [IO.File]::ReadAllBytes("$work/kit/IMAGES/007.NXP"); $bad[3] = 2
+[IO.File]::WriteAllBytes("$work/kit/IMAGES/008.NXP", $bad)
+Assert-Eq (Stage '0') 1 'bad version refused'
+Remove-Item "$work/kit/IMAGES/008.NXP"
+$bad = [IO.File]::ReadAllBytes("$work/kit/IMAGES/007.NXP"); $bad[4] = 1
+[IO.File]::WriteAllBytes("$work/kit/IMAGES/008.NXP", $bad)
+Assert-Eq (Stage '0') 1 'mode conflict with the 256-wide set refused'
+Remove-Item "$work/kit/IMAGES/008.NXP"
+# stray picture-number sidecar without a PNG fails; a notes file is ignored
+Set-Content "$work/kit/IMAGES/009.txt" "palette=0-5"
+Assert-Eq (Stage '0') 1 'sidecar without PNG refused'
+Remove-Item "$work/kit/IMAGES/009.txt"
+Set-Content "$work/kit/IMAGES/notes.txt" "author notes"
+Assert-Eq (Stage '0') 0 'notes.txt ignored'
+Remove-Item "$work/kit/IMAGES/notes.txt"
+
 "l2pos-selftest: $checks checks passed"
