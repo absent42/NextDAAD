@@ -468,7 +468,7 @@ function Invoke-Pictures {
     # IMAGES\NNN.png of the same number wins.
     if ($hasImages) {
         $done = @{}
-        foreach ($ext in 'NXP.ZX0', 'NPZ', 'NXP', 'NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI') {
+        foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI', 'NXP.ZX0', 'NPZ', 'NXP') {
             foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) {
                 $rmNum = $f.Name.Split('.')[0]
                 if ($rmNum -notmatch '^[0-9]{1,3}$') {

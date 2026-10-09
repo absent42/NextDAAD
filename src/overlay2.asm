@@ -4089,17 +4089,18 @@ gfx_row_scatter320:
 ; gfx_depack). Per shape the ZX0 variants probe before raw so
 ; compressed art wins, the Gfx2Next-emitted double extension before
 ; its 8.3 synonym (kept for plain-FAT/no-LFN setups).
-; Mode byte 2 = NXP: mode and width come from the 16-byte header.
+; Mode byte 2 = NXP: mode and width come from the 16-byte header. NXP
+; rows come last so a plain cache miss pays no extra probes.
 gfxExtTab:
-    db "NXP.ZX0",          2, 1
-    db "NPZ", 0, 0, 0, 0,  2, 1
-    db "NXP", 0, 0, 0, 0,  2, 0
     db "NX2.ZX0",          1, 1
     db "N2Z", 0, 0, 0, 0,  1, 1
     db "NX2", 0, 0, 0, 0,  1, 0
     db "NXI.ZX0",          0, 1
     db "NXZ", 0, 0, 0, 0,  0, 1
     db "NXI", 0, 0, 0, 0,  0, 0
+    db "NXP.ZX0",          2, 1
+    db "NPZ", 0, 0, 0, 0,  2, 1
+    db "NXP", 0, 0, 0, 0,  2, 0
 gfxExtEnd:
 GFX_EXT_NAME equ 7
 GFX_EXT_ROW  equ GFX_EXT_NAME+2
