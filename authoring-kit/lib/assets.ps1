@@ -263,7 +263,7 @@ function Convert-Positioned([System.IO.FileInfo]$Src, [string]$Txt, [string]$Nam
     return $true
 }
 
-# Ready-made NXP: header sanity and mode against the game's mode.
+# Ready-made NXP: header sanity; returns the mode byte. Mode -1 skips the game-mode comparison.
 function Test-NxpReadyMade([string]$Path, [int]$Mode, [bool]$Compressed) {
     $b = New-Object byte[] 16
     $fs = [System.IO.File]::OpenRead($Path)
@@ -272,9 +272,10 @@ function Test-NxpReadyMade([string]$Path, [int]$Mode, [bool]$Compressed) {
     if ($n -lt 16 -or $b[0] -ne 0x4E -or $b[1] -ne 0x58 -or $b[2] -ne 0x50) { Fail "IMAGES\$name - not an NXP file (no NXP magic)" }
     if ($b[3] -ne 1) { Fail "IMAGES\$name - NXP version $($b[3]) is not 1" }
     if ($b[4] -gt 1) { Fail "IMAGES\$name - NXP mode byte $($b[4]) is not 0 or 1" }
-    if ($b[4] -ne $Mode) { Fail "IMAGES\$name - NXP mode $(if ($b[4]) {320} else {256}) but the game is $(if ($Mode) {320} else {256})-mode" }
+    if ($Mode -ge 0 -and $b[4] -ne $Mode) { Fail "IMAGES\$name - NXP mode $(if ($b[4]) {320} else {256}) but the game is $(if ($Mode) {320} else {256})-mode" }
     $w = [int]$b[9] -bor ([int]$b[10] -shl 8); $ht = [int]$b[11]; if ($ht -eq 0) { $ht = 256 }
     if (-not $Compressed -and $len -ne (16 + 512 + $w * $ht)) { Fail "IMAGES\$name - $len bytes, header says $(16 + 512 + $w * $ht)" }
+    return [int]$b[4]
 }
 
 # Game-wide Layer 2 mode: 1 = 320x256, 0 = 256x192. First speaker wins.
@@ -301,42 +302,43 @@ function Invoke-Pictures {
         }
         $script:picSig = Get-Sig @($script:gfxExe, $PSCommandPath)
 
-        # Positioned pictures: NNN.txt beside NNN.png (Read-PosSidecar).
-        # Mode: 320-wide plain art or title => 1; 256-wide => 0; else
-        # sidecar mode= keys; else 256. Conflicts fail naming the file.
+        # Positioned pictures: NNN.txt beside NNN.png (Read-PosSidecar) or a
+        # ready-made NNN.NXP. Only such a game decides one Layer 2 mode; the
+        # voters are plain location art, sidecar mode= keys and NXP mode
+        # bytes. The title does not vote. No vote => 256.
         $script:gameMode = $null; $script:modeFrom = ''
         $posPngs = @{}
         foreach ($f in Get-KitFiles $images 'png') {
             if ($f.Name -eq 'DAAD.png' -or $pointers -contains $f.Name) { continue }
             $txt = Join-Path $images ($f.BaseName + '.txt')
-            if (Test-Path -LiteralPath $txt -PathType Leaf) { $posPngs[$f.Name] = $txt; continue }
-            $pw = Get-PngWidth $f.FullName
-            if ($pw -eq 320) { Set-GameMode 1 $f.Name } elseif ($pw -eq 256) { Set-GameMode 0 $f.Name }
+            if (Test-Path -LiteralPath $txt -PathType Leaf) { $posPngs[$f.Name] = $txt }
         }
-        $titlePng = Join-Path $images 'DAAD.png'
-        if (Test-Path -LiteralPath $titlePng -PathType Leaf) {
-            $pw = Get-PngWidth $titlePng
-            if ($pw -eq 320) { Set-GameMode 1 'DAAD.png' } elseif ($pw -eq 256) { Set-GameMode 0 'DAAD.png' }
+        $nxpFiles = @()
+        foreach ($ext in 'NXP.ZX0', 'NPZ', 'NXP') {
+            foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { $nxpFiles += , @($f, ($ext -ne 'NXP')) }
         }
-        if (-not (Test-Path -LiteralPath $titlePng -PathType Leaf)) {
-            foreach ($t in 'DAAD.NX2.ZX0', 'DAAD.N2Z', 'DAAD.NX2', 'DAAD.NXI.ZX0', 'DAAD.NXZ', 'DAAD.NXI') {
-                if (Test-Path -LiteralPath (Join-Path $root $t) -PathType Leaf) { Set-GameMode $(if ($t -like '*NX2*' -or $t -like '*N2Z') {1} else {0}) $t; break }
+        if ($posPngs.Count -gt 0 -or $nxpFiles.Count -gt 0) {
+            foreach ($f in Get-KitFiles $images 'png') {
+                if ($f.Name -eq 'DAAD.png' -or $pointers -contains $f.Name -or $posPngs.ContainsKey($f.Name)) { continue }
+                $pw = Get-PngWidth $f.FullName
+                if ($pw -eq 320) { Set-GameMode 1 $f.Name } elseif ($pw -eq 256) { Set-GameMode 0 $f.Name }
             }
-        }
-        foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2') { foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { Set-GameMode 1 $f.Name } }
-        foreach ($ext in 'NXI.ZX0', 'NXZ', 'NXI') { foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { Set-GameMode 0 $f.Name } }
-        foreach ($png in $posPngs.Keys) {
-            $sc = Read-PosSidecar $posPngs[$png]
-            if ($null -ne $sc.Mode) { Set-GameMode $(if ($sc.Mode -eq 320) {1} else {0}) $png }
-        }
-        # A picture-number sidecar (digit run in the name) needs its PNG.
-        foreach ($t in Get-KitFiles $images 'txt') {
-            if ($t.BaseName -notmatch '\d') { continue }
-            if (-not (Test-Path -LiteralPath (Join-Path $images ($t.BaseName + '.png')) -PathType Leaf)) {
-                Fail "IMAGES\$($t.Name) has no $($t.BaseName).png beside it - a picture sidecar needs its PNG"
+            foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2') { foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { Set-GameMode 1 $f.Name } }
+            foreach ($ext in 'NXI.ZX0', 'NXZ', 'NXI') { foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { Set-GameMode 0 $f.Name } }
+            foreach ($png in $posPngs.Keys) {
+                $sc = Read-PosSidecar $posPngs[$png]
+                if ($null -ne $sc.Mode) { Set-GameMode $(if ($sc.Mode -eq 320) {1} else {0}) $png }
             }
+            foreach ($nf in $nxpFiles) { Set-GameMode (Test-NxpReadyMade $nf[0].FullName -1 $nf[1]) $nf[0].Name }
+            # A picture-number sidecar (digit run in the name) needs its PNG.
+            foreach ($t in Get-KitFiles $images 'txt') {
+                if ($t.BaseName -notmatch '\d') { continue }
+                if (-not (Test-Path -LiteralPath (Join-Path $images ($t.BaseName + '.png')) -PathType Leaf)) {
+                    Fail "IMAGES\$($t.Name) has no $($t.BaseName).png beside it - a picture sidecar needs its PNG"
+                }
+            }
+            if ($null -eq $script:gameMode) { $script:gameMode = 0 }
         }
-        if ($null -eq $script:gameMode) { $script:gameMode = 0 }
 
         # Numbered art: the first digit run in the name is the picture number.
         $count = 0
@@ -477,7 +479,7 @@ function Invoke-Pictures {
                 $done[$num] = $true
                 if ($pngNums.ContainsKey($num)) { continue }
                 $name = "$num.$ext"
-                if ($ext -like 'NXP*' -or $ext -eq 'NPZ') { Test-NxpReadyMade $f.FullName $script:gameMode ($ext -ne 'NXP') }
+                if ($ext -like 'NXP*' -or $ext -eq 'NPZ') { [void](Test-NxpReadyMade $f.FullName $script:gameMode ($ext -ne 'NXP')) }
                 if (Copy-Staged $f.FullName $name) {
                     if ($ext -eq 'NX2' -or $ext -eq 'NXI') { Invoke-Palcheck (Join-Path $rel $name) }
                     Write-Host "  picture $($f.Name) -> RELEASE\$name (ready-made, staged as-is)"

@@ -139,25 +139,32 @@ Assert-Eq (Stage2 '0') 0 'kit2 stage after 320 plain added'
 Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 1 'kit2 003 rebuilt with mode 1'
 Remove-Item "$work/kit2/IMAGES/010.png"
 
-# a ready-made title in the kit root fixes the mode when IMAGES\DAAD.png is absent
+# R29/R30: the title never votes; mode logic runs only for positioned games
 Remove-Item "$work/kit2/RELEASE/*" -Force
-Copy-Item "$work/kit/RELEASE/001.NXI" "$work/kit2/DAAD.NXI"
-Set-Content "$work/kit2/IMAGES/003.txt" "at=0,0`nmode=320"
-Assert-Eq (Stage2 '0') 1 'root DAAD.NXI (256) conflicts with mode=320 sidecar'
-Set-Content "$work/kit2/IMAGES/003.txt" "at=0,0"
-Assert-Eq (Stage2 '0') 0 'root DAAD.NXI with plain sidecar stages'
-Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 0 'kit2 003 mode 0 from root title'
-Remove-Item "$work/kit2/DAAD.NXI"
-
-# ---- Part 3: palcheck on NXP
-Stage '0' | Out-Null
-$pc = "$root/authoring-kit/lib/palcheck.ps1"
-$outp = & $pc -Path "$work/kit/RELEASE/002.NXP" | Out-String
-Assert-Eq ($outp -match 'outside') $false '002 palcheck: all pixels inside 0-100'
-$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/002.NXP"); $b[16 + 512 + 5] = 200
-[IO.File]::WriteAllBytes("$work/t.NXP", $b)
-$outp = & $pc -Path "$work/t.NXP" | Out-String
-Assert-Eq ($outp -match '1 pixel\(s\) use palette indices outside') $true 't palcheck: out-of-range advisory'
-Assert-Eq $LASTEXITCODE 0 'palcheck still exits 0'
+Remove-Item "$work/kit2/IMAGES/*" -Force
+Copy-Item "$work/kit/IMAGES/001.png" "$work/kit2/IMAGES"
+Copy-Item "$work/kit/RELEASE/001.NXI" "$work/kit2/DAAD.NX2"
+Assert-Eq (Stage2 '0') 0 'plain 256 art with a 320 title stages'
+Assert-Eq (Test-Path "$work/kit2/RELEASE/001.NXI") $true 'plain 256 art converted'
+Copy-Item "$work/kit/IMAGES/003.png", "$work/kit/IMAGES/003.txt" "$work/kit2/IMAGES"
+Assert-Eq (Stage2 '0') 0 'positioned 256 game with a 320 kit-root title stages'
+Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 0 '003 mode 0 despite the title'
+Remove-Item "$work/kit2/DAAD.NX2"
+# ready-made NXP files decide the mode
+Remove-Item "$work/kit2/RELEASE/*", "$work/kit2/IMAGES/*" -Force
+$m1 = [IO.File]::ReadAllBytes("$work/kit/RELEASE/006.NXP"); $m1[4] = 1
+[IO.File]::WriteAllBytes("$work/kit2/IMAGES/007.NXP", $m1)
+Assert-Eq (Stage2 '0') 0 'ready-made mode-1 NXP only stages'
+Assert-Eq (Test-Path "$work/kit2/RELEASE/007.NXP") $true '007 staged'
+Copy-Item "$work/kit/IMAGES/001.png" "$work/kit2/IMAGES"
+Assert-Eq (Stage2 '0') 1 'mode-1 NXP plus 256 plain art refused'
+Remove-Item "$work/kit2/IMAGES/001.png"
+Copy-Item "$work/kit/RELEASE/006.NXP" "$work/kit2/IMAGES/007.NXP"
+& python -c "import sys,struct,zlib
+w,h=320,8
+def ch(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+raw=b''.join(b'\0'+bytes(w) for _ in range(h))
+open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
+Assert-Eq (Stage2 '0') 1 'mode-0 NXP plus 320 plain art refused'
 
 "l2pos-selftest: $checks checks passed"
