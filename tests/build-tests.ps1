@@ -4933,6 +4933,16 @@ if ($L2Pos -or $L2PosWide) {
                     $_.condacts[1].Condact -eq 'MES' -and $_.condacts[1].Param1 -eq $l2pMsg[[string]$st.text] })
         }
         if ($hit.Count -ne 1) { throw "l2pos: step $($st.id) has $($hit.Count) matching entries, expected 1 ($(if ($null -eq $st.fstep) { 'PRO 1' } else { "PRO 4, EQ 100 $($st.fstep)" }))" }
+        # Entry must end PLUS 100 1 / DONE (the ladder advance); step 1 in PRO 1 ends DONE.
+        $eb = [System.Collections.Generic.List[byte]]::new()
+        foreach ($c in $hit[0].condacts) {
+            $eb.Add([byte]([int]$c.Opcode -bor $(if ($c.Indirection1) { 0x80 } else { 0 })))
+            if ($c.NumParams -ge 1) { $eb.Add([byte]$c.Param1) }
+            if ($c.NumParams -ge 2) { $eb.Add([byte]$c.Param2) }
+        }
+        $tail = if ($null -eq $st.fstep) { @(22) } else { @(49, 100, 1, 22) }
+        $got = @($eb | Select-Object -Last $tail.Count)
+        if (($got -join ',') -ne ($tail -join ',')) { throw "l2pos: step $($st.id) entry ends $($got -join ' '), expected $($tail -join ' ') (PLUS 100 1 / DONE)" }
     }
     "l2pos: $(@($l2posWalk.steps).Count) walk steps match the compiled DDB (text, condacts, ladder position)"
 
@@ -4954,6 +4964,8 @@ if ($L2Pos -or $L2PosWide) {
             if ([Text.Encoding]::ASCII.GetString($b, 0, 3) -ne 'NXP') { throw "l2pos: $name magic is not NXP" }
             if ($b[3] -ne 1) { throw "l2pos: $name version is $($b[3]), expected 1" }
             if ($b[4] -ne $wantMode) { throw "l2pos: $name mode byte is $($b[4]), expected $wantMode" }
+            if ($b[5] -gt 1) { throw "l2pos: $name flags byte is $($b[5]), expected 0 or 1" }
+            if ($b[14] -ne 0 -or $b[15] -ne 0) { throw "l2pos: $name reserved bytes 14-15 are $($b[14]) $($b[15]), expected 0 0" }
             $w = $b[9] + 256 * $b[10]
             $h = if ($b[11] -eq 0) { 256 } else { $b[11] }
             if ($b.Length -ne 16 + 512 + $w * $h) { throw "l2pos: $name is $($b.Length) bytes, header says 16 + 512 + $w x $h = $(16 + 512 + $w * $h)" }
@@ -4968,12 +4980,16 @@ if ($L2Pos -or $L2PosWide) {
                 if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE on $name" }
             }
             else {
-                [System.IO.File]::WriteAllBytes($zx0Tmp, [byte[]]$b[16..($b.Length - 1)])
-                & $zx0 -f -q $zx0Tmp "$zx0Tmp.zx0" | Out-Null
-                if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE on $name" }
-                $z = [System.IO.File]::ReadAllBytes("$zx0Tmp.zx0")
-                [System.IO.File]::WriteAllBytes($out, [byte[]]($b[0..15] + $z))
-                Remove-Item $zx0Tmp, "$zx0Tmp.zx0" -Force
+                try {
+                    [System.IO.File]::WriteAllBytes($zx0Tmp, [byte[]]$b[16..($b.Length - 1)])
+                    & $zx0 -f -q $zx0Tmp "$zx0Tmp.zx0" | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE on $name" }
+                    $z = [System.IO.File]::ReadAllBytes("$zx0Tmp.zx0")
+                    [System.IO.File]::WriteAllBytes($out, [byte[]]($b[0..15] + $z))
+                }
+                finally {
+                    Remove-Item $zx0Tmp, "$zx0Tmp.zx0" -Force -ErrorAction SilentlyContinue
+                }
             }
             "staged $name -> sd\$legName\$name.ZX0  $((Get-Item $out).Length) bytes ($($b.Length) raw, $desc)"
         }

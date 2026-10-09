@@ -205,8 +205,10 @@ def check_step(z, step, artdir):
         front = z.read_memory(map_symbol("L2FRONTBANK"), 1)[0]
         got = read_surface(z, front, mode)
     finally:
-        z.cmd("set-memory-zone -1")
-        z.exit_cpu_step()
+        try:
+            z.cmd("set-memory-zone -1")
+        finally:
+            z.exit_cpu_step()
     if len(got) != len(want):
         print("step %s FAIL read %d bytes, expect file has %d" % (step["id"], len(got), len(want)))
         return False
