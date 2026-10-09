@@ -899,7 +899,7 @@ h_display:
 ; unknown-sub idiom (SP7 Task 4, overlay1.asm). Corrupts everything.
 h_gfx:
     ld a, c                     ; sub-command; B (P1) and C reach every sub
-    cp 27
+    cp GFX_SUB_COUNT
     jr nc, .unk
     add a, a
     ld hl, .tab
@@ -931,7 +931,8 @@ h_gfx:
     dw .sprstop
     ASSERT $ - .tab == 2*GFX_SUB_CUR_GLYPH
     dw .curglyph, .curblink, .curink, .curpaper, .curreset
-    ASSERT $ - .tab == 54
+    dw .unk
+    ASSERT $ - .tab == 56
     ; Offset ASSERTs miss a swapped label: read every slot back.
     ASSERT {.tab+2*0} == .backfront && {.tab+2*1} == .frontback && {.tab+2*2} == .swap
     ASSERT {.tab+2*3} == .toscreen && {.tab+2*4} == .tobuffer
@@ -948,6 +949,7 @@ h_gfx:
     ASSERT {.tab+2*GFX_SUB_CUR_GLYPH} == .curglyph && {.tab+2*GFX_SUB_CUR_BLINK} == .curblink
     ASSERT {.tab+2*GFX_SUB_CUR_INK} == .curink && {.tab+2*GFX_SUB_CUR_PAPER} == .curpaper
     ASSERT {.tab+2*GFX_SUB_CUR_RESET} == .curreset
+    ASSERT {.tab+2*27} == .unk
 .unk:
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
@@ -3257,6 +3259,23 @@ gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
                                  ; loads and blits never overlap
     ASSERT GFX_ZX0_CHUNK <= 320
     ASSERT (gfxRowBuf & 31) == 0
+
+; NXP positioned pictures state (overlay 2 page only)
+gfxHdrBuf:   ds NXP_HDR_LEN      ; NXP header as read from the file
+gfxPosTab:   ds GFX_CACHE_MAX*GFX_POS_SIZE  ; parallel to gfxCache
+    ASSERT GFX_CACHE_MAX*GFX_POS_SIZE == 192
+gfxPosOvr:   db 0                ; bit 0 = override armed
+gfxPosOvrX:  dw 0                ; override X in pixels (x*8)
+gfxPosOvrY:  db 0                ; override Y in pixels
+gfxRectX:    dw 0                ; rectangle from gfx_pos_resolve (signed)
+gfxRectY:    dw 0
+gfxRectW:    dw 0                ; visible width after clip
+gfxRectH:    db 0                ; visible rows after clip (0 = none)
+gfxRectSrcX: dw 0                ; source column skip (left clip)
+gfxRectSrcY: db 0                ; source rows to discard (top clip)
+gfxPosSurf:  db 0                ; 8K page of the surface being written
+gfxIsNxp:    db 0                ; 1 = opened chain row is NXP
+stagedPos:   db 0                ; 0 = plain staged picture, bit 7 = positioned
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the
 ; vendored dzx0 loop)
