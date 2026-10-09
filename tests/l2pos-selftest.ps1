@@ -72,11 +72,11 @@ Set-Content "$work/g.txt" "at=0,0`npalette=0-99999999999999999999"
 Assert-Throws { Read-PosSidecar "$work/g.txt" } 'palette=' 'g: huge palette'
 
 # ---- Part 2: end-to-end staging through assets.ps1
-& python "$root/tests/art/mkl2pos.py" "$work/kit/IMAGES" --png
+& python "$root/tests/art/mkl2pos.py" "$work/kit/IMAGES" --png *>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'l2pos-selftest: mkl2pos.py --png failed' }
 function Stage([string]$compress) {
     Push-Location "$work/kit"
-    try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress $compress | Out-Null; return $LASTEXITCODE }
+    try { & pwsh -NoProfile -File "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress $compress *>&1 | Out-Null; return $LASTEXITCODE }
     finally { Pop-Location }
 }
 Assert-Eq (Stage '0') 0 'stage raw exit code'
@@ -125,7 +125,7 @@ New-Item -ItemType Directory -Force "$work/kit2/IMAGES", "$work/kit2/RELEASE" | 
 Copy-Item "$work/kit/IMAGES/003.png", "$work/kit/IMAGES/003.txt" "$work/kit2/IMAGES"
 function Stage2([string]$compress) {
     Push-Location "$work/kit2"
-    try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress $compress | Out-Null; return $LASTEXITCODE }
+    try { & pwsh -NoProfile -File "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress $compress *>&1 | Out-Null; return $LASTEXITCODE }
     finally { Pop-Location }
 }
 Assert-Eq (Stage2 '0') 0 'kit2 stage 256 default'
@@ -148,5 +148,16 @@ Set-Content "$work/kit2/IMAGES/003.txt" "at=0,0"
 Assert-Eq (Stage2 '0') 0 'root DAAD.NXI with plain sidecar stages'
 Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 0 'kit2 003 mode 0 from root title'
 Remove-Item "$work/kit2/DAAD.NXI"
+
+# ---- Part 3: palcheck on NXP
+Stage '0' | Out-Null
+$pc = "$root/authoring-kit/lib/palcheck.ps1"
+$outp = & $pc -Path "$work/kit/RELEASE/002.NXP" | Out-String
+Assert-Eq ($outp -match 'outside') $false '002 palcheck: all pixels inside 0-100'
+$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/002.NXP"); $b[16 + 512 + 5] = 200
+[IO.File]::WriteAllBytes("$work/t.NXP", $b)
+$outp = & $pc -Path "$work/t.NXP" | Out-String
+Assert-Eq ($outp -match '1 pixel\(s\) use palette indices outside') $true 't palcheck: out-of-range advisory'
+Assert-Eq $LASTEXITCODE 0 'palcheck still exits 0'
 
 "l2pos-selftest: $checks checks passed"
