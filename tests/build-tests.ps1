@@ -983,7 +983,7 @@ function Assert-CursorStateWriters {
 function Assert-PaletteWriterCensus {
     # Every NR $41/$44 write site that can run while a cycle is armed must sit
     # inside a palLock bracket, or be the tick itself. Counts, comments
-    # stripped: overlay2 9 = the loaders, stamp, mirror and GFX 9's pair;
+    # stripped: overlay2 11 = the loaders, stamp, mirror, GFX 9's pair and gfx_pos_pal_half_run's pair;
     # sprites 8 = the two sprite block writers (4) + cyc_tick's own four (its
     # .wr loop and the last-entry pair); tilemap 2 = tm_pal_write9, boot-only;
     # tmpairs 4 = pair_alloc; video 4 = the pre-arm writer vid_pal_black
@@ -993,7 +993,7 @@ function Assert-PaletteWriterCensus {
     # question is answered.
     # DEBUG only: the console's txt_init reruns tm_pal_write9 unbracketed; a
     # wrong reserved pair at worst.
-    $want = @{ 'src\overlay2.asm' = 9; 'src\sprites.asm' = 8; 'src\tilemap.asm' = 2; 'src\tmpairs.asm' = 4; 'src\video.asm' = 4 }
+    $want = @{ 'src\overlay2.asm' = 11; 'src\sprites.asm' = 8; 'src\tilemap.asm' = 2; 'src\tmpairs.asm' = 4; 'src\video.asm' = 4 }
     foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
         $rel = 'src\' + $f.Name
         $t = (($f | Get-Content -Raw) -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n"
@@ -1003,7 +1003,7 @@ function Assert-PaletteWriterCensus {
             throw "$rel : $n NR `$41/`$44 write site(s), expected $w - a palette writer that can run while a colour cycle is armed must set palLock before its first NR `$43/`$40 write and clear it after its last NR `$44 write. Exempt: tilemap.asm's tm_pal_write9 (boot-only), video.asm's pre-arm writers (under the tick's vidPlaying test) and in-clip ops (under the hook suspend), and cyc_tick itself. Update Assert-PaletteWriterCensus's table only after deciding which"
         }
     }
-    "palette writer census: overlay2 9, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
+    "palette writer census: overlay2 11, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
 }
 
 function Assert-WidthSwitchKeepsStyle {

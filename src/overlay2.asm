@@ -337,6 +337,78 @@ l2_pal9_run:
     djnz .l9
     ret
 
+; Apply palette entries B..C (inclusive) from the 512-byte table at HL
+; into both Layer 2 banks. B > C applies nothing. Ends in the stamp.
+; Caller sets gfxPalBank2Only for bank 2 only, and clears it after.
+; Corrupts AF, BC, DE, HL.
+gfx_pos_pal_apply:
+    ld d, 0
+    push bc
+    call gfx_pos_pal_half_run    ; entries 0-127; HL advances 256
+    pop bc
+    ld d, 128
+    call gfx_pos_pal_half_run    ; entries 128-255
+    ; falls into gfx_pos_pal_finish
+
+; Stamp entry 255 in both banks, NR $43 back to the standing bank 1.
+gfx_pos_pal_finish:
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    call l2_pal9_stamp           ; bank 1; clears palLock
+    nextreg NR_PAL_CTRL, PAL_L2_EDIT_SECOND
+    call l2_pal9_stamp           ; bank 2
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    ret
+
+; Direct-stream form: HL -> 256-byte half (128 entries), D = index of its
+; first entry (0 or 128), B/C range. Caller ends with gfx_pos_pal_finish.
+gfx_pos_pal_half:
+    ; falls into gfx_pos_pal_half_run
+
+; HL -> entry D's two bytes; apply the 128 entries D..D+127 inside B..C.
+; Out: HL += 256, D += 128. Corrupts AF, E, HL, D. Preserves BC.
+gfx_pos_pal_half_run:
+    ld a, 1
+    ld (palLock), a
+    ld e, 128
+.e:
+    ld a, d
+    cp b
+    jr c, .next                  ; index < first
+    ld a, c
+    cp d
+    jr c, .next                  ; index > last
+    ld a, (gfxPalBank2Only)
+    or a
+    jr nz, .b2                   ; buffer mode: hidden bank only
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    ld a, d
+    nextreg NR_PAL_INDEX, a
+    call .pair                   ; bank 1 (live)
+.b2:
+    nextreg NR_PAL_CTRL, PAL_L2_EDIT_SECOND
+    ld a, d
+    nextreg NR_PAL_INDEX, a
+    call .pair                   ; bank 2 (hidden), same bytes
+.next:
+    inc hl
+    inc hl
+    inc d
+    dec e
+    jr nz, .e
+    ret
+.pair:                           ; write (HL),(HL+1) with the dodge; HL unchanged
+    ld a, (hl)
+    cp L2_TRANSP_COLOUR
+    jr nz, .w
+    ld a, L2_TRANSP_DODGE
+.w:
+    nextreg NR_PAL_VALUE9, a
+    inc hl
+    ld a, (hl)
+    dec hl
+    nextreg NR_PAL_VALUE9, a
+    ret
+
 l2Mode:     db 0                 ; last mode set by l2_mode_set
  IFDEF DEBUG
 l2PageCur:  db 0                 ; tc_gradient_256/320 page cursor
@@ -3448,6 +3520,7 @@ gfxRectSrcX: dw 0                ; source column skip (left clip)
 gfxRectSrcY: db 0                ; source rows to discard (top clip)
 gfxPosSurf:  db 0                ; 8K page of the surface being written
 gfxIsNxp:    db 0                ; 1 = opened chain row is NXP
+gfxPalBank2Only: db 0           ; nonzero = positioned palette to bank 2 only
 stagedPos:   db 0                ; 0 = plain staged picture, bit 7 = positioned
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the
