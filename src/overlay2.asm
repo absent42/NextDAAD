@@ -3131,6 +3131,229 @@ gfx_rows_blit:
     jr nz, .row
     ret
 
+; Staged picture's rectangle in Layer 2 pixels: header X/Y, floating
+; (window origin, size clamped to the window) or an armed override.
+; Uses l2Mode for origin and bounds. Out: CF = empty. Corrupts everything.
+gfx_pos_resolve:
+    ld a, (stagedEntry)
+    call gfx_pos_row             ; HL = row
+    ld a, (stagedPos)
+    or a
+    jp m, .nxp
+    ; plain: row holds only a zero flags byte; full picture size at 0,0
+    ld c, 0                      ; not floating
+    ld hl, 0
+    ld (gfxRectX), hl
+    ld (gfxRectY), hl
+    ld hl, 256
+    ld a, (stagedMode)
+    or a
+    jr z, .pw
+    ld hl, 320
+.pw:
+    ld (gfxRectW), hl
+    jr .size
+.nxp:
+    ld c, (hl)                   ; GFX_POS_FLAGS
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (gfxRectX), de
+    ld e, (hl)                   ; GFX_POS_Y
+    ld d, 0
+    inc hl
+    ld (gfxRectY), de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ld (gfxRectW), de
+.size:
+    ld a, (stagedHeight)
+    ld (gfxRectH), a             ; 0 = 256
+    ld a, (gfxPosOvr)
+    rrca
+    jr nc, .noovr
+    ; override replaces X and Y; no window clamp
+    ld hl, (gfxPosOvrX)
+    ld (gfxRectX), hl
+    ld a, (gfxPosOvrY)
+    ld l, a
+    ld h, 0
+    ld (gfxRectY), hl
+    jr gfx_pos_clip
+.noovr:
+    bit 0, c
+    jr z, gfx_pos_clip
+    ; floating: cell width in B survives every mul (mul writes DE only)
+    ld b, 4
+    ld a, (tmCols)
+    cp 80
+    jr z, .cw
+    ld b, 8
+.cw:
+    ld hl, (curWin)
+    ld d, (hl)                   ; WIN_X
+    ld e, b
+    mul d, e
+    ld (gfxRectX), de
+    inc hl
+    ld d, (hl)                   ; WIN_Y
+    ld e, 8
+    mul d, e
+    ld (gfxRectY), de
+    inc hl
+    ld d, (hl)                   ; WIN_W
+    ld e, b
+    mul d, e                     ; DE = window width px (4..320)
+    push hl
+    ld hl, (gfxRectW)
+    or a
+    sbc hl, de
+    jr c, .wok                   ; picture narrower than the window
+    ld (gfxRectW), de
+.wok:
+    pop hl
+    inc hl
+    ld d, (hl)                   ; WIN_H (1..32, WINSIZE min 1)
+    ld e, 8
+    mul d, e                     ; DE = window height px, 256 = D 1 E 0
+    ld a, (gfxRectH)
+    or a
+    jr z, .hclamp                ; 256-row picture: window is never taller
+    ld h, 0
+    ld l, a
+    or a
+    sbc hl, de
+    jr c, .hok                   ; picture shorter than the window
+.hclamp:
+    ld a, e                      ; window height; 256 stores 0 = 256
+    ld (gfxRectH), a
+.hok:
+    ; tilemap origin to Layer 2: mode 0 sits 32,32 inside the tilemap
+    ld a, (l2Mode)
+    or a
+    jr nz, gfx_pos_clip
+    ld hl, (gfxRectX)
+    ld de, -32
+    add hl, de
+    ld (gfxRectX), hl
+    ld hl, (gfxRectY)
+    add hl, de
+    ld (gfxRectY), hl
+    ; falls into gfx_pos_clip
+
+; Clip gfxRect (signed X/Y) to the l2Mode surface: a negative edge becomes
+; a source skip, an overhang shrinks the extent.
+; Out: CF = empty. Corrupts AF, BC, DE, HL.
+gfx_pos_clip:
+    xor a
+    ld (gfxRectSrcY), a
+    ld h, a
+    ld l, a
+    ld (gfxRectSrcX), hl
+    ; X left edge
+    ld hl, (gfxRectX)
+    bit 7, h
+    jr z, .xpos
+    ex de, hl
+    ld hl, 0
+    or a
+    sbc hl, de                   ; HL = -X = source columns to skip
+    ld (gfxRectSrcX), hl
+    ex de, hl
+    ld hl, (gfxRectW)
+    or a
+    sbc hl, de
+    jp c, .empty
+    jp z, .empty                 ; whole width left of the surface
+    ld (gfxRectW), hl
+    ld hl, 0
+    ld (gfxRectX), hl
+.xpos:
+    ; X right edge
+    ld de, 256
+    ld a, (l2Mode)
+    or a
+    jr z, .sw
+    ld de, 320
+.sw:
+    ld hl, (gfxRectX)
+    or a
+    sbc hl, de
+    jr nc, .empty                ; X >= surface width
+    ex de, hl
+    ld hl, 0
+    or a
+    sbc hl, de                   ; HL = room = SW - X
+    ld de, (gfxRectW)
+    or a
+    sbc hl, de
+    jr nc, .xok                  ; W <= room
+    add hl, de
+    ld (gfxRectW), hl
+.xok:
+    ; Y top edge
+    ld hl, (gfxRectY)
+    bit 7, h
+    jr z, .ypos
+    ex de, hl
+    ld hl, 0
+    or a
+    sbc hl, de                   ; HL = -Y = source rows to skip
+    ld a, h
+    or a
+    jr nz, .empty                ; skip >= 256 rows
+    ld a, l
+    ld (gfxRectSrcY), a
+    ld b, a
+    ld a, (gfxRectH)
+    or a
+    jr z, .ytop256               ; 256 rows outlast any skip <= 255
+    cp b
+    jr c, .empty                 ; skip > H
+    jr z, .empty                 ; skip = H
+.ytop256:
+    sub b                        ; H 0: 256 - skip wraps to the right byte
+    ld (gfxRectH), a
+    ld hl, 0
+    ld (gfxRectY), hl
+.ypos:
+    ; Y bottom edge
+    ld de, 192
+    ld a, (l2Mode)
+    or a
+    jr z, .sh
+    ld de, 256
+.sh:
+    ld hl, (gfxRectY)
+    or a
+    sbc hl, de
+    jr nc, .empty                ; Y >= surface height
+    ex de, hl
+    ld hl, 0
+    or a
+    sbc hl, de                   ; HL = room = SH - Y (1..256)
+    ld a, (gfxRectH)
+    or a
+    jr z, .hroom                 ; 256 rows: take the room
+    ld d, 0
+    ld e, a
+    or a
+    sbc hl, de
+    jr nc, .yok                  ; H <= room
+    add hl, de
+.hroom:
+    ld a, l                      ; room; 256 stores 0 = 256
+    ld (gfxRectH), a
+.yok:
+    or a
+    ret
+.empty:
+    scf
+    ret
+
 ; Draw the staged cache entry, double-buffered: everything renders to
 ; the BACK surface (invisible - the old picture stays intact on the
 ; front throughout), then the surfaces flip. Sequence: stage the mode
@@ -3517,7 +3740,7 @@ gfxPosOvrY:  db 0                ; override Y in pixels
 gfxRectX:    dw 0                ; rectangle from gfx_pos_resolve (signed)
 gfxRectY:    dw 0
 gfxRectW:    dw 0                ; visible width after clip
-gfxRectH:    db 0                ; visible rows after clip (0 = none)
+gfxRectH:    db 0                ; visible rows after clip (0 = 256)
 gfxRectSrcX: dw 0                ; source column skip (left clip)
 gfxRectSrcY: db 0                ; source rows to discard (top clip)
 gfxPosSurf:  db 0                ; 8K page of the surface being written
