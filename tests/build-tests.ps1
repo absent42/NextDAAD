@@ -597,6 +597,8 @@ finally { Pop-Location }
 
 & "$PSScriptRoot\anipack-selftest.ps1"
 
+& "$PSScriptRoot\l2pos-selftest.ps1"
+
 & "$PSScriptRoot\intro-selftest.ps1"
 
 # xbnbuild.ps1 drift guard: its generated subset source must stay
