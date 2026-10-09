@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.11.2 - unreleased
+## 0.12.0 - unreleased
 
 - **Positioned pictures.** A numbered PNG with an `IMAGES\NNN.txt` sidecar
   builds as `NNN.NXP`: fixed at `at=X,Y` in pixels or floating in the

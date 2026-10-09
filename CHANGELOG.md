@@ -2,8 +2,33 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.11.2 unreleased
+## v0.12.0 unreleased
 
+- Positioned Layer 2 pictures (NXP): a picture drawn at a fixed X,Y or
+  floating in the current text window, any size that fits, that changes
+  only its own rectangle and applies only its own palette range.
+  Plain NXI/NX2 pictures are unchanged. Files are NNN.NXP, NNN.NXP.ZX0
+  or NNN.NPZ: a 16-byte header (placement, size, palette range) before
+  the usual palette and pixels, probed after the plain shapes. A
+  positioned picture in the other Layer 2 mode clears the screen and
+  switches mode; drawn in GFX 4 buffer mode it stays hidden until
+  GFX 0 or GFX 2.
+- GFX n 7 clears both Layer 2 surfaces. GFX x 8 and GFX y 15 place the
+  next DISPLAY 0 at x*8, y (positioned or plain picture); GFX n 27
+  cancels, as does DISPLAY n with n other than 0. RESTART and LOAD do
+  not cancel.
+- kit: IMAGES\NNN.png with an NNN.txt sidecar (at=X,Y or at=window,
+  palette=F-L or none, mode=256 or 320) builds NNN.NXP; unknown sidecar
+  keys fail the build. Ready-made NXP files are staged after a header
+  check. A game with positioned pictures must use one Layer 2 mode (the
+  title does not count); a game without them builds as before. A .txt
+  in IMAGES\ with a digit in its name and no PNG of the same name fails
+  the build. palcheck reports NXP pixels outside the declared palette
+  range.
+- manual: Graphics gains "Positioned pictures"; the picture-format
+  reference documents NXP for converter writers; platform notes cover
+  GFX 7, 8 and 15 on ported games.
+- kit: interpreter rebuilt.
 - externs/fade: flag 241 = 255 makes `EXTERN c 40` and `EXTERN 0 41`
   instant - the end state is written before the call returns, flag 240
   is set and no steps run. An instant fade-out before a video clip
