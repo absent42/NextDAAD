@@ -313,6 +313,13 @@ function Invoke-Pictures {
             $txt = Join-Path $images ($f.BaseName + '.txt')
             if (Test-Path -LiteralPath $txt -PathType Leaf) { $posPngs[$f.Name] = $txt }
         }
+        # A picture-number sidecar (digit run in the name) needs its PNG.
+        foreach ($t in Get-KitFiles $images 'txt') {
+            if ($t.BaseName -notmatch '\d') { continue }
+            if (-not (Test-Path -LiteralPath (Join-Path $images ($t.BaseName + '.png')) -PathType Leaf)) {
+                Fail "IMAGES\$($t.Name) has no $($t.BaseName).png beside it - a picture sidecar needs its PNG"
+            }
+        }
         $nxpFiles = @()
         foreach ($ext in 'NXP.ZX0', 'NPZ', 'NXP') {
             foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { $nxpFiles += , @($f, ($ext -ne 'NXP')) }
@@ -330,13 +337,6 @@ function Invoke-Pictures {
                 if ($null -ne $sc.Mode) { Set-GameMode $(if ($sc.Mode -eq 320) {1} else {0}) $png }
             }
             foreach ($nf in $nxpFiles) { Set-GameMode (Test-NxpReadyMade $nf[0].FullName -1 $nf[1]) $nf[0].Name }
-            # A picture-number sidecar (digit run in the name) needs its PNG.
-            foreach ($t in Get-KitFiles $images 'txt') {
-                if ($t.BaseName -notmatch '\d') { continue }
-                if (-not (Test-Path -LiteralPath (Join-Path $images ($t.BaseName + '.png')) -PathType Leaf)) {
-                    Fail "IMAGES\$($t.Name) has no $($t.BaseName).png beside it - a picture sidecar needs its PNG"
-                }
-            }
             if ($null -eq $script:gameMode) { $script:gameMode = 0 }
         }
 

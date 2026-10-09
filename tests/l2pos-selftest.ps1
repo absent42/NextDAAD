@@ -165,6 +165,16 @@ w,h=320,8
 def ch(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
 raw=b''.join(b'\0'+bytes(w) for _ in range(h))
 open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
+$errTxt = (& { Push-Location "$work/kit2"; try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress 0 6>&1 | Out-String } finally { Pop-Location } })
+Assert-Eq ($errTxt -match '007\.NXP' -and $errTxt -match '010\.png') $true 'mode conflict error names both files'
 Assert-Eq (Stage2 '0') 1 'mode-0 NXP plus 320 plain art refused'
+# a lone mistyped sidecar in a plain game fails naming it
+Remove-Item "$work/kit2/IMAGES/*", "$work/kit2/RELEASE/*" -Force
+Copy-Item "$work/kit/IMAGES/001.png" "$work/kit2/IMAGES"
+Assert-Eq (Stage2 '0') 0 'plain-only game stages'
+Set-Content "$work/kit2/IMAGES/009.txt" "at=0,0"
+Assert-Eq (Stage2 '0') 1 'plain game with a lone 009.txt refused'
+$errTxt = (& { Push-Location "$work/kit2"; try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress 0 6>&1 | Out-String } finally { Pop-Location } })
+Assert-Eq ($errTxt -match '009\.txt') $true 'lone sidecar error names it'
 
 "l2pos-selftest: $checks checks passed"
