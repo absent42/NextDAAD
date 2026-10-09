@@ -52,6 +52,7 @@ $h = New-NxpHeader (Read-PosSidecar "$work/b.txt") 1 320 256
 Assert-Eq $h[5] 1 'hdr flags floating'; Assert-Eq $h[9] 64 'hdr W 320 lo'; Assert-Eq $h[10] 1 'hdr W 320 hi'; Assert-Eq $h[11] 0 'hdr H 256 -> 0'
 Assert-Throws { New-NxpHeader (Read-PosSidecar "$work/a.txt") 0 256 192 } 'does not fit' 'hdr: 8,16 + 256x192 off screen'
 Assert-Throws { New-NxpHeader (Read-PosSidecar "$work/a.txt") 0 64 200 } 'does not fit' 'hdr: 200 rows in 256 mode'
+Assert-Throws { New-NxpHeader (Read-PosSidecar "$work/a.txt") 0 64 200 'x.png + x.txt' } 'x\.png \+ x\.txt - 64x200 does not fit' 'hdr: names the files'
 
 # folded review cases
 Set-Content "$work/f.txt" "at=300,0"
@@ -118,5 +119,34 @@ Remove-Item "$work/kit/IMAGES/009.txt"
 Set-Content "$work/kit/IMAGES/notes.txt" "author notes"
 Assert-Eq (Stage '0') 0 'notes.txt ignored'
 Remove-Item "$work/kit/IMAGES/notes.txt"
+
+# a game-mode change must rebuild a sidecar picture that has no mode= key
+New-Item -ItemType Directory -Force "$work/kit2/IMAGES", "$work/kit2/RELEASE" | Out-Null
+Copy-Item "$work/kit/IMAGES/003.png", "$work/kit/IMAGES/003.txt" "$work/kit2/IMAGES"
+function Stage2([string]$compress) {
+    Push-Location "$work/kit2"
+    try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress $compress | Out-Null; return $LASTEXITCODE }
+    finally { Pop-Location }
+}
+Assert-Eq (Stage2 '0') 0 'kit2 stage 256 default'
+Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 0 'kit2 003 mode 0'
+& python -c "import sys,struct,zlib
+w,h=320,8
+def ch(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+raw=b''.join(b'\0'+bytes(w) for _ in range(h))
+open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
+Assert-Eq (Stage2 '0') 0 'kit2 stage after 320 plain added'
+Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 1 'kit2 003 rebuilt with mode 1'
+Remove-Item "$work/kit2/IMAGES/010.png"
+
+# a ready-made title in the kit root fixes the mode when IMAGES\DAAD.png is absent
+Remove-Item "$work/kit2/RELEASE/*" -Force
+Copy-Item "$work/kit/RELEASE/001.NXI" "$work/kit2/DAAD.NXI"
+Set-Content "$work/kit2/IMAGES/003.txt" "at=0,0`nmode=320"
+Assert-Eq (Stage2 '0') 1 'root DAAD.NXI (256) conflicts with mode=320 sidecar'
+Set-Content "$work/kit2/IMAGES/003.txt" "at=0,0"
+Assert-Eq (Stage2 '0') 0 'root DAAD.NXI with plain sidecar stages'
+Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NXP")[4]) 0 'kit2 003 mode 0 from root title'
+Remove-Item "$work/kit2/DAAD.NXI"
 
 "l2pos-selftest: $checks checks passed"

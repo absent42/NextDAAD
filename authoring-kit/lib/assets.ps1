@@ -168,11 +168,12 @@ function Read-PosSidecar([string]$Txt) {
 }
 
 # The 16-byte NXP header (manual/reference/picture-format.md, NXP section).
-function New-NxpHeader([hashtable]$Pos, [int]$Mode, [int]$W, [int]$H) {
+function New-NxpHeader([hashtable]$Pos, [int]$Mode, [int]$W, [int]$H, [string]$Who = '') {
+    if ($Who) { $Who = "$Who - " }
     $sw = if ($Mode -eq 1) { 320 } else { 256 }
     $sh = if ($Mode -eq 1) { 256 } else { 192 }
-    if ($W -lt 1 -or $W -gt $sw -or $H -lt 1 -or $H -gt $sh) { Fail "${W}x${H} does not fit the $sw x $sh screen" }
-    if (-not $Pos.Float -and ($Pos.X + $W -gt $sw -or $Pos.Y + $H -gt $sh)) { Fail "at=$($Pos.X),$($Pos.Y) + ${W}x${H} does not fit the $sw x $sh screen" }
+    if ($W -lt 1 -or $W -gt $sw -or $H -lt 1 -or $H -gt $sh) { Fail "${Who}${W}x${H} does not fit the $sw x $sh screen" }
+    if (-not $Pos.Float -and ($Pos.X + $W -gt $sw -or $Pos.Y + $H -gt $sh)) { Fail "${Who}at=$($Pos.X),$($Pos.Y) + ${W}x${H} does not fit the $sw x $sh screen" }
     $hdr = New-Object byte[] 16
     $hdr[0] = 0x4E; $hdr[1] = 0x58; $hdr[2] = 0x50; $hdr[3] = 1
     $hdr[4] = [byte]$Mode
@@ -233,12 +234,12 @@ function Convert-Bitmap([System.IO.FileInfo]$Src, [string]$Name) {
 function Convert-Positioned([System.IO.FileInfo]$Src, [string]$Txt, [string]$Name, [int]$Mode) {
     Add-Produced $Name
     $out = Join-Path $rel $Name
-    $stamp = New-Stamp @($Src.FullName, $Txt) $script:picSig
+    $stamp = New-Stamp @($Src.FullName, $Txt) ($script:picSig + "|m$Mode")
     if (Test-Current $out $stamp) { $script:kept++; return $false }
     $pos = Read-PosSidecar $Txt
     $w = Get-PngWidth $Src.FullName; $ht = Get-PngHeight $Src.FullName
     if ($w -lt 1 -or $ht -lt 1) { Fail "$($Src.Name) - not a PNG" }
-    $hdr = New-NxpHeader $pos $Mode $w $ht
+    $hdr = New-NxpHeader $pos $Mode $w $ht "$($Src.Name) + $([System.IO.Path]::GetFileName($Txt))"
     $tmpRaw = Join-Path $root ($Src.BaseName + '.nxi')
     $tmp = $tmpRaw + $script:zsuf
     Remove-IfExists $tmpRaw; Remove-IfExists "$tmpRaw.zx0"
@@ -316,6 +317,11 @@ function Invoke-Pictures {
         if (Test-Path -LiteralPath $titlePng -PathType Leaf) {
             $pw = Get-PngWidth $titlePng
             if ($pw -eq 320) { Set-GameMode 1 'DAAD.png' } elseif ($pw -eq 256) { Set-GameMode 0 'DAAD.png' }
+        }
+        if (-not (Test-Path -LiteralPath $titlePng -PathType Leaf)) {
+            foreach ($t in 'DAAD.NX2.ZX0', 'DAAD.N2Z', 'DAAD.NX2', 'DAAD.NXI.ZX0', 'DAAD.NXZ', 'DAAD.NXI') {
+                if (Test-Path -LiteralPath (Join-Path $root $t) -PathType Leaf) { Set-GameMode $(if ($t -like '*NX2*' -or $t -like '*N2Z') {1} else {0}) $t; break }
+            }
         }
         foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2') { foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { Set-GameMode 1 $f.Name } }
         foreach ($ext in 'NXI.ZX0', 'NXZ', 'NXI') { foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { Set-GameMode 0 $f.Name } }
