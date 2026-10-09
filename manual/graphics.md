@@ -412,11 +412,12 @@ ignored. Use it to clear positioned art before a screen with no frame.
 
 Known limitations:
 
-- `DISPLAY 0` with no picture staged does not consume an armed override.
 - Switching mode drops a pending buffered reveal.
-- When the picture memory is full, a positioned picture is drawn at
-  `PICTURE` time, with the window and override as they are then, and a
-  plain picture under an override draws as a plain picture.
+- When the picture memory is full, only uncompressed picture files can
+  still be shown. A positioned picture is then drawn at `PICTURE` time,
+  with the window and override as they are then, and a plain picture
+  under an override draws as a plain picture, with the override staying
+  armed.
 
 ## 40-column games
 
@@ -708,11 +709,11 @@ positioned picture is `001.NXP`, or compressed `001.NXP.ZX0` or
 `001.NPZ`; the kit checks its header and mode first. If both
 a `001.png` and a ready-made `001.NX2` are there, the PNG conversion
 wins. If you have several forms of the same number, the one staged is
-the one the interpreter would load first - compressed before
-uncompressed.
+the one the interpreter would load first: `.NX2` forms, then `.NXI`,
+then `.NXP`, each compressed before uncompressed.
 
-A `.NX2` or `.NXI` in `IMAGES\` whose name is not a picture number stops
-the build rather than being ignored, so a file that could never be
+A `.NX2`, `.NXI` or `.NXP` (or a compressed form) in `IMAGES\` whose
+name is not a picture number stops the build rather than being ignored, so a file that could never be
 loaded does not pass unnoticed.
 
 **The title screen goes in the kit folder itself**, not in `IMAGES\` -

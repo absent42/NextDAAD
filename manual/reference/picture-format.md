@@ -255,14 +255,14 @@ exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
 
 ### Extensions
 
-Tried in this order, before any of the section 7 rows:
+Tried after the section 7 rows, in this order:
 
 | Order | Name | Shape |
 |---|---|---|
-| 1 | `NNN.NXP.ZX0` | positioned, compressed |
-| 2 | `NNN.NPZ` | positioned, compressed (8.3 synonym) |
-| 3 | `NNN.NXP` | positioned, raw |
-| 4-9 | the NX2 and NXI rows of section 7 | whole screen |
+| 1-6 | the NX2 and NXI rows of section 7 | whole screen |
+| 7 | `NNN.NXP.ZX0` | positioned, compressed |
+| 8 | `NNN.NPZ` | positioned, compressed (8.3 synonym) |
+| 9 | `NNN.NXP` | positioned, raw |
 
 The mode comes from the header, not the extension. A picture whose mode
 differs from the screen's switches the screen: the Layer 2 surfaces are

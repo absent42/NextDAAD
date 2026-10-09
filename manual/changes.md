@@ -9,8 +9,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   builds as `NNN.NXP`: fixed at `at=X,Y` in pixels or floating in the
   current text window with `at=window`, any size that fits, drawing only
   its own rectangle and applying only its `palette=F-L` range. Plain
-  pictures are unchanged; the one-Layer-2-mode rule applies only to
-  games that use positioned pictures, and the title does not vote. `GFX x 8` / `GFX y 15` place the next
+  pictures draw as before. A game that uses positioned pictures must
+  keep to one Layer 2 mode (the build fails on a 320/256 mix; the title
+  does not count); a game without them builds as before. Any `.txt` in
+  `IMAGES\` with a digit in its name now needs a PNG of the same name.
+  `GFX x 8` / `GFX y 15` place the next
   `DISPLAY 0` at `x*8`,`y` instead, `GFX n 27` cancels, `GFX n 7` clears
   both Layer 2 surfaces. The format is documented in the
   picture-format reference so converters can write NXP files directly. See Graphics, "Positioned pictures".

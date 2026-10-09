@@ -315,7 +315,7 @@ picture covers it. A game uses one mode throughout.</p>
 exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
 512-byte palette followed by the pixels).</p>
 <h3 id="extensions">Extensions</h3>
-<p>Tried in this order, before any of the section 7 rows:</p>
+<p>Tried after the section 7 rows, in this order:</p>
 <table>
 <thead>
 <tr>
@@ -326,24 +326,24 @@ exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
 </thead>
 <tbody>
 <tr>
-<td>1</td>
+<td>1-6</td>
+<td>the NX2 and NXI rows of section 7</td>
+<td>whole screen</td>
+</tr>
+<tr>
+<td>7</td>
 <td><code>NNN.NXP.ZX0</code></td>
 <td>positioned, compressed</td>
 </tr>
 <tr>
-<td>2</td>
+<td>8</td>
 <td><code>NNN.NPZ</code></td>
 <td>positioned, compressed (8.3 synonym)</td>
 </tr>
 <tr>
-<td>3</td>
+<td>9</td>
 <td><code>NNN.NXP</code></td>
 <td>positioned, raw</td>
-</tr>
-<tr>
-<td>4-9</td>
-<td>the NX2 and NXI rows of section 7</td>
-<td>whole screen</td>
 </tr>
 </tbody>
 </table>

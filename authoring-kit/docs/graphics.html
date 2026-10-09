@@ -369,11 +369,12 @@ ignored. Use it to clear positioned art before a screen with no frame.</p>
 </ul>
 <p>Known limitations:</p>
 <ul>
-<li><code>DISPLAY 0</code> with no picture staged does not consume an armed override.</li>
 <li>Switching mode drops a pending buffered reveal.</li>
-<li>When the picture memory is full, a positioned picture is drawn at
-  <code>PICTURE</code> time, with the window and override as they are then, and a
-  plain picture under an override draws as a plain picture.</li>
+<li>When the picture memory is full, only uncompressed picture files can
+  still be shown. A positioned picture is then drawn at <code>PICTURE</code> time,
+  with the window and override as they are then, and a plain picture
+  under an override draws as a plain picture, with the override staying
+  armed.</li>
 </ul>
 <h2 id="40-column-games">40-column games</h2>
 <p><code>GFX 1 18</code> switches the tilemap from 80x32 single-width text to 40x32
@@ -733,10 +734,10 @@ positioned picture is <code>001.NXP</code>, or compressed <code>001.NXP.ZX0</cod
 <code>001.NPZ</code>; the kit checks its header and mode first. If both
 a <code>001.png</code> and a ready-made <code>001.NX2</code> are there, the PNG conversion
 wins. If you have several forms of the same number, the one staged is
-the one the interpreter would load first - compressed before
-uncompressed.</p>
-<p>A <code>.NX2</code> or <code>.NXI</code> in <code>IMAGES\</code> whose name is not a picture number stops
-the build rather than being ignored, so a file that could never be
+the one the interpreter would load first: <code>.NX2</code> forms, then <code>.NXI</code>,
+then <code>.NXP</code>, each compressed before uncompressed.</p>
+<p>A <code>.NX2</code>, <code>.NXI</code> or <code>.NXP</code> (or a compressed form) in <code>IMAGES\</code> whose
+name is not a picture number stops the build rather than being ignored, so a file that could never be
 loaded does not pass unnoticed.</p>
 <p><strong>The title screen goes in the kit folder itself</strong>, not in <code>IMAGES\</code> -
 a ready-made <code>DAAD.NX2</code> or <code>DAAD.NXI</code>, or a compressed variant. An
