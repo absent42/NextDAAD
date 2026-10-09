@@ -866,7 +866,7 @@ l2CopyChunkCnt: db 0
 ; exactly the progressive-paint artifact double buffering exists to
 ; kill. Palette is left as it stands; the flip goes through
 ; l2_mode_set with l2Mode, idempotent when the mode is unchanged.
-; B != 0 also cancels a GFX 8/15 position override. Corrupts everything.
+; Either form spends a GFX 8/15 position override. Corrupts everything.
 h_display:
     call spr_stop_all           ; both paths: the blit and the clear
     ld a, b
@@ -3808,7 +3808,7 @@ gfx_pos_row_write320:
 ; for the ~1ms the load takes instead of the whole render), then
 ; l2_flip_swap + l2_mode_set - resolution and new front bank land
 ; back-to-back, no wrong-mode flash (see l2_flip_swap) - and
-; l2_enable. No-op when nothing is staged. Corrupts everything.
+; l2_enable. Nothing staged: only consumes the override. Corrupts everything.
 ;
 ; Walk order: SOURCE-ROWS-SCATTER, chosen over dest-columns-gather.
 ; The source stream is row-major (Gfx2Next emits rows sequentially);
@@ -3834,7 +3834,7 @@ gfx_pos_row_write320:
 gfx_blit:
     ld a, (stagedEntry)
     inc a                        ; GFX_EMPTY -> 0: nothing staged
-    ret z
+    jp z, gfx_pos_consume        ; but an armed override is still spent
     ld a, (stagedPos)
     or a
     jp m, gfx_blit_pos           ; positioned entry
