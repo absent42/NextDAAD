@@ -242,6 +242,121 @@ picture. Three approaches work and none needs anything from the
 interpreter: keep a strip of solid paper where text must always be
 readable, keep the artwork dark where text lands, or choose an ink that
 survives everything the art can put behind it.</p>
+<h2 id="positioned-pictures">Positioned pictures</h2>
+<p>An ordinary picture covers the whole picture area and replaces what was
+there. A positioned picture is a rectangle of any size that draws only
+its own area and leaves the rest of the screen alone. Use it for a
+status frame, an inventory panel, a portrait, a map inset or a HUD.</p>
+<p>A positioned picture is either <strong>fixed</strong> at a pixel position, or
+<strong>floating</strong>, which places it at the top-left corner of the current text
+window. A floating picture larger than the window is cut to the window.</p>
+<h3 id="making-one">Making one</h3>
+<p>Put a sidecar beside the PNG: <code>IMAGES\012.txt</code> for <code>IMAGES\012.png</code>.
+<code>BUILD.BAT</code> then builds <code>012.NXP</code> (or <code>012.NXP.ZX0</code> with compression on)
+instead of an ordinary picture. The sidecar is <code>key=value</code> lines, with
+<code>;</code> starting a comment, and takes three keys:</p>
+<pre><code>; 012.txt - inventory frame
+at=8,16          ; fixed, X and Y in pixels. at=window = floating
+palette=128-255  ; optional, default 0-255. palette=none = change no colours
+mode=256         ; optional, 256 or 320
+</code></pre>
+<ul>
+<li><code>at</code> is required.</li>
+<li>The PNG may be any width and height that fits the screen. A fixed
+  picture must fit with its position; the build fails otherwise.</li>
+<li><code>palette=F-L</code> limits the picture to palette entries F to L. Only those
+  entries are changed when it draws. <code>none</code> changes no colours at all and
+  the picture uses whatever the palette already holds.</li>
+<li><code>mode</code> is 256 (the 256x192 area, positions counted inside the classic
+  picture area) or 320 (the full 320x256 screen). Leave it out and the
+  kit decides from your other pictures: any 320-wide ordinary picture or
+  title makes the game 320, a 256-wide one makes it 256, and with
+  neither the game is 256.</li>
+<li>Any other key in the sidecar fails the build, as does a sidecar for a
+  picture number with no PNG beside it. A <code>.txt</code> file with no picture
+  number in its name is ignored.</li>
+<li>A game has one Layer 2 mode. Mixing a 320 picture and a 256 picture
+  fails the build, naming both files.</li>
+</ul>
+<p>A picture you have already converted can be dropped in as <code>NNN.NXP</code>
+(or <code>NNN.NXP.ZX0</code> / <code>NNN.NPZ</code>). The kit stages it as it is after
+checking the header against the game's mode. See
+<a href="reference/picture-format.html">Picture format</a> for the file layout.</p>
+<h3 id="how-it-draws">How it draws</h3>
+<p><code>PICTURE</code> and <code>DISPLAY 0</code> work as before. The difference is what
+<code>DISPLAY 0</code> does with a positioned picture: it adds the rectangle to
+what is on screen and does not clear anything else. Three consequences:</p>
+<ul>
+<li><strong>Transparent pixels overwrite.</strong> Index 255 is written like any other
+  pixel, so a hole in the picture clears the art underneath it to
+  transparent in that rectangle. Positioned pictures do not blend.</li>
+<li><strong>A plain picture still clears everything.</strong> <code>DISPLAY 0</code> of an ordinary
+  picture clears and replaces the whole picture, so positioned art on
+  screen goes away. In a game that uses frames, panels or an inventory
+  display, convert the location pictures to positioned pictures too (a
+  sidecar with <code>at=0,0</code>) so showing a new location leaves the frame
+  alone.</li>
+<li><code>GFX n 2</code> swaps the surfaces and shows the other one whole, so it also
+  reveals anything else the back surface holds.</li>
+</ul>
+<h3 id="splitting-the-palette">Splitting the palette</h3>
+<p>A Layer 2 picture is 256 colours and every positioned picture shares the
+one palette. Each picture changes only its own <code>palette=F-L</code> entries, so
+give each kind of picture its own slice and they can coexist.</p>
+<p>Keep the art inside its slice when you convert it. In NextDither, use a
+preset for each kind of picture. For example, location art takes entries
+0 to 100: Auto on 0-100, Blocked on 101-255, and <code>palette=0-100</code> in the
+sidecar. A HUD or frame that sits over it takes the rest: Blocked on
+0-100, Auto on 101-150, Blocked on 151-255, and <code>palette=101-150</code>.
+Pixels that use an entry outside the declared range draw in whatever
+colour that entry holds from earlier, and the kit's picture check warns
+about them when it converts.</p>
+<p>Colour cycling (<code>GFX n 11</code>) and the fade extern change the live palette.
+Stop a cycle with <code>GFX n 12</code> before a positioned <code>DISPLAY</code> whose range
+overlaps the cycled entries, or the picture's colours and the cycle will
+fight.</p>
+<h3 id="drawing-at-a-different-place">Drawing at a different place</h3>
+<p><code>GFX x 8</code> and <code>GFX y 15</code> move the next <code>DISPLAY 0</code> without touching the
+picture file:</p>
+<ul>
+<li><code>GFX x 8</code> sets the X position to <code>x * 8</code> pixels, from 0 to 31 in a 256
+  game or 0 to 39 in a 320 game. For finer X, put the position in the
+  sidecar.</li>
+<li><code>GFX y 15</code> sets the Y position to <code>y</code> pixels.</li>
+<li>Either one arms the override and an axis you did not set is 0.
+  Both apply to the next <code>DISPLAY 0</code> only, then clear. They apply to
+  fixed pictures, floating pictures and ordinary pictures alike, and an
+  ordinary picture drawn this way is drawn at its full size and takes
+  the whole palette.</li>
+<li>A position that runs off the screen is clipped to the screen, not
+  refused.</li>
+<li><code>GFX n 27</code> cancels an armed override without drawing. Any <code>DISPLAY</code> of
+  a number other than 0 cancels it too. <code>RESTART</code>, <code>LOAD</code> and a move to
+  another part do NOT cancel it, so cancel with <code>GFX n 27</code> if a game could
+  get that far with one armed.</li>
+<li>The parameter takes indirection like any other, so a flag can hold the
+  position: <code>GFX @10 8</code>.</li>
+</ul>
+<p><code>GFX n 7</code> clears both Layer 2 surfaces, the front and the back, in one
+call. It is the same as <code>GFX n 5</code> followed by <code>GFX n 6</code>, and <code>n</code> is
+ignored. Use it to clear positioned art before a screen with no frame.</p>
+<h3 id="corners-and-limits">Corners and limits</h3>
+<ul>
+<li>A positioned picture of the other mode switches the Layer 2 mode. The
+  screen is cleared and the mode changes first. Do not plan on mixing
+  modes - one game has one mode - but a picture of the wrong mode does
+  not leave a half-drawn screen. While drawing into the buffer
+  (<code>GFX n 4</code>), a picture of the other mode is skipped, since the hidden
+  surface cannot change mode.</li>
+<li>In buffer mode (<code>GFX n 4</code>), a positioned <code>DISPLAY 0</code> draws to the
+  hidden surface, and its palette range changes only the hidden palette,
+  so nothing shows until <code>GFX n 0</code> or <code>GFX n 2</code>.</li>
+<li>A tall positioned picture may tear for one frame, with its upper part
+  showing before the lower part. The colours of its palette range also
+  change at the moment it starts drawing. Both are cosmetic and brief;
+  draw it in buffer mode and reveal it if a game cannot tolerate that.</li>
+<li>A height of 0 in a header means 256 rows.</li>
+</ul>
 <h2 id="40-column-games">40-column games</h2>
 <p><code>GFX 1 18</code> switches the tilemap from 80x32 single-width text to 40x32
 double-width text - fewer, wider columns, for a game that wants larger
@@ -288,11 +403,12 @@ running at. A game knows its own width because it chose it with <code>GFX n
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - DAAD Ready's Appendix D covers <code>SFX</code>
 and <code>MOUSE</code> only - so write the number.</p>
-<p>For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21,
-22, 23, 24 and 25 the first parameter <code>n</code> is ignored: the buffer
+<p>For every sub-command except 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19,
+20, 21, 22, 23, 24 and 25 the first parameter <code>n</code> is ignored: the buffer
 operations act on the whole surface and take no argument. For 9, 10 and
 11, <code>n</code> is a flag number, the first of a group of flags carrying the
-parameters; for 13 and 14, <code>n</code> is the video number; for 16, it is the
+parameters; for 8 it is the X position in 8-pixel steps and for 15 the Y position in
+pixels; for 13 and 14, <code>n</code> is the video number; for 16, it is the
 font number; for 17, it is the layer-order selector; for 18, it is the
 text width selector; for 19 and 21, it is the sprite set number; for 20,
 it is the first of four flags carrying the set number and position; for
@@ -301,9 +417,7 @@ paper colour (26 ignores it).</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 7, 8 and 15, and everything from 27 up -
-see <a href="platform-notes.html">Platform notes</a> for why 15 has nothing to act on
-here.</p>
+prints a marker). That covers everything from 28 up.</p>
 <table>
 <thead>
 <tr>
@@ -341,6 +455,14 @@ here.</p>
 <td>Clear the back surface.</td>
 </tr>
 <tr>
+<td>7</td>
+<td>Clear both Layer 2 surfaces, the front and the back, in one call - the same as 5 followed by 6. <code>n</code> is ignored. See <a href="#positioned-pictures">Positioned pictures</a>.</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Arm a position override: the next <code>DISPLAY 0</code> draws its picture with the X position set to <code>n * 8</code> pixels. Takes indirection. See <a href="#positioned-pictures">Positioned pictures</a>.</td>
+</tr>
+<tr>
 <td>9</td>
 <td>Set one Layer 2 palette entry from flags. Flag <code>n</code> holds the palette index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> hold red, green and blue as 0-255; the Next keeps the top three bits of each channel. Index 255 is the reserved transparent entry and is ignored, and a colour that would make the entry transparent is nudged one green step, exactly as the picture loader does. The entry lands in the palette the display shows, or in the staged palette while a <code>DISPLAY 0</code> reveal is pending under sub 4. <code>n</code> above 252 is ignored. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
 </tr>
@@ -363,6 +485,10 @@ here.</p>
 <tr>
 <td>14</td>
 <td>As 13, looped until a key is pressed. Identical to <code>SFX n 10</code> (<code>PLAYFLIL</code>).</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Arm a position override: the next <code>DISPLAY 0</code> draws its picture with the Y position set to <code>n</code> pixels. Together with 8, an axis you did not set is 0. See <a href="#positioned-pictures">Positioned pictures</a>.</td>
 </tr>
 <tr>
 <td>16</td>
@@ -407,6 +533,10 @@ here.</p>
 <tr>
 <td>26</td>
 <td>Parser cursor colours follow the window again (the default). <code>n</code> is ignored.</td>
+</tr>
+<tr>
+<td>27</td>
+<td>Cancel an armed position override from 8 or 15 without drawing. <code>n</code> is ignored. <code>RESTART</code>, <code>LOAD</code> and part switches do not cancel an override; this does.</td>
 </tr>
 </tbody>
 </table>

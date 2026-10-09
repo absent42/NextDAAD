@@ -1,4 +1,4 @@
-# Picture format - NX2 and NXI
+# Picture format - NX2, NXI and NXP
 
 What NextDAAD's location-graphics loader accepts, for anyone writing a
 converter, exporter or paint-tool plugin that emits these files.
@@ -6,6 +6,11 @@ converter, exporter or paint-tool plugin that emits these files.
 A file that breaks any rule here is refused by the loader rather than
 misrendered - a rejected picture simply does not appear. Section 6 lists
 what gets refused.
+
+Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI.
+Section 9 describes NXP, the positioned picture: a rectangle of any
+size that draws only its own area. It is a different file, with a
+16-byte header in front.
 
 ---
 
@@ -186,8 +191,112 @@ exist for plain-FAT setups without long filenames. Either works.
 - [ ] Height within 192 (256-wide) or 256 (320-wide).
 - [ ] If compressing, **ZX0 v1 classic**.
 - [ ] Name it `NNN.NX2` or `NNN.NXI`.
+- [ ] Positioned: write the 16-byte NXP header first; never compress it.
 
-## 9. Verifying your output
+## 9. NXP - positioned pictures
+
+An NXP picture is placed on the screen at a position, instead of
+replacing the whole screen. It carries its own size, its position and
+the range of palette entries it is allowed to change. Everything after
+the 16-byte header is exactly what a whole-screen picture holds.
+
+### Layout
+
+```
+offset 0  : 16 bytes   header
+offset 16 : 512 bytes  palette (256 entries x 2 bytes, as section 4)
+offset 528: W*H bytes  pixels (1 byte per pixel, row-major, as section 3)
+```
+
+The header, all multi-byte values little-endian:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 3 | magic `NXP` (ASCII `4E 58 50`) |
+| 3 | 1 | version, 1 |
+| 4 | 1 | mode: 0 = 256x192 coordinate space, 1 = 320x256 |
+| 5 | 1 | flags: bit 0 = floating (X and Y are ignored); bits 1-7 zero |
+| 6 | 2 | X in pixels |
+| 8 | 1 | Y in pixels |
+| 9 | 2 | width in pixels |
+| 11 | 1 | height in pixels, 0 means 256 |
+| 12 | 1 | palette first |
+| 13 | 1 | palette last; first greater than last means apply no palette |
+| 14 | 2 | reserved, zero |
+
+Mode 0 coordinates are the classic 256x192 area, as an NXI picture
+covers it. Mode 1 coordinates are the full 320x256 screen, as an NX2
+picture covers it. A game uses one mode throughout.
+
+### Rules for the writer
+
+- Width 1 to 256 (mode 0) or 1 to 320 (mode 1). Height 1 to 192 (mode 0)
+  or 1 to 256 (mode 1).
+- A fixed picture must fit: X plus width within the screen width, Y plus
+  height within the screen height. A floating picture must fit the
+  screen in size only. (A fixed picture that does overhang is clipped to
+  the screen when drawn, not refused, but do not rely on it.)
+- A raw file is exactly 16 + 512 + width x height bytes.
+- Index 255 is the transparent index and byte 0 = `$E3` is reserved, the
+  same as in section 5. A pixel of 255 is a hole, and it is written like
+  any other pixel, so it replaces whatever art was underneath.
+- There is no palette shift and no re-indexing: pixel value N uses palette
+  entry N. Only entries first to last of the file's palette are
+  loaded when the picture draws, so keep the picture's pixels inside that
+  range.
+- Floating pictures use X and Y of 0 in the header; the game's current
+  text window decides where they land.
+
+### Compression
+
+The header is never compressed. Bytes 16 onward are the ZX0 stream(s)
+exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
+512-byte palette followed by the pixels).
+
+### Extensions
+
+Tried in this order, before any of the section 7 rows:
+
+| Order | Name | Shape |
+|---|---|---|
+| 1 | `NNN.NXP.ZX0` | positioned, compressed |
+| 2 | `NNN.NPZ` | positioned, compressed (8.3 synonym) |
+| 3 | `NNN.NXP` | positioned, raw |
+| 4-9 | the NX2 and NXI rows of section 7 | whole screen |
+
+The mode comes from the header, not the extension. A picture whose mode
+differs from the screen's switches the screen: the Layer 2 surfaces are
+cleared and the mode changes before the picture draws. While the game is
+drawing off-screen (`GFX n 4`) a picture of the other mode is skipped
+instead, because the hidden surface cannot change mode on its own.
+
+### Worked examples
+
+A fixed picture, 256 wide, 96 high, at 0,0 in mode 0, using palette
+entries 0 to 100:
+
+```
+4E 58 50 01  00  00  00 00  00  00 01  60  00 64  00 00
+magic    ver mode flg X     Y   W      H   first last reserved
+```
+
+Here the 256 wide is `00 01` (256 = `$0100`), 96 high is `60`, and the
+palette range is `00` to `64` (100). The file is 16 + 512 + 256 x 96 =
+25104 bytes raw.
+
+A floating picture, 64 wide, 32 high, mode 0, applying no palette (first
+1, last 0):
+
+```
+4E 58 50 01  00  01  00 00  00  40 00  20  01 00  00 00
+```
+
+The flag byte is 1 (floating), X and Y are zero, width is `40 00` (64),
+height is `20` (32), and palette first 1 greater than last 0 means the
+picture changes no palette entry. The file is 16 + 512 + 64 x 32 = 2576
+bytes raw.
+
+## 10. Verifying your output
 
 `authoring-kit/lib/palcheck.ps1` audits a converted file's transparency.
 It warns about a palette entry that collides with the reserved colour,
@@ -197,6 +306,10 @@ rather than a warning, since deliberate transparency is legitimate:
 ```
 powershell -File authoring-kit\lib\palcheck.ps1 path\to\001.NX2
 ```
+
+For an NXP file it reads past the header and also counts pixels that use
+a palette index outside the picture's declared range. Those pixels
+would draw with whatever colour the last picture left in that entry.
 
 It is advisory - it warns and exits 0, and it only understands
 uncompressed files.

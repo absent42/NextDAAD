@@ -13,7 +13,18 @@
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0112-unreleased">0.11.2 - unreleased</h2>
 <ul>
-<li><strong>Instant fades, for fading up after a video.</strong> In <code>externs/fade</code>,
+<li>
+<p><strong>Positioned pictures.</strong> A numbered PNG with an <code>IMAGES\NNN.txt</code> sidecar
+  builds as <code>NNN.NXP</code>: fixed at <code>at=X,Y</code> in pixels or floating in the
+  current text window with <code>at=window</code>, any size that fits, drawing only
+  its own rectangle and applying only its <code>palette=F-L</code> range. Plain
+  pictures are unchanged. <code>GFX x 8</code> / <code>GFX y 15</code> place the next
+  <code>DISPLAY 0</code> at <code>x*8</code>,<code>y</code> instead, <code>GFX n 27</code> cancels, <code>GFX n 7</code> clears
+  both Layer 2 surfaces. NextDither can export NXP directly from the
+  picture-format reference. See Graphics, "Positioned pictures".</p>
+</li>
+<li>
+<p><strong>Instant fades, for fading up after a video.</strong> In <code>externs/fade</code>,
   setting flag 241 to 255 makes <code>EXTERN c 40</code> and <code>EXTERN 0 41</code> take
   effect at once: the colour or the picture is on screen before the
   call returns, and flag 240 already reads 1. Fade to black instantly
@@ -21,7 +32,8 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   ready for <code>EXTERN 0 41</code> to fade the picture up - no visible fade-out
   first. Set flag 241 back to a timed value before the fade-in. Timed
   fades now go up to 254 frames per step. The extern's <code>README.md</code>
-  now also explains both of its flags.</li>
+  now also explains both of its flags.</p>
+</li>
 </ul>
 <h2 id="0111-29-september-2026">0.11.1 - 29 September 2026</h2>
 <ul>
