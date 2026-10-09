@@ -354,6 +354,8 @@ gfx_pos_pal_apply:
 gfx_pos_pal_finish:
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     call l2_pal9_stamp           ; bank 1; clears palLock
+    ld a, 1
+    ld (palLock), a              ; relock for the bank 2 stamp
     nextreg NR_PAL_CTRL, PAL_L2_EDIT_SECOND
     call l2_pal9_stamp           ; bank 2
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
