@@ -1448,7 +1448,7 @@ gfx_load:
     jr c, .miss
     ld (gfxEntryIdx), a         ; hit: A = entry index
     call cache_touch
-    jr .stage
+    jp .stage
 .miss:
     xor a
     ld (gfxAllocFail), a
@@ -1457,7 +1457,7 @@ gfx_load:
     jr nc, .gotslot             ; load has fully verified
     call gfx_evict_fix          ; every slot committed: evict the
     jr nc, .slot                ; coldest and rescan
-    jr .exhausted               ; nothing evictable (only the staged
+    jp .exhausted               ; nothing evictable (only the staged
                                 ; slot left - the GFX_CACHE_MAX=1
                                 ; degradation shape): fallback territory
 .gotslot:
@@ -1467,7 +1467,7 @@ gfx_load:
     call gfx_nxp_hdr_if         ; NXP: header first, else no-op
     jp c, .failcloseh
     call gfx_fetch_run          ; read banks, depack if needed, derive height
-    jr c, .failbanks
+    jp c, .failbanks
     ; everything verified: commit the cache entry
     ld a, (gfxEntryIdx)
     call gce_ptr
@@ -1486,6 +1486,38 @@ gfx_load:
     ld a, (gfxHeight)
     ld (hl), a                  ; GCE_HEIGHT (0 encodes 256)
     ld a, (gfxEntryIdx)
+    call gfx_pos_row            ; HL = row; keeps A, BC
+    ld a, (gfxIsNxp)
+    or a
+    jr z, .plainrow
+    ld a, (gfxHdrBuf+NXP_FLAGS)
+    and NXP_FLAG_FLOAT
+    or GFX_POS_VALID
+    ld (hl), a                  ; GFX_POS_FLAGS
+    inc hl
+    ld de, (gfxHdrBuf+NXP_X)
+    ld (hl), e
+    inc hl
+    ld (hl), d                  ; GFX_POS_X
+    inc hl
+    ld a, (gfxHdrBuf+NXP_Y)
+    ld (hl), a                  ; GFX_POS_Y
+    inc hl
+    ld de, (gfxHdrBuf+NXP_W)
+    ld (hl), e
+    inc hl
+    ld (hl), d                  ; GFX_POS_W
+    inc hl
+    ld a, (gfxHdrBuf+NXP_PALFIRST)
+    ld (hl), a                  ; GFX_POS_PALF
+    inc hl
+    ld a, (gfxHdrBuf+NXP_PALLAST)
+    ld (hl), a                  ; GFX_POS_PALL
+    jr .rowdone
+.plainrow:
+    ld (hl), a                  ; A = 0: row invalid
+.rowdone:
+    ld a, (gfxEntryIdx)
     call cache_touch
 .stage:
     ld a, (gfxEntryIdx)
@@ -1503,6 +1535,9 @@ gfx_load:
     ld (stagedPic), a
     ld a, (gfxEntryIdx)
     ld (stagedEntry), a
+    call gfx_pos_row
+    ld a, (hl)                  ; GFX_POS_FLAGS
+    ld (stagedPos), a           ; 0 = plain; bit 7 = positioned
     or a
     ret
 .failbanks:
@@ -3341,6 +3376,15 @@ nxpMagic:    db "NXP", 1         ; header bytes 0-3: magic + version
 gfxNamePart: db "PART0", 92, "000."   ; +4 digit and +6-8 NNN patched per open
              ds 7                     ; +10-16 extension field (ldir per row)
              db 0                     ; +17 final NUL, never rewritten
+
+; A = cache entry index. Out: HL = its gfxPosTab row. Corrupts DE; keeps A, BC.
+gfx_pos_row:
+    ld d, GFX_POS_SIZE
+    ld e, a
+    mul d, e
+    ld hl, gfxPosTab
+    add hl, de
+    ret
 
 gfxPicNum:     db 0              ; picture being loaded/staged
 gfxEntryIdx:   db 0              ; cache slot in use
