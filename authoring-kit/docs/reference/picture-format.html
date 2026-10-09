@@ -209,7 +209,7 @@ exist for plain-FAT setups without long filenames. Either works.</p>
 <li>[ ] Height within 192 (256-wide) or 256 (320-wide).</li>
 <li>[ ] If compressing, <strong>ZX0 v1 classic</strong>.</li>
 <li>[ ] Name it <code>NNN.NX2</code> or <code>NNN.NXI</code>.</li>
-<li>[ ] Positioned: write the 16-byte NXP header first; never compress it.</li>
+<li>[ ] Positioned: write the 16-byte NXP header first (raw total 16 + 512 + W*H), never compress the header, and name it <code>NNN.NXP</code> (<code>NNN.NXP.ZX0</code> or <code>NNN.NPZ</code> compressed).</li>
 </ul>
 <h2 id="9-nxp-positioned-pictures">9. NXP - positioned pictures</h2>
 <p>An NXP picture is placed on the screen at a position, instead of
@@ -352,6 +352,16 @@ differs from the screen's switches the screen: the Layer 2 surfaces are
 cleared and the mode changes before the picture draws. While the game is
 drawing off-screen (<code>GFX n 4</code>) a picture of the other mode is skipped
 instead, because the hidden surface cannot change mode on its own.</p>
+<h3 id="what-the-loader-refuses">What the loader refuses</h3>
+<p>The loader refuses: magic or version other than <code>NXP</code> 1; mode above 1;
+width 0 or wider than the mode; height 0 in mode 0 or above 192 in
+mode 0; decompressed length other than 512 + W*H. It accepts a fixed
+picture that overhangs the screen (it is clipped), nonzero reserved or
+flag bits, and pixel indices outside the palette range.</p>
+<p>The authoring kit stages a ready-made NXP only when its header is valid
+and its mode byte matches the game's mode. The game's mode is decided
+by its plain pictures, sidecar <code>mode=</code> keys and other ready-made NXP
+files; it is 256 when nothing decides.</p>
 <h3 id="worked-examples">Worked examples</h3>
 <p>A fixed picture, 256 wide, 96 high, at 0,0 in mode 0, using palette
 entries 0 to 100:</p>

@@ -9,10 +9,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   builds as `NNN.NXP`: fixed at `at=X,Y` in pixels or floating in the
   current text window with `at=window`, any size that fits, drawing only
   its own rectangle and applying only its `palette=F-L` range. Plain
-  pictures are unchanged. `GFX x 8` / `GFX y 15` place the next
+  pictures are unchanged; the one-Layer-2-mode rule applies only to
+  games that use positioned pictures, and the title does not vote. `GFX x 8` / `GFX y 15` place the next
   `DISPLAY 0` at `x*8`,`y` instead, `GFX n 27` cancels, `GFX n 7` clears
-  both Layer 2 surfaces. NextDither can export NXP directly from the
-  picture-format reference. See Graphics, "Positioned pictures".
+  both Layer 2 surfaces. The format is documented in the
+  picture-format reference so converters can write NXP files directly. See Graphics, "Positioned pictures".
 
 - **Instant fades, for fading up after a video.** In `externs/fade`,
   setting flag 241 to 255 makes `EXTERN c 40` and `EXTERN 0 41` take

@@ -31,7 +31,8 @@ want unless you are deliberately putting a hole in the art - see
 <a href="#transparency">Transparency</a> below. Most paint programs let you set the
 palette size directly when exporting an indexed PNG; a plain 256-colour
 export can scatter a few pixels onto slot 255 without your noticing.</p>
-<p>The <strong>width decides the shape</strong>, and only two widths are accepted:</p>
+<p>The <strong>width decides the shape</strong>, and only two widths are accepted (unless the PNG has a sidecar - see
+<a href="#positioned-pictures">Positioned pictures</a>):</p>
 <table>
 <thead>
 <tr>
@@ -169,7 +170,7 @@ table so your transparent colour is last.</p>
 but only with <code>COMPRESS=0</code>.</strong> A compressed picture has no readable
 palette, so a <code>COMPRESS=1</code> build reports nothing at all - neither that
 count nor the palette-collision warning described in
-<a href="reference/picture-format.html#9-verifying-your-output">Picture format</a>. If
+<a href="reference/picture-format.html#10-verifying-your-output">Picture format</a>. If
 you ship compressed art, run one build with <code>COMPRESS=0</code> and read them
 from that.</p>
 <p>The report appears on the build that converts the picture, and a picture
@@ -178,7 +179,7 @@ picture at once, run <code>CLEAN.BAT</code> and then build.</p>
 <p>The count is the quickest way to confirm the hole is the size you
 intended, and to catch one you did not ask for. You can also run the
 audit script directly against a converted file, as
-<a href="reference/picture-format.html#9-verifying-your-output">Picture format</a>
+<a href="reference/picture-format.html#10-verifying-your-output">Picture format</a>
 describes.</p>
 <p><strong>A picture with no slot-255 pixels is fully opaque</strong>, which is the
 normal case - and the case you get by quantizing to 255 colours, indices
@@ -249,7 +250,11 @@ its own area and leaves the rest of the screen alone. Use it for a
 status frame, an inventory panel, a portrait, a map inset or a HUD.</p>
 <p>A positioned picture is either <strong>fixed</strong> at a pixel position, or
 <strong>floating</strong>, which places it at the top-left corner of the current text
-window. A floating picture larger than the window is cut to the window.</p>
+window. A floating picture larger than the window is cut to the window.
+In a 256-wide game the window corner can sit outside the picture area
+(it is inset by 32 pixels), so a floating picture in a window that
+reaches the border loses its top-left strip. An armed position override
+(below) turns the cut to the window off.</p>
 <h3 id="making-one">Making one</h3>
 <p>Put a sidecar beside the PNG: <code>IMAGES\012.txt</code> for <code>IMAGES\012.png</code>.
 <code>BUILD.BAT</code> then builds <code>012.NXP</code> (or <code>012.NXP.ZX0</code> with compression on)
@@ -269,18 +274,22 @@ mode=256         ; optional, 256 or 320
   the picture uses whatever the palette already holds.</li>
 <li><code>mode</code> is 256 (the 256x192 area, positions counted inside the classic
   picture area) or 320 (the full 320x256 screen). Leave it out and the
-  kit decides from your other pictures: any 320-wide ordinary picture or
-  title makes the game 320, a 256-wide one makes it 256, and with
-  neither the game is 256.</li>
-<li>Any other key in the sidecar fails the build, as does a sidecar for a
-  picture number with no PNG beside it. A <code>.txt</code> file with no picture
-  number in its name is ignored.</li>
-<li>A game has one Layer 2 mode. Mixing a 320 picture and a 256 picture
-  fails the build, naming both files.</li>
+  kit decides from your other pictures: a 320-wide ordinary picture
+  (or a ready-made NX2) makes the game 320, a 256-wide one (or NXI)
+  makes it 256, and sidecar <code>mode=</code> keys and ready-made NXP files vote
+  too. The title screen does not vote. With no vote the game is 256.</li>
+<li>Any other key in the sidecar fails the build, as does a <code>.txt</code> with a
+  digit in its name and no PNG of the same name. A <code>.txt</code> with no digit
+  in its name is ignored.</li>
+<li>A game that uses positioned pictures has one Layer 2 mode. Two
+  votes that disagree fail the build, naming both files. A game with no
+  positioned pictures is not checked: it can still mix 320 and 256
+  plain pictures and titles, as before.</li>
 </ul>
 <p>A picture you have already converted can be dropped in as <code>NNN.NXP</code>
 (or <code>NNN.NXP.ZX0</code> / <code>NNN.NPZ</code>). The kit stages it as it is after
-checking the header against the game's mode. See
+checking the header (magic, version 1, mode 0 or 1, raw length 16 + 512 +
+width x height) and that its mode matches the game's. See
 <a href="reference/picture-format.html">Picture format</a> for the file layout.</p>
 <h3 id="how-it-draws">How it draws</h3>
 <p><code>PICTURE</code> and <code>DISPLAY 0</code> work as before. The difference is what
@@ -294,7 +303,8 @@ what is on screen and does not clear anything else. Three consequences:</p>
   picture clears and replaces the whole picture, so positioned art on
   screen goes away. In a game that uses frames, panels or an inventory
   display, convert the location pictures to positioned pictures too (a
-  sidecar with <code>at=0,0</code>) so showing a new location leaves the frame
+  sidecar with <code>at=0,0</code>, with <code>mode=</code> set if no ordinary picture fixes the
+  mode) so showing a new location leaves the frame
   alone.</li>
 <li><code>GFX n 2</code> swaps the surfaces and shows the other one whole, so it also
   reveals anything else the back surface holds.</li>
@@ -310,7 +320,7 @@ sidecar. A HUD or frame that sits over it takes the rest: Blocked on
 0-100, Auto on 101-150, Blocked on 151-255, and <code>palette=101-150</code>.
 Pixels that use an entry outside the declared range draw in whatever
 colour that entry holds from earlier, and the kit's picture check warns
-about them when it converts.</p>
+about them when it converts (only for uncompressed builds, <code>COMPRESS=0</code>).</p>
 <p>Colour cycling (<code>GFX n 11</code>) and the fade extern change the live palette.
 Stop a cycle with <code>GFX n 12</code> before a positioned <code>DISPLAY</code> whose range
 overlaps the cycled entries, or the picture's colours and the cycle will
@@ -356,6 +366,14 @@ ignored. Use it to clear positioned art before a screen with no frame.</p>
   change at the moment it starts drawing. Both are cosmetic and brief;
   draw it in buffer mode and reveal it if a game cannot tolerate that.</li>
 <li>A height of 0 in a header means 256 rows.</li>
+</ul>
+<p>Known limitations:</p>
+<ul>
+<li><code>DISPLAY 0</code> with no picture staged does not consume an armed override.</li>
+<li>Switching mode drops a pending buffered reveal.</li>
+<li>When the picture memory is full, a positioned picture is drawn at
+  <code>PICTURE</code> time, with the window and override as they are then, and a
+  plain picture under an override draws as a plain picture.</li>
 </ul>
 <h2 id="40-column-games">40-column games</h2>
 <p><code>GFX 1 18</code> switches the tilemap from 80x32 single-width text to 40x32
@@ -710,7 +728,9 @@ intro</a>; a game may ship both.</p>
 not try to reconvert them.</p>
 <p><strong>Location pictures go in <code>IMAGES\</code></strong>, named by number exactly as the
 PNGs are: <code>001.NX2</code> for 320-wide art, <code>001.NXI</code> for 256-wide, or a
-compressed <code>001.NX2.ZX0</code>, <code>001.N2Z</code>, <code>001.NXI.ZX0</code> or <code>001.NXZ</code>. If both
+compressed <code>001.NX2.ZX0</code>, <code>001.N2Z</code>, <code>001.NXI.ZX0</code> or <code>001.NXZ</code>. A
+positioned picture is <code>001.NXP</code>, or compressed <code>001.NXP.ZX0</code> or
+<code>001.NPZ</code>; the kit checks its header and mode first. If both
 a <code>001.png</code> and a ready-made <code>001.NX2</code> are there, the PNG conversion
 wins. If you have several forms of the same number, the one staged is
 the one the interpreter would load first - compressed before

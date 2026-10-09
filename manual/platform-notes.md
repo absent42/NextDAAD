@@ -70,10 +70,12 @@ so a value ported from a PC game is twenty times too slow: divide it by
 20. `LOAD` and `RAMLOAD` stop a running cycle here (PC leaves it
 running), and a last index of 255 is treated as 254.
 
-Sub 15 is a no-op for a different reason. On CPC and C64 it is
-`XSPLITSCR`, a split-screen toggle; this target has no split-screen
-mode, so 15 is accepted and does nothing here too. Worth stating
-explicitly now that its neighbour, sub 16, installs a font - see
+Subs 7, 8 and 15 mean something different here. On Atari ST, 7 and 8
+select the text write target, and on CPC and C64, 15 is `XSPLITSCR`.
+Here 7 clears both Layer 2 surfaces, and 8 and 15 set the position of
+the next `DISPLAY 0` (see [Positioned pictures](graphics.md#positioned-pictures)).
+A game ported with those calls should drop them, or follow them with
+`GFX n 27`. Sub 16, their neighbour, installs a font - see
 [Fonts](fonts.md).
 
 ### The parser cursor is an inverse block
@@ -90,7 +92,7 @@ at the end of one row.
 The `GFX` sub-commands that *are* implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
 drawing) and their reveal semantics on 0 and 2, the surface clears,
-the palette subs 9 and 10 and colour cycling on 11 and 12, video
+the position subs 7, 8, 15 and 27, the palette subs 9 and 10 and colour cycling on 11 and 12, video
 playback on 13 and 14, and font installation on 16 - are listed in
 [Graphics](graphics.md#gfx-sub-commands), [Video](video.md) and
 [Fonts](fonts.md).

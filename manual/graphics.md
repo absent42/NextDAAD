@@ -29,7 +29,8 @@ want unless you are deliberately putting a hole in the art - see
 palette size directly when exporting an indexed PNG; a plain 256-colour
 export can scatter a few pixels onto slot 255 without your noticing.
 
-The **width decides the shape**, and only two widths are accepted:
+The **width decides the shape**, and only two widths are accepted (unless the PNG has a sidecar - see
+[Positioned pictures](#positioned-pictures)):
 
 | Width | Becomes | On screen |
 |---|---|---|
@@ -188,7 +189,7 @@ table so your transparent colour is last.
 but only with `COMPRESS=0`.** A compressed picture has no readable
 palette, so a `COMPRESS=1` build reports nothing at all - neither that
 count nor the palette-collision warning described in
-[Picture format](reference/picture-format.md#9-verifying-your-output). If
+[Picture format](reference/picture-format.md#10-verifying-your-output). If
 you ship compressed art, run one build with `COMPRESS=0` and read them
 from that.
 
@@ -199,7 +200,7 @@ picture at once, run `CLEAN.BAT` and then build.
 The count is the quickest way to confirm the hole is the size you
 intended, and to catch one you did not ask for. You can also run the
 audit script directly against a converted file, as
-[Picture format](reference/picture-format.md#9-verifying-your-output)
+[Picture format](reference/picture-format.md#10-verifying-your-output)
 describes.
 
 **A picture with no slot-255 pixels is fully opaque**, which is the
@@ -281,6 +282,10 @@ status frame, an inventory panel, a portrait, a map inset or a HUD.
 A positioned picture is either **fixed** at a pixel position, or
 **floating**, which places it at the top-left corner of the current text
 window. A floating picture larger than the window is cut to the window.
+In a 256-wide game the window corner can sit outside the picture area
+(it is inset by 32 pixels), so a floating picture in a window that
+reaches the border loses its top-left strip. An armed position override
+(below) turns the cut to the window off.
 
 ### Making one
 
@@ -304,18 +309,22 @@ mode=256         ; optional, 256 or 320
   the picture uses whatever the palette already holds.
 - `mode` is 256 (the 256x192 area, positions counted inside the classic
   picture area) or 320 (the full 320x256 screen). Leave it out and the
-  kit decides from your other pictures: any 320-wide ordinary picture or
-  title makes the game 320, a 256-wide one makes it 256, and with
-  neither the game is 256.
-- Any other key in the sidecar fails the build, as does a sidecar for a
-  picture number with no PNG beside it. A `.txt` file with no picture
-  number in its name is ignored.
-- A game has one Layer 2 mode. Mixing a 320 picture and a 256 picture
-  fails the build, naming both files.
+  kit decides from your other pictures: a 320-wide ordinary picture
+  (or a ready-made NX2) makes the game 320, a 256-wide one (or NXI)
+  makes it 256, and sidecar `mode=` keys and ready-made NXP files vote
+  too. The title screen does not vote. With no vote the game is 256.
+- Any other key in the sidecar fails the build, as does a `.txt` with a
+  digit in its name and no PNG of the same name. A `.txt` with no digit
+  in its name is ignored.
+- A game that uses positioned pictures has one Layer 2 mode. Two
+  votes that disagree fail the build, naming both files. A game with no
+  positioned pictures is not checked: it can still mix 320 and 256
+  plain pictures and titles, as before.
 
 A picture you have already converted can be dropped in as `NNN.NXP`
 (or `NNN.NXP.ZX0` / `NNN.NPZ`). The kit stages it as it is after
-checking the header against the game's mode. See
+checking the header (magic, version 1, mode 0 or 1, raw length 16 + 512 +
+width x height) and that its mode matches the game's. See
 [Picture format](reference/picture-format.md) for the file layout.
 
 ### How it draws
@@ -331,7 +340,8 @@ what is on screen and does not clear anything else. Three consequences:
   picture clears and replaces the whole picture, so positioned art on
   screen goes away. In a game that uses frames, panels or an inventory
   display, convert the location pictures to positioned pictures too (a
-  sidecar with `at=0,0`) so showing a new location leaves the frame
+  sidecar with `at=0,0`, with `mode=` set if no ordinary picture fixes the
+  mode) so showing a new location leaves the frame
   alone.
 - `GFX n 2` swaps the surfaces and shows the other one whole, so it also
   reveals anything else the back surface holds.
@@ -349,7 +359,7 @@ sidecar. A HUD or frame that sits over it takes the rest: Blocked on
 0-100, Auto on 101-150, Blocked on 151-255, and `palette=101-150`.
 Pixels that use an entry outside the declared range draw in whatever
 colour that entry holds from earlier, and the kit's picture check warns
-about them when it converts.
+about them when it converts (only for uncompressed builds, `COMPRESS=0`).
 
 Colour cycling (`GFX n 11`) and the fade extern change the live palette.
 Stop a cycle with `GFX n 12` before a positioned `DISPLAY` whose range
@@ -399,6 +409,14 @@ ignored. Use it to clear positioned art before a screen with no frame.
   change at the moment it starts drawing. Both are cosmetic and brief;
   draw it in buffer mode and reveal it if a game cannot tolerate that.
 - A height of 0 in a header means 256 rows.
+
+Known limitations:
+
+- `DISPLAY 0` with no picture staged does not consume an armed override.
+- Switching mode drops a pending buffered reveal.
+- When the picture memory is full, a positioned picture is drawn at
+  `PICTURE` time, with the window and override as they are then, and a
+  plain picture under an override draws as a plain picture.
 
 ## 40-column games
 
@@ -685,7 +703,9 @@ not try to reconvert them.
 
 **Location pictures go in `IMAGES\`**, named by number exactly as the
 PNGs are: `001.NX2` for 320-wide art, `001.NXI` for 256-wide, or a
-compressed `001.NX2.ZX0`, `001.N2Z`, `001.NXI.ZX0` or `001.NXZ`. If both
+compressed `001.NX2.ZX0`, `001.N2Z`, `001.NXI.ZX0` or `001.NXZ`. A
+positioned picture is `001.NXP`, or compressed `001.NXP.ZX0` or
+`001.NPZ`; the kit checks its header and mode first. If both
 a `001.png` and a ready-made `001.NX2` are there, the PNG conversion
 wins. If you have several forms of the same number, the one staged is
 the one the interpreter would load first - compressed before
