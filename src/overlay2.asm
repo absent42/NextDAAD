@@ -1702,7 +1702,7 @@ gfx_find_empty:
 ; prn_dec_digit, print.asm), then probe the extension chain: each
 ; gfxExtTab row is tried with esx_fopen until one opens. Out: CF
 ; clear with the handle in gfxHandle and gfxMode/gfxWidth/
-; gfxCompressed set from the matching row; CF set when no candidate
+; gfxCompressed/gfxIsNxp set from the matching row; CF set when no candidate
 ; exists on SD. Corrupts everything.
 ;
 ; SP11 T5 PARTn probe - keep in step with the other four sites (WAV/
@@ -1755,7 +1755,7 @@ gfx_digits3:
 ; caller above gates part 1 before ever reaching here). Shares
 ; gfx_digits3 and gfx_chain_walk with the root pass, so it carries the
 ; same output contract (CF clear + gfxHandle/gfxMode/gfxWidth/
-; gfxCompressed set; CF set = chain exhausted under PARTn\, caller
+; gfxCompressed/gfxIsNxp set; CF set = chain exhausted under PARTn\, caller
 ; falls back to the unchanged root pass) - but writing/probing
 ; gfxNamePart instead of gfxName.
 ; Runs the WHOLE chain before giving up. Corrupts everything.
