@@ -1594,29 +1594,7 @@ gfx_load:
     ld a, (gfxIsNxp)
     or a
     jr z, .plainrow
-    ld a, (gfxHdrBuf+NXP_FLAGS)
-    and NXP_FLAG_FLOAT
-    or GFX_POS_VALID
-    ld (hl), a                  ; GFX_POS_FLAGS
-    inc hl
-    ld de, (gfxHdrBuf+NXP_X)
-    ld (hl), e
-    inc hl
-    ld (hl), d                  ; GFX_POS_X
-    inc hl
-    ld a, (gfxHdrBuf+NXP_Y)
-    ld (hl), a                  ; GFX_POS_Y
-    inc hl
-    ld de, (gfxHdrBuf+NXP_W)
-    ld (hl), e
-    inc hl
-    ld (hl), d                  ; GFX_POS_W
-    inc hl
-    ld a, (gfxHdrBuf+NXP_PALFIRST)
-    ld (hl), a                  ; GFX_POS_PALF
-    inc hl
-    ld a, (gfxHdrBuf+NXP_PALLAST)
-    ld (hl), a                  ; GFX_POS_PALL
+    call gfx_pos_row_build
     jr .rowdone
 .plainrow:
     ld (hl), a                  ; A = 0: row invalid
@@ -1665,12 +1643,9 @@ gfx_load:
     ld a, (gfxCompressed)
     or a
     jr nz, .failcloseh          ; compressed: close + clean fail
-    ld a, (gfxIsNxp)            ; NXP: clean fail (Task 8 replaces this)
-    or a
-    jr nz, .failcloseh
     call gfx_direct_stream      ; closes the handle on every path
     jr c, .failclean
-    ; drawn + flipped, transient: no cache entry claims it and the
+    ; drawn (plain: flipped), transient: no cache entry claims it and the
     ; stage is cleared so a revisit reloads; PICTURE still succeeds
     ld a, GFX_EMPTY
     ld (stagedPic), a
@@ -1913,6 +1888,26 @@ gfx_nxp_read_hdr:
 .bad:
     scf
     ret
+
+; HL = 8-byte placement row: build it from gfxHdrBuf (gfxPosTab layout).
+; Corrupts AF, BC, DE, HL.
+gfx_pos_row_build:
+    ld a, (gfxHdrBuf+NXP_FLAGS)
+    and NXP_FLAG_FLOAT
+    or GFX_POS_VALID
+    ld (hl), a                   ; GFX_POS_FLAGS
+    inc hl
+    ex de, hl
+    ld hl, gfxHdrBuf+NXP_X
+    ld bc, 5
+    ldir                         ; GFX_POS_X, Y, W
+    inc hl                       ; skip NXP_H
+    ldi                          ; GFX_POS_PALF
+    ldi                          ; GFX_POS_PALL
+    ret
+    ASSERT GFX_POS_X == 1 && GFX_POS_Y == 3 && GFX_POS_W == 4 && GFX_POS_PALF == 6 && GFX_POS_PALL == 7
+    ASSERT NXP_Y == NXP_X+2 && NXP_W == NXP_Y+1 && NXP_H == NXP_W+2
+    ASSERT NXP_PALFIRST == NXP_H+1 && NXP_PALLAST == NXP_PALFIRST+1
 
 ; gfx_read_banks (closes the file on every path), then gfx_depack when
 ; gfxCompressed, then gfx_derive_height. Out: CF = the first failing
@@ -2396,7 +2391,11 @@ gfx_evict_fix:
 ; handle closed, l2Mode restored to the still-displayed front
 ; surface's mode; the back surface may hold partial paint - invisible,
 ; never flipped, so the session is unharmed. Corrupts everything.
+; NXP (gfxIsNxp, handle past the header): gfx_direct_stream_pos instead.
 gfx_direct_stream:
+    ld a, (gfxIsNxp)
+    or a
+    jp nz, gfx_direct_stream_pos
     ; l2Mode is committed to the NEW mode before the clear (it sizes
     ; l2_clear_back's page count) but the flip only happens on success:
     ; snapshot the front surface's mode and restore it on the failure
@@ -2477,9 +2476,6 @@ gfx_direct_stream:
     call gfx_close_handle
     call gfx_open_chain
     jr c, .faildone
-    ld a, (gfxIsNxp)            ; offset 0 is the NXP header, not the
-    or a                        ; palette: fail (Task 8 replaces this)
-    jp nz, .fail
     ; Build into the bank that is NOT displayed, exactly as gfx_blit
     ; does, and for the same reason - except worse here: this pass is
     ; interleaved with SD reads, so programming the live bank left the
@@ -2546,21 +2542,151 @@ gfx_direct_stream:
     scf
     ret
 
-; Read exactly 256 bytes from gfxHandle into gfxRowBuf. Out: CF set
-; on an esxDOS error or a short read. Corrupts everything (esx_fread
-; makes no register promises). Only gfx_direct_stream calls this.
+; Read exactly 256 bytes (gfx_direct_readhl: HL bytes, 1..320) from
+; gfxHandle into gfxRowBuf. Out: CF set on an esxDOS error or a short
+; read. Corrupts everything (esx_fread makes no register promises).
 gfx_direct_read256:
+    ld hl, 256
+gfx_direct_readhl:
+    push hl
+    ld b, h
+    ld c, l
     ld a, (gfxHandle)
     ld ix, gfxRowBuf
-    ld bc, 256
     call esx_fread              ; out: BC = ACTUAL bytes read
+    pop hl
     ret c
-    ld hl, 256
     or a
     sbc hl, bc
     ret z                       ; full read: ZF set, CF clear
     scf
     ret
+
+gfx_dsp_consume:                 ; gfx_direct_stream_pos exits, ahead of it for jr
+    call gfx_close_handle
+    jp gfx_pos_consume
+gfx_dsp_fail:
+    xor a                        ; a failed palette pass leaves the lock set
+    ld (palLock), a
+    ld (palBusy), a
+    ld (gfxPalBank2Only), a
+    call gfx_close_handle
+    call data_restore
+    scf
+    ret
+
+; gfx_direct_stream for NXP (rows needed twice, no seek back): resolve
+; from a header row image, palette range into hidden bank 2 (R20), then
+; one read per row written front then back - may tear for one frame.
+; Out: CF clear = drawn, skipped or empty; CF set = failed. Handle closed
+; on every path. Corrupts everything.
+gfx_direct_stream_pos:
+    ld a, (gfxMode)
+    call gfx_pos_mode
+    jr c, gfx_dsp_consume        ; buffer-mode mismatch: skip
+    ld hl, gfxPosTmp
+    push hl
+    call gfx_pos_row_build
+    pop hl
+    ld a, (gfxHeight)
+    call gfx_pos_resolve_hl
+    jr c, gfx_dsp_consume        ; empty rectangle
+    call data_save
+    ld a, 1
+    ld (gfxPalBank2Only), a
+    ld (palBusy), a
+    ld d, 0                      ; halves: entries 0-127, then 128-255
+.pal:
+    push de
+    call gfx_direct_read256
+    pop de
+    jr c, gfx_dsp_fail
+    ld hl, (gfxHdrBuf+NXP_PALFIRST)
+    ld b, l                      ; B = first, C = last
+    ld c, h
+    ASSERT NXP_PALLAST == NXP_PALFIRST+1
+    ld hl, gfxRowBuf
+    call gfx_pos_pal_half_run    ; D += 128
+    ld a, d
+    or a
+    jr nz, .pal
+    call gfx_pos_pal_finish
+    xor a
+    ld (gfxPalBank2Only), a
+    ld (palBusy), a
+    ld a, (gfxRectSrcY)
+    or a
+    jr z, .top
+    ld b, a
+.skip:                           ; top-clipped rows: read and discard
+    push bc
+    call .read
+    pop bc
+    jr c, gfx_dsp_fail
+    djnz .skip
+.top:
+    ld hl, (gfxRectY)            ; L = Y (0..255 after the clip)
+    ld a, (gfxRectH)
+    ld h, a
+    ld (gfxRowY), hl             ; and gfxRowsLeft
+    ASSERT gfxRowsLeft == gfxRowY+1
+    call .read                   ; first row before anything is shown
+    jr c, gfx_dsp_fail
+    ld a, (gfxDrawTarget)
+    or a
+    jr nz, .row
+    call gfx_frame_gate
+    nextreg NR_PAL_CTRL, PAL_L2_SECOND   ; show the new range
+.row:
+    ld a, (gfxDrawTarget)
+    or a
+    jr nz, .back
+    ld a, (l2FrontBank)
+    call .write
+.back:
+    ld a, (l2BackBank)
+    call .write
+    or a                         ; CF clear for the last-row exit
+    ld hl, gfxRowY
+    inc (hl)
+    inc hl                       ; gfxRowsLeft
+    dec (hl)
+    jr z, .end
+    call .read
+    jr nc, .row
+.end:                            ; CF = a row read failed
+    push af
+    ld a, (gfxDrawTarget)
+    or a
+    jr nz, .nomirror
+    call l2_pal_mirror21         ; bank 2 is displayed: refill bank 1
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+.nomirror:
+    pop af
+    jp c, gfx_dsp_fail
+    call gfx_close_handle
+    call data_restore
+    xor a
+    ld (gfxPosOvr), a
+    ld a, (gfxDrawTarget)
+    or a
+    jr nz, .arm
+    call l2_enable
+    or a
+    ret
+.arm:
+    ld a, (l2Mode)
+    ld (gfxRevealMode), a        ; GFX 0/2 mirror bank 2 and reveal
+    ld a, 1
+    ld (gfxRevealPend), a
+    ret                          ; CF clear from the or a above
+.read:
+    ld hl, (gfxWidth)
+    jp gfx_direct_readhl
+.write:                          ; A = first 16K bank of the surface
+    add a, a
+    ld (gfxPosSurf), a
+    jp gfx_pos_row_write
 
 ; --- ZX0 depacker (Task 5) ---
 ; Core algorithm vendored from Einar Saukas's dzx0_standard.asm
@@ -3169,7 +3295,9 @@ gfx_pos_resolve:
     call gfx_pos_row             ; HL = row
     ld a, (stagedPos)
     or a
-    jp m, .nxp
+    ld a, (stagedHeight)
+    jp m, gfx_pos_resolve_hl
+    ld (gfxRectH), a             ; 0 = 256
     ; plain: row holds only a zero flags byte; full picture size at 0,0
     ld c, 0                      ; not floating
     ld hl, 0
@@ -3182,8 +3310,10 @@ gfx_pos_resolve:
     ld hl, 320
 .pw:
     ld (gfxRectW), hl
-    jr .size
-.nxp:
+    jr gfx_pos_resolve_ovr
+; HL = 8-byte placement row, A = rows (0 = 256). Out as gfx_pos_resolve.
+gfx_pos_resolve_hl:
+    ld (gfxRectH), a
     ld c, (hl)                   ; GFX_POS_FLAGS
     inc hl
     ld e, (hl)
@@ -3199,9 +3329,7 @@ gfx_pos_resolve:
     inc hl
     ld d, (hl)
     ld (gfxRectW), de
-.size:
-    ld a, (stagedHeight)
-    ld (gfxRectH), a             ; 0 = 256
+gfx_pos_resolve_ovr:
     ld a, (gfxPosOvr)
     rrca
     jr nc, .noovr
@@ -3384,13 +3512,6 @@ gfx_pos_clip:
     scf
     ret
 
-gfx_pos_skip:                    ; buffer mode cannot switch the surface mode
- IFDEF DEBUG
-    ld b, 29
-    call dbg_markcol
-    ld hl, msgPosMode
-    call dbg_mark
- ENDIF
 gfx_pos_consume:
     xor a
     ld (gfxPosOvr), a
@@ -3398,25 +3519,43 @@ gfx_pos_consume:
  IFDEF DEBUG
 msgPosMode: db "POS mode", 0
  ENDIF
-; DISPLAY 0, positioned or override: draw the rectangle into front and back
-; (buffer mode: back + bank 2, arm the GFX 0/2 reveal), no flip, palette
-; range only. Consumes the override. Corrupts everything.
-gfx_blit_pos:
-    ld a, (stagedMode)
+
+; A = picture mode (R3). Same as l2Mode: NC. Screen mode: clear both
+; surfaces, switch Layer 2, NC. Buffer mode: DEBUG marker, CF = skip the draw.
+; Corrupts everything.
+gfx_pos_mode:
     ld hl, l2Mode
     cp (hl)
-    jr z, .resolve
+    ret z
     ld b, a
     ld a, (gfxDrawTarget)
     or a
-    jr nz, gfx_pos_skip
+    jr nz, .skip                 ; buffer mode cannot switch the surface mode
     ld (gfxRevealPend), a        ; A = 0: the switch discards a pending reveal
     ld (hl), b                   ; l2Mode first: it sizes both clears
     call l2_clear
     call l2_clear_back
     ld a, (l2Mode)
     call l2_mode_set
-.resolve:
+    or a
+    ret
+.skip:
+ IFDEF DEBUG
+    ld b, 29
+    call dbg_markcol
+    ld hl, msgPosMode
+    call dbg_mark
+ ENDIF
+    scf
+    ret
+
+; DISPLAY 0, positioned or override: draw the rectangle into front and back
+; (buffer mode: back + bank 2, arm the GFX 0/2 reveal), no flip, palette
+; range only. Consumes the override. Corrupts everything.
+gfx_blit_pos:
+    ld a, (stagedMode)
+    call gfx_pos_mode
+    jr c, gfx_pos_consume
     call gfx_pos_resolve
     jr c, gfx_pos_consume
     ld bc, 0*256+255             ; plain under override: whole palette
@@ -3520,14 +3659,7 @@ gfx_pos_rows:
     ASSERT gfxRowsLeft == gfxRowY+1
 .row:
     call gfx_row_fetch
-    ld a, (l2Mode)
-    or a
-    jr z, .lin
-    call gfx_pos_row_write320
-    jr .next
-.lin:
-    call gfx_pos_row_write256
-.next:
+    call gfx_pos_row_write
     ld hl, gfxRowY
     inc (hl)
     inc hl                       ; gfxRowsLeft
@@ -3571,6 +3703,13 @@ gfx_copy:
     ret z
     ldir
     ret
+
+; Write gfxRowBuf's row with the l2Mode writer. Corrupts AF, BC, DE, HL.
+gfx_pos_row_write:
+    ld a, (l2Mode)
+    or a
+    jp z, gfx_pos_row_write256
+    ; falls into gfx_pos_row_write320
 
 ; Column-major surface: pixel (x, y) at page surf + (x >> 5), offset
 ; (x & 31)*256 + y. Runs of up to 32 pixels, one LDWS each; LDWS steps L
@@ -4058,6 +4197,7 @@ stagedPos:   db 0                ; 0 = plain staged picture, bit 7 = positioned
 gfxPosX:     dw 0                ; gfx_pos_row_write320: next x
 gfxPosLeft:  dw 0                ; pixels still to write in the row
 gfxPosRun:   db 0                ; pixels in the current page run
+gfxPosTmp:   ds GFX_POS_SIZE     ; direct-stream NXP placement row
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the
 ; vendored dzx0 loop)
