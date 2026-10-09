@@ -1464,6 +1464,8 @@ gfx_load:
     ld (gfxEntryIdx), a
     call gfx_open_chain
     jp c, .failclean
+    call gfx_nxp_hdr_if         ; NXP: header first, else no-op
+    jp c, .failcloseh
     call gfx_fetch_run          ; read banks, depack if needed, derive height
     jr c, .failbanks
     ; everything verified: commit the cache entry
@@ -1519,9 +1521,14 @@ gfx_load:
     ; which the .slot-exhaustion path arrives here without.
     call gfx_open_chain
     jr c, .failclean
+    call gfx_nxp_hdr_if         ; NXP: header first, else no-op
+    jr c, .failcloseh
     ld a, (gfxCompressed)
     or a
     jr nz, .failcloseh          ; compressed: close + clean fail
+    ld a, (gfxIsNxp)            ; NXP: clean fail (Task 8 replaces this)
+    or a
+    jr nz, .failcloseh
     call gfx_direct_stream      ; closes the handle on every path
     jr c, .failclean
     ; drawn + flipped, transient: no cache entry claims it and the
@@ -1648,7 +1655,8 @@ gfx_open_chain_part:
 
 ; Walk gfxExtTab: per row copy the extension to (gfxExtDst), take the row's
 ; mode/compressed bytes, probe (gfxOpenPath). Out: NC + gfxHandle/gfxMode/
-; gfxCompressed/gfxWidth set, or CF = chain exhausted. Corrupts everything.
+; gfxCompressed/gfxWidth/gfxIsNxp set, or CF = chain exhausted. Corrupts
+; everything.
 gfx_chain_walk:
     ld hl, gfxExtTab
 .row:
@@ -1663,6 +1671,14 @@ gfx_chain_walk:
     dec hl
     ld a, (hl)                  ; row's mode byte
     ld (gfxMode), a
+    cp 2                        ; 2 = NXP: provisional mode 0, the
+    ld a, 0                     ; header sets mode and width
+    jr nz, .nxpflag
+    ld (gfxMode), a
+    inc a
+.nxpflag:
+    ld (gfxIsNxp), a
+    ld a, (gfxMode)
     or a
     ld de, 256
     jr z, .width
@@ -1690,6 +1706,73 @@ gfx_chain_walk:
 .opened:
     ld (gfxHandle), a
     or a
+    ret
+
+; After gfx_open_chain: NC no-op for a plain row; NXP reads the header.
+; Out and corruption as gfx_nxp_read_hdr.
+gfx_nxp_hdr_if:
+    ld a, (gfxIsNxp)
+    or a
+    ret z
+    ; falls into gfx_nxp_read_hdr
+
+; NXP: read + validate the 16-byte header (gfxHandle at offset 0).
+; Out: NC + gfxHdrBuf/gfxMode/gfxWidth/gfxHeight set, handle at 16;
+; CF = read error or malformed (caller closes). Corrupts AF, BC, DE, HL, IX.
+gfx_nxp_read_hdr:
+    ld a, (gfxHandle)
+    ld ix, gfxHdrBuf
+    ld bc, NXP_HDR_LEN
+    call esx_fread              ; out: BC = ACTUAL bytes read
+    ret c
+    ld hl, NXP_HDR_LEN
+    or a
+    sbc hl, bc
+    jr nz, .bad                 ; short read
+    ld hl, gfxHdrBuf
+    ld de, nxpMagic
+    ld b, 4
+.magic:
+    ld a, (de)
+    cp (hl)
+    jr nz, .bad
+    inc hl
+    inc de
+    djnz .magic
+    ld a, (gfxHdrBuf+NXP_MODE)
+    cp 2
+    jr nc, .bad
+    ld (gfxMode), a
+    ld hl, (gfxHdrBuf+NXP_W)
+    ld a, h
+    or l
+    jr z, .bad                  ; width 0
+    ld (gfxWidth), hl
+    ld de, 320+1
+    ld a, (gfxMode)
+    or a
+    jr nz, .wmax
+    ld de, 256+1
+.wmax:
+    or a
+    sbc hl, de                  ; width <= max  <=>  width < max+1
+    jr nc, .bad
+    ld a, (gfxHdrBuf+NXP_H)
+    ld (gfxHeight), a
+    ld b, a
+    ld a, (gfxMode)
+    or a
+    jr nz, .hok                 ; 320 mode: any height, 0 = 256
+    ld a, b
+    or a
+    jr z, .bad                  ; 256 rows on the 192-row surface
+    cp 193
+    jr nc, .bad
+.hok:
+    or a
+    ret
+.bad:
+    scf
     ret
 
 ; gfx_read_banks (closes the file on every path), then gfx_depack when
@@ -1802,8 +1885,12 @@ gfx_read_page:
 ; (0 encodes 256 rows, the GCE_HEIGHT convention); CF set when the
 ; size is malformed - shorter than the palette, zero rows, a partial
 ; trailing row, or taller than the mode's surface (192 rows in
-; 256-wide mode, 256 rows in 320-wide mode). Corrupts everything.
+; 256-wide mode, 256 rows in 320-wide mode). NXP rows take
+; gfx_nxp_size_check instead (height is in the header). Corrupts everything.
 gfx_derive_height:
+    ld a, (gfxIsNxp)
+    or a
+    jr nz, gfx_nxp_size_check
     ld hl, (gfxSizeLo)
     ld de, 512
     or a
@@ -1849,6 +1936,38 @@ gfx_derive_height:
     ld (gfxHeight), a
     or a
     ret
+.bad:
+    scf
+    ret
+
+; NXP: bytes after the header must equal 512 + W*H exactly (H 0 = 256).
+; Out: NC ok (gfxHeight already set by the header) / CF bad. Corrupts
+; AF, BC, DE, HL. C only holds 0 or 1 (6-bank read cap), so a borrow is $FF.
+gfx_nxp_size_check:
+    ld hl, (gfxSizeLo)
+    ld de, 512
+    or a
+    sbc hl, de
+    ld a, (gfxSizeHi)
+    sbc a, 0
+    jr c, .bad                  ; shorter than the palette
+    ld c, a                     ; C:HL = pixel bytes present
+    ld de, (gfxWidth)
+    ld a, (gfxHeight)
+    ld b, a                     ; B = rows, 0 = 256 rounds
+.row:
+    or a                        ; a borrow survives dec c: clear per round
+    sbc hl, de
+    jr nc, .nb
+    dec c
+    jp m, .bad                  ; borrowed below zero: too short
+.nb:
+    djnz .row
+    ld a, h
+    or l
+    or c
+    jr nz, .bad                 ; bytes left over: too long
+    ret                         ; CF clear
 .bad:
     scf
     ret
@@ -2219,6 +2338,9 @@ gfx_direct_stream:
     call gfx_close_handle
     call gfx_open_chain
     jr c, .faildone
+    ld a, (gfxIsNxp)            ; offset 0 is the NXP header, not the
+    or a                        ; palette: fail (Task 8 replaces this)
+    jp nz, .fail
     ; Build into the bank that is NOT displayed, exactly as gfx_blit
     ; does, and for the same reason - except worse here: this pass is
     ; interleaved with SD reads, so programming the live bank left the
@@ -3188,7 +3310,11 @@ gfx_row_scatter320:
 ; gfx_depack). Per shape the ZX0 variants probe before raw so
 ; compressed art wins, the Gfx2Next-emitted double extension before
 ; its 8.3 synonym (kept for plain-FAT/no-LFN setups).
+; Mode byte 2 = NXP: mode and width come from the 16-byte header.
 gfxExtTab:
+    db "NXP.ZX0",          2, 1
+    db "NPZ", 0, 0, 0, 0,  2, 1
+    db "NXP", 0, 0, 0, 0,  2, 0
     db "NX2.ZX0",          1, 1
     db "N2Z", 0, 0, 0, 0,  1, 1
     db "NX2", 0, 0, 0, 0,  1, 0
@@ -3198,6 +3324,9 @@ gfxExtTab:
 gfxExtEnd:
 GFX_EXT_NAME equ 7
 GFX_EXT_ROW  equ GFX_EXT_NAME+2
+    ASSERT gfxExtEnd-gfxExtTab == 9*GFX_EXT_ROW
+
+nxpMagic:    db "NXP", 1         ; header bytes 0-3: magic + version
 
 ; SP11 T5: PARTn\ prefixed scratch for gfx_open_chain_part, overlay2-
 ; local. gfxName itself is resident (gfxcache.asm) and exactly 12
@@ -3305,7 +3434,7 @@ zx0DepackSP: dw 0                ; SP snapshot for zx0_fail's rewind
 
 TITLE_ROW equ 4                  ; word name ptr + mode byte + compressed byte
 
-; DAAD.* probe order, first hit wins - exactly gfxExtTab's 6 shapes
+; DAAD.* probe order, first hit wins - exactly gfxExtTab's 6 plain shapes
 ; (same mode/compressed pairs, see its header for the ZX0-before-raw/
 ; wide-before-narrow reasoning) against the fixed base name "DAAD"
 ; instead of a per-picture number, since a title is never numbered.
@@ -3343,6 +3472,8 @@ titleRowPtr: dw 0                 ; title_probe's table-walk cursor
 ; one) - never gfxCache/gfxBankList/staged* (a probe/load, not a cache
 ; commit). Corrupts everything.
 title_probe:
+    xor a
+    ld (gfxIsNxp), a              ; titles are never NXP (gfx_derive_height)
     ld hl, titleTab
 .row:
     ld (titleRowPtr), hl
