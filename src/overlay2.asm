@@ -3354,6 +3354,274 @@ gfx_pos_clip:
     scf
     ret
 
+; DISPLAY 0 on a positioned entry, or on a plain one under an armed
+; override: draw only the rectangle into the front and back surfaces, no
+; flip, palette range only. Buffer mode writes the back surface and bank 2
+; and arms the GFX 0/2 reveal. Consumes the override. Corrupts everything.
+gfx_pos_skip:                    ; buffer mode cannot switch the surface mode
+ IFDEF DEBUG
+    ld b, 29
+    call dbg_markcol
+    ld hl, msgPosMode
+    call dbg_mark
+ ENDIF
+gfx_pos_consume:
+    xor a
+    ld (gfxPosOvr), a
+    ret
+ IFDEF DEBUG
+msgPosMode: db "POS mode", 0
+ ENDIF
+gfx_blit_pos:
+    ld a, (stagedMode)
+    ld hl, l2Mode
+    cp (hl)
+    jr z, .resolve
+    ld b, a
+    ld a, (gfxDrawTarget)
+    or a
+    jr nz, gfx_pos_skip
+    ld (hl), b                   ; l2Mode first: it sizes both clears
+    call l2_clear
+    call l2_clear_back
+    ld a, (l2Mode)
+    call l2_mode_set
+.resolve:
+    call gfx_pos_resolve
+    jr c, gfx_pos_consume
+    ld bc, 0*256+255             ; plain under override: whole palette
+    ld de, 256                   ; and the mode's own row width
+    ld a, (stagedMode)
+    or a
+    jr z, .pw
+    ld de, 320
+.pw:
+    ld a, (stagedPos)
+    or a
+    jp p, .wset
+    ld a, (stagedEntry)
+    call gfx_pos_row             ; keeps BC
+    add hl, GFX_POS_W
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld b, (hl)                   ; GFX_POS_PALF
+    inc hl
+    ld c, (hl)                   ; GFX_POS_PALL
+    ASSERT GFX_POS_PALF == GFX_POS_W+2 && GFX_POS_PALL == GFX_POS_PALF+1
+.wset:
+    ld (gfxWidth), de            ; a fetched row is the whole picture row
+    push bc
+    call data_save
+    ld a, (gfxDrawTarget)
+    ld (gfxPalBank2Only), a      ; buffer mode: hidden bank only
+    or a
+    call z, gfx_frame_gate
+    ld a, 1
+    ld (palBusy), a
+    call gfx_pal_rewind          ; HL = palette, mapped
+    pop bc
+    call gfx_pos_pal_apply
+    xor a
+    ld (gfxPalBank2Only), a
+    ld (palBusy), a
+    ld a, (gfxDrawTarget)
+    or a
+    jr nz, .back
+    ; front rows cost more than a scanline each: a tall rectangle may tear
+    ld a, (l2FrontBank)
+    call gfx_pos_rows
+.back:
+    ld a, (l2BackBank)
+    call gfx_pos_rows
+    call data_restore
+    xor a
+    ld (gfxPosOvr), a
+    ld a, (gfxDrawTarget)
+    or a
+    jp z, l2_enable
+    ld a, (l2Mode)
+    ld (gfxRevealMode), a        ; GFX 0/2 mirror bank 2 and reveal
+    ld a, 1
+    ld (gfxRevealPend), a
+    ret
+
+; Wait for the next frame tick, bounded to 65536 polls. Corrupts AF, C, DE, HL.
+gfx_frame_gate:
+    ld hl, frameCounter
+    ld c, (hl)
+    ld de, 0
+.w:
+    ld a, (hl)
+    cp c
+    ret nz
+    dec de
+    ld a, d
+    or e
+    jr nz, .w
+    ret
+
+; A = first 8K page of the target surface. Rewind the source to the
+; entry's pixel rows, discard gfxRectSrcY rows, then write gfxRectH rows
+; (0 = 256) from row gfxRectY. Corrupts everything.
+gfx_pos_rows:
+    ld (gfxPosSurf), a
+    call gfx_pal_rewind          ; source = run start, HL = DATA_WINDOW
+    inc h
+    inc h                        ; pixels follow the 512-byte palette
+    ld (gfxSrcPtr), hl
+    ld a, (gfxRectSrcY)
+    or a
+    jr z, .top
+    ld b, a
+.skip:
+    push bc
+    call gfx_row_fetch
+    pop bc
+    djnz .skip
+.top:
+    ld a, (gfxRectY)
+    ld (gfxRowY), a              ; 0..255 after the clip
+    ld a, (gfxRectH)
+    ld (gfxRowsLeft), a
+.row:
+    call gfx_row_fetch
+    ld a, (l2Mode)
+    or a
+    jr z, .lin
+    call gfx_pos_row_write320
+    jr .next
+.lin:
+    call gfx_pos_row_write256
+.next:
+    ld hl, gfxRowY
+    inc (hl)
+    ld hl, gfxRowsLeft
+    dec (hl)
+    jr nz, .row
+    ret
+
+; Row-major surface: page surf + (y >> 5), offset (y & 31)*256 + X;
+; X + W <= 256, so a row never crosses a page. Corrupts AF, BC, DE, HL.
+gfx_pos_row_write256:
+    ld a, (gfxRowY)
+    ld e, a
+    ld d, 8
+    mul d, e                     ; D = y >> 5
+    ld a, (gfxPosSurf)
+    add a, d
+    call data_map_page
+    ld a, (gfxRowY)
+    and 31
+    or high DATA_WINDOW
+    ld d, a
+    ld a, (gfxRectX)
+    ld e, a
+    ld hl, gfxRowBuf
+    ld bc, (gfxRectSrcX)
+    add hl, bc
+    ld bc, (gfxRectW)
+    ; falls into gfx_copy
+
+; dma_copy at GFX_DMA_MIN_LEN or more, LDIR below; BC = 0 copies nothing.
+; Same end state as LDIR. Corrupts AF, BC, DE, HL.
+gfx_copy:
+    ld a, b
+    or a
+    jp nz, dma_copy
+    ld a, c
+    cp GFX_DMA_MIN_LEN
+    jp nc, dma_copy
+    or a
+    ret z
+    ldir
+    ret
+
+; Column-major surface: pixel (x, y) at page surf + (x >> 5), offset
+; (x & 31)*256 + y. Runs of up to 32 pixels, one LDWS each; LDWS steps L
+; only, so a run that crosses a source 256-byte boundary is split there.
+; Corrupts AF, BC, DE, HL.
+gfx_pos_row_write320:
+    ld hl, (gfxRectX)
+    ld (gfxPosX), hl
+    ld hl, (gfxRectW)
+    ld (gfxPosLeft), hl
+    ld hl, gfxRowBuf
+    ld de, (gfxRectSrcX)
+    add hl, de                   ; HL = source, live across every run
+.page:
+    ld de, (gfxPosX)
+    ld a, e
+    and $E0
+    or d
+    rlca
+    rlca
+    rlca                         ; A = x >> 5 (x < 512, D = 0/1)
+    ld b, a
+    ld a, (gfxPosSurf)
+    add a, b
+    call data_map_page
+    ld a, e
+    and 31
+    ld c, a
+    or high DATA_WINDOW
+    ld d, a
+    ld a, (gfxRowY)
+    ld e, a                      ; DE = dest
+    ld a, 32
+    sub c                        ; A = room in this page, 1..32
+    ld bc, (gfxPosLeft)
+    inc b
+    dec b
+    jr nz, .run                  ; left >= 256
+    cp c
+    jr c, .run
+    ld a, c                      ; run = left
+.run:
+    ld (gfxPosRun), a
+    ld b, a
+    ld a, l
+    neg                          ; A = pixels before L wraps (0 = 256)
+    jr z, .tail
+    cp b
+    jr nc, .tail                 ; no wrap inside the run
+    ld c, a
+    ld a, b
+    sub c
+    ld b, c
+    ld c, a                      ; B = before the wrap, C = after
+.pre:
+    ldws
+    djnz .pre
+    inc h
+    ld b, c
+.tail:
+    ldws
+    djnz .tail
+    ld a, l
+    or a
+    jr nz, .adv
+    inc h                        ; wrap landed on the run end
+.adv:
+    ld a, (gfxPosRun)
+    ld c, a
+    ld de, (gfxPosX)
+    add de, a
+    ld (gfxPosX), de
+    ld de, (gfxPosLeft)
+    ld a, e
+    sub c
+    ld e, a
+    jr nc, .nob
+    dec d
+.nob:
+    ld (gfxPosLeft), de
+    ld a, d
+    or e
+    jr nz, .page
+    ret
+
 ; Draw the staged cache entry, double-buffered: everything renders to
 ; the BACK surface (invisible - the old picture stays intact on the
 ; front throughout), then the surfaces flip. Sequence: stage the mode
@@ -3394,6 +3662,12 @@ gfx_blit:
     ld a, (stagedEntry)
     inc a                        ; GFX_EMPTY -> 0: nothing staged
     ret z
+    ld a, (stagedPos)
+    or a
+    jp m, gfx_blit_pos           ; positioned entry
+    ld a, (gfxPosOvr)
+    bit 0, a
+    jp nz, gfx_blit_pos          ; plain entry under an armed override
     ld a, (stagedMode)
     ld (l2Mode), a              ; variable only - sizes l2_clear_back's
                                 ; page count; NR $70/$12 wait for the flip
@@ -3563,8 +3837,8 @@ gfx_row_fetch:
     jr .chunk
 .fits:
     pop hl                      ; HL = src
-    call dma_copy               ; LDIR-equivalent end state (HL = src+BC);
-                                ; a row or split tail is >= GFX_DMA_MIN_LEN
+    call gfx_copy               ; LDIR end state (HL = src+BC); NXP widths
+                                ; can leave a tail under GFX_DMA_MIN_LEN
     ld (gfxSrcPtr), hl          ; may land exactly on GFX_SRC_END -
     ret                         ; the next fetch's .chunk check handles it
 
@@ -3747,6 +4021,9 @@ gfxPosSurf:  db 0                ; 8K page of the surface being written
 gfxIsNxp:    db 0                ; 1 = opened chain row is NXP
 gfxPalBank2Only: db 0           ; nonzero = positioned palette to bank 2 only
 stagedPos:   db 0                ; 0 = plain staged picture, bit 7 = positioned
+gfxPosX:     dw 0                ; gfx_pos_row_write320: next x
+gfxPosLeft:  dw 0                ; pixels still to write in the row
+gfxPosRun:   db 0                ; pixels in the current page run
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the
 ; vendored dzx0 loop)
