@@ -853,15 +853,14 @@ l2CopyChunkCnt: db 0
 ; exactly the progressive-paint artifact double buffering exists to
 ; kill. Palette is left as it stands; the flip goes through
 ; l2_mode_set with l2Mode, idempotent when the mode is unchanged.
-; Corrupts everything.
+; B != 0 also cancels a GFX 8/15 position override. Corrupts everything.
 h_display:
     call spr_stop_all           ; both paths: the blit and the clear
     ld a, b
     or a
     jp z, gfx_blit
     call l2_clear_back
-    xor a
-    ld (gfxPosOvr), a           ; DISPLAY n cancels a position override
+    call gfx_pos_consume        ; DISPLAY n cancels a position override
     ld a, (gfxDrawTarget)
     or a
     ret nz                      ; buffer mode: the clear is a buffer
@@ -873,7 +872,7 @@ h_display:
                                 ; just sized for; idempotent when unchanged
 
 ; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
-; sub except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21 - a flag
+; sub except 8, 9, 10, 11, 13-21 (8/15: .posx/.posy position) - a flag
 ; number for 9, 10 and 11 (see .palset/.palget/.cycstart below), the
 ; video number for 13/14 (see .vidgo below), the font number for 16
 ; (see .font/GFX_SUB_FONT below), the layer-order selector for 17
@@ -929,8 +928,8 @@ h_display:
 ;       in sprites.asm)
 ;   7 = clear both surfaces (.clearboth); 8 = X override B*8 px,
 ;       15 = Y override B px: arm a position for the next DISPLAY 0
-;       (.posx/.posy); 27 = cancel it and zero both axes (.poscancel);
-;       DISPLAY n (n != 0) also cancels. 26 and 28 up = unknown
+;       (.posx/.posy); 27 = cancel it (gfx_pos_consume); DISPLAY n
+;       also cancels. Every disarm zeroes both axes. 28 up = unknown
 ;   16 = install font B (0 = base - the embedded table, then FONT.CHR
 ;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
 ;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
@@ -1009,8 +1008,8 @@ h_gfx:
     dw .sprstop
     ASSERT $ - .tab == 2*GFX_SUB_CUR_GLYPH
     dw .curglyph, .curblink, .curink, .curpaper, .curreset
-    dw .poscancel
-    ASSERT $ - .tab == 56
+    dw gfx_pos_consume           ; sub 27: disarm, axes back to 0
+    ASSERT $ - .tab == 2*GFX_SUB_COUNT
     ; Offset ASSERTs miss a swapped label: read every slot back.
     ASSERT {.tab+2*0} == .backfront && {.tab+2*1} == .frontback && {.tab+2*2} == .swap
     ASSERT {.tab+2*3} == .toscreen && {.tab+2*4} == .tobuffer
@@ -1028,7 +1027,7 @@ h_gfx:
     ASSERT {.tab+2*GFX_SUB_CUR_GLYPH} == .curglyph && {.tab+2*GFX_SUB_CUR_BLINK} == .curblink
     ASSERT {.tab+2*GFX_SUB_CUR_INK} == .curink && {.tab+2*GFX_SUB_CUR_PAPER} == .curpaper
     ASSERT {.tab+2*GFX_SUB_CUR_RESET} == .curreset
-    ASSERT {.tab+2*GFX_SUB_POS_CANCEL} == .poscancel
+    ASSERT {.tab+2*GFX_SUB_POS_CANCEL} == gfx_pos_consume
 .clearboth:                      ; sub 7: clear front and back
     call l2_clear
     jp l2_clear_back
@@ -1046,13 +1045,6 @@ h_gfx:
 .arm:
     ld a, 1
     ld (gfxPosOvr), a
-    ret
-.poscancel:                      ; sub 27: disarm, axes back to 0
-    xor a
-    ld (gfxPosOvr), a
-    ld (gfxPosOvrX), a
-    ld (gfxPosOvrX+1), a
-    ld (gfxPosOvrY), a
     ret
 .unk:
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
@@ -1845,7 +1837,7 @@ gfx_nxp_read_hdr:
     jr nz, .bad                 ; short read
     ld hl, gfxHdrBuf
     ld de, nxpMagic
-    ld b, 4
+    ld b, NXP_VERSION+1
 .magic:
     ld a, (de)
     cp (hl)
@@ -2658,8 +2650,7 @@ gfx_direct_stream_pos:
 .done:
     call gfx_close_handle
     call data_restore
-    xor a
-    ld (gfxPosOvr), a
+    call gfx_pos_consume
     ld a, (gfxDrawTarget)
     or a
     jr nz, .arm
@@ -3504,9 +3495,15 @@ gfx_pos_clip:
     scf
     ret
 
+; Disarm the position override and zero both axes (spec: an unset axis
+; is 0). Out: CF clear. Corrupts AF, HL.
 gfx_pos_consume:
     xor a
     ld (gfxPosOvr), a
+    ld (gfxPosOvrY), a
+    ld h, a
+    ld l, a
+    ld (gfxPosOvrX), hl
     ret
  IFDEF DEBUG
 msgPosMode: db "POS mode", 0
@@ -3597,8 +3594,7 @@ gfx_blit_pos:
     ld a, (l2BackBank)
     call gfx_pos_rows
     call data_restore
-    xor a
-    ld (gfxPosOvr), a
+    call gfx_pos_consume
     ld a, (gfxDrawTarget)
     or a
     jp z, l2_enable
@@ -4098,6 +4094,7 @@ GFX_EXT_ROW  equ GFX_EXT_NAME+2
     ASSERT gfxExtEnd-gfxExtTab == 9*GFX_EXT_ROW
 
 nxpMagic:    db "NXP", 1         ; header bytes 0-3: magic + version
+    ASSERT $-nxpMagic == NXP_VERSION+1   ; gfx_nxp_read_hdr compares 4 bytes
 
 ; SP11 T5: PARTn\ prefixed scratch for gfx_open_chain_part, overlay2-
 ; local. gfxName itself is resident (gfxcache.asm) and exactly 12
