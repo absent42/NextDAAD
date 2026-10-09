@@ -122,6 +122,66 @@ function Get-PngWidth([string]$Path) {
     return (([int]$b[16] -shl 24) -bor ([int]$b[17] -shl 16) -bor ([int]$b[18] -shl 8) -bor [int]$b[19])
 }
 
+function Get-PngHeight([string]$Path) {
+    $b = New-Object byte[] 24
+    $fs = [System.IO.File]::OpenRead($Path)
+    try { $n = $fs.Read($b, 0, 24) } finally { $fs.Dispose() }
+    if ($n -lt 24) { return -1 }
+    return (([int]$b[20] -shl 24) -bor ([int]$b[21] -shl 16) -bor ([int]$b[22] -shl 8) -bor [int]$b[23])
+}
+
+# IMAGES\NNN.txt beside a numbered PNG: key=value lines, ; comments.
+#   at=X,Y | at=window     required
+#   palette=F-L | none     optional, default 0-255; none = apply nothing (1-0)
+#   mode=256 | 320         optional
+function Read-PosSidecar([string]$Txt) {
+    $keys = @{}
+    foreach ($line in (Get-Content -LiteralPath $Txt -Encoding UTF8)) {
+        $l = ($line -replace ';.*$', '').Trim()
+        if ($l -eq '') { continue }
+        if ($l -notmatch '^(\w+)\s*=\s*(.+)$') { Fail "$Txt - cannot parse '$line'" }
+        $keys[$Matches[1].ToLower()] = $Matches[2].Trim()
+    }
+    if (-not $keys.ContainsKey('at')) { Fail "$Txt - 'at' is required (at=X,Y or at=window)" }
+    $pos = @{ Float = $false; X = 0; Y = 0; PalFirst = 0; PalLast = 255; Mode = $null }
+    $at = $keys['at']
+    if ($at -eq 'window') { $pos.Float = $true }
+    elseif ($at -match '^(\d+)\s*,\s*(\d+)$') {
+        $pos.X = [int]$Matches[1]; $pos.Y = [int]$Matches[2]
+        if ($pos.X -gt 319 -or $pos.Y -gt 255) { Fail "$Txt - at= X must be 0-319 and Y 0-255" }
+    } else { Fail "$Txt - at= must be X,Y or window (got '$at')" }
+    if ($keys.ContainsKey('palette')) {
+        $pal = $keys['palette']
+        if ($pal -eq 'none') { $pos.PalFirst = 1; $pos.PalLast = 0 }
+        elseif ($pal -match '^(\d+)\s*-\s*(\d+)$' -and [int]$Matches[1] -le 255 -and [int]$Matches[2] -le 255) {
+            $pos.PalFirst = [int]$Matches[1]; $pos.PalLast = [int]$Matches[2]
+        } else { Fail "$Txt - palette= must be F-L with both 0-255, or none (got '$pal')" }
+    }
+    if ($keys.ContainsKey('mode')) {
+        if ($keys['mode'] -ne '256' -and $keys['mode'] -ne '320') { Fail "$Txt - mode= must be 256 or 320" }
+        $pos.Mode = [int]$keys['mode']
+    }
+    return $pos
+}
+
+# The 16-byte NXP header (manual/reference/picture-format.md, NXP section).
+function New-NxpHeader([hashtable]$Pos, [int]$Mode, [int]$W, [int]$H) {
+    $sw = if ($Mode -eq 1) { 320 } else { 256 }
+    $sh = if ($Mode -eq 1) { 256 } else { 192 }
+    if ($W -lt 1 -or $W -gt $sw -or $H -lt 1 -or $H -gt $sh) { Fail "${W}x${H} does not fit the $sw x $sh screen" }
+    if (-not $Pos.Float -and ($Pos.X + $W -gt $sw -or $Pos.Y + $H -gt $sh)) { Fail "at=$($Pos.X),$($Pos.Y) + ${W}x${H} does not fit the $sw x $sh screen" }
+    $hdr = New-Object byte[] 16
+    $hdr[0] = 0x4E; $hdr[1] = 0x58; $hdr[2] = 0x50; $hdr[3] = 1
+    $hdr[4] = [byte]$Mode
+    $hdr[5] = if ($Pos.Float) { 1 } else { 0 }
+    $hdr[6] = [byte]($Pos.X -band 0xFF); $hdr[7] = [byte]($Pos.X -shr 8)
+    $hdr[8] = [byte]$Pos.Y
+    $hdr[9] = [byte]($W -band 0xFF); $hdr[10] = [byte]($W -shr 8)
+    $hdr[11] = [byte]($H -band 0xFF)        # 256 -> 0
+    $hdr[12] = [byte]$Pos.PalFirst; $hdr[13] = [byte]$Pos.PalLast
+    return $hdr
+}
+
 # Deletes this stage's outputs that no source produced this run: removed
 # sources, and the other name of a picture after a COMPRESS change.
 function Remove-Orphans([string[]]$Patterns) {
