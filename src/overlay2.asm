@@ -178,35 +178,53 @@ l2_clear_at:
     jr nz, .loop
     jp data_restore
 
-; Copy all 256 Layer 2 palette entries from the SECOND bank into the
-; FIRST, full 9 bits (both bytes, so the blue LSB and the per-pixel
-; priority flag come across). The caller must already be displaying the
-; second bank, which is what makes the writes invisible.
+; Copy all 256 Layer 2 palette entries from one bank into the other,
+; full 9 bits (both bytes, so the blue LSB and the per-pixel priority
+; flag come across). Both NR $43 values display the SOURCE bank, which
+; is what makes the writes invisible.
 ;
-; This exists for gfx_direct_stream, whose palette source is a file it
-; has just closed - it cannot simply re-run the load into the other
-; bank the way gfx_blit does. Reading the entries back out of hardware
-; is cheaper than reopening the card.
+; l2_pal_mirror21 (bank 2 -> 1, caller displaying bank 2) exists for
+; reveals whose palette source is a closed file - reading the entries
+; back out of hardware is cheaper than reopening the card.
 ;
 ; Each iteration reprograms NR $43 twice, which also keeps the $44
 ; two-write pairing aligned: the dev guide states a write to $43 resets
 ; that byte toggle. Corrupts AF, BC, DE, HL.
 l2_pal_mirror21:
+    ld bc, PAL_L2_SECOND*256+PAL_L2_EDIT_FIRST
+    jr l2_pal_mirror
+
+; Buffer mode with no reveal pending: copy bank 1 into bank 2 first, so
+; the reveal's mirror21 keeps live entries outside a positioned range
+; (GFX 9 edits, cycle phase). Caller holds palBusy. Corrupts AF, BC, DE, HL.
+gfx_pos_pal_sync:
+    ld a, (gfxDrawTarget)
+    or a
+    ret z
+    ld a, (gfxRevealPend)
+    or a
+    ret nz
+    ld bc, PAL_L2_FIRST*256+PAL_L2_EDIT_SECOND
+
+; B = read-side NR $43 (edit source), C = write-side NR $43 (edit target).
+l2_pal_mirror:
     ld a, 1
     ld (palLock), a
     ld d, 0                      ; colour index
 .m:
-    nextreg NR_PAL_CTRL, PAL_L2_SECOND      ; read side: edit bank 2
+    ld a, b
+    nextreg NR_PAL_CTRL, a       ; read side: edit the source bank
     ld a, d
     nextreg NR_PAL_INDEX, a
     ld e, NR_PAL_VALUE
-    call nr_read
+    call nr_read                 ; keeps BC
     ld l, a                      ; RRRGGGBB
     ld e, NR_PAL_VALUE9
     call nr_read                 ; priority + blue LSB (reads do not
     ld h, a                      ; auto-increment, so same entry)
-    nextreg NR_PAL_CTRL, PAL_L2_EDIT_FIRST  ; write side: edit bank 1,
-    ld a, d                                 ; display stays on bank 2
+    ld a, c
+    nextreg NR_PAL_CTRL, a       ; write side: edit the target bank,
+    ld a, d                      ; display stays on the source
     nextreg NR_PAL_INDEX, a
     ld a, l
     nextreg NR_PAL_VALUE9, a
@@ -340,7 +358,7 @@ l2_pal9_run:
 ; Apply palette entries B..C (inclusive) from the 512-byte table at HL
 ; into both Layer 2 banks. B > C applies nothing. Ends in the stamp.
 ; Caller sets gfxPalBank2Only for bank 2 only, and clears it after.
-; Corrupts AF, BC, DE, HL.
+; Corrupts AF, DE, HL.
 gfx_pos_pal_apply:
     ld d, 0
     push bc
@@ -360,11 +378,6 @@ gfx_pos_pal_finish:
     call l2_pal9_stamp           ; bank 2
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     ret
-
-; Direct-stream form: HL -> 256-byte half (128 entries), D = index of its
-; first entry (0 or 128), B/C range. Caller ends with gfx_pos_pal_finish.
-gfx_pos_pal_half:
-    ; falls into gfx_pos_pal_half_run
 
 ; HL -> entry D's two bytes; apply the 128 entries D..D+127 inside B..C.
 ; Out: HL += 256, D += 128. Corrupts AF, E, HL, D. Preserves BC.
@@ -2568,12 +2581,9 @@ gfx_dsp_fail:
     scf
     ret
 
-; gfx_direct_stream for NXP (rows needed twice, no seek back): resolve from
-; a header row image, palette range as gfx_blit_pos (screen: both banks live
-; at the reads), then one read per row written front then back - the front
-; surface paints progressively while rows stream. Out: CF clear = drawn,
-; skipped or empty; CF set = failed. Handle closed on every path.
-; Corrupts everything.
+; gfx_direct_stream for NXP: palette range as gfx_blit_pos, then one read
+; per row written front then back. Out: CF clear = drawn, skipped or empty;
+; CF set = failed. Handle closed on every path. Corrupts everything.
 gfx_direct_stream_pos:
     ld a, (gfxMode)
     call gfx_pos_mode
@@ -2590,6 +2600,7 @@ gfx_direct_stream_pos:
     ld (gfxPalBank2Only), a      ; buffer mode: hidden bank only
     ld a, 1
     ld (palBusy), a
+    call gfx_pos_pal_sync
     ld d, 0                      ; halves: entries 0-127, then 128-255
 .pal:
     push de
@@ -3578,6 +3589,7 @@ gfx_blit_pos:
     call z, gfx_frame_gate
     ld a, 1
     ld (palBusy), a
+    call gfx_pos_pal_sync
     call gfx_pal_rewind          ; HL = palette, mapped
     pop bc
     call gfx_pos_pal_apply
