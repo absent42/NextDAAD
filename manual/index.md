@@ -28,7 +28,7 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 
 ## Reference
 
-- [Picture format](reference/picture-format.md) - NX2 and NXI, for tool authors
+- [Picture format](reference/picture-format.md) - NX2, NXI and NXP, for tool authors
 - [ANI format](reference/ani-format.md) - animated sprite sets, for tool authors
 - [Video format](reference/video-format.md) - NXV and the encoder options
 - [Video delivery](reference/video-delivery.md) - how clips are loaded and played

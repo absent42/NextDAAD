@@ -11,6 +11,7 @@ $steps = @(
     @('kittools', 'pwsh', @('-NoProfile', '-File', 'tests/kittools-selftest.ps1')),
     @('assets-order', 'pwsh', @('-NoProfile', '-File', 'tests/assets-order-selftest.ps1')),
     @('anipack', 'pwsh', @('-NoProfile', '-File', 'tests/anipack-selftest.ps1')),
+    @('l2pos', 'pwsh', @('-NoProfile', '-File', 'tests/l2pos-selftest.ps1')),
     @('intro', 'pwsh', @('-NoProfile', '-File', 'tests/intro-selftest.ps1')),
     @('xbnbuild', 'pwsh', @('-NoProfile', '-File', 'tests/xbnbuild-selftest.ps1')),
     @('audit-externs-selftest', 'pwsh', @('-NoProfile', '-File', 'tests/audit-externs-selftest.ps1')),

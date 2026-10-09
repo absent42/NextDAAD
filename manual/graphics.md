@@ -29,7 +29,8 @@ want unless you are deliberately putting a hole in the art - see
 palette size directly when exporting an indexed PNG; a plain 256-colour
 export can scatter a few pixels onto slot 255 without your noticing.
 
-The **width decides the shape**, and only two widths are accepted:
+The **width decides the shape**, and only two widths are accepted (unless the PNG has a sidecar - see
+[Positioned pictures](#positioned-pictures)):
 
 | Width | Becomes | On screen |
 |---|---|---|
@@ -188,7 +189,7 @@ table so your transparent colour is last.
 but only with `COMPRESS=0`.** A compressed picture has no readable
 palette, so a `COMPRESS=1` build reports nothing at all - neither that
 count nor the palette-collision warning described in
-[Picture format](reference/picture-format.md#9-verifying-your-output). If
+[Picture format](reference/picture-format.md#10-verifying-your-output). If
 you ship compressed art, run one build with `COMPRESS=0` and read them
 from that.
 
@@ -199,7 +200,7 @@ picture at once, run `CLEAN.BAT` and then build.
 The count is the quickest way to confirm the hole is the size you
 intended, and to catch one you did not ask for. You can also run the
 audit script directly against a converted file, as
-[Picture format](reference/picture-format.md#9-verifying-your-output)
+[Picture format](reference/picture-format.md#10-verifying-your-output)
 describes.
 
 **A picture with no slot-255 pixels is fully opaque**, which is the
@@ -271,6 +272,153 @@ interpreter: keep a strip of solid paper where text must always be
 readable, keep the artwork dark where text lands, or choose an ink that
 survives everything the art can put behind it.
 
+## Positioned pictures
+
+An ordinary picture covers the whole picture area and replaces what was
+there. A positioned picture is a rectangle of any size that draws only
+its own area and leaves the rest of the screen alone. Use it for a
+status frame, an inventory panel, a portrait, a map inset or a HUD.
+
+A positioned picture is either **fixed** at a pixel position, or
+**floating**, which places it at the top-left corner of the current text
+window. A floating picture larger than the window is cut to the window.
+In a 256-wide game the window corner can sit outside the picture area
+(it is inset by 32 pixels), so a floating picture in a window that
+reaches the border loses its top-left strip. An armed position override
+(below) turns the cut to the window off.
+
+### Making one
+
+Put a sidecar beside the PNG: `IMAGES\012.txt` for `IMAGES\012.png`.
+`BUILD.BAT` then builds `012.NXP` (or `012.NXP.ZX0` with compression on)
+instead of an ordinary picture. The sidecar is `key=value` lines, with
+`;` starting a comment, and takes three keys:
+
+```
+; 012.txt - inventory frame
+at=8,16          ; fixed, X and Y in pixels. at=window = floating
+palette=128-255  ; optional, default 0-255. palette=none = change no colours
+mode=256         ; optional, 256 or 320
+```
+
+- `at` is required.
+- The PNG may be any width and height that fits the screen. A fixed
+  picture must fit with its position; the build fails otherwise.
+- `palette=F-L` limits the picture to palette entries F to L. Only those
+  entries are changed when it draws. `none` changes no colours at all and
+  the picture uses whatever the palette already holds.
+- `mode` is 256 (the 256x192 area, positions counted inside the classic
+  picture area) or 320 (the full 320x256 screen). Leave it out and the
+  kit decides from your other pictures: a 320-wide ordinary picture
+  (or a ready-made NX2) makes the game 320, a 256-wide one (or NXI)
+  makes it 256, and sidecar `mode=` keys and ready-made NXP files vote
+  too. The title screen does not vote. With no vote the game is 256.
+- Any other key in the sidecar fails the build, as does a `.txt` with a
+  digit in its name and no PNG of the same name. A `.txt` with no digit
+  in its name is ignored.
+- A game that uses positioned pictures has one Layer 2 mode. Two
+  votes that disagree fail the build, naming both files. A game with no
+  positioned pictures is not checked: it can still mix 320 and 256
+  plain pictures and titles, as before.
+
+A picture you have already converted can be dropped in as `NNN.NXP`
+(or `NNN.NXP.ZX0` / `NNN.NPZ`). The kit stages it as it is after
+checking the header (magic, version 1, mode 0 or 1, raw length 16 + 512 +
+width x height) and that its mode matches the game's. See
+[Picture format](reference/picture-format.md) for the file layout.
+
+### How it draws
+
+`PICTURE` and `DISPLAY 0` work as before. The difference is what
+`DISPLAY 0` does with a positioned picture: it adds the rectangle to
+what is on screen and does not clear anything else. Three consequences:
+
+- **Transparent pixels overwrite.** Index 255 is written like any other
+  pixel, so a hole in the picture clears the art underneath it to
+  transparent in that rectangle. Positioned pictures do not blend.
+- **A plain picture still clears everything.** `DISPLAY 0` of an ordinary
+  picture clears and replaces the whole picture, so positioned art on
+  screen goes away. In a game that uses frames, panels or an inventory
+  display, convert the location pictures to positioned pictures too (a
+  sidecar with `at=0,0`, with `mode=` set if no ordinary picture fixes the
+  mode) so showing a new location leaves the frame
+  alone.
+- `GFX n 2` swaps the surfaces and shows the other one whole, so it also
+  reveals anything else the back surface holds.
+
+### Splitting the palette
+
+A Layer 2 picture is 256 colours and every positioned picture shares the
+one palette. Each picture changes only its own `palette=F-L` entries, so
+give each kind of picture its own slice and they can coexist.
+
+Keep the art inside its slice when you convert it. In NextDither, use a
+preset for each kind of picture. For example, location art takes entries
+0 to 100: Auto on 0-100, Blocked on 101-255, and `palette=0-100` in the
+sidecar. A HUD or frame that sits over it takes the rest: Blocked on
+0-100, Auto on 101-150, Blocked on 151-255, and `palette=101-150`.
+Pixels that use an entry outside the declared range draw in whatever
+colour that entry holds from earlier, and the kit's picture check warns
+about them when it converts (only for uncompressed builds, `COMPRESS=0`).
+
+Colour cycling (`GFX n 11`) and the fade extern change the live palette.
+Stop a cycle with `GFX n 12` before a positioned `DISPLAY` whose range
+overlaps the cycled entries, or the picture's colours and the cycle will
+fight.
+
+### Drawing at a different place
+
+`GFX x 8` and `GFX y 15` move the next `DISPLAY 0` without touching the
+picture file:
+
+- `GFX x 8` sets the X position to `x * 8` pixels, from 0 to 31 in a 256
+  game or 0 to 39 in a 320 game. For finer X, put the position in the
+  sidecar.
+- `GFX y 15` sets the Y position to `y` pixels.
+- Either one arms the override and an axis you did not set is 0.
+  Both apply to the next `DISPLAY 0` only, then clear. They apply to
+  fixed pictures, floating pictures and ordinary pictures alike, and an
+  ordinary picture drawn this way is drawn at its full size and takes
+  the whole palette.
+- A position that runs off the screen is clipped to the screen, not
+  refused.
+- `GFX n 27` cancels an armed override without drawing. Any `DISPLAY` of
+  a number other than 0 cancels it too. `RESTART`, `LOAD` and a move to
+  another part do NOT cancel it, so cancel with `GFX n 27` if a game could
+  get that far with one armed.
+- The parameter takes indirection like any other, so a flag can hold the
+  position: `GFX @10 8`.
+
+`GFX n 7` clears both Layer 2 surfaces, the front and the back, in one
+call. It is the same as `GFX n 5` followed by `GFX n 6`, and `n` is
+ignored. Use it to clear positioned art before a screen with no frame.
+
+### Corners and limits
+
+- A positioned picture of the other mode switches the Layer 2 mode. The
+  screen is cleared and the mode changes first. Do not plan on mixing
+  modes - one game has one mode - but a picture of the wrong mode does
+  not leave a half-drawn screen. While drawing into the buffer
+  (`GFX n 4`), a picture of the other mode is skipped, since the hidden
+  surface cannot change mode.
+- In buffer mode (`GFX n 4`), a positioned `DISPLAY 0` draws to the
+  hidden surface, and its palette range changes only the hidden palette,
+  so nothing shows until `GFX n 0` or `GFX n 2`.
+- A tall positioned picture may tear for one frame, with its upper part
+  showing before the lower part. The colours of its palette range also
+  change at the moment it starts drawing. Both are cosmetic and brief;
+  draw it in buffer mode and reveal it if a game cannot tolerate that.
+- A height of 0 in a header means 256 rows.
+
+Known limitations:
+
+- Switching mode drops a pending buffered reveal.
+- When the picture memory is full, only uncompressed picture files can
+  still be shown. A positioned picture is then drawn at `PICTURE` time,
+  with the window and override as they are then, and a plain picture
+  under an override draws as a plain picture: the override is not
+  applied and the next `DISPLAY 0` spends it.
+
 ## 40-column games
 
 `GFX 1 18` switches the tilemap from 80x32 single-width text to 40x32
@@ -322,11 +470,12 @@ running at. A game knows its own width because it chose it with `GFX n
 are no symbolic names for these - DAAD Ready's Appendix D covers `SFX`
 and `MOUSE` only - so write the number.
 
-For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21,
-22, 23, 24 and 25 the first parameter `n` is ignored: the buffer
+For every sub-command except 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19,
+20, 21, 22, 23, 24 and 25 the first parameter `n` is ignored: the buffer
 operations act on the whole surface and take no argument. For 9, 10 and
 11, `n` is a flag number, the first of a group of flags carrying the
-parameters; for 13 and 14, `n` is the video number; for 16, it is the
+parameters; for 8 it is the X position in 8-pixel steps and for 15 the Y position in
+pixels; for 13 and 14, `n` is the video number; for 16, it is the
 font number; for 17, it is the layer-order selector; for 18, it is the
 text width selector; for 19 and 21, it is the sprite set number; for 20,
 it is the first of four flags carrying the set number and position; for
@@ -336,9 +485,7 @@ paper colour (26 ignores it).
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 7, 8 and 15, and everything from 27 up -
-see [Platform notes](platform-notes.md) for why 15 has nothing to act on
-here.
+prints a marker). That covers everything from 28 up.
 
 | s | Behaviour on this target |
 |---|---------------------------|
@@ -349,12 +496,15 @@ here.
 | 4 | Graphics write to the back buffer. `DISPLAY 0` stages the incoming picture's pixels and palette into the hidden surface only - the screen stays exactly as it was until a reveal (sub 0 or 2, above). |
 | 5 | Clear the front surface - the visible one - in place. |
 | 6 | Clear the back surface. |
+| 7 | Clear both Layer 2 surfaces, the front and the back, in one call - the same as 5 followed by 6. `n` is ignored. See [Positioned pictures](#positioned-pictures). |
+| 8 | Arm a position override: the next `DISPLAY 0` draws its picture with the X position set to `n * 8` pixels. Takes indirection. See [Positioned pictures](#positioned-pictures). |
 | 9 | Set one Layer 2 palette entry from flags. Flag `n` holds the palette index, flags `n+1`, `n+2` and `n+3` hold red, green and blue as 0-255; the Next keeps the top three bits of each channel. Index 255 is the reserved transparent entry and is ignored, and a colour that would make the entry transparent is nudged one green step, exactly as the picture loader does. The entry lands in the palette the display shows, or in the staged palette while a `DISPLAY 0` reveal is pending under sub 4. `n` above 252 is ignored. See [Colour cycling and palette entries](#colour-cycling-and-palette-entries). |
 | 10 | Read one Layer 2 palette entry into flags: flag `n` holds the index, flags `n+1`, `n+2` and `n+3` receive red, green and blue as 0, 32, 64 ... 224 - three bits per channel, shifted up. Same bank rule as 9; index 255 is allowed and reads the transparent colour. `n` above 252 is ignored. |
 | 11 | Start colour cycling. Flag `n` holds the first palette index, `n+1` the last, `n+2` the frames per step. Every `frames` frames the entries from first to last shift one index down: entry first takes entry first+1's colour, and entry last takes what entry first had. Nothing starts when frames is 0, when last is not above first, or when `n` is above 253; a last index of 255 is treated as 254. Starting while a cycle runs replaces it. See [Colour cycling and palette entries](#colour-cycling-and-palette-entries). |
 | 12 | Stop colour cycling. `n` is ignored. The palette stays exactly where the last step left it. |
 | 13 | Play video `n` (`NNN.VID`) once. Identical to `SFX n 9` (`PLAYFLI`). See [Video](video.md). |
 | 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
+| 15 | Arm a position override: the next `DISPLAY 0` draws its picture with the Y position set to `n` pixels. Together with 8, an axis you did not set is 0. See [Positioned pictures](#positioned-pictures). |
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Fonts](fonts.md). |
 | 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Text over a picture](#text-over-a-picture) above for the transparent-paper technique this enables. |
 | 18 | Text mode width. `n` 0 selects 80x32 single-width text (the default); `n` 1 selects 40x32 double-width text. A same-width call does nothing. Switching resets the layout: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue `WINAT`/`WINSIZE` after switching if your game uses custom windows. Every window keeps its `INK`, `PAPER` and `MODE`, and the cleared screen takes window 0's paper, so a blue screen stays blue (`PAPER 227` in window 0 clears to transparent). `n` 2 and above is a no-op. See [40-column games](#40-column-games) below. |
@@ -366,6 +516,7 @@ here.
 | 24 | Parser cursor ink `n`, any colour `INK` takes. Independent of 25: set alone, the paper still follows the window. |
 | 25 | Parser cursor paper `n`, any colour `PAPER` takes, including 227 for a see-through cursor over a picture. |
 | 26 | Parser cursor colours follow the window again (the default). `n` is ignored. |
+| 27 | Cancel an armed position override from 8 or 15 without drawing. `n` is ignored. `RESTART`, `LOAD` and part switches do not cancel an override; this does. |
 
 Sub 17 composes the layer priority only - it never enables or disables
 Layer 2, so it cannot bring back a picture surface the game has hidden.
@@ -553,14 +704,16 @@ not try to reconvert them.
 
 **Location pictures go in `IMAGES\`**, named by number exactly as the
 PNGs are: `001.NX2` for 320-wide art, `001.NXI` for 256-wide, or a
-compressed `001.NX2.ZX0`, `001.N2Z`, `001.NXI.ZX0` or `001.NXZ`. If both
+compressed `001.NX2.ZX0`, `001.N2Z`, `001.NXI.ZX0` or `001.NXZ`. A
+positioned picture is `001.NXP`, or compressed `001.NXP.ZX0` or
+`001.NPZ`; the kit checks its header and mode first. If both
 a `001.png` and a ready-made `001.NX2` are there, the PNG conversion
 wins. If you have several forms of the same number, the one staged is
-the one the interpreter would load first - compressed before
-uncompressed.
+the one the interpreter would load first: `.NX2` forms, then `.NXI`,
+then `.NXP`, each compressed before uncompressed.
 
-A `.NX2` or `.NXI` in `IMAGES\` whose name is not a picture number stops
-the build rather than being ignored, so a file that could never be
+A `.NX2`, `.NXI` or `.NXP` (or a compressed form) in `IMAGES\` whose
+name is not a picture number stops the build rather than being ignored, so a file that could never be
 loaded does not pass unnoticed.
 
 **The title screen goes in the kit folder itself**, not in `IMAGES\` -

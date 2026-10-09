@@ -27,6 +27,7 @@
 #   -Sfx2                sd\SFX2\      tests\sfx2.dsf
 #   -AysReg              sd\AYSREG\    tests\aysreg.dsf
 #   -L2Holes             sd\L2HOLES\   tests\l2holes.dsf
+#   -L2Pos               sd\L2POS\     tests\l2pos.dsf    (-L2PosWide: the 320x256 set)
 #   -TmOver              sd\TMOVER\    tests\tmover.dsf
 #   -TileSlack           sd\TILESLK\   tests\tileslack.dsf
 #   -Uto                 sd\UTO\       tools\TEST.DSF     (V2)
@@ -98,7 +99,7 @@
 # The DDB switches are mutually exclusive - if more than one is given,
 # whichever copy runs LAST wins, in the physical block order below:
 # -Suite, -Err4, -GMode, -V3, -Xbn, -Rab, -UU, -Part, -AudLad, -SfxDi,
-# -SfxLong, -Sfx2, -L2Holes, -TileSlack. $legName is resolved in a
+# -SfxLong, -Sfx2, -L2Holes, -L2Pos, -TileSlack. $legName is resolved in a
 # DIFFERENT order that puts -Xbn last of every switch even though its
 # staging block runs right after -V3's: combine -Xbn with any switch
 # after it in the list above and $legName can name XBN while the other
@@ -120,11 +121,13 @@
 #            DSF's own header for the transcript). One typed SAVE and
 #            two typed LOADs share a filename - answer all three prompts
 #            the same (e.g. "pt"). CSpect-lock: see header.
-# Art-staging modifiers (effective only with -Rab, combinable):
+# Art-staging modifiers (effective only with -Rab, combinable; -GfxZx0
+# also with -L2Pos/-L2PosWide):
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
 #   -GfxZx0  ZX0-compress each staged file (NNN.NX2.ZX0 / with
 #            -Gfx256 NNN.NXI.ZX0) so the interpreter's compressed
-#            picture path is exercised
+#            picture path is exercised. NXP keeps its 16-byte header
+#            raw and compresses only the rest (NNN.NXP.ZX0)
 #   (-UU always stages whatever single art shape ships in
 #    tools\urban-upstart - no modifiers; that corpus has no parallel
 #    NX2/NXI pair to choose between)
@@ -209,6 +212,13 @@
 #            names the hole). .NXI not .NX2 deliberately: NX2 probes
 #            first and its 320-wide surface would cover the control
 #            margin. Alternative to every other DDB switch.
+#   -L2Pos   positioned-picture (NXP) fixture, sd\L2POS\: make
+#            tests\l2pos.dsf active AND stage tests\art\mkl2pos.py's
+#            mode 0 set (001.NXI + 002-007.NXP) from tests\out\l2pos-art\,
+#            where its expect_*.bin and l2pos_walk.json stay. One key =
+#            one walk step. -L2PosWide stages the mode 1 set (001.NX2)
+#            from tests\out\l2pos-art-wide\ into the same folder.
+#            -GfxZx0 applies. Alternative to every other DDB switch.
 #   -TmOver  transparent-tilemap-paper/layer-order fixture, sd\TMOVER\:
 #            make tests\tmover.dsf active AND stage the full-frame card
 #            (tests\art\mktmover.py) as 001.NXI (256x192, NO transparent
@@ -393,7 +403,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -427,7 +437,7 @@ $sd = Join-Path $root 'sd'
 if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
     $otherLegSwitches = @(
         'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
-        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'TmOver',
+        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn'
     ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
@@ -458,6 +468,7 @@ if ($SfxLong)          { $legName = 'SFXLONG' }
 if ($Sfx2)             { $legName = 'SFX2' }
 if ($AysReg)           { $legName = 'AYSREG' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
+if ($L2Pos -or $L2PosWide) { $legName = 'L2POS' }
 if ($TmOver)           { $legName = 'TMOVER' }
 if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
@@ -493,7 +504,7 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
-               'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
+               'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
@@ -596,6 +607,8 @@ finally { Pop-Location }
 & "$PSScriptRoot\fontconv-selftest.ps1"
 
 & "$PSScriptRoot\anipack-selftest.ps1"
+
+& "$PSScriptRoot\l2pos-selftest.ps1"
 
 & "$PSScriptRoot\intro-selftest.ps1"
 
@@ -983,7 +996,7 @@ function Assert-CursorStateWriters {
 function Assert-PaletteWriterCensus {
     # Every NR $41/$44 write site that can run while a cycle is armed must sit
     # inside a palLock bracket, or be the tick itself. Counts, comments
-    # stripped: overlay2 9 = the loaders, stamp, mirror and GFX 9's pair;
+    # stripped: overlay2 11 = the loaders, stamp, mirror, GFX 9's pair and gfx_pos_pal_half_run's pair;
     # sprites 8 = the two sprite block writers (4) + cyc_tick's own four (its
     # .wr loop and the last-entry pair); tilemap 2 = tm_pal_write9, boot-only;
     # tmpairs 4 = pair_alloc; video 4 = the pre-arm writer vid_pal_black
@@ -993,7 +1006,7 @@ function Assert-PaletteWriterCensus {
     # question is answered.
     # DEBUG only: the console's txt_init reruns tm_pal_write9 unbracketed; a
     # wrong reserved pair at worst.
-    $want = @{ 'src\overlay2.asm' = 9; 'src\sprites.asm' = 8; 'src\tilemap.asm' = 2; 'src\tmpairs.asm' = 4; 'src\video.asm' = 4 }
+    $want = @{ 'src\overlay2.asm' = 11; 'src\sprites.asm' = 8; 'src\tilemap.asm' = 2; 'src\tmpairs.asm' = 4; 'src\video.asm' = 4 }
     foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
         $rel = 'src\' + $f.Name
         $t = (($f | Get-Content -Raw) -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n"
@@ -1003,7 +1016,7 @@ function Assert-PaletteWriterCensus {
             throw "$rel : $n NR `$41/`$44 write site(s), expected $w - a palette writer that can run while a colour cycle is armed must set palLock before its first NR `$43/`$40 write and clear it after its last NR `$44 write. Exempt: tilemap.asm's tm_pal_write9 (boot-only), video.asm's pre-arm writers (under the tick's vidPlaying test) and in-clip ops (under the hook suspend), and cyc_tick itself. Update Assert-PaletteWriterCensus's table only after deciding which"
         }
     }
-    "palette writer census: overlay2 9, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
+    "palette writer census: overlay2 11, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
 }
 
 function Assert-WidthSwitchKeepsStyle {
@@ -1446,6 +1459,23 @@ try {
     & $ndrc @drcTarget EN NDL2HOLE.DSF NDL2HOLE.DDB --json -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (l2holes)" }
     Copy-Item NDL2HOLE.DDB "$root\tests\out\l2holes.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
+# Positioned-picture (NXP) fixture; only -L2Pos/-L2PosWide make it active
+# (sd\L2POS\). No -v3: no V3 condact is used. The .json is kept for the
+# walk check in the staging block.
+$l2posWork = Join-Path $root 'tests\out\l2pos-work'
+Remove-Item $l2posWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $l2posWork | Out-Null
+Copy-Item "$PSScriptRoot\l2pos.dsf" "$l2posWork\NDL2POS.DSF" -Force
+Push-Location $l2posWork
+try {
+    & $ndrc @drcTarget EN NDL2POS.DSF NDL2POS.DDB --json -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (l2pos)" }
+    Copy-Item NDL2POS.DDB "$root\tests\out\l2pos.ddb" -Force
 }
 finally {
     Pop-Location
@@ -1983,6 +2013,32 @@ foreach ($s in @(
     if ((Find-ByteRuns $l2holesBytes $s.b).Count -lt 1) { throw "l2holes: '$($s.n)' is not present in tests\out\l2holes.ddb" }
 }
 "l2holes.ddb: $($l2holesBytes.Length) bytes, v$($l2holesBytes[0]), ruler 32 rows x 80 columns verified from the compiled messages ($($l2hTags.Count) hole tags), MODE 2 / WINSIZE 32 80 / WINAT 31 79 / PAPER 1 / PICTURE 1 / DISPLAY 0 / DISPLAY 1 / ANYKEY all present"
+
+# ---- l2pos: compiled bytes the walk depends on -----------------------
+# Every walk step's full condact run is checked again at -L2Pos staging,
+# against mkl2pos.py's l2pos_walk.json.
+$l2posBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\l2pos.ddb")
+if ($l2posBytes[0] -ne 2) {
+    throw "l2pos: DDB header version byte is $($l2posBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+}
+foreach ($s in @(
+        @{ n = 'WINDOW 0 / WINAT 28 0 / WINSIZE 4 80 / MODE 2 (text window below the pictures)'; b = [byte[]]@(78, 0, 82, 28, 0, 107, 4, 80, 81, 2) },
+        @{ n = 'WINDOW 7 / WINAT 0 79 / WINSIZE 1 1 / MODE 2 (ANYKEY parking window)'; b = [byte[]]@(78, 7, 82, 0, 79, 107, 1, 1, 81, 2) },
+        @{ n = 'WINDOW 7 / ANYKEY / WINDOW 0 / PROCESS 4 (the step driver)'; b = [byte[]]@(78, 7, 24, 78, 0, 75, 4) },
+        @{ n = 'GFX 20 8'; b = [byte[]]@(87, 20, 8) },
+        @{ n = 'GFX 64 15'; b = [byte[]]@(87, 64, 15) },
+        @{ n = 'GFX 39 8'; b = [byte[]]@(87, 39, 8) },
+        @{ n = 'GFX 0 27'; b = [byte[]]@(87, 0, 27) },
+        @{ n = 'GFX 0 4'; b = [byte[]]@(87, 0, 4) },
+        @{ n = 'GFX 0 0'; b = [byte[]]@(87, 0, 0) },
+        @{ n = 'GFX 0 2'; b = [byte[]]@(87, 0, 2) },
+        @{ n = 'GFX 0 3'; b = [byte[]]@(87, 0, 3) },
+        @{ n = 'GFX 0 7'; b = [byte[]]@(87, 0, 7) },
+        @{ n = 'PICTURE 7'; b = [byte[]]@(84, 7) },
+        @{ n = 'DISPLAY 1'; b = [byte[]]@(28, 1) })) {
+    if ((Find-ByteRuns $l2posBytes $s.b).Count -lt 1) { throw "l2pos: '$($s.n)' is not present in tests\out\l2pos.ddb" }
+}
+"l2pos.ddb: $($l2posBytes.Length) bytes, v$($l2posBytes[0]), windows / driver / GFX 0 0,2,3,4,7,27 / GFX 20 8, 64 15, 39 8 / PICTURE 7 / DISPLAY 1 present"
 
 # ---- tileslack: the LABEL must name the file that actually plays -----
 # The printed label (a message number) and the clip that plays (a
@@ -2961,6 +3017,7 @@ if ($DrcDiff) {
         @{ Name = 'debugflag'; Dsf = "$PSScriptRoot\debugflag.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'debugflag-debug'; Dsf = "$PSScriptRoot\debugflag.dsf"; SrcOpts = @('-v3'); DbOpts = @('-d') }
         @{ Name = 'l2holes'; Dsf = "$PSScriptRoot\l2holes.dsf" }
+        @{ Name = 'l2pos'; Dsf = "$PSScriptRoot\l2pos.dsf" }
         @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf" }
         @{ Name = 'tileslack'; Dsf = "$PSScriptRoot\tileslack.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'fontsw'; Dsf = "$PSScriptRoot\fontsw.dsf"; SrcOpts = @('-v3') }
@@ -4828,6 +4885,123 @@ if ($L2Holes) {
     $l2holesActive = $true
 }
 
+$l2posActive = $false
+if ($L2Pos -or $L2PosWide) {
+    # Positioned-picture (NXP) leg: tests\l2pos.dsf + mkl2pos.py's art set
+    # for one Layer 2 mode. expect_*.bin, l2pos_tags.txt and the walk json
+    # stay in the art dir; only GAME.DDB, the pictures and the NEX go in.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
+    }
+    $l2posMode = if ($L2PosWide) { 1 } else { 0 }
+    $l2posArt = Join-Path $root $(if ($l2posMode) { 'tests\out\l2pos-art-wide' } else { 'tests\out\l2pos-art' })
+    Copy-Item "$root\tests\out\l2pos.ddb" "$leg\GAME.DDB" -Force
+    if ($l2posMode) { & python "$PSScriptRoot\art\mkl2pos.py" $l2posArt --mode 1 }
+    else { & python "$PSScriptRoot\art\mkl2pos.py" $l2posArt }
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2pos.py failed" }
+    $l2posWalk = Get-Content "$l2posArt\l2pos_walk.json" -Raw | ConvertFrom-Json
+    if ([int]$l2posWalk.set_mode -ne $l2posMode) { throw "l2pos: walk json is for mode $($l2posWalk.set_mode), expected $l2posMode" }
+
+    # The walk is the authority: every step must compile as MES <its text>
+    # followed by its condacts verbatim, contiguous in the DDB, and sit in
+    # PRO 1 (step 1) or behind EQ 100 <fstep> in PRO 4.
+    $l2pOps = @{ PICTURE = 84; DISPLAY = 28; WINDOW = 78; WINAT = 82; WINSIZE = 107; GFX = 87 }
+    $l2pJson = Get-Content "$l2posWork\NDL2POS.json" -Raw | ConvertFrom-Json
+    $l2pMsg = @{}
+    foreach ($m in $l2pJson.messages) { $l2pMsg[[string]$m.Text] = [int]$m.Value }
+    $l2pProc = @{}
+    foreach ($p in $l2pJson.processes) { $l2pProc[[int]$p.Value] = @($p.entries) }
+    foreach ($st in $l2posWalk.steps) {
+        if (-not $l2pMsg.ContainsKey([string]$st.text)) { throw "l2pos: step $($st.id) text '$($st.text)' is not a compiled message" }
+        $run = [System.Collections.Generic.List[byte]]::new()
+        $run.Add(77); $run.Add([byte]$l2pMsg[[string]$st.text])
+        foreach ($c in $st.condacts) {
+            $w = $c -split ' '
+            if (-not $l2pOps.ContainsKey($w[0])) { throw "l2pos: step $($st.id) condact '$c' has no opcode in this check" }
+            $run.Add([byte]$l2pOps[$w[0]])
+            foreach ($a in @($w | Select-Object -Skip 1)) { $run.Add([byte][int]$a) }
+        }
+        if ((Find-ByteRuns $l2posBytes $run.ToArray()).Count -lt 1) {
+            throw "l2pos: step $($st.id) (MES '$($st.text)' / $($st.condacts -join ' / ')) is not a contiguous run in tests\out\l2pos.ddb"
+        }
+        if ($null -eq $st.fstep) {
+            $hit = @($l2pProc[1] | Where-Object { $_.condacts[0].Condact -eq 'MES' -and $_.condacts[0].Param1 -eq $l2pMsg[[string]$st.text] })
+        }
+        else {
+            $hit = @($l2pProc[4] | Where-Object {
+                    $_.condacts[0].Condact -eq 'EQ' -and $_.condacts[0].Param1 -eq 100 -and $_.condacts[0].Param2 -eq [int]$st.fstep -and
+                    $_.condacts[1].Condact -eq 'MES' -and $_.condacts[1].Param1 -eq $l2pMsg[[string]$st.text] })
+        }
+        if ($hit.Count -ne 1) { throw "l2pos: step $($st.id) has $($hit.Count) matching entries, expected 1 ($(if ($null -eq $st.fstep) { 'PRO 1' } else { "PRO 4, EQ 100 $($st.fstep)" }))" }
+        # Entry must end PLUS 100 1 / DONE (the ladder advance); step 1 in PRO 1 ends DONE.
+        $eb = [System.Collections.Generic.List[byte]]::new()
+        foreach ($c in $hit[0].condacts) {
+            $eb.Add([byte]([int]$c.Opcode -bor $(if ($c.Indirection1) { 0x80 } else { 0 })))
+            if ($c.NumParams -ge 1) { $eb.Add([byte]$c.Param1) }
+            if ($c.NumParams -ge 2) { $eb.Add([byte]$c.Param2) }
+        }
+        $tail = if ($null -eq $st.fstep) { @(22) } else { @(49, 100, 1, 22) }
+        $got = @($eb | Select-Object -Last $tail.Count)
+        if (($got -join ',') -ne ($tail -join ',')) { throw "l2pos: step $($st.id) entry ends $($got -join ' '), expected $($tail -join ' ') (PLUS 100 1 / DONE)" }
+    }
+    "l2pos: $(@($l2posWalk.steps).Count) walk steps match the compiled DDB (text, condacts, ladder position)"
+
+    $zx0 = "$root\tools\z88dk\bin\z88dk-zx0.exe"
+    $zx0Tmp = "$root\tests\out\l2pos-zx0.tmp"
+    $plain = if ($l2posMode) { '001.NX2' } else { '001.NXI' }
+    $sw = if ($l2posMode) { 320 } else { 256 }
+    foreach ($name in @($plain) + @(2..7 | ForEach-Object { '{0:D3}.NXP' -f $_ })) {
+        $src = Join-Path $l2posArt $name
+        if (-not (Test-Path -LiteralPath $src)) { throw "mkl2pos.py produced no $name" }
+        $b = [System.IO.File]::ReadAllBytes($src)
+        if ($name -eq $plain) {
+            if ($b.Length -le 512 -or (($b.Length - 512) % $sw) -ne 0) { throw "l2pos: $name is $($b.Length) bytes - not 512 + whole $sw-byte rows" }
+            $desc = "$sw x $(($b.Length - 512) / $sw) plain"
+        }
+        else {
+            # header: "NXP" 1, mode, floating, x16, y, w16, h (0 = 256), pal first/last, 0 0
+            $wantMode = if ($name -eq '007.NXP') { 1 - $l2posMode } else { $l2posMode }
+            if ([Text.Encoding]::ASCII.GetString($b, 0, 3) -ne 'NXP') { throw "l2pos: $name magic is not NXP" }
+            if ($b[3] -ne 1) { throw "l2pos: $name version is $($b[3]), expected 1" }
+            if ($b[4] -ne $wantMode) { throw "l2pos: $name mode byte is $($b[4]), expected $wantMode" }
+            if ($b[5] -gt 1) { throw "l2pos: $name flags byte is $($b[5]), expected 0 or 1" }
+            if ($b[14] -ne 0 -or $b[15] -ne 0) { throw "l2pos: $name reserved bytes 14-15 are $($b[14]) $($b[15]), expected 0 0" }
+            $w = $b[9] + 256 * $b[10]
+            $h = if ($b[11] -eq 0) { 256 } else { $b[11] }
+            if ($b.Length -ne 16 + 512 + $w * $h) { throw "l2pos: $name is $($b.Length) bytes, header says 16 + 512 + $w x $h = $(16 + 512 + $w * $h)" }
+            $desc = "mode $($b[4]) $w x $h at $($b[6] + 256 * $b[7]),$($b[8])$(if ($b[5]) { ' floating' })"
+        }
+        if ($GfxZx0) {
+            # NXP: the interpreter reads 16 raw header bytes, then one ZX0
+            # stream (palette + pixels). Plain files are one whole stream.
+            $out = "$leg\$name.ZX0"
+            if ($name -eq $plain) {
+                & $zx0 -f -q $src $out | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE on $name" }
+            }
+            else {
+                try {
+                    [System.IO.File]::WriteAllBytes($zx0Tmp, [byte[]]$b[16..($b.Length - 1)])
+                    & $zx0 -f -q $zx0Tmp "$zx0Tmp.zx0" | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE on $name" }
+                    $z = [System.IO.File]::ReadAllBytes("$zx0Tmp.zx0")
+                    [System.IO.File]::WriteAllBytes($out, [byte[]]($b[0..15] + $z))
+                }
+                finally {
+                    Remove-Item $zx0Tmp, "$zx0Tmp.zx0" -Force -ErrorAction SilentlyContinue
+                }
+            }
+            "staged $name -> sd\$legName\$name.ZX0  $((Get-Item $out).Length) bytes ($($b.Length) raw, $desc)"
+        }
+        else {
+            Copy-Item $src "$leg\$name" -Force
+            "staged $name -> sd\$legName\$name  $($b.Length) bytes, $desc"
+        }
+    }
+    "l2pos: expect_*.bin, l2pos_tags.txt and l2pos_walk.json stay in $l2posArt"
+    $l2posActive = $true
+}
+
 $tmoverActive = $false
 if ($TmOver) {
     # Transparent tilemap paper / layer order leg. Two jobs, both owned
@@ -5455,6 +5629,7 @@ elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixt
 elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
 elseif ($aysRegActive) { "active: aysreg (AYS stream register-loss fixture)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture)" }
+elseif ($l2posActive) { "active: l2pos (positioned pictures fixture, mode $l2posMode set$(if ($GfxZx0) { ', ZX0' }))" }
 elseif ($tmoverActive) { "active: tmover (transparent tilemap paper / layer order fixture - four PAPER/INK bands over a full-frame card, four timed layer-order states)" }
 elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs)" }
 elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass)" }

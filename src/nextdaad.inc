@@ -857,9 +857,8 @@ DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
                             ; 1..256 and ASSERTs both ends; read dma_copy's
                             ; header before changing it anyway.
 GFX_DMA_MIN_LEN equ 64      ; design threshold: below this LDIR wins on
-                            ; programming overhead (documentation only -
-                            ; no call site moves fewer bytes than this, so
-                            ; none needs a runtime length check)
+                            ; programming overhead; gfx_copy (overlay2.asm)
+                            ; checks it at run time for NXP-width rows
 
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0
@@ -1275,6 +1274,37 @@ GFX_SUB_CUR_BLINK equ 23    ; GFX r 23: blink half-period in frames, 0 = steady
 GFX_SUB_CUR_INK   equ 24    ; GFX i 24: cursor ink
 GFX_SUB_CUR_PAPER equ 25    ; GFX p 25: cursor paper
 GFX_SUB_CUR_RESET equ 26    ; GFX n 26: cursor colours follow the window again
+
+; --- NXP positioned pictures ---
+GFX_SUB_CLEAR_BOTH equ 7     ; GFX n 7: clear front and back surfaces
+GFX_SUB_POS_X      equ 8     ; GFX x 8: override X = x*8, arm
+GFX_SUB_POS_Y      equ 15    ; GFX y 15: override Y = y, arm
+GFX_SUB_POS_CANCEL equ 27    ; GFX n 27: cancel armed override
+GFX_SUB_COUNT      equ 28    ; h_gfx bound (was literal 27)
+
+; NXP 16-byte header, byte offsets
+NXP_MAGIC0  equ 0            ; 'N','X','P', version 1
+NXP_VERSION equ 3
+NXP_MODE    equ 4            ; 0 = 256x192 space, 1 = 320x256
+NXP_FLAGS   equ 5            ; bit 0 = floating
+NXP_X       equ 6            ; dw pixels
+NXP_Y       equ 8            ; db pixels
+NXP_W       equ 9            ; dw pixels, 1..320
+NXP_H       equ 11           ; db pixels, 0 = 256
+NXP_PALFIRST equ 12
+NXP_PALLAST equ 13           ; first > last = apply none
+NXP_HDR_LEN equ 16
+NXP_FLAG_FLOAT equ 1
+
+; overlay-2 parallel placement table, one row per cache slot
+GFX_POS_SIZE   equ 8
+GFX_POS_FLAGS  equ 0         ; bit 7 = row valid (entry is NXP), bit 0 = floating
+GFX_POS_X      equ 1         ; dw
+GFX_POS_Y      equ 3
+GFX_POS_W      equ 4         ; dw
+GFX_POS_PALF   equ 6
+GFX_POS_PALL   equ 7
+GFX_POS_VALID  equ $80
 
 ; DAC ports: four 8-bit DAC channels, A/B to the left audio channel and
 ; C/D to the right (soundrive-2 pairing); DAC B = $F3, DAC C = $F9 is

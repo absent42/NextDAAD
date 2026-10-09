@@ -62,10 +62,12 @@ machine's timing mode. PC/DOS's interpreter actually counts milliseconds,
 so a value ported from a PC game is twenty times too slow: divide it by
 20. <code>LOAD</code> and <code>RAMLOAD</code> stop a running cycle here (PC leaves it
 running), and a last index of 255 is treated as 254.</p>
-<p>Sub 15 is a no-op for a different reason. On CPC and C64 it is
-<code>XSPLITSCR</code>, a split-screen toggle; this target has no split-screen
-mode, so 15 is accepted and does nothing here too. Worth stating
-explicitly now that its neighbour, sub 16, installs a font - see
+<p>Subs 7, 8 and 15 mean something different here. On Atari ST, 7 and 8
+select the text write target, and on CPC and C64, 15 is <code>XSPLITSCR</code>.
+Here 7 clears both Layer 2 surfaces, and 8 and 15 set the position of
+the next <code>DISPLAY 0</code> (see <a href="graphics.html#positioned-pictures">Positioned pictures</a>).
+A game ported with those calls should drop them, or follow them with
+<code>GFX n 27</code>. Sub 16, their neighbour, installs a font - see
 <a href="fonts.html">Fonts</a>.</p>
 <h3 id="the-parser-cursor-is-an-inverse-block">The parser cursor is an inverse block</h3>
 <p>Every other interpreter draws an underscore in the text colour after
@@ -77,8 +79,8 @@ window and is capped to the window's capacity, where PC and ADP refuse
 at the end of one row.</p>
 <p>The <code>GFX</code> sub-commands that <em>are</em> implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
-drawing) and their reveal semantics on 0 and 2, the surface clears,
-the palette subs 9 and 10 and colour cycling on 11 and 12, video
+drawing) and their reveal semantics on 0 and 2,
+the surface clears (5, 6 and 7), the position subs 8, 15 and 27, the palette subs 9 and 10 and colour cycling on 11 and 12, video
 playback on 13 and 14, and font installation on 16 - are listed in
 <a href="graphics.html#gfx-sub-commands">Graphics</a>, <a href="video.html">Video</a> and
 <a href="fonts.html">Fonts</a>.</p>
