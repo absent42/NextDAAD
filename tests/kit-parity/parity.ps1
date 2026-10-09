@@ -1,5 +1,7 @@
 # Builds the parity fixture through the kit's own launchers and compares a
 # sha256 manifest of RELEASE\ with golden\manifest.txt. Exit 0/1/2.
+# nextdaad.nex is a verbatim copy of the kit's interpreter: it is checked
+# against that source every run instead, so rebuilds need no re-capture.
 param(
     [string]$ToolsDir = '',
     [string]$FfmpegDir = '',
@@ -123,9 +125,17 @@ if ($Shell) {
 }
 
 $rel = Join-Path $kit 'RELEASE'
+# Runs before -Capture/-NoCompare exits, so the Linux container checks it too.
+$nexOut = Join-Path $rel 'nextdaad.nex'
+$nexSrc = Join-Path $kit 'nextdaad.nex'
+if (-not (Test-Path -LiteralPath $nexOut)) { Write-Host 'parity: FAIL - RELEASE has no nextdaad.nex'; exit 1 }
+$nexSame = [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($nexOut), [IO.File]::ReadAllBytes($nexSrc))
+if (-not $nexSame) { Write-Host 'parity: FAIL - RELEASE\nextdaad.nex differs from the kit''s nextdaad.nex'; exit 1 }
+Write-Host 'parity: nextdaad.nex is a byte-exact copy of the kit interpreter'
 $sha = [System.Security.Cryptography.SHA256]::Create()
 $lines = foreach ($f in (Get-ChildItem -LiteralPath $rel -File -Recurse)) {
     $relPath = $f.FullName.Substring($rel.Length + 1) -replace '\\', '/'
+    if ($relPath -eq 'nextdaad.nex') { continue }
     $bytes = [IO.File]::ReadAllBytes($f.FullName)
     $hex = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
     "$relPath $($f.Length) $hex"
