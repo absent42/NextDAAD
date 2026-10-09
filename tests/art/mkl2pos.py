@@ -244,6 +244,9 @@ WALK = [
     ('3b', 'STEP 3B ORIGIN ',
      ['WINDOW 2', 'WINAT 0 0', 'WINSIZE 4 16', 'PICTURE 5', 'DISPLAY 0', 'WINDOW 0'],
      'FLT at window 2: mode 0 -32,-32 nothing; mode 1 0,0'),
+    ('3c', 'STEP 3C PART CLIP ',
+     ['WINDOW 2', 'WINAT 2 4', 'WINSIZE 4 16', 'PICTURE 5', 'DISPLAY 0', 'WINDOW 0'],
+     'FLT at window 2: mode 0 -16,-16 (source cols 16-63 rows 16-31 at 0,0, cuts the F); mode 1 16,16'),
     ('4', 'STEP 4 OVERRIDE ', ['GFX 20 8', 'GFX 64 15', 'PICTURE 6', 'DISPLAY 0'],
      'TB at 160,64 (its notch overwrites LOC2)'),
     ('4b', 'STEP 4B PLAIN AT ', ['GFX 8 8', 'GFX 0 15', 'PICTURE 1', 'DISPLAY 0'],
@@ -420,16 +423,28 @@ def replay(pics, mode):
                         condacts=condacts, shows=shows, mode=m.l2mode,
                         expect='expect_%s.bin' % sid, data=m.front_bytes(sid)))
     by = {s['id']: s['data'] for s in out}
-    # cross-checks against the independent painter and the walk's claims
-    assert by['1'] == surface_bytes(mode, [(0, 0, pics[1]), (192, 160, pics[3])])
+    # independent replay: hand-placed cumulative rects per step, no model
+    m0 = mode == 0
+    adds = {
+        '1': [(0, 0, 1), (192, 160, 3)], '1b': [(8, 160, 6)], '2': [(0, 0, 2)],
+        '2b': [(0, 96, 4)], '3': [(32, 128, 5) if m0 else (64, 160, 5)],
+        '3b': [] if m0 else [(0, 0, 5)], '3c': [(-16, -16, 5) if m0 else (16, 16, 5)],
+        '4': [(160, 64, 6)], '4b': [(64, 0, 1)], '4c': [] if m0 else [(312, 0, 6)],
+        '4d': [(8, 160, 6)], '5': [], '5a': [(128, 128, 3)], '5b': [(32, 64, 6)],
+    }
+    rects = []
+    for s in out[:-2]:
+        rects += [(x, y, pics[n]) for x, y, n in adds[s['id']]]
+        assert by[s['id']] == surface_bytes(mode, rects), "step %s differs from the independent replay" % s['id']
+    # the walk's claims
     assert by['1b'] != by['1'] and by['2'] != by['1b'] and by['2b'] != by['2']
-    assert by['3'] != by['2b']
-    assert (by['3b'] == by['3']) == (mode == 0), "3b: mode 0 draws nothing, mode 1 draws at 0,0"
-    assert (by['4c'] == by['4b']) == (mode == 0), "4c: mode 0 off-surface, mode 1 eight columns"
+    assert by['3'] != by['2b'] and by['3c'] != by['3b']
+    assert (by['3b'] == by['3']) == m0, "3b: mode 0 draws nothing, mode 1 draws at 0,0"
+    assert (by['4c'] == by['4b']) == m0, "4c: mode 0 off-surface, mode 1 eight columns"
     assert by['4d'] == by['4c'] and by['5'] == by['4d']
     assert by['5a'] != by['5'] and by['5b'] != by['5a']
-    assert by['6'] == bytes([TRANSP]) * len(by['6'])
-    assert out[-1]['mode'] == 1 - mode
+    assert out[-2]['id'] == '6' and by['6'] == bytes([TRANSP]) * len(by['6'])
+    assert out[-1]['id'] == '7' and out[-1]['mode'] == 1 - mode
     assert by['7'] == surface_bytes(1 - mode, [(8, 160, pics[6])])
     return out
 
