@@ -373,8 +373,8 @@ ignored. Use it to clear positioned art before a screen with no frame.</p>
 <li>When the picture memory is full, only uncompressed picture files can
   still be shown. A positioned picture is then drawn at <code>PICTURE</code> time,
   with the window and override as they are then, and a plain picture
-  under an override draws as a plain picture, with the override staying
-  armed.</li>
+  under an override draws as a plain picture: the override is not
+  applied and the next <code>DISPLAY 0</code> spends it.</li>
 </ul>
 <h2 id="40-column-games">40-column games</h2>
 <p><code>GFX 1 18</code> switches the tilemap from 80x32 single-width text to 40x32

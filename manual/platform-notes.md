@@ -91,7 +91,7 @@ at the end of one row.
 
 The `GFX` sub-commands that *are* implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
-drawing) and their reveal semantics on 0 and 2, the surface clears,
+drawing) and their reveal semantics on 0 and 2,
 the surface clears (5, 6 and 7), the position subs 8, 15 and 27, the palette subs 9 and 10 and colour cycling on 11 and 12, video
 playback on 13 and 14, and font installation on 16 - are listed in
 [Graphics](graphics.md#gfx-sub-commands), [Video](video.md) and

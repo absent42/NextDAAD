@@ -416,8 +416,8 @@ Known limitations:
 - When the picture memory is full, only uncompressed picture files can
   still be shown. A positioned picture is then drawn at `PICTURE` time,
   with the window and override as they are then, and a plain picture
-  under an override draws as a plain picture, with the override staying
-  armed.
+  under an override draws as a plain picture: the override is not
+  applied and the next `DISPLAY 0` spends it.
 
 ## 40-column games
 
