@@ -20,10 +20,13 @@
 param([Parameter(Mandatory=$true)][string]$Path)
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Path)) { exit 0 }
+if ($Path -match '\.(ZX0|NPZ)$') { exit 0 }     # compressed: the header is plain, the body is not
 $b = [System.IO.File]::ReadAllBytes($Path)
 $base = 0; $palFirst = 0; $palLast = 255; $isNxp = $false
 if ($b.Length -ge 16 -and $b[0] -eq 0x4E -and $b[1] -eq 0x58 -and $b[2] -eq 0x50) {
     $isNxp = $true; $base = 16; $palFirst = $b[12]; $palLast = $b[13]
+    $nh = if ($b[11] -eq 0) { 256 } else { $b[11] }
+    if ($b.Length -ne 16 + 512 + ($b[9] + 256 * $b[10]) * $nh) { exit 0 }   # compressed or truncated
 }
 if ($b.Length -lt ($base + 512)) { exit 0 }   # compressed or not a raw picture
 

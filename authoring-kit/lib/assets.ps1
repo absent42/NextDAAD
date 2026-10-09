@@ -169,6 +169,7 @@ function Read-PosSidecar([string]$Txt) {
 
 # The 16-byte NXP header (manual/reference/picture-format.md, NXP section).
 function New-NxpHeader([hashtable]$Pos, [int]$Mode, [int]$W, [int]$H, [string]$Who = '') {
+    if ($Mode -ne 0 -and $Mode -ne 1) { Fail "New-NxpHeader: mode $Mode is not 0 or 1" }
     if ($Who) { $Who = "$Who - " }
     $sw = if ($Mode -eq 1) { 320 } else { 256 }
     $sh = if ($Mode -eq 1) { 256 } else { 192 }
@@ -481,7 +482,7 @@ function Invoke-Pictures {
                 $name = "$num.$ext"
                 if ($ext -like 'NXP*' -or $ext -eq 'NPZ') { [void](Test-NxpReadyMade $f.FullName $script:gameMode ($ext -ne 'NXP')) }
                 if (Copy-Staged $f.FullName $name) {
-                    if ($ext -eq 'NX2' -or $ext -eq 'NXI') { Invoke-Palcheck (Join-Path $rel $name) }
+                    if ($ext -eq 'NX2' -or $ext -eq 'NXI' -or $ext -eq 'NXP') { Invoke-Palcheck (Join-Path $rel $name) }
                     Write-Host "  picture $($f.Name) -> RELEASE\$name (ready-made, staged as-is)"
                 }
             }
