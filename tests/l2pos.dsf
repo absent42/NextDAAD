@@ -1,8 +1,8 @@
-; NextDAAD positioned Layer 2 picture (NXP) fixture.
+; NextDAAD positioned Layer 2 picture (NX3) fixture.
 ;
 ; Staged by tests\build-tests.ps1 -L2Pos (256x192 set, mode 0) or
 ; -L2PosWide (320x256 set, mode 1) into sd\L2POS\: GAME.DDB, 001.NXI or
-; 001.NX2, 002-007.NXP and NEXTDAAD.NEX. tests\art\mkl2pos.py makes the
+; 001.NX2, 002-007.NX3 and NEXTDAAD.NEX. tests\art\mkl2pos.py makes the
 ; art and, per step, the expected Layer 2 front surface.
 ;
 ; One keypress = one step of mkl2pos.py's WALK, in order. Each step
@@ -160,7 +160,7 @@ SOUTH 0
         INK 15
         PLUS fStep 1
         DONE
-; step 2: NXP LOC2 over rows 0-95, TA and TB kept
+; step 2: NX3 LOC2 over rows 0-95, TA and TB kept
 > _ _   EQ fStep 1
         MES "STEP 2 LOC2 "
         PICTURE 2
@@ -390,7 +390,7 @@ SOUTH 0
         NEWLINE
         PLUS fStep 1
         DONE
-; step 7: other-mode NXP: both cleared, mode switched, TB at 8,160
+; step 7: other-mode NX3: both cleared, mode switched, TB at 8,160
 > _ _   EQ fStep 14
         MES "STEP 7 MODE "
         PICTURE 7

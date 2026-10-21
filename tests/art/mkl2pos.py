@@ -1,7 +1,7 @@
-# Positioned-picture (NXP) fixture art, and the expected Layer 2 FRONT
+# Positioned-picture (NX3) fixture art, and the expected Layer 2 FRONT
 # surface after every step of the fixture walk (tests/l2pos.dsf).
 #
-#   mkl2pos.py <outdir> [--mode 0|1]   001.NXI|NX2, 002-007.NXP,
+#   mkl2pos.py <outdir> [--mode 0|1]   001.NXI|NX2, 002-007.NX3,
 #                                      expect_<id>.bin, l2pos_tags.txt,
 #                                      l2pos_walk.json
 #   mkl2pos.py <outdir> --png [--mode 0|1]
@@ -167,8 +167,8 @@ def flat(px):
     return bytes(b for row in px for b in row)
 
 
-def nxp_header(mode, floating, x, y, w, h, pf, pl):
-    return (b'NXP' + bytes([1, mode, 1 if floating else 0]) + struct.pack('<H', x)
+def nx3_header(mode, floating, x, y, w, h, pf, pl):
+    return (b'NX3' + bytes([1, mode, 1 if floating else 0]) + struct.pack('<H', x)
             + bytes([y]) + struct.pack('<H', w) + bytes([h & 255, pf, pl, 0, 0]))
 
 
@@ -187,10 +187,10 @@ def build(mode):
             files[plain_name(mode)] = body
         else:
             w = p['w'] or sw
-            files['%03d.NXP' % n] = nxp_header(mode, p['fl'], p['x'], p['y'], w, p['h'], *p['pal']) + body
+            files['%03d.NX3' % n] = nx3_header(mode, p['fl'], p['x'], p['y'], w, p['h'], *p['pal']) + body
     # 007: 006's bytes with the other mode byte (R3 mode switch)
     p = PICS[6]
-    files['007.NXP'] = nxp_header(1 - mode, False, p['x'], p['y'], p['w'], p['h'], *p['pal']) + files['006.NXP'][16:]
+    files['007.NX3'] = nx3_header(1 - mode, False, p['x'], p['y'], p['w'], p['h'], *p['pal']) + files['006.NX3'][16:]
     pics[7] = pics[6]
     return files, pics
 
@@ -206,7 +206,7 @@ def decode_back(files, mode):
             n = int(name[:3])
             p = PICS[6 if n == 7 else n]
             pmode = 1 - mode if n == 7 else mode
-            assert data[:4] == b'NXP\x01', name
+            assert data[:4] == b'NX3\x01', name
             assert data[4] == pmode, name
             assert data[5] == (1 if p['fl'] else 0), name
             x, y = struct.unpack('<H', data[6:8])[0], data[8]
@@ -235,7 +235,7 @@ WALK = [
     ('1b', 'STEP 1B TB ', ['PICTURE 6', 'DISPLAY 0'],
      'TB at 8,160'),
     ('2', 'STEP 2 LOC2 ', ['PICTURE 2', 'DISPLAY 0'],
-     'NXP LOC2 over rows 0-95, TA and TB kept'),
+     'NX3 LOC2 over rows 0-95, TA and TB kept'),
     ('2b', 'STEP 2B HUD ', ['PICTURE 4', 'DISPLAY 0'],
      'HUD rows 96-127'),
     ('3', 'STEP 3 WINDOW ',
@@ -264,7 +264,7 @@ WALK = [
     ('6', 'STEP 6 CLEAR ', ['GFX 0 7', 'DISPLAY 1'],
      'both surfaces transparent'),
     ('7', 'STEP 7 MODE ', ['PICTURE 7', 'DISPLAY 0'],
-     'other-mode NXP: both cleared, mode switched, TB at 8,160'),
+     'other-mode NX3: both cleared, mode switched, TB at 8,160'),
 ]
 
 

@@ -126,8 +126,8 @@
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
 #   -GfxZx0  ZX0-compress each staged file (NNN.NX2.ZX0 / with
 #            -Gfx256 NNN.NXI.ZX0) so the interpreter's compressed
-#            picture path is exercised. NXP keeps its 16-byte header
-#            raw and compresses only the rest (NNN.NXP.ZX0)
+#            picture path is exercised. NX3 keeps its 16-byte header
+#            raw and compresses only the rest (NNN.NX3.ZX0)
 #   (-UU always stages whatever single art shape ships in
 #    tools\urban-upstart - no modifiers; that corpus has no parallel
 #    NX2/NXI pair to choose between)
@@ -212,9 +212,9 @@
 #            names the hole). .NXI not .NX2 deliberately: NX2 probes
 #            first and its 320-wide surface would cover the control
 #            margin. Alternative to every other DDB switch.
-#   -L2Pos   positioned-picture (NXP) fixture, sd\L2POS\: make
+#   -L2Pos   positioned-picture (NX3) fixture, sd\L2POS\: make
 #            tests\l2pos.dsf active AND stage tests\art\mkl2pos.py's
-#            mode 0 set (001.NXI + 002-007.NXP) from tests\out\l2pos-art\,
+#            mode 0 set (001.NXI + 002-007.NX3) from tests\out\l2pos-art\,
 #            where its expect_*.bin and l2pos_walk.json stay. One key =
 #            one walk step. -L2PosWide stages the mode 1 set (001.NX2)
 #            from tests\out\l2pos-art-wide\ into the same folder.
@@ -1464,7 +1464,7 @@ finally {
     Pop-Location
 }
 
-# Positioned-picture (NXP) fixture; only -L2Pos/-L2PosWide make it active
+# Positioned-picture (NX3) fixture; only -L2Pos/-L2PosWide make it active
 # (sd\L2POS\). No -v3: no V3 condact is used. The .json is kept for the
 # walk check in the staging block.
 $l2posWork = Join-Path $root 'tests\out\l2pos-work'
@@ -4887,7 +4887,7 @@ if ($L2Holes) {
 
 $l2posActive = $false
 if ($L2Pos -or $L2PosWide) {
-    # Positioned-picture (NXP) leg: tests\l2pos.dsf + mkl2pos.py's art set
+    # Positioned-picture (NX3) leg: tests\l2pos.dsf + mkl2pos.py's art set
     # for one Layer 2 mode. expect_*.bin, l2pos_tags.txt and the walk json
     # stay in the art dir; only GAME.DDB, the pictures and the NEX go in.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
@@ -4950,7 +4950,7 @@ if ($L2Pos -or $L2PosWide) {
     $zx0Tmp = "$root\tests\out\l2pos-zx0.tmp"
     $plain = if ($l2posMode) { '001.NX2' } else { '001.NXI' }
     $sw = if ($l2posMode) { 320 } else { 256 }
-    foreach ($name in @($plain) + @(2..7 | ForEach-Object { '{0:D3}.NXP' -f $_ })) {
+    foreach ($name in @($plain) + @(2..7 | ForEach-Object { '{0:D3}.NX3' -f $_ })) {
         $src = Join-Path $l2posArt $name
         if (-not (Test-Path -LiteralPath $src)) { throw "mkl2pos.py produced no $name" }
         $b = [System.IO.File]::ReadAllBytes($src)
@@ -4959,9 +4959,9 @@ if ($L2Pos -or $L2PosWide) {
             $desc = "$sw x $(($b.Length - 512) / $sw) plain"
         }
         else {
-            # header: "NXP" 1, mode, floating, x16, y, w16, h (0 = 256), pal first/last, 0 0
-            $wantMode = if ($name -eq '007.NXP') { 1 - $l2posMode } else { $l2posMode }
-            if ([Text.Encoding]::ASCII.GetString($b, 0, 3) -ne 'NXP') { throw "l2pos: $name magic is not NXP" }
+            # header: "NX3" 1, mode, floating, x16, y, w16, h (0 = 256), pal first/last, 0 0
+            $wantMode = if ($name -eq '007.NX3') { 1 - $l2posMode } else { $l2posMode }
+            if ([Text.Encoding]::ASCII.GetString($b, 0, 3) -ne 'NX3') { throw "l2pos: $name magic is not NX3" }
             if ($b[3] -ne 1) { throw "l2pos: $name version is $($b[3]), expected 1" }
             if ($b[4] -ne $wantMode) { throw "l2pos: $name mode byte is $($b[4]), expected $wantMode" }
             if ($b[5] -gt 1) { throw "l2pos: $name flags byte is $($b[5]), expected 0 or 1" }
@@ -4972,7 +4972,7 @@ if ($L2Pos -or $L2PosWide) {
             $desc = "mode $($b[4]) $w x $h at $($b[6] + 256 * $b[7]),$($b[8])$(if ($b[5]) { ' floating' })"
         }
         if ($GfxZx0) {
-            # NXP: the interpreter reads 16 raw header bytes, then one ZX0
+            # NX3: the interpreter reads 16 raw header bytes, then one ZX0
             # stream (palette + pixels). Plain files are one whole stream.
             $out = "$leg\$name.ZX0"
             if ($name -eq $plain) {
