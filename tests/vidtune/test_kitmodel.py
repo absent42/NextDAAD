@@ -71,3 +71,24 @@ def test_clip_state_lifecycle(fixture_kit):
     assert clip_state(c002, cfg2, "pal9k") == (True, True)
     # unknown stamp: stale, conservatively
     assert clip_state(c002, cfg, None) == (True, True)
+
+
+def test_find_kit_root_without_video(tmp_path):
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "video.ps1").write_text("# kit\n")
+    (tmp_path / "CONFIG.BAT").write_text("@echo off\n")
+    assert not (tmp_path / "VIDEO").exists()
+    assert find_kit_root(tmp_path / "lib") == tmp_path
+
+
+def test_game_paths_folder(game_kit):
+    from vidtune.kitmodel import game_paths
+    g = game_kit / "MYGAME2"
+    assert game_paths(game_kit, g) == (g / "VIDEO", g / "MYGAME2.CFG",
+                                       g / "MYGAME2.CFG")
+
+
+def test_game_paths_legacy(fixture_kit):
+    from vidtune.kitmodel import game_paths
+    assert game_paths(fixture_kit, fixture_kit) == (
+        fixture_kit / "VIDEO", None, fixture_kit / "CONFIG.local.BAT")

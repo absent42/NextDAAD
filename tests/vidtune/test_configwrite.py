@@ -175,3 +175,37 @@ def test_verify_error_with_bak(fixture_kit, monkeypatch):
     monkeypatch.setattr(cw, "parse_config", _wrong_read(cw.parse_config))
     with pytest.raises(RuntimeError, match="restore from CONFIG.local.BAT.bak"):
         write_vidopts_line(fixture_kit / CFG, "005", "--direct")
+
+
+def test_write_to_game_cfg(game_kit):
+    gcfg = game_kit / "MYGAME2" / "MYGAME2.CFG"
+    write_vidopts_line(game_kit / CFG, "001", "--direct", target_path=gcfg)
+    assert b"SET VIDOPTS_001=--direct\r\n" in gcfg.read_bytes()
+    assert not (game_kit / LOC).exists()
+    assert parse_config(game_kit / CFG, game_cfg=gcfg).per_clip["001"] == "--direct"
+
+
+def test_starter_protected(fixture_kit):
+    from vidtune.configwrite import StarterProtected
+    s = fixture_kit / "STARTER"
+    s.mkdir()
+    scfg = s / "STARTER.CFG"
+    before = b"@echo off\r\nSET VIDFPS=\r\n"
+    scfg.write_bytes(before)
+    with pytest.raises(StarterProtected):
+        write_vidopts_line(fixture_kit / CFG, "001", "--direct", target_path=scfg)
+    assert scfg.read_bytes() == before
+    assert not (fixture_kit / LOC).exists()
+    assert not list(s.glob("*.bak")) and not list(s.glob("*.tmp"))
+
+
+def test_stamp_covers_game_cfg(game_kit):
+    import os
+    gcfg = game_kit / "MYGAME2" / "MYGAME2.CFG"
+    stamp = config_stamp(game_kit / CFG, game_cfg=gcfg)
+    st = gcfg.stat()
+    os.utime(gcfg, (st.st_atime, st.st_mtime + 10))
+    assert config_stamp(game_kit / CFG, game_cfg=gcfg) != stamp
+    with pytest.raises(ConfigConflict):
+        write_vidopts_line(game_kit / CFG, "001", "--direct",
+                           expected_stamp=stamp, target_path=gcfg)

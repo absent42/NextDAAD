@@ -1,4 +1,5 @@
 # authoring-kit/lib/vidtune/__main__.py
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -25,17 +26,22 @@ def main():
     app.setFont(theme.ui_font())
     app.setStyleSheet(theme.stylesheet())
     app.setWindowIcon(QIcon(str(ICON_PATH)))  # kit picker, message boxes
+    ap = argparse.ArgumentParser(prog="vidtune")
+    # Set by lib/vidtune.ps1 from Resolve-KitGame; absent = legacy kit root.
+    ap.add_argument("--game-dir", type=Path, default=None)
+    args, _ = ap.parse_known_args(sys.argv[1:])
     root = find_kit_root(Path.cwd())
     if root is None:
         picked = QFileDialog.getExistingDirectory(
-            None, "Open kit folder (contains CONFIG.BAT and VIDEO)")
+            None, "Open kit folder (contains CONFIG.BAT and lib\\)")
         root = find_kit_root(picked) if picked else None
     if root is None:
         QMessageBox.critical(None, "vidtune",
                              "No kit found - a kit folder contains "
-                             "CONFIG.BAT and a VIDEO directory.")
+                             "CONFIG.BAT and a lib\\ directory.")
         return 1
-    win = MainWindow(root)
+    game_dir = args.game_dir.resolve() if args.game_dir else None
+    win = MainWindow(root, game_dir)
     win.show()
     return app.exec()
 

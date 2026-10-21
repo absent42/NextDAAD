@@ -21,11 +21,23 @@ PATH_KEYS = {
 
 
 def find_kit_root(start):
+    # VIDEO\ lives in each game folder now, so lib/video.ps1 marks the kit.
     p = Path(start).resolve()
     for cand in (p, *p.parents):
-        if (cand / "CONFIG.BAT").is_file() and (cand / "VIDEO").is_dir():
+        if (cand / "CONFIG.BAT").is_file() and (cand / "lib" / "video.ps1").is_file():
             return cand
     return None
+
+
+def game_paths(kit_root, game_dir):
+    """(video dir, game .CFG or None, VIDOPTS write target) for a game
+    folder, or for the kit root itself in legacy mode."""
+    kit_root, game_dir = Path(kit_root), Path(game_dir)
+    if game_dir.resolve() == kit_root.resolve():
+        return kit_root / "VIDEO", None, kit_root / "CONFIG.local.BAT"
+    # As kitgame.ps1 Resolve-KitGame: <SrcRoot>\<GAME>.CFG.
+    cfg = game_dir / f"{game_dir.name}.CFG"
+    return game_dir / "VIDEO", cfg, cfg
 
 
 @dataclass
@@ -109,9 +121,11 @@ class Clip:
     sidecar: Path
 
 
-def list_clips(kit_root):
+def list_clips(src_root):
+    # src_root holds VIDEO\: the game folder, or the kit root in legacy mode.
     clips = []
-    sources = sorted(list(Path(kit_root, "VIDEO").glob("*.mp4")) + list(Path(kit_root, "VIDEO").glob("*.mkv")))
+    video = Path(src_root, "VIDEO")
+    sources = sorted(list(video.glob("*.mp4")) + list(video.glob("*.mkv")))
     for mp4 in sources:
         if not mp4.stem.isdigit():
             continue
