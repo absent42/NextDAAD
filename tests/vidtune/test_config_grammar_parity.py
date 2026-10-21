@@ -37,9 +37,10 @@ CONFIG_LOCAL_BAT = (
 
 # Output goes to a UTF-8 file: console encodings differ by host and locale.
 _PROBE_PS1 = (
-    "param([string]$KitConfigPath, [string]$KitRoot, [string]$OutPath)\n"
+    "param([string]$KitConfigPath, [string]$KitRoot, [string]$OutPath,"
+    " [string]$GameCfg = '')\n"
     ". $KitConfigPath\n"
-    "$cfg = Read-KitConfig $KitRoot\n"
+    "$cfg = Read-KitConfig $KitRoot $GameCfg\n"
     "$lines = @($cfg.GetEnumerator() | Sort-Object Name |"
     " ForEach-Object { \"$($_.Name)=$($_.Value)\" })\n"
     "[IO.File]::WriteAllText($OutPath, ($lines -join \"`n\"),"
@@ -88,3 +89,36 @@ def test_kitmodel_matches_kitconfig_ps1(tmp_path):
         assert py_vals["FFMPEGDIR"] == "tools\\ffmpeg\\bin"
     else:
         assert py_vals["FFMPEGDIR"] == "tools/ffmpeg/bin"  # path key: normalised off Windows
+
+
+@pytest.mark.skipif(PS is None, reason="neither pwsh nor powershell is on PATH")
+def test_three_layer_config_matches(tmp_path):
+    from vidtune.kitmodel import parse_config
+    (tmp_path / "CONFIG.BAT").write_bytes(b"SET COLS=80\r\nSET BASE=b\r\nSET VIDASPECT=base\r\n")
+    game = tmp_path / "G.CFG"
+    game.write_bytes(b"SET COLS=40\r\nSET GAME=OTHER\r\nSET VIDASPECT=game\r\n")
+    (tmp_path / "CONFIG.local.BAT").write_bytes(b"SET GAME=G\r\nSET RUN=0\r\n")
+
+    assert parse_config(tmp_path / "CONFIG.BAT", game_cfg=game).vid_aspect == "game"
+    assert parse_config(tmp_path / "CONFIG.BAT").vid_aspect == "base"
+
+    probe = tmp_path / "probe.ps1"
+    probe.write_text(_PROBE_PS1, newline="")
+    out = tmp_path / "probe-out.txt"
+    r = subprocess.run(
+        [PS, "-NoProfile", "-File", str(probe),
+         "-KitConfigPath", str(KITCONFIG_PS1), "-KitRoot", str(tmp_path),
+         "-OutPath", str(out), "-GameCfg", str(game)],
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ps_vals = dict(ln.partition("=")[::2]
+                   for ln in out.read_text(encoding="utf-8").split("\n") if ln)
+    py_vals = {}
+    _read_sets(tmp_path / "CONFIG.BAT", py_vals)
+    g = {}
+    _read_sets(game, g)
+    g.pop("GAME", None)
+    py_vals.update(g)
+    _read_sets(tmp_path / "CONFIG.local.BAT", py_vals)
+    assert py_vals == ps_vals
+    assert ps_vals["COLS"] == "40" and ps_vals["GAME"] == "G" and ps_vals["RUN"] == "0"

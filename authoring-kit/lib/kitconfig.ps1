@@ -16,9 +16,20 @@ function Read-KitConfigFile([string]$Path, [hashtable]$Into) {
     }
 }
 
-function Read-KitConfig([string]$KitRoot) {
+# Layers, last wins: CONFIG.BAT, the game's .CFG, CONFIG.local.BAT. GAME in the
+# game .CFG is dropped: the selector lives in CONFIG.local.BAT.
+function Read-KitConfig([string]$KitRoot, [string]$GameCfg = '') {
     $cfg = @{}
     Read-KitConfigFile (Join-Path $KitRoot 'CONFIG.BAT') $cfg
+    if ($GameCfg -ne '') {
+        $game = @{}
+        Read-KitConfigFile $GameCfg $game
+        if ($game.ContainsKey('GAME')) {
+            $game.Remove('GAME')
+            Write-Host "WARNING: GAME in $GameCfg is ignored - select the game in CONFIG.local.BAT"
+        }
+        foreach ($k in $game.Keys) { $cfg[$k] = $game[$k] }
+    }
     Read-KitConfigFile (Join-Path $KitRoot 'CONFIG.local.BAT') $cfg
     return $cfg
 }

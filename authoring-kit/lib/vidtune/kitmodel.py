@@ -61,11 +61,17 @@ def _read_sets(path, into):
             into[name] = value
 
 
-def parse_config(config_path, local_path=None):
+def parse_config(config_path, local_path=None, game_cfg=None):
     # Last-wins within and across files, as cmd's SET is. lib/kitconfig.ps1
     # implements the same grammar; tests/kitconfig-selftest.ps1 pins it.
+    # Layers: CONFIG.BAT, game_cfg (GAME dropped), CONFIG.local.BAT.
     vals = {}
     _read_sets(config_path, vals)
+    if game_cfg is not None:
+        game = {}
+        _read_sets(game_cfg, game)
+        game.pop("GAME", None)
+        vals.update(game)
     if local_path is None:
         local_path = Path(config_path).with_name("CONFIG.local.BAT")
     _read_sets(local_path, vals)
