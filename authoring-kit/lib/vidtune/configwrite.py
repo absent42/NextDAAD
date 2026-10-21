@@ -16,6 +16,10 @@ class StarterProtected(Exception):
     """The VIDOPTS target is inside the shipped STARTER\\ folder."""
 
 
+class LocalOverride(Exception):
+    """CONFIG.local.BAT defines the VIDOPTS_NNN a game .CFG write targets."""
+
+
 STARTER_MESSAGE = ("STARTER\\ is replaced by every kit update - copy it to "
                    "your own game folder and tune the copy.")
 
@@ -86,6 +90,13 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None,
             and config_stamp(config_path, game_cfg) != expected_stamp):
         raise ConfigConflict(
             "a config file changed on disk since it was loaded - reload first")
+    if game_cfg is not None and local.is_file():
+        # CONFIG.local.BAT is read last, so its line would mask the .CFG write.
+        if any(_line_re(num3).match(ln.rstrip(b"\r"))
+               for ln in local.read_bytes().split(b"\n")):
+            raise LocalOverride(
+                f"VIDOPTS_{num3} in CONFIG.local.BAT overrides {loc.name} - "
+                f"move that line into {loc.name}, then accept again.")
     # Both targets sit directly above CONFIG.BAT, so it alone is the base.
     base = parse_config(config_path, local_path=local.with_name("no.local")
                         ).per_clip.get(num3, "")

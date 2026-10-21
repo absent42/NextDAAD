@@ -50,8 +50,8 @@ from PySide6.QtWidgets import (
 
 from . import ICON_PATH, __version__, presets, settingsmodel, theme
 from .presetrow import LadderPanel, RouteMenuButton
-from .configwrite import (ConfigConflict, StarterProtected, config_stamp,
-                          write_sidecar, write_vidopts_line)
+from .configwrite import (ConfigConflict, LocalOverride, StarterProtected,
+                          config_stamp, write_sidecar, write_vidopts_line)
 from .encoderun import EncodeJob, resolve_encoder, summarize_report, videnc_names
 from .kitmodel import (clip_state, game_paths, list_clips, parse_config,
                        read_generation_stamp)
@@ -762,13 +762,14 @@ class MainWindow(QMainWindow):
     _SCROLLBAR_ALLOWANCE = 24       # headroom for a vertical scrollbar once the form is tall
     _MIN_HEIGHT = 700
 
-    def __init__(self, kit_root: Path, game_dir: Path | None = None):
+    def __init__(self, kit_root: Path, game_dir: Path | None = None,
+                 game_cfg: Path | None = None):
         super().__init__()
         self.kit_root = Path(kit_root)
         # None = legacy: the game's VIDEO\ is the kit root's.
         self.game_dir = self.kit_root if game_dir is None else Path(game_dir)
-        _, self.game_cfg, self.vidopts_target = game_paths(self.kit_root,
-                                                           self.game_dir)
+        _, self.game_cfg, self.vidopts_target = game_paths(
+            self.kit_root, self.game_dir, game_cfg)
         self.cfg = parse_config(self.kit_root / "CONFIG.BAT",
                                 game_cfg=self.game_cfg)
         self.cfg_stamp = config_stamp(self.kit_root / "CONFIG.BAT",
@@ -1461,7 +1462,7 @@ class MainWindow(QMainWindow):
             write_vidopts_line(config_path, num3, " ".join(dev),
                                expected_stamp=self.cfg_stamp,
                                target_path=self.vidopts_target)
-        except StarterProtected as exc:
+        except (StarterProtected, LocalOverride) as exc:
             QMessageBox.critical(self, "vidtune", str(exc))
             return None
         except ConfigConflict:

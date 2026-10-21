@@ -29,14 +29,15 @@ def find_kit_root(start):
     return None
 
 
-def game_paths(kit_root, game_dir):
+def game_paths(kit_root, game_dir, game_cfg=None):
     """(video dir, game .CFG or None, VIDOPTS write target) for a game
     folder, or for the kit root itself in legacy mode."""
     kit_root, game_dir = Path(kit_root), Path(game_dir)
     if game_dir.resolve() == kit_root.resolve():
         return kit_root / "VIDEO", None, kit_root / "CONFIG.local.BAT"
-    # As kitgame.ps1 Resolve-KitGame: <SrcRoot>\<GAME>.CFG.
-    cfg = game_dir / f"{game_dir.name}.CFG"
+    # vidtune.ps1 passes Resolve-KitGame's CfgFile (named from the .DSF as
+    # found on disk); the folder name is only a fallback for direct runs.
+    cfg = Path(game_cfg) if game_cfg else game_dir / f"{game_dir.name}.CFG"
     return game_dir / "VIDEO", cfg, cfg
 
 

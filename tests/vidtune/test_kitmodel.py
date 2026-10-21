@@ -92,3 +92,11 @@ def test_game_paths_legacy(fixture_kit):
     from vidtune.kitmodel import game_paths
     assert game_paths(fixture_kit, fixture_kit) == (
         fixture_kit / "VIDEO", None, fixture_kit / "CONFIG.local.BAT")
+
+
+def test_game_paths_explicit_cfg(game_kit):
+    # Resolve-KitGame names the .CFG from the .DSF on disk, not the folder.
+    from vidtune.kitmodel import game_paths
+    g = game_kit / "MYGAME2"
+    cfg = g / "MyGame2.CFG"
+    assert game_paths(game_kit, g, cfg) == (g / "VIDEO", cfg, cfg)

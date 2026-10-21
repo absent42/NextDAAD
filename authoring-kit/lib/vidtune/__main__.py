@@ -17,6 +17,17 @@ from vidtune.kitmodel import find_kit_root
 from vidtune.mainwindow import MainWindow
 
 
+def parse_args(argv):
+    """(game_dir, game_cfg), each a resolved Path or None. Set by
+    lib/vidtune.ps1 from Resolve-KitGame; no --game-dir = legacy kit root."""
+    ap = argparse.ArgumentParser(prog="vidtune")
+    ap.add_argument("--game-dir", type=Path, default=None)
+    ap.add_argument("--game-cfg", type=Path, default=None)
+    args, _ = ap.parse_known_args(argv)  # Qt's own options pass through
+    return tuple(p.resolve() if p is not None else None
+                 for p in (args.game_dir, args.game_cfg))
+
+
 def main():
     app = QApplication(sys.argv)
     # MainWindow styles itself too (so a test- or embedder-constructed
@@ -26,10 +37,7 @@ def main():
     app.setFont(theme.ui_font())
     app.setStyleSheet(theme.stylesheet())
     app.setWindowIcon(QIcon(str(ICON_PATH)))  # kit picker, message boxes
-    ap = argparse.ArgumentParser(prog="vidtune")
-    # Set by lib/vidtune.ps1 from Resolve-KitGame; absent = legacy kit root.
-    ap.add_argument("--game-dir", type=Path, default=None)
-    args, _ = ap.parse_known_args(sys.argv[1:])
+    game_dir, game_cfg = parse_args(sys.argv[1:])
     root = find_kit_root(Path.cwd())
     if root is None:
         picked = QFileDialog.getExistingDirectory(
@@ -40,8 +48,7 @@ def main():
                              "No kit found - a kit folder contains "
                              "CONFIG.BAT and a lib\\ directory.")
         return 1
-    game_dir = args.game_dir.resolve() if args.game_dir else None
-    win = MainWindow(root, game_dir)
+    win = MainWindow(root, game_dir, game_cfg)
     win.show()
     return app.exec()
 

@@ -209,3 +209,26 @@ def test_stamp_covers_game_cfg(game_kit):
     with pytest.raises(ConfigConflict):
         write_vidopts_line(game_kit / CFG, "001", "--direct",
                            expected_stamp=stamp, target_path=gcfg)
+
+
+def test_local_override_refused(game_kit):
+    from vidtune.configwrite import LocalOverride
+    gcfg = game_kit / "MYGAME2" / "MYGAME2.CFG"
+    loc = game_kit / LOC
+    loc.write_bytes(b"@echo off\r\nSET VIDOPTS_001=\r\n")   # empty still masks
+    before_g, before_l = gcfg.read_bytes(), loc.read_bytes()
+    with pytest.raises(LocalOverride) as ei:
+        write_vidopts_line(game_kit / CFG, "001", "--direct", target_path=gcfg)
+    assert str(ei.value) == ("VIDOPTS_001 in CONFIG.local.BAT overrides "
+                             "MYGAME2.CFG - move that line into MYGAME2.CFG, "
+                             "then accept again.")
+    assert gcfg.read_bytes() == before_g and loc.read_bytes() == before_l
+    for d in (game_kit, game_kit / "MYGAME2"):
+        assert not list(d.glob("*.bak")) and not list(d.glob("*.tmp"))
+
+
+def test_local_other_clip_does_not_block(game_kit):
+    gcfg = game_kit / "MYGAME2" / "MYGAME2.CFG"
+    (game_kit / LOC).write_bytes(b"SET VIDOPTS_0010=x\r\nSET VIDOPTS_002=--direct\r\n")
+    write_vidopts_line(game_kit / CFG, "001", "--direct", target_path=gcfg)
+    assert b"SET VIDOPTS_001=--direct" in gcfg.read_bytes()

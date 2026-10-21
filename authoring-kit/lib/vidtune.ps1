@@ -12,7 +12,10 @@ try { $g = Resolve-KitGame $cfg0 $kitRoot } catch { Write-Host "$($_.Exception.M
 $cfg = Read-KitConfig $kitRoot $g.CfgFile
 Export-KitConfig $cfg
 # Quoted: Start-Process joins -ArgumentList unquoted, and the path may hold spaces.
-$gameArg = @('--game-dir', "`"$($g.SrcRoot)`"")
+# Trailing separator trimmed so it cannot escape the quote; a bare drive or
+# empty path still resolves to the kit root, the working directory.
+$gameArg = @('--game-dir', "`"$($g.SrcRoot.TrimEnd('\', '/'))`"")
+if ($g.Mode -eq 'folder') { $gameArg += @('--game-cfg', "`"$($g.CfgFile)`"") }
 $t = Resolve-KitTools $cfg $kitRoot
 $env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
 $kitExe = Join-Path $kitRoot (Join-Path 'tools' (Join-Path 'vidtools' "vidtune$ExeSuffix"))
