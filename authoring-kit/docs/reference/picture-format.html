@@ -3,23 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Picture format - NX2, NXI and NXP - NextDAAD</title>
+<title>Picture format - NX2, NXI and NX3 - NextDAAD</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
 <main>
-<h1 id="picture-format-nx2-nxi-and-nxp">Picture format - NX2, NXI and NXP</h1>
+<h1 id="picture-format-nx2-nxi-and-nx3">Picture format - NX2, NXI and NX3</h1>
 <p>What NextDAAD's location-graphics loader accepts, for anyone writing a
 converter, exporter or paint-tool plugin that emits these files.</p>
 <p>A file that breaks any rule here is refused by the loader rather than
 misrendered - a rejected picture simply does not appear. Section 6 lists
 what gets refused.</p>
-<p>Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI.
-Section 9 describes NXP, the positioned picture: a rectangle of any
+<p>Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI, and the
+palette, pixel and compression rules NX3 shares with them.
+Section 9 describes NX3, the positioned picture: a rectangle of any
 size that draws only its own area. It is a different file, with a
 16-byte header in front.</p>
+<p>Not to be confused with the <code>.nxp</code> palette file that Gfx2Next and
+NextDither write: that holds a palette only and is not a picture.</p>
 <hr />
-<h2 id="1-the-two-shapes">1. The two shapes</h2>
+<h2 id="1-the-three-shapes">1. The three shapes</h2>
 <table>
 <thead>
 <tr>
@@ -42,21 +45,31 @@ size that draws only its own area. It is a different file, with a
 <td><strong>192</strong> rows</td>
 <td>Classic paper area, inset by the border</td>
 </tr>
+<tr>
+<td><code>.NX3</code></td>
+<td>any, up to <strong>256</strong> or <strong>320</strong> by its mode</td>
+<td><strong>192</strong> or <strong>256</strong> rows, by its mode</td>
+<td>Its own rectangle only; size and position stored in its header (section 9)</td>
+</tr>
 </tbody>
 </table>
-<p>Width is implied by the extension. It is not stored in the file.</p>
-<p>Files are named <code>NNN.NX2</code> / <code>NNN.NXI</code>, where <code>NNN</code> is the DAAD picture
-number, zero-padded to three digits (<code>001</code>, <code>042</code>).</p>
+<p>For NX2 and NXI the width is implied by the extension. It is not stored
+in the file.</p>
+<p>Files are named <code>NNN.NX2</code> / <code>NNN.NXI</code> / <code>NNN.NX3</code>, where <code>NNN</code> is the
+DAAD picture number, zero-padded to three digits (<code>001</code>, <code>042</code>).</p>
 <h2 id="2-file-layout">2. File layout</h2>
 <pre><code>offset 0     : 512 bytes  palette   (256 entries x 2 bytes)
 offset 512   : W*H bytes  pixel data (1 byte per pixel, row-major)
 </code></pre>
-<p>Nothing else. No header, no magic number, no footer, no padding.</p>
+<p>Nothing else. No header, no magic number, no footer, no padding. NX3
+puts a 16-byte header before this same layout (section 9).</p>
 <p><strong>Height is derived from the file size</strong>, as <code>(size - 512) / width</code>. The
-file must therefore be exactly <code>512 + width * height</code> bytes.</p>
+file must therefore be exactly <code>512 + width * height</code> bytes. (NX2 and
+NXI. NX3 stores its height in the header and is
+<code>16 + 512 + width * height</code> bytes.)</p>
 <h2 id="3-pixel-data">3. Pixel data</h2>
 <p>One byte per pixel, each byte a palette index 0-255.</p>
-<p><strong>Row-major, in both shapes</strong> - <code>width</code> bytes for row 0, then row 1, and
+<p><strong>Row-major, in every shape</strong> - <code>width</code> bytes for row 0, then row 1, and
 so on. This holds for 320-wide too, even though its Layer 2 video memory
 is column-major on the hardware; that is a property of the display
 surface, not of this file. <strong>Write rows.</strong></p>
@@ -140,6 +153,8 @@ display. It is never misrendered.</p>
 <li>More than 192 rows for a 256-wide file.</li>
 <li>More than 256 rows for a 320-wide file.</li>
 </ul>
+<p>An NX3 file is checked against its header instead; section 9 lists what
+it is refused for.</p>
 <h2 id="7-optional-zx0-compression">7. Optional ZX0 compression</h2>
 <p>Pictures may be ZX0-compressed. The interpreter decompresses on load.</p>
 <p><strong>Use ZX0 CLASSIC (v1) format, not v2.</strong> The two are mutually
@@ -147,8 +162,12 @@ unreadable and a ZX0 stream carries no version marker, so a v2 file
 fails silently or renders as garbage. Compressors predating ZX0 v2 emit
 v1 unconditionally; a v2-capable compressor needs its <code>-c</code> (classic)
 switch.</p>
-<p>The compressed bytes must decompress to exactly the layout in section 2.</p>
-<p>Extensions, tried in this order (compressed wins over raw):</p>
+<p>A compressed file holds one ZX0 stream or several back to back (Gfx2Next
+writes two: the palette, then the pixels). Together they must
+decompress to exactly the layout in section 2. For NX3 the header stays
+uncompressed in front of the stream or streams (section 9).</p>
+<p>Extensions, tried in this order for each picture number, first found
+wins (within each shape, compressed before raw):</p>
 <table>
 <thead>
 <tr>
@@ -188,11 +207,27 @@ switch.</p>
 <td><code>NNN.NXI</code></td>
 <td>256, raw</td>
 </tr>
+<tr>
+<td>7</td>
+<td><code>NNN.NX3.ZX0</code></td>
+<td>positioned, compressed</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>NNN.N3Z</code></td>
+<td>positioned, compressed (8.3 synonym)</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>NNN.NX3</code></td>
+<td>positioned, raw</td>
+</tr>
 </tbody>
 </table>
 <p>The double extension is what Gfx2Next emits; the three-letter synonyms
 exist for plain-FAT setups without long filenames. Either works.</p>
 <h2 id="8-checklist-for-an-exporter">8. Checklist for an exporter</h2>
+<h3 id="whole-screen-nx2-nxi">Whole-screen (NX2, NXI)</h3>
 <ul>
 <li>[ ] Quantise opaque artwork into <strong>indices 0-254</strong> (255 colours, not
       256). Emit pixel index 255 only where you mean transparency, and
@@ -208,11 +243,30 @@ exist for plain-FAT setups without long filenames. Either works.</p>
 <li>[ ] Total size exactly <code>512 + width * height</code>.</li>
 <li>[ ] Height within 192 (256-wide) or 256 (320-wide).</li>
 <li>[ ] If compressing, <strong>ZX0 v1 classic</strong>.</li>
-<li>[ ] Name it <code>NNN.NX2</code> or <code>NNN.NXI</code>.</li>
-<li>[ ] Positioned: write the 16-byte NXP header first (raw total 16 + 512 + W*H), never compress the header, and name it <code>NNN.NXP</code> (<code>NNN.NXP.ZX0</code> or <code>NNN.NPZ</code> compressed).</li>
+<li>[ ] Name it <code>NNN.NX2</code> or <code>NNN.NXI</code> (<code>NNN.NX2.ZX0</code> / <code>NNN.N2Z</code> or
+      <code>NNN.NXI.ZX0</code> / <code>NNN.NXZ</code> compressed).</li>
 </ul>
-<h2 id="9-nxp-positioned-pictures">9. NXP - positioned pictures</h2>
-<p>An NXP picture is placed on the screen at a position, instead of
+<h3 id="positioned-nx3">Positioned (NX3)</h3>
+<ul>
+<li>[ ] Write the 16-byte header first (section 9): magic <code>NX3</code>, version
+      1, mode, flags, X, Y, width, height, palette range.</li>
+<li>[ ] Follow it with the palette and pixels exactly as the whole-screen
+      checklist above: 512 bytes of palette, opaque art in indices
+      0-254, index 255 only for holes, no byte 0 = <code>$E3</code> except at index
+      255, pixels row-major.</li>
+<li>[ ] Total size exactly <code>16 + 512 + width * height</code>.</li>
+<li>[ ] Width 1 to 256 and height 1 to 192 in mode 0; width 1 to 320 and
+      height 1 to 256 in mode 1. A fixed picture also fits at its X and
+      Y.</li>
+<li>[ ] Every pixel other than index 255 inside the declared palette range,
+      unless the range is empty (first greater than last), in which case
+      pixels use whatever the palette already holds.</li>
+<li>[ ] If compressing, compress only what follows the header (ZX0 v1
+      classic). The header is never compressed.</li>
+<li>[ ] Name it <code>NNN.NX3</code> (<code>NNN.NX3.ZX0</code> or <code>NNN.N3Z</code> compressed).</li>
+</ul>
+<h2 id="9-nx3-positioned-pictures">9. NX3 - positioned pictures</h2>
+<p>An NX3 picture is placed on the screen at a position, instead of
 replacing the whole screen. It carries its own size, its position and
 the range of palette entries it is allowed to change. Everything after
 the 16-byte header is exactly what a whole-screen picture holds.</p>
@@ -234,7 +288,7 @@ offset 528: W*H bytes  pixels (1 byte per pixel, row-major, as section 3)
 <tr>
 <td>0</td>
 <td>3</td>
-<td>magic <code>NXP</code> (ASCII <code>4E 58 50</code>)</td>
+<td>magic <code>NX3</code> (ASCII <code>4E 58 33</code>)</td>
 </tr>
 <tr>
 <td>3</td>
@@ -290,7 +344,10 @@ offset 528: W*H bytes  pixels (1 byte per pixel, row-major, as section 3)
 </table>
 <p>Mode 0 coordinates are the classic 256x192 area, as an NXI picture
 covers it. Mode 1 coordinates are the full 320x256 screen, as an NX2
-picture covers it. A game uses one mode throughout.</p>
+picture covers it. The authoring kit keeps a game that has positioned
+pictures to one mode; the interpreter switches mode whenever a picture
+of the other mode is displayed, except while drawing off-screen (see
+Extensions below).</p>
 <h3 id="rules-for-the-writer">Rules for the writer</h3>
 <ul>
 <li>Width 1 to 256 (mode 0) or 1 to 320 (mode 1). Height 1 to 192 (mode 0)
@@ -311,61 +368,32 @@ picture covers it. A game uses one mode throughout.</p>
   text window decides where they land.</li>
 </ul>
 <h3 id="compression">Compression</h3>
-<p>The header is never compressed. Bytes 16 onward are the ZX0 stream(s)
-exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
-512-byte palette followed by the pixels).</p>
+<p>The header is never compressed. Bytes 16 onward are compressed exactly
+as in section 7: ZX0 classic, one stream or several back to back,
+together decompressing to the 512-byte palette followed by the pixels.</p>
 <h3 id="extensions">Extensions</h3>
-<p>Tried after the section 7 rows, in this order:</p>
-<table>
-<thead>
-<tr>
-<th>Order</th>
-<th>Name</th>
-<th>Shape</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>1-6</td>
-<td>the NX2 and NXI rows of section 7</td>
-<td>whole screen</td>
-</tr>
-<tr>
-<td>7</td>
-<td><code>NNN.NXP.ZX0</code></td>
-<td>positioned, compressed</td>
-</tr>
-<tr>
-<td>8</td>
-<td><code>NNN.NPZ</code></td>
-<td>positioned, compressed (8.3 synonym)</td>
-</tr>
-<tr>
-<td>9</td>
-<td><code>NNN.NXP</code></td>
-<td>positioned, raw</td>
-</tr>
-</tbody>
-</table>
+<p><code>NNN.NX3.ZX0</code>, <code>NNN.N3Z</code> and <code>NNN.NX3</code> are rows 7 to 9 of the section 7
+table. They are tried after every whole-screen name, so a picture
+number that also has an NX2 or NXI file loads that file instead.</p>
 <p>The mode comes from the header, not the extension. A picture whose mode
 differs from the screen's switches the screen: the Layer 2 surfaces are
 cleared and the mode changes before the picture draws. While the game is
 drawing off-screen (<code>GFX n 4</code>) a picture of the other mode is skipped
 instead, because the hidden surface cannot change mode on its own.</p>
 <h3 id="what-the-loader-refuses">What the loader refuses</h3>
-<p>The loader refuses: magic or version other than <code>NXP</code> 1; mode above 1;
+<p>The loader refuses: magic or version other than <code>NX3</code> 1; mode above 1;
 width 0 or wider than the mode; height 0 in mode 0 or above 192 in
 mode 0; decompressed length other than 512 + W*H. It accepts a fixed
 picture that overhangs the screen (it is clipped), nonzero reserved or
 flag bits, and pixel indices outside the palette range.</p>
-<p>The authoring kit stages a ready-made NXP only when its header is valid
+<p>The authoring kit stages a ready-made NX3 only when its header is valid
 and its mode byte matches the game's mode. The game's mode is decided
-by its plain pictures, sidecar <code>mode=</code> keys and other ready-made NXP
+by its plain pictures, sidecar <code>mode=</code> keys and other ready-made NX3
 files; it is 256 when nothing decides.</p>
 <h3 id="worked-examples">Worked examples</h3>
 <p>A fixed picture, 256 wide, 96 high, at 0,0 in mode 0, using palette
 entries 0 to 100:</p>
-<pre><code>4E 58 50 01  00  00  00 00  00  00 01  60  00 64  00 00
+<pre><code>4E 58 33 01  00  00  00 00  00  00 01  60  00 64  00 00
 magic    ver mode flg X     Y   W      H   first last reserved
 </code></pre>
 <p>Here the 256 wide is <code>00 01</code> (256 = <code>$0100</code>), 96 high is <code>60</code>, and the
@@ -373,7 +401,7 @@ palette range is <code>00</code> to <code>64</code> (100). The file is 16 + 512 
 25104 bytes raw.</p>
 <p>A floating picture, 64 wide, 32 high, mode 0, applying no palette (first
 1, last 0):</p>
-<pre><code>4E 58 50 01  00  01  00 00  00  40 00  20  01 00  00 00
+<pre><code>4E 58 33 01  00  01  00 00  00  40 00  20  01 00  00 00
 </code></pre>
 <p>The flag byte is 1 (floating), X and Y are zero, width is <code>40 00</code> (64),
 height is <code>20</code> (32), and palette first 1 greater than last 0 means the
@@ -385,8 +413,9 @@ It warns about a palette entry that collides with the reserved colour,
 naming the index, and it reports how many pixels use index 255 - a count
 rather than a warning, since deliberate transparency is legitimate:</p>
 <pre><code>powershell -File authoring-kit\lib\palcheck.ps1 path\to\001.NX2
+powershell -File authoring-kit\lib\palcheck.ps1 path\to\012.NX3
 </code></pre>
-<p>For an NXP file it reads past the header and also counts pixels that use
+<p>For an NX3 file it reads past the header and also counts pixels that use
 a palette index outside the picture's declared range. Those pixels
 would draw with whatever colour the last picture left in that entry.</p>
 <p>It is advisory - it warns and exits 0, and it only understands

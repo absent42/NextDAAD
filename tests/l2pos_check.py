@@ -233,7 +233,7 @@ def check_leg(mode, artdir, walk):
     staged = LEG / "NEXTDAAD.NEX"
     if staged.read_bytes() != NEX.read_bytes():
         sys.exit("l2pos_check: %s differs from %s - restage after the build" % (staged, NEX))
-    for name in [plain] + ["%03d.NXP" % n for n in range(2, 8)]:
+    for name in [plain] + ["%03d.NX3" % n for n in range(2, 8)]:
         if (LEG / name).exists() and (LEG / name).read_bytes() != (artdir / name).read_bytes():
             sys.exit("l2pos_check: staged %s is not %s's" % (name, artdir))
 

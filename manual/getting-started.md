@@ -286,7 +286,8 @@ folder) to the root of the card. It holds:
 - `0.XMB` - external message text, if your game uses XMESSAGE or XMES.
   It must stay beside `GAME.DDB`; without it those messages silently
   print nothing.
-- `NNN.NX2` / `NNN.NXI` - converted location pictures, and `DAAD.NX2` /
+- `NNN.NX2` / `NNN.NXI` - converted location pictures, `NNN.NX3` for a
+  positioned picture, and `DAAD.NX2` /
   `DAAD.NXI` for a title screen (with a `.zx0` suffix when
   `COMPRESS=1`).
 - `GAME.AKY`, `NNN.AKY`, `NNN.AYS`, `GAME.SFB`, `NNN.WAV` - converted

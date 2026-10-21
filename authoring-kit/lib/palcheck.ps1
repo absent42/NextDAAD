@@ -4,7 +4,7 @@
 # gfx2next -pal-embed writes a 512-byte palette (256 x 2-byte 9-bit
 # entries, RRRGGGBB then blue LSB) followed by the pixel bytes, so both
 # checks read the file the interpreter will actually load. A positioned
-# picture (NXP) has a 16-byte header first; its declared palette range
+# picture (NX3) has a 16-byte header first; its declared palette range
 # also gets an out-of-range pixel check.
 # Advisory only: always exits 0, never fails a build.
 #
@@ -20,11 +20,11 @@
 param([Parameter(Mandatory=$true)][string]$Path)
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Path)) { exit 0 }
-if ($Path -match '\.(ZX0|NPZ)$') { exit 0 }     # compressed: the header is plain, the body is not
+if ($Path -match '\.(ZX0|N3Z)$') { exit 0 }     # compressed: the header is plain, the body is not
 $b = [System.IO.File]::ReadAllBytes($Path)
-$base = 0; $palFirst = 0; $palLast = 255; $isNxp = $false
-if ($b.Length -ge 16 -and $b[0] -eq 0x4E -and $b[1] -eq 0x58 -and $b[2] -eq 0x50) {
-    $isNxp = $true; $base = 16; $palFirst = $b[12]; $palLast = $b[13]
+$base = 0; $palFirst = 0; $palLast = 255; $isNx3 = $false
+if ($b.Length -ge 16 -and $b[0] -eq 0x4E -and $b[1] -eq 0x58 -and $b[2] -eq 0x33) {
+    $isNx3 = $true; $base = 16; $palFirst = $b[12]; $palLast = $b[13]
     $nh = if ($b[11] -eq 0) { 256 } else { $b[11] }
     if ($b.Length -ne 16 + 512 + ($b[9] + 256 * $b[10]) * $nh) { exit 0 }   # compressed or truncated
 }
@@ -62,9 +62,9 @@ for ($i = $base + 512; $i -lt $b.Length; $i++) {
 if ($transparent -gt 0) {
     Write-Output "$name has $transparent transparent pixel(s) at palette index $RESERVED. They show the text layer through. If you did not mean this picture to have holes, quantize your source art to 255 colours (indices 0-254) so index $RESERVED stays unused, and re-convert."
 }
-# 3. NXP only: pixels outside the declared palette range draw with whatever
+# 3. NX3 only: pixels outside the declared palette range draw with whatever
 #    colour another picture left in that entry.
-if ($isNxp -and $palFirst -le $palLast) {
+if ($isNx3 -and $palFirst -le $palLast) {
     $outside = 0
     for ($i = $base + 512; $i -lt $b.Length; $i++) {
         $v = $b[$i]

@@ -1573,7 +1573,7 @@ gfx_load:
     ld (gfxEntryIdx), a
     call gfx_open_chain
     jp c, .failclean
-    call gfx_nxp_hdr_if         ; NXP: header first, else no-op
+    call gfx_nx3_hdr_if         ; NX3: header first, else no-op
     jp c, .failcloseh
     call gfx_fetch_run          ; read banks, depack if needed, derive height
     jp c, .failbanks
@@ -1596,7 +1596,7 @@ gfx_load:
     ld (hl), a                  ; GCE_HEIGHT (0 encodes 256)
     ld a, (gfxEntryIdx)
     call gfx_pos_row            ; HL = row; keeps A, BC
-    ld a, (gfxIsNxp)
+    ld a, (gfxIsNx3)
     or a
     jr z, .plainrow
     call gfx_pos_row_build
@@ -1643,7 +1643,7 @@ gfx_load:
     ; which the .slot-exhaustion path arrives here without.
     call gfx_open_chain
     jr c, .failclean
-    call gfx_nxp_hdr_if         ; NXP: header first, else no-op
+    call gfx_nx3_hdr_if         ; NX3: header first, else no-op
     jr c, .failcloseh
     ld a, (gfxCompressed)
     or a
@@ -1702,7 +1702,7 @@ gfx_find_empty:
 ; prn_dec_digit, print.asm), then probe the extension chain: each
 ; gfxExtTab row is tried with esx_fopen until one opens. Out: CF
 ; clear with the handle in gfxHandle and gfxMode/gfxWidth/
-; gfxCompressed/gfxIsNxp set from the matching row; CF set when no candidate
+; gfxCompressed/gfxIsNx3 set from the matching row; CF set when no candidate
 ; exists on SD. Corrupts everything.
 ;
 ; SP11 T5 PARTn probe - keep in step with the other four sites (WAV/
@@ -1755,7 +1755,7 @@ gfx_digits3:
 ; caller above gates part 1 before ever reaching here). Shares
 ; gfx_digits3 and gfx_chain_walk with the root pass, so it carries the
 ; same output contract (CF clear + gfxHandle/gfxMode/gfxWidth/
-; gfxCompressed/gfxIsNxp set; CF set = chain exhausted under PARTn\, caller
+; gfxCompressed/gfxIsNx3 set; CF set = chain exhausted under PARTn\, caller
 ; falls back to the unchanged root pass) - but writing/probing
 ; gfxNamePart instead of gfxName.
 ; Runs the WHOLE chain before giving up. Corrupts everything.
@@ -1774,7 +1774,7 @@ gfx_open_chain_part:
 
 ; Walk gfxExtTab: per row copy the extension to (gfxExtDst), take the row's
 ; mode/compressed bytes, probe (gfxOpenPath). Out: NC + gfxHandle/gfxMode/
-; gfxCompressed/gfxWidth/gfxIsNxp set, or CF = chain exhausted. Corrupts
+; gfxCompressed/gfxWidth/gfxIsNx3 set, or CF = chain exhausted. Corrupts
 ; everything.
 gfx_chain_walk:
     ld hl, gfxExtTab
@@ -1790,13 +1790,13 @@ gfx_chain_walk:
     dec hl
     ld a, (hl)                  ; row's mode byte
     ld (gfxMode), a
-    cp 2                        ; 2 = NXP: provisional mode 0, the
+    cp 2                        ; 2 = NX3: provisional mode 0, the
     ld a, 0                     ; header sets mode and width
-    jr nz, .nxpflag
+    jr nz, .nx3flag
     ld (gfxMode), a
     inc a
-.nxpflag:
-    ld (gfxIsNxp), a
+.nx3flag:
+    ld (gfxIsNx3), a
     ld a, (gfxMode)
     or a
     ld de, 256
@@ -1827,30 +1827,30 @@ gfx_chain_walk:
     or a
     ret
 
-; After gfx_open_chain: NC no-op for a plain row; NXP reads the header.
-; Out and corruption as gfx_nxp_read_hdr.
-gfx_nxp_hdr_if:
-    ld a, (gfxIsNxp)
+; After gfx_open_chain: NC no-op for a plain row; NX3 reads the header.
+; Out and corruption as gfx_nx3_read_hdr.
+gfx_nx3_hdr_if:
+    ld a, (gfxIsNx3)
     or a
     ret z
-    ; falls into gfx_nxp_read_hdr
+    ; falls into gfx_nx3_read_hdr
 
-; NXP: read + validate the 16-byte header (gfxHandle at offset 0).
+; NX3: read + validate the 16-byte header (gfxHandle at offset 0).
 ; Out: NC + gfxHdrBuf/gfxMode/gfxWidth/gfxHeight set, handle at 16;
 ; CF = read error or malformed (caller closes). Corrupts AF, BC, DE, HL, IX.
-gfx_nxp_read_hdr:
+gfx_nx3_read_hdr:
     ld a, (gfxHandle)
     ld ix, gfxHdrBuf
-    ld bc, NXP_HDR_LEN
+    ld bc, NX3_HDR_LEN
     call esx_fread              ; out: BC = ACTUAL bytes read
     ret c
-    ld hl, NXP_HDR_LEN
+    ld hl, NX3_HDR_LEN
     or a
     sbc hl, bc
     jr nz, .bad                 ; short read
     ld hl, gfxHdrBuf
-    ld de, nxpMagic
-    ld b, NXP_VERSION+1
+    ld de, nx3Magic
+    ld b, NX3_VERSION+1
 .magic:
     ld a, (de)
     cp (hl)
@@ -1858,11 +1858,11 @@ gfx_nxp_read_hdr:
     inc hl
     inc de
     djnz .magic
-    ld a, (gfxHdrBuf+NXP_MODE)
+    ld a, (gfxHdrBuf+NX3_MODE)
     cp 2
     jr nc, .bad
     ld (gfxMode), a
-    ld hl, (gfxHdrBuf+NXP_W)
+    ld hl, (gfxHdrBuf+NX3_W)
     ld a, h
     or l
     jr z, .bad                  ; width 0
@@ -1876,7 +1876,7 @@ gfx_nxp_read_hdr:
     or a
     sbc hl, de                  ; width <= max  <=>  width < max+1
     jr nc, .bad
-    ld a, (gfxHdrBuf+NXP_H)
+    ld a, (gfxHdrBuf+NX3_H)
     ld (gfxHeight), a
     ld b, a
     ld a, (gfxMode)
@@ -1897,22 +1897,22 @@ gfx_nxp_read_hdr:
 ; HL = 8-byte placement row: build it from gfxHdrBuf (gfxPosTab layout).
 ; Corrupts AF, BC, DE, HL.
 gfx_pos_row_build:
-    ld a, (gfxHdrBuf+NXP_FLAGS)
-    and NXP_FLAG_FLOAT
+    ld a, (gfxHdrBuf+NX3_FLAGS)
+    and NX3_FLAG_FLOAT
     or GFX_POS_VALID
     ld (hl), a                   ; GFX_POS_FLAGS
     inc hl
     ex de, hl
-    ld hl, gfxHdrBuf+NXP_X
+    ld hl, gfxHdrBuf+NX3_X
     ld bc, 5
     ldir                         ; GFX_POS_X, Y, W
-    inc hl                       ; skip NXP_H
+    inc hl                       ; skip NX3_H
     ldi                          ; GFX_POS_PALF
     ldi                          ; GFX_POS_PALL
     ret
     ASSERT GFX_POS_X == 1 && GFX_POS_Y == 3 && GFX_POS_W == 4 && GFX_POS_PALF == 6 && GFX_POS_PALL == 7
-    ASSERT NXP_Y == NXP_X+2 && NXP_W == NXP_Y+1 && NXP_H == NXP_W+2
-    ASSERT NXP_PALFIRST == NXP_H+1 && NXP_PALLAST == NXP_PALFIRST+1
+    ASSERT NX3_Y == NX3_X+2 && NX3_W == NX3_Y+1 && NX3_H == NX3_W+2
+    ASSERT NX3_PALFIRST == NX3_H+1 && NX3_PALLAST == NX3_PALFIRST+1
 
 ; gfx_read_banks (closes the file on every path), then gfx_depack when
 ; gfxCompressed, then gfx_derive_height. Out: CF = the first failing
@@ -2024,12 +2024,12 @@ gfx_read_page:
 ; (0 encodes 256 rows, the GCE_HEIGHT convention); CF set when the
 ; size is malformed - shorter than the palette, zero rows, a partial
 ; trailing row, or taller than the mode's surface (192 rows in
-; 256-wide mode, 256 rows in 320-wide mode). NXP rows take
-; gfx_nxp_size_check instead (height is in the header). Corrupts everything.
+; 256-wide mode, 256 rows in 320-wide mode). NX3 rows take
+; gfx_nx3_size_check instead (height is in the header). Corrupts everything.
 gfx_derive_height:
-    ld a, (gfxIsNxp)
+    ld a, (gfxIsNx3)
     or a
-    jr nz, gfx_nxp_size_check
+    jr nz, gfx_nx3_size_check
     ld hl, (gfxSizeLo)
     ld de, 512
     or a
@@ -2079,10 +2079,10 @@ gfx_derive_height:
     scf
     ret
 
-; NXP: bytes after the header must equal 512 + W*H exactly (H 0 = 256).
+; NX3: bytes after the header must equal 512 + W*H exactly (H 0 = 256).
 ; Out: NC ok (gfxHeight already set by the header) / CF bad. Corrupts
 ; AF, BC, DE, HL. C only holds 0 or 1 (6-bank read cap), so a borrow is $FF.
-gfx_nxp_size_check:
+gfx_nx3_size_check:
     ld hl, (gfxSizeLo)
     ld de, 512
     or a
@@ -2396,9 +2396,9 @@ gfx_evict_fix:
 ; handle closed, l2Mode restored to the still-displayed front
 ; surface's mode; the back surface may hold partial paint - invisible,
 ; never flipped, so the session is unharmed. Corrupts everything.
-; NXP (gfxIsNxp, handle past the header): gfx_direct_stream_pos instead.
+; NX3 (gfxIsNx3, handle past the header): gfx_direct_stream_pos instead.
 gfx_direct_stream:
-    ld a, (gfxIsNxp)
+    ld a, (gfxIsNx3)
     or a
     jp nz, gfx_direct_stream_pos
     ; l2Mode is committed to the NEW mode before the clear (it sizes
@@ -2581,7 +2581,7 @@ gfx_dsp_fail:
     scf
     ret
 
-; gfx_direct_stream for NXP: palette range as gfx_blit_pos, then one read
+; gfx_direct_stream for NX3: palette range as gfx_blit_pos, then one read
 ; per row written front then back. Out: CF clear = drawn, skipped or empty;
 ; CF set = failed. Handle closed on every path. Corrupts everything.
 gfx_direct_stream_pos:
@@ -2607,10 +2607,10 @@ gfx_direct_stream_pos:
     call gfx_direct_read256
     pop de
     jr c, gfx_dsp_fail
-    ld hl, (gfxHdrBuf+NXP_PALFIRST)
+    ld hl, (gfxHdrBuf+NX3_PALFIRST)
     ld b, l                      ; B = first, C = last
     ld c, h
-    ASSERT NXP_PALLAST == NXP_PALFIRST+1
+    ASSERT NX3_PALLAST == NX3_PALFIRST+1
     ld hl, gfxRowBuf
     call gfx_pos_pal_half_run    ; D += 128
     ld a, d
@@ -4010,7 +4010,7 @@ gfx_row_fetch:
     jr .chunk
 .fits:
     pop hl                      ; HL = src
-    call gfx_copy               ; LDIR end state (HL = src+BC); NXP widths
+    call gfx_copy               ; LDIR end state (HL = src+BC); NX3 widths
                                 ; can leave a tail under GFX_DMA_MIN_LEN
     ld (gfxSrcPtr), hl          ; may land exactly on GFX_SRC_END -
     ret                         ; the next fetch's .chunk check handles it
@@ -4089,7 +4089,7 @@ gfx_row_scatter320:
 ; gfx_depack). Per shape the ZX0 variants probe before raw so
 ; compressed art wins, the Gfx2Next-emitted double extension before
 ; its 8.3 synonym (kept for plain-FAT/no-LFN setups).
-; Mode byte 2 = NXP: mode and width come from the 16-byte header. NXP
+; Mode byte 2 = NX3: mode and width come from the 16-byte header. NX3
 ; rows come last so a plain cache miss pays no extra probes.
 gfxExtTab:
     db "NX2.ZX0",          1, 1
@@ -4098,16 +4098,16 @@ gfxExtTab:
     db "NXI.ZX0",          0, 1
     db "NXZ", 0, 0, 0, 0,  0, 1
     db "NXI", 0, 0, 0, 0,  0, 0
-    db "NXP.ZX0",          2, 1
-    db "NPZ", 0, 0, 0, 0,  2, 1
-    db "NXP", 0, 0, 0, 0,  2, 0
+    db "NX3.ZX0",          2, 1
+    db "N3Z", 0, 0, 0, 0,  2, 1
+    db "NX3", 0, 0, 0, 0,  2, 0
 gfxExtEnd:
 GFX_EXT_NAME equ 7
 GFX_EXT_ROW  equ GFX_EXT_NAME+2
     ASSERT gfxExtEnd-gfxExtTab == 9*GFX_EXT_ROW
 
-nxpMagic:    db "NXP", 1         ; header bytes 0-3: magic + version
-    ASSERT $-nxpMagic == NXP_VERSION+1   ; gfx_nxp_read_hdr compares 4 bytes
+nx3Magic:    db "NX3", 1         ; header bytes 0-3: magic + version
+    ASSERT $-nx3Magic == NX3_VERSION+1   ; gfx_nx3_read_hdr compares 4 bytes
 
 ; SP11 T5: PARTn\ prefixed scratch for gfx_open_chain_part, overlay2-
 ; local. gfxName itself is resident (gfxcache.asm) and exactly 12
@@ -4179,8 +4179,8 @@ gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
     ASSERT GFX_ZX0_CHUNK <= 320
     ASSERT (gfxRowBuf & 31) == 0
 
-; NXP positioned pictures state (overlay 2 page only)
-gfxHdrBuf:   ds NXP_HDR_LEN      ; NXP header as read from the file
+; NX3 positioned pictures state (overlay 2 page only)
+gfxHdrBuf:   ds NX3_HDR_LEN      ; NX3 header as read from the file
 gfxPosTab:   ds GFX_CACHE_MAX*GFX_POS_SIZE  ; parallel to gfxCache
     ASSERT GFX_CACHE_MAX*GFX_POS_SIZE == 192
 gfxPosOvr:   db 0                ; bit 0 = override armed
@@ -4193,13 +4193,13 @@ gfxRectH:    db 0                ; visible rows after clip (0 = 256)
 gfxRectSrcX: dw 0                ; source column skip (left clip)
 gfxRectSrcY: db 0                ; source rows to discard (top clip)
 gfxPosSurf:  db 0                ; 8K page of the surface being written
-gfxIsNxp:    db 0                ; 1 = opened chain row is NXP
+gfxIsNx3:    db 0                ; 1 = opened chain row is NX3
 gfxPalBank2Only: db 0           ; nonzero = positioned palette to bank 2 only
 stagedPos:   db 0                ; 0 = plain staged picture, bit 7 = positioned
 gfxPosX:     dw 0                ; gfx_pos_row_write320: next x
 gfxPosLeft:  dw 0                ; pixels still to write in the row
 gfxPosRun:   db 0                ; pixels in the current page run
-gfxPosTmp:   ds GFX_POS_SIZE     ; direct-stream NXP placement row
+gfxPosTmp:   ds GFX_POS_SIZE     ; direct-stream NX3 placement row
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the
 ; vendored dzx0 loop)
@@ -4268,7 +4268,7 @@ titleRowPtr: dw 0                 ; title_probe's table-walk cursor
 ; commit). Corrupts everything.
 title_probe:
     xor a
-    ld (gfxIsNxp), a              ; titles are never NXP (gfx_derive_height)
+    ld (gfxIsNx3), a              ; titles are never NX3 (gfx_derive_height)
     ld hl, titleTab
 .row:
     ld (titleRowPtr), hl

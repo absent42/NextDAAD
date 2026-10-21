@@ -19,6 +19,9 @@ the ordinary <code>PICTURE</code> and <code>DISPLAY</code> condacts - nothing ab
 picture is Next-specific.</p>
 <p><code>IMAGES\DAAD.png</code> is the exception: it is the title screen rather than a
 numbered picture. See below.</p>
+<p>A numbered PNG with a sidecar text file beside it (<code>IMAGES\012.txt</code> for
+<code>IMAGES\012.png</code>) becomes a positioned picture instead, drawn at a
+position of its own - see <a href="#positioned-pictures">Positioned pictures</a>.</p>
 <h2 id="what-the-art-must-be">What the art must be</h2>
 <p>Every source PNG must be an <strong>8-bit paletted (indexed) PNG</strong>. Truecolour
 images are rejected - quantize to an indexed palette before exporting,
@@ -54,13 +57,14 @@ export can scatter a few pixels onto slot 255 without your noticing.</p>
 </tr>
 </tbody>
 </table>
-<p>Any other width stops the build with <code>expected a 320 or 256 wide PNG
-named with a picture number</code>. The same message covers the other half of
+<p>Without a sidecar, any other width stops the build with <code>expected a 320
+or 256 wide PNG named with a picture number</code>. The same message covers the other half of
 the rule: the file name must contain a number, so <code>cellar.png</code> is
 refused as surely as a 512-wide image is.</p>
 <p>Height is free: up to 256 rows for 320-wide art, up to 192 rows for
-256-wide art. A picture shorter than the full screen is drawn
-<strong>top-aligned</strong>, and the screen below it stays transparent, so a text
+256-wide art. An ordinary picture (one without a sidecar) shorter than
+the full screen is drawn <strong>top-aligned</strong>, and the screen below it stays
+transparent, so a text
 window under the art shows through without your having to draw anything.
 That is the usual way to combine a picture with a description, and it
 needs nothing transparent in the artwork itself.</p>
@@ -112,8 +116,11 @@ doing it rather than you arranging a palette by hand.</p>
 art and slot 255 stays unused.</p>
 <h3 id="other-output">Other output</h3>
 <p>NextDither also writes <code>.NX2</code> and <code>.NXI</code> files directly, along with
-ZX0-compressed variants and standalone palettes, and the kit takes those
-too - see <a href="#already-converted-artwork">Already-converted artwork</a>.</p>
+ZX0-compressed variants, and the kit takes those too - see
+<a href="#already-converted-artwork">Already-converted artwork</a>. It can also
+write a standalone palette file (<code>.nxp</code>). The kit has no use for one -
+every picture carries its own palette - so do not put palette files in
+<code>IMAGES\</code>.</p>
 <p>Either route works. The indexed PNG is the one to reach for by default,
 because the build audits the palette of everything it converts and tells
 you what it found. A ready-made file is staged untouched, so it only
@@ -133,8 +140,10 @@ There is no classic border on this target - the text layer covers the
 whole display, edge to edge, and the old ULA screen is switched off
 underneath it - so the interpreter colours the area the picture and the
 text do not reach instead. The result on screen is the one you expect.</p>
-<p>320-wide art covers the border area as well, so <code>BORDER</code> only shows in a
-game laid out the classic way.</p>
+<p>320-wide art covers the border area as well, so in a 320-wide game
+<code>BORDER</code> shows only through transparent pixels and where no picture has
+drawn (below a short picture, or around positioned pictures on a
+cleared screen).</p>
 <h2 id="text-colours-are-never-at-risk">Text colours are never at risk</h2>
 <p>Text is drawn on its own layer with its own fixed palette. A picture's
 palette only ever reaches Layer 2, so no artwork can recolour your
@@ -159,6 +168,15 @@ every side, so take 8 off the column and 4 off the row before
 converting. That is the arithmetic behind the classic paper area
 described above: columns 8 to 71 is 64 cells, 64 x 4 = 256 pixels
 across, and rows 4 to 27 is 24 cells, 24 x 8 = 192 pixels down.</p>
+<p>A <a href="#positioned-pictures">positioned picture</a> is placed on the screen at
+its own X and Y, so its hole is counted from the picture's own top-left
+corner. Work out <code>left</code> and <code>top</code> as above - for a picture in the
+256x192 mode, taking 8 off the column and 4 off the row first - then
+subtract the picture's X from <code>left</code> and its Y from <code>top</code>. A floating
+picture has X and Y of 0 in its header and sits at its window's corner,
+so subtract the window's corner instead: <code>left = (column - window
+column) x 4</code>, <code>top = (row - window row) x 8</code>. In 40-column mode a
+column is 8 pixels, not 4, and the 256x192 inset is 4 columns, not 8.</p>
 <p><strong>The colour has to be in slot 255.</strong> Only that slot is transparent. The
 same magenta anywhere else in your palette comes out opaque, with
 nothing on screen to tell you why, so if your hole renders as solid
@@ -231,12 +249,21 @@ you don't want text drawn over, for instance).</p>
   see <a href="#parser-cursor">Parser cursor</a> for a cursor with its own colours.</li>
 </ul>
 <p><strong>Where there is nothing to show through, you get the border colour.</strong>
-Transparent paper over a transparent part of the picture, or outside the
-picture area altogether, falls through to whatever <code>BORDER</code> last set. A
-256-wide picture covers character columns 8 to 71 and rows 4 to 27, so
-transparent paper outside that rectangle shows the border colour rather
-than artwork; a 320-wide picture covers the whole screen and the question
-does not arise.</p>
+Transparent paper falls through to whatever <code>BORDER</code> last set wherever
+the picture layer has nothing opaque underneath: a transparent pixel,
+part of the screen no picture has drawn, or the area outside the picture
+layer altogether. Which areas those are depends on the Layer 2 mode and
+on what has been drawn:</p>
+<ul>
+<li>While the 256x192 mode is showing, the picture layer covers only character columns 8
+  to 71 and rows 4 to 27, so transparent paper outside that rectangle
+  always shows the border colour.</li>
+<li>While the 320x256 mode is showing, the picture layer covers the whole screen, so only
+  what has been drawn decides it. A full-size opaque picture leaves no
+  gap, but below a short picture, and outside the rectangles of
+  positioned pictures on a cleared screen, transparent paper shows the
+  border colour too.</li>
+</ul>
 <p><strong>Legibility over artwork is yours to solve.</strong> with <code>GFX 1 17</code> ink now sits over whatever
 the picture happens to be doing at that spot, and that varies per
 picture. Three approaches work and none needs anything from the
@@ -250,14 +277,16 @@ its own area and leaves the rest of the screen alone. Use it for a
 status frame, an inventory panel, a portrait, a map inset or a HUD.</p>
 <p>A positioned picture is either <strong>fixed</strong> at a pixel position, or
 <strong>floating</strong>, which places it at the top-left corner of the current text
-window. A floating picture larger than the window is cut to the window.
+window. The corner is worked out in window cells: each cell is 8 Layer 2
+pixels tall, and 4 wide in an 80-column game or 8 wide in a 40-column
+game. A floating picture larger than the window is cut to the window.
 In a 256-wide game the window corner can sit outside the picture area
 (it is inset by 32 pixels), so a floating picture in a window that
 reaches the border loses its top-left strip. An armed position override
 (below) turns the cut to the window off.</p>
 <h3 id="making-one">Making one</h3>
 <p>Put a sidecar beside the PNG: <code>IMAGES\012.txt</code> for <code>IMAGES\012.png</code>.
-<code>BUILD.BAT</code> then builds <code>012.NXP</code> (or <code>012.NXP.ZX0</code> with compression on)
+<code>BUILD.BAT</code> then builds <code>012.NX3</code> (or <code>012.NX3.ZX0</code> with compression on)
 instead of an ordinary picture. The sidecar is <code>key=value</code> lines, with
 <code>;</code> starting a comment, and takes three keys:</p>
 <pre><code>; 012.txt - inventory frame
@@ -276,7 +305,7 @@ mode=256         ; optional, 256 or 320
   picture area) or 320 (the full 320x256 screen). Leave it out and the
   kit decides from your other pictures: a 320-wide ordinary picture
   (or a ready-made NX2) makes the game 320, a 256-wide one (or NXI)
-  makes it 256, and sidecar <code>mode=</code> keys and ready-made NXP files vote
+  makes it 256, and sidecar <code>mode=</code> keys and ready-made NX3 files vote
   too. The title screen does not vote. With no vote the game is 256.</li>
 <li>Any other key in the sidecar fails the build, as does a <code>.txt</code> with a
   digit in its name and no PNG of the same name. A <code>.txt</code> with no digit
@@ -286,8 +315,8 @@ mode=256         ; optional, 256 or 320
   positioned pictures is not checked: it can still mix 320 and 256
   plain pictures and titles, as before.</li>
 </ul>
-<p>A picture you have already converted can be dropped in as <code>NNN.NXP</code>
-(or <code>NNN.NXP.ZX0</code> / <code>NNN.NPZ</code>). The kit stages it as it is after
+<p>A picture you have already converted can be dropped in as <code>NNN.NX3</code>
+(or <code>NNN.NX3.ZX0</code> / <code>NNN.N3Z</code>). The kit stages it as it is after
 checking the header (magic, version 1, mode 0 or 1, raw length 16 + 512 +
 width x height) and that its mode matches the game's. See
 <a href="reference/picture-format.html">Picture format</a> for the file layout.</p>
@@ -353,9 +382,9 @@ ignored. Use it to clear positioned art before a screen with no frame.</p>
 <h3 id="corners-and-limits">Corners and limits</h3>
 <ul>
 <li>A positioned picture of the other mode switches the Layer 2 mode. The
-  screen is cleared and the mode changes first. Do not plan on mixing
-  modes - one game has one mode - but a picture of the wrong mode does
-  not leave a half-drawn screen. While drawing into the buffer
+  screen is cleared and the mode changes first. A game with positioned
+  pictures is built to one mode, so do not plan on mixing modes in one,
+  but a picture of the wrong mode does not leave a half-drawn screen. While drawing into the buffer
   (<code>GFX n 4</code>), a picture of the other mode is skipped, since the hidden
   surface cannot change mode.</li>
 <li>In buffer mode (<code>GFX n 4</code>), a positioned <code>DISPLAY 0</code> draws to the
@@ -410,6 +439,11 @@ reset, style kept, game-owned, same-width no-op).</p>
   and the hole comes out half the intended width. At 40-column width the
   Transparency section's 256-wide example spans text columns 4 to 35, at
   8 Layer 2 pixels per text column.</li>
+<li><strong>Floating pictures anchor to the wider cells too.</strong> A floating
+  <a href="#positioned-pictures">positioned picture</a> lands at its window's
+  corner counted in window cells, 8 Layer 2 pixels wide in 40-column
+  mode (4 in 80-column mode), so the same <code>WINAT</code> puts it twice as far
+  from the screen's left edge.</li>
 </ul>
 <p><strong>Flag 29 and flag 62 are unaffected by the width.</strong> The 1991 DAAD
 manual's classic inference - flag 29 under 128 means an 80-column
@@ -719,7 +753,8 @@ normal. No source changes are needed, and a game with no title art boots
 straight into play.</p>
 <p>The art rules are identical to location pictures: 8-bit paletted PNG,
 320 wide for full-screen or 256 wide for the classic bordered frame,
-same <code>COMPRESS</code> handling.</p>
+same <code>COMPRESS</code> handling. A title cannot be a positioned picture: the
+kit takes no <code>DAAD.txt</code> sidecar, and the title is always drawn whole.</p>
 <p>The title is shown once, at cold boot, and is never overridden per part
 in a <a href="multi-part-games.html">multi-part game</a>.</p>
 <p>For a slideshow with music instead of a single picture, see <a href="intro.html">Loader
@@ -730,13 +765,13 @@ not try to reconvert them.</p>
 <p><strong>Location pictures go in <code>IMAGES\</code></strong>, named by number exactly as the
 PNGs are: <code>001.NX2</code> for 320-wide art, <code>001.NXI</code> for 256-wide, or a
 compressed <code>001.NX2.ZX0</code>, <code>001.N2Z</code>, <code>001.NXI.ZX0</code> or <code>001.NXZ</code>. A
-positioned picture is <code>001.NXP</code>, or compressed <code>001.NXP.ZX0</code> or
-<code>001.NPZ</code>; the kit checks its header and mode first. If both
+positioned picture is <code>001.NX3</code>, or compressed <code>001.NX3.ZX0</code> or
+<code>001.N3Z</code>; the kit checks its header and mode first. If both
 a <code>001.png</code> and a ready-made <code>001.NX2</code> are there, the PNG conversion
 wins. If you have several forms of the same number, the one staged is
 the one the interpreter would load first: <code>.NX2</code> forms, then <code>.NXI</code>,
-then <code>.NXP</code>, each compressed before uncompressed.</p>
-<p>A <code>.NX2</code>, <code>.NXI</code> or <code>.NXP</code> (or a compressed form) in <code>IMAGES\</code> whose
+then <code>.NX3</code>, each compressed before uncompressed.</p>
+<p>A <code>.NX2</code>, <code>.NXI</code> or <code>.NX3</code> (or a compressed form) in <code>IMAGES\</code> whose
 name is not a picture number stops the build rather than being ignored, so a file that could never be
 loaded does not pass unnoticed.</p>
 <p><strong>The title screen goes in the kit folder itself</strong>, not in <code>IMAGES\</code> -

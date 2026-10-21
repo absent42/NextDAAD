@@ -6,7 +6,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
 ## 0.12.0 - unreleased
 
 - **Positioned pictures.** A numbered PNG with an `IMAGES\NNN.txt` sidecar
-  builds as `NNN.NXP`: fixed at `at=X,Y` in pixels or floating in the
+  builds as `NNN.NX3`: fixed at `at=X,Y` in pixels or floating in the
   current text window with `at=window`, any size that fits, drawing only
   its own rectangle and applying only its `palette=F-L` range. Plain
   pictures draw as before. A game that uses positioned pictures must
@@ -16,7 +16,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   `GFX x 8` / `GFX y 15` place the next
   `DISPLAY 0` at `x*8`,`y` instead, `GFX n 27` cancels, `GFX n 7` clears
   both Layer 2 surfaces. The format is documented in the
-  picture-format reference so converters can write NXP files directly. See Graphics, "Positioned pictures".
+  picture-format reference so converters can write NX3 files directly. See Graphics, "Positioned pictures".
 
 - **Instant fades, for fading up after a video.** In `externs/fade`,
   setting flag 241 to 255 makes `EXTERN c 40` and `EXTERN 0 41` take
