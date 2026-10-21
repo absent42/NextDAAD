@@ -161,7 +161,7 @@ $activate = @'
 $noActivate = @'
 [ -z "${VIRTUAL_ENV:-}" ]
 if python3 -c 'import numpy' 2>/dev/null; then echo "== the system python3 has numpy"; exit 1; fi
-cp /in/003.mkv VIDEO/003.mkv
+cp /in/003.mkv STARTER/VIDEO/003.mkv
 '@
 $modesKept = @'
 # unzip kept the execute bits, so the page's chmod line is skipped.
@@ -182,14 +182,23 @@ done
 set -x
 '@
 $ok = 'echo INSTALL-TEST-OK'
+# Pass 4: a new game is a copy of STARTER\ under its own name, selected in
+# CONFIG.local.BAT (vidtune refuses to save into STARTER\).
+$pass4Game = @'
+cp -r STARTER MYGAME
+mv MYGAME/STARTER.DSF MYGAME/MYGAME.DSF
+mv MYGAME/STARTER.CFG MYGAME/MYGAME.CFG
+printf 'SET GAME=MYGAME\r\n' > CONFIG.local.BAT
+'@
 # Pass 4: the page's tuning-window packages and Qt libraries, still no
 # activation, no FFMPEGDIR. The launcher must leave vidtune running; then
-# vt4.py drives Encode Full and Accept offscreen.
+# vt4.py drives Encode Full and Accept offscreen on MYGAME\.
 $pass4Vidtune = @'
+[ ! -e RELEASE/STARTER ] || { echo "== built STARTER, not the selected MYGAME"; exit 1; }
 ~/nextdaad-venv/bin/pip install -r lib/requirements-vidtune.txt >/dev/null
 apt install -y libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 >/dev/null
 if grep -qiE '^SET FFMPEGDIR=[^[:space:]]' CONFIG.BAT; then echo "== CONFIG.BAT sets FFMPEGDIR"; exit 1; fi
-rm -f VIDEO/003.vid VIDEO/003.vid.args
+rm -f MYGAME/VIDEO/003.vid MYGAME/VIDEO/003.vid.args
 set +e
 QT_QPA_PLATFORM=offscreen ./vidtune.sh
 vc=$?
@@ -207,21 +216,26 @@ done
 kill $pids
 set -x
 QT_QPA_PLATFORM=offscreen ~/nextdaad-venv/bin/python3 /in/vt4.py
-[ -f VIDEO/003.vid ]
+[ -f MYGAME/VIDEO/003.vid ]
+grep -q '^SET VIDOPTS_003=--dither 0.3' MYGAME/MYGAME.CFG || { echo "== VIDOPTS_003 not in MYGAME/MYGAME.CFG"; exit 1; }
+if grep -q 'VIDOPTS_003' CONFIG.local.BAT STARTER/STARTER.CFG; then echo "== VIDOPTS_003 saved outside MYGAME.CFG"; exit 1; fi
 '@
 $vt4 = @'
-# Pass 4: vidtune on the unzipped kit, offscreen. ffmpeg must come from PATH
-# and videnc must run under vidtune's own Python; Encode Full then Accept.
+# Pass 4: vidtune on the MYGAME copy of the starter, offscreen. ffmpeg must
+# come from PATH and videnc must run under vidtune's own Python; a dither
+# edit, Encode Full, then Accept saves VIDOPTS_003 to MYGAME.CFG.
 import sys, time
 from pathlib import Path
 kit = Path.cwd()
+game = kit / "MYGAME"
+gcfg = game / "MYGAME.CFG"
 sys.path.insert(0, str(kit / "lib"))
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 app = QApplication(sys.argv)
 from vidtune.mainwindow import MainWindow
-w = MainWindow(kit)
-vid = kit / "VIDEO" / "003.vid"
+w = MainWindow(kit, game_dir=game, game_cfg=gcfg)
+vid = game / "VIDEO" / "003.vid"
 fails = []
 print("== ffmpeg", w.ffmpeg)
 print("== encoder", w.encoder_argv)
@@ -232,6 +246,9 @@ if not w.encoder_argv or w.encoder_argv[0] != sys.executable:
 t0 = time.time()
 def start():
     w.select_clip("003")
+    s = w.settings_panel.get_settings()
+    s["dither"] = "0.3"   # a deviation, so Accept writes a VIDOPTS_003 line
+    w.settings_panel.set_settings(s, w.kit_base)
     w.on_encode_full()
     if w._job is None:
         fails.append("Encode Full did not start")
@@ -252,9 +269,13 @@ def poll():
     else:
         QTimer.singleShot(2000, poll)
 def finish():
-    print("== VIDEO/003.vid", vid.stat().st_size if vid.is_file() else "missing", "after", int(time.time() - t0), "s")
+    print("== MYGAME/VIDEO/003.vid", vid.stat().st_size if vid.is_file() else "missing", "after", int(time.time() - t0), "s")
     if not vid.is_file():
-        fails.append("VIDEO/003.vid missing after Accept")
+        fails.append("MYGAME/VIDEO/003.vid missing after Accept")
+    saved = [ln for ln in gcfg.read_text("latin-1").splitlines() if ln.startswith("SET VIDOPTS_003=")]
+    print("== MYGAME.CFG", saved)
+    if saved != ["SET VIDOPTS_003=--dither 0.3"]:
+        fails.append("Accept did not save VIDOPTS_003=--dither 0.3 to MYGAME/MYGAME.CFG")
     for f in fails:
         print("== FAIL", f)
     w.close()   # closeEvent waits for preview decode threads
@@ -263,8 +284,8 @@ QTimer.singleShot(0, start)
 sys.exit(app.exec())
 '@
 $pass2Extra = @'
-cp /in/003.mkv VIDEO/003.mkv
-mv INTRO.TXT.sample INTRO.TXT
+cp /in/003.mkv STARTER/VIDEO/003.mkv
+mv STARTER/INTRO.TXT.sample STARTER/INTRO.TXT
 '@
 # ./build.sh must fail in the shell; sh build.sh must reach build.ps1's
 # Test-Executable message; its chmod line, run verbatim, must fix the kit.
@@ -287,13 +308,13 @@ set -x
 '@
 $def = @{
     '1' = @{ Img = 'ubuntu:22.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/GAME.DDB STARTER/DATA/001.NX2 STARTER/DATA/GAME.AKY STARTER/DATA/001.VID STARTER/DATA/003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $ok)
-        Proves = 'ubuntu:22.04 (oldest Ubuntu at the glibc 2.34 floor): page venv on Python 3.10, not activated, STARTER plus VIDEO/003.mkv' }
+        Proves = 'ubuntu:22.04 (oldest Ubuntu at the glibc 2.34 floor): page venv on Python 3.10, not activated, STARTER plus STARTER/VIDEO/003.mkv' }
     '2' = @{ Img = 'ubuntu:24.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/nextdaad.nex STARTER/DATA/GAME.DDB STARTER/DATA/003.VID STARTER/DATA/INTRO/INTRO.DAT'; Body = ($head, $kit, $py, $activate, $modesKept, $pass2Extra, $build, $ok)
-        Proves = 'ubuntu:24.04: page venv recipe (activated) + ffmpeg, VIDEO/003.mkv encoded and INTRO.TXT compiled' }
+        Proves = 'ubuntu:24.04: page venv recipe (activated) + ffmpeg, STARTER/VIDEO/003.mkv encoded and STARTER/INTRO.TXT compiled' }
     '3' = @{ Img = 'ubuntu:22.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/GAME.DDB STARTER/DATA/001.NX2 STARTER/DATA/GAME.AKY STARTER/DATA/001.VID'; Body = ($head, $kit, $pass3Extra, $build, $ok)
         Proves = 'ubuntu:22.04 with execute bits dropped: shell refuses ./build.sh, sh build.sh prints the chmod line, that line fixes the kit' }
-    '4' = @{ Img = 'ubuntu:24.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/GAME.DDB STARTER/DATA/003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $pass4Vidtune, $ok)
-        Proves = 'ubuntu:24.04: apt ffmpeg, no FFMPEGDIR, venv not activated; build encodes 003, vidtune.sh starts, Encode Full + Accept write VIDEO/003.vid' }
+    '4' = @{ Img = 'ubuntu:24.04'; Check = 'MYGAME/MYGAME.NEX MYGAME/DATA/GAME.DDB MYGAME/DATA/003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $pass4Game, $build, $pass4Vidtune, $ok)
+        Proves = 'ubuntu:24.04: apt ffmpeg, no FFMPEGDIR, venv not activated; STARTER copied to MYGAME and selected, build encodes 003, vidtune.sh starts, Encode Full + Accept write MYGAME/VIDEO/003.vid and VIDOPTS_003 to MYGAME.CFG' }
 }
 Write-Lf (Join-Path $in 'vt4.py') $vt4
 $results = @()
