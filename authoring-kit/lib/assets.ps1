@@ -167,16 +167,16 @@ function Read-PosSidecar([string]$Txt) {
     return $pos
 }
 
-# The 16-byte NXP header (manual/reference/picture-format.md, NXP section).
-function New-NxpHeader([hashtable]$Pos, [int]$Mode, [int]$W, [int]$H, [string]$Who = '') {
-    if ($Mode -ne 0 -and $Mode -ne 1) { Fail "New-NxpHeader: mode $Mode is not 0 or 1" }
+# The 16-byte NX3 header (manual/reference/picture-format.md, NX3 section).
+function New-Nx3Header([hashtable]$Pos, [int]$Mode, [int]$W, [int]$H, [string]$Who = '') {
+    if ($Mode -ne 0 -and $Mode -ne 1) { Fail "New-Nx3Header: mode $Mode is not 0 or 1" }
     if ($Who) { $Who = "$Who - " }
     $sw = if ($Mode -eq 1) { 320 } else { 256 }
     $sh = if ($Mode -eq 1) { 256 } else { 192 }
     if ($W -lt 1 -or $W -gt $sw -or $H -lt 1 -or $H -gt $sh) { Fail "${Who}${W}x${H} does not fit the $sw x $sh screen" }
     if (-not $Pos.Float -and ($Pos.X + $W -gt $sw -or $Pos.Y + $H -gt $sh)) { Fail "${Who}at=$($Pos.X),$($Pos.Y) + ${W}x${H} does not fit the $sw x $sh screen" }
     $hdr = New-Object byte[] 16
-    $hdr[0] = 0x4E; $hdr[1] = 0x58; $hdr[2] = 0x50; $hdr[3] = 1
+    $hdr[0] = 0x4E; $hdr[1] = 0x58; $hdr[2] = 0x33; $hdr[3] = 1
     $hdr[4] = [byte]$Mode
     $hdr[5] = if ($Pos.Float) { 1 } else { 0 }
     $hdr[6] = [byte]($Pos.X -band 0xFF); $hdr[7] = [byte]($Pos.X -shr 8)
@@ -231,7 +231,7 @@ function Convert-Bitmap([System.IO.FileInfo]$Src, [string]$Name) {
 }
 
 # Positioned picture: gfx2next payload as Convert-Bitmap makes it, with the
-# 16-byte NXP header in front. The header is never compressed.
+# 16-byte NX3 header in front. The header is never compressed.
 function Convert-Positioned([System.IO.FileInfo]$Src, [string]$Txt, [string]$Name, [int]$Mode) {
     Add-Produced $Name
     $out = Join-Path $rel $Name
@@ -240,7 +240,7 @@ function Convert-Positioned([System.IO.FileInfo]$Src, [string]$Txt, [string]$Nam
     $pos = Read-PosSidecar $Txt
     $w = Get-PngWidth $Src.FullName; $ht = Get-PngHeight $Src.FullName
     if ($w -lt 1 -or $ht -lt 1) { Fail "$($Src.Name) - not a PNG" }
-    $hdr = New-NxpHeader $pos $Mode $w $ht "$($Src.Name) + $([System.IO.Path]::GetFileName($Txt))"
+    $hdr = New-Nx3Header $pos $Mode $w $ht "$($Src.Name) + $([System.IO.Path]::GetFileName($Txt))"
     $tmpRaw = Join-Path $root ($Src.BaseName + '.nxi')
     $tmp = $tmpRaw + $script:zsuf
     Remove-IfExists $tmpRaw; Remove-IfExists "$tmpRaw.zx0"
@@ -264,16 +264,16 @@ function Convert-Positioned([System.IO.FileInfo]$Src, [string]$Txt, [string]$Nam
     return $true
 }
 
-# Ready-made NXP: header sanity; returns the mode byte. Mode -1 skips the game-mode comparison.
-function Test-NxpReadyMade([string]$Path, [int]$Mode, [bool]$Compressed) {
+# Ready-made NX3: header sanity; returns the mode byte. Mode -1 skips the game-mode comparison.
+function Test-Nx3ReadyMade([string]$Path, [int]$Mode, [bool]$Compressed) {
     $b = New-Object byte[] 16
     $fs = [System.IO.File]::OpenRead($Path)
     try { $n = $fs.Read($b, 0, 16); $len = $fs.Length } finally { $fs.Dispose() }
     $name = Split-Path $Path -Leaf
-    if ($n -lt 16 -or $b[0] -ne 0x4E -or $b[1] -ne 0x58 -or $b[2] -ne 0x50) { Fail "IMAGES\$name - not an NXP file (no NXP magic)" }
-    if ($b[3] -ne 1) { Fail "IMAGES\$name - NXP version $($b[3]) is not 1" }
-    if ($b[4] -gt 1) { Fail "IMAGES\$name - NXP mode byte $($b[4]) is not 0 or 1" }
-    if ($Mode -ge 0 -and $b[4] -ne $Mode) { Fail "IMAGES\$name - NXP mode $(if ($b[4]) {320} else {256}) but the game is $(if ($Mode) {320} else {256})-mode" }
+    if ($n -lt 16 -or $b[0] -ne 0x4E -or $b[1] -ne 0x58 -or $b[2] -ne 0x33) { Fail "IMAGES\$name - not an NX3 file (no NX3 magic)" }
+    if ($b[3] -ne 1) { Fail "IMAGES\$name - NX3 version $($b[3]) is not 1" }
+    if ($b[4] -gt 1) { Fail "IMAGES\$name - NX3 mode byte $($b[4]) is not 0 or 1" }
+    if ($Mode -ge 0 -and $b[4] -ne $Mode) { Fail "IMAGES\$name - NX3 mode $(if ($b[4]) {320} else {256}) but the game is $(if ($Mode) {320} else {256})-mode" }
     $w = [int]$b[9] -bor ([int]$b[10] -shl 8); $ht = [int]$b[11]; if ($ht -eq 0) { $ht = 256 }
     if (-not $Compressed -and $len -ne (16 + 512 + $w * $ht)) { Fail "IMAGES\$name - $len bytes, header says $(16 + 512 + $w * $ht)" }
     return [int]$b[4]
@@ -304,8 +304,8 @@ function Invoke-Pictures {
         $script:picSig = Get-Sig @($script:gfxExe, $PSCommandPath)
 
         # Positioned pictures: NNN.txt beside NNN.png (Read-PosSidecar) or a
-        # ready-made NNN.NXP. Only such a game decides one Layer 2 mode; the
-        # voters are plain location art, sidecar mode= keys and NXP mode
+        # ready-made NNN.NX3. Only such a game decides one Layer 2 mode; the
+        # voters are plain location art, sidecar mode= keys and NX3 mode
         # bytes. The title does not vote. No vote => 256.
         $script:gameMode = $null; $script:modeFrom = ''
         $posPngs = @{}
@@ -321,11 +321,11 @@ function Invoke-Pictures {
                 Fail "IMAGES\$($t.Name) has no $($t.BaseName).png beside it - a picture sidecar needs its PNG"
             }
         }
-        $nxpFiles = @()
-        foreach ($ext in 'NXP.ZX0', 'NPZ', 'NXP') {
-            foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { $nxpFiles += , @($f, ($ext -ne 'NXP')) }
+        $nx3Files = @()
+        foreach ($ext in 'NX3.ZX0', 'N3Z', 'NX3') {
+            foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) { $nx3Files += , @($f, ($ext -ne 'NX3')) }
         }
-        if ($posPngs.Count -gt 0 -or $nxpFiles.Count -gt 0) {
+        if ($posPngs.Count -gt 0 -or $nx3Files.Count -gt 0) {
             foreach ($f in Get-KitFiles $images 'png') {
                 if ($f.Name -eq 'DAAD.png' -or $pointers -contains $f.Name -or $posPngs.ContainsKey($f.Name)) { continue }
                 $pw = Get-PngWidth $f.FullName
@@ -337,7 +337,7 @@ function Invoke-Pictures {
                 $sc = Read-PosSidecar $posPngs[$png]
                 if ($null -ne $sc.Mode) { Set-GameMode $(if ($sc.Mode -eq 320) {1} else {0}) $png }
             }
-            foreach ($nf in $nxpFiles) { Set-GameMode (Test-NxpReadyMade $nf[0].FullName -1 $nf[1]) $nf[0].Name }
+            foreach ($nf in $nx3Files) { Set-GameMode (Test-Nx3ReadyMade $nf[0].FullName -1 $nf[1]) $nf[0].Name }
             if ($null -eq $script:gameMode) { $script:gameMode = 0 }
         }
 
@@ -350,7 +350,7 @@ function Invoke-Pictures {
             if ($posPngs.ContainsKey($f.Name)) {
                 $num = '{0:D3}' -f [int]$m.Value
                 $pngNums[$num] = $true
-                $name = "$num.NXP$($script:zsuf)"
+                $name = "$num.NX3$($script:zsuf)"
                 if (Convert-Positioned $f $posPngs[$f.Name] $name $script:gameMode) { $count++; Write-Host "  image $($f.Name) + $($f.BaseName).txt -> $name" }
                 continue
             }
@@ -469,20 +469,20 @@ function Invoke-Pictures {
     # IMAGES\NNN.png of the same number wins.
     if ($hasImages) {
         $done = @{}
-        foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI', 'NXP.ZX0', 'NPZ', 'NXP') {
+        foreach ($ext in 'NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI', 'NX3.ZX0', 'N3Z', 'NX3') {
             foreach ($f in Get-KitFiles $images ([regex]::Escape($ext))) {
                 $rmNum = $f.Name.Split('.')[0]
                 if ($rmNum -notmatch '^[0-9]{1,3}$') {
-                    Fail "IMAGES\$($f.Name) - not a picture number (a ready-made picture is NNN.NX2, NNN.NXI or NNN.NXP, or a compressed NNN.NX2.ZX0/NNN.N2Z/NNN.NXI.ZX0/NNN.NXZ/NNN.NXP.ZX0/NNN.NPZ; a ready-made title screen belongs in the kit folder root as DAAD.*)"
+                    Fail "IMAGES\$($f.Name) - not a picture number (a ready-made picture is NNN.NX2, NNN.NXI or NNN.NX3, or a compressed NNN.NX2.ZX0/NNN.N2Z/NNN.NXI.ZX0/NNN.NXZ/NNN.NX3.ZX0/NNN.N3Z; a ready-made title screen belongs in the kit folder root as DAAD.*)"
                 }
                 $num = '{0:D3}' -f [int]$rmNum
                 if ($done.ContainsKey($num)) { continue }
                 $done[$num] = $true
                 if ($pngNums.ContainsKey($num)) { continue }
                 $name = "$num.$ext"
-                if ($ext -like 'NXP*' -or $ext -eq 'NPZ') { [void](Test-NxpReadyMade $f.FullName $script:gameMode ($ext -ne 'NXP')) }
+                if ($ext -like 'NX3*' -or $ext -eq 'N3Z') { [void](Test-Nx3ReadyMade $f.FullName $script:gameMode ($ext -ne 'NX3')) }
                 if (Copy-Staged $f.FullName $name) {
-                    if ($ext -eq 'NX2' -or $ext -eq 'NXI' -or $ext -eq 'NXP') { Invoke-Palcheck (Join-Path $rel $name) }
+                    if ($ext -eq 'NX2' -or $ext -eq 'NXI' -or $ext -eq 'NX3') { Invoke-Palcheck (Join-Path $rel $name) }
                     Write-Host "  picture $($f.Name) -> RELEASE\$name (ready-made, staged as-is)"
                 }
             }
@@ -628,7 +628,7 @@ function Invoke-Video {
 try {
     if (-not (Test-Path -LiteralPath $rel -PathType Container)) { Fail 'RELEASE\ does not exist - run BUILD.BAT' }
     switch ($Stage) {
-        'Pictures' { Invoke-Pictures; $owned = @('*.NX2', '*.NXI', '*.ZX0', '*.N2Z', '*.NXZ', '*.NXP', '*.NPZ', '*.ANI'); $what = 'picture' }
+        'Pictures' { Invoke-Pictures; $owned = @('*.NX2', '*.NXI', '*.ZX0', '*.N2Z', '*.NXZ', '*.NX3', '*.N3Z', '*.ANI'); $what = 'picture' }
         'Audio'    { Invoke-Audio;    $owned = @('*.WAV', '*.AKY', '*.AYS', 'GAME.SFB'); $what = 'audio' }
         'Video'    { Invoke-Video;    $owned = @('*.VID'); $what = 'video' }
     }
