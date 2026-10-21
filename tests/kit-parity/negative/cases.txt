@@ -1,4 +1,4 @@
-# name|setup|expect[|verbs[|files]] - expect OK: exit 0, WARN: exit 0 Windows / 1 elsewhere, else exit 1
+# name|setup|expect[|verbs[|files]] - expect OK: exit 0, WARN: exit 0 Windows / 1 elsewhere, else exit 1; no field may contain '|'
 no-dsf|remove PARITY.DSF; set GAME=|ERROR: set GAME in CONFIG.local.BAT (found 0 .DSF files and 0 game folders here, need exactly one)
 two-dsf|copy PARITY.DSF SECOND.DSF; set GAME=|ERROR: set GAME in CONFIG.local.BAT (found 2 .DSF files and 0 game folders here, need exactly one)
 named-dsf-missing|set GAME=NOSUCH|ERROR: NOSUCH.DSF not found in NOSUCH{sep} or this folder
@@ -13,9 +13,10 @@ include-case|rename inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf
 include-folder-case|rename inc INC|WARN:on disk as INC (case differs
 ndrc-missing|set NDRC=nosuch|ERROR: required tool missing: nosuch
 cspect-running|cspect|ERROR: CSpect is running - close it before building
-stale-release|write RELEASE/GAME.DDB x|OK:holds 1 item(s) from an older kit build
+stale-release|write RELEASE/GAME.DDB x|OK:holds 1 item(s) from an older kit build (GAME.DDB)|build|+RELEASE/GAME.DDB
 folder-include-case|layout folder; rename PARITY/inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf
 game-in-cfg|layout folder; write PARITY/PARITY.CFG SET GAME=NOSUCH|OK:WARNING: GAME in
+vidopts-local|layout folder; set VIDOPTS_009=--dither 0.0; set VIDOPTS_008=--dither 0.0|OK:WARNING: CONFIG.local.BAT sets VIDOPTS_008, VIDOPTS_009 - these apply to every game; move them into PARITY.CFG
 folder-no-dsf|layout folder; remove PARITY/PARITY.DSF; set GAME=PARITY|ERROR: PARITY{sep} has no PARITY.DSF
 run-not-built|layout folder|ERROR: nothing built yet for PARITY|run
 clean-scoped|layout folder; write RELEASE/OTHER/OTHER.NEX x|OK:|build,clean|+RELEASE/OTHER/OTHER.NEX -RELEASE/PARITY/PARITY.NEX

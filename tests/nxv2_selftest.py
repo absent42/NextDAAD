@@ -6571,7 +6571,7 @@ def t17_cli_and_arg_hash():
            "video.ps1 must build the arg vector from VIDOPTS + VIDOPTS_NNN")
     expect("$hash = Get-ArgHash $videoArgs" in ps1,
            "video.ps1 must hash that same vector")
-    expect("& $enc[0] $enc[1..($enc.Length)] $src.FullName $vid --ffmpeg $ffmpeg @encArgs" in ps1,
+    expect("& $enc[0] $enc[1..($enc.Length)] $clip.FullName $vid --ffmpeg $ffmpeg @encArgs" in ps1,
            "video.ps1 must invoke the encoder with the hashed vector")
     m = _re.search(r"\$encoderGeneration = '([^']+)'", ps1)
     expect(m, "video.ps1 must carry an $encoderGeneration stamp")

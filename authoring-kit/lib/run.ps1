@@ -29,8 +29,13 @@ if (-not $OnWindows -and -not (Get-Command $t.CSPECTCMD -CommandType Application
 $sep = [IO.Path]::DirectorySeparatorChar
 $mmc = "RELEASE$sep$($g.Name)$sep"
 $launch = "$mmc$($nexFile.Name)"
+$mmcArg = "-mmc=$mmc"
+# Legacy argument passing (5.1, 7.0-7.2) quotes a spaced argument without
+# escaping its trailing \, which would swallow the closing quote: double it.
+$pass = "$(Get-Variable PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue)"
+if ($OnWindows -and ($pass -in @('', 'Legacy')) -and $mmcArg -match '\s') { $mmcArg += $sep }
 # The call operator quotes each argument on both hosts (Start-Process
 # -ArgumentList does not); piping to Out-Null waits for CSpect to exit.
-if ($OnWindows) { & $t.CSPECT '-w3' '-zxnext' '-esc' "-mmc=$mmc" $launch | Out-Null }
-else { & $t.CSPECTCMD $t.CSPECT '-w3' '-zxnext' '-esc' "-mmc=$mmc" $launch | Out-Null }
+if ($OnWindows) { & $t.CSPECT '-w3' '-zxnext' '-esc' $mmcArg $launch | Out-Null }
+else { & $t.CSPECTCMD $t.CSPECT '-w3' '-zxnext' '-esc' $mmcArg $launch | Out-Null }
 exit 0

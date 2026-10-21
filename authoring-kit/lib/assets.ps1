@@ -28,6 +28,8 @@ $ErrorActionPreference = 'Stop'
 $root = (Get-Location).Path
 $srcRoot = if ($Src) { [IO.Path]::GetFullPath($Src) } else { $root }
 $rel = if ($Data) { [IO.Path]::GetFullPath($Data) } else { Join-Path $root 'RELEASE' }
+# Message label: $rel relative to the kit root (RELEASE\<GAME>\DATA from build.ps1).
+$relLbl = if ($rel.StartsWith($root + [IO.Path]::DirectorySeparatorChar)) { $rel.Substring($root.Length + 1) } else { $rel }
 $palcheck = Join-Path $PSScriptRoot 'palcheck.ps1'
 $anipack = Join-Path $PSScriptRoot 'anipack.ps1'
 $aysconv = Join-Path $PSScriptRoot 'aysconv.ps1'
@@ -77,7 +79,7 @@ function Test-Current([string]$Out, [DateTime]$Stamp) {
     return ([System.IO.File]::GetLastWriteTimeUtc($Out).Ticks -eq $Stamp.Ticks)
 }
 
-# Copies $Src to RELEASE\$Name unless size and modified time already match.
+# Copies $Src to $rel\$Name unless size and modified time already match.
 # Returns $true when it copied.
 function Copy-Staged([string]$Src, [string]$Name) {
     Add-Produced $Name
@@ -211,7 +213,7 @@ function Remove-Orphans([string[]]$Patterns) {
 # ---- pictures ----
 # gfx2next gets a bare dstfile, written to the cwd (kit root) on both hosts:
 # Windows drops a dst directory, Linux writes beside the source without a
-# dst. -zx0 appends .zx0. Each output is moved to its RELEASE\ name.
+# dst. -zx0 appends .zx0. Each output is moved to its $rel name.
 function Convert-Bitmap([System.IO.FileInfo]$Src, [string]$Name) {
     Add-Produced $Name
     $out = Join-Path $rel $Name
@@ -407,7 +409,7 @@ function Invoke-Pictures {
                 Fail "$pn converted to $size bytes, not 256 - the source must be exactly 16x16"
             }
             Move-Item -LiteralPath $tmp -Destination (Join-Path $rel "$base.SPR") -Force
-            Write-Host "  pointer $pn -> RELEASE\$base.SPR (gfx2next -sprites -pal-std)"
+            Write-Host "  pointer $pn -> $(Join-Path $relLbl "$base.SPR") (gfx2next -sprites -pal-std)"
         }
 
         # Sprite sets: NNN.png (raw PLTE indices via -pal-none, anipack does
@@ -463,7 +465,7 @@ function Invoke-Pictures {
             if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
             if (Copy-Staged $src $t) {
                 if ($t -eq 'DAAD.NX2' -or $t -eq 'DAAD.NXI') { Invoke-Palcheck (Join-Path $rel $t) }
-                Write-Host "  title $t -> RELEASE\$t (ready-made, staged as-is)"
+                Write-Host "  title $t -> $(Join-Path $relLbl $t) (ready-made, staged as-is)"
             }
             break
         }
@@ -488,7 +490,7 @@ function Invoke-Pictures {
                 if ($ext -like 'NX3*' -or $ext -eq 'N3Z') { [void](Test-Nx3ReadyMade $f.FullName $script:gameMode ($ext -ne 'NX3')) }
                 if (Copy-Staged $f.FullName $name) {
                     if ($ext -eq 'NX2' -or $ext -eq 'NXI' -or $ext -eq 'NX3') { Invoke-Palcheck (Join-Path $rel $name) }
-                    Write-Host "  picture $($f.Name) -> RELEASE\$name (ready-made, staged as-is)"
+                    Write-Host "  picture $($f.Name) -> $(Join-Path $relLbl $name) (ready-made, staged as-is)"
                 }
             }
         }

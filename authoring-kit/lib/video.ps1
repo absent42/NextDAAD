@@ -70,8 +70,7 @@
 # is needed unless numeric-named .mp4 files exist in VIDEO\.
 
 # -Src: the game's source root (build.ps1 passes it); VIDEO\ is read there.
-# Untyped: the encode loop below reuses $src for FileInfo items.
-param($Src = (Get-Location).Path)
+param([string]$Src = (Get-Location).Path)
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 
 $videoDir = Join-Path $Src 'VIDEO'
@@ -251,10 +250,10 @@ if ($env:VIDOPTS) { $globalOpts = @($env:VIDOPTS -split '\s+' | Where-Object { $
 # whether the cache is stale and, unchanged, to invoke the encoder) and
 # check it against the mtime + sidecar-hash cache.
 $plan = @()
-foreach ($src in $sources) {
-    $vid = [IO.Path]::ChangeExtension($src.FullName, 'vid')
+foreach ($clip in $sources) {
+    $vid = [IO.Path]::ChangeExtension($clip.FullName, 'vid')
     $sidecar = "$vid.args"
-    $num3 = '{0:D3}' -f [int]$src.BaseName
+    $num3 = '{0:D3}' -f [int]$clip.BaseName
     $perOpts = @()
     $perRaw = [Environment]::GetEnvironmentVariable("VIDOPTS_$num3")
     if ($perRaw) { $perOpts = @($perRaw -split '\s+' | Where-Object { $_ }) }
@@ -271,7 +270,7 @@ foreach ($src in $sources) {
     $stale = $false
     if (-not (Test-Path $vid)) {
         $stale = $true
-    } elseif ((Get-Item $vid).LastWriteTime -lt $src.LastWriteTime) {
+    } elseif ((Get-Item $vid).LastWriteTime -lt $clip.LastWriteTime) {
         $stale = $true
     } elseif (-not (Test-Path $sidecar)) {
         $stale = $true
@@ -281,7 +280,7 @@ foreach ($src in $sources) {
     }
     if ($stale) {
         $plan += [PSCustomObject]@{
-            Src = $src; Vid = $vid; Sidecar = $sidecar
+            Src = $clip; Vid = $vid; Sidecar = $sidecar
             Args = $videoArgs; Hash = $hash; PerRaw = $perRaw; Num3 = $num3
         }
     }
@@ -335,18 +334,18 @@ if (-not $enc) {
 }
 
 foreach ($item in $plan) {
-    $src = $item.Src
+    $clip = $item.Src
     $vid = $item.Vid
     $desc = ($item.Args -join ' ')
     if (-not $desc) { $desc = 'defaults: full 320x256 @25' }
     if ($item.PerRaw) {
         Write-Host "  $($item.Num3): applying VIDOPTS_$($item.Num3)=$($item.PerRaw)"
     }
-    Write-Host "  encoding $($src.Name) -> $([IO.Path]::GetFileName($vid)) ($desc)"
+    Write-Host "  encoding $($clip.Name) -> $([IO.Path]::GetFileName($vid)) ($desc)"
     $encArgs = $item.Args
-    & $enc[0] $enc[1..($enc.Length)] $src.FullName $vid --ffmpeg $ffmpeg @encArgs
+    & $enc[0] $enc[1..($enc.Length)] $clip.FullName $vid --ffmpeg $ffmpeg @encArgs
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: videnc failed on $($src.Name)"
+        Write-Host "ERROR: videnc failed on $($clip.Name)"
         if (Test-Path $vid) { Remove-Item $vid -Force }
         if (Test-Path $item.Sidecar) { Remove-Item $item.Sidecar -Force }
         exit 1

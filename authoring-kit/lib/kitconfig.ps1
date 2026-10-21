@@ -1,5 +1,5 @@
-# kitconfig.ps1 - dot-source. Reads CONFIG.BAT and CONFIG.local.BAT with
-# cmd's semantics (last-wins). Grammar shared with lib\vidtune\kitmodel.py.
+# kitconfig.ps1 - dot-source. Reads CONFIG.BAT, the game .CFG (game-folder mode)
+# and CONFIG.local.BAT with cmd's semantics (last-wins). Grammar shared with lib\vidtune\kitmodel.py.
 if ($null -eq (Get-Variable OnWindows -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'kitplatform.ps1') }
 $KitConfigLineRegex = '^\s*set\s+"?([A-Za-z0-9_]+)=(.*?)"?\s*$'
 $KitConfigPathKeys = '^(TOOLSDIR|GFXDIR|ARKOSDIR|CSPECTDIR|FFMPEGDIR|SJASMPLUSDIR|NEXTDAWDIR|VIDTOOLSDIR|NDRC|NEXFILE|INTRONEX)$'

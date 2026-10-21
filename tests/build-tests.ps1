@@ -624,7 +624,7 @@ $xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
     throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit playername DRIFTED from authoring-kit\externs\all\GAME.XBN (format v$($xbnDriftFresh[3]) vs v$($xbnDriftShipped[3])) - generator and all.asm disagree; compare $xbnDriftOut"
 }
-# The kit-root GAME.XBN is what BUILD.BAT stages into RELEASE; it must be a
+# STARTER\GAME.XBN is what BUILD.BAT stages into RELEASE\STARTER\DATA; it must be a
 # byte copy of externs\all\GAME.XBN.
 $xbnKitRoot = [IO.File]::ReadAllBytes("$root\authoring-kit\STARTER\GAME.XBN")
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnKitRoot, $xbnDriftShipped)) {
@@ -4395,7 +4395,7 @@ if ($Aud) {
         }
         $audFallback = [ordered]@{
             '001.AKY'  = @((Join-Path $root 'tests\audio\L9.AKY'), 'MUSIC = SFX 1 7 needs it; 9 channels, so every PSG silence runs')
-            'GAME.SFB' = @((Join-Path $root 'authoring-kit\RELEASE\GAME.SFB'), 'AYFX = SFX 2 1 needs it; regenerate with the kit audio script')
+            'GAME.SFB' = @((Join-Path $root 'authoring-kit\RELEASE\STARTER\DATA\GAME.SFB'), 'AYFX = SFX 2 1 needs it; regenerate with the kit audio script')
             '001.WAV'  = @($audTone, 'SAMP = SFX 1 1 and SAMPL = SFX 1 2 need it; regenerate with the mktone script')
             '002.AYS'  = @((Join-Path $root 'tests\out\intro\out-011b-stream\MUSIC.AYS'), 'TUNE2 = SFX 2 7 needs it, the only route into the AYS stop; regenerate with the kit aysconv script')
         }
@@ -4463,9 +4463,9 @@ if ($AudLad) {
     # at the 2026-07-23 STOPM sighting.
     #
     # Converted here from the TRACKED source rather than copied from the
-    # kit's RELEASE\ (which is gitignored build output and may be absent
+    # kit's RELEASE\STARTER\DATA\ (which is gitignored build output and may be absent
     # or stale): SongToAky with the kit's own flags reproduces
-    # RELEASE\GAME.AKY byte for byte (verified, sha256 89ac228e8a7e3147,
+    # RELEASE\STARTER\DATA\GAME.AKY byte for byte (verified, sha256 89ac228e8a7e3147,
     # 7487 bytes). authoring-kit\ is READ-ONLY here - the conversion
     # writes to tests\out\, never back into the kit.
     $realSrc = "$root\authoring-kit\STARTER\AUDIO\1.aks"
@@ -4477,11 +4477,11 @@ if ($AudLad) {
         if ($LASTEXITCODE -eq 0 -and (Test-Path $realOut)) { $realOk = $true }
         else { "WARNING: SongToAky failed on $realSrc - rung R unavailable" }
     }
-    if (-not $realOk -and (Test-Path "$root\authoring-kit\RELEASE\GAME.AKY")) {
+    if (-not $realOk -and (Test-Path "$root\authoring-kit\RELEASE\STARTER\DATA\GAME.AKY")) {
         # Fallback: the kit's own build output, if a build has been run.
-        Copy-Item "$root\authoring-kit\RELEASE\GAME.AKY" $realOut -Force
+        Copy-Item "$root\authoring-kit\RELEASE\STARTER\DATA\GAME.AKY" $realOut -Force
         $realOk = $true
-        "rung R: SongToAky unavailable - used authoring-kit\RELEASE\GAME.AKY instead"
+        "rung R: SongToAky unavailable - used authoring-kit\RELEASE\STARTER\DATA\GAME.AKY instead"
     }
     if ($realOk) {
         Copy-Item $realOut "$leg\006.AKY" -Force
@@ -5426,7 +5426,7 @@ if ($SprAud) {
     }
     # Music: 006.AKY, the kit's 9-channel tune, converted from the tracked
     # source exactly as the -AudLad rung R is (SongToAky, encoding address
-    # 0xD800), with the kit's own RELEASE\GAME.AKY as the fallback.
+    # 0xD800), with the kit's own RELEASE\STARTER\DATA\GAME.AKY as the fallback.
     $spraudSong = "$root\tests\out\real9.aky"
     $s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
     $songOk = $false
@@ -5434,8 +5434,8 @@ if ($SprAud) {
         & $s2a -bin --encodingAddress 0xD800 "$root\authoring-kit\STARTER\AUDIO\1.aks" $spraudSong | Out-Null
         if ($LASTEXITCODE -eq 0 -and (Test-Path $spraudSong)) { $songOk = $true }
     }
-    if (-not $songOk -and (Test-Path "$root\authoring-kit\RELEASE\GAME.AKY")) {
-        Copy-Item "$root\authoring-kit\RELEASE\GAME.AKY" $spraudSong -Force
+    if (-not $songOk -and (Test-Path "$root\authoring-kit\RELEASE\STARTER\DATA\GAME.AKY")) {
+        Copy-Item "$root\authoring-kit\RELEASE\STARTER\DATA\GAME.AKY" $spraudSong -Force
         $songOk = $true
     }
     if ($songOk) {

@@ -2,7 +2,7 @@
 ; asserts the compiled bytes; tests\spraud_dump.py drives it over ZRCP and
 ; reads the DEBUG sprite snapshot after every step. Staged by
 ; tests\build-tests.ps1 -SprAud into sd\SPRAUD\ with 002/006/020/021.ANI,
-; 006.AKY (the kit's 9-channel tune, SongToAky of authoring-kit\AUDIO\1.aks),
+; 006.AKY (the kit's 9-channel tune, SongToAky of authoring-kit\STARTER\AUDIO\1.aks),
 ; 001.WAV (440 Hz, 16000 bytes) and 002.WAV (880 Hz, 12000 bytes), both under
 ; SFX_WIN_BYTES so they take the COMPLETE arm, and 003.WAV (220 Hz, 40000
 ; bytes, STREAMING arm).

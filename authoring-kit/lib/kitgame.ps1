@@ -57,7 +57,10 @@ function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
         }
     }
     $cfgFile = ''
-    if ($mode -eq 'folder') { $cfgFile = Join-Path $src "$name.CFG" }
+    if ($mode -eq 'folder') {
+        $cf = Find-KitFile $src "$name.CFG"
+        $cfgFile = if ($cf) { $cf.FullName } else { Join-Path $src "$name.CFG" }
+    }
     $rel = Join-Path (Join-Path $kit 'RELEASE') $name
     return [pscustomobject]@{
         Name      = $name

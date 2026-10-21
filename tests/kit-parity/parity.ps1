@@ -129,7 +129,7 @@ function Invoke-LibScript([string]$name, [string[]]$scriptArgs) {
         return $LASTEXITCODE
     } finally { $ErrorActionPreference = $prevEap; Pop-Location }
 }
-# Externs first: BUILD stages the kit-root GAME.XBN into RELEASE.
+# Externs first: BUILD stages the game's GAME.XBN (kit root or PARITY\) into RELEASE.
 if ($Shell) {
     # Bare module list, no -BaseDir: the golden GAME.XBN fails if
     # externs.ps1 binds the first module to -BaseDir by position.
@@ -181,13 +181,17 @@ if ($Layout -eq 'folder') {
     $localPath = Join-Path $kit 'CONFIG.local.BAT'
     $localSaved = [IO.File]::ReadAllBytes($localPath)
     [IO.File]::AppendAllText($localPath, "SET GAME=OTHER`r`n", [Text.Encoding]::ASCII)
-    $code = Invoke-Build
-    [IO.File]::WriteAllBytes($localPath, $localSaved)
+    try { $code = Invoke-Build } finally { [IO.File]::WriteAllBytes($localPath, $localSaved) }
     if ($code -ne 0) { Write-Host "parity: BUILD of OTHER failed ($code)"; exit 1 }
     if (-not (Test-Path -LiteralPath (Join-Path $rel 'OTHER/OTHER.NEX'))) { Write-Host 'parity: FAIL - RELEASE has no OTHER\OTHER.NEX'; exit 1 }
     $after = @((Get-Manifest) | Where-Object { $_.StartsWith('PARITY/') })
     if (($after -join "`n") -cne ($sorted -join "`n")) { Write-Host 'parity: FAIL - building OTHER changed RELEASE\PARITY\'; exit 1 }
     Write-Host 'parity: second game OTHER left RELEASE\PARITY\ unchanged'
+    # No intro for OTHER: its interpreter is OTHER.NEX itself.
+    foreach ($n in 'PARITY/DATA/nextdaad.nex', 'OTHER/OTHER.NEX') {
+        if (-not [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes((Join-Path $rel $n)), [IO.File]::ReadAllBytes($nexSrc))) { Write-Host "parity: FAIL - RELEASE/$n differs from the kit's nextdaad.nex after the OTHER build"; exit 1 }
+    }
+    Write-Host 'parity: nextdaad.nex still byte-exact after the OTHER build'
 }
 $manifestName = if ($Variant -eq 'compress') { 'manifest-compress.txt' } else { 'manifest.txt' }
 $manifest = Join-Path $work $manifestName

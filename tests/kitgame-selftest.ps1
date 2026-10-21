@@ -47,6 +47,27 @@ $g = Resolve-KitGame @{ GAME = 'MYGAME2' } $k
 Assert-Eq $g.Mode 'folder' 'case-insensitive folder mode'
 Assert-Eq $g.Name 'mygame2' 'Name as found on disk'
 
+$k = New-Kit @('MYGAME/MYGAME.DSF', 'MYGAME/mygame.cfg')
+$g = Resolve-KitGame @{ GAME = 'MYGAME' } $k
+Assert-Eq ($g.CfgFile.EndsWith("${sep}mygame.cfg", [StringComparison]::Ordinal)) $true 'CfgFile is the on-disk name'
+$k = New-Kit @('MYGAME/MYGAME.DSF')
+$g = Resolve-KitGame @{ GAME = 'MYGAME' } $k
+Assert-Eq ($g.CfgFile.EndsWith("${sep}MYGAME.CFG", [StringComparison]::Ordinal)) $true 'CfgFile constructed when absent'
+
+$k = New-Kit @('MYGAME2/MYGAME2.DSF')
+$g = Resolve-KitGame @{ GAME = "  MYGAME2`t " } $k
+Assert-Eq $g.Mode 'folder' 'GAME trimmed: folder mode'
+Assert-Eq $g.Name 'MYGAME2' 'GAME trimmed: name'
+
+$k = New-Kit @('MYGAME.DSF', 'mygame/MyGame.dsf')
+$g = Resolve-KitGame @{ GAME = 'MYGAME' } $k
+Assert-Eq $g.Mode 'folder' 'root dsf plus case-different folder: folder wins'
+Assert-Eq ($g.SrcRoot.EndsWith("${sep}mygame", [StringComparison]::Ordinal)) $true 'folder SrcRoot as on disk'
+Assert-Eq ($g.Name -ceq 'MyGame') $true 'folder Name as on disk'
+$g = Resolve-KitGame @{} $k
+Assert-Eq $g.Mode 'legacy' 'blank GAME: root dsf beats case-different folder'
+Assert-Eq ($g.Name -ceq 'MYGAME') $true 'legacy Name'
+
 $k = New-Kit @('OLD.DSF')
 $g = Resolve-KitGame @{ GAME = 'OLD' } $k
 Assert-Eq $g.Mode 'legacy' 'legacy mode'
@@ -91,7 +112,9 @@ $k = New-Kit @('MYGAME2/MYGAME2.DSF', 'MYGAME2/MYGAME2.CFG')
 [IO.File]::WriteAllLines("$k/CONFIG.BAT", @('SET COLS=80', 'SET KEEP=base'), [Text.Encoding]::ASCII)
 [IO.File]::WriteAllLines("$k/MYGAME2/MYGAME2.CFG", @('SET COLS=40', 'SET GAME=OTHER'), [Text.Encoding]::ASCII)
 [IO.File]::WriteAllLines("$k/CONFIG.local.BAT", @('SET GAME=MYGAME2', 'SET RUN=0'), [Text.Encoding]::ASCII)
-$c = Read-KitConfig $k "$k/MYGAME2/MYGAME2.CFG" 6>$null
+$warn = @(& { $script:c = Read-KitConfig $k "$k/MYGAME2/MYGAME2.CFG" } 6>&1 | ForEach-Object { "$_" })
+Assert-Eq $warn.Count 1 'one GAME-in-cfg warning'
+Assert-Eq $warn[0] "WARNING: GAME in $k/MYGAME2/MYGAME2.CFG is ignored - select the game in CONFIG.local.BAT" 'GAME-in-cfg warning text'
 Assert-Eq $c['COLS'] '40' 'game cfg overrides base'
 Assert-Eq $c['GAME'] 'MYGAME2' 'GAME in game cfg ignored'
 Assert-Eq $c['RUN'] '0' 'local layer'

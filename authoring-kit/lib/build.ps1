@@ -46,6 +46,14 @@ function Invoke-Stage([string]$Script, [hashtable]$Params) {
 # ---- GAME: a game folder, or a kit-root .DSF (legacy) ----
 try { $g = Resolve-KitGame $cfg $kitRoot } catch { Fail "$($_.Exception.Message)" }
 $cfg = Read-KitConfig $kitRoot $g.CfgFile
+# Folder mode: per-video settings belong in the game's .CFG, not the kit-wide file.
+if ($g.Mode -eq 'folder') {
+    $loc = @{}
+    Read-KitConfigFile (Join-Path $kitRoot 'CONFIG.local.BAT') $loc
+    [string[]]$vk = @($loc.Keys | Where-Object { $_ -match '^VIDOPTS_\d{3}$' })
+    [Array]::Sort($vk, [StringComparer]::Ordinal)
+    if ($vk.Count) { Write-Host "WARNING: CONFIG.local.BAT sets $($vk -join ', ') - these apply to every game; move them into $(Split-Path -Leaf $g.CfgFile)" }
+}
 Export-KitConfig $cfg
 $game = $g.Name
 $src = $g.SrcRoot
@@ -153,8 +161,15 @@ $gameLbl = Join-KitPath @('RELEASE', $game)
 $dataLbl = Join-KitPath @('RELEASE', $game, 'DATA')
 # A pre-folder kit build left its files in the RELEASE\ root.
 if (Test-Path -LiteralPath $relRoot -PathType Container) {
-    $stale = @(Get-ChildItem -LiteralPath $relRoot -Force | Where-Object { -not $_.PSIsContainer -or $_.Name -match '^(?i)(INTRO|PART[2-9])$' })
-    if ($stale.Count) { Write-Host "WARNING: RELEASE$sep holds $($stale.Count) item(s) from an older kit build - delete them; each game now builds into RELEASE$sep$game$sep" }
+    # No -Force: hidden and system entries (desktop.ini, .DS_Store) are not the kit's.
+    $stale = @(Get-ChildItem -LiteralPath $relRoot | Where-Object {
+        -not $_.Name.StartsWith('.') -and
+        (-not $_.PSIsContainer -or ($_.Name -match '^(?i)(INTRO|PART[2-9])$' -and $_.Name -ine $game)) })
+    if ($stale.Count) {
+        $names = @($stale | Select-Object -First 5 | ForEach-Object { $_.Name }) -join ', '
+        if ($stale.Count -gt 5) { $names += " and $($stale.Count - 5) more" }
+        Write-Host "WARNING: RELEASE$sep holds $($stale.Count) item(s) from an older kit build ($names) - delete them; each game now builds into RELEASE$sep$game$sep"
+    }
 }
 if (-not (Test-Path -LiteralPath $rel)) { New-Item -ItemType Directory -Force $rel | Out-Null }
 
