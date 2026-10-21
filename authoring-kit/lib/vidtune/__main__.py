@@ -41,12 +41,12 @@ def main():
     root = find_kit_root(Path.cwd())
     if root is None:
         picked = QFileDialog.getExistingDirectory(
-            None, "Open kit folder (contains CONFIG.BAT and lib\\)")
+            None, "Open kit folder (contains CONFIG.BAT and the lib folder)")
         root = find_kit_root(picked) if picked else None
     if root is None:
         QMessageBox.critical(None, "vidtune",
                              "No kit found - a kit folder contains "
-                             "CONFIG.BAT and a lib\\ directory.")
+                             "CONFIG.BAT and a lib folder.")
         return 1
     win = MainWindow(root, game_dir, game_cfg)
     win.show()

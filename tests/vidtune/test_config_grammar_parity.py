@@ -94,13 +94,18 @@ def test_kitmodel_matches_kitconfig_ps1(tmp_path):
 @pytest.mark.skipif(PS is None, reason="neither pwsh nor powershell is on PATH")
 def test_three_layer_config_matches(tmp_path):
     from vidtune.kitmodel import parse_config
-    (tmp_path / "CONFIG.BAT").write_bytes(b"SET COLS=80\r\nSET BASE=b\r\nSET VIDASPECT=base\r\n")
+    # Each field is set last in a different layer; GAME in the .CFG is dropped.
+    (tmp_path / "CONFIG.BAT").write_bytes(
+        b"SET COLS=80\r\nSET VIDASPECT=base\r\nSET VIDFPS=25\r\n"
+        b"SET VIDOPTS=--base\r\nSET VIDOPTS_001=--b1\r\nSET VIDOPTS_002=--b2\r\n"
+        b"SET VIDPROFILE=baseprof\r\nSET TOOLSDIR=basetools\r\n")
     game = tmp_path / "G.CFG"
-    game.write_bytes(b"SET COLS=40\r\nSET GAME=OTHER\r\nSET VIDASPECT=game\r\n")
-    (tmp_path / "CONFIG.local.BAT").write_bytes(b"SET GAME=G\r\nSET RUN=0\r\n")
-
-    assert parse_config(tmp_path / "CONFIG.BAT", game_cfg=game).vid_aspect == "game"
-    assert parse_config(tmp_path / "CONFIG.BAT").vid_aspect == "base"
+    game.write_bytes(
+        b"SET COLS=40\r\nSET GAME=OTHER\r\nSET VIDASPECT=game\r\n"
+        b"SET VIDOPTS_001=--g1\r\nSET VIDOPTS_003=--g3\r\nSET VIDFPS=12.5\r\n")
+    (tmp_path / "CONFIG.local.BAT").write_bytes(
+        b"SET GAME=G\r\nSET RUN=0\r\nSET VIDFPS=50\r\nSET VIDOPTS_002=\r\n"
+        b"SET VIDPROFILE=localprof\r\n")
 
     probe = tmp_path / "probe.ps1"
     probe.write_text(_PROBE_PS1, newline="")
@@ -111,14 +116,17 @@ def test_three_layer_config_matches(tmp_path):
          "-OutPath", str(out), "-GameCfg", str(game)],
         capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stdout + r.stderr
-    ps_vals = dict(ln.partition("=")[::2]
-                   for ln in out.read_text(encoding="utf-8").split("\n") if ln)
-    py_vals = {}
-    _read_sets(tmp_path / "CONFIG.BAT", py_vals)
-    g = {}
-    _read_sets(game, g)
-    g.pop("GAME", None)
-    py_vals.update(g)
-    _read_sets(tmp_path / "CONFIG.local.BAT", py_vals)
-    assert py_vals == ps_vals
-    assert ps_vals["COLS"] == "40" and ps_vals["GAME"] == "G" and ps_vals["RUN"] == "0"
+    ps = dict(ln.partition("=")[::2]
+              for ln in out.read_text(encoding="utf-8").split("\n") if ln)
+    cfg = parse_config(tmp_path / "CONFIG.BAT", game_cfg=game)
+
+    assert cfg.vid_aspect == ps["VIDASPECT"] == "game"
+    assert cfg.vid_fps == ps["VIDFPS"] == "50"
+    assert cfg.vid_opts == ps["VIDOPTS"] == "--base"
+    assert cfg.vidprofile == ps["VIDPROFILE"] == "localprof"
+    assert cfg.toolsdir == ps["TOOLSDIR"] == "basetools"
+    per_ps = {k[len("VIDOPTS_"):]: v for k, v in ps.items()
+              if k.startswith("VIDOPTS_") and v}
+    assert cfg.per_clip == per_ps == {"001": "--g1", "003": "--g3"}
+    assert ps["COLS"] == "40" and ps["GAME"] == "G" and ps["RUN"] == "0"
+    assert parse_config(tmp_path / "CONFIG.BAT").vid_aspect == "base"

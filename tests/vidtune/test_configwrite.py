@@ -199,6 +199,19 @@ def test_starter_protected(fixture_kit):
     assert not list(s.glob("*.bak")) and not list(s.glob("*.tmp"))
 
 
+def test_starter_protected_any_case(fixture_kit):
+    from vidtune.configwrite import StarterProtected, check_starter
+    s = fixture_kit / "starter"
+    s.mkdir()
+    scfg = s / "starter.cfg"
+    with pytest.raises(StarterProtected):
+        write_vidopts_line(fixture_kit / CFG, "001", "--direct", target_path=scfg)
+    assert not scfg.exists()
+    with pytest.raises(StarterProtected):
+        check_starter(fixture_kit / CFG, s / "VIDEO" / "001.vid")
+    check_starter(fixture_kit / CFG, fixture_kit / "MYGAME" / "VIDEO" / "001.vid")
+
+
 def test_stamp_covers_game_cfg(game_kit):
     import os
     gcfg = game_kit / "MYGAME2" / "MYGAME2.CFG"

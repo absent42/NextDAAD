@@ -59,6 +59,12 @@ def _in_starter(config_path, target):
     return len(rel.parts) > 1 and rel.parts[0].casefold() == "starter"
 
 
+def check_starter(config_path, target):
+    """Raises StarterProtected when target lies inside the kit's STARTER folder."""
+    if _in_starter(config_path, target):
+        raise StarterProtected(STARTER_MESSAGE)
+
+
 def _split_lines(raw, default_eol):
     """[[text, ending], ...]; each line keeps its own ending, and a final
     line without one gets default_eol."""
@@ -82,8 +88,7 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None,
     config_path = Path(config_path)
     local = local_path_for(config_path)
     loc = local if target_path is None else Path(target_path)
-    if _in_starter(config_path, loc):
-        raise StarterProtected(STARTER_MESSAGE)
+    check_starter(config_path, loc)
     # Any target other than CONFIG.local.BAT is the game .CFG layer.
     game_cfg = None if loc == local else loc
     if (expected_stamp is not None

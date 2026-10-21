@@ -51,7 +51,8 @@ from PySide6.QtWidgets import (
 from . import ICON_PATH, __version__, presets, settingsmodel, theme
 from .presetrow import LadderPanel, RouteMenuButton
 from .configwrite import (ConfigConflict, LocalOverride, StarterProtected,
-                          config_stamp, write_sidecar, write_vidopts_line)
+                          check_starter, config_stamp, write_sidecar,
+                          write_vidopts_line)
 from .encoderun import EncodeJob, resolve_encoder, summarize_report, videnc_names
 from .kitmodel import (clip_state, game_paths, list_clips, parse_config,
                        read_generation_stamp)
@@ -882,9 +883,10 @@ class MainWindow(QMainWindow):
         self.preview_button = QPushButton("Preview Segment")
         self.encode_button = QPushButton("Encode Full")
         # Accept is the one action that commits - it writes VIDOPTS_NNN
-        # into <GAME>.CFG (legacy: CONFIG.local.BAT) and copies the encode into place. Everything
-        # else on this row is reversible experimentation, so Accept is
-        # the single primary and the rest stay quiet.
+        # into <GAME>.CFG (legacy: CONFIG.local.BAT) and copies the encode
+        # into place. Everything else on this row is reversible
+        # experimentation, so Accept is the single primary and the rest
+        # stay quiet.
         self.accept_button = QPushButton("Accept")
         self.accept_button.setProperty("primary", True)
         self.accept_button.setEnabled(False)
@@ -1369,6 +1371,13 @@ class MainWindow(QMainWindow):
             return
         stale = self._guarded(self._stale_clips)
         if stale is None:
+            return
+        # Refuse before any encode lands in STARTER\VIDEO, not at save.
+        try:
+            for clip, _ in stale:
+                check_starter(self.kit_root / "CONFIG.BAT", clip.vid)
+        except StarterProtected as exc:
+            QMessageBox.critical(self, "vidtune", str(exc))
             return
         self._all_queue = stale
         self._all_cancelled = False
