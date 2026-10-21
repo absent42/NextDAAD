@@ -17,3 +17,5 @@ stale-release|write RELEASE/GAME.DDB x|OK:holds 1 item(s) from an older kit buil
 folder-include-case|layout folder; rename PARITY/inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf
 game-in-cfg|layout folder; write PARITY/PARITY.CFG SET GAME=NOSUCH|OK:WARNING: GAME in
 folder-no-dsf|layout folder; remove PARITY/PARITY.DSF; set GAME=PARITY|ERROR: PARITY{sep} has no PARITY.DSF
+run-not-built|layout folder|ERROR: nothing built yet for PARITY|run
+clean-scoped|layout folder; write RELEASE/OTHER/OTHER.NEX x|OK:|build,clean|+RELEASE/OTHER/OTHER.NEX -RELEASE/PARITY/PARITY.NEX

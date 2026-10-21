@@ -139,9 +139,9 @@ if ($Shell) {
     $code = Invoke-Launcher 'EXTERNS' @('ticker', 'hints') $extCwd
     if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
 }
-# Shim until externs.ps1 writes GAME.XBN to the game folder (Task 6 removes it).
-if ($Layout -eq 'folder' -and (Test-Path -LiteralPath (Join-Path $kit 'GAME.XBN'))) {
-    Move-Item -LiteralPath (Join-Path $kit 'GAME.XBN') -Destination (Join-Path $gameDir 'GAME.XBN') -Force
+if ($Layout -eq 'folder') {
+    if (-not (Test-Path -LiteralPath (Join-Path $gameDir 'GAME.XBN'))) { Write-Host 'parity: EXTERNS did not write PARITY/GAME.XBN'; exit 1 }
+    if (Test-Path -LiteralPath (Join-Path $kit 'GAME.XBN')) { Write-Host 'parity: EXTERNS left GAME.XBN at the kit root'; exit 1 }
 }
 function Invoke-Build { if ($Shell) { return (Invoke-LibScript 'build' @()) } else { return (Invoke-Launcher 'BUILD' @()) } }
 $code = Invoke-Build
