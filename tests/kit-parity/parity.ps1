@@ -9,7 +9,8 @@ param(
     [switch]$NoCompare,
     [switch]$PrepareOnly,
     [string]$Shell = '',
-    [ValidateSet('', 'compress')][string]$Variant = ''
+    [ValidateSet('', 'compress')][string]$Variant = '',
+    [ValidateSet('', 'folder')][string]$Layout = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot)
@@ -72,12 +73,29 @@ $local += "SET GFXDIR=$([IO.Path]::GetFullPath((Join-Path $kit 'tools/gfx2next')
 $local += "SET VIDTOOLSDIR=$([IO.Path]::GetFullPath((Join-Path $kit 'tools/vidtools')))"
 [IO.File]::WriteAllLines((Join-Path $kit 'CONFIG.local.BAT'), $local, [Text.Encoding]::ASCII)
 Remove-Item -LiteralPath (Join-Path $kit $configName)
+# -Layout folder: the same fixture as game folder kit\PARITY\ with its game
+# settings in PARITY.CFG; GAME, RUN and tool dirs stay in CONFIG.local.BAT.
+$gameDir = Join-Path $kit 'PARITY'
+if ($Layout -eq 'folder') {
+    New-Item -ItemType Directory -Force $gameDir | Out-Null
+    foreach ($mv in 'PARITY.DSF', 'inc', 'PART2', 'IMAGES', 'AUDIO', 'VIDEO', 'INTRO', 'HINTS.TXT', 'INTRO.TXT', 'FONT.psf', 'FONT1.bdf', 'GAME.XBN') {
+        $p = Join-Path $kit $mv
+        if (Test-Path -LiteralPath $p) { Move-Item -LiteralPath $p -Destination (Join-Path $gameDir $mv) }
+    }
+    $localPath = Join-Path $kit 'CONFIG.local.BAT'
+    $keep = @(); $gameCfg = @()
+    foreach ($l in [IO.File]::ReadAllLines($localPath)) {
+        if ($l -match '^SET (COMPRESS|VIDOPTS_\d+)=') { $gameCfg += $l } else { $keep += $l }
+    }
+    [IO.File]::WriteAllLines($localPath, $keep, [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllLines((Join-Path $gameDir 'PARITY.CFG'), $gameCfg, [Text.Encoding]::ASCII)
+}
 if ($PrepareOnly) { Write-Host "parity: prepared $kit"; exit 0 }
 
 # A driver .cmd sidesteps cmd /c quote stripping on a quoted path with
 # spaces (the form tests\xbnbuild-selftest.ps1 uses). < nul defeats pause.
-function Invoke-Launcher([string]$name, [string[]]$launchArgs) {
-    Push-Location $kit
+function Invoke-Launcher([string]$name, [string[]]$launchArgs, [string]$cwd = $kit) {
+    Push-Location $cwd
     # A native tool's stderr (eg. sjasmplus' banner) becomes a terminating
     # error under -Stop merged with 2>&1, even on exit code 0. Scope
     # Continue to just this call; $LASTEXITCODE is checked explicitly.
@@ -88,11 +106,12 @@ function Invoke-Launcher([string]$name, [string[]]$launchArgs) {
             $drv = Join-Path $work 'launch.cmd'
             $drv = [IO.Path]::GetFullPath($drv)
             $kitFull = [IO.Path]::GetFullPath($kit)
-            $line = "@cd /d `"$kitFull`"`r`n@call `"$kitFull/$name.BAT`" $($launchArgs -join ' ') < nul`r`n@exit /b %ERRORLEVEL%`r`n"
+            $cwdFull = [IO.Path]::GetFullPath($cwd)
+            $line = "@cd /d `"$cwdFull`"`r`n@call `"$kitFull/$name.BAT`" $($launchArgs -join ' ') < nul`r`n@exit /b %ERRORLEVEL%`r`n"
             [IO.File]::WriteAllText($drv, $line, [Text.Encoding]::ASCII)
             & cmd /c $drv 2>&1 | ForEach-Object { "$_" } | Out-Host
         } else {
-            & sh "./$($name.ToLower()).sh" @launchArgs 2>&1 | ForEach-Object { "$_" } | Out-Host
+            & sh (Join-Path ([IO.Path]::GetFullPath($kit)) "$($name.ToLower()).sh") @launchArgs 2>&1 | ForEach-Object { "$_" } | Out-Host
         }
         return $LASTEXITCODE
     } finally { $ErrorActionPreference = $prevEap; Pop-Location }
@@ -115,14 +134,18 @@ if ($Shell) {
     # externs.ps1 binds the first module to -BaseDir by position.
     $code = Invoke-LibScript 'externs' @('ticker', 'hints')
     if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
-    $code = Invoke-LibScript 'build' @()
-    if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
 } else {
-    $code = Invoke-Launcher 'EXTERNS' @('ticker', 'hints')
+    $extCwd = if ($Layout -eq 'folder') { $gameDir } else { $kit }
+    $code = Invoke-Launcher 'EXTERNS' @('ticker', 'hints') $extCwd
     if ($code -ne 0) { Write-Host "parity: EXTERNS failed ($code)"; exit 1 }
-    $code = Invoke-Launcher 'BUILD' @()
-    if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
 }
+# Shim until externs.ps1 writes GAME.XBN to the game folder (Task 6 removes it).
+if ($Layout -eq 'folder' -and (Test-Path -LiteralPath (Join-Path $kit 'GAME.XBN'))) {
+    Move-Item -LiteralPath (Join-Path $kit 'GAME.XBN') -Destination (Join-Path $gameDir 'GAME.XBN') -Force
+}
+function Invoke-Build { if ($Shell) { return (Invoke-LibScript 'build' @()) } else { return (Invoke-Launcher 'BUILD' @()) } }
+$code = Invoke-Build
+if ($code -ne 0) { Write-Host "parity: BUILD failed ($code)"; exit 1 }
 
 $rel = Join-Path $kit 'RELEASE'
 # Runs before -Capture/-NoCompare exits, so the Linux container checks it too.
@@ -134,16 +157,37 @@ $nexSame = [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($nexOut), [I
 if (-not $nexSame) { Write-Host 'parity: FAIL - RELEASE\PARITY\DATA\nextdaad.nex differs from the kit''s nextdaad.nex'; exit 1 }
 Write-Host 'parity: nextdaad.nex is a byte-exact copy of the kit interpreter'
 $sha = [System.Security.Cryptography.SHA256]::Create()
-$lines = foreach ($f in (Get-ChildItem -LiteralPath $rel -File -Recurse)) {
-    $relPath = $f.FullName.Substring($rel.Length + 1) -replace '\\', '/'
-    if ($relPath -eq 'PARITY/DATA/nextdaad.nex') { continue }
-    $bytes = [IO.File]::ReadAllBytes($f.FullName)
-    $hex = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
-    "$relPath $($f.Length) $hex"
+function Get-Manifest {
+    $lines = foreach ($f in (Get-ChildItem -LiteralPath $rel -File -Recurse)) {
+        $relPath = $f.FullName.Substring($rel.Length + 1) -replace '\\', '/'
+        if ($relPath -eq 'PARITY/DATA/nextdaad.nex') { continue }
+        $bytes = [IO.File]::ReadAllBytes($f.FullName)
+        $hex = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
+        "$relPath $($f.Length) $hex"
+    }
+    $list = New-Object System.Collections.Generic.List[string]
+    $list.AddRange([string[]]$lines)
+    $list.Sort([StringComparer]::Ordinal)
+    return , $list
 }
-$sorted = New-Object System.Collections.Generic.List[string]
-$sorted.AddRange([string[]]$lines)
-$sorted.Sort([StringComparer]::Ordinal)
+$sorted = Get-Manifest
+if ($Layout -eq 'folder') {
+    # A second game folder builds into RELEASE\OTHER\ and leaves RELEASE\PARITY\ alone.
+    $other = Join-Path $kit 'OTHER'
+    New-Item -ItemType Directory -Force $other | Out-Null
+    Copy-Item -LiteralPath (Join-Path $gameDir 'PARITY.DSF') -Destination (Join-Path $other 'OTHER.DSF')
+    Copy-Item -LiteralPath (Join-Path $gameDir 'inc') -Destination (Join-Path $other 'inc') -Recurse
+    $localPath = Join-Path $kit 'CONFIG.local.BAT'
+    $localSaved = [IO.File]::ReadAllBytes($localPath)
+    [IO.File]::AppendAllText($localPath, "SET GAME=OTHER`r`n", [Text.Encoding]::ASCII)
+    $code = Invoke-Build
+    [IO.File]::WriteAllBytes($localPath, $localSaved)
+    if ($code -ne 0) { Write-Host "parity: BUILD of OTHER failed ($code)"; exit 1 }
+    if (-not (Test-Path -LiteralPath (Join-Path $rel 'OTHER/OTHER.NEX'))) { Write-Host 'parity: FAIL - RELEASE has no OTHER\OTHER.NEX'; exit 1 }
+    $after = @((Get-Manifest) | Where-Object { $_.StartsWith('PARITY/') })
+    if (($after -join "`n") -cne ($sorted -join "`n")) { Write-Host 'parity: FAIL - building OTHER changed RELEASE\PARITY\'; exit 1 }
+    Write-Host 'parity: second game OTHER left RELEASE\PARITY\ unchanged'
+}
 $manifestName = if ($Variant -eq 'compress') { 'manifest-compress.txt' } else { 'manifest.txt' }
 $manifest = Join-Path $work $manifestName
 [IO.File]::WriteAllText($manifest, (($sorted -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))

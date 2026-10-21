@@ -14,3 +14,6 @@ include-folder-case|rename inc INC|WARN:on disk as INC (case differs
 ndrc-missing|set NDRC=nosuch|ERROR: required tool missing: nosuch
 cspect-running|cspect|ERROR: CSpect is running - close it before building
 stale-release|write RELEASE/GAME.DDB x|OK:holds 1 item(s) from an older kit build
+folder-include-case|layout folder; rename PARITY/inc/rooms.dsf ROOMS.DSF|WARN:#include inc/rooms.dsf
+game-in-cfg|layout folder; write PARITY/PARITY.CFG SET GAME=NOSUCH|OK:WARNING: GAME in
+folder-no-dsf|layout folder; remove PARITY/PARITY.DSF; set GAME=PARITY|ERROR: PARITY{sep} has no PARITY.DSF

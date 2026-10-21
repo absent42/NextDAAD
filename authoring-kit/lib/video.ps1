@@ -69,9 +69,12 @@
 # (tools\ffmpeg\bin\ffmpeg.exe - see tools\README.txt); nothing here
 # is needed unless numeric-named .mp4 files exist in VIDEO\.
 
+# -Src: the game's source root (build.ps1 passes it); VIDEO\ is read there.
+# Untyped: the encode loop below reuses $src for FileInfo items.
+param($Src = (Get-Location).Path)
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 
-$videoDir = Join-Path (Get-Location).Path 'VIDEO'
+$videoDir = Join-Path $Src 'VIDEO'
 $sources = @(Get-ChildItem -LiteralPath $videoDir -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match '(?i)\.(mp4|mkv)$' } |
     Where-Object { $_.BaseName -match '^\d+$' })
