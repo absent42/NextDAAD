@@ -4,6 +4,26 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.12.0 unreleased
 
+- **Multi-game kit support.** Game folders and a `DATA\` folder on the 
+  card. Each game now lives in its own folder in the kit, 
+  `MYGAME\MYGAME.DSF` with its `IMAGES\`, `AUDIO\`, `VIDEO\` and other 
+  files, and one kit holds any number of games. Choose the one to build 
+  with `SET GAME=` in `CONFIG.local.BAT` (a sample, 
+  `CONFIG.local.BAT.sample`, ships with the kit). A game's own settings 
+  go in `MYGAME\MYGAME.CFG`, read after `CONFIG.BAT` and before 
+  `CONFIG.local.BAT`; vidtune saves its `VIDOPTS_NNN` lines there. Each 
+  game builds to `RELEASE\MYGAME\`, which holds only `MYGAME.NEX`, the 
+  file you launch, and a `DATA\` folder with everything else. Save games 
+  and the files externs write (`GAME.HPR`, `GAME.HST`, `TRANS.TXT`) 
+  land in `DATA\` too. Copy the contents of `RELEASE\` to the card root 
+  and each game gets its own folder. `RUN.BAT` runs the selected game, 
+  `CLEAN.BAT` empties only its folder, and `EXTERNS.BAT` writes 
+  `GAME.XBN` into its game folder. The starter game moves into 
+  `STARTER\`, which every kit update replaces: copy it to your own game 
+  folder before you write a game. Games built by older kits, with every 
+  file loose at the card root, still run. **Moving from v0.11:** unzip 
+  0.12.0 into a new folder rather than over your old kit, and follow 
+  Getting started, "Moving from v0.11.x or below to v0.12.0".
 - Positioned Layer 2 pictures (NX3): a picture drawn at a fixed X,Y or
   floating in the current text window, any size that fits, that changes
   only its own rectangle and applies only its own palette range.
@@ -28,7 +48,6 @@ All notable changes to NextDAAD are recorded here.
 - manual: Graphics gains "Positioned pictures"; the picture-format
   reference documents NX3 for converter writers; platform notes cover
   GFX 7, 8 and 15 on ported games.
-- kit: interpreter rebuilt.
 - externs/fade: flag 241 = 255 makes `EXTERN c 40` and `EXTERN 0 41`
   instant - the end state is written before the call returns, flag 240
   is set and no steps run. An instant fade-out before a video clip
