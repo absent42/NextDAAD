@@ -22,7 +22,8 @@ an extern costs you a Z80 assembler and the discipline this chapter
 describes.</p>
 <h2 id="the-gamexbn-file">The GAME.XBN file</h2>
 <p>Your extern ships as <code>GAME.XBN</code>, a single binary file placed beside
-<code>GAME.DDB</code> in the game directory. The interpreter probes for it once at
+<code>GAME.DDB</code> in the game's <code>DATA\</code> folder. With the kit, put <code>GAME.XBN</code> in
+your game folder and the build copies it there. The interpreter probes for it once at
 boot, right after the database loads. If the file is absent, externs are
 simply off - no error, no cost, the game plays as if the feature did not
 exist.</p>
@@ -55,7 +56,8 @@ and a <code>SAVEBIN</code> that writes the whole thing out:</p>
 </code></pre>
 <p>A collection module uses <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code> instead of
 <code>XBN_HEADER</code>; see <a href="#one-binary-any-subset">the collection</a>.</p>
-<p>Copy the resulting <code>GAME.XBN</code> next to <code>GAME.DDB</code> on the card. The whole
+<p>Copy the resulting <code>GAME.XBN</code> into your game folder, beside your <code>.DSF</code>,
+and build: it lands next to <code>GAME.DDB</code> in <code>DATA\</code>. The whole
 binary, header included, must fit in 16384 bytes - see
 <a href="reference/limits.html">Limits</a>.</p>
 <h3 id="the-ticker-example">The ticker example</h3>
@@ -637,6 +639,9 @@ registers a row's Out column names carry a result.</p>
   interpreter itself uses</strong> for save games and asset loading. <code>mode</code> for
   <code>SVC_FOPEN</code> is the raw esxDOS open mode byte; the error convention
   throughout is esxDOS style - carry flag set, A holds the error code.
+  A bare filename opens in the game's <code>DATA\</code> folder, beside <code>GAME.DDB</code>,
+  where save games go too (in an older flat-layout game with no
+  <code>DATA\</code>, beside the launched file).
   Like the underlying wrappers, every file service may clobber AF, BC,
   DE, HL, IX and IY; only the columns the table above lists are
   meaningful on return.</li>
@@ -958,7 +963,7 @@ this one.</p>
 <p>A game loads ONE <code>GAME.XBN</code>, and you never merge sources by hand:</p>
 <ul>
 <li><code>externs\all\GAME.XBN</code> ships every module in this collection EXCEPT
-  transcript, in one prebuilt binary. Copy it beside <code>GAME.DDB</code> and use
+  transcript, in one prebuilt binary. Copy it into your game folder and use
   whichever functions you want. With no hooked module in it, this
   binary carries a plain format 2 header - the loader never arms the
   output tap for it, so every printed character costs nothing extra.
@@ -969,8 +974,9 @@ this one.</p>
   binary whose header names one, whether or not the module is
   recording, so include it only in a game that means to record.</li>
 <li><code>EXTERNS.BAT ticker fade</code> from the kit root builds a binary holding
-  only the modules you name, your own included (this route needs
-  sjasmplus - see <code>externs\README.md</code> for where it looks).</li>
+  only the modules you name, your own included, and writes it as
+  <code>GAME.XBN</code> into the folder of the game <code>GAME</code> selects (this route
+  needs sjasmplus - see <code>externs\README.md</code> for where it looks).</li>
 </ul>
 <p>An unused module costs nothing at run time. This is the collection's
 dormancy rule: every module stays inert until the game invokes it - an
@@ -1005,7 +1011,11 @@ collection module by its name and your own by its folder:</p>
 <p>An argument with a <code>\</code> or <code>/</code> in it is a folder holding <code>&lt;folder&gt;.asm</code>,
 and the folder's name is the module's name; naming that <code>.asm</code> file
 itself works too. A relative path counts from the folder you ran
-<code>EXTERNS.BAT</code> in. The path must be plain ASCII: sjasmplus cannot open a
+<code>EXTERNS.BAT</code> in, not from the game folder. A good home for a module
+that belongs to one game is inside that game's folder, say
+<code>MYGAME\mods\doors\</code>, so it is kept with the game and a kit update never
+touches it; from the kit root that is <code>EXTERNS.BAT fade MYGAME\mods\doors</code>.
+The path must be plain ASCII: sjasmplus cannot open a
 file whose path has accented or other non-ASCII characters. A folder you put inside <code>externs\</code>
 is reached by its bare name, like the shipped ones; a folder anywhere
 else may not reuse a name from <code>externs\</code>. Modules run in the order you
@@ -1072,10 +1082,11 @@ above, and keep off flags 224-251, the collection's reserved band.</p>
 assembler command line.</p>
 <h3 id="hints-a-hint-book-on-the-card">hints - a hint book on the card</h3>
 <p>Author <code>HINTS.TXT</code> beside your game source; <code>BUILD.BAT</code> packs it into
-<code>RELEASE\GAME.HNT</code> (up to 256 topics, 255 levels per topic, 64KB of
+<code>RELEASE\&lt;GAME&gt;\DATA\GAME.HNT</code> (up to 256 topics, 255 levels per topic, 64KB of
 text - see <a href="reference/limits.html">Limits</a>). The extern prints a topic's
-next unread hint and remembers per-topic progress in <code>GAME.HPR</code> on the
-card, costing you no flags and surviving <code>LOAD</code> and <code>RESTART</code>:</p>
+next unread hint and remembers per-topic progress in <code>GAME.HPR</code>, which
+it writes in the game's <code>DATA\</code> folder on the card,
+costing you no flags and surviving <code>LOAD</code> and <code>RESTART</code>:</p>
 <pre><code>EXTERN 0 52    ; CONDITION: fails the entry when the hint book is
                ; missing or unreadable - check it once at startup
 EXTERN 3 50    ; CONDITION: prints topic 3's next unread hint and

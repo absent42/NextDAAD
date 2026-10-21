@@ -11,27 +11,26 @@ builds by default, never touches any of the machinery below.
 
 ## Laying the parts out
 
-- **Part 1 is your main `.DSF`** in the kit folder, built exactly as it
-  always was and staged as `GAME.DDB` at the SD root. Nothing about a
-  single-part build changes.
+- **Part 1 is your main `.DSF`** in your game folder, built exactly as
+  it always was and staged as `GAME.DDB` in the game's `DATA\` folder.
+  Nothing about a single-part build changes.
 - **Parts 2 to 9** - the supported range - each get a `PART<n>\` folder
-  in the kit directory, holding exactly one `.DSF` (auto-detected the
-  same way as the main game) plus that part's own already-converted art
-  and audio, if any.
+  inside your game folder, holding exactly one `.DSF` plus that part's
+  own already-converted art and audio, if any.
 - `BUILD.BAT` compiles each `PART<n>\` DSF the same way as the main game
-  and stages the result as `RELEASE\GAME<n>.DDB` and
-  `RELEASE\PART<n>\0.XMB` if that part uses XMESSAGE or XMES. It then
-  copies every other file from `PART<n>\` into `RELEASE\PART<n>\`
-  untouched.
+  and stages the result as `RELEASE\<GAME>\DATA\GAME<n>.DDB` and
+  `RELEASE\<GAME>\DATA\PART<n>\0.XMB` if that part uses XMESSAGE or
+  XMES. It then copies every other file from `PART<n>\` into
+  `RELEASE\<GAME>\DATA\PART<n>\` untouched.
 - On the SD card that becomes `GAME.DDB`, `GAME2.DDB`, `GAME3.DDB` and
-  so on at the root, alongside `PART2\`, `PART3\` folders holding each
-  part's own shadowed assets.
+  so on in `<GAME>\DATA\`, alongside `PART2\`, `PART3\` folders holding
+  each part's own shadowed assets.
 
 **Part folders take converted files, not sources.** Put ready-to-use
 `.NX2`, `.NXI`, `.NX3`, `.AKY`, `.AYS`, `.WAV`, `.VID`, `GAME.SFB`, `FONT.CHR`
 to `FONT9.CHR` and `POINTER.SPR` to `POINTER9.SPR` files in a `PART<n>\`
-folder - not `.png` or `.aks` sources. Only the main kit folder's `IMAGES\` and `AUDIO\` are
-converted.
+folder - not `.png` or `.aks` sources. Only the game folder's own
+`IMAGES\` and `AUDIO\` are converted.
 
 A part switch opens its target by the exact name `GAMEn.DDB`, so a stray
 file beside it - a `GAMEn.DSF` source left next to the compiled DDB, say
@@ -41,7 +40,7 @@ file beside it - a `GAMEn.DSF` source left next to the compiled DDB, say
 
 - `EXTERN n 4` (`XPART n` under MALUVA) switches the running game to
   part `n`, 1 to 9. It loads `GAMEn.DDB` (`GAME.DDB` for part 1) from
-  the SD root.
+  the game's `DATA\` folder.
 - **If that file is not there, the switch is a silent no-op.** The game
   keeps running in the current part, unaffected. A game that ships an
   `EXTERN n 4` trigger must also ship that part's DDB, or the trigger
@@ -53,11 +52,11 @@ file beside it - a `GAMEn.DSF` source left next to the compiled DDB, say
 ## Shadowed assets
 
 For a part of 2 or above, these asset kinds are looked for in
-`PART<n>\<name>` **first**, and fall back to the game root if they are
+`PART<n>\<name>` **first**, and fall back to `DATA\` itself if they are
 not there:
 
 - location art (the whole extension probe runs under `PART<n>\`, then
-  again at the root if that whole pass misses) - see
+  again in `DATA\` if that whole pass misses) - see
   [Graphics](graphics.md)
 - `NNN.WAV` samples, and numbered `NNN.AYS` / `NNN.AKY` songs, and
   `GAME.SFB` - see [Audio](audio.md)
@@ -97,8 +96,8 @@ byte-identical to a plain single-part build.
 SAVE always records the current part number in the file, and LOAD reads
 it back and switches automatically if it differs from the running part.
 A cross-part LOAD is a part entry, exactly like `EXTERN n 4`, not a
-resume (caveat 7). Save files share one filename namespace in the game
-root regardless of part (caveat 9) - SAVE and LOAD never look inside
+resume (caveat 7). Save files share one filename namespace in `DATA\`
+regardless of part (caveat 9) - SAVE and LOAD never look inside
 `PART<n>\`.
 
 **Only distribute save files your own build wrote, and do not hand-edit
@@ -151,7 +150,7 @@ switch if you want the checkpoint to track it.
    death-retry feature - but a stale slot restores a stale part, so
    authors using RAMSAVE for checkpoints should refresh it after each
    switch, with a RAMSAVE in `PRO 0`.
-9. **Save files share one namespace** in the game root regardless of
+9. **Save files share one namespace** in `DATA\` regardless of
    part; identical names overwrite across parts.
 
 ## Compiling every part the same way

@@ -16,7 +16,8 @@ describes.
 ## The GAME.XBN file
 
 Your extern ships as `GAME.XBN`, a single binary file placed beside
-`GAME.DDB` in the game directory. The interpreter probes for it once at
+`GAME.DDB` in the game's `DATA\` folder. With the kit, put `GAME.XBN` in
+your game folder and the build copies it there. The interpreter probes for it once at
 boot, right after the database loads. If the file is absent, externs are
 simply off - no error, no cost, the game plays as if the feature did not
 exist.
@@ -60,7 +61,8 @@ xbn_end:
 A collection module uses `xbnmod.inc`'s `XBN_BEGIN` instead of
 `XBN_HEADER`; see [the collection](#one-binary-any-subset).
 
-Copy the resulting `GAME.XBN` next to `GAME.DDB` on the card. The whole
+Copy the resulting `GAME.XBN` into your game folder, beside your `.DSF`,
+and build: it lands next to `GAME.DDB` in `DATA\`. The whole
 binary, header included, must fit in 16384 bytes - see
 [Limits](reference/limits.md).
 
@@ -526,6 +528,9 @@ A few things worth knowing about specific rows:
   interpreter itself uses** for save games and asset loading. `mode` for
   `SVC_FOPEN` is the raw esxDOS open mode byte; the error convention
   throughout is esxDOS style - carry flag set, A holds the error code.
+  A bare filename opens in the game's `DATA\` folder, beside `GAME.DDB`,
+  where save games go too (in an older flat-layout game with no
+  `DATA\`, beside the launched file).
   Like the underlying wrappers, every file service may clobber AF, BC,
   DE, HL, IX and IY; only the columns the table above lists are
   meaningful on return.
@@ -808,7 +813,7 @@ this one.
 A game loads ONE `GAME.XBN`, and you never merge sources by hand:
 
 - `externs\all\GAME.XBN` ships every module in this collection EXCEPT
-  transcript, in one prebuilt binary. Copy it beside `GAME.DDB` and use
+  transcript, in one prebuilt binary. Copy it into your game folder and use
   whichever functions you want. With no hooked module in it, this
   binary carries a plain format 2 header - the loader never arms the
   output tap for it, so every printed character costs nothing extra.
@@ -819,8 +824,9 @@ A game loads ONE `GAME.XBN`, and you never merge sources by hand:
   binary whose header names one, whether or not the module is
   recording, so include it only in a game that means to record.
 - `EXTERNS.BAT ticker fade` from the kit root builds a binary holding
-  only the modules you name, your own included (this route needs
-  sjasmplus - see `externs\README.md` for where it looks).
+  only the modules you name, your own included, and writes it as
+  `GAME.XBN` into the folder of the game `GAME` selects (this route
+  needs sjasmplus - see `externs\README.md` for where it looks).
 
 An unused module costs nothing at run time. This is the collection's
 dormancy rule: every module stays inert until the game invokes it - an
@@ -861,7 +867,11 @@ collection module by its name and your own by its folder:
 An argument with a `\` or `/` in it is a folder holding `<folder>.asm`,
 and the folder's name is the module's name; naming that `.asm` file
 itself works too. A relative path counts from the folder you ran
-`EXTERNS.BAT` in. The path must be plain ASCII: sjasmplus cannot open a
+`EXTERNS.BAT` in, not from the game folder. A good home for a module
+that belongs to one game is inside that game's folder, say
+`MYGAME\mods\doors\`, so it is kept with the game and a kit update never
+touches it; from the kit root that is `EXTERNS.BAT fade MYGAME\mods\doors`.
+The path must be plain ASCII: sjasmplus cannot open a
 file whose path has accented or other non-ASCII characters. A folder you put inside `externs\`
 is reached by its bare name, like the shipped ones; a folder anywhere
 else may not reuse a name from `externs\`. Modules run in the order you
@@ -934,10 +944,11 @@ assembler command line.
 ### hints - a hint book on the card
 
 Author `HINTS.TXT` beside your game source; `BUILD.BAT` packs it into
-`RELEASE\GAME.HNT` (up to 256 topics, 255 levels per topic, 64KB of
+`RELEASE\<GAME>\DATA\GAME.HNT` (up to 256 topics, 255 levels per topic, 64KB of
 text - see [Limits](reference/limits.md)). The extern prints a topic's
-next unread hint and remembers per-topic progress in `GAME.HPR` on the
-card, costing you no flags and surviving `LOAD` and `RESTART`:
+next unread hint and remembers per-topic progress in `GAME.HPR`, which
+it writes in the game's `DATA\` folder on the card,
+costing you no flags and surviving `LOAD` and `RESTART`:
 
 ```
 EXTERN 0 52    ; CONDITION: fails the entry when the hint book is

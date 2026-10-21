@@ -18,27 +18,26 @@ episode structure.</p>
 builds by default, never touches any of the machinery below.</p>
 <h2 id="laying-the-parts-out">Laying the parts out</h2>
 <ul>
-<li><strong>Part 1 is your main <code>.DSF</code></strong> in the kit folder, built exactly as it
-  always was and staged as <code>GAME.DDB</code> at the SD root. Nothing about a
-  single-part build changes.</li>
+<li><strong>Part 1 is your main <code>.DSF</code></strong> in your game folder, built exactly as
+  it always was and staged as <code>GAME.DDB</code> in the game's <code>DATA\</code> folder.
+  Nothing about a single-part build changes.</li>
 <li><strong>Parts 2 to 9</strong> - the supported range - each get a <code>PART&lt;n&gt;\</code> folder
-  in the kit directory, holding exactly one <code>.DSF</code> (auto-detected the
-  same way as the main game) plus that part's own already-converted art
-  and audio, if any.</li>
+  inside your game folder, holding exactly one <code>.DSF</code> plus that part's
+  own already-converted art and audio, if any.</li>
 <li><code>BUILD.BAT</code> compiles each <code>PART&lt;n&gt;\</code> DSF the same way as the main game
-  and stages the result as <code>RELEASE\GAME&lt;n&gt;.DDB</code> and
-  <code>RELEASE\PART&lt;n&gt;\0.XMB</code> if that part uses XMESSAGE or XMES. It then
-  copies every other file from <code>PART&lt;n&gt;\</code> into <code>RELEASE\PART&lt;n&gt;\</code>
-  untouched.</li>
+  and stages the result as <code>RELEASE\&lt;GAME&gt;\DATA\GAME&lt;n&gt;.DDB</code> and
+  <code>RELEASE\&lt;GAME&gt;\DATA\PART&lt;n&gt;\0.XMB</code> if that part uses XMESSAGE or
+  XMES. It then copies every other file from <code>PART&lt;n&gt;\</code> into
+  <code>RELEASE\&lt;GAME&gt;\DATA\PART&lt;n&gt;\</code> untouched.</li>
 <li>On the SD card that becomes <code>GAME.DDB</code>, <code>GAME2.DDB</code>, <code>GAME3.DDB</code> and
-  so on at the root, alongside <code>PART2\</code>, <code>PART3\</code> folders holding each
-  part's own shadowed assets.</li>
+  so on in <code>&lt;GAME&gt;\DATA\</code>, alongside <code>PART2\</code>, <code>PART3\</code> folders holding
+  each part's own shadowed assets.</li>
 </ul>
 <p><strong>Part folders take converted files, not sources.</strong> Put ready-to-use
 <code>.NX2</code>, <code>.NXI</code>, <code>.NX3</code>, <code>.AKY</code>, <code>.AYS</code>, <code>.WAV</code>, <code>.VID</code>, <code>GAME.SFB</code>, <code>FONT.CHR</code>
 to <code>FONT9.CHR</code> and <code>POINTER.SPR</code> to <code>POINTER9.SPR</code> files in a <code>PART&lt;n&gt;\</code>
-folder - not <code>.png</code> or <code>.aks</code> sources. Only the main kit folder's <code>IMAGES\</code> and <code>AUDIO\</code> are
-converted.</p>
+folder - not <code>.png</code> or <code>.aks</code> sources. Only the game folder's own
+<code>IMAGES\</code> and <code>AUDIO\</code> are converted.</p>
 <p>A part switch opens its target by the exact name <code>GAMEn.DDB</code>, so a stray
 file beside it - a <code>GAMEn.DSF</code> source left next to the compiled DDB, say
 - is ignored and harmless.</p>
@@ -46,7 +45,7 @@ file beside it - a <code>GAMEn.DSF</code> source left next to the compiled DDB, 
 <ul>
 <li><code>EXTERN n 4</code> (<code>XPART n</code> under MALUVA) switches the running game to
   part <code>n</code>, 1 to 9. It loads <code>GAMEn.DDB</code> (<code>GAME.DDB</code> for part 1) from
-  the SD root.</li>
+  the game's <code>DATA\</code> folder.</li>
 <li><strong>If that file is not there, the switch is a silent no-op.</strong> The game
   keeps running in the current part, unaffected. A game that ships an
   <code>EXTERN n 4</code> trigger must also ship that part's DDB, or the trigger
@@ -57,11 +56,11 @@ file beside it - a <code>GAMEn.DSF</code> source left next to the compiled DDB, 
 </ul>
 <h2 id="shadowed-assets">Shadowed assets</h2>
 <p>For a part of 2 or above, these asset kinds are looked for in
-<code>PART&lt;n&gt;\&lt;name&gt;</code> <strong>first</strong>, and fall back to the game root if they are
+<code>PART&lt;n&gt;\&lt;name&gt;</code> <strong>first</strong>, and fall back to <code>DATA\</code> itself if they are
 not there:</p>
 <ul>
 <li>location art (the whole extension probe runs under <code>PART&lt;n&gt;\</code>, then
-  again at the root if that whole pass misses) - see
+  again in <code>DATA\</code> if that whole pass misses) - see
   <a href="graphics.html">Graphics</a></li>
 <li><code>NNN.WAV</code> samples, and numbered <code>NNN.AYS</code> / <code>NNN.AKY</code> songs, and
   <code>GAME.SFB</code> - see <a href="audio.html">Audio</a></li>
@@ -98,8 +97,8 @@ byte-identical to a plain single-part build.</p>
 <p>SAVE always records the current part number in the file, and LOAD reads
 it back and switches automatically if it differs from the running part.
 A cross-part LOAD is a part entry, exactly like <code>EXTERN n 4</code>, not a
-resume (caveat 7). Save files share one filename namespace in the game
-root regardless of part (caveat 9) - SAVE and LOAD never look inside
+resume (caveat 7). Save files share one filename namespace in <code>DATA\</code>
+regardless of part (caveat 9) - SAVE and LOAD never look inside
 <code>PART&lt;n&gt;\</code>.</p>
 <p><strong>Only distribute save files your own build wrote, and do not hand-edit
 them.</strong> Save files are length-detected, and a malformed or hand-edited
@@ -149,7 +148,7 @@ switch if you want the checkpoint to track it.</p>
    death-retry feature - but a stale slot restores a stale part, so
    authors using RAMSAVE for checkpoints should refresh it after each
    switch, with a RAMSAVE in <code>PRO 0</code>.</li>
-<li><strong>Save files share one namespace</strong> in the game root regardless of
+<li><strong>Save files share one namespace</strong> in <code>DATA\</code> regardless of
    part; identical names overwrite across parts.</li>
 </ol>
 <h2 id="compiling-every-part-the-same-way">Compiling every part the same way</h2>

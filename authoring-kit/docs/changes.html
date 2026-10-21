@@ -14,6 +14,28 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="0120-unreleased">0.12.0 - unreleased</h2>
 <ul>
 <li>
+<p><strong>Game folders, and a <code>DATA\</code> folder on the card.</strong> Each game now
+  lives in its own folder in the kit, <code>MYGAME\MYGAME.DSF</code> with its
+  <code>IMAGES\</code>, <code>AUDIO\</code>, <code>VIDEO\</code> and other files, and one kit holds any
+  number of games. Choose the one to build with <code>SET GAME=</code> in
+  <code>CONFIG.local.BAT</code> (a sample, <code>CONFIG.local.BAT.sample</code>, ships with
+  the kit). A game's own settings go in <code>MYGAME\MYGAME.CFG</code>, read after
+  <code>CONFIG.BAT</code> and before <code>CONFIG.local.BAT</code>; vidtune saves its
+  <code>VIDOPTS_NNN</code> lines there. Each game builds to <code>RELEASE\MYGAME\</code>,
+  which holds only <code>MYGAME.NEX</code>, the file you launch, and a <code>DATA\</code>
+  folder with everything else. Save games and the files externs write
+  (<code>GAME.HPR</code>, <code>GAME.HST</code>, <code>TRANS.TXT</code>) land in <code>DATA\</code> too. Copy the
+  contents of <code>RELEASE\</code> to the card root and each game gets its own
+  folder. <code>RUN.BAT</code> runs the selected game, <code>CLEAN.BAT</code> empties only
+  its folder, and <code>EXTERNS.BAT</code> writes <code>GAME.XBN</code> into its game folder.
+  The starter game moves into <code>STARTER\</code>, which every kit update
+  replaces: copy it to your own game folder before you write a game.
+  Games built by older kits, with every file loose at the card root,
+  still run. <strong>Moving from v0.11:</strong> unzip v0.12.0 into a new folder
+  rather than over your old kit, and follow Getting started, "Moving
+  from v0.11 to v0.12.0".</p>
+</li>
+<li>
 <p><strong>Positioned pictures.</strong> A numbered PNG with an <code>IMAGES\NNN.txt</code> sidecar
   builds as <code>NNN.NX3</code>: fixed at <code>at=X,Y</code> in pixels or floating in the
   current text window with <code>at=window</code>, any size that fits, drawing only

@@ -68,7 +68,9 @@ each into the kit's <code>tools\</code> folder at the path shown:</p>
 <p><code>tools\README.txt</code> lists the download addresses and the exact executable
 paths the build checks for.</p>
 <p>Double-click <code>BUILD.BAT</code> to build, <code>RUN.BAT</code> to play the result in
-CSpect, <code>CLEAN.BAT</code> to start over.</p>
+CSpect, <code>CLEAN.BAT</code> to start over. On a fresh kit the first build makes
+the starter game; read <a href="#where-your-files-go">Where your files go</a>
+before you start your own.</p>
 <h3 id="linux-setup">Linux setup</h3>
 <p>x86_64 Linux with glibc 2.34 or newer: Ubuntu 22.04, Debian 12, Fedora
 36 and later. Follow the steps below in order, in a terminal. First the
@@ -86,7 +88,8 @@ cd NextDAAD-AuthoringKit
 <p>The interpreter, the compiler (<code>lib/ndrc</code>) and Gfx2Next
 (<code>tools/gfx2next/gfx2next</code>) ship in the Linux kit. A tool that is on
 your <code>PATH</code> is found without any setting; a tool under <code>tools/</code> is
-found there; <code>CONFIG.BAT</code> points anywhere else. Install only the
+found there; a setting in <code>CONFIG.local.BAT</code> points anywhere else
+(see <a href="#configuration">Configuration</a>). Install only the
 optional tools your game uses:</p>
 <ul>
 <li><strong>Arkos Tracker 3</strong> Linux release from https://www.julien-nevo.com/arkostracker/,
@@ -98,7 +101,7 @@ optional tools your game uses:</p>
 <li><strong>CSpect</strong> Linux build from https://mdf200.itch.io/cspect plus mono
   (<code>sudo apt install mono-devel</code>), to play the result. Extract into
   <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>, or set
-  <code>CSPECTCMD</code> in <code>CONFIG.BAT</code> to run it some other way (Linux only,
+  <code>CSPECTCMD</code> in <code>CONFIG.local.BAT</code> to run it some other way (Linux only,
   ignored on Windows).</li>
 <li><strong>sjasmplus</strong>, only to rebuild an extern with <code>externs.sh</code>: a
   distribution package where one exists (<code>sudo apt install sjasmplus</code>
@@ -134,7 +137,7 @@ and Ubuntu, add them with:</p>
 </code></pre>
 <p>The shipped <code>CONFIG.BAT</code> has <code>RUN=1</code>, so until CSpect is installed each
 build ends with <code>ERROR: CSpect not found</code> after the build succeeds; set
-<code>RUN=0</code> to build without an emulator.</p>
+<code>RUN=0</code> in <code>CONFIG.local.BAT</code> to build without an emulator.</p>
 <p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code> and <code>vidtune.sh</code> are the
 Linux names of the five <code>.BAT</code> launchers and take the same arguments.</p>
 <p>Two things differ from Windows:</p>
@@ -143,15 +146,16 @@ Linux names of the five <code>.BAT</code> launchers and take the same arguments.
   <code>IMAGES/</code>, <code>AUDIO/</code>, <code>VIDEO/</code>, <code>001.png</code>, <code>STARTER.DSF</code>, <code>FONT.CHR</code>.
   An <code>#include</code> or <code>#incbin</code> in your source must match the file's case
   exactly and use <code>/</code> between folders.</li>
-<li><strong><code>CONFIG.BAT</code> keeps its name.</strong> It is a plain settings file of
-  <code>SET NAME=value</code> lines that the scripts read; nothing executes it.
-  Paths in it may use <code>/</code>.</li>
+<li><strong><code>CONFIG.BAT</code> keeps its name</strong>, and so does <code>CONFIG.local.BAT</code>.
+  They are plain settings files of <code>SET NAME=value</code> lines that the
+  scripts read; nothing executes them. Paths in them may use <code>/</code>.</li>
 </ul>
 <h3 id="already-have-some-of-these">Already have some of these?</h3>
 <p>Arkos Tracker, CSpect and ffmpeg are general-purpose tools you may well
 have installed already, and there is no need for a second copy.
-<code>CONFIG.BAT</code> has a directory setting per tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>,
-<code>FFMPEGDIR</code>, <code>GFXDIR</code>, <code>SJASMPLUSDIR</code> - and each one you set is used
+There is a directory setting per tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>,
+<code>FFMPEGDIR</code>, <code>GFXDIR</code>, <code>SJASMPLUSDIR</code> - and each one you set in
+<code>CONFIG.local.BAT</code> is used
 instead of the folder under <code>TOOLSDIR</code>. Anything you leave blank still
 comes from <code>TOOLSDIR</code>, so mixing the two is fine: keep the small stuff
 in <code>tools\</code> and point the big installs wherever they already are.
@@ -204,11 +208,31 @@ below, however they were written.</p>
 <p>For a step-by-step tutorial on setting up a dev environment, please 
 see the <a href="https://condact.xyz/nextdaad/tutorials/dev-environment">condact.xyz</a> website.</p>
 <h2 id="where-your-files-go">Where your files go</h2>
-<p>Everything the build reads lives in the kit folder:</p>
+<p>Each game lives in its own folder inside the kit folder, called its
+<strong>game folder</strong>. The folder and the game's source file share one name:
+the game <code>MYGAME</code> is <code>MYGAME\MYGAME.DSF</code>. One kit can hold any number of
+games side by side, and you tell the build which one to work on (see
+<a href="#choosing-the-game">Choosing the game</a>).</p>
+<p>The kit ships one game folder, <code>STARTER\</code>, holding the starter game.
+On a fresh kit with nothing configured, <code>BUILD.BAT</code> builds it and runs
+it, so you can check your setup before you write anything.</p>
+<p><strong>Copy <code>STARTER\</code> before you write your game.</strong> Every kit update
+replaces <code>STARTER\</code> completely, so anything you change inside it is lost
+at the next update. To start from the starter game, copy it to a game
+folder of your own first, then edit and build the copy, never
+<code>STARTER\STARTER.DSF</code> itself. While <code>STARTER\</code> is the game being built,
+the build reminds you of this every time:</p>
+<pre><code>WARNING: STARTER\ is replaced by every kit update - copy it to your own game folder before writing a game (see Getting started).
+</code></pre>
+<p>The build still succeeds. A game folder named <code>STARTER</code> is always
+treated as the shipped starter - the warning prints and vidtune will not
+save there - so give your own game any other name.</p>
+<p>Everything the build reads for a game is inside its game folder:</p>
 <ul>
-<li><strong>Your adventure</strong>, as a single <code>.DSF</code> file in the kit folder. With
-  exactly one there, the build finds it by itself; otherwise name it in
-  <code>GAME</code> in <code>CONFIG.BAT</code> (base name, no extension).</li>
+<li><strong><code>&lt;GAME&gt;.DSF</code></strong> - your adventure. Files it <code>#include</code>s or <code>#incbin</code>s
+  are looked up inside the game folder too.</li>
+<li><strong><code>&lt;GAME&gt;.CFG</code></strong> - this game's own settings (see
+  <a href="#configuration">Configuration</a>). Optional.</li>
 <li><strong><code>IMAGES\</code></strong> - location pictures as <code>001.png</code>, <code>002.png</code> and so on,
   plus <code>DAAD.png</code> for a title screen. See <a href="graphics.html">Graphics</a> for
   the art rules.</li>
@@ -216,15 +240,79 @@ see the <a href="https://condact.xyz/nextdaad/tutorials/dev-environment">condact
   <a href="audio.html">Audio</a>.</li>
 <li><strong><code>VIDEO\</code></strong> - cutscene sources as <code>001.mp4</code> or <code>001.mkv</code> (or a
   pre-encoded <code>001.vid</code>). See <a href="video.html">Video</a>.</li>
-<li><strong>Ready-made files in the kit folder itself</strong> - a <code>FONT.CHR</code> custom
+<li><strong>Ready-made files in the game folder itself</strong> - a <code>FONT.CHR</code> custom
   font (see <a href="fonts.html">Fonts</a>) or a <code>POINTER.SPR</code> mouse pointer (see
   <a href="mouse.html">Mouse</a>), or already-converted title art. These
   are copied through untouched.</li>
+<li><strong><code>INTRO.TXT</code></strong>, <strong><code>HINTS.TXT</code></strong>, <strong><code>GAME.XBN</code></strong>, <strong><code>PART2\</code></strong> to
+  <strong><code>PART9\</code></strong> - a <a href="intro.html">loader intro</a>, hints and other
+  <a href="externs.html">externs</a>, and the extra parts of a
+  <a href="multi-part-games.html">multi-part game</a>, when your game has them.</li>
 </ul>
-<p>A pure-text game needs none of these folders. Graphics, audio and video
-are all optional and the build skips whatever is absent.</p>
+<p>A pure-text game needs only its <code>.DSF</code>. Graphics, audio and video are
+all optional and the build skips whatever is absent. A game folder is
+self-contained: the build never looks in the kit folder or in another
+game folder for a file your game is missing, so a new game cannot pick
+up the starter's pictures or tunes by accident.</p>
+<p>Everything else in the kit folder - the launchers, <code>CONFIG.BAT</code>,
+<code>lib\</code>, <code>docs\</code>, <code>externs\</code>, <code>tools\</code> and the rest - belongs to the kit.
+<a href="#updating-the-kit">Updating the kit</a> lists what an update replaces.</p>
+<h3 id="starting-a-new-game">Starting a new game</h3>
+<ol>
+<li>Copy the <code>STARTER\</code> folder to a new folder named after your game,
+   say <code>MYGAME\</code>. In the copy, rename <code>STARTER.DSF</code> to <code>MYGAME.DSF</code> and
+   <code>STARTER.CFG</code> to <code>MYGAME.CFG</code>.</li>
+<li>Copy <code>CONFIG.local.BAT.sample</code> in the kit folder to
+   <code>CONFIG.local.BAT</code>, open it, and add the line <code>SET GAME=MYGAME</code>.</li>
+<li>Put your game's own settings in <code>MYGAME\MYGAME.CFG</code>. Leave the
+   kit's <code>CONFIG.BAT</code> alone.</li>
+<li>Edit <code>MYGAME\MYGAME.DSF</code> and build it with <code>BUILD.BAT</code>. Do not edit
+   the files in <code>STARTER\</code>.</li>
+</ol>
+<p>The starter's pictures, audio and video come along in the copy. Keep
+what you want and delete or replace the rest. <code>MYGAME.CFG</code> holds
+<code>VIDOPTS_001</code> and <code>VIDOPTS_002</code> lines tuned for the starter's two demo
+clips; delete them when you replace those clips with your own.</p>
+<h3 id="choosing-the-game">Choosing the game</h3>
+<p>Name the game to build in <code>CONFIG.local.BAT</code>, one <code>SET GAME=</code> line per
+game you have, with all but one turned off by <code>REM</code>:</p>
+<pre><code>REM SET GAME=MYGAME1
+SET GAME=MYGAME2
+</code></pre>
+<p>To switch games, move the <code>REM</code>. <code>GAME</code> is the name of the game folder
+(and of the <code>.DSF</code> inside it), with no extension.</p>
+<p>When <code>GAME</code> is blank, the build looks for something it can pick without
+being told:</p>
+<ul>
+<li>if the kit folder itself holds exactly one <code>.DSF</code>, it builds that game
+  in the old single-game layout (see
+  <a href="#updating-the-kit">Updating the kit</a>);</li>
+<li>otherwise, if exactly one game folder exists, it builds that one - on a
+  fresh kit that is <code>STARTER\</code>;</li>
+<li>otherwise it stops with <code>set GAME in CONFIG.local.BAT</code>.</li>
+</ul>
+<p>So once you have copied the starter to your own folder there are two
+game folders, and you need the <code>SET GAME=</code> line. The folders <code>PART2\</code> to
+<code>PART9\</code> hold the extra parts of a multi-part game and are never taken
+for game folders.</p>
 <h2 id="configuration">Configuration</h2>
-<p><code>CONFIG.BAT</code> holds every setting:</p>
+<p><code>CONFIG.BAT</code> in the kit folder holds every setting with its default
+value and a note on what it does. It belongs to the kit and every
+update replaces it, so do not edit it. Change a setting by copying its
+line into one of the two files below and editing the copy:</p>
+<ul>
+<li><strong><code>&lt;GAME&gt;\&lt;GAME&gt;.CFG</code></strong> - settings that belong to one game: <code>COLS</code>,
+  <code>COMPRESS</code>, the video options, and so on. Each game keeps its own, so
+  two games never share settings by accident.</li>
+<li><strong><code>CONFIG.local.BAT</code></strong> in the kit folder - settings that belong to
+  your machine, such as tool folders and <code>RUN</code>, plus the <code>GAME</code>
+  selector. Create it from <code>CONFIG.local.BAT.sample</code> the first time.</li>
+</ul>
+<p>Neither file is shipped with the kit, so an update never touches them.
+Both use the same <code>SET NAME=value</code> lines as <code>CONFIG.BAT</code>, and a line
+starting <code>REM</code> is ignored, so a line copies between the three files
+unchanged. The build only reads these files; it never runs them.</p>
+<p>The settings:</p>
 <table>
 <thead>
 <tr>
@@ -235,7 +323,7 @@ are all optional and the build skips whatever is absent.</p>
 <tbody>
 <tr>
 <td><code>GAME</code></td>
-<td>Base name of your <code>.DSF</code>. Blank = auto-detect the single <code>.DSF</code>.</td>
+<td>The game to build: the name of its game folder. Set it in <code>CONFIG.local.BAT</code>. Blank = pick one automatically, see <a href="#choosing-the-game">Choosing the game</a>.</td>
 </tr>
 <tr>
 <td><code>COMPRESS</code></td>
@@ -267,7 +355,7 @@ are all optional and the build skips whatever is absent.</p>
 </tr>
 <tr>
 <td><code>NEXFILE</code></td>
-<td>The interpreter to ship. Default <code>nextdaad.nex</code>.</td>
+<td>The interpreter file to ship. Default <code>nextdaad.nex</code>. The build stages it under your game's name - see <a href="#what-comes-out">What comes out</a>.</td>
 </tr>
 <tr>
 <td><code>NEXTDAWDIR</code></td>
@@ -283,48 +371,70 @@ are all optional and the build skips whatever is absent.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Local overrides.</strong> If a file named <code>CONFIG.local.BAT</code> sits beside
-<code>CONFIG.BAT</code>, it is loaded straight after it. Any setting in it
-overrides the same setting in <code>CONFIG.BAT</code>: every key, last wins, and an
-empty <code>SET NAME=</code> clears the value. A <code>CONFIG.BAT</code> line for the same key
-is masked while the local line exists. Put settings that belong to your machine rather than to the game there -
-a different <code>TOOLSDIR</code>, or <code>RUN=0</code> for an unattended build - and
-<code>CONFIG.BAT</code> stays as the settings you would hand to someone else along
-with the game. vidtune always saves its per-video <code>VIDOPTS_NNN</code> settings
-in <code>CONFIG.local.BAT</code>, so kit updates keep them.</p>
+<p><strong>Local overrides.</strong> The build reads three files in turn, and a later
+file wins:</p>
+<ol>
+<li><code>CONFIG.BAT</code> - the kit's defaults.</li>
+<li><code>&lt;GAME&gt;\&lt;GAME&gt;.CFG</code> - the selected game's own settings.</li>
+<li><code>CONFIG.local.BAT</code> - your machine's settings.</li>
+</ol>
+<p>Every key works the same way: the last file to set it wins, and an
+empty <code>SET NAME=</code> clears the value. A line in <code>CONFIG.BAT</code> is masked
+while the same key is set in either of the other two. <code>GAME</code> is the one
+exception - a game's own <code>.CFG</code> cannot choose a different game, so a
+<code>GAME</code> line there is ignored, with a warning naming the file.</p>
+<p><strong>Copy only the lines you change.</strong> Never copy the whole of
+<code>CONFIG.BAT</code> into <code>CONFIG.local.BAT</code> or a <code>.CFG</code>. A full copy pins every
+default - the compiler version, file names, tool folders - and from then
+on hides any change a kit update makes to them.</p>
+<p>vidtune saves its per-video <code>VIDOPTS_NNN</code> settings in the game's
+<code>&lt;GAME&gt;.CFG</code>, so each game keeps its own tuning and kit updates keep
+it. See <a href="video.html">Video</a>.</p>
 <h2 id="build-and-run">Build and run</h2>
 <ul>
 <li><strong><code>BUILD.BAT</code></strong> (Linux: <code>./build.sh</code>) - compiles the database, converts
   graphics and audio, encodes any new video, copies the interpreter,
   and launches CSpect if <code>RUN=1</code>. It finishes with
-  <code>BUILD OK: RELEASE\ is ready to copy to an SD card</code>.</li>
-<li><strong><code>RUN.BAT</code></strong> (<code>./run.sh</code>) - launches CSpect on whatever is already in
-  <code>RELEASE\</code>, without rebuilding.</li>
-<li><strong><code>CLEAN.BAT</code></strong> (<code>./clean.sh</code>) - empties <code>RELEASE\</code>. The next build
+  <code>BUILD OK: RELEASE\MYGAME\ is ready - copy the contents of RELEASE\ to the root of an SD card</code>,
+  naming your game.</li>
+<li><strong><code>RUN.BAT</code></strong> (<code>./run.sh</code>) - launches CSpect on the game already built
+  in <code>RELEASE\&lt;GAME&gt;\</code>, without rebuilding. CSpect sees that folder as
+  its SD card, the same shape as the folder you copy to a real card.</li>
+<li><strong><code>CLEAN.BAT</code></strong> (<code>./clean.sh</code>) - empties <code>RELEASE\&lt;GAME&gt;\</code> for the
+  selected game only; other games' output is left alone. The next build
   then converts everything from scratch.</li>
 </ul>
-<p>Each launcher is a few lines that start the matching script in <code>lib\</code>
-(<code>build.ps1</code>, <code>run.ps1</code>, <code>clean.ps1</code>); the build itself is the same
-code on both platforms.</p>
+<p>All three work on the game <code>GAME</code> selects (see
+<a href="#choosing-the-game">Choosing the game</a>). Each launcher is a few lines
+that start the matching script in <code>lib\</code> (<code>build.ps1</code>, <code>run.ps1</code>,
+<code>clean.ps1</code>); the build itself is the same code on both platforms.</p>
 <p>The build stops at the first error, with a message naming the cause.</p>
 <p>Pictures, sprite sets, sounds, tunes and video are only converted or
 copied when their source has changed since the last build. Everything
-else in <code>RELEASE\</code> is left as it is, so a game with hundreds of pictures
-rebuilds in seconds. A file counts as changed when its size or modified
-time differs, including a file replaced by an older copy. Updating the
-kit or a conversion tool also converts everything again. The build
-deletes the output of any picture or tune you remove from the kit
-folder, so nothing lingers on the card from an earlier build.</p>
+else in <code>RELEASE\&lt;GAME&gt;\</code> is left as it is, so a game with hundreds of
+pictures rebuilds in seconds. A file counts as changed when its size or
+modified time differs, including a file replaced by an older copy.
+Updating the kit or a conversion tool also converts everything again.
+The build deletes the output of any picture or tune you remove from the
+game folder, so nothing lingers on the card from an earlier build.</p>
 <p>Your database is compiled as DAAD version 3. If you are bringing in a
 game written for version 2, three behaviours change silently - see
 <a href="daad-v3.html">DAAD V3</a>.</p>
 <h2 id="what-comes-out">What comes out</h2>
-<p><code>RELEASE\</code> is the finished SD card image. Copy its <strong>contents</strong> (not the
-folder) to the root of the card. It holds:</p>
+<p>Each game builds into its own folder, <code>RELEASE\&lt;GAME&gt;\</code>. Copy the
+<strong>contents</strong> of <code>RELEASE\</code> (not the <code>RELEASE</code> folder itself) to the
+root of the SD card, and each game arrives in a folder of its own. A
+built game holds exactly two things:</p>
 <ul>
-<li><code>nextdaad.nex</code> - the interpreter, the file you launch.</li>
-<li><code>&lt;GAME&gt;.NEX</code> and <code>INTRO\</code> - the loader intro, when you ship one; launch
-  <code>&lt;GAME&gt;.NEX</code> instead. See <a href="intro.html">Loader intro</a>.</li>
+<li><strong><code>&lt;GAME&gt;.NEX</code></strong> - the file you launch.</li>
+<li><strong><code>DATA\</code></strong> - everything else the game reads.</li>
+</ul>
+<p>Without a <a href="intro.html">loader intro</a>, <code>&lt;GAME&gt;.NEX</code> is the interpreter
+itself. With one, <code>&lt;GAME&gt;.NEX</code> is the intro launcher, and the
+interpreter it starts is <code>DATA\nextdaad.nex</code>. Launch <code>&lt;GAME&gt;.NEX</code> either
+way.</p>
+<p><code>DATA\</code> holds:</p>
+<ul>
 <li><code>GAME.DDB</code> - your compiled adventure.</li>
 <li><code>0.XMB</code> - external message text, if your game uses XMESSAGE or XMES.
   It must stay beside <code>GAME.DDB</code>; without it those messages silently
@@ -338,13 +448,26 @@ folder) to the root of the card. It holds:</p>
 <li><code>NNN.VID</code> - encoded cutscenes.</li>
 <li><code>FONT.CHR</code>, <code>POINTER.SPR</code> - your custom font and pointer, if you
   supplied them.</li>
+<li><code>GAME.XBN</code>, <code>GAME.HNT</code> - externs and hints, if your game has them.</li>
+<li><code>nextdaad.nex</code> and <code>INTRO\</code> - the interpreter and the intro's own
+  files, only when the game has a loader intro.</li>
+<li><code>PART2\</code> to <code>PART9\</code> and <code>GAME2.DDB</code> onwards - the extra parts of a
+  <a href="multi-part-games.html">multi-part game</a>.</li>
 </ul>
+<p><code>DATA\</code> is also where the game writes while it is played: save games,
+and the files externs keep, such as <code>GAME.HPR</code> (hint progress),
+<code>GAME.HST</code> (high scores) and <code>TRANS.TXT</code> (a transcript), all land in
+<code>&lt;GAME&gt;\DATA\</code> on the card.</p>
+<p>Games built by kits before v0.12.0 put every file loose at the card
+root. The interpreter still runs a game laid out that way.</p>
 <h2 id="the-starter-game">The starter game</h2>
-<p><code>STARTER.DSF</code> ships with the kit along with example graphics, audio and
-video, so a first build works before you have written anything. It shows
-the Next-specific condacts in use - <code>PICTURE</code>/<code>DISPLAY</code> for location
-art, <code>SFX</code> for music and effects, <code>BEEP</code> for tones, <code>GFX</code> for cutscenes.
-Try the verbs <code>MUSIC</code>, <code>MUTE</code>, <code>TUNE</code>, <code>BLEEP</code>, <code>ZAP</code>, <code>SAMPLE</code>, <code>MOVIE</code> and <code>REEL</code>.</p>
+<p><code>STARTER\</code> ships with the kit, holding <code>STARTER.DSF</code> along with example
+graphics, audio and video, so a first build works before you have
+written anything. It shows the Next-specific condacts in use -
+<code>PICTURE</code>/<code>DISPLAY</code> for location art, <code>SFX</code> for music and effects,
+<code>BEEP</code> for tones, <code>GFX</code> for cutscenes. Try the verbs <code>MUSIC</code>, <code>MUTE</code>,
+<code>TUNE</code>, <code>BLEEP</code>, <code>ZAP</code>, <code>SAMPLE</code>, <code>MOVIE</code> and <code>REEL</code>. To build on it,
+copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <h2 id="when-the-build-fails">When the build fails</h2>
 <table>
 <thead>
@@ -355,8 +478,24 @@ Try the verbs <code>MUSIC</code>, <code>MUTE</code>, <code>TUNE</code>, <code>BL
 </thead>
 <tbody>
 <tr>
-<td><code>set GAME in CONFIG.BAT</code></td>
-<td>The kit folder holds no <code>.DSF</code>, or more than one. Set <code>GAME</code> to the base name of the one you want.</td>
+<td><code>set GAME in CONFIG.local.BAT (found ... .DSF files and ... game folders here, need exactly one)</code></td>
+<td><code>GAME</code> is blank and the build cannot pick a game by itself: there is more than one game folder, or none, or more than one loose <code>.DSF</code> in the kit folder. Add <code>SET GAME=</code> with your game folder's name to <code>CONFIG.local.BAT</code> - see <a href="#choosing-the-game">Choosing the game</a>.</td>
+</tr>
+<tr>
+<td><code>MYGAME\ has no MYGAME.DSF</code> / <code>MYGAME.DSF not found in MYGAME\ or this folder</code></td>
+<td><code>GAME</code> names a game that is not there. The folder and the <code>.DSF</code> inside it must both carry the name <code>GAME</code> gives.</td>
+</tr>
+<tr>
+<td><code>WARNING: STARTER\ is replaced by every kit update</code></td>
+<td>You are building the shipped starter. Fine for a first try; to write a game, copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</td>
+</tr>
+<tr>
+<td><code>WARNING: GAME in ... .CFG is ignored</code></td>
+<td>A game's <code>.CFG</code> cannot select the game. Move the <code>SET GAME=</code> line into <code>CONFIG.local.BAT</code>.</td>
+</tr>
+<tr>
+<td><code>WARNING: RELEASE\ holds ... item(s) from an older kit build</code></td>
+<td>Files left loose in <code>RELEASE\</code> by a kit before v0.12.0. Delete them - see <a href="#updating-the-kit">Updating the kit</a>.</td>
 </tr>
 <tr>
 <td><code>differ only by case - keep one</code></td>
@@ -448,7 +587,7 @@ power-cycle to try again.</p>
 <tbody>
 <tr>
 <td><code>NextDAAD: DDB missing - E1</code></td>
-<td>There is no <code>GAME.DDB</code> beside the interpreter, or the card could not be read at all. Copy the <strong>contents</strong> of <code>RELEASE\</code> to the card root, not the folder itself.</td>
+<td>There is no <code>GAME.DDB</code> beside the interpreter, or the card could not be read at all. The interpreter looks in the <code>DATA\</code> folder next to the <code>&lt;GAME&gt;.NEX</code> you launched, so keep the game's folder whole: copy the <strong>contents</strong> of <code>RELEASE\</code> to the card root, which puts <code>&lt;GAME&gt;.NEX</code> and its <code>DATA\</code> together in the game's own folder.</td>
 </tr>
 <tr>
 <td><code>NextDAAD: DDB oversize - E2</code></td>
@@ -475,6 +614,112 @@ power-cycle to try again.</p>
 <p>Once a build runs, the game itself may still behave differently from how
 it did on another DAAD interpreter. <a href="platform-notes.html">Platform
 notes</a> is the place to look first.</p>
+<h2 id="updating-the-kit">Updating the kit</h2>
+<p>To update, unzip the new kit over your existing kit folder and let it
+replace files. Moving up from v0.11.x or earlier is the one exception:
+see <a href="#moving-from-v011-to-v0120">Moving from v0.11 to v0.12.0</a> below.</p>
+<p>An update replaces the kit's own files and leaves yours alone.</p>
+<p><strong>Replaced by every update (the kit's files):</strong></p>
+<ul>
+<li><code>CONFIG.BAT</code> and <code>CONFIG.local.BAT.sample</code></li>
+<li>the launchers: <code>BUILD.BAT</code>, <code>RUN.BAT</code>, <code>CLEAN.BAT</code>, <code>EXTERNS.BAT</code>,
+  <code>VIDTUNE.BAT</code> (Linux: <code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code>,
+  <code>vidtune.sh</code>)</li>
+<li>the folders <code>lib\</code>, <code>docs\</code>, <code>externs\</code> and <code>.agents\</code></li>
+<li><code>AGENTS.md</code>, <code>README.txt</code>, <code>xbn.inc</code>, <code>xbnmod.inc</code></li>
+<li><code>nextdaad.nex</code> and <code>intro.nex</code></li>
+<li><code>tools\gfx2next\</code> and <code>tools\vidtools\</code></li>
+<li><code>STARTER\</code>, the starter game</li>
+</ul>
+<p><strong>Never shipped, so never touched (your files):</strong></p>
+<ul>
+<li><code>CONFIG.local.BAT</code></li>
+<li>every game folder of your own, including any extern module sources
+  you keep inside it</li>
+<li><code>RELEASE\</code></li>
+<li>the other tools you installed under <code>tools\</code> (Arkos Tracker, CSpect,
+  ffmpeg, sjasmplus)</li>
+</ul>
+<p><strong>Where your settings belong:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A game's own settings (<code>COLS</code>, <code>COMPRESS</code>, intro and video options, <code>VIDOPTS_NNN</code>)</td>
+<td><code>&lt;GAME&gt;\&lt;GAME&gt;.CFG</code></td>
+</tr>
+<tr>
+<td>Machine settings (<code>TOOLSDIR</code>, tool folders, <code>RUN</code>) and the <code>GAME</code> selector</td>
+<td><code>CONFIG.local.BAT</code></td>
+</tr>
+<tr>
+<td>Nothing</td>
+<td><code>CONFIG.BAT</code> - the update replaces it</td>
+</tr>
+</tbody>
+</table>
+<p>Do not edit anything in <code>STARTER\</code>: copy it (see
+<a href="#starting-a-new-game">Starting a new game</a>).</p>
+<p><strong>A game still in the old layout.</strong> A game whose <code>.DSF</code> sits loose in
+the kit folder, as every game did before v0.12.0, still builds. But
+its pictures, audio and other files sit in the kit folder too, among the
+kit's own files, and any setting you changed in <code>CONFIG.BAT</code> is lost at
+the next update. The safe course is to move the game into a game folder
+of its own, and any <code>VIDOPTS_NNN</code> lines into its <code>.CFG</code>, before you rely
+on updates - the steps below do exactly that.</p>
+<p>The build also warns when <code>RELEASE\</code> still holds loose files from a
+build made by an older kit:</p>
+<pre><code>WARNING: RELEASE\ holds 12 item(s) from an older kit build - delete them; each game now builds into RELEASE\MYGAME\
+</code></pre>
+<p>The build never deletes them for you. Delete them yourself, so they do
+not end up on your card.</p>
+<h3 id="moving-from-v011-to-v0120">Moving from v0.11 to v0.12.0</h3>
+<p>Do this one update into a <strong>new, empty folder</strong>, not over the old kit.
+Unzipped over a v0.11 kit, v0.12.0 would leave the old starter files
+(<code>STARTER.DSF</code>, <code>IMAGES\</code> and the rest) loose in the kit folder, and
+with <code>GAME</code> blank a loose <code>.DSF</code> makes the build use the old layout.</p>
+<ol>
+<li>Unzip v0.12.0 into a new folder beside your old kit.</li>
+<li>In the new kit folder, make a folder named after your game, matching
+   its <code>.DSF</code> - for <code>MYGAME.DSF</code>, make <code>MYGAME\</code>. From the old kit
+   folder, copy into it: the <code>.DSF</code> and any source files it includes,
+   <code>IMAGES\</code>, <code>AUDIO\</code>, <code>VIDEO\</code>, <code>INTRO.TXT</code>, <code>HINTS.TXT</code>, the <code>DAAD.*</code>
+   title files, the <code>FONT*</code> and <code>POINTER*</code> files, <code>GAME.XBN</code>, and any
+   <code>PART2\</code> to <code>PART9\</code> folders. Copy only the ones your game has.</li>
+<li>Compare your old <code>CONFIG.BAT</code> with the <code>CONFIG.BAT</code> from the v0.11
+   kit zip as it was shipped, and copy across only the lines you
+   changed. Game settings (<code>COLS</code>, <code>COMPRESS</code>, intro and video options)
+   go into a new <code>MYGAME\MYGAME.CFG</code>. Machine settings (<code>TOOLSDIR</code>, the
+   tool folders, <code>RUN</code>) go into a new <code>CONFIG.local.BAT</code>, made from
+   <code>CONFIG.local.BAT.sample</code>. The v0.11 <code>CONFIG.BAT</code> shipped
+   <code>VIDOPTS_001</code> and <code>VIDOPTS_002</code> lines for the starter's demo clips;
+   leave those behind unless your game uses them.</li>
+<li>From your old <code>CONFIG.local.BAT</code>, if you had one: the <code>VIDOPTS_NNN</code>
+   lines go into <code>MYGAME\MYGAME.CFG</code>, and machine settings go into the
+   new <code>CONFIG.local.BAT</code>. Then add <code>SET GAME=MYGAME</code> to the new
+   <code>CONFIG.local.BAT</code>.</li>
+<li>Copy across the tools you installed under the old kit's <code>tools\</code>
+   folder (Arkos Tracker, CSpect, ffmpeg, sjasmplus), unless they live
+   somewhere else and <code>CONFIG.local.BAT</code> points at them.</li>
+<li>Build. The video encode cache is kept in <code>VIDEO\</code> beside your clips
+   (<code>NNN.vid</code> with its <code>NNN.vid.args</code>), so it moved with <code>VIDEO\</code> in
+   step 2: your cutscenes do not re-encode, as long as the
+   <code>VIDOPTS_NNN</code> lines you moved give the same encoder settings.</li>
+<li>On the SD card, delete your game's old loose files from the card
+   root, then copy the new <code>MYGAME\</code> folder from <code>RELEASE\</code>. Save games
+   made with the old layout go into <code>MYGAME\DATA\</code> to stay loadable.</li>
+<li>Once the new kit builds and runs your game, you can retire the old
+   kit folder.</li>
+</ol>
+<p>If you would rather keep your game in the old layout, skip steps 2 to
+4. It still builds, but an update then leaves your work alone only if
+every setting you changed is in <code>CONFIG.local.BAT</code>. Moving the game
+into its own folder is the better choice.</p>
 </main>
 </body>
 </html>

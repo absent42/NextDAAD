@@ -5,9 +5,9 @@ picture layer.
 
 ## Where pictures go
 
-Put your artwork in `IMAGES\`, named by DAAD picture number:
-`001.png`, `002.png`, and so on. `BUILD.BAT` converts each one and
-stages it in `RELEASE\` under the same number. Your game shows it with
+Put your artwork in your game folder's `IMAGES\`, named by DAAD picture
+number: `001.png`, `002.png`, and so on. `BUILD.BAT` converts each one
+and stages it in `RELEASE\<GAME>\DATA\` under the same number. Your game shows it with
 the ordinary `PICTURE` and `DISPLAY` condacts - nothing about drawing a
 picture is Next-specific.
 
@@ -58,7 +58,7 @@ If you are using 256-wide art, lay your text windows out the classic
 way, inside the paper area - the picture occupies the middle of the
 screen and leaves the border free.
 
-Setting `COMPRESS=1` in `CONFIG.BAT` ZX0-compresses each converted
+Setting `COMPRESS=1` in your game's `<GAME>.CFG` ZX0-compresses each converted
 picture, which makes for a much smaller SD card image. The interpreter
 decompresses on load, so nothing else changes.
 
@@ -752,7 +752,7 @@ A `.NX2`, `.NXI` or `.NX3` (or a compressed form) in `IMAGES\` whose
 name is not a picture number stops the build rather than being ignored, so a file that could never be
 loaded does not pass unnoticed.
 
-**The title screen goes in the kit folder itself**, not in `IMAGES\` -
+**The title screen goes in the game folder itself**, not in `IMAGES\` -
 a ready-made `DAAD.NX2` or `DAAD.NXI`, or a compressed variant. An
 `IMAGES\DAAD.png` wins if you have both.
 

@@ -1,8 +1,15 @@
 # NextDAAD Authoring Kit
 
-This folder builds DAAD text adventures for the ZX Spectrum Next. The game
-is the one `.DSF` file in this folder; `BUILD.BAT` (Windows) or `./build.sh`
-(Linux) compiles it and stages everything in `RELEASE\`.
+This folder builds DAAD text adventures for the ZX Spectrum Next. Each game
+lives in its own game folder, `<GAME>\<GAME>.DSF` plus its `IMAGES\`,
+`AUDIO\`, `VIDEO\` and other files. `SET GAME=<GAME>` in `CONFIG.local.BAT`
+selects the game; `BUILD.BAT` (Windows) or `./build.sh` (Linux) compiles it
+and stages it in `RELEASE\<GAME>\`: `<GAME>.NEX` to launch, everything else
+in `DATA\`.
+
+`STARTER\` is the shipped starter game and every kit update replaces it.
+Never write a game in it: copy it to a new game folder first (rename
+`STARTER.DSF` and `STARTER.CFG` to match) and work on the copy.
 
 Two skills in `.agents/skills/` cover the work. Load the one the task needs
 before starting:
@@ -14,4 +21,6 @@ before starting:
   that the game calls with `EXTERN`, shipped as `GAME.XBN`.
 
 The manual is `docs/index.html`. Do not change anything under `lib/` or
-`tools/`; they are the kit's own build tools.
+`tools/`, or `CONFIG.BAT`; they are the kit's own and an update replaces
+them. A game's settings go in `<GAME>\<GAME>.CFG`, machine settings in
+`CONFIG.local.BAT`.

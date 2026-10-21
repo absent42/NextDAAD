@@ -27,7 +27,7 @@ not a replacement: a game can ship either, both or neither.</p>
   attract loop, and timing that stays right on a 60 Hz display.</li>
 </ul>
 <h2 id="quick-start">Quick start</h2>
-<p>Create <code>INTRO.TXT</code> in the kit folder:</p>
+<p>Create <code>INTRO.TXT</code> in your game folder, beside your <code>.DSF</code>:</p>
 <pre><code>MUSIC AKY AUDIO\STARTER.aks
 SKIP ANY 1.0
 SLIDE DAAD.NX2 IN FADE 1.0 HOLD 4.0
@@ -36,11 +36,14 @@ SLIDE DAAD.NX2 IN CUT HOLD KEY
   TEXT 30 CENTRE &quot;Press any key&quot; INK 254 TYPE
 END FADE 1.0
 </code></pre>
-<p>Run <code>BUILD.BAT</code>. <code>RELEASE\</code> now holds <code>&lt;GAME&gt;.NEX</code> beside <code>nextdaad.nex</code>:
-<strong>launch <code>&lt;GAME&gt;.NEX</code></strong>. It plays the show and starts the game. This
+<p>Run <code>BUILD.BAT</code>. <code>RELEASE\&lt;GAME&gt;\&lt;GAME&gt;.NEX</code> is now the intro launcher,
+and the interpreter moves into <code>DATA\</code> as <code>DATA\nextdaad.nex</code>:
+<strong>launch <code>&lt;GAME&gt;.NEX</code></strong> as before. It plays the show and starts the game. This
 example reuses the starter's own title picture (<code>DAAD.NX2</code>) and its boot
 music (<code>AUDIO\STARTER.aks</code>), which is why it works unmodified.
-<code>INTRO.TXT.sample</code> in the kit folder is this example; rename it to try
+<code>INTRO.TXT.sample</code> in <code>STARTER\</code> is this example; in your own copy of
+the starter (see <a href="getting-started.html#starting-a-new-game">Getting started</a>),
+rename it to <code>INTRO.TXT</code> to try
 it, then point <code>SLIDE</code> at your own 320x256 or 256x192 art - the numbered
 pictures in <code>IMAGES\</code> are a different shape and cannot be used as
 slides. Remove <code>INTRO.TXT</code> and the next build removes the launcher
@@ -48,7 +51,7 @@ again.</p>
 <h2 id="writing-the-script">Writing the script</h2>
 <p>One statement per line. Keywords in any case; <code>;</code> starts a comment. Times
 are seconds with one decimal place. Colours are the same 0 to 255 numbers
-as <a href="colours.html">INK and PAPER</a>. File names are relative to the kit folder,
+as <a href="colours.html">INK and PAPER</a>. File names are relative to your game folder,
 so <code>IMAGES\</code> art and <code>AUDIO\</code> songs can be reused; an <code>INTRO\</code> folder is a
 good home for anything that belongs only to the show.</p>
 <h3 id="before-the-first-slide">Before the first slide</h3>
@@ -226,10 +229,11 @@ three-minute track is about 5.6 MB. The converted stream must come out
 at least 8192 bytes (about a quarter of a second) with an even length;
 the build fails if ffmpeg produces anything shorter or odd-length.</p>
 <p><strong>NDR</strong> plays a NextDAW export with NextDAW's runtime player. The kit
-copies that player from your own NextDAW install into <code>RELEASE\INTRO\</code>
+copies that player from your own NextDAW install into
+<code>RELEASE\&lt;GAME&gt;\DATA\INTRO\</code>
 at build time, because NextDAW's licence lets you ship it inside your
 game but not redistribute it, and the kit never contains it. Set
-<code>NEXTDAWDIR</code> in <code>CONFIG.BAT</code> to the folder holding <code>RuntimePlayer\</code>, or
+<code>NEXTDAWDIR</code> in <code>CONFIG.local.BAT</code> to the folder holding <code>RuntimePlayer\</code>, or
 put your copy under <code>tools\NextDAW\</code>. Only the E000 build of the runtime
 player is accepted - <code>RuntimePlayer\NextDAW_RuntimePlayer_E000.bin</code> - and
 the exported song is capped at 64K. The licence asks for a credit line
@@ -248,14 +252,18 @@ hold is shorter than the next picture takes to load from the card (about
 a second for a 320-wide picture, longer while music streams), the hold
 simply lasts until the picture is ready.</p>
 <h2 id="what-is-on-the-card">What is on the card</h2>
-<p><code>BUILD.BAT</code> writes <code>RELEASE\&lt;GAME&gt;.NEX</code> and a <code>RELEASE\INTRO\</code> folder:
+<p><code>BUILD.BAT</code> writes the launcher as <code>RELEASE\&lt;GAME&gt;\&lt;GAME&gt;.NEX</code>, the
+interpreter as <code>RELEASE\&lt;GAME&gt;\DATA\nextdaad.nex</code>, and a
+<code>RELEASE\&lt;GAME&gt;\DATA\INTRO\</code> folder:
 <code>INTRO.DAT</code> (the compiled script), the pictures as <code>001.NXC</code>, <code>002.NXI</code>
 and so on (<code>NXC</code> is a 320-wide picture stored in the hardware's own order
 and is not interchangeable with a location picture), <code>FONT.TIL</code> for a
 colour font, and one of <code>MUSIC.AKY</code>, <code>MUSIC.AYS</code>, <code>MUSIC.PCM</code> or
-<code>MUSIC.NDR</code> with <code>NDAW.BIN</code>. Copy <code>RELEASE\</code> to the card as usual and
-launch <code>&lt;GAME&gt;.NEX</code>. Launching <code>nextdaad.nex</code> directly still works and
-skips the intro. A game shipping both an intro and a title shows the
+<code>MUSIC.NDR</code> with <code>NDAW.BIN</code>. The intro reads these, the game's
+<code>FONT.CHR</code> and <code>nextdaad.nex</code> from <code>DATA\</code>. Copy the contents of
+<code>RELEASE\</code> to the card as usual and launch <code>&lt;GAME&gt;.NEX</code>. Launching
+<code>DATA\nextdaad.nex</code> directly still works and skips the intro. A game
+shipping both an intro and a title shows the
 intro, then the title.</p>
 <h2 id="when-something-is-missing">When something is missing</h2>
 <p>The launcher never stops a game from starting on a broken or missing

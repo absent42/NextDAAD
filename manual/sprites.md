@@ -23,7 +23,7 @@ reserved flags, no reserved objects, no change to any existing condact.
 **Set numbers are 0 to 254.** 255 is reserved as the stop-all argument.
 Set numbers are their own namespace, nothing to do with picture numbers:
 set 3 and picture 3 are unrelated files. The file is looked for in
-`PARTn\` first and then in the game's root folder, the same probe order
+`PARTn\` first and then in the game's `DATA\` folder, the same probe order
 pictures and `POINTER.SPR` use.
 
 **Positions are picture pixels**, the coordinates you already think in:
@@ -71,7 +71,7 @@ IMAGES\SPRITES\002.png
 IMAGES\SPRITES\002.txt
 ```
 
-The build packs each one into `RELEASE\NNN.ANI` and prints a line
+The build packs each one into `RELEASE\<GAME>\DATA\NNN.ANI` and prints a line
 naming what it made.
 
 **A sheet, `NNN.png`.** A **paletted 8-bit PNG** (colour type 3 - an

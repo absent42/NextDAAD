@@ -12,9 +12,9 @@
 <p>Location pictures and a title screen, drawn on the Next's Layer 2
 picture layer.</p>
 <h2 id="where-pictures-go">Where pictures go</h2>
-<p>Put your artwork in <code>IMAGES\</code>, named by DAAD picture number:
-<code>001.png</code>, <code>002.png</code>, and so on. <code>BUILD.BAT</code> converts each one and
-stages it in <code>RELEASE\</code> under the same number. Your game shows it with
+<p>Put your artwork in your game folder's <code>IMAGES\</code>, named by DAAD picture
+number: <code>001.png</code>, <code>002.png</code>, and so on. <code>BUILD.BAT</code> converts each one
+and stages it in <code>RELEASE\&lt;GAME&gt;\DATA\</code> under the same number. Your game shows it with
 the ordinary <code>PICTURE</code> and <code>DISPLAY</code> condacts - nothing about drawing a
 picture is Next-specific.</p>
 <p><code>IMAGES\DAAD.png</code> is the exception: it is the title screen rather than a
@@ -71,7 +71,7 @@ needs nothing transparent in the artwork itself.</p>
 <p>If you are using 256-wide art, lay your text windows out the classic
 way, inside the paper area - the picture occupies the middle of the
 screen and leaves the border free.</p>
-<p>Setting <code>COMPRESS=1</code> in <code>CONFIG.BAT</code> ZX0-compresses each converted
+<p>Setting <code>COMPRESS=1</code> in your game's <code>&lt;GAME&gt;.CFG</code> ZX0-compresses each converted
 picture, which makes for a much smaller SD card image. The interpreter
 decompresses on load, so nothing else changes.</p>
 <h2 id="nextdither">NextDither</h2>
@@ -774,7 +774,7 @@ then <code>.NX3</code>, each compressed before uncompressed.</p>
 <p>A <code>.NX2</code>, <code>.NXI</code> or <code>.NX3</code> (or a compressed form) in <code>IMAGES\</code> whose
 name is not a picture number stops the build rather than being ignored, so a file that could never be
 loaded does not pass unnoticed.</p>
-<p><strong>The title screen goes in the kit folder itself</strong>, not in <code>IMAGES\</code> -
+<p><strong>The title screen goes in the game folder itself</strong>, not in <code>IMAGES\</code> -
 a ready-made <code>DAAD.NX2</code> or <code>DAAD.NXI</code>, or a compressed variant. An
 <code>IMAGES\DAAD.png</code> wins if you have both.</p>
 <p>Staged-as-is means the kit never saw your source art, so the palette

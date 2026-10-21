@@ -145,7 +145,7 @@ story needs silence. `EXIT 0` silences everything.
 ## A picture, sprite or font silently does nothing
 
 **Rule.** Missing assets are silent at runtime. Check the number in the file
-name and that the converted file exists in `RELEASE\` (for a picture,
+name and that the converted file exists in `RELEASE\<GAME>\DATA\` (for a picture,
 `NNN.NX2` or `NNN.NXI`). `PICTURE n` for a missing picture fails the entry,
 so anything after it in that entry is skipped too.
 
@@ -173,7 +173,10 @@ fallthrough entry that handles the refusal, exactly as STARTER's `TIME` and
 
 ## The build refuses to start
 
-**Symptom.** `set GAME in CONFIG.BAT`.
+**Symptom.** `set GAME in CONFIG.local.BAT (found ... .DSF files and ...
+game folders here, need exactly one)`.
 
-**Rule.** More than one `.DSF` in the kit root. Either keep one, or set
-`GAME=name` in `CONFIG.BAT`.
+**Rule.** `GAME` is blank and there is not exactly one game to pick -
+typically a second game folder after copying `STARTER\`. Put
+`SET GAME=name` (the game folder's name) in `CONFIG.local.BAT`, never in
+`CONFIG.BAT` or a game's `.CFG`.
