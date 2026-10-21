@@ -1,5 +1,5 @@
 ; NextDAAD loader intro launcher. Boots, plays INTRO\INTRO.DAT, chain-loads
-; nextdaad.nex from the launch directory. Every failure before the hand-off
+; nextdaad.nex from DATA\ (else the launch directory). Every failure before the hand-off
 ; ends at the game.
     DEVICE ZXSPECTRUMNEXT
     INCLUDE "intro.inc"

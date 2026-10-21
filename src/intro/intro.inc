@@ -135,6 +135,7 @@ ESX_F_OPEN      equ $9A
 ESX_F_CLOSE     equ $9B
 ESX_F_READ      equ $9D
 ESX_F_SEEK      equ $9F
+ESX_F_CHDIR     equ $A9
 ESX_MODE_READ   equ $01
 
 LOAD_CHUNK      equ 2048        ; bytes per esxDOS read (spike 2 may halve it)
