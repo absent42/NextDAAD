@@ -100,17 +100,7 @@ esx_filemap:
     pop hl
     ret
 
- IFDEF DEBUG
-; DeZog quality-of-life fallback (see ddb_load_debug_retry, below): F_CHDIR
-; ($a9). In: A=drive specifier, IX=ASCIIZ path. Out: CF set + A=esxDOS
-; error code on failure. Only reachable via ddb_load_debug_retry, so
-; DEBUG-only - Release never emits this.
-esx_fchdir:
-    call cardBusy_set
-    rst $08
-    db ESX_F_CHDIR
-    jr cardBusy_clear
- ENDIF
+; esx_fchdir lives in main.asm's resident tail (post-anchor).
 
 ; Load GAME.DDB into 8K pages DDB_PAGE_FIRST.. via slot 6.
 ; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR or DDB_E_MACHINE.
@@ -247,8 +237,8 @@ ddb_load:
 ; the debug payload actually lives (the owner keeps it at DBG_DDB_
 ; FALLBACK_DIR, nextdaad.inc - edit that ONE DEFINE if it ever moves), so
 ; plain ddb_load's first attempt can come back DDB_E_FILE even though the
-; card genuinely has the file. main.asm's boot path calls THIS in place
-; of plain ddb_load (DEBUG only - see main.asm's own IFDEF). On DDB_E_
+; card genuinely has the file. main.asm's ddb_load_boot tail-jumps here
+; in place of plain ddb_load (DEBUG only). On DDB_E_
 ; FILE only, F_CHDIR into the fallback directory and retry ddb_load
 ; exactly once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR/DDB_E_
 ; MACHINE) from the first attempt returns immediately, untouched: a

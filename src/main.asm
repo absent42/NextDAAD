@@ -29,15 +29,7 @@ main:
     call bank_table_init
     call ram_diag
     call bank_selftest
- IFDEF DEBUG
-    ; DeZog quality-of-life: dezogif/serial-launch sessions inherit cwd
-    ; at the SD root - see file.asm's ddb_load_debug_retry (this wraps
-    ; plain ddb_load with a one-shot F_CHDIR-and-retry fallback) for the
-    ; full story. Release keeps the plain, unwrapped call below.
-    call ddb_load_debug_retry
- ELSE
-    call ddb_load
- ENDIF
+    call ddb_load_boot           ; DATA\ first, then the launch folder
     or a
     jr z, .loaded
     dec a
@@ -1610,6 +1602,35 @@ kb_flush_frame:
     pop de
     pop hl
     jp kb_flush
+
+; Boot DDB load: F_CHDIR into DATA\ (a failure is ignored, the launch
+; folder stays current), then the normal loader. Out: as ddb_load.
+ddb_load_boot:
+    ld a, '*'                   ; '*' = default drive
+    ld ix, dataDirName
+    call esx_fchdir
+ IFDEF DEBUG
+    sbc a, a                    ; CF=fail: A = 0 on fail, 1 on success
+    inc a
+    ld (dataDirOk), a
+    jp ddb_load_debug_retry     ; DeZog root-cwd fallback, file.asm
+ ELSE
+    jp ddb_load
+ ENDIF
+
+; F_CHDIR ($A9). In: A = drive spec, IX = ASCIIZ path.
+; Out: CF set + A = esxDOS error on failure.
+esx_fchdir:
+    call cardBusy_set
+    rst $08
+    db ESX_F_CHDIR
+    jp cardBusy_clear           ; preserves A and F
+
+ IFDEF DEBUG
+dataDirOk:  db 0                ; ddb_diag row 5: 1 = DIR DATA
+msgDirData: db " DIR "          ; runs on into dataDirName
+ ENDIF
+dataDirName: db "DATA", 0
 
 ; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
 ; static ret table here every call and runs the chain with SP on it, so an
