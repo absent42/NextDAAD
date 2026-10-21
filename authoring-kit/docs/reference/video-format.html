@@ -116,7 +116,9 @@ needs none of the Python stack - only ffmpeg.</p>
 </code></pre>
 <p>In the kit, BUILD.BAT runs this automatically for any numeric-named
 <code>VIDEO\NNN.mp4</code> (see <code>lib\build.ps1</code> / <code>lib\video.ps1</code>; configured by
-<code>VIDASPECT</code>/<code>VIDFPS</code>/<code>VIDOPTS</code>/<code>VIDOPTS_NNN</code> in <code>CONFIG.BAT</code>); run it
+<code>VIDASPECT</code>/<code>VIDFPS</code>/<code>VIDOPTS</code>/<code>VIDOPTS_NNN</code> in the game's
+<code>&lt;GAME&gt;\&lt;GAME&gt;.CFG</code>, or in <code>CONFIG.local.BAT</code> for a game in the flat
+layout of kits before v0.12.0; <code>CONFIG.BAT</code> lists the defaults); run it
 by hand for per-file control or clipping.</p>
 <h2 id="shapes">Shapes</h2>
 <table>

@@ -4,10 +4,12 @@ The `MOUSE` condact drives a hardware sprite pointer: showing and hiding
 it, reading its position and buttons, and installing your own pointer
 artwork in place of the default arrow.
 
-A custom pointer is a `POINTER.SPR` file dropped into the kit folder,
+A custom pointer is a `POINTER.SPR` file dropped into your game folder,
 staged to the release untouched. Up to nine further numbered variants
 can sit beside it and be switched from your source while the game runs.
-This is optional - with no `POINTER.SPR` the default arrow plays.
+The build stages them into the game's `DATA\` folder. (A game still in
+the flat layout of kits before v0.12.0 keeps them loose in the kit
+folder.) This is optional - with no `POINTER.SPR` the default arrow plays.
 
 The pointer moves over the whole 320x256 display, border included, in
 both picture modes; `RESETMS` parks it at the display's centre. Its tip
@@ -39,7 +41,7 @@ idiom `SFX` uses for a sub-command it does not recognise.
 
 ## Custom mouse pointer
 
-Put a `POINTER.SPR` in the kit folder and the interpreter installs it
+Put a `POINTER.SPR` in your game folder and the interpreter installs it
 into hardware sprite slot 0 in place of the default arrow. The next
 `MOUSE 1` (`SHOWMS`) in your game picks it up automatically; no source
 changes are needed.
@@ -72,7 +74,7 @@ the hotspot within the bitmap if you want it elsewhere - see
 ### Numbered pointer shapes
 
 `POINTER.SPR` is shape 0, the base. Nine more can sit beside it in the
-kit folder: `POINTER1.SPR` to `POINTER9.SPR`. `MOUSE n 5` (`POINTERMS`)
+game folder: `POINTER1.SPR` to `POINTER9.SPR`. `MOUSE n 5` (`POINTERMS`)
 installs shape `n` and re-arms hardware sprite slot 0: `MOUSE 3 5`
 switches to `POINTER3.SPR`; `MOUSE 0 5` returns to the base. It lays the
 built-in arrow down first and only then looks for `POINTER.SPR`, so
@@ -124,7 +126,7 @@ The kit build does this for you: drop a 16x16 indexed PNG at
 `IMAGES\POINTER.png` (or `IMAGES\POINTER1.png` to `IMAGES\POINTER9.png`,
 for the numbered shapes above) and the build converts and stages it
 automatically. The command above is for converting a pointer by hand,
-outside the kit. Either way, a ready-made `.SPR` in the kit folder wins
+outside the kit. Either way, a ready-made `.SPR` in your game folder wins
 over a converted PNG of the same number, so keep only one source per
 shape.
 

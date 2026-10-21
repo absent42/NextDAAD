@@ -15,7 +15,8 @@ module checking the version itself, not the loader. Ship
 `../transcript/GAME.XBN` on its own, or fold it into an
 `EXTERNS.BAT` subset, only in a game that means to record.
 
-To use it: copy this folder's `GAME.XBN` next to your `GAME.DDB`, then add the
+To use it: copy this folder's `GAME.XBN` into your game folder (the build
+stages it beside `GAME.DDB` in `DATA\`), then add the
 DSF lines from whichever module's README you want. Each module documents its
 own `EXTERN` condact fn codes, for example `EXTERN n 30` to arm ticker.
 Function codes and flags are disjoint across the collection, so modules never
@@ -38,7 +39,8 @@ its flag block stays yours.
 | toolkit | 70-84 | `../toolkit/README.md` |
 
 If you would rather ship a smaller binary with only the modules you use, run
-`EXTERNS.BAT` from the kit root - see the collection README.
+`EXTERNS.BAT` from the kit root; it writes `GAME.XBN` into the selected game
+folder - see the collection README.
 
 `CALL` targets are slots in a fixed jump table at `$C00E`, not routine
 addresses: slot n is at `$C00E + 3n`. Slots whose module is not in the build

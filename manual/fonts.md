@@ -1,9 +1,11 @@
 # Fonts
 
-A custom font is a `FONT.CHR` file dropped into the kit folder - not in
+A custom font is a `FONT.CHR` file dropped into your game folder - not in
 `IMAGES\` - staged to the release untouched and installed in place of
 the built-in font at boot. Up to nine further numbered variants can sit
-beside it and be switched from your source while the game runs.
+beside it and be switched from your source while the game runs. The
+build stages them into the game's `DATA\` folder. (A game still in the
+flat layout of kits before v0.12.0 keeps them loose in the kit folder.)
 
 Custom fonts are optional. With no `FONT.CHR` the built-in font plays.
 
@@ -25,7 +27,7 @@ characters 32 to 127 only, 96 glyphs of 8 rows, **768 bytes** (the
 `.ch8` files font collections ship).
 
 Drop a `FONT.ch8` (or `FONT1.ch8` to `FONT9.ch8`, for the numbered fonts
-below) in the kit folder and the kit build converts it for you -
+below) in your game folder and the kit build converts it for you -
 nothing to run by hand. A ready-made `.CHR` of the same number still
 wins over a converted `.ch8`, so a hand-built full table always takes
 priority.
@@ -60,7 +62,7 @@ folder to ship it.
 
 The same converter reads fonts drawn for other machines, and the kit
 build picks those up too: a `FONT.fon`, `.psf`, `.psfu`, `.bdf`,
-`.yaff`, `.draw`, `.spr` or `.fnt` in the kit folder (or `FONT1.*` to
+`.yaff`, `.draw`, `.spr` or `.fnt` in your game folder (or `FONT1.*` to
 `FONT9.*`) is converted the same way a `.ch8` is. The format is read
 from the file itself, not its extension.
 
@@ -97,7 +99,7 @@ pip install monobit
 monobit-convert MyFont.xyz to FONT.bdf
 ```
 
-Then drop the `FONT.bdf` in the kit folder, or run `fontconv.ps1` on it.
+Then drop the `FONT.bdf` in your game folder, or run `fontconv.ps1` on it.
 Fonts from the hoard need no such step - the kit reads them directly.
 The hoard's own licence notes that some of its source folders carry
 their own terms, so check the folder a font came from before shipping
@@ -139,7 +141,7 @@ you genuinely want that.
 
 `fontconv.ps1` warns - it does not refuse - when the font you hand it
 has a non-blank glyph 32, for either input shape. A `FONT.CHR` you place
-in the kit folder without running it through `fontconv.ps1` is never
+in your game folder without running it through `fontconv.ps1` is never
 checked, so check that one yourself if you have edited glyph 32.
 
 ## Numbered fonts and switching at runtime

@@ -12,10 +12,12 @@
 <p>The <code>MOUSE</code> condact drives a hardware sprite pointer: showing and hiding
 it, reading its position and buttons, and installing your own pointer
 artwork in place of the default arrow.</p>
-<p>A custom pointer is a <code>POINTER.SPR</code> file dropped into the kit folder,
+<p>A custom pointer is a <code>POINTER.SPR</code> file dropped into your game folder,
 staged to the release untouched. Up to nine further numbered variants
 can sit beside it and be switched from your source while the game runs.
-This is optional - with no <code>POINTER.SPR</code> the default arrow plays.</p>
+The build stages them into the game's <code>DATA\</code> folder. (A game still in
+the flat layout of kits before v0.12.0 keeps them loose in the kit
+folder.) This is optional - with no <code>POINTER.SPR</code> the default arrow plays.</p>
 <p>The pointer moves over the whole 320x256 display, border included, in
 both picture modes; <code>RESETMS</code> parks it at the display's centre. Its tip
 sits in the text cell <code>GETMS</code> reports.</p>
@@ -81,7 +83,7 @@ idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
 </tbody>
 </table>
 <h2 id="custom-mouse-pointer">Custom mouse pointer</h2>
-<p>Put a <code>POINTER.SPR</code> in the kit folder and the interpreter installs it
+<p>Put a <code>POINTER.SPR</code> in your game folder and the interpreter installs it
 into hardware sprite slot 0 in place of the default arrow. The next
 <code>MOUSE 1</code> (<code>SHOWMS</code>) in your game picks it up automatically; no source
 changes are needed.</p>
@@ -107,7 +109,7 @@ the hotspot within the bitmap if you want it elsewhere - see
 <a href="#mouse-sub-commands">MOUSE sub-commands</a> above.</p>
 <h3 id="numbered-pointer-shapes">Numbered pointer shapes</h3>
 <p><code>POINTER.SPR</code> is shape 0, the base. Nine more can sit beside it in the
-kit folder: <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code>. <code>MOUSE n 5</code> (<code>POINTERMS</code>)
+game folder: <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code>. <code>MOUSE n 5</code> (<code>POINTERMS</code>)
 installs shape <code>n</code> and re-arms hardware sprite slot 0: <code>MOUSE 3 5</code>
 switches to <code>POINTER3.SPR</code>; <code>MOUSE 0 5</code> returns to the base. It lays the
 built-in arrow down first and only then looks for <code>POINTER.SPR</code>, so
@@ -149,7 +151,7 @@ check.</p>
 <code>IMAGES\POINTER.png</code> (or <code>IMAGES\POINTER1.png</code> to <code>IMAGES\POINTER9.png</code>,
 for the numbered shapes above) and the build converts and stages it
 automatically. The command above is for converting a pointer by hand,
-outside the kit. Either way, a ready-made <code>.SPR</code> in the kit folder wins
+outside the kit. Either way, a ready-made <code>.SPR</code> in your game folder wins
 over a converted PNG of the same number, so keep only one source per
 shape.</p>
 <h3 id="exporting-from-a-sprite-editor">Exporting from a sprite editor</h3>
