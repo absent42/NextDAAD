@@ -55,8 +55,8 @@ never passes `-Base` - it always pads against the built-in font - so
 this only applies when you run `fontconv.ps1` yourself. Any other input
 size is an error naming both shapes it accepts.
 
-Put the resulting `FONT.CHR` (or `FONT1.CHR` to `FONT9.CHR`) in the kit
-folder to ship it.
+Put the resulting `FONT.CHR` (or `FONT1.CHR` to `FONT9.CHR`) in your game
+folder (in the old flat layout, the kit folder) to ship it.
 
 ## Other font formats
 
@@ -146,10 +146,10 @@ checked, so check that one yourself if you have edited glyph 32.
 
 ## Numbered fonts and switching at runtime
 
-`FONT.CHR` is font 0, the base. Nine more can sit beside it in the kit
-folder: `FONT1.CHR` to `FONT9.CHR` (ready-made, or converted from
-`FONT1.ch8` to `FONT9.ch8` as above). Nothing on disk selects one - `GFX n 16` in your
-source installs font `n` while the game runs. `GFX 3 16` switches to
+`FONT.CHR` is font 0, the base. Nine more can sit beside it in the game
+folder (in the old flat layout, the kit folder): `FONT1.CHR` to
+`FONT9.CHR` (ready-made, or converted from `FONT1.ch8` to `FONT9.ch8` as
+above). Nothing on disk selects one - `GFX n 16` in your source installs font `n` while the game runs. `GFX 3 16` switches to
 `FONT3.CHR`; `GFX 0 16` returns to the base. A missing or wrong-size
 file is a silent no-op: whatever font is currently installed stays, and
 the game plays on.

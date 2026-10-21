@@ -51,8 +51,8 @@ the built-in font. The kit build's own automatic <code>.ch8</code> conversion ab
 never passes <code>-Base</code> - it always pads against the built-in font - so
 this only applies when you run <code>fontconv.ps1</code> yourself. Any other input
 size is an error naming both shapes it accepts.</p>
-<p>Put the resulting <code>FONT.CHR</code> (or <code>FONT1.CHR</code> to <code>FONT9.CHR</code>) in the kit
-folder to ship it.</p>
+<p>Put the resulting <code>FONT.CHR</code> (or <code>FONT1.CHR</code> to <code>FONT9.CHR</code>) in your game
+folder (in the old flat layout, the kit folder) to ship it.</p>
 <h2 id="other-font-formats">Other font formats</h2>
 <p>The same converter reads fonts drawn for other machines, and the kit
 build picks those up too: a <code>FONT.fon</code>, <code>.psf</code>, <code>.psfu</code>, <code>.bdf</code>,
@@ -128,10 +128,10 @@ has a non-blank glyph 32, for either input shape. A <code>FONT.CHR</code> you pl
 in your game folder without running it through <code>fontconv.ps1</code> is never
 checked, so check that one yourself if you have edited glyph 32.</p>
 <h2 id="numbered-fonts-and-switching-at-runtime">Numbered fonts and switching at runtime</h2>
-<p><code>FONT.CHR</code> is font 0, the base. Nine more can sit beside it in the kit
-folder: <code>FONT1.CHR</code> to <code>FONT9.CHR</code> (ready-made, or converted from
-<code>FONT1.ch8</code> to <code>FONT9.ch8</code> as above). Nothing on disk selects one - <code>GFX n 16</code> in your
-source installs font <code>n</code> while the game runs. <code>GFX 3 16</code> switches to
+<p><code>FONT.CHR</code> is font 0, the base. Nine more can sit beside it in the game
+folder (in the old flat layout, the kit folder): <code>FONT1.CHR</code> to
+<code>FONT9.CHR</code> (ready-made, or converted from <code>FONT1.ch8</code> to <code>FONT9.ch8</code> as
+above). Nothing on disk selects one - <code>GFX n 16</code> in your source installs font <code>n</code> while the game runs. <code>GFX 3 16</code> switches to
 <code>FONT3.CHR</code>; <code>GFX 0 16</code> returns to the base. A missing or wrong-size
 file is a silent no-op: whatever font is currently installed stays, and
 the game plays on.</p>

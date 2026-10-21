@@ -138,6 +138,8 @@ and Ubuntu, add them with:</p>
 <p>The shipped <code>CONFIG.BAT</code> has <code>RUN=1</code>, so until CSpect is installed each
 build ends with <code>ERROR: CSpect not found</code> after the build succeeds; set
 <code>RUN=0</code> in <code>CONFIG.local.BAT</code> to build without an emulator.</p>
+<p>On a fresh kit the first build makes the starter game; read
+<a href="#where-your-files-go">Where your files go</a> before you start your own.</p>
 <p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code> and <code>vidtune.sh</code> are the
 Linux names of the five <code>.BAT</code> launchers and take the same arguments.</p>
 <p>Two things differ from Windows:</p>
@@ -287,8 +289,9 @@ being told:</p>
 <li>if the kit folder itself holds exactly one <code>.DSF</code>, it builds that game
   in the old single-game layout (see
   <a href="#updating-the-kit">Updating the kit</a>);</li>
-<li>otherwise, if exactly one game folder exists, it builds that one - on a
-  fresh kit that is <code>STARTER\</code>;</li>
+<li>otherwise, if the kit folder holds no loose <code>.DSF</code> and exactly one
+  game folder exists, it builds that one - on a fresh kit that is
+  <code>STARTER\</code>;</li>
 <li>otherwise it stops with <code>set GAME in CONFIG.local.BAT</code>.</li>
 </ul>
 <p>So once you have copied the starter to your own folder there are two
@@ -308,7 +311,9 @@ line into one of the two files below and editing the copy:</p>
   your machine, such as tool folders and <code>RUN</code>, plus the <code>GAME</code>
   selector. Create it from <code>CONFIG.local.BAT.sample</code> the first time.</li>
 </ul>
-<p>Neither file is shipped with the kit, so an update never touches them.
+<p>Your own game's <code>.CFG</code> and <code>CONFIG.local.BAT</code> are never shipped with
+the kit (only the starter's <code>STARTER.CFG</code> is), so an update never
+touches them.
 Both use the same <code>SET NAME=value</code> lines as <code>CONFIG.BAT</code>, and a line
 starting <code>REM</code> is ignored, so a line copies between the three files
 unchanged. The build only reads these files; it never runs them.</p>
@@ -674,7 +679,7 @@ of its own, and any <code>VIDOPTS_NNN</code> lines into its <code>.CFG</code>, b
 on updates - the steps below do exactly that.</p>
 <p>The build also warns when <code>RELEASE\</code> still holds loose files from a
 build made by an older kit:</p>
-<pre><code>WARNING: RELEASE\ holds 12 item(s) from an older kit build - delete them; each game now builds into RELEASE\MYGAME\
+<pre><code>WARNING: RELEASE\ holds 12 item(s) from an older kit build (001.NX2, 002.NX2, 003.NX2, FONT.CHR, GAME.AKY and 7 more) - delete them; each game now builds into RELEASE\MYGAME\
 </code></pre>
 <p>The build never deletes them for you. Delete them yourself, so they do
 not end up on your card.</p>
@@ -692,8 +697,9 @@ with <code>GAME</code> blank a loose <code>.DSF</code> makes the build use the o
    title files, the <code>FONT*</code> and <code>POINTER*</code> files, <code>GAME.XBN</code>, and any
    <code>PART2\</code> to <code>PART9\</code> folders. Copy only the ones your game has.</li>
 <li>Compare your old <code>CONFIG.BAT</code> with the <code>CONFIG.BAT</code> from the v0.11
-   kit zip as it was shipped, and copy across only the lines you
-   changed. Game settings (<code>COLS</code>, <code>COMPRESS</code>, intro and video options)
+   kit zip as it was shipped (re-download the v0.11 kit zip from the
+   releases page if you no longer have it), and copy across only the
+   lines you changed. Game settings (<code>COLS</code>, <code>COMPRESS</code>, intro and video options)
    go into a new <code>MYGAME\MYGAME.CFG</code>. Machine settings (<code>TOOLSDIR</code>, the
    tool folders, <code>RUN</code>) go into a new <code>CONFIG.local.BAT</code>, made from
    <code>CONFIG.local.BAT.sample</code>. The v0.11 <code>CONFIG.BAT</code> shipped
@@ -716,10 +722,12 @@ with <code>GAME</code> blank a loose <code>.DSF</code> makes the build use the o
 <li>Once the new kit builds and runs your game, you can retire the old
    kit folder.</li>
 </ol>
-<p>If you would rather keep your game in the old layout, skip steps 2 to
-4. It still builds, but an update then leaves your work alone only if
-every setting you changed is in <code>CONFIG.local.BAT</code>. Moving the game
-into its own folder is the better choice.</p>
+<p>If you would rather keep your game in the old layout, do step 2 without
+the game folder: copy the same loose game files straight into the new
+kit folder. Skip steps 3 and 4 and keep every setting you changed in
+<code>CONFIG.local.BAT</code>, the one settings file an update leaves alone. It
+still builds, but moving the game into its own folder is the better
+choice.</p>
 </main>
 </body>
 </html>
