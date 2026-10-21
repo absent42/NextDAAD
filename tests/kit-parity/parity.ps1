@@ -126,16 +126,17 @@ if ($Shell) {
 
 $rel = Join-Path $kit 'RELEASE'
 # Runs before -Capture/-NoCompare exits, so the Linux container checks it too.
-$nexOut = Join-Path $rel 'nextdaad.nex'
+# The fixture has an intro, so the interpreter is DATA\nextdaad.nex.
+$nexOut = Join-Path $rel 'PARITY/DATA/nextdaad.nex'
 $nexSrc = Join-Path $kit 'nextdaad.nex'
-if (-not (Test-Path -LiteralPath $nexOut)) { Write-Host 'parity: FAIL - RELEASE has no nextdaad.nex'; exit 1 }
+if (-not (Test-Path -LiteralPath $nexOut)) { Write-Host 'parity: FAIL - RELEASE has no PARITY\DATA\nextdaad.nex'; exit 1 }
 $nexSame = [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($nexOut), [IO.File]::ReadAllBytes($nexSrc))
-if (-not $nexSame) { Write-Host 'parity: FAIL - RELEASE\nextdaad.nex differs from the kit''s nextdaad.nex'; exit 1 }
+if (-not $nexSame) { Write-Host 'parity: FAIL - RELEASE\PARITY\DATA\nextdaad.nex differs from the kit''s nextdaad.nex'; exit 1 }
 Write-Host 'parity: nextdaad.nex is a byte-exact copy of the kit interpreter'
 $sha = [System.Security.Cryptography.SHA256]::Create()
 $lines = foreach ($f in (Get-ChildItem -LiteralPath $rel -File -Recurse)) {
     $relPath = $f.FullName.Substring($rel.Length + 1) -replace '\\', '/'
-    if ($relPath -eq 'nextdaad.nex') { continue }
+    if ($relPath -eq 'PARITY/DATA/nextdaad.nex') { continue }
     $bytes = [IO.File]::ReadAllBytes($f.FullName)
     $hex = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
     "$relPath $($f.Length) $hex"

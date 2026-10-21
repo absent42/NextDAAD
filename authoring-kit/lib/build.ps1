@@ -5,10 +5,12 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 . (Join-Path $PSScriptRoot 'kitconfig.ps1')
 . (Join-Path $PSScriptRoot 'kittools.ps1')
+. (Join-Path $PSScriptRoot 'kitgame.ps1')
 $kitRoot = (Get-Location).Path
 $lib = $PSScriptRoot
+$sep = [IO.Path]::DirectorySeparatorChar
+# First read resolves the game; the re-read with its .CFG is the one used.
 $cfg = Read-KitConfig $kitRoot
-Export-KitConfig $cfg
 function cfg([string]$k) { if ($cfg.ContainsKey($k)) { return [string]$cfg[$k] } else { return '' } }
 function Fail([string[]]$Lines) { foreach ($l in $Lines) { Write-Host $l }; exit 1 }
 # cmd's del ... 2>nul: a file that will not go is left, silently.
@@ -41,15 +43,13 @@ function Invoke-Stage([string]$Script, [hashtable]$Params) {
     return $LASTEXITCODE
 }
 
-# ---- GAME: auto-detect a single .DSF when blank ----
-$game = cfg 'GAME'
-if (-not $game) {
-    $dsfs = @(Get-ChildItem -LiteralPath $kitRoot -File | Where-Object { $_.Name -match '(?i)\.DSF$' })
-    if ($dsfs.Count -ne 1) { Fail "ERROR: set GAME in CONFIG.BAT (found $($dsfs.Count) .DSF files here, need exactly one)" }
-    $game = $dsfs[0].BaseName
-}
-$dsfFile = Find-KitFile $kitRoot "$game.DSF"
-if (-not $dsfFile) { Fail "ERROR: $game.DSF not found in this folder" }
+# ---- GAME: a game folder, or a kit-root .DSF (legacy) ----
+try { $g = Resolve-KitGame $cfg $kitRoot } catch { Fail "$($_.Exception.Message)" }
+$cfg = Read-KitConfig $kitRoot $g.CfgFile
+Export-KitConfig $cfg
+$game = $g.Name
+$src = $g.SrcRoot
+$dsfFile = Find-KitFile $src "$game.DSF"
 
 $t = Resolve-KitTools $cfg $kitRoot
 $drTarget = 'nextdaad'
@@ -143,10 +143,19 @@ foreach ($p in (Test-DsfIncludes $dsfFile.FullName)) {
     if ($OnWindows) { Write-Host "WARNING: $p" } else { Fail "ERROR: $p" }
 }
 
-# ---- prepare RELEASE\ : outputs rebuilt every run are removed ----
+# ---- prepare RELEASE\<GAME>\DATA\ : outputs rebuilt every run are removed ----
 # Pictures, sprite sets, audio and video are left to assets.ps1.
-$rel = Join-Path $kitRoot 'RELEASE'
-if (-not (Test-Path -LiteralPath $rel)) { New-Item -ItemType Directory $rel | Out-Null }
+$relRoot = Join-Path $kitRoot 'RELEASE'
+$relGame = $g.RelGame
+$rel = $g.DataDir
+$gameLbl = "RELEASE\$game"
+$dataLbl = "RELEASE\$game\DATA"
+# A pre-folder kit build left its files in the RELEASE\ root.
+if (Test-Path -LiteralPath $relRoot -PathType Container) {
+    $stale = @(Get-ChildItem -LiteralPath $relRoot -Force | Where-Object { -not $_.PSIsContainer -or $_.Name -match '^(?i)(INTRO|PART[2-9])$' })
+    if ($stale.Count) { Write-Host "WARNING: RELEASE$sep holds $($stale.Count) item(s) from an older kit build - delete them; each game now builds into RELEASE$sep$game$sep" }
+}
+if (-not (Test-Path -LiteralPath $rel)) { New-Item -ItemType Directory -Force $rel | Out-Null }
 
 # assets.ps1 stamps outputs with 100 ns mtime ticks; a coarse filesystem
 # (FAT, exFAT, 9p, drvfs) would rebuild everything or keep stale outputs.
@@ -166,7 +175,8 @@ function Remove-OutDir([string]$name) {
 }
 foreach ($n in 'GAME.DDB', 'FONT.CHR', 'POINTER.SPR', 'GAME.HNT', 'GAME.XBN') { Remove-Quiet (Join-Path $rel $n) }
 foreach ($i in 1..9) { Remove-Quiet (Join-Path $rel "FONT$i.CHR"); Remove-Quiet (Join-Path $rel "POINTER$i.SPR") }
-Remove-Quiet (Join-Path $rel "$game.NEX")
+Remove-Quiet (Join-Path $relGame "$game.NEX")
+Remove-Quiet (Join-Path $rel 'nextdaad.nex')
 Remove-OutDir 'INTRO'
 foreach ($i in 2..9) { Remove-Quiet (Join-Path $rel "GAME$i.DDB"); Remove-OutDir "PART$i" }
 
@@ -207,25 +217,27 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir) {
     }
     return 0
 }
-if ((Invoke-Ddb $dsfFile.Name (Join-Path 'RELEASE' 'GAME.DDB') 'RELEASE') -ne 0) { exit 1 }
+if ((Invoke-Ddb $dsfFile.Name (Join-Path $rel 'GAME.DDB') $rel) -ne 0) { exit 1 }
 
 # ---- pictures, audio, video ----
-if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress }) -ne 0) { exit 1 }
-if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Audio'; Game = $game; S2A = $t.S2A; S2Y = $t.S2Y; S2E = $t.S2E }) -ne 0) { exit 1 }
+if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress; Src = $src; Data = $rel }) -ne 0) { exit 1 }
+if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Audio'; Game = $game; S2A = $t.S2A; S2Y = $t.S2Y; S2E = $t.S2E; Src = $src; Data = $rel }) -ne 0) { exit 1 }
 if (Test-Path -LiteralPath 'VIDEO') {
     if ((Invoke-Stage 'video.ps1' @{}) -ne 0) { exit 1 }
 }
-if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Video' }) -ne 0) { exit 1 }
+if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Video'; Src = $src; Data = $rel }) -ne 0) { exit 1 }
 
-# ---- interpreter ----
-try { Copy-Item -LiteralPath $nexFile -Destination (Join-Path $rel 'nextdaad.nex') -Force }
+# ---- interpreter: <GAME>.NEX, or DATA\nextdaad.nex behind an intro launcher ----
+$introFile = Find-KitFile $src 'INTRO.TXT'
+if ($introFile) { $nexOut = Join-Path $rel 'nextdaad.nex'; $nexLbl = "$dataLbl\nextdaad.nex" }
+else { $nexOut = Join-Path $relGame "$game.NEX"; $nexLbl = "$gameLbl\$game.NEX" }
+try { Copy-Item -LiteralPath $nexFile -Destination $nexOut -Force }
 catch { Fail "ERROR: could not copy interpreter $nexFile" }
-Write-Host '  interpreter -> RELEASE\nextdaad.nex'
+Write-Host "  interpreter -> $nexLbl"
 
-# ---- loader intro: INTRO.TXT into RELEASE\INTRO\ plus RELEASE\<GAME>.NEX ----
-$introFile = Find-KitFile $kitRoot 'INTRO.TXT'
+# ---- loader intro: INTRO.TXT into DATA\INTRO\ plus RELEASE\<GAME>\<GAME>.NEX ----
 if ($introFile) {
-    # introc.ps1 runs gfx2next from inside RELEASE\INTRO\, so GFX goes absolute.
+    # introc.ps1 runs gfx2next from inside DATA\INTRO\, so GFX goes absolute.
     $gfxAbs = if ([IO.Path]::IsPathRooted($t.GFX)) { $t.GFX } else { Join-Path $kitRoot $t.GFX }
     $gfxAbs = [IO.Path]::GetFullPath($gfxAbs)
     if (-not (Test-Path -LiteralPath $gfxAbs)) { Fail "ERROR: gfx2next not found at $gfxAbs - install Gfx2Next, or set GFXDIR in CONFIG.BAT" }
@@ -243,52 +255,52 @@ if ($introFile) {
     }
     Write-Host 'Compiling intro ...'
     $introParams = @{
-        Script = $introFile.FullName; Root = $kitRoot; Out = (Join-Path 'RELEASE' 'INTRO'); Cols = $cols; Gfx = $gfxAbs
+        Script = $introFile.FullName; Root = $src; Out = (Join-Path $rel 'INTRO'); Cols = $cols; Gfx = $gfxAbs
         S2A = $t.S2A; S2Y = $t.S2Y; Ffmpeg = $t.FFMPEG; NdawBin = $t.NDAWBIN
         Palcheck = (Join-Path $lib 'palcheck.ps1'); Aysconv = (Join-Path $lib 'aysconv.ps1')
-        Launcher = $t.INTRONEX; LauncherOut = (Join-Path 'RELEASE' "$game.NEX")
+        Launcher = $t.INTRONEX; LauncherOut = (Join-Path $relGame "$game.NEX")
     }
     if ((Invoke-Stage 'introc.ps1' $introParams) -ne 0) { Fail 'ERROR: intro compile failed - see the message above' }
-    Write-Host "  intro -> RELEASE\INTRO\ and RELEASE\$game.NEX (launch this file)"
+    Write-Host "  intro -> $dataLbl\INTRO\ and $gameLbl\$game.NEX (launch this file)"
 }
 
 # ---- convertible fonts: one source per slot; a ready-made FONT<n>.CHR wins ----
 $fontExts = 'ch8', 'fon', 'psf', 'psfu', 'bdf', 'yaff', 'draw', 'spr', 'fnt'
 $slots = @('') + @(1..9 | ForEach-Object { "$_" })
 foreach ($slot in $slots) {
-    $src = ''; $dup = ''
+    $fsrc = $null; $dup = ''
     foreach ($ext in $fontExts) {
         $cand = "FONT$slot.$ext"
-        $f = Find-KitFile $kitRoot $cand
-        if ($f) { if ($src) { $dup = $f.Name } else { $src = $f.Name } }
+        $f = Find-KitFile $src $cand
+        if ($f) { if ($fsrc) { $dup = $f.Name } else { $fsrc = $f } }
     }
     if ($dup) {
-        Fail @("ERROR: both $src and $dup could be converted to FONT$slot.CHR.",
+        Fail @("ERROR: both $($fsrc.Name) and $dup could be converted to FONT$slot.CHR.",
                '       Remove one, or convert it yourself and drop in a ready-made',
                "       FONT$slot.CHR, which always wins over a converted source.")
     }
-    if ($src) {
-        if ((Invoke-Stage 'fontconv.ps1' @{ In = $src; Out = (Join-Path 'RELEASE' "FONT$slot.CHR") }) -ne 0) { Fail "ERROR: fontconv failed converting $src" }
-        Write-Host "  font $src -> RELEASE\FONT$slot.CHR (converted)"
+    if ($fsrc) {
+        if ((Invoke-Stage 'fontconv.ps1' @{ In = $fsrc.FullName; Out = (Join-Path $rel "FONT$slot.CHR") }) -ne 0) { Fail "ERROR: fontconv failed converting $($fsrc.Name)" }
+        Write-Host "  font $($fsrc.Name) -> $dataLbl\FONT$slot.CHR (converted)"
     }
 }
 
 # ---- ready-made fonts, then pointers, staged as-is ----
 # BUILD.BAT's copy /Y >nul was unchecked: a failure shows and the build goes on.
 function Copy-AsIs([string]$Name, [string]$What, [string]$Note) {
-    $f = Find-KitFile $kitRoot $Name
+    $f = Find-KitFile $src $Name
     if (-not $f) { return }
     Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel $Name) -Force -ErrorAction Continue
-    Write-Host "  $What $Name -> RELEASE\$Name ($Note)"
+    Write-Host "  $What $Name -> $dataLbl\$Name ($Note)"
 }
 foreach ($slot in $slots) { Copy-AsIs "FONT$slot.CHR" 'font' 'ready-made, staged as-is' }
 foreach ($slot in $slots) { Copy-AsIs "POINTER$slot.SPR" 'pointer' 'ready-made, staged as-is' }
 
 # ---- hints and extern ----
-$hintsFile = Find-KitFile $kitRoot 'HINTS.TXT'
+$hintsFile = Find-KitFile $src 'HINTS.TXT'
 if ($hintsFile) {
-    if ((Invoke-Stage 'hintpack.ps1' @{ In = $hintsFile.Name; Out = (Join-Path 'RELEASE' 'GAME.HNT') }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
-    Write-Host "  hints $($hintsFile.Name) -> RELEASE\GAME.HNT"
+    if ((Invoke-Stage 'hintpack.ps1' @{ In = $hintsFile.FullName; Out = (Join-Path $rel 'GAME.HNT') }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
+    Write-Host "  hints $($hintsFile.Name) -> $dataLbl\GAME.HNT"
 }
 Copy-AsIs 'GAME.XBN' 'extern' 'staged as-is'
 
@@ -306,20 +318,20 @@ foreach ($n in 2..9) {
     foreach ($p in (Test-DsfIncludes $pdsfs[0].FullName)) {
         if ($OnWindows) { Write-Host "WARNING: $p" } else { Fail "ERROR: $p" }
     }
-    if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path 'RELEASE' "GAME$n.DDB") (Join-Path 'RELEASE' $part)) -ne 0) { exit 1 }
+    if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path $rel "GAME$n.DDB") (Join-Path $rel $part)) -ne 0) { exit 1 }
     $count = 0
     foreach ($f in Get-KitFiles $part '*') {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
         try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel "PART$n") -Force }
         catch {
-            Fail "ERROR: could not stage PART$n\$($f.Name) into RELEASE\PART$n"
+            Fail "ERROR: could not stage PART$n\$($f.Name) into $dataLbl\PART$n"
         }
         $count++
     }
-    Write-Host "  $count asset(s) staged -> RELEASE\PART$n\"
+    Write-Host "  $count asset(s) staged -> $dataLbl\PART$n\"
 }
 
-Write-Host 'BUILD OK: RELEASE\ is ready to copy to an SD card'
+Write-Host "BUILD OK: RELEASE$sep$game$sep is ready - copy the contents of RELEASE$sep to the root of an SD card"
 if ((cfg 'RUN') -eq '1') {
     # BUILD.BAT exited 0 after RUN.BAT whatever it returned. On Windows a
     # failed run pauses so its error stays readable in a double-clicked console.
