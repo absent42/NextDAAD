@@ -234,22 +234,22 @@ ddb_load:
  IFDEF DEBUG
 ; DeZog quality-of-life (owner's first real hardware DeZog session): a
 ; dezogif/serial DeZog launch inherits cwd at the SD ROOT, not wherever
-; the debug payload actually lives (the owner keeps it at DBG_DDB_
-; FALLBACK_DIR, nextdaad.inc - edit that ONE DEFINE if it ever moves), so
-; plain ddb_load's first attempt can come back DDB_E_FILE even though the
-; card genuinely has the file. main.asm's ddb_load_boot tail-jumps here
-; in place of plain ddb_load (DEBUG only). On DDB_E_
-; FILE only, F_CHDIR into the fallback directory and retry ddb_load
-; exactly once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR/DDB_E_
-; MACHINE) from the first attempt returns immediately, untouched: a
-; database that IS there but is built for another target is found on
-; the spot, and the fallback directory is never consulted for it. If
-; the F_CHDIR itself fails, or the retried ddb_load STILL comes back
-; DDB_E_FILE (or any other code), the retry's own return value is passed
-; straight through - the net effect is identical to plain ddb_load, plus
-; this one extra attempt. A normal Browser launch (cwd already holds
-; GAME.DDB) never reaches the F_CHDIR at all: the first ddb_load already
-; returns DDB_OK and this returns immediately, same as it always has.
+; the debug payload actually lives (the owner keeps it at
+; DBG_DDB_FALLBACK_DIR, nextdaad.inc - edit that ONE DEFINE if it ever
+; moves), so plain ddb_load's first attempt can come back DDB_E_FILE even
+; though the card genuinely has the file. main.asm's ddb_load_boot
+; tail-jumps here in place of plain ddb_load (DEBUG only). On DDB_E_FILE
+; only, F_CHDIR into the fallback directory and retry ddb_load exactly
+; once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR/DDB_E_MACHINE) from
+; the first attempt returns immediately, untouched: a database that IS
+; there but is built for another target is found on the spot, and the
+; fallback directory is never consulted for it. If the F_CHDIR itself
+; fails, or the retried ddb_load STILL comes back DDB_E_FILE (or any other
+; code), the retry's own return value is passed straight through - the net
+; effect is identical to plain ddb_load, plus this one extra attempt. A
+; normal Browser launch (cwd already holds GAME.DDB) never reaches the
+; F_CHDIR at all: the first ddb_load already returns DDB_OK and this
+; returns immediately, same as it always has.
 ; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR or DDB_E_MACHINE -
 ; identical contract to ddb_load.
 ddb_load_debug_retry:

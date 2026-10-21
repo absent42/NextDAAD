@@ -12,7 +12,6 @@ esx_init:
     rst $08
     db ESX_F_CHDIR
     ret
-introDataDir: db "DATA", 0
 
 ; HL = ASCIIZ name in resident RAM. Out: CF set, or A = handle.
 esx_open_name:
@@ -65,3 +64,4 @@ name_intro:
     ld hl, nameBuf
     ret
 introDir: db "INTRO", 92
+introDataDir: db "DATA", 0

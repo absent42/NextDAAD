@@ -416,7 +416,7 @@ ddb_diag:
     ld a, (dataDirOk)
     or a
     jr nz, .dir
-    ld hl, msgDirRoot
+    ld hl, msgDirKept
 .dir:
     call dbg_puts
     ld b, 6
@@ -837,7 +837,7 @@ msgRam1M:     db "RAM 768K FREE ", 0
 msgBanksOk:   db "BANKS OK", 0
 msgBanksFail: db "BANKS FAIL ", 0
 msgDdb:      db "GAME.DDB SIZE ", 0
-msgDirRoot:  db " DIR ROOT", 0
+msgDirKept:  db " DIR KEPT", 0
 msgVer:      db "VER ", 0
 msgTgt:      db " TGT ", 0
 

@@ -1629,6 +1629,7 @@ esx_fchdir:
  IFDEF DEBUG
 dataDirOk:  db 0                ; ddb_diag row 5: 1 = DIR DATA
 msgDirData: db " DIR "          ; runs on into dataDirName
+    ASSERT msgDirData + 5 == dataDirName
  ENDIF
 dataDirName: db "DATA", 0
 
