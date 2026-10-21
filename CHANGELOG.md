@@ -4,11 +4,11 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.12.0 unreleased
 
-- Positioned Layer 2 pictures (NXP): a picture drawn at a fixed X,Y or
+- Positioned Layer 2 pictures (NX3): a picture drawn at a fixed X,Y or
   floating in the current text window, any size that fits, that changes
   only its own rectangle and applies only its own palette range.
-  Plain NXI/NX2 pictures are unchanged. Files are NNN.NXP, NNN.NXP.ZX0
-  or NNN.NPZ: a 16-byte header (placement, size, palette range) before
+  Plain NXI/NX2 pictures are unchanged. Files are NNN.NX3, NNN.NX3.ZX0
+  or NNN.N3Z: a 16-byte header (placement, size, palette range) before
   the usual palette and pixels, probed after the plain shapes. A
   positioned picture in the other Layer 2 mode clears the screen and
   switches mode; drawn in GFX 4 buffer mode it stays hidden until
@@ -18,15 +18,15 @@ All notable changes to NextDAAD are recorded here.
   cancels, as does DISPLAY n with n other than 0. RESTART and LOAD do
   not cancel.
 - kit: IMAGES\NNN.png with an NNN.txt sidecar (at=X,Y or at=window,
-  palette=F-L or none, mode=256 or 320) builds NNN.NXP; unknown sidecar
-  keys fail the build. Ready-made NXP files are staged after a header
+  palette=F-L or none, mode=256 or 320) builds NNN.NX3; unknown sidecar
+  keys fail the build. Ready-made NX3 files are staged after a header
   check. A game with positioned pictures must use one Layer 2 mode (the
   title does not count); a game without them builds as before. A .txt
   in IMAGES\ with a digit in its name and no PNG of the same name fails
-  the build. palcheck reports NXP pixels outside the declared palette
+  the build. palcheck reports NX3 pixels outside the declared palette
   range.
 - manual: Graphics gains "Positioned pictures"; the picture-format
-  reference documents NXP for converter writers; platform notes cover
+  reference documents NX3 for converter writers; platform notes cover
   GFX 7, 8 and 15 on ported games.
 - kit: interpreter rebuilt.
 - externs/fade: flag 241 = 255 makes `EXTERN c 40` and `EXTERN 0 41`
