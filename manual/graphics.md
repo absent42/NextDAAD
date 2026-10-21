@@ -148,8 +148,9 @@ whole display, edge to edge, and the old ULA screen is switched off
 underneath it - so the interpreter colours the area the picture and the
 text do not reach instead. The result on screen is the one you expect.
 
-320-wide art covers the border area as well, so `BORDER` only shows in a
-game laid out the classic way.
+320-wide art covers the border area as well, so in a 320-wide game
+`BORDER` shows only where no picture has drawn (below a short picture,
+or around positioned pictures on a cleared screen).
 
 ## Text colours are never at risk
 
@@ -186,9 +187,14 @@ described above: columns 8 to 71 is 64 cells, 64 x 4 = 256 pixels
 across, and rows 4 to 27 is 24 cells, 24 x 8 = 192 pixels down.
 
 A [positioned picture](#positioned-pictures) is placed on the screen at
-its own X and Y, so work the hole out the same way and then subtract the
-picture's X from `left` and its Y from `top`: the hole is counted from
-the picture's own top-left corner.
+its own X and Y, so its hole is counted from the picture's own top-left
+corner. Work out `left` and `top` as above - for a picture in the
+256x192 mode, taking 8 off the column and 4 off the row first - then
+subtract the picture's X from `left` and its Y from `top`. A floating
+picture has X and Y of 0 in its header and sits at its window's corner,
+so subtract the window's corner instead: `left = (column - window
+column) x 4`, `top = (row - window row) x 8`. In 40-column mode a
+column is 8 pixels, not 4.
 
 **The colour has to be in slot 255.** Only that slot is transparent. The
 same magenta anywhere else in your palette comes out opaque, with
@@ -277,10 +283,10 @@ part of the screen no picture has drawn, or the area outside the picture
 layer altogether. Which areas those are depends on the Layer 2 mode and
 on what has been drawn:
 
-- In a 256-wide game the picture layer covers only character columns 8
+- While the 256x192 mode is showing, the picture layer covers only character columns 8
   to 71 and rows 4 to 27, so transparent paper outside that rectangle
   always shows the border colour.
-- In a 320-wide game the picture layer covers the whole screen, so only
+- While the 320x256 mode is showing, the picture layer covers the whole screen, so only
   what has been drawn decides it. A full-size opaque picture leaves no
   gap, but below a short picture, and outside the rectangles of
   positioned pictures on a cleared screen, transparent paper shows the
@@ -482,7 +488,7 @@ Author against your chosen width from the start, not as an afterthought:
   [positioned picture](#positioned-pictures) lands at its window's
   corner counted in window cells, 8 Layer 2 pixels wide in 40-column
   mode (4 in 80-column mode), so the same `WINAT` puts it twice as far
-  across.
+  from the screen's left edge.
 
 **Flag 29 and flag 62 are unaffected by the width.** The 1991 DAAD
 manual's classic inference - flag 29 under 128 means an 80-column

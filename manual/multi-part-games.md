@@ -28,7 +28,7 @@ builds by default, never touches any of the machinery below.
   part's own shadowed assets.
 
 **Part folders take converted files, not sources.** Put ready-to-use
-`.NX2`, `.NXI`, `.AKY`, `.AYS`, `.WAV`, `.VID`, `GAME.SFB`, `FONT.CHR`
+`.NX2`, `.NXI`, `.NX3`, `.AKY`, `.AYS`, `.WAV`, `.VID`, `GAME.SFB`, `FONT.CHR`
 to `FONT9.CHR` and `POINTER.SPR` to `POINTER9.SPR` files in a `PART<n>\`
 folder - not `.png` or `.aks` sources. Only the main kit folder's `IMAGES\` and `AUDIO\` are
 converted.

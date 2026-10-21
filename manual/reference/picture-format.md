@@ -7,7 +7,8 @@ A file that breaks any rule here is refused by the loader rather than
 misrendered - a rejected picture simply does not appear. Section 6 lists
 what gets refused.
 
-Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI.
+Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI, and the
+palette, pixel and compression rules NX3 shares with them.
 Section 9 describes NX3, the positioned picture: a rectangle of any
 size that draws only its own area. It is a different file, with a
 16-byte header in front.
@@ -42,7 +43,9 @@ Nothing else. No header, no magic number, no footer, no padding. NX3
 puts a 16-byte header before this same layout (section 9).
 
 **Height is derived from the file size**, as `(size - 512) / width`. The
-file must therefore be exactly `512 + width * height` bytes.
+file must therefore be exactly `512 + width * height` bytes. (NX2 and
+NXI. NX3 stores its height in the header and is
+`16 + 512 + width * height` bytes.)
 
 ## 3. Pixel data
 
@@ -167,8 +170,10 @@ fails silently or renders as garbage. Compressors predating ZX0 v2 emit
 v1 unconditionally; a v2-capable compressor needs its `-c` (classic)
 switch.
 
-The compressed bytes must decompress to exactly the layout in section 2.
-For NX3 the header stays uncompressed in front of the stream (section 9).
+A compressed file holds one ZX0 stream or several back to back (Gfx2Next
+writes two: the palette, then the pixels). Together they must
+decompress to exactly the layout in section 2. For NX3 the header stays
+uncompressed in front of the stream or streams (section 9).
 
 Extensions, tried in this order for each picture number, first found
 wins (within each shape, compressed before raw):
@@ -221,7 +226,9 @@ exist for plain-FAT setups without long filenames. Either works.
 - [ ] Width 1 to 256 and height 1 to 192 in mode 0; width 1 to 320 and
       height 1 to 256 in mode 1. A fixed picture also fits at its X and
       Y.
-- [ ] Every pixel inside the declared palette range.
+- [ ] Every pixel other than index 255 inside the declared palette range,
+      unless the range is empty (first greater than last), in which case
+      pixels use whatever the palette already holds.
 - [ ] If compressing, compress only what follows the header (ZX0 v1
       classic). The header is never compressed.
 - [ ] Name it `NNN.NX3` (`NNN.NX3.ZX0` or `NNN.N3Z` compressed).
@@ -261,7 +268,8 @@ Mode 0 coordinates are the classic 256x192 area, as an NXI picture
 covers it. Mode 1 coordinates are the full 320x256 screen, as an NX2
 picture covers it. The authoring kit keeps a game that has positioned
 pictures to one mode; the interpreter switches mode whenever a picture
-of the other mode is displayed (see Extensions below).
+of the other mode is displayed, except while drawing off-screen (see
+Extensions below).
 
 ### Rules for the writer
 
@@ -284,9 +292,9 @@ of the other mode is displayed (see Extensions below).
 
 ### Compression
 
-The header is never compressed. Bytes 16 onward are the ZX0 stream(s)
-exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
-512-byte palette followed by the pixels).
+The header is never compressed. Bytes 16 onward are compressed exactly
+as in section 7: ZX0 classic, one stream or several back to back,
+together decompressing to the 512-byte palette followed by the pixels.
 
 ### Extensions
 

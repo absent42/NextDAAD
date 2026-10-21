@@ -1283,7 +1283,7 @@ GFX_SUB_POS_CANCEL equ 27    ; GFX n 27: cancel armed override
 GFX_SUB_COUNT      equ 28    ; h_gfx bound (was literal 27)
 
 ; NX3 16-byte header, byte offsets
-NX3_MAGIC0  equ 0            ; 'N','X','P', version 1
+NX3_MAGIC0  equ 0            ; 'N','X','3', version 1
 NX3_VERSION equ 3
 NX3_MODE    equ 4            ; 0 = 256x192 space, 1 = 320x256
 NX3_FLAGS   equ 5            ; bit 0 = floating

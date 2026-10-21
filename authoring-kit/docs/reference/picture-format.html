@@ -14,7 +14,8 @@ converter, exporter or paint-tool plugin that emits these files.</p>
 <p>A file that breaks any rule here is refused by the loader rather than
 misrendered - a rejected picture simply does not appear. Section 6 lists
 what gets refused.</p>
-<p>Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI.
+<p>Sections 1 to 8 describe the whole-screen pictures, NX2 and NXI, and the
+palette, pixel and compression rules NX3 shares with them.
 Section 9 describes NX3, the positioned picture: a rectangle of any
 size that draws only its own area. It is a different file, with a
 16-byte header in front.</p>
@@ -63,7 +64,9 @@ offset 512   : W*H bytes  pixel data (1 byte per pixel, row-major)
 <p>Nothing else. No header, no magic number, no footer, no padding. NX3
 puts a 16-byte header before this same layout (section 9).</p>
 <p><strong>Height is derived from the file size</strong>, as <code>(size - 512) / width</code>. The
-file must therefore be exactly <code>512 + width * height</code> bytes.</p>
+file must therefore be exactly <code>512 + width * height</code> bytes. (NX2 and
+NXI. NX3 stores its height in the header and is
+<code>16 + 512 + width * height</code> bytes.)</p>
 <h2 id="3-pixel-data">3. Pixel data</h2>
 <p>One byte per pixel, each byte a palette index 0-255.</p>
 <p><strong>Row-major, in every shape</strong> - <code>width</code> bytes for row 0, then row 1, and
@@ -159,8 +162,10 @@ unreadable and a ZX0 stream carries no version marker, so a v2 file
 fails silently or renders as garbage. Compressors predating ZX0 v2 emit
 v1 unconditionally; a v2-capable compressor needs its <code>-c</code> (classic)
 switch.</p>
-<p>The compressed bytes must decompress to exactly the layout in section 2.
-For NX3 the header stays uncompressed in front of the stream (section 9).</p>
+<p>A compressed file holds one ZX0 stream or several back to back (Gfx2Next
+writes two: the palette, then the pixels). Together they must
+decompress to exactly the layout in section 2. For NX3 the header stays
+uncompressed in front of the stream or streams (section 9).</p>
 <p>Extensions, tried in this order for each picture number, first found
 wins (within each shape, compressed before raw):</p>
 <table>
@@ -253,7 +258,9 @@ exist for plain-FAT setups without long filenames. Either works.</p>
 <li>[ ] Width 1 to 256 and height 1 to 192 in mode 0; width 1 to 320 and
       height 1 to 256 in mode 1. A fixed picture also fits at its X and
       Y.</li>
-<li>[ ] Every pixel inside the declared palette range.</li>
+<li>[ ] Every pixel other than index 255 inside the declared palette range,
+      unless the range is empty (first greater than last), in which case
+      pixels use whatever the palette already holds.</li>
 <li>[ ] If compressing, compress only what follows the header (ZX0 v1
       classic). The header is never compressed.</li>
 <li>[ ] Name it <code>NNN.NX3</code> (<code>NNN.NX3.ZX0</code> or <code>NNN.N3Z</code> compressed).</li>
@@ -339,7 +346,8 @@ offset 528: W*H bytes  pixels (1 byte per pixel, row-major, as section 3)
 covers it. Mode 1 coordinates are the full 320x256 screen, as an NX2
 picture covers it. The authoring kit keeps a game that has positioned
 pictures to one mode; the interpreter switches mode whenever a picture
-of the other mode is displayed (see Extensions below).</p>
+of the other mode is displayed, except while drawing off-screen (see
+Extensions below).</p>
 <h3 id="rules-for-the-writer">Rules for the writer</h3>
 <ul>
 <li>Width 1 to 256 (mode 0) or 1 to 320 (mode 1). Height 1 to 192 (mode 0)
@@ -360,9 +368,9 @@ of the other mode is displayed (see Extensions below).</p>
   text window decides where they land.</li>
 </ul>
 <h3 id="compression">Compression</h3>
-<p>The header is never compressed. Bytes 16 onward are the ZX0 stream(s)
-exactly as for NX2 and NXI (section 7: ZX0 classic, decompressing to the
-512-byte palette followed by the pixels).</p>
+<p>The header is never compressed. Bytes 16 onward are compressed exactly
+as in section 7: ZX0 classic, one stream or several back to back,
+together decompressing to the 512-byte palette followed by the pixels.</p>
 <h3 id="extensions">Extensions</h3>
 <p><code>NNN.NX3.ZX0</code>, <code>NNN.N3Z</code> and <code>NNN.NX3</code> are rows 7 to 9 of the section 7
 table. They are tried after every whole-screen name, so a picture
