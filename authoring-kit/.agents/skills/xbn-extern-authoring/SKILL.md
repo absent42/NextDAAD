@@ -6,7 +6,8 @@ description: "Authoring reference for NextDAAD XBN externs - Z80 machine code a 
 # XBN extern authoring
 
 An XBN extern is Z80 machine code the author writes and ships as `GAME.XBN`
-beside `GAME.DDB`. The interpreter probes for the file once at boot and calls
+beside `GAME.DDB` (in the game's `DATA\` folder on the card; in the kit, put
+it in the game folder and the build stages it there). The interpreter probes for the file once at boot and calls
 into it from the game's own DSF. With no `GAME.XBN` present, externs are
 simply off: no error, no cost, the game plays as if the feature did not
 exist - which is what makes a database written against an extern still
@@ -73,8 +74,10 @@ code.
    load-and-test and nothing more, and only four services are legal inside it.
    See `references/services.md`.
 4. **Build.** Run the folder's `build.ps1` for a standalone binary, or
-   `EXTERNS.BAT ticker fade` from the kit root for a subset - your own
-   module joins by its folder, `EXTERNS.BAT fade ..\mymods\doors`. See
+   `EXTERNS.BAT ticker fade` from the kit root for a subset, written as
+   `GAME.XBN` into the selected game folder - your own module joins by its
+   folder, `EXTERNS.BAT fade MYGAME\mods\doors` (keep it inside the game
+   folder so a kit update never touches it). See
    `references/bundling-and-build.md`.
 5. **Test with a DSF that exercises both branches of every condition** - one
    entry that passes and one that fails, with the flag poisoned before the

@@ -21,9 +21,9 @@ comments walk through every decision.
 
 ## How to build
 
-A prebuilt `GAME.XBN` ships in this directory - copy it next to your
-own `GAME.DDB` on the SD card (or the folder your interpreter boots
-from) and it just works, no toolchain needed.
+A prebuilt `GAME.XBN` ships in this directory - copy it into your game
+folder (the build stages it beside `GAME.DDB` in `DATA\`) and it just
+works, no toolchain needed.
 
 To rebuild after editing the source (build.ps1 finds sjasmplus via its
 -SjasmPlus parameter, then the kit's tools\sjasmplus\, then PATH;

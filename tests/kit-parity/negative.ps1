@@ -1,5 +1,6 @@
-# Each case breaks a fresh fixture kit one way and asserts BUILD refuses
-# with exit 1 and the expected message. Messages are the v0.11.0 wording.
+# Each case sets up a fresh fixture kit one way, runs the launchers and
+# asserts the exit code and message (exit 1 unless OK: or a Windows WARN:).
+# Case lines: name|setup|expect[|verbs[|files]], see negative/cases.txt.
 param([string]$ToolsDir = '', [string]$FfmpegDir = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot)
@@ -10,10 +11,11 @@ $kit = Join-Path $root 'tests/out/kit parity/kit'
 $cases = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'negative/cases.txt') -Encoding ASCII | Where-Object { $_ -and -not $_.StartsWith('#') }
 $failed = 0
 
-function Prepare {
+function Prepare([string]$Layout = '') {
     # Hashtable splat: an array splat of dash-prefixed strings binds
     # positionally, not by name, so -PrepareOnly would land in $ToolsDir.
     $prepArgs = @{ PrepareOnly = $true }
+    if ($Layout) { $prepArgs.Layout = $Layout }
     if ($ToolsDir) { $prepArgs.ToolsDir = $ToolsDir }
     if ($FfmpegDir) { $prepArgs.FfmpegDir = $FfmpegDir }
     & (Join-Path $PSScriptRoot 'parity.ps1') @prepArgs | Out-Null
@@ -40,6 +42,12 @@ function Apply-Setup([string]$setup) {
             }
         }
         elseif ($s -match '^set (\w+)=(.*)$') { Set-Config $Matches[1] $Matches[2] }
+        elseif ($s -match '^write (\S+) (.*)$') {
+            $p = Join-Path $kit $Matches[1]
+            New-Item -ItemType Directory -Force (Split-Path $p) | Out-Null
+            [IO.File]::WriteAllText($p, $Matches[2].Replace('\n', "`n"), [Text.Encoding]::ASCII)
+        }
+        elseif ($s -eq 'layout folder') { throw "negative: 'layout folder' must be the first setup step" }
         elseif ($s -eq 'stub-ndrc') {
             $stub = Join-Path $kit 'ndrc-stub'
             if ($onWindows) {
@@ -88,7 +96,9 @@ function Apply-Setup([string]$setup) {
         else { throw "negative: unknown setup step '$s'" }
     }
 }
-function Run-Build {
+# Verb build, run or clean: the kit launcher of that name.
+function Run-Launcher([string]$Verb) {
+    if ($Verb -notin 'build', 'run', 'clean') { throw "negative: unknown verb '$Verb'" }
     Push-Location $kit
     # A native tool's stderr becomes a terminating error under -Stop merged
     # with 2>&1, even on exit code 0 (parity.ps1's Invoke-Launcher note).
@@ -98,34 +108,52 @@ function Run-Build {
         if ($onWindows) {
             $drv = [IO.Path]::GetFullPath((Join-Path (Split-Path $kit) 'launch-neg.cmd'))
             $kitFull = [IO.Path]::GetFullPath($kit)
-            [IO.File]::WriteAllText($drv, "@cd /d `"$kitFull`"`r`n@call `"$kitFull/BUILD.BAT`" < nul`r`n@exit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
+            [IO.File]::WriteAllText($drv, "@cd /d `"$kitFull`"`r`n@call `"$kitFull/$($Verb.ToUpperInvariant()).BAT`" < nul`r`n@exit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
             $out = (& cmd /c $drv 2>&1 | ForEach-Object { "$_" }) -join "`n"
-        } else { $out = (& sh ./build.sh 2>&1 | ForEach-Object { "$_" }) -join "`n" }
+        } else { $out = (& sh "./$Verb.sh" 2>&1 | ForEach-Object { "$_" }) -join "`n" }
         return @{ Code = $LASTEXITCODE; Out = $out }
     } finally { $ErrorActionPreference = $prevEap; Pop-Location }
 }
 $skipped = 0
+# name|setup|expect[|verbs[|files]]
 foreach ($case in $cases) {
-    $name, $setup, $expect = $case.Split('|', 3)
+    $fields = $case.Split('|', 5)
+    $name, $setup, $expect = $fields[0..2]
+    $verbs = @('build')
+    if ($fields.Count -gt 3 -and $fields[3].Trim()) { $verbs = @($fields[3].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    $files = @()
+    if ($fields.Count -gt 4) { $files = @($fields[4].Split(' ') | Where-Object { $_ }) }
+    $layout = ''
+    if ($setup -match '^\s*layout folder\s*(;|$)') { $layout = 'folder'; $setup = $setup -replace '^\s*layout folder\s*;?', '' }
     $script:spawned = $null
     try {
-        Prepare
-        Apply-Setup $setup
+        Prepare $layout
+        if ($setup.Trim()) { Apply-Setup $setup }
         # Counted after setup: a case's own stand-in CSpect is in both counts.
         # Linux names the process CSpect.exe (its command line, via Test-CSpectRunning's pgrep match).
         $before = @(Get-Process -Name 'CSpect*' -ErrorAction SilentlyContinue).Count
-        $r = Run-Build
+        foreach ($v in $verbs) { $r = Run-Launcher $v }
         $after = @(Get-Process -Name 'CSpect*' -ErrorAction SilentlyContinue).Count
     } finally {
         if ($script:spawned) { Stop-Process -Id $script:spawned.Id -Force -ErrorAction SilentlyContinue; $script:spawned.WaitForExit() }
     }
     $want = $expect.Replace('{sep}', "$sep").Replace('{build}', $buildName) -replace '[\\/]', '/'
     $wantWarn = $want.StartsWith('WARN:')
+    $wantOk = $want.StartsWith('OK:')
     if ($wantWarn) { $want = $want.Substring(5) }
+    if ($wantOk) { $want = $want.Substring(3) }
     # A WARN case builds on Windows; elsewhere build.ps1 fails with ERROR: and the same text.
-    $wantCode = if ($wantWarn -and $onWindows) { 0 } else { 1 }
+    $wantCode = if ($wantOk -or ($wantWarn -and $onWindows)) { 0 } else { 1 }
     $got = $r.Out -replace '[\\/]', '/'
-    $ok = ($r.Code -eq $wantCode) -and $got.Contains($want) -and ($after -eq $before)
+    $fileErr = @()
+    foreach ($fspec in $files) {
+        $fp = Join-Path $kit $fspec.Substring(1)
+        if ($fspec.StartsWith('+') -and -not (Test-Path -LiteralPath $fp)) { $fileErr += "missing $($fspec.Substring(1))" }
+        elseif ($fspec.StartsWith('-') -and (Test-Path -LiteralPath $fp)) { $fileErr += "unexpected $($fspec.Substring(1))" }
+        elseif ($fspec[0] -notin '+', '-') { throw "negative: bad files entry '$fspec'" }
+    }
+    $ok = ($r.Code -eq $wantCode) -and $got.Contains($want) -and ($after -eq $before) -and ($fileErr.Count -eq 0)
+    if ($fileErr.Count) { Write-Host "negative: $name files: $($fileErr -join ', ')" }
     if ($ok) { Write-Host "negative: $name ok" }
     else {
         $failed++

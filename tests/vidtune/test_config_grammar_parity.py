@@ -37,9 +37,10 @@ CONFIG_LOCAL_BAT = (
 
 # Output goes to a UTF-8 file: console encodings differ by host and locale.
 _PROBE_PS1 = (
-    "param([string]$KitConfigPath, [string]$KitRoot, [string]$OutPath)\n"
+    "param([string]$KitConfigPath, [string]$KitRoot, [string]$OutPath,"
+    " [string]$GameCfg = '')\n"
     ". $KitConfigPath\n"
-    "$cfg = Read-KitConfig $KitRoot\n"
+    "$cfg = Read-KitConfig $KitRoot $GameCfg\n"
     "$lines = @($cfg.GetEnumerator() | Sort-Object Name |"
     " ForEach-Object { \"$($_.Name)=$($_.Value)\" })\n"
     "[IO.File]::WriteAllText($OutPath, ($lines -join \"`n\"),"
@@ -88,3 +89,44 @@ def test_kitmodel_matches_kitconfig_ps1(tmp_path):
         assert py_vals["FFMPEGDIR"] == "tools\\ffmpeg\\bin"
     else:
         assert py_vals["FFMPEGDIR"] == "tools/ffmpeg/bin"  # path key: normalised off Windows
+
+
+@pytest.mark.skipif(PS is None, reason="neither pwsh nor powershell is on PATH")
+def test_three_layer_config_matches(tmp_path):
+    from vidtune.kitmodel import parse_config
+    # Each field is set last in a different layer; GAME in the .CFG is dropped.
+    (tmp_path / "CONFIG.BAT").write_bytes(
+        b"SET COLS=80\r\nSET VIDASPECT=base\r\nSET VIDFPS=25\r\n"
+        b"SET VIDOPTS=--base\r\nSET VIDOPTS_001=--b1\r\nSET VIDOPTS_002=--b2\r\n"
+        b"SET VIDPROFILE=baseprof\r\nSET TOOLSDIR=basetools\r\n")
+    game = tmp_path / "G.CFG"
+    game.write_bytes(
+        b"SET COLS=40\r\nSET GAME=OTHER\r\nSET VIDASPECT=game\r\n"
+        b"SET VIDOPTS_001=--g1\r\nSET VIDOPTS_003=--g3\r\nSET VIDFPS=12.5\r\n")
+    (tmp_path / "CONFIG.local.BAT").write_bytes(
+        b"SET GAME=G\r\nSET RUN=0\r\nSET VIDFPS=50\r\nSET VIDOPTS_002=\r\n"
+        b"SET VIDPROFILE=localprof\r\n")
+
+    probe = tmp_path / "probe.ps1"
+    probe.write_text(_PROBE_PS1, newline="")
+    out = tmp_path / "probe-out.txt"
+    r = subprocess.run(
+        [PS, "-NoProfile", "-File", str(probe),
+         "-KitConfigPath", str(KITCONFIG_PS1), "-KitRoot", str(tmp_path),
+         "-OutPath", str(out), "-GameCfg", str(game)],
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ps = dict(ln.partition("=")[::2]
+              for ln in out.read_text(encoding="utf-8").split("\n") if ln)
+    cfg = parse_config(tmp_path / "CONFIG.BAT", game_cfg=game)
+
+    assert cfg.vid_aspect == ps["VIDASPECT"] == "game"
+    assert cfg.vid_fps == ps["VIDFPS"] == "50"
+    assert cfg.vid_opts == ps["VIDOPTS"] == "--base"
+    assert cfg.vidprofile == ps["VIDPROFILE"] == "localprof"
+    assert cfg.toolsdir == ps["TOOLSDIR"] == "basetools"
+    per_ps = {k[len("VIDOPTS_"):]: v for k, v in ps.items()
+              if k.startswith("VIDOPTS_") and v}
+    assert cfg.per_clip == per_ps == {"001": "--g1", "003": "--g3"}
+    assert ps["COLS"] == "40" and ps["GAME"] == "G" and ps["RUN"] == "0"
+    assert parse_config(tmp_path / "CONFIG.BAT").vid_aspect == "base"

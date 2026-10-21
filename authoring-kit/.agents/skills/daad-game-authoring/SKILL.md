@@ -5,20 +5,26 @@ description: "Reference and workflow for writing a DAAD text adventure with the 
 
 # DAAD game authoring for NextDAAD
 
-A game in this kit is one `.DSF` text file in the kit root plus optional
-assets in `IMAGES\`, `AUDIO\` and `VIDEO\`. The build compiles the DSF to
-`GAME.DDB` and stages everything in `RELEASE\`, ready for an SD card or the
-emulator. This skill is the language and the kit in one place; the manual
+A game in this kit is a game folder, `<GAME>\`, holding one `<GAME>.DSF`
+text file plus optional assets in `IMAGES\`, `AUDIO\` and `VIDEO\` inside
+it, and its own settings in `<GAME>\<GAME>.CFG`. `SET GAME=<GAME>` in
+`CONFIG.local.BAT` selects it. The build compiles the DSF to `GAME.DDB`
+and stages everything in `RELEASE\<GAME>\` (`<GAME>.NEX` plus `DATA\`),
+ready for an SD card or the emulator. This skill is the language and the kit in one place; the manual
 in `docs\` is the authority for anything it does not settle.
 
-## Start from STARTER.DSF, not from a blank page
+## Start from a copy of STARTER\, not from a blank page
 
-`STARTER.DSF` in the kit root is a complete, building game skeleton: the
+`STARTER\STARTER.DSF` is a complete, building game skeleton: the
 vocabulary every game needs, all 63 system messages, the standard process
 tables and working examples of pictures, music, samples, video, externs and
-hints. Copy it, rename the copy, and add rooms, objects and entries to it.
-The kit builds the only `.DSF` in the root, so move or delete the original
-when a new one replaces it (or set `GAME=` in `CONFIG.BAT`).
+hints. Every kit update replaces `STARTER\`, so never edit it. Copy the
+whole folder to `MYGAME\`, rename `STARTER.DSF` and `STARTER.CFG` in the
+copy to `MYGAME.DSF` and `MYGAME.CFG` and `AUDIO\STARTER.aks` and
+`AUDIO\STARTER_FX.aks` to `AUDIO\MYGAME.aks` and `AUDIO\MYGAME_FX.aks`, put `SET GAME=MYGAME` in
+`CONFIG.local.BAT` (create it from `CONFIG.local.BAT.sample`), and add
+rooms, objects and entries to `MYGAME\MYGAME.DSF`. With more than one
+game folder the build needs that `GAME` line.
 
 Processes 0, 1 and 2 are the engine's loop: leave them as they are. A game
 lives in process 5 (commands), process 4 (things that happen every turn),
@@ -38,14 +44,14 @@ process 3 (extra text after a room description) and the tail of process 6
    section order and the one-to-one counts. Syntax in
    `references/dsf-source-format.md`.
 3. **Build after every change that touches structure.** Run `BUILD.BAT`
-   (Windows) or `./build.sh` (Linux), or the compiler alone from the kit
-   root when only the DSF changed:
+   (Windows) or `./build.sh` (Linux), or the compiler alone from inside
+   the game folder when only the DSF changed:
 
-       lib\ndrc.exe nextdaad EN GAME.DSF RELEASE\GAME.DDB -v3 -auto-tokens
+       ..\lib\ndrc.exe nextdaad EN MYGAME.DSF ..\RELEASE\MYGAME\DATA\GAME.DDB -v3 -auto-tokens
 
    The first error names the line. `references/dsf-source-format.md` ends
    with the messages you will meet and what each means.
-4. **Play it.** `RUN.BAT` / `./run.sh` launches the emulator on `RELEASE\`.
+4. **Play it.** `RUN.BAT` / `./run.sh` launches the emulator on `RELEASE\<GAME>\`.
    Walk every exit, try every puzzle in the wrong state and the right one,
    and try each verb with no noun. Doubled messages and "I can't do that"
    after a real response are fall-through bugs (`references/pitfalls.md`).
@@ -119,8 +125,9 @@ Load the one the work needs.
   GFX / SFX / MOUSE sub-command tables, audio file naming, video, fonts,
   sprites, externs and hints, XMESSAGE, multi-part games, differences from
   other DAAD interpreters.
-- `references/kit-workflow.md` - where files go, BUILD / RUN / CLEAN,
-  `CONFIG.BAT`, the compile line, build and runtime error messages.
+- `references/kit-workflow.md` - game folders and where files go, BUILD /
+  RUN / CLEAN, `CONFIG.BAT` / `<GAME>.CFG` / `CONFIG.local.BAT`, the
+  compile line, build and runtime error messages.
 - `references/pitfalls.md` - symptoms and the rule behind each.
 
 The manual: `docs\index.html` in the kit root. For an extern of your own,

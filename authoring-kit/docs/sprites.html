@@ -44,7 +44,7 @@ reserved flags, no reserved objects, no change to any existing condact.</p>
 <p><strong>Set numbers are 0 to 254.</strong> 255 is reserved as the stop-all argument.
 Set numbers are their own namespace, nothing to do with picture numbers:
 set 3 and picture 3 are unrelated files. The file is looked for in
-<code>PARTn\</code> first and then in the game's root folder, the same probe order
+<code>PARTn\</code> first and then in the game's <code>DATA\</code> folder, the same probe order
 pictures and <code>POINTER.SPR</code> use.</p>
 <p><strong>Positions are picture pixels</strong>, the coordinates you already think in:
 0 to 319 across by 0 to 255 down in a 320-wide picture mode, 0 to 255 by
@@ -80,7 +80,7 @@ sidecar text file of the same name beside it:</p>
 <pre><code>IMAGES\SPRITES\002.png
 IMAGES\SPRITES\002.txt
 </code></pre>
-<p>The build packs each one into <code>RELEASE\NNN.ANI</code> and prints a line
+<p>The build packs each one into <code>RELEASE\&lt;GAME&gt;\DATA\NNN.ANI</code> and prints a line
 naming what it made.</p>
 <p><strong>A sheet, <code>NNN.png</code>.</strong> A <strong>paletted 8-bit PNG</strong> (colour type 3 - an
 indexed image, not truecolour; anything else is rejected). Frames are

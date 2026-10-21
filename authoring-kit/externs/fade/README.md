@@ -188,8 +188,9 @@ though the picture is already on screen by then.
 
 ## Build
 
-A prebuilt GAME.XBN ships in this directory - copy it beside your
-GAME.DDB and it just works. To rebuild after editing the source:
+A prebuilt GAME.XBN ships in this directory - copy it into your game
+folder (the build stages it beside GAME.DDB in DATA\) and it just works.
+To rebuild after editing the source:
 
     ./build.ps1        (finds sjasmplus via its -SjasmPlus parameter,
                         then the kit's tools\sjasmplus\, then PATH)
@@ -208,7 +209,8 @@ GAME.DDB and it just works. To rebuild after editing the source:
   is parked at its solid end and nothing is stepping.
 - One XBN per game: to combine this with other collection externs, use
   the prebuilt `all/GAME.XBN`, or build a subset with `EXTERNS.BAT`
-  from the kit root - see `externs/README.md`. Nothing is merged by
+  from the kit root, which writes it into the selected game folder - see
+  `externs/README.md`. Nothing is merged by
   hand; fn codes and flags are disjoint across the collection.
 - The fade manipulates the Layer 2 first palette, the interpreter's
   standing convention. The snapshot captures full 9-bit colour - both

@@ -33,7 +33,7 @@
 ;
 ; THE REAL MATERIAL (#T7A rung R, #T7B).
 ;   LADR -> 006.AKY  the kit's own 9-channel tune ("The Last V8",
-;                    authoring-kit\AUDIO\1.aks -> 7487 bytes)
+;                    authoring-kit\STARTER\AUDIO\1.aks -> 7487 bytes)
 ; GAME.AKY is a byte-identical copy of 006.AKY, so boot autoplay
 ; and LADR play the same bytes. This is not a convenience: it is the
 ; EXACT configuration of the 2026-07-23 STOPM sighting. In the kit,

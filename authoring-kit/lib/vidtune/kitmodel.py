@@ -21,11 +21,24 @@ PATH_KEYS = {
 
 
 def find_kit_root(start):
+    # VIDEO\ lives in each game folder now, so lib/video.ps1 marks the kit.
     p = Path(start).resolve()
     for cand in (p, *p.parents):
-        if (cand / "CONFIG.BAT").is_file() and (cand / "VIDEO").is_dir():
+        if (cand / "CONFIG.BAT").is_file() and (cand / "lib" / "video.ps1").is_file():
             return cand
     return None
+
+
+def game_paths(kit_root, game_dir, game_cfg=None):
+    """(video dir, game .CFG or None, VIDOPTS write target) for a game
+    folder, or for the kit root itself in legacy mode."""
+    kit_root, game_dir = Path(kit_root), Path(game_dir)
+    if game_dir.resolve() == kit_root.resolve():
+        return kit_root / "VIDEO", None, kit_root / "CONFIG.local.BAT"
+    # vidtune.ps1 passes Resolve-KitGame's CfgFile (named from the .DSF as
+    # found on disk); the folder name is only a fallback for direct runs.
+    cfg = Path(game_cfg) if game_cfg else game_dir / f"{game_dir.name}.CFG"
+    return game_dir / "VIDEO", cfg, cfg
 
 
 @dataclass
@@ -61,11 +74,17 @@ def _read_sets(path, into):
             into[name] = value
 
 
-def parse_config(config_path, local_path=None):
+def parse_config(config_path, local_path=None, game_cfg=None):
     # Last-wins within and across files, as cmd's SET is. lib/kitconfig.ps1
     # implements the same grammar; tests/kitconfig-selftest.ps1 pins it.
+    # Layers: CONFIG.BAT, game_cfg (GAME dropped), CONFIG.local.BAT.
     vals = {}
     _read_sets(config_path, vals)
+    if game_cfg is not None:
+        game = {}
+        _read_sets(game_cfg, game)
+        game.pop("GAME", None)
+        vals.update(game)
     if local_path is None:
         local_path = Path(config_path).with_name("CONFIG.local.BAT")
     _read_sets(local_path, vals)
@@ -103,9 +122,11 @@ class Clip:
     sidecar: Path
 
 
-def list_clips(kit_root):
+def list_clips(src_root):
+    # src_root holds VIDEO\: the game folder, or the kit root in legacy mode.
     clips = []
-    sources = sorted(list(Path(kit_root, "VIDEO").glob("*.mp4")) + list(Path(kit_root, "VIDEO").glob("*.mkv")))
+    video = Path(src_root, "VIDEO")
+    sources = sorted(list(video.glob("*.mp4")) + list(video.glob("*.mkv")))
     for mp4 in sources:
         if not mp4.stem.isdigit():
             continue

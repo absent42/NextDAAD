@@ -32,7 +32,7 @@ descriptions, help text, endgame text) to XMESSAGE first.</p>
 <h2 id="xmessage-xmes">XMESSAGE / XMES</h2>
 <p>XMESSAGE (adds a trailing newline) and XMES (does not) print text
 stored externally in <code>0.XMB</code>, a file ndrc writes during compilation
-whenever your DSF uses either condact (staged into <code>RELEASE\</code>
+whenever your DSF uses either condact (staged into <code>RELEASE\&lt;GAME&gt;\DATA\</code>
 automatically - see below). Two limits to know:</p>
 <ul>
 <li><strong>No per-call length limit on this target.</strong> The DAAD manual gives
@@ -52,10 +52,11 @@ automatically - see below). Two limits to know:</p>
   leans heavily on XMESSAGE should watch its total external-text
   volume, not just individual message length.</li>
 </ul>
-<p><code>0.XMB</code> is staged into <code>RELEASE\</code> automatically, right after <code>GAME.DDB</code>,
-whenever your DSF uses XMESSAGE or XMES. ndrc writes <code>0.XMB</code> into the
-current working directory during the DDB compile step; <code>lib\build.ps1</code>
-then moves it to <code>RELEASE\0.XMB</code> (or <code>RELEASE\PART&lt;n&gt;\0.XMB</code> for a
+<p><code>0.XMB</code> is staged into <code>RELEASE\&lt;GAME&gt;\DATA\</code> automatically, right after
+<code>GAME.DDB</code>, whenever your DSF uses XMESSAGE or XMES. ndrc writes <code>0.XMB</code>
+into your game folder during the DDB compile step; <code>lib\build.ps1</code>
+then moves it to <code>RELEASE\&lt;GAME&gt;\DATA\0.XMB</code> (or
+<code>RELEASE\&lt;GAME&gt;\DATA\PART&lt;n&gt;\0.XMB</code> for a
 part - see <a href="../multi-part-games.html">Multi-part games</a>), where it must
 sit alongside <code>GAME.DDB</code> on the SD card - without it, XMESSAGE/XMES
 would silently no-op at runtime rather than failing loudly. A DSF with

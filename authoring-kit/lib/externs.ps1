@@ -9,15 +9,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 . (Join-Path $PSScriptRoot 'kitconfig.ps1')
 . (Join-Path $PSScriptRoot 'kittools.ps1')
+. (Join-Path $PSScriptRoot 'kitgame.ps1')
 $kitRoot = (Get-Location).Path
-$cfg = Read-KitConfig $kitRoot
+$cfg0 = Read-KitConfig $kitRoot
+try { $g = Resolve-KitGame $cfg0 $kitRoot } catch { Write-Host "$($_.Exception.Message)"; exit 1 }
+$cfg = Read-KitConfig $kitRoot $g.CfgFile
 Export-KitConfig $cfg
 $t = Resolve-KitTools $cfg $kitRoot
 if (-not $BaseDir) { $BaseDir = $kitRoot }
 # Absolute now: xbnbuild changes directory, and TOOLSDIR defaults relative.
 $sj = if ([IO.Path]::IsPathRooted($t.SJASMPLUS)) { $t.SJASMPLUS } else { Join-Path $kitRoot $t.SJASMPLUS }
 $xb = Join-Path $PSScriptRoot 'xbnbuild.ps1'
-$out = Join-Path $kitRoot 'GAME.XBN'
+$out = Join-Path $g.SrcRoot 'GAME.XBN'
 # -SjasmPlus only when the file exists, so xbnbuild's PATH fallback stays reachable.
 if (Test-Path -LiteralPath $sj -PathType Leaf) { & $xb @Modules -Out $out -BaseDir $BaseDir -SjasmPlus $sj }
 else { & $xb @Modules -Out $out -BaseDir $BaseDir }

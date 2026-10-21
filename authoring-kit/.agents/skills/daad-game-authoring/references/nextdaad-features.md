@@ -62,7 +62,7 @@ picture.
   backgrounds.
 - `GFX 1 18` switches to 40 x 32 text; `GFX 0 18` back to 80 x 32. Issue it
   in the init process before anything is drawn, and set `COLS=40` in
-  `CONFIG.BAT` so the compiler wraps at 40. Same-width switches are no-ops.
+  the game's `<GAME>.CFG` so the compiler wraps at 40. Same-width switches are no-ops.
 
 ### GFX n s
 
@@ -117,7 +117,7 @@ becomes `001.AKY`).
   a game whose only music is `<GAME>.aks` needs no `SFX` at all.
 - Arkos Tracker 3 lives at `tools\ArkosTracker3\tools\` (`SongToAky.exe`,
   `SongToSoundEffects.exe`, `SongToYm.exe`), or set `ARKOSDIR` in
-  `CONFIG.BAT`. Without it no `.aks` converts.
+  `CONFIG.local.BAT`. Without it no `.aks` converts.
 - Arkos Tracker 3 songs must be composed for 3 PSGs (9 channels). Others
   convert but play silently. A song over 10208 bytes must be renamed
   `STREAM_NNN.aks`. The effects bank is at most 2048 bytes.
@@ -165,15 +165,16 @@ reaches the interpreter. One second is `PAUSE 83`; two seconds is
   `GFX n 13` plays once, `GFX n 14` loops until a key. The location picture
   and colours come back by themselves afterwards.
 - Needs a 2MB Next and real hardware; emulators do not play it correctly.
-- Encoding is tuned per clip with `VIDOPTS_NNN=` lines in `CONFIG.BAT`
-  (delete the shipped `VIDOPTS_001` / `VIDOPTS_002` demo lines when the
-  demo clips go). `VIDTUNE.BAT` is the GUI for that.
+- Encoding is tuned per clip with `VIDOPTS_NNN=` lines in the game's
+  `<GAME>.CFG` (delete the `VIDOPTS_001` / `VIDOPTS_002` demo lines copied
+  from `STARTER.CFG` when the demo clips go). `VIDTUNE.BAT` is the GUI for
+  that; it saves to the `.CFG` and refuses to save into `STARTER\`.
 
 ## Fonts
 
 [Manual: fonts](../../../../docs/fonts.html)
 
-- `FONT.CHR` in the kit root: exactly 2048 bytes (256 glyphs x 8 rows).
+- `FONT.CHR` in the game folder: exactly 2048 bytes (256 glyphs x 8 rows).
   Also accepted and auto-converted: `.ch8`, `.fon`, `.psf`, `.psfu`, `.bdf`,
   `.yaff`, `.draw`, `.spr`, `.fnt`. Same for `FONT1.*` to `FONT9.*`.
 - `GFX n 16` swaps to `FONTn.CHR` at runtime, restyling all text at once.
@@ -211,14 +212,14 @@ reaches the interpreter. One second is `PAUSE 83`; two seconds is
 
 Only `MOUSE n 3` and `MOUSE n 4` move the pointer; an `INKEY` loop that
 never polls leaves it frozen. Custom pointer: `POINTER.SPR` (256 bytes,
-16 x 16, RGB332, 227 transparent) in the kit root, or `IMAGES\POINTER.png`.
+16 x 16, RGB332, 227 transparent) in the game folder, or `IMAGES\POINTER.png`.
 
 ## Externs
 
 [Manual: externs](../../../../docs/externs.html)
 
-`EXTERN p fn` calls machine code in `GAME.XBN`. The kit ships a collection
-in the root `GAME.XBN` so these work out of the box. An extern can be a
+`EXTERN p fn` calls machine code in `GAME.XBN`. The starter ships the collection
+as `STARTER\GAME.XBN`, so a game copied from it has these out of the box. An extern can be a
 condition: when the module says no, the entry stops there, so give every
 condition-extern a fallthrough entry that handles the "no". With no
 `GAME.XBN` present every `EXTERN` is a harmless no-op that never fails.
@@ -234,11 +235,12 @@ condition-extern a fallthrough entry that handles the "no". With no
 | 63-65 | timer | Countdowns: 63 arm, 64 stop, `d 65` set an in-game-minute deadline |
 | 66-69 | realtime | Real-time clock: `0 66` snapshot (condition, fails with no RTC), `f 67` field f into flag 238 (0 sec, 1 min, 2 hour, 3 day, 4 month, 5 year, 6 weekday) |
 | 70-84 | toolkit | 70 print flag p as decimal, 71 print 16-bit pair, 72/73 add/sub, 74 compare into 251, 76/77 random pick without repeats, 78 count objects at location, 79 carried weight, 80 object by noun, 82 print HH:MM, 83 MM:SS, 84 set print window |
-| 90-94 | transcript | Session transcript to the card; ships separately, not in the root `GAME.XBN` |
+| 90-94 | transcript | Session transcript to the card; ships separately, not in the starter's `GAME.XBN` |
 
 Codes 3 and 7 are reserved for the interpreter (`XMESSAGE`, `XUNDONE`);
 never write `EXTERN n 3`. Flags 224-251 belong to the collection. A game
-that writes its own module puts it in `externs\` and uses codes 16 and up
+that writes its own module keeps its source inside the game folder (a kit
+update never touches it), builds it with `EXTERNS.BAT`, and uses codes 16 and up
 that no bundled module claims; the `xbn-extern-authoring` skill beside this
 one covers that.
 
@@ -248,10 +250,11 @@ Fade scene change:
 
 ### Hints
 
-`HINTS.TXT` in the kit root: a `[n] label` line starts topic n, each
+`HINTS.TXT` in the game folder: a `[n] label` line starts topic n, each
 blank-line-separated paragraph after it is the next stronger hint. The
 build packs it into `GAME.HNT`. No `_` and no control characters in hint
-text. Progress lives in `GAME.HPR` on the card and is shared by every save.
+text. Progress lives in `GAME.HPR` in the game's `DATA\` folder on the card
+and is shared by every save.
 
 ## XMESSAGE and XMES
 

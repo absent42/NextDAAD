@@ -11,9 +11,9 @@
 <h1 id="video">Video</h1>
 <p>Full-screen, full-motion cutscenes with synchronised audio, in
 NextDAAD's own NXV format.</p>
-<p>Drop a video source in <code>VIDEO\</code>, named by video number. <code>VIDEO\001.mp4</code>
-is encoded by the build to <code>VIDEO\001.vid</code> and staged as
-<code>RELEASE\001.VID</code>; a pre-encoded <code>VIDEO\001.vid</code> with no <code>.mp4</code> beside
+<p>Drop a video source in your game folder's <code>VIDEO\</code>, named by video
+number. <code>VIDEO\001.mp4</code> is encoded by the build to <code>VIDEO\001.vid</code> and
+staged as <code>RELEASE\&lt;GAME&gt;\DATA\001.VID</code>; a pre-encoded <code>VIDEO\001.vid</code> with no <code>.mp4</code> beside
 it is staged as it is. <code>.mkv</code> sources are accepted the same way, with
 the same numeric naming (<code>VIDEO\001.mkv</code>).</p>
 <p>Your game plays one with <code>GFX n 13</code> (play once) or <code>GFX n 14</code> (loop
@@ -177,11 +177,15 @@ next build re-encodes that clip:</p>
 are per-clip decisions - one cutscene may want one route and the next
 another. <code>VIDASPECT</code>, <code>VIDFPS</code> and <code>VIDOPTS</code> apply to <em>every</em> clip in
 the game, so use those only for something you genuinely want everywhere.</p>
-<p>A <code>VIDOPTS_NNN</code> line works in <code>CONFIG.BAT</code> or in <code>CONFIG.local.BAT</code>.
-Any setting in <code>CONFIG.local.BAT</code> overrides the same setting in
-<code>CONFIG.BAT</code> (every key, last wins, and an empty <code>SET NAME=</code> clears it),
-so a <code>VIDOPTS_NNN</code> line in the local file masks the same-numbered line in
-<code>CONFIG.BAT</code>. Lines you write by hand in <code>CONFIG.BAT</code> stay valid.</p>
+<p>Put <code>VIDOPTS_NNN</code> lines, and any <code>VIDASPECT</code>, <code>VIDFPS</code> or <code>VIDOPTS</code>
+line, in your game's own settings file, <code>&lt;GAME&gt;\&lt;GAME&gt;.CFG</code>. Each game
+then keeps its own: video 001 in one game never shares settings with
+video 001 in another. A line in <code>CONFIG.local.BAT</code> would also work, but
+that file is read last and applies to every game you build, so it
+masks the same line in every game's <code>.CFG</code>. Do not put them in
+<code>CONFIG.BAT</code>, which a kit update replaces. See
+<a href="getting-started.html#configuration">Getting started</a> for how the three
+files combine.</p>
 <p><strong>By hand</strong>, for a one-off encode or to cut a clip from a longer source:</p>
 <pre><code>tools\vidtools\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
 </code></pre>
@@ -191,22 +195,32 @@ a <code>VIDEO\001.mp4</code> sitting next to your hand-made <code>VIDEO\001.vid<
 overwrite it on the next build. A <code>.vid</code> with no <code>.mp4</code> beside it is
 used exactly as you made it.</p>
 <p><strong>In the tuner.</strong> <code>VIDTUNE.BAT</code> puts the same settings behind a preview
-window; when you accept an encode it saves the matching <code>VIDOPTS_NNN</code>
-line into <code>CONFIG.local.BAT</code> (created on the first accept, or by Encode
-Stale + Edited when it saves a clip) and never
-edits <code>CONFIG.BAT</code>, so the settings survive a kit update. That local
-line overrides any <code>VIDOPTS_NNN</code> line for the same video in
-<code>CONFIG.BAT</code>. Resetting a clip whose setting comes from <code>CONFIG.BAT</code>
-writes an empty <code>SET VIDOPTS_NNN=</code> to the local file, which clears it.</p>
+window and works on the game <code>GAME</code> selects. When you accept an encode
+it saves the matching <code>VIDOPTS_NNN</code> line into that game's
+<code>&lt;GAME&gt;.CFG</code> (creating the file if it is not there yet, as Encode
+Stale + Edited also does when it saves a clip) and never edits
+<code>CONFIG.BAT</code>, so the settings survive a kit update. Resetting a clip
+removes its line, or writes an empty <code>SET VIDOPTS_NNN=</code> when a
+<code>CONFIG.BAT</code> line needs clearing.</p>
+<p>The tuner refuses to save in two cases, and says why:</p>
+<ul>
+<li><strong>The game is the shipped <code>STARTER\</code>.</strong> A kit update would replace
+  the file and lose your tuning. Copy the starter to your own game
+  folder and tune the copy - see
+  <a href="getting-started.html#starting-a-new-game">Starting a new game</a>.</li>
+<li><strong><code>CONFIG.local.BAT</code> already sets that <code>VIDOPTS_NNN</code>.</strong> That file is
+  read last, so its line would hide what the tuner saved. Move the line
+  from <code>CONFIG.local.BAT</code> into <code>&lt;GAME&gt;.CFG</code>, then accept again.</li>
+</ul>
+<p>A game still in the flat layout of kits before v0.12.0, with its
+<code>.DSF</code> loose in the kit folder, has no <code>.CFG</code>; there the tuner saves in
+<code>CONFIG.local.BAT</code> instead.</p>
 <p><strong>Before you drop your own footage into <code>VIDEO\001.mp4</code> or <code>002.mp4</code>,
-read the <code>VIDOPTS_NNN</code> lines already in <code>CONFIG.BAT</code>.</strong> Those were
-written for the demo clips that ship with the kit. Options that suited
-a cartoon will not suit your footage, and they apply silently to
-whatever file you put in that slot. Editing <code>CONFIG.BAT</code> does not last,
-because a kit update brings the lines back. Instead reset the clip in
-the tuner, which writes an empty <code>SET VIDOPTS_001=</code> to <code>CONFIG.local.BAT</code>
-to mask the line, or write that empty line there yourself. The local
-file survives kit updates.</p>
+read the <code>VIDOPTS_NNN</code> lines already in your <code>&lt;GAME&gt;.CFG</code>.</strong> A game
+copied from the starter keeps the lines written for the starter's demo
+clips. Options that suited a cartoon will not suit your footage, and
+they apply silently to whatever file you put in that slot. Delete them
+from your <code>.CFG</code>, or reset the clip in the tuner.</p>
 <h3 id="the-builds-own-encode-settings">The build's own encode settings</h3>
 <table>
 <thead>
@@ -252,8 +266,8 @@ itself - there is nothing to delete by hand.</p>
 its time squeezing the best picture into the fixed playback budget.
 Expect minutes per clip, once per source change.</p>
 <h2 id="4-the-presets">4. The presets</h2>
-<p>Each one is a complete answer for a class of footage. Copy the
-<code>CONFIG.BAT</code> line, adjust the video number, build.</p>
+<p>Each one is a complete answer for a class of footage. Copy the line
+into your <code>&lt;GAME&gt;.CFG</code>, adjust the video number, build.</p>
 <h3 id="preset-1-quiet-scene">Preset 1 - Quiet scene</h3>
 <p><strong>For:</strong> slow zooms and pans, held shots, talking heads, title cards,
 establishing shots, anything where most of the frame is the same from
@@ -514,8 +528,8 @@ rate is being resampled badly. Check section 5 - if you have set
 <p><strong>Motion that steps rather than flows, but at a steady even cadence.</strong> A
 half-rate encode looks like this and is meant to - Preset 2 trades
 motion for picture size on purpose. If you did not ask for <code>--fps 12.5</code>,
-check that no <code>VIDFPS</code> or <code>VIDOPTS</code> line in <code>CONFIG.BAT</code> is setting it
-for every clip.</p>
+check that no <code>VIDFPS</code> or <code>VIDOPTS</code> line in your <code>&lt;GAME&gt;.CFG</code> or
+<code>CONFIG.local.BAT</code> is setting it for every clip.</p>
 <p><strong>The whole clip runs slow, with the audio popping.</strong> That is a 60Hz
 display, not the encode. Playback is designed for a 50Hz display; on a
 60Hz one, expect slower playback and audio popping. No setting fixes it.</p>
@@ -530,7 +544,8 @@ dither with <code>--dither 0.8</code>. If instead what you are seeing is the dit
 pattern itself, as a fine speckle over flat areas, lower it with
 <code>--dither 0.3</code>. The default is 0.5 and suits most footage.</p>
 <p><strong>Everything looks worse than it did, across every clip.</strong> Check
-<code>VIDOPTS</code> and <code>VIDASPECT</code> in <code>CONFIG.BAT</code> - those apply to every video
+<code>VIDOPTS</code> and <code>VIDASPECT</code> in your <code>&lt;GAME&gt;.CFG</code> and in
+<code>CONFIG.local.BAT</code> - those apply to every video
 in the game. Per-clip settings belong in <code>VIDOPTS_NNN</code>.</p>
 <h2 id="8-if-it-will-not-play">8. If it will not play</h2>
 <p>A cutscene that cannot start prints a short message on screen and the
@@ -547,7 +562,7 @@ for it as soon as the cutscene fails to appear.</p>
 <tbody>
 <tr>
 <td><code>VID FILE?</code></td>
-<td>There is no <code>NNN.VID</code> on the card for that video number. Check the number in your <code>GFX n 13</code>, and check the file reached <code>RELEASE\</code> and then the card.</td>
+<td>There is no <code>NNN.VID</code> on the card for that video number. Check the number in your <code>GFX n 13</code>, and check the file reached <code>RELEASE\&lt;GAME&gt;\DATA\</code> and then the card.</td>
 </tr>
 <tr>
 <td><code>VID FMT?</code></td>
@@ -650,18 +665,19 @@ loaded and played, and what happens to the screen and to game audio
 around it.</p>
 <p>Per-clip tuning has a GUI too: run <code>VIDTUNE.BAT</code>. Pick a clip, preview a
 segment, adjust shape, frame rate, dither and the other knobs above,
-encode and accept - the settings land in <code>VIDOPTS_NNN</code> in
-<code>CONFIG.local.BAT</code>, so the next build reproduces the same encode.</p>
+encode and accept - the settings land in <code>VIDOPTS_NNN</code> in your game's
+<code>&lt;GAME&gt;.CFG</code>, so the next build reproduces the same encode.</p>
 <p>A clip whose settings you have changed but not saved shows as <code>edited</code>
 in the clip list. Revert throws those changes away and goes back to
 the saved settings. Encode Stale + Edited encodes every stale or edited
-clip with the settings you gave it, and saves them to <code>CONFIG.local.BAT</code>
+clip with the settings you gave it, and saves them to <code>&lt;GAME&gt;.CFG</code>
 the same way Accept does.</p>
 <h2 id="the-starter-games-demo-clips">The starter game's demo clips</h2>
-<p><code>VIDEO\001.mp4</code> and <code>VIDEO\002.mp4</code> build with the kit so the video
-condacts work out of the box. 001 encodes at the <code>full</code> 320x256 default;
-002 has <code>SET VIDOPTS_002=--shape 16:9</code> in <code>CONFIG.BAT</code>, the kit's one
-worked example of a per-video option. Try the verbs MOVIE, which plays
+<p><code>STARTER\VIDEO\001.mp4</code> and <code>STARTER\VIDEO\002.mp4</code> build with the kit
+so the video condacts work out of the box. <code>STARTER\STARTER.CFG</code> holds
+a tuned <code>VIDOPTS_NNN</code> line for each, as worked examples of per-video
+options: 001 encodes at the 16:9 shape, 002 at 12.5 frames per second
+on the uncompressed route. Try the verbs MOVIE, which plays
 <code>001.VID</code> once, and REEL, which loops <code>002.VID</code> until a key is pressed.</p>
 </main>
 </body>

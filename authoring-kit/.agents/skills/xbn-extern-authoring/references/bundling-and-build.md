@@ -35,8 +35,9 @@ From the kit root:
 
     EXTERNS.BAT ticker fade ..\mymods\doors
 
-That writes one `GAME.XBN` holding the modules you name to the kit root,
-beside `BUILD.BAT`. Each argument is either:
+That writes one `GAME.XBN` holding the modules you name into the folder of
+the game `GAME` selects (`<GAME>\GAME.XBN`; the kit root for a game in the
+flat layout of kits before v0.12.0). Each argument is either:
 
 - a bare name - a folder under `externs\`: the nine shipped modules
   (`playername`, `ticker`, `fade`, `hints`, `clock`, `timer`,
@@ -48,7 +49,8 @@ beside `BUILD.BAT`. Each argument is either:
   else.
 
 This route puts one step in front of the assembler ladder: it reads
-`SJASMPLUSDIR` from `CONFIG.BAT` (empty by default, which falls back to the
+`SJASMPLUSDIR` from the kit settings (empty by default in `CONFIG.BAT`; set
+it in `CONFIG.local.BAT`; blank falls back to the
 kit's `tools\` folder), turns it into an absolute path, and passes it down
 as `-SjasmPlus` only if that path actually exists. That last condition
 matters - passing it unconditionally would skip the `PATH` fallback and
@@ -203,18 +205,20 @@ same with `XBN_CLAIMS`.
 
 ## Where GAME.XBN goes
 
-On the card, `GAME.XBN` sits beside `GAME.DDB` in the game directory. Nothing
-else is needed: the interpreter probes for it once at boot.
+On the card, `GAME.XBN` sits beside `GAME.DDB` in the game's `DATA\`
+folder. Nothing else is needed: the interpreter probes for it once at boot.
 
 Two ways to get it there:
 
 - **By hand.** Copy a module folder's prebuilt `GAME.XBN` next to your
-  `GAME.DDB` on the card. No assembler, no build step.
-- **Through the kit's build.** Put a `GAME.XBN` in the kit root, beside
-  `BUILD.BAT`. `BUILD.BAT` stages it as-is into `RELEASE\GAME.XBN`, and
-  `RELEASE\`'s contents are what you copy to the card. `EXTERNS.BAT` writes
-  its subset binary to exactly that spot, so a subset build is picked up by
-  the next `BUILD.BAT` with no extra step.
+  `GAME.DDB` in `<GAME>\DATA\` on the card. No assembler, no build step.
+- **Through the kit's build.** Put a `GAME.XBN` in the game folder, beside
+  `<GAME>.DSF`. `BUILD.BAT` stages it as-is into
+  `RELEASE\<GAME>\DATA\GAME.XBN`, and `RELEASE\`'s contents are what you
+  copy to the card. `EXTERNS.BAT` writes its subset binary to exactly that
+  spot, so a subset build is picked up by the next `BUILD.BAT` with no
+  extra step. Keep a game's own module sources inside its game folder too,
+  so a kit update never touches them.
 
 The whole file, header included, must fit in 16384 bytes. The subset builder
 prints the headroom left; the loader rejects anything larger, and rejects it

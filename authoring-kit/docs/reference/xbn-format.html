@@ -313,6 +313,10 @@ tables.</p>
 </tr>
 </tbody>
 </table>
+<p>A bare filename given to <code>SVC_FOPEN</code> opens in the game's <code>DATA\</code> folder,
+beside <code>GAME.DDB</code> - the folder the interpreter reads its own files from
+and writes save games to. A game in the flat layout of kits before
+v0.12.0, with no <code>DATA\</code> folder, opens it beside the launched file.</p>
 <p>Error convention throughout is esxDOS style: carry flag set, error code
 in A. A row's Corrupts column is its contract; only the registers its
 Out column names carry a result. Every service preserves the caller's

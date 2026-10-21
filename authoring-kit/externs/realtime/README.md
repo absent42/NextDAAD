@@ -67,8 +67,8 @@ fourth year in that span is a leap year, 2000 included.
 
 ## The day stamp
 
-`GAME.HST` is two bytes, the packed date, written beside your game on the
-card. fn 68 creates or overwrites it; fn 69 reads it and reports the
+`GAME.HST` is two bytes, the packed date, written in the game's `DATA\`
+folder on the card, beside `GAME.DDB`. fn 68 creates or overwrites it; fn 69 reads it and reports the
 difference:
 
     EXTERN 0 69    ; days since the stamp, into flag 238

@@ -5,6 +5,7 @@ $steps = @(
     @('parity', 'pwsh', (@('-NoProfile', '-File', 'tests/kit-parity/parity.ps1', '-NoCompare') + $tools)),
     @('parity-compress', 'pwsh', (@('-NoProfile', '-File', 'tests/kit-parity/parity.ps1', '-NoCompare', '-Variant', 'compress') + $tools)),
     @('negative', 'pwsh', (@('-NoProfile', '-File', 'tests/kit-parity/negative.ps1') + $tools)),
+    @('kit-fresh-install', 'pwsh', (@('-NoProfile', '-File', 'tests/kit-fresh-install.ps1') + $tools)),
     @('tools-ab', 'pwsh', (@('-NoProfile', '-File', 'tests/kit-parity/tools-ab.ps1', '-Out', '/out/tools-ab.txt') + $tools)),
     @('kit-binaries', 'pwsh', @('-NoProfile', '-File', 'tests/kit-binaries-selftest.ps1')),
     @('kitconfig', 'pwsh', @('-NoProfile', '-File', 'tests/kitconfig-selftest.ps1')),

@@ -24,7 +24,7 @@
 # tools\ArkosTracker3\players\playerAky\doc\AKY.md, cross-checked field by
 # field against the converted player in src\audio\player_aky.asm (the
 # decoder that actually runs) and against a real SongToAky export of
-# authoring-kit\AUDIO\1.aks. The three agree; where AKY.md's bit-field
+# authoring-kit\STARTER\AUDIO\1.aks. The three agree; where AKY.md's bit-field
 # tables are ambiguous the player source was taken as authority:
 #   IS  software-only byte = 0 vvvv n 0 1   -> (vol << 3) | 1
 #       followed by dw softwarePeriod (little-endian, LSB first)

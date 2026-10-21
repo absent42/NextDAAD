@@ -1,7 +1,10 @@
 @echo off
 REM ---- NextDAAD authoring kit configuration ----
-REM Base name of your .DSF (without extension). Leave blank to auto-detect
-REM when exactly one .DSF is present in this folder.
+REM Kit defaults. Do not edit: a kit update replaces this file. Select the
+REM game in CONFIG.local.BAT (SET GAME=MYGAME builds MYGAME\MYGAME.DSF);
+REM blank auto-detects when exactly one game folder is present. Per-game
+REM settings go in <GAME>\<GAME>.CFG and machine settings in
+REM CONFIG.local.BAT; copy only the lines you change.
 SET GAME=
 
 REM 1 = ZX0-compress location graphics (smaller, uses the interpreter depack
@@ -115,12 +118,9 @@ SET VIDOPTS=
 REM Per-video overrides: VIDOPTS_NNN (3-digit video number) appends options
 REM for that video only, after VIDOPTS, and wins over it - including for
 REM the shape, whichever of --shape/--width/--aspect you set. The encode
-REM pass echoes each VIDOPTS_NNN it applies. vidtune saves its per-video
-REM overrides to CONFIG.local.BAT, which wins over this file.
+REM pass echoes each VIDOPTS_NNN it applies. Set them in <GAME>\<GAME>.CFG;
+REM vidtune saves its per-video overrides there, which wins over this file
+REM (STARTER\STARTER.CFG holds worked examples for the demo clips).
 REM The encoder derives each clip's data budget and prints what it chose;
 REM set --stream-budget only to override that - see
 REM docs\reference\video-delivery.html "Streaming, resident and direct delivery".
-REM The two lines below are worked examples for the demo clips - delete
-REM them when you replace 001.mp4 and 002.mp4 with your own footage.
-SET VIDOPTS_002=--fps 12.5 --dither 0.0 --tile-slack 0.5 --direct
-SET VIDOPTS_001=--shape 16:9 --dither 0.25

@@ -1,4 +1,4 @@
-; esxDOS wrappers. Files open relative to the launch directory.
+; esxDOS wrappers. Files open relative to DATA\, else the launch directory.
 esx_init:
     xor a
     rst $08
@@ -7,6 +7,10 @@ esx_init:
     ld a, '*'                    ; '*' is esxDOS F_OPEN's default-drive byte
 .got:                             ; a failed open then shows ERR_NEX_OPEN, not a bad drive
     ld (esxDrive), a
+    ld a, '*'                    ; chdir DATA\; failure is ignored
+    ld ix, introDataDir
+    rst $08
+    db ESX_F_CHDIR
     ret
 
 ; HL = ASCIIZ name in resident RAM. Out: CF set, or A = handle.
@@ -60,3 +64,4 @@ name_intro:
     ld hl, nameBuf
     ret
 introDir: db "INTRO", 92
+introDataDir: db "DATA", 0

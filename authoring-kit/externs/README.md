@@ -5,7 +5,8 @@ self-contained: the assembly source, a prebuilt `GAME.XBN` you can copy
 straight to your card, a `README.md` with the DSF lines that drive it,
 and a `build.ps1` to rebuild after editing.
 
-To use one: copy its `GAME.XBN` next to your `GAME.DDB` and add the DSF
+To use one: copy its `GAME.XBN` into your game folder (beside your
+`.DSF`; the build stages it next to `GAME.DDB` in `DATA\`) and add the DSF
 lines from its README. No assembler needed unless you change the source.
 
 | Extern | What it does | fn codes | Flags used |
@@ -40,11 +41,13 @@ from the kit root:
 
     EXTERNS.BAT ticker fade
 
-This writes `GAME.XBN` to the kit root, beside `BUILD.BAT`. Copy it next to
-your `GAME.DDB` the same as any other extern binary. That needs a Z80
+This writes `GAME.XBN` into the folder of the game that `GAME` selects
+(`<GAME>\GAME.XBN`), where the next build picks it up. For a game in the
+old flat layout, with its `.DSF` loose in the kit root, it goes to the kit
+root instead. That needs a Z80
 assembler. Download sjasmplus from
 https://github.com/z00m128/sjasmplus and extract it into `tools\sjasmplus\`, or
-point `SJASMPLUSDIR` in `CONFIG.BAT` at an install you already have. You do not
+point `SJASMPLUSDIR` in `CONFIG.local.BAT` at an install you already have. You do not
 need it otherwise: every extern here ships a prebuilt `GAME.XBN`, and `all/`
 ships one containing every module except transcript.
 
@@ -52,7 +55,10 @@ Your own modules combine the same way - name the folder that holds one:
 
     EXTERNS.BAT fade ..\mymods\doors
 
-A relative path counts from the folder you ran `EXTERNS.BAT` in. The
+A relative path counts from the folder you ran `EXTERNS.BAT` in. Keep a
+module that belongs to one game inside that game's folder, for example
+`MYGAME\mods\doors\`, so a kit update never touches it; from the kit root
+that is `EXTERNS.BAT fade MYGAME\mods\doors`. The
 shape your module needs is in the manual, `docs\externs.html`, under
 "Your own modules in a subset".
 

@@ -7,16 +7,32 @@ The manual page is [getting started](../../../../docs/getting-started.html).
 
 | What | Where | Notes |
 |---|---|---|
-| The game source | one `*.DSF` in the kit root | Auto-detected when it is the only DSF; otherwise set `GAME=` in `CONFIG.BAT` |
-| Location pictures, title | `IMAGES\NNN.png`, `IMAGES\DAAD.png` | Indexed PNG, 320 or 256 wide |
-| Sprite sheets | `IMAGES\SPRITES\NNN.png` + `NNN.txt` | |
-| Music, effects, samples | `AUDIO\` | `.aks` and `.wav`; see nextdaad-features.md for names |
-| Cutscenes | `VIDEO\NNN.mp4` | |
-| Fonts, pointers, hints, intro | kit root: `FONT.CHR`, `POINTER.SPR`, `HINTS.TXT`, `INTRO.TXT` | |
-| Extra parts | `PART2\` to `PART9\` | One DSF each |
-| Build output | `RELEASE\` | Copy its contents to the SD card root |
+| The game source | `<GAME>\<GAME>.DSF`, in a game folder of its own | Select it with `SET GAME=<GAME>` in `CONFIG.local.BAT`; blank works only while exactly one game folder exists |
+| The game's settings | `<GAME>\<GAME>.CFG` | Same `SET` lines as `CONFIG.BAT`; copy only the lines you change |
+| Location pictures, title | `<GAME>\IMAGES\NNN.png`, `<GAME>\IMAGES\DAAD.png` | Indexed PNG, 320 or 256 wide |
+| Sprite sheets | `<GAME>\IMAGES\SPRITES\NNN.png` + `NNN.txt` | |
+| Music, effects, samples | `<GAME>\AUDIO\` | `.aks` and `.wav`; see nextdaad-features.md for names |
+| Cutscenes | `<GAME>\VIDEO\NNN.mp4` | |
+| Fonts, pointers, hints, intro, externs | the game folder: `FONT.CHR`, `POINTER.SPR`, `HINTS.TXT`, `INTRO.TXT`, `GAME.XBN` | |
+| Extra parts | `<GAME>\PART2\` to `<GAME>\PART9\` | One DSF each |
+| Build output | `RELEASE\<GAME>\`: `<GAME>.NEX` and `DATA\` | Copy the contents of `RELEASE\` to the SD card root |
 
-A text-only game needs none of the asset folders.
+A text-only game needs none of the asset folders. A game folder is
+self-contained: nothing is looked up in the kit root or another game folder.
+
+`STARTER\` is the shipped starter game. Every kit update replaces it, so
+never write a game in it. To start a new game: copy `STARTER\` to
+`MYGAME\`, rename `STARTER.DSF` and `STARTER.CFG` in the copy to
+`MYGAME.DSF` and `MYGAME.CFG` and `AUDIO\STARTER.aks` and
+`AUDIO\STARTER_FX.aks` to `AUDIO\MYGAME.aks` and `AUDIO\MYGAME_FX.aks`
+(music and effects are taken from the `.aks` named after the game), create `CONFIG.local.BAT` from
+`CONFIG.local.BAT.sample` with `SET GAME=MYGAME`, and edit
+`MYGAME\MYGAME.DSF`. The copied `.CFG` holds `VIDOPTS_001`/`VIDOPTS_002`
+lines tuned for the starter's demo clips; delete them when the clips change.
+
+A `.DSF` loose in the kit root is the old (before v0.12.0) single-game
+layout. It still builds, picked when `GAME` is blank and it is the only
+root `.DSF`, but it has no `.CFG` and its files sit among the kit's own.
 
 ## Build, run, clean
 
@@ -25,33 +41,40 @@ Linux: `./build.sh`, `./run.sh`, `./clean.sh` (needs PowerShell 7 as `pwsh`).
 
 The build compiles the DSF with the bundled compiler, converts every
 asset that changed, copies the interpreter, and ends with
-`BUILD OK: RELEASE\ is ready to copy to an SD card`. It is incremental:
-only changed sources are reconverted. `RUN.BAT` launches CSpect on
-`RELEASE\` if CSpect is installed under `tools\`. `CLEAN.BAT` empties
-`RELEASE\` for a full rebuild.
+`BUILD OK: RELEASE\<GAME>\ is ready - copy the contents of RELEASE\ to the root of an SD card`.
+It is incremental: only changed sources are reconverted. `RUN.BAT`
+launches CSpect on the selected game, with `RELEASE\<GAME>\` as the
+emulated card, if CSpect is installed under `tools\`. `CLEAN.BAT` empties
+`RELEASE\<GAME>\` (that game only) for a full rebuild. While `STARTER\`
+is the game, every build prints a warning that kit updates replace it.
 
 The compile line the build runs, for when you want to check a DSF without
-converting assets (run from the kit root):
+converting assets. Run it from inside the game folder, as the build does,
+so `#include` lines resolve there:
 
-    lib\ndrc.exe nextdaad EN GAME.DSF RELEASE\GAME.DDB -v3 -auto-tokens
-    lib/ndrc nextdaad EN GAME.DSF RELEASE/GAME.DDB -v3 -auto-tokens
+    ..\lib\ndrc.exe nextdaad EN MYGAME.DSF ..\RELEASE\MYGAME\DATA\GAME.DDB -v3 -auto-tokens
+    ../lib/ndrc nextdaad EN MYGAME.DSF ../RELEASE/MYGAME/DATA/GAME.DDB -v3 -auto-tokens
 
 Add `-cols=40` for a 40-column game. Compiler errors name the DSF line.
 The build refuses `#classic`.
 
-## CONFIG.BAT
+## CONFIG.BAT, the game's .CFG, CONFIG.local.BAT
 
-Read as `KEY=value` lines, not executed. `CONFIG.local.BAT` is read after
-it and wins, for machine-specific paths.
+All three are read as `SET KEY=value` lines, never executed; `REM` lines
+are ignored. Order, last wins: `CONFIG.BAT` (kit defaults - do not edit,
+an update replaces it), then `<GAME>\<GAME>.CFG` (the game's settings),
+then `CONFIG.local.BAT` (machine settings and the game selector). A `GAME`
+line in a `.CFG` is ignored with a warning. Copy only changed lines, never
+a whole `CONFIG.BAT`.
 
 | Key | Meaning |
 |---|---|
-| `GAME` | DSF base name when there is more than one |
+| `GAME` | The game folder to build; set in `CONFIG.local.BAT` |
 | `RUN` | `1` launches CSpect after a successful build |
 | `COLS` | blank = 80 columns, `40` = 40 (the DSF must also issue `GFX 1 18`) |
 | `COMPRESS` | `1` ZX0-compresses pictures |
 | `TOOLSDIR`, `CSPECTDIR`, `ARKOSDIR`, `FFMPEGDIR`, `SJASMPLUSDIR` | Tool locations; blank = under `tools\` |
-| `VIDOPTS`, `VIDOPTS_NNN`, `VIDFPS`, `VIDASPECT` | Video encoding |
+| `VIDOPTS`, `VIDOPTS_NNN`, `VIDFPS`, `VIDASPECT` | Video encoding; per game, in the `.CFG`. vidtune saves `VIDOPTS_NNN` there and refuses `STARTER\` |
 
 ## Third-party tools
 
@@ -69,7 +92,9 @@ the path in `tools\README.txt`.
 
 | Message | Cause |
 |---|---|
-| `set GAME in CONFIG.BAT` | zero or several DSFs in the root |
+| `set GAME in CONFIG.local.BAT (found ...)` | `GAME` blank and no single game to pick: several game folders, none, or several root DSFs |
+| `<GAME>\ has no <GAME>.DSF` / `<GAME>.DSF not found` | `GAME` names a folder or DSF that is not there |
+| `WARNING: RELEASE\ holds ... from an older kit build` | loose pre-v0.12.0 output in `RELEASE\`; delete it by hand |
 | `ndrc failed compiling` | the compiler output above it names the line |
 | `GAME.DDB is N bytes, over the 65535 limit` | move text to `XMESSAGE`, cut messages |
 | `uses #classic, which NextDAAD does not support` | delete the `#classic` line |
@@ -85,17 +110,21 @@ Warnings are advisory; the build continues.
 ## Runtime errors
 
 Boot failures show a magenta bar on the top row. `E1` means `GAME.DDB` is
-missing (the `RELEASE\` folder itself was copied instead of its contents);
+missing (the game's `DATA\` folder is not beside `<GAME>.NEX`, or the
+`RELEASE\` folder itself was copied instead of its contents);
 `E2` the DDB is over 64K; `E4` it was compiled for another machine.
 `RUNTIME ERROR - E<n>`: 1 invalid location (often `DESC 255`), 4 nested
 `DOALL`, 5 a V3 opcode in a V2 database.
 
 Missing assets at runtime (picture, sprite set, font, pointer, part DDB,
 `0.XMB`) are silent: the game carries on without them. If something does
-not appear, check the file name and number in `RELEASE\` first.
+not appear, check the file name and number in `RELEASE\<GAME>\DATA\` first.
+
+Save games and extern files (`GAME.HPR`, `GAME.HST`, `TRANS.TXT`) are
+written into `DATA\` at runtime.
 
 ## Testing on real hardware
 
 Copy the contents of `RELEASE\` to the SD card root and run
-`nextdaad.nex` (or `<GAME>.NEX` when there is a loader intro). Video,
-streamed samples and exact timing only behave on real hardware.
+`<GAME>\<GAME>.NEX` (with or without a loader intro). Video, streamed
+samples and exact timing only behave on real hardware.

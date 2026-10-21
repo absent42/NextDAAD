@@ -112,6 +112,13 @@ FORBIDDEN = [
      "the frame hook is suspended for the whole of a video clip"),
     (r"everything\s+from\s+22\s+up",
      "GFX 22-26 are the parser cursor subs now; the no-op range starts at 27"),
+    # Game-folder layout (v0.12.0).
+    (r"nextdaad\.nex.{0,10}the interpreter, the file you launch",
+     "since v0.12.0 the launch file is <GAME>.NEX"),
+    (r"is the finished SD card image",
+     "old flat-layout wording; RELEASE\\ now holds one folder per game"),
+    (r"\bedit(ing)?\s+`?STARTER\.DSF",
+     "authors copy STARTER\\ to their own game folder first"),
 ]
 
 def parse(path, pattern, label):

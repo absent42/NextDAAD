@@ -1,4 +1,4 @@
-# Converts and stages pictures, sprite sets, audio and video into RELEASE\,
+# Converts and stages pictures, sprite sets, audio and video into $Data,
 # skipping outputs that are already current, then deletes any output of
 # the stage that no source produced this run. Called by build.ps1
 # with cwd = kit root.
@@ -8,7 +8,7 @@
 # time to the second, plus a fingerprint of every source and converter
 # (name, size, time) in the sub-second digits. Editing or replacing a
 # source, updating a converter or editing this script changes the stamp.
-# Nothing but shipped files is written to RELEASE\.
+# Nothing but shipped files is written to $Data.
 param(
     [Parameter(Mandatory=$true)][ValidateSet('Pictures', 'Audio', 'Video')][string]$Stage,
     [string]$Gfx = '',
@@ -16,13 +16,20 @@ param(
     [string]$Game = '',
     [string]$S2A = '',
     [string]$S2Y = '',
-    [string]$S2E = ''
+    [string]$S2E = '',
+    [string]$Src = '',
+    [string]$Data = ''
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 
+# $root (cwd = kit root) holds temp files and resolves tools; sources come
+# from $srcRoot, outputs go to $rel.
 $root = (Get-Location).Path
-$rel = Join-Path $root 'RELEASE'
+$srcRoot = if ($Src) { [IO.Path]::GetFullPath($Src) } else { $root }
+$rel = if ($Data) { [IO.Path]::GetFullPath($Data) } else { Join-Path $root 'RELEASE' }
+# Message label: $rel relative to the kit root (RELEASE\<GAME>\DATA from build.ps1).
+$relLbl = if ($rel.StartsWith($root + [IO.Path]::DirectorySeparatorChar)) { $rel.Substring($root.Length + 1) } else { $rel }
 $palcheck = Join-Path $PSScriptRoot 'palcheck.ps1'
 $anipack = Join-Path $PSScriptRoot 'anipack.ps1'
 $aysconv = Join-Path $PSScriptRoot 'aysconv.ps1'
@@ -72,7 +79,7 @@ function Test-Current([string]$Out, [DateTime]$Stamp) {
     return ([System.IO.File]::GetLastWriteTimeUtc($Out).Ticks -eq $Stamp.Ticks)
 }
 
-# Copies $Src to RELEASE\$Name unless size and modified time already match.
+# Copies $Src to $rel\$Name unless size and modified time already match.
 # Returns $true when it copied.
 function Copy-Staged([string]$Src, [string]$Name) {
     Add-Produced $Name
@@ -200,13 +207,13 @@ function Remove-Orphans([string[]]$Patterns) {
             $n++
         }
     }
-    if ($n) { Write-Host "  $n file(s) with no source removed from RELEASE\" }
+    if ($n) { Write-Host "  $n file(s) with no source removed from $rel" }
 }
 
 # ---- pictures ----
 # gfx2next gets a bare dstfile, written to the cwd (kit root) on both hosts:
 # Windows drops a dst directory, Linux writes beside the source without a
-# dst. -zx0 appends .zx0. Each output is moved to its RELEASE\ name.
+# dst. -zx0 appends .zx0. Each output is moved to its $rel name.
 function Convert-Bitmap([System.IO.FileInfo]$Src, [string]$Name) {
     Add-Produced $Name
     $out = Join-Path $rel $Name
@@ -288,7 +295,7 @@ function Set-GameMode([int]$M, [string]$Who) {
 function Invoke-Pictures {
     $script:zsuf = ''
     if ($Compress -eq '1') { $script:zsuf = '.zx0' }
-    $images = Join-Path $root 'IMAGES'
+    $images = Join-Path $srcRoot 'IMAGES'
     $hasImages = Test-Path -LiteralPath $images -PathType Container
     $pointers = @('POINTER.png') + @(1..9 | ForEach-Object { "POINTER$_.png" })
     $pngNums = @{}
@@ -402,7 +409,7 @@ function Invoke-Pictures {
                 Fail "$pn converted to $size bytes, not 256 - the source must be exactly 16x16"
             }
             Move-Item -LiteralPath $tmp -Destination (Join-Path $rel "$base.SPR") -Force
-            Write-Host "  pointer $pn -> RELEASE\$base.SPR (gfx2next -sprites -pal-std)"
+            Write-Host "  pointer $pn -> $(Join-Path $relLbl "$base.SPR") (gfx2next -sprites -pal-std)"
         }
 
         # Sprite sets: NNN.png (raw PLTE indices via -pal-none, anipack does
@@ -454,11 +461,11 @@ function Invoke-Pictures {
     # Probe order matches the interpreter's (compressed variants first).
     if (-not $titleConverted) {
         foreach ($t in 'DAAD.NX2.ZX0', 'DAAD.N2Z', 'DAAD.NX2', 'DAAD.NXI.ZX0', 'DAAD.NXZ', 'DAAD.NXI') {
-            $src = Join-Path $root $t
+            $src = Join-Path $srcRoot $t
             if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }
             if (Copy-Staged $src $t) {
                 if ($t -eq 'DAAD.NX2' -or $t -eq 'DAAD.NXI') { Invoke-Palcheck (Join-Path $rel $t) }
-                Write-Host "  title $t -> RELEASE\$t (ready-made, staged as-is)"
+                Write-Host "  title $t -> $(Join-Path $relLbl $t) (ready-made, staged as-is)"
             }
             break
         }
@@ -483,7 +490,7 @@ function Invoke-Pictures {
                 if ($ext -like 'NX3*' -or $ext -eq 'N3Z') { [void](Test-Nx3ReadyMade $f.FullName $script:gameMode ($ext -ne 'NX3')) }
                 if (Copy-Staged $f.FullName $name) {
                     if ($ext -eq 'NX2' -or $ext -eq 'NXI' -or $ext -eq 'NX3') { Invoke-Palcheck (Join-Path $rel $name) }
-                    Write-Host "  picture $($f.Name) -> RELEASE\$name (ready-made, staged as-is)"
+                    Write-Host "  picture $($f.Name) -> $(Join-Path $relLbl $name) (ready-made, staged as-is)"
                 }
             }
         }
@@ -513,7 +520,7 @@ function Convert-Aky([string]$Src, [string]$Name) {
 }
 
 function Invoke-Audio {
-    $audio = Join-Path $root 'AUDIO'
+    $audio = Join-Path $srcRoot 'AUDIO'
     if (-not (Test-Path -LiteralPath $audio -PathType Container)) {
         Write-Host '  no AUDIO\ - skipping audio'
         return
@@ -565,7 +572,7 @@ function Invoke-Audio {
             $out = Join-Path $rel $name
             $stamp = New-Stamp @($f.FullName) $aysSig
             if (Test-Current $out $stamp) { $script:kept++; continue }
-            if (Invoke-KitScript $aysconv @{ Song = $f.FullName; Out = (Join-Path 'RELEASE' $name); SongToYm = $s2yExe }) {
+            if (Invoke-KitScript $aysconv @{ Song = $f.FullName; Out = $out; SongToYm = $s2yExe }) {
                 [System.IO.File]::SetLastWriteTimeUtc($out, $stamp)
                 Write-Host "  stream $num -> $name"
             } else {
@@ -613,7 +620,7 @@ function Invoke-Audio {
 
 # ---- video: VIDEO\NNN.vid (encoded by video.ps1 or supplied) copied as-is ----
 function Invoke-Video {
-    $video = Join-Path $root 'VIDEO'
+    $video = Join-Path $srcRoot 'VIDEO'
     if (-not (Test-Path -LiteralPath $video -PathType Container)) {
         Write-Host '  no VIDEO\ - skipping video cutscenes'
         return
@@ -626,7 +633,7 @@ function Invoke-Video {
 }
 
 try {
-    if (-not (Test-Path -LiteralPath $rel -PathType Container)) { Fail 'RELEASE\ does not exist - run BUILD.BAT' }
+    if (-not (Test-Path -LiteralPath $rel -PathType Container)) { Fail "$rel does not exist - run BUILD.BAT" }
     switch ($Stage) {
         'Pictures' { Invoke-Pictures; $owned = @('*.NX2', '*.NXI', '*.ZX0', '*.N2Z', '*.NXZ', '*.NX3', '*.N3Z', '*.ANI'); $what = 'picture' }
         'Audio'    { Invoke-Audio;    $owned = @('*.WAV', '*.AKY', '*.AYS', 'GAME.SFB'); $what = 'audio' }

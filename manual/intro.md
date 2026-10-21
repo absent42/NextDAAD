@@ -20,7 +20,7 @@ not a replacement: a game can ship either, both or neither.
 
 ## Quick start
 
-Create `INTRO.TXT` in the kit folder:
+Create `INTRO.TXT` in your game folder, beside your `.DSF`:
 
 ```
 MUSIC AKY AUDIO\STARTER.aks
@@ -32,11 +32,14 @@ SLIDE DAAD.NX2 IN CUT HOLD KEY
 END FADE 1.0
 ```
 
-Run `BUILD.BAT`. `RELEASE\` now holds `<GAME>.NEX` beside `nextdaad.nex`:
-**launch `<GAME>.NEX`**. It plays the show and starts the game. This
+Run `BUILD.BAT`. `RELEASE\<GAME>\<GAME>.NEX` is now the intro launcher,
+and the interpreter moves into `DATA\` as `DATA\nextdaad.nex`:
+**launch `<GAME>.NEX`** as before. It plays the show and starts the game. This
 example reuses the starter's own title picture (`DAAD.NX2`) and its boot
 music (`AUDIO\STARTER.aks`), which is why it works unmodified.
-`INTRO.TXT.sample` in the kit folder is this example; rename it to try
+`INTRO.TXT.sample` in `STARTER\` is this example; in your own copy of
+the starter (see [Getting started](getting-started.md#starting-a-new-game)),
+rename it to `INTRO.TXT` to try
 it, then point `SLIDE` at your own 320x256 or 256x192 art - the numbered
 pictures in `IMAGES\` are a different shape and cannot be used as
 slides. Remove `INTRO.TXT` and the next build removes the launcher
@@ -46,7 +49,7 @@ again.
 
 One statement per line. Keywords in any case; `;` starts a comment. Times
 are seconds with one decimal place. Colours are the same 0 to 255 numbers
-as [INK and PAPER](colours.md). File names are relative to the kit folder,
+as [INK and PAPER](colours.md). File names are relative to your game folder,
 so `IMAGES\` art and `AUDIO\` songs can be reused; an `INTRO\` folder is a
 good home for anything that belongs only to the show.
 
@@ -181,10 +184,11 @@ at least 8192 bytes (about a quarter of a second) with an even length;
 the build fails if ffmpeg produces anything shorter or odd-length.
 
 **NDR** plays a NextDAW export with NextDAW's runtime player. The kit
-copies that player from your own NextDAW install into `RELEASE\INTRO\`
+copies that player from your own NextDAW install into
+`RELEASE\<GAME>\DATA\INTRO\`
 at build time, because NextDAW's licence lets you ship it inside your
 game but not redistribute it, and the kit never contains it. Set
-`NEXTDAWDIR` in `CONFIG.BAT` to the folder holding `RuntimePlayer\`, or
+`NEXTDAWDIR` in `CONFIG.local.BAT` to the folder holding `RuntimePlayer\`, or
 put your copy under `tools\NextDAW\`. Only the E000 build of the runtime
 player is accepted - `RuntimePlayer\NextDAW_RuntimePlayer_E000.bin` - and
 the exported song is capped at 64K. The licence asks for a credit line
@@ -208,14 +212,18 @@ simply lasts until the picture is ready.
 
 ## What is on the card
 
-`BUILD.BAT` writes `RELEASE\<GAME>.NEX` and a `RELEASE\INTRO\` folder:
+`BUILD.BAT` writes the launcher as `RELEASE\<GAME>\<GAME>.NEX`, the
+interpreter as `RELEASE\<GAME>\DATA\nextdaad.nex`, and a
+`RELEASE\<GAME>\DATA\INTRO\` folder:
 `INTRO.DAT` (the compiled script), the pictures as `001.NXC`, `002.NXI`
 and so on (`NXC` is a 320-wide picture stored in the hardware's own order
 and is not interchangeable with a location picture), `FONT.TIL` for a
 colour font, and one of `MUSIC.AKY`, `MUSIC.AYS`, `MUSIC.PCM` or
-`MUSIC.NDR` with `NDAW.BIN`. Copy `RELEASE\` to the card as usual and
-launch `<GAME>.NEX`. Launching `nextdaad.nex` directly still works and
-skips the intro. A game shipping both an intro and a title shows the
+`MUSIC.NDR` with `NDAW.BIN`. The intro reads these, the game's
+`FONT.CHR` and `nextdaad.nex` from `DATA\`. Copy the contents of
+`RELEASE\` to the card as usual and launch `<GAME>.NEX`. Launching
+`DATA\nextdaad.nex` directly still works and skips the intro. A game
+shipping both an intro and a title shows the
 intro, then the title.
 
 ## When something is missing

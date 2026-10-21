@@ -5,9 +5,17 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 . (Join-Path $PSScriptRoot 'kitconfig.ps1')
 . (Join-Path $PSScriptRoot 'kittools.ps1')
+. (Join-Path $PSScriptRoot 'kitgame.ps1')
 $kitRoot = (Get-Location).Path
-$cfg = Read-KitConfig $kitRoot
+$cfg0 = Read-KitConfig $kitRoot
+try { $g = Resolve-KitGame $cfg0 $kitRoot } catch { Write-Host "$($_.Exception.Message)"; exit 1 }
+$cfg = Read-KitConfig $kitRoot $g.CfgFile
 Export-KitConfig $cfg
+# Quoted: Start-Process joins -ArgumentList unquoted, and the path may hold spaces.
+# Trailing separator trimmed so it cannot escape the quote; a bare drive or
+# empty path still resolves to the kit root, the working directory.
+$gameArg = @('--game-dir', "`"$($g.SrcRoot.TrimEnd('\', '/'))`"")
+if ($g.Mode -eq 'folder') { $gameArg += @('--game-cfg', "`"$($g.CfgFile)`"") }
 $t = Resolve-KitTools $cfg $kitRoot
 $env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
 $kitExe = Join-Path $kitRoot (Join-Path 'tools' (Join-Path 'vidtools' "vidtune$ExeSuffix"))
@@ -15,7 +23,7 @@ if (-not $Src) {
     foreach ($exe in @($t.VIDTUNE, $kitExe)) {
         $abs = if ([IO.Path]::IsPathRooted($exe)) { $exe } else { Join-Path $kitRoot $exe }
         if ((Test-Path -LiteralPath $abs -PathType Leaf) -and (Get-Item -LiteralPath $abs).Length -gt 1000000) {
-            Start-Process -FilePath $abs -WorkingDirectory $kitRoot | Out-Null
+            Start-Process -FilePath $abs -ArgumentList $gameArg -WorkingDirectory $kitRoot | Out-Null
             exit 0
         }
     }
@@ -25,7 +33,7 @@ $py = Find-Python @('PySide6.QtWidgets', 'numpy', 'PIL')
 if ($py) {
     $rest = @()
     if ($py.Length -gt 1) { $rest = $py[1..($py.Length - 1)] }
-    Start-Process -FilePath $py[0] -ArgumentList ($rest + @('-m', 'vidtune')) -WorkingDirectory $kitRoot | Out-Null
+    Start-Process -FilePath $py[0] -ArgumentList ($rest + @('-m', 'vidtune') + $gameArg) -WorkingDirectory $kitRoot | Out-Null
     exit 0
 }
 # vidtune itself always ships (lib/vidtune); only its Python packages can be

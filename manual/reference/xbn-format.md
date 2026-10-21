@@ -120,6 +120,11 @@ tables.
 | 19 | `SVC_VOCFIND` | HL = ASCIIZ word (any case, first five characters count) | D = word id, E = type, CF clear; CF set = not in the vocabulary | AF, BC, DE, HL | no |
 | 20 | `SVC_FITWORD` | A = length of the word about to be printed (0 = flush only) | Flushes any pending word, then starts a new line if the word would not fit the rest of the current window's line but fits the window (word wrap, with scrolling and More paging); A = the current window's width, CF clear | AF, BC, DE, HL, IX, IY | no |
 
+A bare filename given to `SVC_FOPEN` opens in the game's `DATA\` folder,
+beside `GAME.DDB` - the folder the interpreter reads its own files from
+and writes save games to. A game in the flat layout of kits before
+v0.12.0, with no `DATA\` folder, opens it beside the launched file.
+
 Error convention throughout is esxDOS style: carry flag set, error code
 in A. A row's Corrupts column is its contract; only the registers its
 Out column names carry a result. Every service preserves the caller's

@@ -4,8 +4,8 @@ A NextDAAD XBN worked example: hint text served from an SD card file,
 so a game can ship a large hint book without spending DAAD message
 slots or interpreter RAM on it.
 
-`HINTS.TXT` is authored beside your game source and packed by
-`BUILD.BAT` into `RELEASE\GAME.HNT`. The packer assigns each topic and
+`HINTS.TXT` is authored in your game folder, beside your game source, and
+packed by `BUILD.BAT` into `RELEASE\<GAME>\DATA\GAME.HNT`. The packer assigns each topic and
 level its offset; the extern only reads what the packer wrote.
 
 ## EXTERN fn codes
@@ -103,7 +103,8 @@ player has already read, `EXTERN n 50` fails (CF set: no further hint)
 for them from then on. `EXTERN 0 53` clears a player's progress if that
 needs resetting.
 
-Automatic-mode progress lives in `GAME.HPR` beside your game, not in
+Automatic-mode progress lives in `GAME.HPR`, which the extern writes in
+the game's `DATA\` folder on the card beside `GAME.HNT`, not in
 flags, so hint level costs the author no game flags at all. It does
 not rewind on `LOAD` or `RESTART`, and it is shared by every save game
 and every player using that card. A hint already read stays read.

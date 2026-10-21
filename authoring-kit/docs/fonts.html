@@ -9,10 +9,12 @@
 <body>
 <main>
 <h1 id="fonts">Fonts</h1>
-<p>A custom font is a <code>FONT.CHR</code> file dropped into the kit folder - not in
+<p>A custom font is a <code>FONT.CHR</code> file dropped into your game folder - not in
 <code>IMAGES\</code> - staged to the release untouched and installed in place of
 the built-in font at boot. Up to nine further numbered variants can sit
-beside it and be switched from your source while the game runs.</p>
+beside it and be switched from your source while the game runs. The
+build stages them into the game's <code>DATA\</code> folder. (A game still in the
+flat layout of kits before v0.12.0 keeps them loose in the kit folder.)</p>
 <p>Custom fonts are optional. With no <code>FONT.CHR</code> the built-in font plays.</p>
 <h2 id="the-format">The format</h2>
 <p><code>FONT.CHR</code> is <strong>256 glyphs, 8 rows each, 1 bit per pixel - exactly 2048
@@ -27,7 +29,7 @@ always did.</p>
 characters 32 to 127 only, 96 glyphs of 8 rows, <strong>768 bytes</strong> (the
 <code>.ch8</code> files font collections ship).</p>
 <p>Drop a <code>FONT.ch8</code> (or <code>FONT1.ch8</code> to <code>FONT9.ch8</code>, for the numbered fonts
-below) in the kit folder and the kit build converts it for you -
+below) in your game folder and the kit build converts it for you -
 nothing to run by hand. A ready-made <code>.CHR</code> of the same number still
 wins over a converted <code>.ch8</code>, so a hand-built full table always takes
 priority.</p>
@@ -49,12 +51,12 @@ the built-in font. The kit build's own automatic <code>.ch8</code> conversion ab
 never passes <code>-Base</code> - it always pads against the built-in font - so
 this only applies when you run <code>fontconv.ps1</code> yourself. Any other input
 size is an error naming both shapes it accepts.</p>
-<p>Put the resulting <code>FONT.CHR</code> (or <code>FONT1.CHR</code> to <code>FONT9.CHR</code>) in the kit
-folder to ship it.</p>
+<p>Put the resulting <code>FONT.CHR</code> (or <code>FONT1.CHR</code> to <code>FONT9.CHR</code>) in your game
+folder (in the old flat layout, the kit folder) to ship it.</p>
 <h2 id="other-font-formats">Other font formats</h2>
 <p>The same converter reads fonts drawn for other machines, and the kit
 build picks those up too: a <code>FONT.fon</code>, <code>.psf</code>, <code>.psfu</code>, <code>.bdf</code>,
-<code>.yaff</code>, <code>.draw</code>, <code>.spr</code> or <code>.fnt</code> in the kit folder (or <code>FONT1.*</code> to
+<code>.yaff</code>, <code>.draw</code>, <code>.spr</code> or <code>.fnt</code> in your game folder (or <code>FONT1.*</code> to
 <code>FONT9.*</code>) is converted the same way a <code>.ch8</code> is. The format is read
 from the file itself, not its extension.</p>
 <ul>
@@ -87,7 +89,7 @@ dozens of formats and writes BDF, which carries the character codes:</p>
 <pre><code>pip install monobit
 monobit-convert MyFont.xyz to FONT.bdf
 </code></pre>
-<p>Then drop the <code>FONT.bdf</code> in the kit folder, or run <code>fontconv.ps1</code> on it.
+<p>Then drop the <code>FONT.bdf</code> in your game folder, or run <code>fontconv.ps1</code> on it.
 Fonts from the hoard need no such step - the kit reads them directly.
 The hoard's own licence notes that some of its source folders carry
 their own terms, so check the folder a font came from before shipping
@@ -123,13 +125,13 @@ of the screen instead of clean black paper. Leave glyph 32 empty unless
 you genuinely want that.</p>
 <p><code>fontconv.ps1</code> warns - it does not refuse - when the font you hand it
 has a non-blank glyph 32, for either input shape. A <code>FONT.CHR</code> you place
-in the kit folder without running it through <code>fontconv.ps1</code> is never
+in your game folder without running it through <code>fontconv.ps1</code> is never
 checked, so check that one yourself if you have edited glyph 32.</p>
 <h2 id="numbered-fonts-and-switching-at-runtime">Numbered fonts and switching at runtime</h2>
-<p><code>FONT.CHR</code> is font 0, the base. Nine more can sit beside it in the kit
-folder: <code>FONT1.CHR</code> to <code>FONT9.CHR</code> (ready-made, or converted from
-<code>FONT1.ch8</code> to <code>FONT9.ch8</code> as above). Nothing on disk selects one - <code>GFX n 16</code> in your
-source installs font <code>n</code> while the game runs. <code>GFX 3 16</code> switches to
+<p><code>FONT.CHR</code> is font 0, the base. Nine more can sit beside it in the game
+folder (in the old flat layout, the kit folder): <code>FONT1.CHR</code> to
+<code>FONT9.CHR</code> (ready-made, or converted from <code>FONT1.ch8</code> to <code>FONT9.ch8</code> as
+above). Nothing on disk selects one - <code>GFX n 16</code> in your source installs font <code>n</code> while the game runs. <code>GFX 3 16</code> switches to
 <code>FONT3.CHR</code>; <code>GFX 0 16</code> returns to the base. A missing or wrong-size
 file is a silent no-op: whatever font is currently installed stays, and
 the game plays on.</p>

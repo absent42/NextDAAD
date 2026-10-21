@@ -386,7 +386,8 @@ width 0 or wider than the mode; height 0 in mode 0 or above 192 in
 mode 0; decompressed length other than 512 + W*H. It accepts a fixed
 picture that overhangs the screen (it is clipped), nonzero reserved or
 flag bits, and pixel indices outside the palette range.</p>
-<p>The authoring kit stages a ready-made NX3 only when its header is valid
+<p>The authoring kit stages a ready-made NX3 (an <code>NNN.NX3</code> in the game
+folder's <code>IMAGES\</code>, copied into the game's <code>DATA\</code> folder) only when its header is valid
 and its mode byte matches the game's mode. The game's mode is decided
 by its plain pictures, sidecar <code>mode=</code> keys and other ready-made NX3
 files; it is 256 when nothing decides.</p>

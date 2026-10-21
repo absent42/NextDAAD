@@ -3,7 +3,7 @@
 ## What it does
 
 Records every typed line and every printed character to `TRANS.TXT` in
-the game's own folder, written by the interpreter the player actually
+the game's own `DATA\` folder, written by the interpreter the player actually
 ran. On hardware that gives a walkthrough recorder and a bug report
 that writes itself; for testing it gives a file diff instead of a
 tilemap read. Needs a v0.10.1 interpreter (format 3 header, line and
@@ -28,9 +28,11 @@ in a game that actually records.
 
 ## How to build
 
-A prebuilt `GAME.XBN` ships in this directory - copy it next to your
-own `GAME.DDB`. To build a smaller binary that combines it with other
-modules, run `EXTERNS.BAT transcript ...` from the kit root (see the
+A prebuilt `GAME.XBN` ships in this directory - copy it into your game
+folder (the build stages it beside `GAME.DDB` in `DATA\`). To build a
+smaller binary that combines it with other modules, run
+`EXTERNS.BAT transcript ...` from the kit root, which writes `GAME.XBN`
+into the selected game folder (see the
 collection README). To rebuild after editing the source (build.ps1
 finds sjasmplus via its -SjasmPlus parameter, then the kit's
 tools\sjasmplus\, then PATH; https://github.com/z00m128/sjasmplus):

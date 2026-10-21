@@ -1,12 +1,16 @@
-# clean.ps1 - empty RELEASE\ the way CLEAN.BAT did: top-level files and
-# the INTRO folder. PART<n>\ folders are left, as before.
+# clean.ps1 - remove RELEASE\<GAME>\ for the selected game; other games'
+# output in RELEASE\ is left. cwd = kit root.
 $ErrorActionPreference = 'Stop'
-$rel = Join-Path (Get-Location).Path 'RELEASE'
+. (Join-Path $PSScriptRoot 'kitplatform.ps1')
+. (Join-Path $PSScriptRoot 'kitconfig.ps1')
+. (Join-Path $PSScriptRoot 'kitgame.ps1')
+$kitRoot = (Get-Location).Path
+$cfg0 = Read-KitConfig $kitRoot
+try { $g = Resolve-KitGame $cfg0 $kitRoot } catch { Write-Host "$($_.Exception.Message)"; exit 1 }
+$rel = $g.RelGame
 if (Test-Path -LiteralPath $rel -PathType Container) {
-    Get-ChildItem -LiteralPath $rel -File | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
-    $intro = Join-Path $rel 'INTRO'
-    if (Test-Path -LiteralPath $intro) { Remove-Item -LiteralPath $intro -Recurse -Force }
-    Write-Host 'cleaned RELEASE\'
+    Remove-Item -LiteralPath $rel -Recurse -Force
+    Write-Host "cleaned $(Join-KitPath @('RELEASE', $g.Name))$([IO.Path]::DirectorySeparatorChar)"
 } else {
     Write-Host 'nothing to clean'
 }

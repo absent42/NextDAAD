@@ -117,7 +117,9 @@ python lib\videnc.py source.mp4 VIDEO\001.vid --shape 16:9 --start 00:00:02 --du
 
 In the kit, BUILD.BAT runs this automatically for any numeric-named
 `VIDEO\NNN.mp4` (see `lib\build.ps1` / `lib\video.ps1`; configured by
-`VIDASPECT`/`VIDFPS`/`VIDOPTS`/`VIDOPTS_NNN` in `CONFIG.BAT`); run it
+`VIDASPECT`/`VIDFPS`/`VIDOPTS`/`VIDOPTS_NNN` in the game's
+`<GAME>\<GAME>.CFG`, or in `CONFIG.local.BAT` for a game in the flat
+layout of kits before v0.12.0; `CONFIG.BAT` lists the defaults); run it
 by hand for per-file control or clipping.
 
 ## Shapes

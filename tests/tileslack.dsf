@@ -40,7 +40,7 @@
 ;   004.VID   PAIR 2  jellyfish  ARM B  --tile-slack 0.5
 ;
 ; Both pairs are `full` 320x256 @25, Layer 2 mode-1, encoded from
-; authoring-kit\VIDEO\001.mp4 (Big Buck Bunny) and 002.mp4 (jellyfish) -
+; authoring-kit\STARTER\VIDEO\001.mp4 (Big Buck Bunny) and 002.mp4 (jellyfish) -
 ; the whole 10 s in each case. Clip identities were verified by ffprobe and
 ; by looking at an extracted frame, not taken from any document.
 ; Within a pair NOTHING differs but the knob: same source, same cut, same
