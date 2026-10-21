@@ -262,8 +262,12 @@ up the starter's pictures or tunes by accident.</p>
 <h3 id="starting-a-new-game">Starting a new game</h3>
 <ol>
 <li>Copy the <code>STARTER\</code> folder to a new folder named after your game,
-   say <code>MYGAME\</code>. In the copy, rename <code>STARTER.DSF</code> to <code>MYGAME.DSF</code> and
-   <code>STARTER.CFG</code> to <code>MYGAME.CFG</code>.</li>
+   say <code>MYGAME\</code>. In the copy, rename <code>STARTER.DSF</code> to <code>MYGAME.DSF</code>,
+   <code>STARTER.CFG</code> to <code>MYGAME.CFG</code>, <code>AUDIO\STARTER.aks</code> to
+   <code>AUDIO\MYGAME.aks</code> and <code>AUDIO\STARTER_FX.aks</code> to
+   <code>AUDIO\MYGAME_FX.aks</code>. The build takes a game's music and sound
+   effects from the <code>.aks</code> files named after the game, so without the
+   last two renames the copy builds with no music and no sound effects.</li>
 <li>Copy <code>CONFIG.local.BAT.sample</code> in the kit folder to
    <code>CONFIG.local.BAT</code>, open it, and add the line <code>SET GAME=MYGAME</code>.</li>
 <li>Put your game's own settings in <code>MYGAME\MYGAME.CFG</code>. Leave the
@@ -493,6 +497,10 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <tr>
 <td><code>WARNING: STARTER\ is replaced by every kit update</code></td>
 <td>You are building the shipped starter. Fine for a first try; to write a game, copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</td>
+</tr>
+<tr>
+<td><code>WARNING: AUDIO\STARTER.aks is not used</code> / <code>WARNING: AUDIO\STARTER_FX.aks is not used</code></td>
+<td>Your game folder is a copy of the starter and its music or sound effects still carry the starter's name, so the build leaves them out. Rename them to <code>AUDIO\&lt;GAME&gt;.aks</code> and <code>AUDIO\&lt;GAME&gt;_FX.aks</code> - see <a href="#starting-a-new-game">Starting a new game</a>.</td>
 </tr>
 <tr>
 <td><code>WARNING: GAME in ... .CFG is ignored</code></td>

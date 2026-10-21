@@ -9,7 +9,8 @@ in `DATA\`.
 
 `STARTER\` is the shipped starter game and every kit update replaces it.
 Never write a game in it: copy it to a new game folder first (rename
-`STARTER.DSF` and `STARTER.CFG` to match) and work on the copy.
+`STARTER.DSF`, `STARTER.CFG`, `AUDIO\STARTER.aks` and
+`AUDIO\STARTER_FX.aks` to match) and work on the copy.
 
 Two skills in `.agents/skills/` cover the work. Load the one the task needs
 before starting:

@@ -20,7 +20,8 @@ vocabulary every game needs, all 63 system messages, the standard process
 tables and working examples of pictures, music, samples, video, externs and
 hints. Every kit update replaces `STARTER\`, so never edit it. Copy the
 whole folder to `MYGAME\`, rename `STARTER.DSF` and `STARTER.CFG` in the
-copy to `MYGAME.DSF` and `MYGAME.CFG`, put `SET GAME=MYGAME` in
+copy to `MYGAME.DSF` and `MYGAME.CFG` and `AUDIO\STARTER.aks` and
+`AUDIO\STARTER_FX.aks` to `AUDIO\MYGAME.aks` and `AUDIO\MYGAME_FX.aks`, put `SET GAME=MYGAME` in
 `CONFIG.local.BAT` (create it from `CONFIG.local.BAT.sample`), and add
 rooms, objects and entries to `MYGAME\MYGAME.DSF`. With more than one
 game folder the build needs that `GAME` line.

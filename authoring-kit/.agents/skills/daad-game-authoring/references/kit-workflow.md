@@ -23,7 +23,9 @@ self-contained: nothing is looked up in the kit root or another game folder.
 `STARTER\` is the shipped starter game. Every kit update replaces it, so
 never write a game in it. To start a new game: copy `STARTER\` to
 `MYGAME\`, rename `STARTER.DSF` and `STARTER.CFG` in the copy to
-`MYGAME.DSF` and `MYGAME.CFG`, create `CONFIG.local.BAT` from
+`MYGAME.DSF` and `MYGAME.CFG` and `AUDIO\STARTER.aks` and
+`AUDIO\STARTER_FX.aks` to `AUDIO\MYGAME.aks` and `AUDIO\MYGAME_FX.aks`
+(music and effects are taken from the `.aks` named after the game), create `CONFIG.local.BAT` from
 `CONFIG.local.BAT.sample` with `SET GAME=MYGAME`, and edit
 `MYGAME\MYGAME.DSF`. The copied `.CFG` holds `VIDOPTS_001`/`VIDOPTS_002`
 lines tuned for the starter's demo clips; delete them when the clips change.

@@ -14,8 +14,10 @@ Quick start:
 Writing your own game:
   1. Copy STARTER\ to a folder named after your game, e.g. MYGAME\, and
      rename STARTER.DSF and STARTER.CFG inside it to MYGAME.DSF and
-     MYGAME.CFG. Every kit update replaces STARTER\, so never write your
-     game in it.
+     MYGAME.CFG, and AUDIO\STARTER.aks and AUDIO\STARTER_FX.aks to
+     AUDIO\MYGAME.aks and AUDIO\MYGAME_FX.aks (the game's music and
+     sound effects). Every kit update replaces STARTER\, so never write
+     your game in it.
   2. Copy CONFIG.local.BAT.sample to CONFIG.local.BAT and add
      SET GAME=MYGAME
   3. Put your game's settings in MYGAME\MYGAME.CFG and your machine's

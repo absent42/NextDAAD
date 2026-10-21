@@ -260,8 +260,12 @@ Everything else in the kit folder - the launchers, `CONFIG.BAT`,
 ### Starting a new game
 
 1. Copy the `STARTER\` folder to a new folder named after your game,
-   say `MYGAME\`. In the copy, rename `STARTER.DSF` to `MYGAME.DSF` and
-   `STARTER.CFG` to `MYGAME.CFG`.
+   say `MYGAME\`. In the copy, rename `STARTER.DSF` to `MYGAME.DSF`,
+   `STARTER.CFG` to `MYGAME.CFG`, `AUDIO\STARTER.aks` to
+   `AUDIO\MYGAME.aks` and `AUDIO\STARTER_FX.aks` to
+   `AUDIO\MYGAME_FX.aks`. The build takes a game's music and sound
+   effects from the `.aks` files named after the game, so without the
+   last two renames the copy builds with no music and no sound effects.
 2. Copy `CONFIG.local.BAT.sample` in the kit folder to
    `CONFIG.local.BAT`, open it, and add the line `SET GAME=MYGAME`.
 3. Put your game's own settings in `MYGAME\MYGAME.CFG`. Leave the
@@ -456,6 +460,7 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `set GAME in CONFIG.local.BAT (found ... .DSF files and ... game folders here, need exactly one)` | `GAME` is blank and the build cannot pick a game by itself: there is more than one game folder, or none, or more than one loose `.DSF` in the kit folder. Add `SET GAME=` with your game folder's name to `CONFIG.local.BAT` - see [Choosing the game](#choosing-the-game). |
 | `MYGAME\ has no MYGAME.DSF` / `MYGAME.DSF not found in MYGAME\ or this folder` | `GAME` names a game that is not there. The folder and the `.DSF` inside it must both carry the name `GAME` gives. |
 | `WARNING: STARTER\ is replaced by every kit update` | You are building the shipped starter. Fine for a first try; to write a game, copy it first - see [Starting a new game](#starting-a-new-game). |
+| `WARNING: AUDIO\STARTER.aks is not used` / `WARNING: AUDIO\STARTER_FX.aks is not used` | Your game folder is a copy of the starter and its music or sound effects still carry the starter's name, so the build leaves them out. Rename them to `AUDIO\<GAME>.aks` and `AUDIO\<GAME>_FX.aks` - see [Starting a new game](#starting-a-new-game). |
 | `WARNING: GAME in ... .CFG is ignored` | A game's `.CFG` cannot select the game. Move the `SET GAME=` line into `CONFIG.local.BAT`. |
 | `WARNING: RELEASE\ holds ... item(s) from an older kit build` | Files left loose in `RELEASE\` by a kit before v0.12.0. Delete them - see [Updating the kit](#updating-the-kit). |
 | `differ only by case - keep one` | Two files in the kit folder have names that differ only in letter case. Windows treats them as one file and Linux as two; rename one. |
