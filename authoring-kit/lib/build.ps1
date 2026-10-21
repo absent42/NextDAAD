@@ -59,6 +59,15 @@ $game = $g.Name
 $src = $g.SrcRoot
 $dsfFile = Find-KitFile $src "$game.DSF"
 if ($g.IsStarter) { Write-Host "WARNING: STARTER$sep is replaced by every kit update - copy it to your own game folder before writing a game (see Getting started)." }
+# A copied starter keeps STARTER.aks / STARTER_FX.aks; the Audio stage reads only <GAME>.aks / <GAME>_FX.aks.
+if ($g.Mode -eq 'folder' -and -not $g.IsStarter) {
+    $aud = Join-Path $src 'AUDIO'
+    foreach ($p in @(@('', 'music'), @('_FX', 'sound effects'))) {
+        if ((Find-KitFile $aud "STARTER$($p[0]).aks") -and -not (Find-KitFile $aud "$game$($p[0]).aks")) {
+            Write-Host "WARNING: AUDIO$($sep)STARTER$($p[0]).aks is not used - rename it to $game$($p[0]).aks to make it this game's $($p[1])"
+        }
+    }
+}
 
 $t = Resolve-KitTools $cfg $kitRoot
 $drTarget = 'nextdaad'

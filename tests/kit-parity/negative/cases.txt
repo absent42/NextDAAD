@@ -20,3 +20,5 @@ vidopts-local|layout folder; set VIDOPTS_009=--dither 0.0; set VIDOPTS_008=--dit
 folder-no-dsf|layout folder; remove PARITY/PARITY.DSF; set GAME=PARITY|ERROR: PARITY{sep} has no PARITY.DSF
 run-not-built|layout folder|ERROR: nothing built yet for PARITY|run
 clean-scoped|layout folder; write RELEASE/OTHER/OTHER.NEX x|OK:|build,clean|+RELEASE/OTHER/OTHER.NEX -RELEASE/PARITY/PARITY.NEX
+starter-music|layout folder; copy PARITY/AUDIO/PARITY.aks PARITY/AUDIO/STARTER.aks; remove PARITY/AUDIO/PARITY.aks; remove PARITY/INTRO.TXT|OK:WARNING: AUDIO{sep}STARTER.aks is not used - rename it to PARITY.aks to make it this game's music
+starter-fx|layout folder; rename PARITY/AUDIO/PARITY_FX.aks STARTER_FX.aks|OK:WARNING: AUDIO{sep}STARTER_FX.aks is not used - rename it to PARITY_FX.aks to make it this game's sound effects
