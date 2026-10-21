@@ -149,8 +149,9 @@ underneath it - so the interpreter colours the area the picture and the
 text do not reach instead. The result on screen is the one you expect.
 
 320-wide art covers the border area as well, so in a 320-wide game
-`BORDER` shows only where no picture has drawn (below a short picture,
-or around positioned pictures on a cleared screen).
+`BORDER` shows only through transparent pixels and where no picture has
+drawn (below a short picture, or around positioned pictures on a
+cleared screen).
 
 ## Text colours are never at risk
 
@@ -194,7 +195,7 @@ subtract the picture's X from `left` and its Y from `top`. A floating
 picture has X and Y of 0 in its header and sits at its window's corner,
 so subtract the window's corner instead: `left = (column - window
 column) x 4`, `top = (row - window row) x 8`. In 40-column mode a
-column is 8 pixels, not 4.
+column is 8 pixels, not 4, and the 256x192 inset is 4 columns, not 8.
 
 **The colour has to be in slot 255.** Only that slot is transparent. The
 same magenta anywhere else in your palette comes out opaque, with

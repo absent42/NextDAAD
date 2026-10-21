@@ -141,8 +141,9 @@ whole display, edge to edge, and the old ULA screen is switched off
 underneath it - so the interpreter colours the area the picture and the
 text do not reach instead. The result on screen is the one you expect.</p>
 <p>320-wide art covers the border area as well, so in a 320-wide game
-<code>BORDER</code> shows only where no picture has drawn (below a short picture,
-or around positioned pictures on a cleared screen).</p>
+<code>BORDER</code> shows only through transparent pixels and where no picture has
+drawn (below a short picture, or around positioned pictures on a
+cleared screen).</p>
 <h2 id="text-colours-are-never-at-risk">Text colours are never at risk</h2>
 <p>Text is drawn on its own layer with its own fixed palette. A picture's
 palette only ever reaches Layer 2, so no artwork can recolour your
@@ -175,7 +176,7 @@ subtract the picture's X from <code>left</code> and its Y from <code>top</code>.
 picture has X and Y of 0 in its header and sits at its window's corner,
 so subtract the window's corner instead: <code>left = (column - window
 column) x 4</code>, <code>top = (row - window row) x 8</code>. In 40-column mode a
-column is 8 pixels, not 4.</p>
+column is 8 pixels, not 4, and the 256x192 inset is 4 columns, not 8.</p>
 <p><strong>The colour has to be in slot 255.</strong> Only that slot is transparent. The
 same magenta anywhere else in your palette comes out opaque, with
 nothing on screen to tell you why, so if your hole renders as solid
