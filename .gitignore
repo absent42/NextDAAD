@@ -15,8 +15,8 @@ debug/
 sd/*
 !sd/README.txt
 tests/out/
-authoring-kit/VIDEO/*.mp4
-authoring-kit/VIDEO/*.mp4.bak
+authoring-kit/STARTER/VIDEO/*.mp4
+authoring-kit/STARTER/VIDEO/*.mp4.bak
 .superpowers/
 __pycache__/
 RELEASE.md

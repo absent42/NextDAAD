@@ -42,7 +42,8 @@ foreach ($rel in $tracked) {
     New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
     [IO.File]::Copy($src, $dst, $true)
 }
-foreach ($drop in 'IMAGES', 'AUDIO', 'VIDEO', 'HINTS.TXT', 'STARTER.DSF', 'INTRO.TXT.sample') {
+# The shipped STARTER\ game would make a second game beside the fixture.
+foreach ($drop in 'STARTER') {
     $p = Join-Path $kit $drop
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
 }
@@ -51,9 +52,9 @@ $fix = Join-Path $PSScriptRoot 'fixture'
 Copy-Item -Path "$fix/*" -Destination $kit -Recurse -Force
 $pyRest = @(); if ($pyc.Length -gt 1) { $pyRest = $pyc[1..($pyc.Length - 1)] }; & $pyc[0] @pyRest (Join-Path $PSScriptRoot 'mkfixture.py') $kit --ffmpeg $ffmpeg
 if ($LASTEXITCODE -ne 0) { throw 'mkfixture.py failed' }
-Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/PARITY.aks')
-Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER_FX.aks') -Destination (Join-Path $kit 'AUDIO/PARITY_FX.aks')
-Copy-Item -LiteralPath (Join-Path $kitSrc 'AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/STREAM_001.aks')
+Copy-Item -LiteralPath (Join-Path $kitSrc 'STARTER/AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/PARITY.aks')
+Copy-Item -LiteralPath (Join-Path $kitSrc 'STARTER/AUDIO/STARTER_FX.aks') -Destination (Join-Path $kit 'AUDIO/PARITY_FX.aks')
+Copy-Item -LiteralPath (Join-Path $kitSrc 'STARTER/AUDIO/STARTER.aks') -Destination (Join-Path $kit 'AUDIO/STREAM_001.aks')
 # Variant selects which fixture CONFIG/intro pair the kit copy keeps -
 # the other variant's files are removed so the copy holds exactly what
 # an author would have (never both intros or both CONFIG.fixture*.BAT).

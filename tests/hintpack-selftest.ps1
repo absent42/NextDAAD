@@ -172,7 +172,7 @@ $checks++
 # Drift guard: the shipped HINTS.TXT decides how many levels each topic
 # has, and the fixture states those counts for the bench. They have gone
 # out of step repeatedly, so pack the real file and compare.
-$kitHints = Join-Path $root 'authoring-kit/HINTS.TXT'
+$kitHints = Join-Path $root 'authoring-kit/STARTER/HINTS.TXT'
 $kitOut = "$tmp/KIT.HNT"
 & $pack -In $kitHints -Out $kitOut -WarningAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) { throw "hintpack exited $LASTEXITCODE on the kit HINTS.TXT" }

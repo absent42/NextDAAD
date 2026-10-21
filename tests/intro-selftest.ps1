@@ -256,7 +256,7 @@ if (Test-Path $ff) {
 # ---- 010 AKY through SongToAky when present.
 $s2a = Get-RepoTool 'SongToAky'
 if (Test-Path $s2a) {
-    Copy-Item "$root/authoring-kit/AUDIO/STARTER.aks" "$work/theme.aks" -Force
+    Copy-Item "$root/authoring-kit/STARTER/AUDIO/STARTER.aks" "$work/theme.aks" -Force
     Write-Script '010-aky' "MUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
     $d = Compile '010-aky' ($gfxArgs + @('-S2A', $s2a))
     $aky = [IO.File]::ReadAllBytes("$work/out-010-aky/MUSIC.AKY")
@@ -312,7 +312,7 @@ Assert-Eq ([Convert]::ToBase64String($dRelRoot)) ([Convert]::ToBase64String($dAb
 # (not failed) without it. Task 12 uses case number 012.
 $s2y = Get-RepoTool 'SongToYm'
 if (Test-Path $s2y) {
-    Copy-Item "$root/authoring-kit/AUDIO/STARTER.aks" "$work/stream.aks" -Force
+    Copy-Item "$root/authoring-kit/STARTER/AUDIO/STARTER.aks" "$work/stream.aks" -Force
     Write-Script '011b-stream' "MUSIC STREAM stream.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
     $aysconv = "$root/authoring-kit/lib/aysconv.ps1"
     $d = Compile '011b-stream' ($gfxArgs + @('-S2Y', $s2y, '-Aysconv', $aysconv))

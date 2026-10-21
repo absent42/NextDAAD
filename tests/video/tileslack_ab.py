@@ -57,11 +57,11 @@ WORK = ROOT / "tests" / "out" / "tileslack"
 CLIPS = {
     "bunny": {
         "label": "bunny",
-        "src": ROOT / "authoring-kit" / "VIDEO" / "001.mp4",
+        "src": ROOT / "authoring-kit" / "STARTER" / "VIDEO" / "001.mp4",
     },
     "jellyfish": {
         "label": "jellyfish",
-        "src": ROOT / "authoring-kit" / "VIDEO" / "002.mp4",
+        "src": ROOT / "authoring-kit" / "STARTER" / "VIDEO" / "002.mp4",
     },
 }
 
@@ -491,7 +491,7 @@ def print_tables(results):
     for clip in CLIPS:
         r = results.get((clip, 0.0))
         if r and r.get("status") == "ok":
-            print(f"{CLIPS[clip]['label']:<10} authoring-kit/VIDEO/"
+            print(f"{CLIPS[clip]['label']:<10} authoring-kit/STARTER/VIDEO/"
                   f"{CLIPS[clip]['src'].name}  "
                   f"sha256 {r['source_sha256'][:16]}  "
                   f"pin {r['report']['stream_budget']:.2f} "

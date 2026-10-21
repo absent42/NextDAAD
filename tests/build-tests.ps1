@@ -140,7 +140,7 @@
 #   -AudLad  make the tests\audlad.dsf DDB active AND stage the AY
 #            characterization ladder into sd\AUDLAD\ - L1/L3/L6/L9/L9Q.AKY
 #            from tests\audio\ -> 001..005.AKY, the kit's own 9-channel
-#            tune (converted here from the tracked authoring-kit\AUDIO\
+#            tune (converted here from the tracked authoring-kit\STARTER\AUDIO\
 #            1.aks) -> 006.AKY, and GAME.AKY as a byte-identical copy of
 #            006.AKY - the STOPM control: boot autoplay and the LADR
 #            verb then replay the SAME bytes, on the real material.
@@ -294,7 +294,7 @@
 #              -XbnHints      same combined binary as -XbnAll (hints is
 #                              one of its modules) plus a packed
 #                              GAME.HNT (authoring-kit\lib\hintpack.ps1
-#                              over authoring-kit\HINTS.TXT), so
+#                              over authoring-kit\STARTER\HINTS.TXT), so
 #                              XHNP/XHNQ/XHNA/XHNR/XHNT have a hint file.
 #              -XbnClock      same combined binary as -XbnAll (clock and
 #                              timer are two of its modules), no hint
@@ -626,9 +626,9 @@ if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShippe
 }
 # The kit-root GAME.XBN is what BUILD.BAT stages into RELEASE; it must be a
 # byte copy of externs\all\GAME.XBN.
-$xbnKitRoot = [IO.File]::ReadAllBytes("$root\authoring-kit\GAME.XBN")
+$xbnKitRoot = [IO.File]::ReadAllBytes("$root\authoring-kit\STARTER\GAME.XBN")
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnKitRoot, $xbnDriftShipped)) {
-    throw "authoring-kit\GAME.XBN differs from authoring-kit\externs\all\GAME.XBN - copy the combined build to the kit root and commit both together"
+    throw "authoring-kit\STARTER\GAME.XBN differs from authoring-kit\externs\all\GAME.XBN - copy the combined build to STARTER\ and commit both together"
 }
 
 & "$PSScriptRoot\xbnbuild-selftest.ps1"
@@ -3455,8 +3455,8 @@ if ($Xbn) {
             "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
         # ALL.XBN's hints module needs a hint file too - same pack as -XbnHints below.
-        & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\HINTS.TXT" -Out "$leg\GAME.HNT"
-        "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
+        & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\STARTER\HINTS.TXT" -Out "$leg\GAME.HNT"
+        "staged authoring-kit\STARTER\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
     }
     elseif ($XbnHints) {
         # Same as -XbnAll, targets XHNP/XHNQ/XHNA/XHNR/XHNT (hints module)
@@ -3502,8 +3502,8 @@ if ($Xbn) {
         else {
             "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
-        & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\HINTS.TXT" -Out "$leg\GAME.HNT"
-        "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
+        & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\STARTER\HINTS.TXT" -Out "$leg\GAME.HNT"
+        "staged authoring-kit\STARTER\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
     }
     elseif ($XbnClock) {
         # Same as -XbnAll, targets XCLK/XCLA/XCLS/XTMR/XTMI (clock/timer
@@ -4468,7 +4468,7 @@ if ($AudLad) {
     # RELEASE\GAME.AKY byte for byte (verified, sha256 89ac228e8a7e3147,
     # 7487 bytes). authoring-kit\ is READ-ONLY here - the conversion
     # writes to tests\out\, never back into the kit.
-    $realSrc = "$root\authoring-kit\AUDIO\1.aks"
+    $realSrc = "$root\authoring-kit\STARTER\AUDIO\1.aks"
     $realOut = "$root\tests\out\real9.aky"
     $s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
     $realOk = $false
@@ -4488,7 +4488,7 @@ if ($AudLad) {
         $ladStaged++
     }
     else {
-        "WARNING: no rung R material (need authoring-kit\AUDIO\1.aks + SongToAky, or a kit build) - LADR and the #T7B STOPM leg will be silent no-ops"
+        "WARNING: no rung R material (need authoring-kit\STARTER\AUDIO\1.aks + SongToAky, or a kit build) - LADR and the #T7B STOPM leg will be silent no-ops"
     }
     # GAME.AKY is a copy of 006.AKY, NOT of a synthetic rung: boot
     # autoplay and LADR must play the same bytes, on the real material,
@@ -4792,7 +4792,7 @@ if ($AysReg) {
     # Effects bank from the TRACKED kit source, converted exactly as
     # authoring-kit\lib\assets.ps1 does; written to tests\out, never into
     # the kit. Without it SFX 1 1 is a no-op and ZAP proves nothing.
-    $fxSrc = "$root\authoring-kit\AUDIO\STARTER_FX.aks"
+    $fxSrc = "$root\authoring-kit\STARTER\AUDIO\STARTER_FX.aks"
     $fxOut = "$root\tests\out\aysreg_fx.sfb"
     $s2e = "$root\tools\ArkosTracker3\tools\SongToSoundEffects.exe"
     & $s2e -bin --encodingAddress 0xD000 $fxSrc $fxOut | Out-Null
@@ -5430,8 +5430,8 @@ if ($SprAud) {
     $spraudSong = "$root\tests\out\real9.aky"
     $s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
     $songOk = $false
-    if ((Test-Path "$root\authoring-kit\AUDIO\1.aks") -and (Test-Path $s2a)) {
-        & $s2a -bin --encodingAddress 0xD800 "$root\authoring-kit\AUDIO\1.aks" $spraudSong | Out-Null
+    if ((Test-Path "$root\authoring-kit\STARTER\AUDIO\1.aks") -and (Test-Path $s2a)) {
+        & $s2a -bin --encodingAddress 0xD800 "$root\authoring-kit\STARTER\AUDIO\1.aks" $spraudSong | Out-Null
         if ($LASTEXITCODE -eq 0 -and (Test-Path $spraudSong)) { $songOk = $true }
     }
     if (-not $songOk -and (Test-Path "$root\authoring-kit\RELEASE\GAME.AKY")) {
@@ -5443,7 +5443,7 @@ if ($SprAud) {
         "staged 006.AKY $((Get-Item $spraudSong).Length) bytes (song slot 10208)"
     }
     else {
-        "WARNING: no song material (need authoring-kit\AUDIO\1.aks + SongToAky, or a kit build) - A2's music is a silent no-op"
+        "WARNING: no song material (need authoring-kit\STARTER\AUDIO\1.aks + SongToAky, or a kit build) - A2's music is a silent no-op"
     }
 }
 
@@ -5533,12 +5533,12 @@ if ($Intro) {
     $extra = @{ Gfx = "$root\tools\gfx2next\gfx2next.exe"; Palcheck = "$root\authoring-kit\lib\palcheck.ps1" }
     switch ($IntroMusic) {
         'aky' {
-            Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$introWork\theme.aks" -Force
+            Copy-Item "$root\authoring-kit\STARTER\AUDIO\STARTER.aks" "$introWork\theme.aks" -Force
             $music = "MUSIC AKY theme.aks`n"
             $extra['S2A'] = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
         }
         'ays' {
-            Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$introWork\theme.aks" -Force
+            Copy-Item "$root\authoring-kit\STARTER\AUDIO\STARTER.aks" "$introWork\theme.aks" -Force
             $music = "MUSIC STREAM theme.aks`n"
             $extra['S2Y'] = "$root\tools\ArkosTracker3\tools\SongToYm.exe"
             $extra['Aysconv'] = "$root\authoring-kit\lib\aysconv.ps1"

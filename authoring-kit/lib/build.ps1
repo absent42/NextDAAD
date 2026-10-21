@@ -50,6 +50,7 @@ Export-KitConfig $cfg
 $game = $g.Name
 $src = $g.SrcRoot
 $dsfFile = Find-KitFile $src "$game.DSF"
+if ($g.IsStarter) { Write-Host "WARNING: STARTER$sep is replaced by every kit update - copy it to your own game folder before writing a game (see Getting started)." }
 
 $t = Resolve-KitTools $cfg $kitRoot
 $drTarget = 'nextdaad'
