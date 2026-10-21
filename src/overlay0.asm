@@ -2630,7 +2630,7 @@ h_xpart:
 ;
 ; ddbName (errors.asm, resident) is a 10-byte buffer: "GAMEn.DDB",0 is
 ; 9 characters + NUL, fitting exactly. xpart_build_name below writes
-; the LITERAL target name for every part, n=1 included - no wildcard.
+; "GAME.DDB" for part 1 and "GAMEn.DDB" for parts 2-9 - no wildcard.
 switch_to_part:
     ; The LOAD/RAMLOAD path hands an unvalidated SAV trailing part byte
     ; here (h_xpart's own 1-9 range check is EXTERN-only); route any
