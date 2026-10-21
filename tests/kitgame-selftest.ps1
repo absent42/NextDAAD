@@ -67,6 +67,17 @@ $g = Resolve-KitGame @{} $k
 Assert-Eq $g.Mode 'legacy' 'blank GAME, root DSF plus folders is legacy'
 Assert-Eq $g.Name 'LEGACY' 'legacy base name'
 
+$k = New-Kit @('X.DSF', 'PART2/PART2.DSF')
+$g = Resolve-KitGame @{} $k
+Assert-Eq $g.Mode 'legacy' 'blank GAME, root DSF plus PART2 is legacy'
+Assert-Eq $g.Name 'X' 'PART2 not a game folder'
+
+$k = New-Kit @('part2/PART2.DSF')
+Assert-Throws { Resolve-KitGame @{} $k } 'ERROR: set GAME in CONFIG.local.BAT (found 0 .DSF files and 0 game folders here, need exactly one)' 'only PART2 folder'
+
+$k = New-Kit @('PART2/PART2.DSF')
+Assert-Throws { Resolve-KitGame @{ GAME = 'PART2' } $k } "ERROR: PART2.DSF not found in PART2${sep} or this folder" 'GAME=PART2 is no game folder'
+
 $k = New-Kit @('EMPTY/readme.txt')
 Assert-Throws { Resolve-KitGame @{ GAME = 'EMPTY' } $k } "EMPTY${sep} has no EMPTY.DSF" 'folder without dsf'
 

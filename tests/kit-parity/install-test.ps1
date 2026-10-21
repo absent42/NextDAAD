@@ -286,13 +286,13 @@ sh -c "$fix"
 set -x
 '@
 $def = @{
-    '1' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID 003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $ok)
+    '1' = @{ Img = 'ubuntu:22.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/GAME.DDB STARTER/DATA/001.NX2 STARTER/DATA/GAME.AKY STARTER/DATA/001.VID STARTER/DATA/003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $ok)
         Proves = 'ubuntu:22.04 (oldest Ubuntu at the glibc 2.34 floor): page venv on Python 3.10, not activated, STARTER plus VIDEO/003.mkv' }
-    '2' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID STARTER.NEX INTRO/INTRO.DAT'; Body = ($head, $kit, $py, $activate, $modesKept, $pass2Extra, $build, $ok)
+    '2' = @{ Img = 'ubuntu:24.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/nextdaad.nex STARTER/DATA/GAME.DDB STARTER/DATA/003.VID STARTER/DATA/INTRO/INTRO.DAT'; Body = ($head, $kit, $py, $activate, $modesKept, $pass2Extra, $build, $ok)
         Proves = 'ubuntu:24.04: page venv recipe (activated) + ffmpeg, VIDEO/003.mkv encoded and INTRO.TXT compiled' }
-    '3' = @{ Img = 'ubuntu:22.04'; Check = 'nextdaad.nex GAME.DDB 001.NX2 GAME.AKY 001.VID'; Body = ($head, $kit, $pass3Extra, $build, $ok)
+    '3' = @{ Img = 'ubuntu:22.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/GAME.DDB STARTER/DATA/001.NX2 STARTER/DATA/GAME.AKY STARTER/DATA/001.VID'; Body = ($head, $kit, $pass3Extra, $build, $ok)
         Proves = 'ubuntu:22.04 with execute bits dropped: shell refuses ./build.sh, sh build.sh prints the chmod line, that line fixes the kit' }
-    '4' = @{ Img = 'ubuntu:24.04'; Check = 'nextdaad.nex GAME.DDB 003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $pass4Vidtune, $ok)
+    '4' = @{ Img = 'ubuntu:24.04'; Check = 'STARTER/STARTER.NEX STARTER/DATA/GAME.DDB STARTER/DATA/003.VID'; Body = ($head, $kit, $py, $modesKept, $noActivate, $build, $pass4Vidtune, $ok)
         Proves = 'ubuntu:24.04: apt ffmpeg, no FFMPEGDIR, venv not activated; build encodes 003, vidtune.sh starts, Encode Full + Accept write VIDEO/003.vid' }
 }
 Write-Lf (Join-Path $in 'vt4.py') $vt4

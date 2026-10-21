@@ -9,6 +9,9 @@ function Find-KitDir([string]$Dir, [string]$Name) {
     return $null
 }
 
+# PART2..PART9 are multi-part folders, never game folders.
+function Test-KitPartDir([string]$Name) { return ($Name -match '^(?i)PART[2-9]$') }
+
 function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
     $sep = [IO.Path]::DirectorySeparatorChar
     $kit = [IO.Path]::GetFullPath($KitRoot)
@@ -16,7 +19,8 @@ function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
     if ($Config.ContainsKey('GAME')) { $game = "$($Config['GAME'])".Trim() }
     $mode = ''; $name = ''; $src = ''
     if ($game -ne '') {
-        $dir = Find-KitDir $kit $game
+        $dir = $null
+        if (-not (Test-KitPartDir $game)) { $dir = Find-KitDir $kit $game }
         if ($dir) {
             $dsf = Find-KitFile $dir.FullName "$game.DSF"
             if (-not $dsf) { throw "ERROR: $game$sep has no $game.DSF" }
@@ -30,6 +34,7 @@ function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
         $rootDsf = @(Get-KitFiles $kit 'dsf')
         $folders = @()
         foreach ($d in (Get-ChildItem -LiteralPath $kit -Directory | Sort-Object Name)) {
+            if (Test-KitPartDir $d.Name) { continue }
             $f = Find-KitFile $d.FullName "$($d.Name).DSF"
             if ($f) { $folders += , @($d, $f) }
         }
