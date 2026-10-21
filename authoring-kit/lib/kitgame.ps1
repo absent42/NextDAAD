@@ -9,6 +9,14 @@ function Find-KitDir([string]$Dir, [string]$Name) {
     return $null
 }
 
+# Directories in ordinal-insensitive name order, the same on NTFS and ext4.
+function Get-KitDirs([string]$Dir) {
+    $list = New-Object System.Collections.Generic.List[System.IO.DirectoryInfo]
+    foreach ($d in Get-ChildItem -LiteralPath $Dir -Directory) { $list.Add($d) }
+    $list.Sort([Comparison[System.IO.DirectoryInfo]]{ param($a, $b) [StringComparer]::OrdinalIgnoreCase.Compare($a.Name, $b.Name) })
+    return $list.ToArray()
+}
+
 # PART2..PART9 are multi-part folders, never game folders.
 function Test-KitPartDir([string]$Name) { return ($Name -match '^(?i)PART[2-9]$') }
 
@@ -33,7 +41,7 @@ function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
     } else {
         $rootDsf = @(Get-KitFiles $kit 'dsf')
         $folders = @()
-        foreach ($d in (Get-ChildItem -LiteralPath $kit -Directory | Sort-Object Name)) {
+        foreach ($d in (Get-KitDirs $kit)) {
             if (Test-KitPartDir $d.Name) { continue }
             $f = Find-KitFile $d.FullName "$($d.Name).DSF"
             if ($f) { $folders += , @($d, $f) }

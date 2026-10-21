@@ -148,8 +148,8 @@ foreach ($p in (Test-DsfIncludes $dsfFile.FullName)) {
 $relRoot = Join-Path $kitRoot 'RELEASE'
 $relGame = $g.RelGame
 $rel = $g.DataDir
-$gameLbl = "RELEASE\$game"
-$dataLbl = "RELEASE\$game\DATA"
+$gameLbl = Join-KitPath @('RELEASE', $game)
+$dataLbl = Join-KitPath @('RELEASE', $game, 'DATA')
 # A pre-folder kit build left its files in the RELEASE\ root.
 if (Test-Path -LiteralPath $relRoot -PathType Container) {
     $stale = @(Get-ChildItem -LiteralPath $relRoot -Force | Where-Object { -not $_.PSIsContainer -or $_.Name -match '^(?i)(INTRO|PART[2-9])$' })
@@ -234,8 +234,8 @@ if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Video'; Src = $src; Data = $rel }) -n
 
 # ---- interpreter: <GAME>.NEX, or DATA\nextdaad.nex behind an intro launcher ----
 $introFile = Find-KitFile $src 'INTRO.TXT'
-if ($introFile) { $nexOut = Join-Path $rel 'nextdaad.nex'; $nexLbl = "$dataLbl\nextdaad.nex" }
-else { $nexOut = Join-Path $relGame "$game.NEX"; $nexLbl = "$gameLbl\$game.NEX" }
+if ($introFile) { $nexOut = Join-Path $rel 'nextdaad.nex'; $nexLbl = Join-KitPath @($dataLbl, 'nextdaad.nex') }
+else { $nexOut = Join-Path $relGame "$game.NEX"; $nexLbl = Join-KitPath @($gameLbl, "$game.NEX") }
 try { Copy-Item -LiteralPath $nexFile -Destination $nexOut -Force }
 catch { Fail "ERROR: could not copy interpreter $nexFile" }
 Write-Host "  interpreter -> $nexLbl"
