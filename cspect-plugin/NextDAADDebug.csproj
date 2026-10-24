@@ -7,7 +7,15 @@
     <RootNamespace>NextDAADDebug</RootNamespace>
     <Version>0.1.0</Version>
     <CSpectDir Condition="'$(CSpectDir)'==''">D:\ZXNextDev\cspect</CSpectDir>
+    <Configurations>Debug;Release;Autopilot</Configurations>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Autopilot'">
+    <DefineConstants>$(DefineConstants);AUTOPILOT</DefineConstants>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(Configuration)'!='Autopilot'">
+    <Compile Remove="src\Autopilot\**" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Remove="tests\**" />
     <None Remove="tests\**" />
