@@ -63,17 +63,57 @@ $env:FAKE_JNEXT_RC = '1'; Remove-Item $env:FAKE_JNEXT_LOG
 $msg = $null; try { Publish-JNextCard $fake $base "$work/c2.img" "$work/G1" 'G1.NEX' $work } catch { $msg = $_.Exception.Message }
 Assert-Eq ($msg -like '*step 1, exit 1*') $true 'failed add stops the run'
 Assert-Eq @(Get-Content $env:FAKE_JNEXT_LOG).Count 1 'nothing after the failed add'
-Assert-Eq ($null -ne (Test-JNextRunning)) $true 'Test-JNextRunning returns a bool'
+$running = Test-JNextRunning
+Assert-Eq ($running -is [bool]) $true 'Test-JNextRunning returns a bool'
+if ($OnWindows) {
+    if (@(Get-Process -Name jnext -ErrorAction SilentlyContinue).Count -gt 0) {
+        Write-Output 'skip: Test-JNextRunning false-case (a jnext process is running)'
+    } else {
+        Assert-Eq $running $false 'Test-JNextRunning false with no jnext process'
+    }
+}
 Remove-Item Env:FAKE_JNEXT_RC, Env:FAKE_JNEXT_LOG
 Remove-Item $work -Recurse -Force
 
 # Real jNext (file-copy mode only; never emulates): stage STARTER, check the card.
 $jexe = if ($env:JNEXT_SELFTEST_EXE) { $env:JNEXT_SELFTEST_EXE } else { ('D:/ZXNextDev/jnext/jnext' + $ExeSuffix) }
 $jbase = Join-Path $HOME '.jnext/sdcard/cspect-next-1gb-fixed.img'
-$starter = Join-Path $root 'authoring-kit/RELEASE/STARTER'
+$starter = if ($env:JNEXT_SELFTEST_STARTER) { $env:JNEXT_SELFTEST_STARTER } else { Join-Path $root 'authoring-kit/RELEASE/STARTER' }
 $py = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not ((Test-Path $jexe) -and (Test-Path $jbase) -and (Test-Path "$starter/STARTER.NEX") -and $py)) {
-    Write-Output 'skip: real jNext integration (jnext, base image, built STARTER or python missing)'
+$toolsRepo = Join-Path $root 'tools'
+$kitWork = Join-Path $root 'tests/out/kitjnext-kit'
+$skip = $null
+if (-not ((Test-Path $jexe) -and (Test-Path $jbase) -and $py)) { $skip = 'jnext, base image or python missing' }
+elseif (-not (Test-Path "$starter/STARTER.NEX")) {
+    # Build STARTER in a scratch copy of the tracked kit: RUN=0 so no emulator can start.
+    if (-not (Test-Path $toolsRepo -PathType Container)) { $skip = 'STARTER not built and the toolchain folder is missing' }
+    else {
+        if (Test-Path $kitWork) { Remove-Item $kitWork -Recurse -Force }
+        $kitSrc = Join-Path $root 'authoring-kit'
+        foreach ($rel in (& git -C $kitSrc ls-files)) {
+            $dst = Join-Path $kitWork $rel
+            New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+            [IO.File]::Copy((Join-Path $kitSrc $rel), $dst, $true)
+        }
+        $local = @('@echo off', "SET TOOLSDIR=$toolsRepo", "SET FFMPEGDIR=$(Join-Path $kitSrc 'tools/ffmpeg')",
+                   "SET GFXDIR=$(Join-Path $kitWork 'tools/gfx2next')", "SET VIDTOOLSDIR=$(Join-Path $kitWork 'tools/vidtools')",
+                   'SET RUN=0', 'SET GAME=STARTER')
+        [IO.File]::WriteAllLines((Join-Path $kitWork 'CONFIG.local.BAT'), $local, [Text.Encoding]::ASCII)
+        $hostExe = (Get-Process -Id $PID).Path
+        Push-Location $kitWork
+        try {
+            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            & $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kitWork 'lib/build.ps1') 2>&1 | ForEach-Object { "$_" } | Out-Host
+            $brc = $LASTEXITCODE
+            $ErrorActionPreference = $eap
+        } finally { Pop-Location }
+        Assert-Eq $brc 0 'scratch STARTER build exit'
+        $starter = Join-Path $kitWork 'RELEASE/STARTER'
+        Assert-Eq (Test-Path "$starter/STARTER.NEX") $true 'scratch build produced STARTER.NEX'
+    }
+}
+if ($skip) {
+    Write-Output "skip: real jNext integration ($skip)"
 } else {
     $out = Join-Path $root 'tests/out/kitjnext'
     New-Item -ItemType Directory -Path $out -Force | Out-Null
@@ -89,6 +129,7 @@ if (-not ((Test-Path $jexe) -and (Test-Path $jbase) -and (Test-Path "$starter/ST
         Assert-Eq ([BitConverter]::ToString([IO.File]::ReadAllBytes($tmp))) ([BitConverter]::ToString($want)) 'read-back AUTOEXEC = vector'
     } finally {
         Remove-Item $card -Force -ErrorAction SilentlyContinue
+        if (Test-Path $kitWork) { Remove-Item $kitWork -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
 Write-Output "kitjnext-selftest: $checks checks passed"
