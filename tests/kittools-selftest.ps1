@@ -38,6 +38,15 @@ try {
     Assert-Eq $t.S2A (Join-Path $t.ARKOSBIN "SongToAky$x") 'S2A'
     Assert-Eq $t.FFMPEGBIN (Join-Path (Join-Path 'tools' 'ffmpeg') 'bin') 'ffmpeg bin\ probed'
     Assert-Eq $t.SJASMPLUSBIN (Join-Path (Join-Path 'tools' 'sjasmplus') 'sjasmplus-1.23.1') 'nested sjasmplus folder'
+    Assert-Eq $t.EMULATOR 'cspect' 'EMULATOR default'
+    Assert-Eq $t.JNEXTDIR (Join-Path 'tools' 'jnext') 'JNEXTDIR default under TOOLSDIR'
+    Assert-Eq $t.JNEXT (Join-Path (Join-Path 'tools' 'jnext') "jnext$x") 'JNEXT default'
+    Assert-Eq $t.JNEXTIMG (Join-KitPath @($HOME, '.jnext', 'sdcard', 'cspect-next-1gb-fixed.img')) 'JNEXTIMG default'
+    $tj = Resolve-KitTools @{ EMULATOR = 'JNext'; JNEXTDIR = 'alt\jn'; JNEXTIMG = 'x.img' } $kit
+    Assert-Eq $tj.EMULATOR 'jnext' 'EMULATOR lower-cased'
+    Assert-Eq $tj.JNEXT (Join-Path 'alt\jn' "jnext$x") 'JNEXTDIR override'
+    Assert-Eq $tj.JNEXTIMG 'x.img' 'JNEXTIMG override'
+    Assert-Eq (Resolve-KitTools @{ JNEXT = 'my\jn' } $kit).JNEXT 'my\jn' 'JNEXT full-path override'
     Assert-Eq $t.INTRONEX 'intro.nex' 'INTRONEX default'
     Assert-Eq $t.NEXFILE '' 'NEXFILE comes from CONFIG, no default here'
     Assert-Eq $env:FFMPEG $t.FFMPEG 'FFMPEG exported'
@@ -78,7 +87,10 @@ $fakeBin = "$root/tests/out/kittools/bin"
 New-Item -ItemType Directory -Force $fakeBin | Out-Null
 $fakeFf = "$fakeBin/ffmpeg$x"
 [IO.File]::WriteAllText($fakeFf, "#!/bin/sh`nexit 0`n")
+$fakeJn = "$fakeBin/jnext$x"
+[IO.File]::WriteAllText($fakeJn, "#!/bin/sh`nexit 0`n")
 if (-not $OnWindows) { & chmod +x $fakeFf }
+if (-not $OnWindows) { & chmod +x $fakeJn }
 $oldPath = $env:PATH
 $env:PATH = $fakeBin + [IO.Path]::PathSeparator + $env:PATH
 try {
@@ -87,9 +99,11 @@ try {
         Assert-Eq $t4.FFMPEG (Join-Path 'nosuch' "ffmpeg$x") 'Windows: no PATH fallback'
         Assert-Eq (Find-OnPath 'ffmpeg') '' 'Windows: Find-OnPath is empty'
         Assert-Eq $t4.CSPECTCMD '' 'Windows: CSPECTCMD unused'
+        Assert-Eq $t4.JNEXT (Join-Path (Join-Path 'tools' 'jnext') "jnext$x") 'Windows: no jnext PATH fallback'
     } else {
         Assert-Eq ([IO.Path]::GetFullPath($t4.FFMPEG)) ([IO.Path]::GetFullPath($fakeFf)) 'Linux: ffmpeg from PATH'
         Assert-Eq $t4.CSPECTCMD 'mono' 'Linux: CSPECTCMD defaults to mono'
+        Assert-Eq ([IO.Path]::GetFullPath($t4.JNEXT)) ([IO.Path]::GetFullPath($fakeJn)) 'Linux: jnext from PATH'
     }
 } finally { $env:PATH = $oldPath }
 $t5 = Resolve-KitTools @{ CSPECTCMD = 'dotnet' } $kit

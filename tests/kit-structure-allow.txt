@@ -78,6 +78,8 @@ tests-hazards|tests/kitconfig-selftest.ps1|SET CSPECTDIR=C:\Emulators\CSpect
 tests-hazards|tests/kitconfig-selftest.ps1|SET VIDOPTS=a\b
 tests-hazards|tests/kitconfig-selftest.ps1|$sep['CSPECTDIR'] 'C:\Emulators\CSpect'
 tests-hazards|tests/kitconfig-selftest.ps1|$sep['VIDOPTS'] 'a\b'
+tests-hazards|tests/kitconfig-selftest.ps1|SET JNEXTDIR=C:\Emu\jnext
+tests-hazards|tests/kitconfig-selftest.ps1|$sep['JNEXTDIR'] 'C:\Emu\jnext'
 
 # tests-hazards: kittools-selftest.ps1 pins that Resolve-KitTools passes an
 # override value through unchanged - genuine test data, not a real path.
@@ -85,3 +87,6 @@ tests-hazards|tests/kittools-selftest.ps1|NDRC is lib\ndrc beside kittools.ps1
 tests-hazards|tests/kittools-selftest.ps1|FFMPEGDIR = 'alt\ff'; NDRCVER
 tests-hazards|tests/kittools-selftest.ps1|Join-Path 'alt\ff' "ffmpeg$x"
 tests-hazards|tests/kittools-selftest.ps1|$t2.NDRC 'my\ndrc'
+tests-hazards|tests/kittools-selftest.ps1|JNEXTDIR = 'alt\jn'
+tests-hazards|tests/kittools-selftest.ps1|Join-Path 'alt\jn'
+tests-hazards|tests/kittools-selftest.ps1|JNEXT = 'my\jn'

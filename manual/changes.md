@@ -48,6 +48,11 @@ game behaves, how it builds, or what the kit gives you, it is here.
   first. Set flag 241 back to a timed value before the fade-in. Timed
   fades now go up to 254 frames per step. The extern's `README.md`
   now also explains both of its flags.
+- **Run in jNext.** `SET EMULATOR=jnext` makes `RUN.BAT` / `run.sh` (and
+  `RUN=1` builds) start the game in the jNext emulator instead of
+  CSpect. jNext plays video cutscenes and long streamed sounds, which
+  CSpect cannot. CSpect stays the default. See Getting started,
+  "Running in jNext".
 
 ## 0.11.1 - 29 September 2026
 

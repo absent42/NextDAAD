@@ -10,9 +10,17 @@ Tool           Provides                                Download                 
 -------------  --------------------------------------  ---------------------------------------------------------  --------------------------
 Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
+jNext          Optional emulator (video, streamed)     https://github.com/jorgegv/jnext/releases                  tools\jnext\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
 sjasmplus      Z80 assembler (externs only, optional)  https://github.com/z00m128/sjasmplus                       tools\sjasmplus\
 NextDAW        Runtime player for MUSIC NDR intros     not downloadable - your own licensed copy                  tools\NextDAW\
+
+jNext is optional and only matters if you set EMULATOR=jnext in
+CONFIG.local.BAT. Use version 1.1.87 or later; on Windows extract the x64
+zip so that jnext.exe ends up in tools\jnext\. Start it once by itself
+so it downloads its SD-card image (about 1 GB, into .jnext\sdcard\ in
+your home folder), then close it. Unlike CSpect it plays video cutscenes
+and long streamed sounds.
 
 sjasmplus is optional: every extern in authoring-kit\externs\ ships a
 prebuilt GAME.XBN. Download it only if you want to modify an extern's
@@ -54,6 +62,7 @@ After extracting, these paths must exist:
   tools\ArkosTracker3\tools\SongToSoundEffects.exe
   tools\ArkosTracker3\tools\SongToYm.exe (only needed for STREAM_NNN.aks)
   tools\CSpect\CSpect.exe
+  tools\jnext\jnext.exe (only for EMULATOR=jnext)
   tools\ffmpeg\bin\ffmpeg.exe (only needed for VIDEO\NNN.mp4 cutscenes)
   tools\vidtools\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
   tools\vidtools\vidtune.exe (only needed for interactive per-clip tuning)
@@ -62,6 +71,7 @@ After extracting, these paths must exist:
 On Linux, the build checks these paths instead:
   tools/ArkosTracker3/tools/SongToAky (SongToSoundEffects, SongToYm beside it)
   tools/CSpect/CSpect.exe (run under mono)
+  jnext on PATH, or tools/jnext/jnext (only for EMULATOR=jnext)
   tools/sjasmplus/sjasmplus
   tools/ffmpeg/ffmpeg, or tools/ffmpeg/bin/ffmpeg
 A tool missing from its path above (ffmpeg, SongToAky, sjasmplus,
