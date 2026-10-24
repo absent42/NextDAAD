@@ -46,7 +46,7 @@ It is incremental: only changed sources are reconverted. `RUN.BAT`
 launches the emulator `EMULATOR` names (CSpect by default, or jNext) on the
 selected game, if it is installed under `tools\`; CSpect uses
 `RELEASE\<GAME>\` as the emulated card. `CLEAN.BAT` empties
-`RELEASE\<GAME>\` (that game only) for a full rebuild. While `STARTER\`
+`RELEASE\<GAME>\` (that game only) and `CACHE\jnext\` for a full rebuild. While `STARTER\`
 is the game, every build prints a warning that kit updates replace it.
 
 The compile line the build runs, for when you want to check a DSF without
@@ -75,6 +75,8 @@ a whole `CONFIG.BAT`.
 | `EMULATOR` | blank or `cspect` = CSpect; `jnext` = jNext, which also plays video and streamed sound |
 | `COLS` | blank = 80 columns, `40` = 40 (the DSF must also issue `GFX 1 18`) |
 | `COMPRESS` | `1` ZX0-compresses pictures |
+| `JNEXTDIR`, `JNEXT` | jNext folder (blank = `tools\jnext\`, or `jnext` on PATH on Linux) and full path to the program, for `EMULATOR=jnext` |
+| `JNEXTIMG` | jNext's SD-card image; blank = `.jnext/sdcard/` in the home folder. The kit copies it to `CACHE\jnext\card.img` and never changes it |
 | `TOOLSDIR`, `CSPECTDIR`, `ARKOSDIR`, `FFMPEGDIR`, `SJASMPLUSDIR` | Tool locations; blank = under `tools\` |
 | `VIDOPTS`, `VIDOPTS_NNN`, `VIDFPS`, `VIDASPECT` | Video encoding; per game, in the `.CFG`. vidtune saves `VIDOPTS_NNN` there and refuses `STARTER\` |
 
@@ -106,7 +108,11 @@ the path in `tools\README.txt`.
 | `GAME.AKY is N bytes, over the 10208 song limit` | shorten or rename to `STREAM_NNN.aks` |
 | `required tool missing` / `... not found` | install under `tools\` or set the `*DIR` key |
 | `CSpect is running - close it before building` | close the emulator |
+| `ERROR: EMULATOR=... - use cspect or jnext` | set `EMULATOR` to `cspect` or `jnext`, or blank |
+| `ERROR: jNext not found at ...` | install jNext 1.1.87 or later there, or set `JNEXTDIR` in `CONFIG.local.BAT` |
+| `ERROR: no jNext SD-card image at ...` | start jNext once to download its image, or set `JNEXTIMG` in `CONFIG.local.BAT` |
 | `ERROR: jNext is running - close it before running the game` | close jNext |
+| `ERROR: jNext could not write the SD-card image (step N, exit CODE)` | step 1 adds AUTOEXEC.BAS, steps 2-3 the game; exit 1 old jNext, 2 unreadable file, 3 unusable name (rename), 4 exists, 5 bad image (CLEAN.BAT), 6 card full |
 | `does not keep sub-microsecond file times` | move the kit to a local NTFS or ext4 drive |
 
 Warnings are advisory; the build continues.

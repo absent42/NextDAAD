@@ -11,7 +11,7 @@
 <h1 id="getting-started">Getting started</h1>
 <p>The authoring kit turns your DAAD source into a folder you copy straight
 onto an SD card. It compiles the database, converts your artwork and
-audio, stages the interpreter beside them, and can launch an emulator on
+audio, stages the interpreter beside them, and can launch an emulator (CSpect, or jNext) on
 the result. There is nothing to assemble by hand.</p>
 <h2 id="what-you-need">What you need</h2>
 <p>The kit runs on Windows and on Linux. The build scripts, the compiler
@@ -74,7 +74,7 @@ each into the kit's <code>tools\</code> folder at the path shown:</p>
 <p><code>tools\README.txt</code> lists the download addresses and the exact executable
 paths the build checks for.</p>
 <p>Double-click <code>BUILD.BAT</code> to build, <code>RUN.BAT</code> to play the result in
-CSpect, <code>CLEAN.BAT</code> to start over. On a fresh kit the first build makes
+CSpect (or jNext, see <code>EMULATOR</code>), <code>CLEAN.BAT</code> to start over. On a fresh kit the first build makes
 the starter game; read <a href="#where-your-files-go">Where your files go</a>
 before you start your own.</p>
 <h3 id="linux-setup">Linux setup</h3>
@@ -371,6 +371,10 @@ unchanged. The build only reads these files; it never runs them.</p>
 <td>The folder holding <code>jnext.exe</code>, only for <code>EMULATOR=jnext</code>. Blank means <code>tools\jnext\</code>; on Linux, blank finds <code>jnext</code> on your PATH.</td>
 </tr>
 <tr>
+<td><code>JNEXT</code></td>
+<td>The full path to the jNext program itself, only for <code>EMULATOR=jnext</code>. Overrides <code>JNEXTDIR</code>; set it when the program is not named <code>jnext</code> or <code>jnext.exe</code>, as with a Flatpak launcher.</td>
+</tr>
+<tr>
 <td><code>JNEXTIMG</code></td>
 <td>The SD-card image jNext downloaded on its first run. Blank means jNext's own copy in your home folder (<code>.jnext\sdcard\</code>). The kit copies it and never changes it.</td>
 </tr>
@@ -433,7 +437,8 @@ it. See <a href="video.html">Video</a>.</p>
   gets a card image with the game added, see
   <a href="#running-in-jnext">Running in jNext</a>.</li>
 <li><strong><code>CLEAN.BAT</code></strong> (<code>./clean.sh</code>) - empties <code>RELEASE\&lt;GAME&gt;\</code> for the
-  selected game only; other games' output is left alone. The next build
+  selected game only; other games' output is left alone. It also deletes
+  <code>CACHE\jnext\</code>, the jNext card copy. The next build
   then converts everything from scratch.</li>
 </ul>
 <p>All three work on the game <code>GAME</code> selects (see
@@ -460,7 +465,9 @@ plays both. CSpect stays the default.</p>
 <li>Download jNext 1.1.87 or later from
    https://github.com/jorgegv/jnext/releases. On Windows, extract the
    x64 zip into <code>tools\jnext\</code>. On Linux, install the <code>.deb</code> or <code>.rpm</code>
-   package or the Flatpak, which puts <code>jnext</code> on your PATH.</li>
+   package, which puts <code>jnext</code> on your PATH. A Flatpak install is untested
+   and may not see the kit's folders; if you use one, add
+   <code>SET JNEXT=&lt;launcher&gt;</code> to <code>CONFIG.local.BAT</code>.</li>
 <li>Start jNext once by itself and let it download its SD-card image
    (about 1 GB, kept in <code>.jnext\sdcard\</code> in your home folder). Close it
    again.</li>
@@ -469,7 +476,8 @@ plays both. CSpect stays the default.</p>
 <p>From then on <code>RUN.BAT</code> (and a <code>RUN=1</code> build) copies that card image to
 <code>CACHE\jnext\card.img</code>, adds your game to the copy, and boots NextZXOS,
 which starts the game. It takes a few seconds longer than CSpect. Your
-own copy of the card is never changed.</p>
+own copy of the card is never changed. The copy, about 1 GB, stays in
+<code>CACHE\jnext\</code> between runs until <code>CLEAN.BAT</code> removes that folder.</p>
 <ul>
 <li>Saves made in jNext are lost on the next RUN, because every run starts
   from a fresh copy of the card.</li>
@@ -584,7 +592,7 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 </tr>
 <tr>
 <td><code>ERROR: jNext not found at ...</code></td>
-<td>Install jNext 1.1.87 or later at the path shown, or set <code>JNEXTDIR</code> in <code>CONFIG.local.BAT</code>. See <a href="#running-in-jnext">Running in jNext</a>.</td>
+<td>Install jNext 1.1.87 or later at the path shown, or set <code>JNEXTDIR</code> in <code>CONFIG.local.BAT</code>. On Linux, installing the <code>.deb</code> or <code>.rpm</code> package puts <code>jnext</code> on your PATH. See <a href="#running-in-jnext">Running in jNext</a>.</td>
 </tr>
 <tr>
 <td><code>ERROR: no jNext SD-card image at ...</code></td>
@@ -596,7 +604,7 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 </tr>
 <tr>
 <td><code>ERROR: jNext could not write the SD-card image (step N, exit CODE)</code></td>
-<td>The kit could not add your game to its copy of the SD card. Close any jNext still running, check there is free disk space on the drive that holds the kit (<code>CACHE\jnext\</code>), and run again. If it keeps failing at step 2 or 3, look in your game folder for a file or folder with a long or unusual name and rename it.</td>
+<td>The kit could not add your game to its copy of the SD card. Step 1 adds <code>AUTOEXEC.BAS</code>; steps 2 and 3 add your game. Look up CODE in the list below the table.</td>
 </tr>
 <tr>
 <td><code>ndrc failed compiling</code></td>
@@ -648,6 +656,20 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 </tr>
 </tbody>
 </table>
+<p>The jNext card-write error ends with the code jNext gave back:</p>
+<ul>
+<li><code>exit 1</code> - jNext is older than 1.1.87. Update jNext.</li>
+<li><code>exit 2</code> - jNext could not read a file it was asked to add. Close any
+  program holding the file; antivirus software scanning a new file is a
+  common cause. Run again.</li>
+<li><code>exit 3</code> - a file or folder name in your game folder cannot be stored
+  on an SD card, or two names differ only in capitals. Rename it.</li>
+<li><code>exit 4</code> - the file already exists on the card. Run <code>CLEAN.BAT</code> and run
+  again.</li>
+<li><code>exit 5</code> - the card copy in <code>CACHE\jnext\</code> is damaged or could not be
+  written. Run <code>CLEAN.BAT</code>, check there is free disk space, and run again.</li>
+<li><code>exit 6</code> - the card is full. Your game folder is too big for it.</li>
+</ul>
 <p>Warnings are different from errors. Anything about the sound-effects
 bank, or about picture transparency, is advisory - the build carries on
 and the game still ships.</p>

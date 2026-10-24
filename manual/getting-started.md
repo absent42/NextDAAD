@@ -2,7 +2,7 @@
 
 The authoring kit turns your DAAD source into a folder you copy straight
 onto an SD card. It compiles the database, converts your artwork and
-audio, stages the interpreter beside them, and can launch an emulator on
+audio, stages the interpreter beside them, and can launch an emulator (CSpect, or jNext) on
 the result. There is nothing to assemble by hand.
 
 ## What you need
@@ -39,7 +39,7 @@ each into the kit's `tools\` folder at the path shown:
 paths the build checks for.
 
 Double-click `BUILD.BAT` to build, `RUN.BAT` to play the result in
-CSpect, `CLEAN.BAT` to start over. On a fresh kit the first build makes
+CSpect (or jNext, see `EMULATOR`), `CLEAN.BAT` to start over. On a fresh kit the first build makes
 the starter game; read [Where your files go](#where-your-files-go)
 before you start your own.
 
@@ -341,6 +341,7 @@ The settings:
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
 | `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
 | `JNEXTDIR` | The folder holding `jnext.exe`, only for `EMULATOR=jnext`. Blank means `tools\jnext\`; on Linux, blank finds `jnext` on your PATH. |
+| `JNEXT` | The full path to the jNext program itself, only for `EMULATOR=jnext`. Overrides `JNEXTDIR`; set it when the program is not named `jnext` or `jnext.exe`, as with a Flatpak launcher. |
 | `JNEXTIMG` | The SD-card image jNext downloaded on its first run. Blank means jNext's own copy in your home folder (`.jnext\sdcard\`). The kit copies it and never changes it. |
 | `VIDTOOLSDIR` | Same, for the folder holding `videnc.exe` and `vidtune.exe`, which the kit ships. You should not need to set this. On Linux the encoder runs from `lib\videnc.py` and this setting is unused. |
 | `NDRCVER` | Normally unset: the compiler version the kit was tested against is pinned in `lib\toolversions.txt` and the build refuses any other. Set it only alongside your own `NDRC` override. |
@@ -385,7 +386,8 @@ it. See [Video](video.md).
   gets a card image with the game added, see
   [Running in jNext](#running-in-jnext).
 - **`CLEAN.BAT`** (`./clean.sh`) - empties `RELEASE\<GAME>\` for the
-  selected game only; other games' output is left alone. The next build
+  selected game only; other games' output is left alone. It also deletes
+  `CACHE\jnext\`, the jNext card copy. The next build
   then converts everything from scratch.
 
 All three work on the game `GAME` selects (see
@@ -417,7 +419,9 @@ plays both. CSpect stays the default.
 1. Download jNext 1.1.87 or later from
    https://github.com/jorgegv/jnext/releases. On Windows, extract the
    x64 zip into `tools\jnext\`. On Linux, install the `.deb` or `.rpm`
-   package or the Flatpak, which puts `jnext` on your PATH.
+   package, which puts `jnext` on your PATH. A Flatpak install is untested
+   and may not see the kit's folders; if you use one, add
+   `SET JNEXT=<launcher>` to `CONFIG.local.BAT`.
 2. Start jNext once by itself and let it download its SD-card image
    (about 1 GB, kept in `.jnext\sdcard\` in your home folder). Close it
    again.
@@ -426,7 +430,8 @@ plays both. CSpect stays the default.
 From then on `RUN.BAT` (and a `RUN=1` build) copies that card image to
 `CACHE\jnext\card.img`, adds your game to the copy, and boots NextZXOS,
 which starts the game. It takes a few seconds longer than CSpect. Your
-own copy of the card is never changed.
+own copy of the card is never changed. The copy, about 1 GB, stays in
+`CACHE\jnext\` between runs until `CLEAN.BAT` removes that folder.
 
 - Saves made in jNext are lost on the next RUN, because every run starts
   from a fresh copy of the card.
@@ -504,10 +509,10 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `wrong DAAD compiler version` | The banner `lib\ndrc.exe` prints does not match the version pinned in `lib\toolversions.txt`. This should not happen with the kit as shipped; if you have replaced `ndrc.exe` yourself, set `NDRCVER` in `CONFIG.local.BAT` to match. |
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
 | `ERROR: EMULATOR=... - use cspect or jnext` | `EMULATOR` holds something else. Set it to `cspect` or `jnext`, or leave it blank for CSpect. |
-| `ERROR: jNext not found at ...` | Install jNext 1.1.87 or later at the path shown, or set `JNEXTDIR` in `CONFIG.local.BAT`. See [Running in jNext](#running-in-jnext). |
+| `ERROR: jNext not found at ...` | Install jNext 1.1.87 or later at the path shown, or set `JNEXTDIR` in `CONFIG.local.BAT`. On Linux, installing the `.deb` or `.rpm` package puts `jnext` on your PATH. See [Running in jNext](#running-in-jnext). |
 | `ERROR: no jNext SD-card image at ...` | Start jNext once and let it download its SD-card image, or set `JNEXTIMG` in `CONFIG.local.BAT`. |
 | `ERROR: jNext is running - close it before running the game` | Close jNext and run again. |
-| `ERROR: jNext could not write the SD-card image (step N, exit CODE)` | The kit could not add your game to its copy of the SD card. Close any jNext still running, check there is free disk space on the drive that holds the kit (`CACHE\jnext\`), and run again. If it keeps failing at step 2 or 3, look in your game folder for a file or folder with a long or unusual name and rename it. |
+| `ERROR: jNext could not write the SD-card image (step N, exit CODE)` | The kit could not add your game to its copy of the SD card. Step 1 adds `AUTOEXEC.BAS`; steps 2 and 3 add your game. Look up CODE in the list below the table. |
 | `ndrc failed compiling` | The compiler rejected your source. Its own output above the message names the line. |
 | `WARNING: ... -> on disk as ... (case differs; Linux cannot open it)` / `WARNING: ... -> uses \ (Linux needs /)` | An `#include` or `#incbin` line names a file whose name on disk is spelled with different capitals, or separates folders with `\`. Windows builds it anyway; on Linux the same line is an `ERROR:` and the build stops. Match the case and use `/`. |
 | `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |
@@ -520,6 +525,20 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `this encode cannot stream` / `cannot play at rate` | No encode of that clip fits the playback budget. Use a smaller shape, a lower frame rate, or a shorter clip - see [Video delivery](reference/video-delivery.md). |
 | `audio bytes/frame ... exceeds` | The frame rate is below the floor sound needs. Raise `VIDFPS`. |
 | `over the NXV player's ... ceiling` | The clip is too big or too long to play. The message names the longest clip your shape and frame rate allow. |
+
+The jNext card-write error ends with the code jNext gave back:
+
+- `exit 1` - jNext is older than 1.1.87. Update jNext.
+- `exit 2` - jNext could not read a file it was asked to add. Close any
+  program holding the file; antivirus software scanning a new file is a
+  common cause. Run again.
+- `exit 3` - a file or folder name in your game folder cannot be stored
+  on an SD card, or two names differ only in capitals. Rename it.
+- `exit 4` - the file already exists on the card. Run `CLEAN.BAT` and run
+  again.
+- `exit 5` - the card copy in `CACHE\jnext\` is damaged or could not be
+  written. Run `CLEAN.BAT`, check there is free disk space, and run again.
+- `exit 6` - the card is full. Your game folder is too big for it.
 
 Warnings are different from errors. Anything about the sound-effects
 bank, or about picture transparency, is advisory - the build carries on
