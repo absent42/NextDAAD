@@ -1,5 +1,5 @@
 # Boots DBGFIX with the window enabled for 12 s and checks debugger.log:
-# the window opened, nothing was disarmed or disabled. Needs build.ps1 first.
+# the window opened, the ImGui draw ran, nothing was disarmed or disabled. Needs build.ps1 first.
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 & "$repo\cspect-plugin\stage-cspect.ps1" | Out-Host
@@ -21,7 +21,9 @@ try {
 }
 finally { Remove-Item Env:NEXTDAAD_DEBUG -ErrorAction SilentlyContinue }
 $log = Get-Content "$leg\debugger.log" -Raw
-if ($log -notmatch 'window opened 800x640') { throw "window did not open:`n$log" }
+if ($log -notmatch 'window opened 800x672') { throw "window did not open:`n$log" }
+if ($log -notmatch 'imgui draw active') { throw "ImGui draw action never ran:`n$log" }
+if ($log -match 'display only|needs CSpect') { throw "window degraded:`n$log" }
 if ($log -match 'disarmed|window disabled') { throw "plugin failed:`n$log" }
 if (-not (Test-Path "$leg\DEBUGGER.local.TXT")) { throw 'settings file not written' }
 'window-smoke: window opened, no failures'

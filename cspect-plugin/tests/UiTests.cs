@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Xunit;
 
@@ -30,7 +31,7 @@ namespace NextDAADDebug.Tests
         public void HeldButtonClicksOnce()
         {
             var m = new MouseTracker();
-            Func<int, UiInput> f = b => m.Next(16, 16, b, 0, 100, 40, 8, 16, 1, 2, true, true);
+            Func<int, UiInput> f = b => m.Next(16, 16, b, 0, 100, 40, 8, 16);
             Assert.True(f(1).LeftClick);
             Assert.False(f(1).LeftClick);
             Assert.False(f(0).LeftClick);
@@ -42,11 +43,11 @@ namespace NextDAADDebug.Tests
         public void OutsideMouseHitsNothing()
         {
             var m = new MouseTracker();
-            var a = m.Next(-1, -1, 1, 0, 100, 40, 8, 16, 1, 2, true, true);
+            var a = m.Next(-1, -1, 1, 0, 100, 40, 8, 16);
             Assert.Equal(-1, a.Col);
             Assert.False(a.LeftClick);
-            var b = m.Next(900, 700, 0, 0, 100, 40, 8, 16, 1, 2, true, true);
-            var c = m.Next(900, 700, 1, 0, 100, 40, 8, 16, 1, 2, true, true);
+            var b = m.Next(900, 700, 0, 0, 100, 40, 8, 16);
+            var c = m.Next(900, 700, 1, 0, 100, 40, 8, 16);
             Assert.False(c.LeftClick);
             var ui = UiDriver.NewUi();
             ui.Begin(c);
@@ -54,17 +55,103 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
-        public void WheelTotalBecomesSteps()
+        public void WheelIsPerFrameSteps()
         {
-            var m = new MouseTracker();
-            Func<int, bool, int> w = (v, up) => m.Next(8, 8, 0, v, 100, 40, 8, 16, 1, 2, true, up).Wheel;
-            Assert.Equal(0, w(500, true));                 // first sample only sets the base
-            Assert.Equal(1, w(620, true));
-            Assert.Equal(0, w(620, true));
-            Assert.Equal(-1, w(500, true));
-            Assert.Equal(1, w(380, false));                // inverted device
             var d = new MouseTracker();
-            Assert.Equal(1, d.Next(8, 8, 0, 3, 100, 40, 8, 16, 1, 2, false, true).Wheel);   // per-frame delta
+            Assert.Equal(3, d.Next(8, 8, 0, 3, 100, 40, 8, 16).Wheel);
+            Assert.Equal(5, d.Next(8, 8, 0, 9, 100, 40, 8, 16).Wheel);      // clamped
+            Assert.Equal(-5, d.Next(8, 8, 0, -7, 100, 40, 8, 16).Wheel);
+            Assert.Equal(0, d.Next(8, 8, 0, 0, 100, 40, 8, 16).Wheel);
+            Assert.Equal(-1, d.Next(8, 8, 0, -1, 100, 40, 8, 16).Wheel);
+        }
+
+        const float Off = -3.4028235e38f;      // ImGui MousePos when the window is not hovered
+
+        [Fact]
+        public void ImGuiMouseIsRelativeToImage()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            m.Sample(100.5f, 52f, 8f, 4f, false, false, 0);
+            var u = m.Take();
+            Assert.Equal(11, u.Col);                 // (100.5 - 8) / 8
+            Assert.Equal(3, u.Row);                  // (52 - 4) / 16
+            m.Sample(7f, 3f, 8f, 4f, true, false, 0);
+            u = m.Take();
+            Assert.Equal(-1, u.Col);                 // left of / above the image
+            Assert.False(u.LeftClick);
+            m.Sample(8f + 800f, 20f, 8f, 4f, true, false, 0);
+            Assert.Equal(-1, m.Take().Col);
+        }
+
+        [Fact]
+        public void ImGuiMouseNotHoveredHitsNothing()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            m.Sample(Off, Off, 0, 0, true, true, 1);
+            var u = m.Take();
+            Assert.Equal(-1, u.Col);
+            Assert.Equal(-1, u.Row);
+            Assert.False(u.LeftClick);
+            Assert.False(u.RightClick);
+            m.Sample(float.NaN, 10, 0, 0, false, false, 0);
+            Assert.Equal(-1, m.Take().Col);
+        }
+
+        [Fact]
+        public void ImGuiButtonsAreEdges()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            Func<bool, bool, UiInput> f = (l, r) => { m.Sample(16, 16, 0, 0, l, r, 0); return m.Take(); };
+            Assert.True(f(true, false).LeftClick);
+            Assert.False(f(true, false).LeftClick);
+            Assert.False(f(false, false).LeftClick);
+            Assert.True(f(false, true).RightClick);
+        }
+
+        [Fact]
+        public void ImGuiShortClickBetweenTicksIsKept()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            m.Sample(16, 16, 0, 0, false, false, 0);
+            m.Take();
+            m.Sample(16, 16, 0, 0, true, false, 0);    // two draws in one OSTick: press then release
+            m.Sample(16, 16, 0, 0, false, false, 0);
+            Assert.True(m.Take().LeftClick);
+            m.Sample(16, 16, 0, 0, false, false, 0);
+            m.Sample(16, 16, 0, 0, true, false, 0);
+            Assert.True(m.Take().LeftClick);
+        }
+
+        [Fact]
+        public void ImGuiWheelAccumulatesAndUpIsPositive()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            m.Sample(16, 16, 0, 0, false, false, 1);
+            m.Sample(16, 16, 0, 0, false, false, 1);
+            var u = m.Take();
+            Assert.Equal(2, u.Wheel);                    // two notches between ticks
+            Assert.True(u.HasEvent);
+            Assert.Equal(0, m.Take().Wheel);   // consumed
+            m.Sample(16, 16, 0, 0, false, false, -1);
+            Assert.Equal(-1, m.Take().Wheel);
+            m.Sample(16, 16, 0, 0, false, false, 0.25f);
+            Assert.Equal(1, m.Take().Wheel);             // a fractional step still moves
+            for (int i = 0; i < 8; i++) m.Sample(16, 16, 0, 0, false, false, 1);
+            Assert.Equal(5, m.Take().Wheel);
+        }
+
+        [Fact]
+        public void ImGuiPressOutsideDoesNotClickAfterEntering()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            m.Sample(900, 16, 0, 0, true, false, 0);     // pressed right of the image
+            m.Sample(16, 16, 0, 0, true, false, 0);      // dragged in, still held
+            Assert.False(m.Take().LeftClick);
+            m.Sample(Off, Off, 0, 0, true, false, 0);    // pressed with the window not hovered
+            m.Sample(16, 16, 0, 0, false, false, 0);
+            Assert.False(m.Take().LeftClick);
+            m.Sample(16, 16, 0, 0, true, false, 0);
+            Assert.True(m.Take().LeftClick);
         }
 
         [Fact]
@@ -182,6 +269,38 @@ namespace NextDAADDebug.Tests
             wz.Feed(UiDriver.Click(ui, wz.Current.Draw, "Cancel"));
             Assert.Null(wz.Current);
             Assert.Null(wz.Result);
+        }
+
+        [Fact]
+        public void DigitPadAcceptsTypedNumberInRange()
+        {
+            var pad = new DigitPad("Value", 7, 0, 255);
+            Assert.True(pad.Type(" 42 "));
+            Assert.Equal(42, pad.Value);
+            Assert.False(pad.Type("256"));
+            Assert.False(pad.Type("-1"));
+            Assert.False(pad.Type("4x"));
+            Assert.False(pad.Type(""));
+            Assert.Equal(42, pad.Value);
+            var small = new DigitPad("Row", 3, 2, 9);
+            Assert.False(small.Type("1"));
+            Assert.True(small.Type("9"));
+            Assert.Equal(9, small.Value);
+        }
+
+        [Fact]
+        public void PickerAcceptsTypedPrefix()
+        {
+            var pk = new Picker("Noun", new List<PickItem> { new PickItem("  7  Lamp", 7), new PickItem(" 70  Box", 70), new PickItem("LAMP", 1), new PickItem("lantern", 2) });
+            Assert.True(pk.Type("la"));
+            Assert.Equal(1, pk.Selected);                // first label starting with the text, any case
+            Assert.True(pk.Type("7"));
+            Assert.Equal(7, pk.Selected);                // padded number labels match without the padding
+            Assert.True(pk.Type("70"));
+            Assert.Equal(70, pk.Selected);
+            Assert.False(pk.Type("zz"));
+            Assert.False(pk.Type("  "));
+            Assert.Equal(70, pk.Selected);
         }
 
         [Fact]

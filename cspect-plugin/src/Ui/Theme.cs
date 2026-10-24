@@ -11,7 +11,7 @@ namespace NextDAADDebug
             0x283848, 0x406080, 0x202830, 0x283040, 0x3868A0, 0x303848, 0xE04040,
         };
 
-        // argb false = ABGR channel order (PlatformFacts.ScreenIsArgb).
+        // argb false = ABGR channel order (PlatformFacts.TextureIsArgb).
         public static uint[] Palette(bool argb)
         {
             var p = new uint[Rgb.Length];

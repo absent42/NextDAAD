@@ -56,12 +56,49 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
-        public void DisplayOnlyHintReplacesHotkeyText()
+        public void HotkeyHintShown()
         {
             ui.Begin(new UiInput());
-            view.Draw(ui, Snap(), posted.Add, false);
-            Assert.True(OnScreen("display only - Ctrl+Alt+B/N/R"));
-            Assert.False(OnScreen("Ctrl+Alt+A/B/N/R"));
+            Draw(ui, Snap());
+            Assert.True(OnScreen("Ctrl+Alt+A/B/N/R"));
+        }
+
+        [Fact]
+        public void TypedNumberSetsFlag()
+        {
+            var s = Snap();
+            Click(s, " Flags ");
+            Assert.False(view.TypingWanted);
+            Assert.False(view.Type("5"));
+            int x, y;
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Assert.True(ui.S.Find(" +    7 ", out x, out y, 23, 40));
+            ui.Begin(UiDriver.At(31, y));
+            Draw(ui, s);
+            Assert.True(view.TypingWanted);
+            Assert.False(view.Type("300"));
+            Assert.True(view.PopupOpen);
+            Assert.True(view.Type("42"));
+            Assert.False(view.PopupOpen);
+            Assert.Contains(posted, c => c.Kind == CommandKind.SetFlag && c.A == 7 && c.B == 42);
+        }
+
+        [Fact]
+        public void TypedPrefixPicksAndChainsWizard()
+        {
+            var s = Snap();
+            Click(s, "Breakpoints");
+            Click(s, " Add ");
+            Assert.True(view.TypingWanted);
+            Assert.True(view.Type("runtime"));
+            Assert.Contains(posted, c => c.Kind == CommandKind.AddBreakpoint && c.Bp.Kind == BreakKind.RuntimeError);
+            Click(s, " Add ");
+            Assert.True(view.Type("flag c"));
+            Assert.True(view.PopupOpen);                // wizard moved on to the flag picker
+            view.CancelPopup();
+            Assert.False(view.PopupOpen);
+            Assert.False(view.TypingWanted);
         }
 
         [Fact]

@@ -35,15 +35,38 @@ namespace NextDAADDebug
         }
 
         public bool PopupOpen => popup != null;
+        public bool TypingWanted => popup is DigitPad || popup is Picker;
 
-        public void Draw(Ui ui, Snapshot s, Action<Command> post, bool inputAvailable = true)
+        // Typed text for the open popup; false = no popup or not accepted.
+        public bool Type(string text)
+        {
+            if (popup == null || !popup.Type(text)) return false;
+            Finish(PopupResult.Ok);
+            return true;
+        }
+
+        public void CancelPopup()
+        {
+            if (popup != null) Finish(PopupResult.Cancel);
+        }
+
+        void Finish(PopupResult r)
+        {
+            var p = popup;
+            var cb = onPopup;
+            popup = null;
+            onPopup = null;
+            if (cb != null) cb(p, r);
+        }
+
+        public void Draw(Ui ui, Snapshot s, Action<Command> post)
         {
             bool newHalt = s.Halted && !wasHalted;
             wasHalted = s.Halted;
             if (newHalt || level < 0 || level >= s.Stack.Length) level = s.Stack.Length - 1;
             bool hadPopup = popup != null;
             ui.Blocked = hadPopup;
-            Toolbar(ui, s, post, inputAvailable);
+            Toolbar(ui, s, post);
             StatusLine(ui, s);
             StackPane(ui, s);
             int tab = ui.Tabs(RightX, TopY, TopTabs, topTab);
@@ -65,15 +88,8 @@ namespace NextDAADDebug
             if (popup != null)
             {
                 ui.Blocked = !hadPopup;      // a popup opened this frame gets no input until the next
-                var p = popup;
-                var r = p.Draw(ui);
-                if (r != PopupResult.Open)
-                {
-                    var cb = onPopup;
-                    popup = null;
-                    onPopup = null;
-                    if (cb != null) cb(p, r);
-                }
+                var r = popup.Draw(ui);
+                if (r != PopupResult.Open) Finish(r);
             }
             lastBps = s.Breakpoints;
             SaveIfChanged();
@@ -95,7 +111,7 @@ namespace NextDAADDebug
             catch (Exception ex) { Log.Write("settings not saved: " + ex.Message); }
         }
 
-        void Toolbar(Ui ui, Snapshot s, Action<Command> post, bool inputAvailable)
+        void Toolbar(Ui ui, Snapshot s, Action<Command> post)
         {
             bool h = s.Halted;
             int x = 0;
@@ -105,8 +121,7 @@ namespace NextDAADDebug
             x = Btn(ui, x, "Step entry", h, () => post(Command.Of(CommandKind.StepEntry)));
             x = Btn(ui, x, "Step out", h, () => post(Command.Of(CommandKind.StepOut)));
             Btn(ui, x, "Run to PARSE", h, () => post(Command.Of(CommandKind.RunToParse)));
-            if (inputAvailable) ui.S.Text(Cols - 22, 0, "Ctrl+Alt+A/B/N/R", Theme.Dim, Theme.Bg);
-            else ui.S.Text(Cols - 30, 0, "display only - Ctrl+Alt+B/N/R", Theme.Dim, Theme.Bg);
+            ui.S.Text(Cols - 22, 0, "Ctrl+Alt+A/B/N/R", Theme.Dim, Theme.Bg);
         }
 
         static int Btn(Ui ui, int x, string label, bool enabled, Action act)
@@ -386,7 +401,7 @@ namespace NextDAADDebug
                 case 4:
                     foreach (var v in d.Vocabulary.OrderBy(v => v.Word, StringComparer.Ordinal)) rows.Add(v.Word.PadRight(6) + v.Number.ToString().PadLeft(4) + "  " + v.Type);
                     break;
-                case 5: for (int i = 0; i < 128; i++) rows.Add(Num(i) + "'" + d.Token(i) + "'"); break;
+                case 5: for (int i = 0; i < d.TokenCount; i++) rows.Add(Num(i) + "'" + d.Token(i) + "'"); break;
                 default:
                     for (int l = 0; l < d.NumLocations; l++)
                         rows.Add(Num(l) + string.Join(", ", d.Connections(l).Select(c => CondactFormatter.Word(d, c.Word, WordType.Verb) + " -> " + c.Destination)));
