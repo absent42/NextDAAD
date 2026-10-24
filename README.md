@@ -24,9 +24,11 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 ## Requirements
 
 - A ZX Spectrum Next (or an emulator) with an SD card. Video
-  cutscenes need 2MB of RAM and a real machine, and so does a sampled
-  effect longer than 24K - everything else, including shorter effects,
-  runs under emulation.
+  cutscenes need 2MB of RAM. Cutscenes and sampled effects longer than
+  24K stream from the card, so they need a real machine or
+  [jNext](https://github.com/jorgegv/jnext) 1.1.87 or later - CSpect
+  cannot play them. Everything else, including shorter effects, runs
+  under either emulator.
 - A DAAD DSF source file and game assets. The authoring kit builds the DAAD database 
   from source and converts your game assets for you.
 - Windows or Linux, to run the automated build scripts of the authoring kit.
@@ -37,7 +39,7 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
   8-bit colour modes, each with its own palette, optionally
   ZX0-compressed, drawn through a bank-allocated cache and a
   double-buffered surface. Layer 2 graphics can be drawn in front of 
-  or behind the text display
+  or behind the text display, and at any X/Y point on the screen
 - **80x32 or 40x32 text** - a tilemap based text driver with per-character 
   colour from the full ZX Next palette, with optional paper/ink transparency
 - **Title screens** - a picture shown at boot over the theme music,
@@ -105,6 +107,9 @@ few third-party tools it does not redistribute:
 
 - [Arkos Tracker 3](https://www.julien-nevo.com/arkostracker/index.php/download/) - music and sound effects
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
+- [jNext](https://github.com/jorgegv/jnext) - optional second emulator
+  (1.1.87 or later) that also plays video cutscenes and long streamed
+  sounds.
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
 
 Also included with the kit is VidEnc & VidTune, a encoder and UI app for fine-tuning video encodes and 
@@ -159,6 +164,7 @@ the Markdown, never the generated HTML.
 - em00k for [playwav32](https://github.com/em00k/playwav32) which informed the sample sound playback method
 - Rusty Pixels for [Gfx2Next](https://www.rustypixels.uk/gfx2next/)
 - Mike Dailly for [CSpect](https://mdf200.itch.io/cspect)
+- Jorge Gonzalez Villalonga (ZXjogv) for [jNext](https://github.com/jorgegv/jnext)
 - Cesar Hernandez Baño for [ZEsarUX](https://github.com/chernandezba/zesarux)
 - z00m for [sjasmplus](https://github.com/z00m128/sjasmplus)
 - Stefan Vogt for [The Curse of Rabenstein](https://github.com/ByteProject/Rabenstein) which was used during development testing

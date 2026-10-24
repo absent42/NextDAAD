@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.12.0 - unreleased
+## 0.12.0 - 24 October 2026
 
 - **Multi-game kit support.** Game folders and a `DATA\` folder on the 
   card. Each game now lives in its own folder in the kit, 
@@ -25,7 +25,6 @@ game behaves, how it builds, or what the kit gives you, it is here.
   file loose at the card root, still run. **Moving from v0.11:** unzip 
   0.12.0 into a new folder rather than over your old kit, and follow 
   Getting started, "Moving from v0.11.x or below to v0.12.0".
-
 - **Positioned pictures.** A numbered PNG with an `IMAGES\NNN.txt` sidecar
   builds as `NNN.NX3`: fixed at `at=X,Y` in pixels or floating in the
   current text window with `at=window`, any size that fits, drawing only
@@ -38,7 +37,6 @@ game behaves, how it builds, or what the kit gives you, it is here.
   `DISPLAY 0` at `x*8`,`y` instead, `GFX n 27` cancels, `GFX n 7` clears
   both Layer 2 surfaces. The format is documented in the
   picture-format reference so converters can write NX3 files directly. See Graphics, "Positioned pictures".
-
 - **Instant fades, for fading up after a video.** In `externs/fade`,
   setting flag 241 to 255 makes `EXTERN c 40` and `EXTERN 0 41` take
   effect at once: the colour or the picture is on screen before the

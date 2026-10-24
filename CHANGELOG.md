@@ -2,9 +2,9 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.12.0 unreleased
+## v0.12.0 24/10/2025
 
-- **Multi-game kit support.** Game folders and a `DATA\` folder on the 
+- **Multi-game kit support**: Game folders and a `DATA\` folder on the 
   card. Each game now lives in its own folder in the kit, 
   `MYGAME\MYGAME.DSF` with its `IMAGES\`, `AUDIO\`, `VIDEO\` and other 
   files, and one kit holds any number of games. Choose the one to build 
@@ -24,7 +24,7 @@ All notable changes to NextDAAD are recorded here.
   file loose at the card root, still run. **Moving from v0.11:** unzip 
   0.12.0 into a new folder rather than over your old kit, and follow 
   Getting started, "Moving from v0.11.x or below to v0.12.0".
-- Positioned Layer 2 pictures (NX3): a picture drawn at a fixed X,Y or
+- **Positioned Layer 2 pictures (NX3)**: a picture drawn at a fixed X,Y or
   floating in the current text window, any size that fits, that changes
   only its own rectangle and applies only its own palette range.
   Plain NXI/NX2 pictures are unchanged. Files are NNN.NX3, NNN.NX3.ZX0
