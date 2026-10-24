@@ -507,7 +507,7 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `ERROR: jNext not found at ...` | Install jNext 1.1.87 or later at the path shown, or set `JNEXTDIR` in `CONFIG.local.BAT`. See [Running in jNext](#running-in-jnext). |
 | `ERROR: no jNext SD-card image at ...` | Start jNext once and let it download its SD-card image, or set `JNEXTIMG` in `CONFIG.local.BAT`. |
 | `ERROR: jNext is running - close it before running the game` | Close jNext and run again. |
-| `ERROR: jNext could not write the SD-card image (step N, exit CODE)` | The kit could not add your game to its copy of the card. Run again; if it repeats, check there is free disk space, or run `CLEAN.BAT`, which deletes the copy at `CACHE\jnext\card.img`. |
+| `ERROR: jNext could not write the SD-card image (step N, exit CODE)` | The kit could not add your game to its copy of the SD card. Close any jNext still running, check there is free disk space on the drive that holds the kit (`CACHE\jnext\`), and run again. If it keeps failing at step 2 or 3, look in your game folder for a file or folder with a long or unusual name and rename it. |
 | `ndrc failed compiling` | The compiler rejected your source. Its own output above the message names the line. |
 | `WARNING: ... -> on disk as ... (case differs; Linux cannot open it)` / `WARNING: ... -> uses \ (Linux needs /)` | An `#include` or `#incbin` line names a file whose name on disk is spelled with different capitals, or separates folders with `\`. Windows builds it anyway; on Linux the same line is an `ERROR:` and the build stops. Match the case and use `/`. |
 | `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |
