@@ -152,11 +152,8 @@ namespace NextDAADDebug
             UiInput input;
             if (inputOk)
             {
-                input = mouse.Next(surface.MouseX, surface.MouseY, surface.Buttons, surface.Wheel, Cols, Rows, CellW, CellH,
-                    PlatformFacts.LeftButtonMask, PlatformFacts.RightButtonMask, PlatformFacts.WheelIsTotal, PlatformFacts.WheelUpPositive);
-#pragma warning disable CS0162
-                if (!PlatformFacts.WheelIsTotal) surface.ResetWheel();
-#pragma warning restore CS0162
+                input = mouse.Next(surface.MouseX, surface.MouseY, surface.Buttons, surface.Wheel, Cols, Rows, CellW, CellH);
+                surface.ResetWheel();
             }
             else input = new UiInput();
             if (!input.HasEvent && snap.Serial == lastSerial) return;
