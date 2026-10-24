@@ -25,8 +25,7 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 
 - A ZX Spectrum Next (or an emulator) with an SD card. Video
   cutscenes need 2MB of RAM. Cutscenes and sampled effects longer than
-  24K stream from the card, so they need a real machine or
-  [jNext](https://github.com/jorgegv/jnext) 1.1.87 or later - CSpect
+  24K stream from the card, so they need a real machine or jNext 1.1.87 or later - CSpect
   cannot play them. Everything else, including shorter effects, runs
   under either emulator.
 - A DAAD DSF source file and game assets. The authoring kit builds the DAAD database 
