@@ -12,6 +12,7 @@ namespace NextDAADDebug
         byte Peek(ushort address);
         byte[] Peek(ushort address, int count);
         byte[] PeekPhysical(int address, int count);
+        byte[] PeekPhysicalUla(int address, int count);
         void Poke(ushort address, byte value);
         byte GetNextRegister(byte register);
         CpuRegs Registers();

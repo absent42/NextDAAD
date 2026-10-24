@@ -14,6 +14,7 @@ namespace NextDAADDebug
         public byte Peek(ushort a) => cs.Peek(a);
         public byte[] Peek(ushort a, int n) => cs.Peek(a, n, null);
         public byte[] PeekPhysical(int a, int n) => cs.PeekPhysical(a, n, null);
+        public byte[] PeekPhysicalUla(int a, int n) => cs.PeekPhysicalULA(a, n, null);
         public void Poke(ushort a, byte v) => cs.Poke(a, v);
         public byte GetNextRegister(byte r) => cs.GetNextRegister(r, -1);
 
