@@ -36,6 +36,8 @@ namespace NextDAADDebug
             }
         }
 
+        public bool TryGet(string name, out ushort address) => syms.TryGetValue(name, out address);
+
         public HookInfo Hook(string name) => hooks[name];
 
         public static SymbolFile Parse(string text)
