@@ -11,10 +11,9 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
-<h2 id="0120-unreleased">0.12.0 - unreleased</h2>
+<h2 id="0120-24-october-2026">0.12.0 - 24 October 2026</h2>
 <ul>
-<li>
-<p><strong>Multi-game kit support.</strong> Game folders and a <code>DATA\</code> folder on the 
+<li><strong>Multi-game kit support.</strong> Game folders and a <code>DATA\</code> folder on the 
   card. Each game now lives in its own folder in the kit, 
   <code>MYGAME\MYGAME.DSF</code> with its <code>IMAGES\</code>, <code>AUDIO\</code>, <code>VIDEO\</code> and other 
   files, and one kit holds any number of games. Choose the one to build 
@@ -33,10 +32,8 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   folder before you write a game. Games built by older kits, with every 
   file loose at the card root, still run. <strong>Moving from v0.11:</strong> unzip 
   0.12.0 into a new folder rather than over your old kit, and follow 
-  Getting started, "Moving from v0.11.x or below to v0.12.0".</p>
-</li>
-<li>
-<p><strong>Positioned pictures.</strong> A numbered PNG with an <code>IMAGES\NNN.txt</code> sidecar
+  Getting started, "Moving from v0.11.x or below to v0.12.0".</li>
+<li><strong>Positioned pictures.</strong> A numbered PNG with an <code>IMAGES\NNN.txt</code> sidecar
   builds as <code>NNN.NX3</code>: fixed at <code>at=X,Y</code> in pixels or floating in the
   current text window with <code>at=window</code>, any size that fits, drawing only
   its own rectangle and applying only its <code>palette=F-L</code> range. Plain
@@ -47,10 +44,8 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   <code>GFX x 8</code> / <code>GFX y 15</code> place the next
   <code>DISPLAY 0</code> at <code>x*8</code>,<code>y</code> instead, <code>GFX n 27</code> cancels, <code>GFX n 7</code> clears
   both Layer 2 surfaces. The format is documented in the
-  picture-format reference so converters can write NX3 files directly. See Graphics, "Positioned pictures".</p>
-</li>
-<li>
-<p><strong>Instant fades, for fading up after a video.</strong> In <code>externs/fade</code>,
+  picture-format reference so converters can write NX3 files directly. See Graphics, "Positioned pictures".</li>
+<li><strong>Instant fades, for fading up after a video.</strong> In <code>externs/fade</code>,
   setting flag 241 to 255 makes <code>EXTERN c 40</code> and <code>EXTERN 0 41</code> take
   effect at once: the colour or the picture is on screen before the
   call returns, and flag 240 already reads 1. Fade to black instantly
@@ -58,8 +53,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   ready for <code>EXTERN 0 41</code> to fade the picture up - no visible fade-out
   first. Set flag 241 back to a timed value before the fade-in. Timed
   fades now go up to 254 frames per step. The extern's <code>README.md</code>
-  now also explains both of its flags.</p>
-</li>
+  now also explains both of its flags.</li>
 <li><strong>Run in jNext.</strong> <code>SET EMULATOR=jnext</code> makes <code>RUN.BAT</code> / <code>run.sh</code> (and
   <code>RUN=1</code> builds) start the game in the jNext emulator instead of
   CSpect. jNext plays video cutscenes and long streamed sounds, which
