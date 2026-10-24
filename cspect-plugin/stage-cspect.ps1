@@ -17,5 +17,5 @@ if (-not (Test-Path -LiteralPath (Join-Path $Dest 'CSpect.exe'))) {
     & robocopy $CSpectDir $Dest /E /XJ /XF *.mmc /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
 }
-Copy-Item (Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Release\net452\NextDAADDebug.dll') $Dest -Force
+Copy-Item (Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Release\net48\NextDAADDebug.dll') $Dest -Force
 "staged $Dest"

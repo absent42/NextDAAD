@@ -1,12 +1,12 @@
 # Stages the debugger bench legs. Each sd\LEG* folder is complete: game,
 # interpreter, SYM, source map and its own CSpect copy with the plugin.
-# tools\CSpect (3.3.1) and D:\ZXNextDev\cspect (3.4.0) are only read.
+# tools\CSpect (3.3.1) and D:\ZXNextDev\cspect (4.0) are only read.
 # A leg folder is only ever replaced when it carries the marker this script wrote.
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
 $fx = Join-Path $PSScriptRoot 'tests\fixtures'
-$cs340 = 'D:\ZXNextDev\cspect'
-$dll = Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Release\net452\NextDAADDebug.dll'
+$cs40 = 'D:\ZXNextDev\cspect'
+$dll = Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Release\net48\NextDAADDebug.dll'
 $marker = '.cspect-debugger-leg'
 $legNames = 'LEGDBGW', 'LEGDBG331', 'LEGDBGSTALE', 'LEGDBGBADSYM'
 $T = [string][char]9
@@ -23,7 +23,7 @@ foreach ($n in $legNames) {
 $debugSym = Join-Path $repo 'build\NEXTDAAD.DEBUG.SYM'
 Copy-Item "$repo\build\NEXTDAAD.SYM" $debugSym -Force
 & "$repo\build.ps1" -Release | Out-Host
-& "$PSScriptRoot\stage-cspect.ps1" -CSpectDir $cs340 | Out-Host        # builds the DLL against 3.4.0
+& "$PSScriptRoot\stage-cspect.ps1" -CSpectDir $cs40 | Out-Host        # builds the DLL against 4.0
 
 # DEBUGGER.local.TXT text: bp lines are Kind, enabled, A, B, C, Op.
 function Seed([string[]]$records) {
@@ -78,11 +78,11 @@ function New-Leg([string]$name, [string]$cspectSrc, [string]$seed) {
     return $leg
 }
 
-New-Leg 'LEGDBGW' $cs340 $seedFull | Out-Null
+New-Leg 'LEGDBGW' $cs40 $seedFull | Out-Null
 New-Leg 'LEGDBG331' (Join-Path $repo 'tools\CSpect') $null | Out-Null
-$stale = New-Leg 'LEGDBGSTALE' $cs340 $seedStale
+$stale = New-Leg 'LEGDBGSTALE' $cs40 $seedStale
 $dsm = [IO.File]::ReadAllText("$stale\GAME.DSM") -replace '(?m)^ddb\t[0-9A-Fa-f]+\t', "ddb`t00000000`t"
 [IO.File]::WriteAllText("$stale\GAME.DSM", $dsm, (New-Object Text.UTF8Encoding($false)))
-$bad = New-Leg 'LEGDBGBADSYM' $cs340 $null
+$bad = New-Leg 'LEGDBGBADSYM' $cs40 $null
 Copy-Item $debugSym "$bad\NEXTDAAD.SYM" -Force
 'staged sd\LEGDBGW, sd\LEGDBG331, sd\LEGDBGSTALE, sd\LEGDBGBADSYM'
