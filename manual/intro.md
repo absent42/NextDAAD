@@ -236,7 +236,8 @@ missing or unusable font falls back to the built-in one, and a music
 file that will not open plays silence. Only a missing, unreadable or
 refused `nextdaad.nex` is fatal, since there is then no game to start: a
 failure opening the file or reading its header shows `E9 nextdaad.nex`
-on a magenta border; a card failure once the file's banks have started
+in white on a magenta bar across the top of a black screen; a card
+failure once the file's banks have started
 loading instead stops on a plain magenta border with no message. If a
 show misbehaves, check the build output first: every compile error names
 its line in `INTRO.TXT`.
