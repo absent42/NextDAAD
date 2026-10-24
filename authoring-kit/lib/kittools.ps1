@@ -40,6 +40,7 @@ function Resolve-KitTools([hashtable]$Config, [string]$KitRoot) {
     $t.GFXDIR = or (cfg 'GFXDIR') (Join-Path $t.TOOLSDIR 'gfx2next')
     $t.ARKOSDIR = or (cfg 'ARKOSDIR') (Join-Path $t.TOOLSDIR 'ArkosTracker3')
     $t.CSPECTDIR = or (cfg 'CSPECTDIR') (Join-Path $t.TOOLSDIR 'CSpect')
+    $t.JNEXTDIR = or (cfg 'JNEXTDIR') (Join-Path $t.TOOLSDIR 'jnext')
     $t.FFMPEGDIR = or (cfg 'FFMPEGDIR') (Join-Path $t.TOOLSDIR 'ffmpeg')
     $t.SJASMPLUSDIR = or (cfg 'SJASMPLUSDIR') (Join-Path $t.TOOLSDIR 'sjasmplus')
     $t.NEXTDAWDIR = or (cfg 'NEXTDAWDIR') (Join-Path $t.TOOLSDIR 'NextDAW')
@@ -49,6 +50,9 @@ function Resolve-KitTools([hashtable]$Config, [string]$KitRoot) {
     $t.NDRC = or (cfg 'NDRC') (Join-Path $lib "ndrc$x")
     $t.GFX = Join-Path $t.GFXDIR "gfx2next$x"
     $t.CSPECT = Join-Path $t.CSPECTDIR "CSpect.exe"
+    $t.JNEXT = or (cfg 'JNEXT') (Join-Path $t.JNEXTDIR "jnext$x")
+    $t.JNEXTIMG = or (cfg 'JNEXTIMG') (Join-KitPath @($HOME, '.jnext', 'sdcard', 'cspect-next-1gb-fixed.img'))
+    $t.EMULATOR = (or (cfg 'EMULATOR') 'cspect').ToLowerInvariant()
     $t.VIDENC = Join-Path $t.VIDTOOLSDIR "videnc$x"
     $t.VIDTUNE = Join-Path $t.VIDTOOLSDIR "vidtune$x"
     $t.ARKOSBIN = $t.ARKOSDIR
@@ -95,6 +99,7 @@ function Resolve-KitTools([hashtable]$Config, [string]$KitRoot) {
     if (-not (Test-Path -LiteralPath (abs $t.SJASMPLUS))) { $p = Find-OnPath 'sjasmplus'; if ($p) { $t.SJASMPLUS = $p; $t.SJASMPLUSBIN = Split-Path -Parent $p } }
     if (-not (Test-Path -LiteralPath (abs $t.GFX))) { $p = Find-OnPath 'gfx2next'; if ($p) { $t.GFX = $p } }
     if (-not (Test-Path -LiteralPath (abs $t.CSPECT))) { $p = Find-OnPath 'CSpect.exe'; if ($p) { $t.CSPECT = $p } }
+    if (-not (Test-Path -LiteralPath (abs $t.JNEXT))) { $p = Find-OnPath 'jnext'; if ($p) { $t.JNEXT = $p } }
     $t.CSPECTCMD = ''
     if (-not $OnWindows) { $t.CSPECTCMD = or (cfg 'CSPECTCMD') 'mono' }
     $env:TOOLSDIR = $t.TOOLSDIR

@@ -28,6 +28,7 @@ CONFIG_BAT = (
     "SET NEL=a\x85b\r\n"
     "SET FFMPEGDIR=tools\\ffmpeg\\bin\r\n"
     "SET VIDOPTS=--x=a\\b\r\n"
+    "SET JNEXTIMG=D:\\Cards\\next.img\r\n"
 )
 
 CONFIG_LOCAL_BAT = (

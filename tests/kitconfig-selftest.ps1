@@ -53,13 +53,16 @@ $sepWork = "$root/tests/out/kitconfig-sep"
 New-Item -ItemType Directory -Force $sepWork | Out-Null
 [IO.File]::WriteAllLines("$sepWork/CONFIG.BAT", @(
     'SET CSPECTDIR=C:\Emulators\CSpect',
+    'SET JNEXTDIR=C:\Emu\jnext',
     'SET VIDOPTS=a\b'
 ), [Text.Encoding]::ASCII)
 $sep = Read-KitConfig $sepWork
 if ($OnWindows) {
     Assert-Eq $sep['CSPECTDIR'] 'C:\Emulators\CSpect' 'path key unchanged on Windows'
+    Assert-Eq $sep['JNEXTDIR'] 'C:\Emu\jnext' 'JNEXTDIR unchanged on Windows'
 } else {
     Assert-Eq $sep['CSPECTDIR'] 'C:/Emulators/CSpect' 'path key normalised on non-Windows'
+    Assert-Eq $sep['JNEXTDIR'] 'C:/Emu/jnext' 'JNEXTDIR normalised on non-Windows'
 }
 Assert-Eq $sep['VIDOPTS'] 'a\b' 'non-path key backslash unchanged on both hosts'
 Assert-Eq ($OnWindows -is [bool]) $true 'OnWindows is a bool'

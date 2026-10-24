@@ -11,7 +11,7 @@ REM 1 = ZX0-compress location graphics (smaller, uses the interpreter depack
 REM path); 0 = raw NX2/NXI. Default is raw.
 SET COMPRESS=0
 
-REM 1 = launch CSpect on the result after a successful build; 0 = build only.
+REM 1 = launch the emulator (see EMULATOR) after a successful build; 0 = build only.
 SET RUN=1
 
 REM Text columns your game is authored for: blank = 80 (the default), or 40
@@ -58,6 +58,18 @@ SET CSPECTDIR=
 
 REM Linux only: the program that runs CSpect.exe (default mono). Ignored on Windows.
 SET CSPECTCMD=
+
+REM The emulator RUN launches: cspect (the default) or jnext. jNext plays
+REM video cutscenes and long streamed sounds, which CSpect cannot - see
+REM docs\getting-started.html "Running in jNext".
+SET EMULATOR=
+
+REM jNext - folder holding jnext.exe (Windows). Linux: blank finds jnext on PATH.
+SET JNEXTDIR=
+
+REM The SD-card image jNext downloaded on its first run. Blank = jNext's
+REM own copy in your home folder. The kit copies it and never changes it.
+SET JNEXTIMG=
 
 REM ffmpeg - reads your .mp4 cutscene sources.
 SET FFMPEGDIR=

@@ -44,5 +44,6 @@ both tools/gfx2next/LICENSE.txt
 both tools/gfx2next/.gitkeep
 both tools/ArkosTracker3/tools/.gitkeep
 both tools/CSpect/.gitkeep
+both tools/jnext/.gitkeep
 both tools/ffmpeg/bin/.gitkeep
 both tools/sjasmplus/.gitkeep

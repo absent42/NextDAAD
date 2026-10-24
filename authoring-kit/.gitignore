@@ -1,4 +1,5 @@
 RELEASE/
+CACHE/
 CONFIG.local.BAT*
 !CONFIG.local.BAT.sample
 

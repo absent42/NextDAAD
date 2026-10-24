@@ -16,7 +16,7 @@ _SET_RE = re.compile(r'^\s*set\s+"?([A-Za-z0-9_]+)=(.*?)"?\s*$', re.IGNORECASE)
 PATH_KEYS = {
     "TOOLSDIR", "GFXDIR", "ARKOSDIR", "CSPECTDIR", "FFMPEGDIR",
     "SJASMPLUSDIR", "NEXTDAWDIR", "VIDTOOLSDIR", "NDRC", "NEXFILE",
-    "INTRONEX",
+    "INTRONEX", "JNEXTDIR", "JNEXT", "JNEXTIMG",
 }
 
 
