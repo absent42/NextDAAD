@@ -58,7 +58,9 @@ namespace NextDAADDebug.Tests
         public void WheelIsPerFrameSteps()
         {
             var d = new MouseTracker();
-            Assert.Equal(1, d.Next(8, 8, 0, 3, 100, 40, 8, 16).Wheel);
+            Assert.Equal(3, d.Next(8, 8, 0, 3, 100, 40, 8, 16).Wheel);
+            Assert.Equal(5, d.Next(8, 8, 0, 9, 100, 40, 8, 16).Wheel);      // clamped
+            Assert.Equal(-5, d.Next(8, 8, 0, -7, 100, 40, 8, 16).Wheel);
             Assert.Equal(0, d.Next(8, 8, 0, 0, 100, 40, 8, 16).Wheel);
             Assert.Equal(-1, d.Next(8, 8, 0, -1, 100, 40, 8, 16).Wheel);
         }
@@ -68,38 +70,38 @@ namespace NextDAADDebug.Tests
         [Fact]
         public void ImGuiMouseIsRelativeToImage()
         {
-            var m = new ImGuiMouse();
+            var m = new ImGuiMouse(100, 40, 8, 16);
             m.Sample(100.5f, 52f, 8f, 4f, false, false, 0);
-            var u = m.Take(100, 40, 8, 16);
+            var u = m.Take();
             Assert.Equal(11, u.Col);                 // (100.5 - 8) / 8
             Assert.Equal(3, u.Row);                  // (52 - 4) / 16
             m.Sample(7f, 3f, 8f, 4f, true, false, 0);
-            u = m.Take(100, 40, 8, 16);
+            u = m.Take();
             Assert.Equal(-1, u.Col);                 // left of / above the image
             Assert.False(u.LeftClick);
             m.Sample(8f + 800f, 20f, 8f, 4f, true, false, 0);
-            Assert.Equal(-1, m.Take(100, 40, 8, 16).Col);
+            Assert.Equal(-1, m.Take().Col);
         }
 
         [Fact]
         public void ImGuiMouseNotHoveredHitsNothing()
         {
-            var m = new ImGuiMouse();
+            var m = new ImGuiMouse(100, 40, 8, 16);
             m.Sample(Off, Off, 0, 0, true, true, 1);
-            var u = m.Take(100, 40, 8, 16);
+            var u = m.Take();
             Assert.Equal(-1, u.Col);
             Assert.Equal(-1, u.Row);
             Assert.False(u.LeftClick);
             Assert.False(u.RightClick);
             m.Sample(float.NaN, 10, 0, 0, false, false, 0);
-            Assert.Equal(-1, m.Take(100, 40, 8, 16).Col);
+            Assert.Equal(-1, m.Take().Col);
         }
 
         [Fact]
         public void ImGuiButtonsAreEdges()
         {
-            var m = new ImGuiMouse();
-            Func<bool, bool, UiInput> f = (l, r) => { m.Sample(16, 16, 0, 0, l, r, 0); return m.Take(100, 40, 8, 16); };
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            Func<bool, bool, UiInput> f = (l, r) => { m.Sample(16, 16, 0, 0, l, r, 0); return m.Take(); };
             Assert.True(f(true, false).LeftClick);
             Assert.False(f(true, false).LeftClick);
             Assert.False(f(false, false).LeftClick);
@@ -109,29 +111,47 @@ namespace NextDAADDebug.Tests
         [Fact]
         public void ImGuiShortClickBetweenTicksIsKept()
         {
-            var m = new ImGuiMouse();
+            var m = new ImGuiMouse(100, 40, 8, 16);
             m.Sample(16, 16, 0, 0, false, false, 0);
-            m.Take(100, 40, 8, 16);
+            m.Take();
             m.Sample(16, 16, 0, 0, true, false, 0);    // two draws in one OSTick: press then release
             m.Sample(16, 16, 0, 0, false, false, 0);
-            Assert.True(m.Take(100, 40, 8, 16).LeftClick);
+            Assert.True(m.Take().LeftClick);
             m.Sample(16, 16, 0, 0, false, false, 0);
             m.Sample(16, 16, 0, 0, true, false, 0);
-            Assert.True(m.Take(100, 40, 8, 16).LeftClick);
+            Assert.True(m.Take().LeftClick);
         }
 
         [Fact]
         public void ImGuiWheelAccumulatesAndUpIsPositive()
         {
-            var m = new ImGuiMouse();
+            var m = new ImGuiMouse(100, 40, 8, 16);
             m.Sample(16, 16, 0, 0, false, false, 1);
             m.Sample(16, 16, 0, 0, false, false, 1);
-            var u = m.Take(100, 40, 8, 16);
-            Assert.Equal(1, u.Wheel);
+            var u = m.Take();
+            Assert.Equal(2, u.Wheel);                    // two notches between ticks
             Assert.True(u.HasEvent);
-            Assert.Equal(0, m.Take(100, 40, 8, 16).Wheel);   // consumed
+            Assert.Equal(0, m.Take().Wheel);   // consumed
             m.Sample(16, 16, 0, 0, false, false, -1);
-            Assert.Equal(-1, m.Take(100, 40, 8, 16).Wheel);
+            Assert.Equal(-1, m.Take().Wheel);
+            m.Sample(16, 16, 0, 0, false, false, 0.25f);
+            Assert.Equal(1, m.Take().Wheel);             // a fractional step still moves
+            for (int i = 0; i < 8; i++) m.Sample(16, 16, 0, 0, false, false, 1);
+            Assert.Equal(5, m.Take().Wheel);
+        }
+
+        [Fact]
+        public void ImGuiPressOutsideDoesNotClickAfterEntering()
+        {
+            var m = new ImGuiMouse(100, 40, 8, 16);
+            m.Sample(900, 16, 0, 0, true, false, 0);     // pressed right of the image
+            m.Sample(16, 16, 0, 0, true, false, 0);      // dragged in, still held
+            Assert.False(m.Take().LeftClick);
+            m.Sample(Off, Off, 0, 0, true, false, 0);    // pressed with the window not hovered
+            m.Sample(16, 16, 0, 0, false, false, 0);
+            Assert.False(m.Take().LeftClick);
+            m.Sample(16, 16, 0, 0, true, false, 0);
+            Assert.True(m.Take().LeftClick);
         }
 
         [Fact]

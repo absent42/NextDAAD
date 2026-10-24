@@ -11,9 +11,10 @@ namespace NextDAADDebug
         public bool HasEvent;
     }
 
-    // Turns polled mouse state into edge-triggered clicks. Buttons: bit 0 left, bit 1 right; wheel: steps this frame, +1 up.
+    // Turns polled mouse state into edge-triggered clicks. Buttons: bit 0 left, bit 1 right; wheel: steps this frame, +up, clamped to MaxWheel.
     public sealed class MouseTracker
     {
+        public const int MaxWheel = 5;
         int lastButtons, lastCol = -2, lastRow = -2;
 
         public UiInput Next(int px, int py, int buttons, int wheel, int cols, int rows, int cellW, int cellH)
@@ -34,7 +35,7 @@ namespace NextDAADDebug
             }
             u.LeftClick = u.Col >= 0 && (pressed & 1) != 0;
             u.RightClick = u.Col >= 0 && (pressed & 2) != 0;
-            u.Wheel = Math.Sign(wheel);
+            u.Wheel = Math.Max(-MaxWheel, Math.Min(MaxWheel, wheel));
             u.HasEvent = u.LeftClick || u.RightClick || u.Wheel != 0 || u.Col != lastCol || u.Row != lastRow;
             lastCol = u.Col;
             lastRow = u.Row;
@@ -43,27 +44,40 @@ namespace NextDAADDebug
     }
 
     // ImGui IO samples from the draw action, folded into one UiInput per OSTick.
-    // MousePos is -FLT_MAX when the window is not hovered; a press in any sample counts once.
+    // MousePos is -FLT_MAX when the window is not hovered; a press on the image in any sample counts once,
+    // a press made off the image never does.
     public sealed class ImGuiMouse
     {
         readonly MouseTracker tracker = new MouseTracker();
+        readonly int cols, rows, cellW, cellH;
         int px = -1, py = -1, down, pressed;
         float wheel;
+
+        public ImGuiMouse(int cols, int rows, int cellW, int cellH)
+        {
+            this.cols = cols;
+            this.rows = rows;
+            this.cellW = cellW;
+            this.cellH = cellH;
+        }
 
         public void Sample(float mouseX, float mouseY, float imageX, float imageY, bool left, bool right, float wheelDelta)
         {
             bool off = float.IsNaN(mouseX) || float.IsNaN(mouseY) || mouseX < -1e30f || mouseY < -1e30f;
             px = off ? -1 : (int)Math.Floor(mouseX - imageX);
             py = off ? -1 : (int)Math.Floor(mouseY - imageY);
+            bool inside = px >= 0 && py >= 0 && px < cols * cellW && py < rows * cellH;
             int now = (left ? 1 : 0) | (right ? 2 : 0);
-            pressed |= now & ~down;
+            pressed = inside ? pressed | (now & ~down) : 0;
             down = now;
             if (!float.IsNaN(wheelDelta)) wheel += wheelDelta;
         }
 
-        public UiInput Take(int cols, int rows, int cellW, int cellH)
+        public UiInput Take()
         {
-            var u = tracker.Pressed(px, py, pressed, Math.Sign(wheel), cols, rows, cellW, cellH);
+            int steps = (int)Math.Max(-MouseTracker.MaxWheel, Math.Min(MouseTracker.MaxWheel, wheel));
+            if (steps == 0 && wheel != 0) steps = Math.Sign(wheel);
+            var u = tracker.Pressed(px, py, pressed, steps, cols, rows, cellW, cellH);
             pressed = 0;
             wheel = 0;
             return u;

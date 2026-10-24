@@ -13,6 +13,7 @@ namespace NextDAADDebug
         bool Closed { get; }
         void Present(uint[] pixels);
         void Close();
+        void Release();         // after an OS close: free what Close would have
     }
 
     // The only iWindow/ImGui user. Created only after VersionGate, so older CSpect builds never load it.
@@ -27,7 +28,8 @@ namespace NextDAADDebug
         readonly int width, height;
         IntPtr texture;
         volatile bool closed;
-        bool failed, wasTyping;
+        bool failed, wasTyping, disabled;
+        int pushed;
 
         public ImGuiSurface(iWindow w, WindowHost host, int width, int height)
         {
@@ -58,13 +60,17 @@ namespace NextDAADDebug
         {
             if (closed) return;
             closed = true;
-            if (texture != IntPtr.Zero)
-            {
-                try { w.DestroyImGuiTexture(texture); }
-                catch (Exception ex) { Log.Write("DestroyImGuiTexture: " + ex.Message); }
-                texture = IntPtr.Zero;
-            }
+            Release();
             w.Close();
+        }
+
+        public void Release()
+        {
+            closed = true;
+            if (texture == IntPtr.Zero) return;
+            try { w.DestroyImGuiTexture(texture); }
+            catch (Exception ex) { Log.Write("DestroyImGuiTexture: " + ex.Message); }
+            texture = IntPtr.Zero;
         }
 
         // Exceptions must not reach CSpect; the first one is logged and drawing stops.
@@ -72,16 +78,21 @@ namespace NextDAADDebug
         {
             if (closed || failed) return;
             bool began = false;
+            pushed = 0;
+            disabled = false;
             try
             {
                 var io = ImGui.GetIO();
                 ImGui.SetNextWindowPos(Vector2.Zero);
                 ImGui.SetNextWindowSize(io.DisplaySize);
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+                pushed++;
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
-                began = true;
+                pushed++;
                 bool visible = ImGui.Begin("NextDAAD debugger", Flags);
-                ImGui.PopStyleVar(2);
+                began = true;
+                ImGui.PopStyleVar(pushed);
+                pushed = 0;
                 if (visible && texture != IntPtr.Zero)
                 {
                     ImGui.Image(texture, new Vector2(width, height));
@@ -98,7 +109,10 @@ namespace NextDAADDebug
             }
             finally
             {
-                if (began) ImGui.End();
+                // Keep ImGui's stacks balanced whatever threw.
+                if (disabled) { try { ImGui.EndDisabled(); } catch (Exception) { } }
+                if (pushed > 0) { try { ImGui.PopStyleVar(pushed); } catch (Exception) { } }
+                if (began) { try { ImGui.End(); } catch (Exception) { } }
             }
         }
 
@@ -108,6 +122,7 @@ namespace NextDAADDebug
             bool typing = host.TypingWanted;
             ImGui.SetCursorPosX(4);
             ImGui.BeginDisabled(!typing);
+            disabled = true;
             if (typing && !wasTyping) ImGui.SetKeyboardFocusHere();
             wasTyping = typing;
             ImGui.SetNextItemWidth(240);
@@ -115,6 +130,7 @@ namespace NextDAADDebug
             bool enter = ImGui.InputText("##typed", ref text, 64, ImGuiInputTextFlags.EnterReturnsTrue);
             host.TypedText = text;
             ImGui.EndDisabled();
+            disabled = false;
             ImGui.SameLine();
             ImGui.TextUnformatted(typing ? host.TypedNote ?? "type a number or name, Enter = OK, Esc = cancel" : "");
             if (!typing) return;
@@ -139,7 +155,7 @@ namespace NextDAADDebug
         readonly CellScreen screen = new CellScreen(Cols, Rows);
         readonly Ui ui;
         readonly DebuggerView view;
-        readonly ImGuiMouse mouse = new ImGuiMouse();
+        readonly ImGuiMouse mouse = new ImGuiMouse(Cols, Rows, CellW, CellH);
         readonly uint[] pixels = new uint[ImageW * ImageH];
         readonly byte[] font;
         readonly uint[] palette;
@@ -204,7 +220,13 @@ namespace NextDAADDebug
 
         void FrameLocked(Snapshot snap, Action<Command> post)
         {
-            if (drawError != null) throw new InvalidOperationException("ImGui draw failed", drawError);
+            if (drawError != null)
+            {
+                try { CloseLocked(); }
+                catch (Exception ex) { Log.Write("close after draw failure: " + ex.Message); }
+                surface = null;
+                throw new InvalidOperationException("ImGui draw failed", drawError);
+            }
             if (toggleRequested)
             {
                 toggleRequested = false;
@@ -219,6 +241,7 @@ namespace NextDAADDebug
             if (surface != null && surface.Closed)
             {
                 SavePosition();
+                surface.Release();
                 surface = null;
                 wanted = false;
                 return;
@@ -246,7 +269,7 @@ namespace NextDAADDebug
                 view.CancelPopup();
                 force = true;
             }
-            UiInput input = mouse.Take(Cols, Rows, CellW, CellH);
+            UiInput input = mouse.Take();
             if (!force && !input.HasEvent && snap.Serial == lastSerial) return;
             lastSerial = snap.Serial;
             ui.Begin(input);

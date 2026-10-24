@@ -21,13 +21,14 @@ namespace NextDAADDebug.Tests
 
         sealed class FakeSurface : ISurface
         {
-            public int Closes, Presents;
+            public int Closes, Presents, Releases;
             public bool IsClosed;
             public int X { get; set; }
             public int Y { get; set; }
             public bool Closed => IsClosed;
             public void Present(uint[] pixels) { Presents++; }
             public void Close() { Closes++; IsClosed = true; }
+            public void Release() { Releases++; }
         }
 
         // Cell centre in window pixels, image at (0,0).
@@ -109,6 +110,24 @@ namespace NextDAADDebug.Tests
             host.Frame(new Snapshot(), c => { });
             host.DrawFailed(new Exception("boom"));
             Assert.Throws<InvalidOperationException>(() => host.Frame(new Snapshot(), c => { }));
+            Assert.Equal(1, surf.Closes);                   // the blank window does not stay open
+        }
+
+        [Fact]
+        public void OsCloseReleasesSurface()
+        {
+            var surf = new FakeSurface();
+            int opens = 0;
+            var host = new WindowHost(() => { opens++; return surf; }, Settings.Defaults(), null, ".");
+            host.Frame(new Snapshot(), c => { });
+            surf.IsClosed = true;                           // OnClosed fired
+            host.Frame(new Snapshot(), c => { });
+            Assert.Equal(1, surf.Releases);
+            Assert.Equal(0, surf.Closes);
+            host.Toggle();
+            surf.IsClosed = false;
+            host.Frame(new Snapshot(), c => { });
+            Assert.Equal(2, opens);
         }
 
         [Fact]
