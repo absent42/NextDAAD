@@ -129,9 +129,12 @@ def xlink(fs):
 
 
 def compare(fs, carddir, srcdir):
-    """Each card file must be one run and equal its SRCDIR twin; returns problems."""
+    """Each card file must be one run and equal its SRCDIR twin, and no SRCDIR file may be
+    missing from the card; RUN.NEX stands for the single top-level *.NEX. Returns problems."""
     problems = 0
     count = 0
+    seen = set()
+    nexes = [n for n in os.listdir(srcdir) if n.upper().endswith(".NEX") and os.path.isfile(os.path.join(srcdir, n))]
 
     def walk(c, rel):
         nonlocal problems, count
@@ -150,11 +153,15 @@ def compare(fs, carddir, srcdir):
             if not os.path.isfile(src):
                 alt = [n for n in os.listdir(os.path.dirname(src) or ".")
                        if n.upper() == name.upper()] if os.path.isdir(os.path.dirname(src)) else []
-                if not alt:
+                if alt:
+                    src = os.path.join(os.path.dirname(src), alt[0])
+                elif rel == "" and name.upper() == "RUN.NEX" and len(nexes) == 1:
+                    src = os.path.join(srcdir, nexes[0])
+                else:
                     problems += 1
                     print("EXTRA on card, not in source: " + rel + name)
                     continue
-                src = os.path.join(os.path.dirname(src), alt[0])
+            seen.add(os.path.relpath(src, srcdir).replace(os.sep, "/").upper())
             with open(src, "rb") as f:
                 want = f.read()
             got = fs.read_chain(clus, size) if clus else b""
@@ -163,6 +170,12 @@ def compare(fs, carddir, srcdir):
                 print("MISMATCH %s: card %d bytes, source %d bytes" % (rel + name, len(got), len(want)))
 
     walk(fs.lookup(carddir), "")
+    for root, _, files in os.walk(srcdir):
+        for fn in files:
+            rp = os.path.relpath(os.path.join(root, fn), srcdir).replace(os.sep, "/")
+            if rp.upper() not in seen:
+                problems += 1
+                print("MISSING from card: " + rp)
     print("files compared: %d, problems: %d" % (count, problems))
     return problems
 

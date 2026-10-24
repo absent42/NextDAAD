@@ -23,12 +23,15 @@ Assert-Eq (Get-JNextCardName 'STARTER') 'STARTER' 'clean name kept'
 Assert-Eq (Get-JNextCardName 'rollercoaster') 'ROLLERCO' 'long name truncated'
 Assert-Eq (Get-JNextCardName 'My Game') 'MYXGAME' 'space replaced'
 Assert-Eq (Get-JNextCardName '') 'GAME' 'empty name'
+Assert-Eq (Get-JNextCardName 'ABCDEFGH') 'ABCDEFGH' 'exactly 8 chars kept'
+Assert-Eq (Get-JNextCardName '!!!') 'XXX' 'all-invalid name becomes X'
 Assert-Eq (Get-JNextLaunchNex 'STARTER.NEX') 'STARTER.NEX' '8.3 NEX launched by name'
 Assert-Eq (Get-JNextLaunchNex 'Starter.nex') 'STARTER.NEX' 'case folded'
 Assert-Eq (Get-JNextLaunchNex 'ROLLERCOASTER.NEX') 'RUN.NEX' 'long NEX uses RUN.NEX'
+Assert-Eq (Get-JNextLaunchNex 'ABCDEFGHI.NEX') 'RUN.NEX' '9-char NEX stem uses RUN.NEX'
 
 # Publish-JNextCard against a fake jnext that logs its arguments.
-$work = Join-Path $root 'tests/out/kitjnext-fake'
+$work = Join-Path $root 'tests/out/kitjnext fake'
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 New-Item -ItemType Directory -Path "$work/G1/DATA" -Force | Out-Null
 [IO.File]::WriteAllBytes("$work/G1/ROLLERCOASTER.NEX", [byte[]](1..16))
@@ -38,31 +41,45 @@ $base = "$work/base.img"
 $env:FAKE_JNEXT_LOG = "$work/fake.log"
 if ($OnWindows) {
     $fake = "$work/fakejnext.cmd"
-    [IO.File]::WriteAllText($fake, "@echo %*>>`"%FAKE_JNEXT_LOG%`"`r`n@exit /b %FAKE_JNEXT_RC%`r`n")
+    [IO.File]::WriteAllText($fake, "@echo --- call>>`"%FAKE_JNEXT_LOG%`"`r`n:l`r`n@if `"%~1`"==`"`" goto e`r`n@echo [%~1]>>`"%FAKE_JNEXT_LOG%`"`r`n@shift`r`n@goto l`r`n:e`r`n@exit /b %FAKE_JNEXT_RC%`r`n")
 } else {
     $fake = "$work/fakejnext"
-    [IO.File]::WriteAllText($fake, "#!/bin/sh`necho `"`$*`" >> `"`$FAKE_JNEXT_LOG`"`nexit `$FAKE_JNEXT_RC`n")
+    [IO.File]::WriteAllText($fake, "#!/bin/sh`necho '--- call' >> `"`$FAKE_JNEXT_LOG`"`nfor a in `"`$@`"; do echo `"[`$a]`" >> `"`$FAKE_JNEXT_LOG`"; done`nexit `$FAKE_JNEXT_RC`n")
     & chmod +x $fake
 }
 $env:FAKE_JNEXT_RC = '0'
 $dir = Publish-JNextCard $fake $base "$work/CACHE/jnext/card.img" "$work/G1" 'ROLLERCOASTER.NEX' $work
 Assert-Eq $dir 'ROLLERCO' 'card folder name returned'
-$log = @(Get-Content $env:FAKE_JNEXT_LOG)
-Assert-Eq $log.Count 3 'three adds for a long NEX name'
-Assert-Eq ($log[0] -like '*--sdcard-file-dest /NEXTZXOS/AUTOEXEC.BAS --sdcard-file-force*') $true 'AUTOEXEC add first'
-Assert-Eq ($log[1] -like '*--sdcard-file-dest /ROLLERCO') $true 'game folder add'
-Assert-Eq ($log[2] -like '*--sdcard-file-dest /ROLLERCO/RUN.NEX') $true 'RUN.NEX copy'
+function Get-Calls {
+    $calls = @(); $cur = $null
+    foreach ($l in @(Get-Content -LiteralPath $env:FAKE_JNEXT_LOG)) {
+        if ($l -eq '--- call') { if ($null -ne $cur) { $calls += , $cur }; $cur = @() } else { $cur += $l }
+    }
+    if ($null -ne $cur) { $calls += , $cur }
+    return , $calls
+}
+$cardPath = "$work/CACHE/jnext/card.img"
+$calls = Get-Calls
+Assert-Eq $calls.Count 3 'three adds for a long NEX name'
+Assert-Eq ($calls[0] -contains '[/NEXTZXOS/AUTOEXEC.BAS]') $true 'AUTOEXEC add first'
+Assert-Eq ($calls[0] -contains '[--sdcard-file-force]') $true 'AUTOEXEC add is forced'
+Assert-Eq ($calls[1] -contains '[/ROLLERCO]') $true 'game folder add'
+Assert-Eq ($calls[2] -contains '[/ROLLERCO/RUN.NEX]') $true 'RUN.NEX copy'
+foreach ($i in 0..2) { Assert-Eq ($calls[$i] -contains "[$cardPath]") $true "call $($i + 1) card path is one argument with its space" }
+Assert-Eq ($calls[0] -contains "[$(Join-Path $work 'AUTOEXEC.BAS')]") $true 'AUTOEXEC source is one argument with its space'
+Assert-Eq ($calls[1] -contains "[$work/G1]") $true 'game folder source is one argument with its space'
+Assert-Eq ($calls[2] -contains "[$(Join-Path "$work/G1" 'ROLLERCOASTER.NEX')]") $true 'NEX source is one argument with its space'
 Assert-Eq (Test-Path "$work/CACHE/jnext/card.img") $true 'card copied from base'
 Assert-Eq (Test-Path "$work/AUTOEXEC.BAS") $true 'AUTOEXEC.BAS written to work dir'
 Remove-Item $env:FAKE_JNEXT_LOG
 Copy-Item "$work/G1/ROLLERCOASTER.NEX" "$work/G1/G1.NEX"
 $dir = Publish-JNextCard $fake $base "$work/c1.img" "$work/G1" 'G1.NEX' $work
 Assert-Eq $dir 'G1' 'short game name'
-Assert-Eq @(Get-Content $env:FAKE_JNEXT_LOG).Count 2 'two adds for an 8.3 NEX name'
+Assert-Eq (Get-Calls).Count 2 'two adds for an 8.3 NEX name'
 $env:FAKE_JNEXT_RC = '1'; Remove-Item $env:FAKE_JNEXT_LOG
 $msg = $null; try { Publish-JNextCard $fake $base "$work/c2.img" "$work/G1" 'G1.NEX' $work } catch { $msg = $_.Exception.Message }
 Assert-Eq ($msg -like '*step 1, exit 1*') $true 'failed add stops the run'
-Assert-Eq @(Get-Content $env:FAKE_JNEXT_LOG).Count 1 'nothing after the failed add'
+Assert-Eq (Get-Calls).Count 1 'nothing after the failed add'
 $running = Test-JNextRunning
 Assert-Eq ($running -is [bool]) $true 'Test-JNextRunning returns a bool'
 if ($OnWindows) {
@@ -74,6 +91,36 @@ if ($OnWindows) {
 }
 Remove-Item Env:FAKE_JNEXT_RC, Env:FAKE_JNEXT_LOG
 Remove-Item $work -Recurse -Force
+
+# jnext_cardcheck.compare against a fake card: RUN.NEX accepted for a long NEX, MISSING reported.
+$py0 = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($py0) {
+    $unit = @'
+import importlib.util, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("cc", sys.argv[1]); cc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cc)
+class FS:
+    def __init__(s, files): s.files = files
+    def read_dir(s, c): return [(n, False, i + 1, len(d)) for i, (n, d) in enumerate(s.files)]
+    def chain(s, c): return [c]
+    def read_chain(s, c, size=None): d = s.files[c - 1][1]; return d if size is None else d[:size]
+    def lookup(s, p): return 0
+def run(card, src):
+    d = tempfile.mkdtemp()
+    for n, b in src: open(os.path.join(d, n), "wb").write(b)
+    cc.Fat32 = FS
+    return cc.compare(FS(card), "X", d)
+nex = b"nexdata"
+print("RESULT", run([("RUN.NEX", nex), ("A.DAT", b"a")], [("ROLLERCOASTER.NEX", nex), ("A.DAT", b"a")]),
+      run([("A.DAT", b"a")], [("ROLLERCOASTER.NEX", nex), ("A.DAT", b"a")]),
+      run([("RUN.NEX", nex), ("A.DAT", b"a")], [("A.DAT", b"a")]))
+'@
+    $unitFile = Join-Path $root 'tests/out/cardcheck_unit.py'
+    New-Item -ItemType Directory -Path (Split-Path $unitFile) -Force | Out-Null
+    [IO.File]::WriteAllText($unitFile, $unit)
+    try { $ur = & $py0.Source -I $unitFile (Join-Path $root 'tests/jnext_cardcheck.py') 2>&1 } finally { Remove-Item $unitFile -Force -ErrorAction SilentlyContinue }
+    $ur | Out-Host
+    Assert-Eq (($ur | Where-Object { "$_" -like 'RESULT*' }) -join '') 'RESULT 0 1 1' 'cardcheck: long-NEX RUN.NEX ok, missing file and extra file reported'
+}
 
 # Real jNext (file-copy mode only; never emulates): stage STARTER, check the card.
 $jexe = if ($env:JNEXT_SELFTEST_EXE) { $env:JNEXT_SELFTEST_EXE } else { ('D:/ZXNextDev/jnext/jnext' + $ExeSuffix) }
@@ -101,12 +148,12 @@ elseif (-not (Test-Path "$starter/STARTER.NEX")) {
         [IO.File]::WriteAllLines((Join-Path $kitWork 'CONFIG.local.BAT'), $local, [Text.Encoding]::ASCII)
         $hostExe = (Get-Process -Id $PID).Path
         Push-Location $kitWork
+        $eap = $ErrorActionPreference
         try {
-            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            $ErrorActionPreference = 'Continue'
             & $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kitWork 'lib/build.ps1') 2>&1 | ForEach-Object { "$_" } | Out-Host
             $brc = $LASTEXITCODE
-            $ErrorActionPreference = $eap
-        } finally { Pop-Location }
+        } finally { $ErrorActionPreference = $eap; Pop-Location }
         Assert-Eq $brc 0 'scratch STARTER build exit'
         $starter = Join-Path $kitWork 'RELEASE/STARTER'
         Assert-Eq (Test-Path "$starter/STARTER.NEX") $true 'scratch build produced STARTER.NEX'
