@@ -2,6 +2,18 @@ using System;
 
 namespace NextDAADDebug
 {
+    // iWindow is reached through OpenWindow's return type, so CSpect builds without it never load it.
+    public static class VersionGate
+    {
+        public const string TooOld = "NextDAAD debugger needs CSpect 4.0 or later - no window, breakpoints off, trace mode only";
+
+        public static bool WindowSupported(Type cspect)
+        {
+            var open = cspect.GetMethod("OpenWindow");
+            return open != null && open.ReturnType.GetMethod("SetImGuiDraw") != null;
+        }
+    }
+
     public enum HaltMethod { DebuggerEnter, Block, Pause }
 
     // CSpect 3.4.0.0 behaviour not in its documentation, measured on Windows and under mono (identical except S8).

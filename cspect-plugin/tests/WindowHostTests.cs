@@ -3,8 +3,22 @@ using Xunit;
 
 namespace NextDAADDebug.Tests
 {
+    public interface IWin34 { void Close(); }
+    public interface ICs34 { IWin34 OpenWindow(string title, int w, int h); }
+    public interface IWin40 { bool SetImGuiDraw(Action draw); }
+    public interface ICs40 { IWin40 OpenWindow(string title, int w, int h); }
+
     public class WindowHostTests
     {
+        [Fact]
+        public void GateNeedsOpenWindowAndSetImGuiDraw()
+        {
+            Assert.False(VersionGate.WindowSupported(typeof(IDisposable)));
+            Assert.False(VersionGate.WindowSupported(typeof(ICs34)));
+            Assert.True(VersionGate.WindowSupported(typeof(ICs40)));
+            Assert.True(VersionGate.WindowSupported(typeof(Plugin.iCSpect)));    // the referenced CSpect 4.0 Plugin.dll
+        }
+
         sealed class FakeSurface : ISurface
         {
             public int Closes;

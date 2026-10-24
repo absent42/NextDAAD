@@ -89,7 +89,7 @@ namespace NextDAADDebug
             : this((Func<ISurface>)null, settings, settingsPath, sourceRoot, PlatformFacts.WindowCloseWorks)
         {
             this.cs = cs;
-            supported = typeof(iCSpect).GetMethod("OpenWindow") != null;
+            supported = VersionGate.WindowSupported(typeof(iCSpect));
         }
 
         internal WindowHost(Func<ISurface> opener, Settings settings, string settingsPath, string sourceRoot, bool closeWorks = true)
