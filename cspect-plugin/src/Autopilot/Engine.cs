@@ -17,7 +17,7 @@ namespace NextDAADDebug.Autopilot
         readonly ResultWriter writer;
         readonly Func<double> clock;
         readonly bool hasQuit;
-        int index, phase, col, row, startOffset;
+        int index, phase, col, row, startOffset, startState;
         bool begun;
         double started;
 
@@ -129,11 +129,19 @@ namespace NextDAADDebug.Autopilot
                 case StepKind.Wheel:
                     return Pointer(s, ref actual);
                 case StepKind.Type:
-                    host.Type(s.Text);
-                    return "PASS";
+                    if (host.Type(s.Text)) return "PASS";
+                    actual = "not accepted: " + s.Text;
+                    return "FAIL";
                 case StepKind.Key:
-                    if (s.Text == "esc") host.Cancel(); else host.Type("");
-                    return "PASS";
+                    if (s.Text == "esc")
+                    {
+                        if (host.Cancel()) return "PASS";
+                        actual = "no popup open";
+                        return "FAIL";
+                    }
+                    if (host.Accept()) return "PASS";
+                    actual = "nothing to accept";
+                    return "FAIL";
                 case StepKind.Hotkey:
                     host.Hotkey(s.Text[0]);
                     return "PASS";
@@ -144,7 +152,7 @@ namespace NextDAADDebug.Autopilot
                     actual = "keys still queued";
                     return "FAIL";
                 case StepKind.Dump:
-                    actual = "dump " + (index + 1).ToString("D3");
+                    actual = "dump " + s.Text + " " + (index + 1).ToString("D3");
                     return "PASS";
                 case StepKind.Note:
                     actual = s.Text;
@@ -236,7 +244,8 @@ namespace NextDAADDebug.Autopilot
             return "PASS";
         }
 
-        // step-advances presses the step hotkey and watches CurrentOffset for StepAdvanceSeconds.
+        // step-advances: when halted (DebuggerState() != 0), press the step hotkey and watch CurrentOffset
+        // for StepAdvanceSeconds; the fact carries the debugger state before and after.
         string Measure(Step s, ref string actual)
         {
             string v;
@@ -246,10 +255,19 @@ namespace NextDAADDebug.Autopilot
                 case "ticks-while-halted": v = host.TicksWhileHalted.ToString(CultureInfo.InvariantCulture); break;
                 case "step-advances":
                 {
-                    if (phase == 0) { startOffset = host.CurrentOffset; host.Hotkey('n'); phase = 1; return null; }
+                    if (phase == 0)
+                    {
+                        startState = host.DebuggerState();
+                        if (startState == 0) { v = "not halted"; break; }
+                        startOffset = host.CurrentOffset;
+                        host.Hotkey('n');
+                        phase = 1;
+                        return null;
+                    }
                     int cur = host.CurrentOffset;
-                    if (cur != startOffset) v = "yes " + startOffset + "->" + cur;
-                    else if (clock() - started >= StepAdvanceSeconds) v = "no " + startOffset;
+                    string halted = " halted=" + startState + "->" + host.DebuggerState();
+                    if (cur != startOffset) v = "yes " + startOffset + "->" + cur + halted;
+                    else if (clock() - started >= StepAdvanceSeconds) v = "no " + startOffset + halted;
                     else return null;
                     break;
                 }

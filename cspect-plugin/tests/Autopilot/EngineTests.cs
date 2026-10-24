@@ -28,9 +28,12 @@ namespace NextDAADDebug.Tests
 
         public string LogText() => Log;
         public void Inject(UiInput input) => Injected.Add(input);
-        public void Type(string text) => Calls.Add("Type:" + text);
-        public void Cancel() => Calls.Add("Cancel");
-        public void Hotkey(char k) => Calls.Add("Hotkey:" + k);
+        public bool PopupOpen = true;
+        public Action<char> OnHotkey;
+        public bool Type(string text) { Calls.Add("Type:" + text); return PopupOpen; }
+        public bool Accept() { Calls.Add("Accept"); return PopupOpen; }
+        public bool Cancel() { Calls.Add("Cancel"); return PopupOpen; }
+        public void Hotkey(char k) { Calls.Add("Hotkey:" + k); OnHotkey?.Invoke(k); }
         public int DebuggerState() => State;
         public void Quit() => Calls.Add("Quit");
     }
@@ -165,8 +168,69 @@ namespace NextDAADDebug.Tests
         {
             var e = Make("type \"GET LAMP\"\nkey esc\nkey enter\nhotkey n");
             Run(e);
-            Assert.Equal(new[] { "Type:GET LAMP", "Cancel", "Type:", "Hotkey:n" }, host.Calls.ToArray());
+            Assert.Equal(new[] { "Type:GET LAMP", "Cancel", "Accept", "Hotkey:n" }, host.Calls.ToArray());
             Assert.Equal(0, e.Failures);
+        }
+
+        [Fact]
+        public void Engine_PopupRefusalsFail()
+        {
+            host.PopupOpen = false;
+            var e = Make("type \"12\"\nkey enter\nkey esc");
+            Run(e);
+            Assert.Equal(3, e.Failures);
+            var l = Lines();
+            Assert.Contains("actual not accepted: 12", l[0]);
+            Assert.Contains("actual nothing to accept", l[1]);
+            Assert.Contains("actual no popup open", l[2]);
+        }
+
+        [Fact]
+        public void Engine_StepAdvancesYes()
+        {
+            host.State = 1;
+            host.CurrentOffset = 10;
+            host.OnHotkey = k => { host.CurrentOffset = 14; host.State = 1; };
+            var e = Make("measure step-advances");
+            Run(e);
+            Assert.Equal(0, e.Failures);
+            Assert.Contains("FACT step-advances=yes 10->14 halted=1->1", Lines());
+        }
+
+        [Fact]
+        public void Engine_StepAdvancesNo()
+        {
+            host.State = 1;
+            host.CurrentOffset = 10;
+            host.OnHotkey = k => host.State = 0;
+            var e = Make("measure step-advances");
+            e.Frame();
+            e.Frame();
+            Assert.False(e.Finished);
+            now = 2;
+            e.Frame();
+            Assert.True(e.Finished);
+            Assert.Equal(0, e.Failures);
+            Assert.Contains("FACT step-advances=no 10 halted=1->0", Lines());
+        }
+
+        [Fact]
+        public void Engine_StepAdvancesNotHalted()
+        {
+            host.State = 0;
+            var e = Make("measure step-advances");
+            Run(e);
+            Assert.Equal(0, e.Failures);
+            Assert.DoesNotContain("Hotkey:n", host.Calls);
+            Assert.Contains("FACT step-advances=not halted", Lines());
+        }
+
+        [Fact]
+        public void Engine_DumpLineNamesDump()
+        {
+            var e = Make("dump before-click");
+            Run(e);
+            Assert.Contains("actual dump before-click 001", Lines()[0]);
         }
 
         [Fact]

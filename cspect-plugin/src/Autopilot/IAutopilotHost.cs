@@ -8,8 +8,9 @@ namespace NextDAADDebug.Autopilot
         string[] GameRows();                // may throw or return null before the interpreter is loaded
         string LogText();
         void Inject(UiInput input);
-        void Type(string text);             // ENTER semantics
-        void Cancel();
+        bool Type(string text);             // ENTER semantics; false = no popup open or it refused the text
+        bool Accept();                      // OK on the open DigitPad/Picker; false = no popup or nothing selectable
+        bool Cancel();                      // false = no popup open
         void Hotkey(char k);
         KeyFeeder Keys { get; }
         int DebuggerState();
