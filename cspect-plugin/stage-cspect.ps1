@@ -16,6 +16,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $Dest 'CSpect.exe'))) {
     New-Item -ItemType Directory -Force $Dest | Out-Null
     & robocopy $CSpectDir $Dest /E /XJ /XF *.mmc /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
+    # The copy inherits Zone.Identifier from a downloaded CSpect; unattended launches would stop at a hidden prompt.
+    Get-ChildItem -LiteralPath $Dest -Recurse -File | Unblock-File
 }
 Copy-Item (Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Release\net48\NextDAADDebug.dll') $Dest -Force
 "staged $Dest"

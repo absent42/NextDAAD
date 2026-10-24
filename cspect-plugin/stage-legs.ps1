@@ -73,6 +73,7 @@ function New-Leg([string]$name, [string]$cspectSrc, [string]$seed) {
     Copy-Item "$repo\build\NEXTDAAD.SYM" $leg
     & robocopy $cspectSrc "$leg\cspect" /E /XJ /XF *.mmc /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
+    Get-ChildItem -LiteralPath "$leg\cspect" -Recurse -File | Unblock-File      # copy only; the source keeps its mark
     Copy-Item $dll "$leg\cspect" -Force
     if ($seed) { [IO.File]::WriteAllText("$leg\DEBUGGER.seed.TXT", $seed, (New-Object Text.UTF8Encoding($false))) }
     return $leg
