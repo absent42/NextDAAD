@@ -24,12 +24,13 @@ if ($t.EMULATOR -eq 'jnext') {
     if (-not $jnextOk -and -not $OnWindows) { $jnextOk = [bool](Get-Command $t.JNEXT -CommandType Application -ErrorAction SilentlyContinue) }
     if (-not $jnextOk) {
         Write-Host "ERROR: jNext not found at $($t.JNEXT)"
-        Write-Host '       Install jNext 1.1.87 or later there, or set JNEXTDIR in CONFIG.BAT.'
+        Write-Host '       Install jNext 1.1.87 or later there, or set JNEXTDIR in CONFIG.local.BAT.'
+        if (-not $OnWindows) { Write-Host '       On Linux, installing the .deb or .rpm package puts jnext on your PATH.' }
         exit 1
     }
     if (-not (Test-Path -LiteralPath $t.JNEXTIMG -PathType Leaf)) {
         Write-Host "ERROR: no jNext SD-card image at $($t.JNEXTIMG)"
-        Write-Host '       Start jNext once and let it download its SD-card image, or set JNEXTIMG in CONFIG.BAT.'
+        Write-Host '       Start jNext once and let it download its SD-card image, or set JNEXTIMG in CONFIG.local.BAT.'
         exit 1
     }
     if (Test-JNextRunning) { Write-Host 'ERROR: jNext is running - close it before running the game'; exit 1 }
@@ -37,8 +38,9 @@ if ($t.EMULATOR -eq 'jnext') {
     $card = Join-Path $jwork 'card.img'
     try { $null = Publish-JNextCard $t.JNEXT $t.JNEXTIMG $card $g.RelGame $nexFile.Name $jwork }
     catch { Write-Host "$($_.Exception.Message)"; exit 1 }
-    # jNext exits non-zero when the author closes it; that is not an error.
-    $null = Invoke-JNextTool $t.JNEXT @('--sdcard', $card)
+    # jNext EXIT STATUS: 0 success; 130/143 after SIGINT/SIGTERM; any other non-zero is an error.
+    $jrc = Invoke-JNextTool $t.JNEXT @('--sdcard', $card)
+    if ($jrc -notin @(0, 130, 143)) { Write-Host "note: jNext exited with code $jrc" }
     exit 0
 }
 if (-not (Test-Path -LiteralPath $t.CSPECT -PathType Leaf)) {
