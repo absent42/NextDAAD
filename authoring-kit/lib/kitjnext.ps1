@@ -43,3 +43,42 @@ function Get-JNextLaunchNex([string]$NexFile) {
     if ($NexFile -match '^[A-Za-z0-9_-]{1,8}\.[Nn][Ee][Xx]$') { return $NexFile.ToUpperInvariant() }
     return 'RUN.NEX'
 }
+
+# jnext.exe is a GUI-subsystem exe: the pipe makes the shell wait for it to finish.
+function Invoke-JNextTool([string]$Exe, [string[]]$Arguments) {
+    $ErrorActionPreference = 'Continue'
+    & $Exe @Arguments 2>&1 | ForEach-Object { "$_" } | Out-Host
+    return $LASTEXITCODE
+}
+
+# Copies the base image to $Card and adds AUTOEXEC.BAS and the game; returns the card folder name.
+function Publish-JNextCard([string]$Exe, [string]$BaseImage, [string]$Card, [string]$GameDir, [string]$NexFile, [string]$WorkDir) {
+    $cardDir = Get-JNextCardName ([IO.Path]::GetFileNameWithoutExtension($NexFile))
+    $launch = Get-JNextLaunchNex $NexFile
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Card) -Force | Out-Null
+    Copy-Item -LiteralPath $BaseImage -Destination $Card -Force
+    New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
+    $bas = Join-Path $WorkDir 'AUTOEXEC.BAS'
+    [IO.File]::WriteAllBytes($bas, [byte[]](New-AutoexecBas $cardDir $launch))
+    $calls = @(, @('--sdcard', $Card, '--sdcard-file-add', $bas, '--sdcard-file-dest', '/NEXTZXOS/AUTOEXEC.BAS', '--sdcard-file-force'))
+    $calls += , @('--sdcard', $Card, '--sdcard-file-add', $GameDir, '--sdcard-file-dest', "/$cardDir")
+    if ($launch -eq 'RUN.NEX') {
+        $calls += , @('--sdcard', $Card, '--sdcard-file-add', (Join-Path $GameDir $NexFile), '--sdcard-file-dest', "/$cardDir/RUN.NEX")
+    }
+    $step = 0
+    foreach ($c in $calls) {
+        $step++
+        $rc = Invoke-JNextTool $Exe $c
+        if ($rc -ne 0) { throw "ERROR: jNext could not write the SD-card image (step $step, exit $rc)" }
+    }
+    return $cardDir
+}
+
+# Windows: the process is jnext. Linux: pgrep -x jnext.
+function Test-JNextRunning {
+    if ($OnWindows) { return (@(Get-Process -Name jnext -ErrorAction SilentlyContinue).Count -gt 0) }
+    $pg = Get-Command pgrep -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $pg) { Write-Host 'note: pgrep not found - the running-jNext check is skipped'; return $false }
+    & $pg.Source -x jnext *> $null
+    return ($LASTEXITCODE -eq 0)
+}

@@ -10,6 +10,7 @@ $steps = @(
     @('kit-binaries', 'pwsh', @('-NoProfile', '-File', 'tests/kit-binaries-selftest.ps1')),
     @('kitconfig', 'pwsh', @('-NoProfile', '-File', 'tests/kitconfig-selftest.ps1')),
     @('kittools', 'pwsh', @('-NoProfile', '-File', 'tests/kittools-selftest.ps1')),
+    @('kitjnext', 'pwsh', @('-NoProfile', '-File', 'tests/kitjnext-selftest.ps1')),
     @('assets-order', 'pwsh', @('-NoProfile', '-File', 'tests/assets-order-selftest.ps1')),
     @('anipack', 'pwsh', @('-NoProfile', '-File', 'tests/anipack-selftest.ps1')),
     @('l2pos', 'pwsh', @('-NoProfile', '-File', 'tests/l2pos-selftest.ps1')),
