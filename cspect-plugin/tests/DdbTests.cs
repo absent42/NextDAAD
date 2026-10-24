@@ -51,6 +51,28 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void TokenCountBoundedByFixture()
+        {
+            var d = Fix();
+            Assert.Equal(35, d.TokenCount);
+            Assert.Equal("?", d.Token(d.TokenCount));
+            Assert.NotEqual("?", d.Token(d.TokenCount - 1));
+        }
+
+        [Fact]
+        public void TokenScanStopsAtNextTable()
+        {
+            var img = new byte[48];
+            img[8] = 34;                // TokensPtr
+            img[16] = 40;               // MsgList: next section after the tokens
+            img[34] = 0xF8; img[35] = (byte)('a' | 0x80); img[36] = (byte)('b' | 0x80);
+            img[40] = 0x81; img[41] = 0x82; img[42] = 0x83;
+            var d = new Ddb(img);
+            Assert.Equal(2, d.TokenCount);
+            Assert.Equal("?", d.Token(2));
+        }
+
+        [Fact]
         public void MessageExpandsToken()
         {
             var img = new byte[44];

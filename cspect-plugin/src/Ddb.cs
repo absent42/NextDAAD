@@ -71,12 +71,25 @@ namespace NextDAADDebug
             return n >= 0 && n < tokens.Count ? tokens[n] : "?";
         }
 
+        public int TokenCount { get { if (tokens == null) tokens = ReadTokens(); return tokens.Count; } }
+
+        // Token table ends where the next section begins: a header table, or the first text/process body.
+        int TokensEnd()
+        {
+            int start = TokensPtr, end = b.Length;
+            void Consider(int v) { if (v > start && v < end) end = v; }
+            foreach (int v in new[] { ProcList, ObjList, LocList, MsgList, SysList, ConList, VocabPtr, ObjLocPtr, ObjNamePtr, ObjAttrPtr, ObjExtrPtr }) Consider(v);
+            foreach (var (tbl, n) in new[] { (ProcList, NumProcesses), (ObjList, NumObjects), (LocList, NumLocations), (MsgList, NumMessages), (SysList, NumSysMessages) })
+                for (int i = 0; i < n; i++) Consider(Word(tbl + 2 * i));
+            return end;
+        }
+
         List<string> ReadTokens()
         {
             var list = new List<string>();
             var sb = new StringBuilder();
-            int p = TokensPtr, strings = 0;
-            while (list.Count < 128 && p >= 0 && p < b.Length && p - TokensPtr < 8192)
+            int p = TokensPtr, strings = 0, limit = TokensEnd();
+            while (list.Count < 128 && p >= 0 && p < limit && p < b.Length)
             {
                 byte c = b[p++];
                 sb.Append((char)(c & 0x7F));

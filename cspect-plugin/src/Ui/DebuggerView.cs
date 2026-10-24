@@ -401,7 +401,7 @@ namespace NextDAADDebug
                 case 4:
                     foreach (var v in d.Vocabulary.OrderBy(v => v.Word, StringComparer.Ordinal)) rows.Add(v.Word.PadRight(6) + v.Number.ToString().PadLeft(4) + "  " + v.Type);
                     break;
-                case 5: for (int i = 0; i < 128; i++) rows.Add(Num(i) + "'" + d.Token(i) + "'"); break;
+                case 5: for (int i = 0; i < d.TokenCount; i++) rows.Add(Num(i) + "'" + d.Token(i) + "'"); break;
                 default:
                     for (int l = 0; l < d.NumLocations; l++)
                         rows.Add(Num(l) + string.Join(", ", d.Connections(l).Select(c => CondactFormatter.Word(d, c.Word, WordType.Verb) + " -> " + c.Destination)));
