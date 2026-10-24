@@ -55,6 +55,11 @@ All notable changes to NextDAAD are recorded here.
   fade up from black without a timed fade-out first. Timed fades now
   top out at 254 frames per step. README gains a Flags section and an
   instant-fade section; fade, all and kit-root GAME.XBN rebuilt.
+- **Run in jNext.** `SET EMULATOR=jnext` makes `RUN.BAT` / `run.sh` (and
+  `RUN=1` builds) start the game in the jNext emulator instead of
+  CSpect. jNext plays video cutscenes and long streamed sounds, which
+  CSpect cannot. CSpect stays the default. See Getting started,
+  "Running in jNext".
 
 ## v0.11.1 29/09/2026
 

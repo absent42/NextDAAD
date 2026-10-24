@@ -31,6 +31,7 @@ each into the kit's `tools\` folder at the path shown:
 |---|---|---|---|
 | Arkos Tracker 3 | `SongToAky.exe`, `SongToSoundEffects.exe`, `SongToYm.exe` | `tools\ArkosTracker3\tools\` | only with `.aks` audio |
 | CSpect | emulator, to play the result without hardware | `tools\CSpect\` | to run the build |
+| jNext | optional second emulator that also plays cutscenes and streamed sound | `tools\jnext\` | to run the build in jNext |
 | ffmpeg | reads your video sources | `tools\ffmpeg\` | only when encoding an `.mp4` cutscene |
 | sjasmplus | Z80 assembler | `tools\sjasmplus\` | only to rebuild an extern with `EXTERNS.BAT` |
 
@@ -78,6 +79,8 @@ optional tools your game uses:
   `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`, or set
   `CSPECTCMD` in `CONFIG.local.BAT` to run it some other way (Linux only,
   ignored on Windows).
+- **jNext**, optional, runs natively on Linux (no mono). See
+  [Running in jNext](#running-in-jnext).
 - **sjasmplus**, only to rebuild an extern with `externs.sh`: a
   distribution package where one exists (`sudo apt install sjasmplus`
   on Debian), otherwise build it from
@@ -140,7 +143,7 @@ Two things differ from Windows:
 Arkos Tracker, CSpect and ffmpeg are general-purpose tools you may well
 have installed already, and there is no need for a second copy.
 There is a directory setting per tool - `ARKOSDIR`, `CSPECTDIR`,
-`FFMPEGDIR`, `GFXDIR`, `SJASMPLUSDIR` - and each one you set in
+`FFMPEGDIR`, `GFXDIR`, `SJASMPLUSDIR`, `JNEXTDIR` - and each one you set in
 `CONFIG.local.BAT` is used
 instead of the folder under `TOOLSDIR`. Anything you leave blank still
 comes from `TOOLSDIR`, so mixing the two is fine: keep the small stuff
@@ -332,10 +335,13 @@ The settings:
 |---------|---------|
 | `GAME` | The game to build: the name of its game folder. Set it in `CONFIG.local.BAT`. Blank = pick one automatically, see [Choosing the game](#choosing-the-game). |
 | `COMPRESS` | `1` = ZX0-compress pictures (smaller files); `0` = raw. |
-| `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
+| `RUN` | `1` = launch the emulator chosen by `EMULATOR` after a successful build; `0` = build only. |
+| `EMULATOR` | The emulator `RUN` launches: `cspect` (blank means this) or `jnext`. See [Running in jNext](#running-in-jnext). |
 | `COLS` | Text columns your game is authored for. Blank = 80 (the default), or `40` for the double-width 40-column mode. Sets the compiler's `-cols` option - the interpreter still boots at 80, so a 40-column game must issue `GFX 1 18` in its init process. See [Graphics](graphics.md). |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
 | `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
+| `JNEXTDIR` | The folder holding `jnext.exe`, only for `EMULATOR=jnext`. Blank means `tools\jnext\`; on Linux, blank finds `jnext` on your PATH. |
+| `JNEXTIMG` | The SD-card image jNext downloaded on its first run. Blank means jNext's own copy in your home folder (`.jnext\sdcard\`). The kit copies it and never changes it. |
 | `VIDTOOLSDIR` | Same, for the folder holding `videnc.exe` and `vidtune.exe`, which the kit ships. You should not need to set this. On Linux the encoder runs from `lib\videnc.py` and this setting is unused. |
 | `NDRCVER` | Normally unset: the compiler version the kit was tested against is pinned in `lib\toolversions.txt` and the build refuses any other. Set it only alongside your own `NDRC` override. |
 | `NEXFILE` | The interpreter file to ship. Default `nextdaad.nex`. The build stages it under your game's name - see [What comes out](#what-comes-out). |
@@ -369,12 +375,15 @@ it. See [Video](video.md).
 
 - **`BUILD.BAT`** (Linux: `./build.sh`) - compiles the database, converts
   graphics and audio, encodes any new video, copies the interpreter,
-  and launches CSpect if `RUN=1`. It finishes with
+  and launches the emulator if `RUN=1`. It finishes with
   `BUILD OK: RELEASE\MYGAME\ is ready - copy the contents of RELEASE\ to the root of an SD card`,
   naming your game.
-- **`RUN.BAT`** (`./run.sh`) - launches CSpect on the game already built
-  in `RELEASE\<GAME>\`, without rebuilding. CSpect sees that folder as
-  its SD card, the same shape as the folder you copy to a real card.
+- **`RUN.BAT`** (`./run.sh`) - launches the emulator chosen by `EMULATOR`
+  (CSpect unless you say otherwise) on the game already built in
+  `RELEASE\<GAME>\`, without rebuilding. CSpect sees that folder as its
+  SD card, the same shape as the folder you copy to a real card; jNext
+  gets a card image with the game added, see
+  [Running in jNext](#running-in-jnext).
 - **`CLEAN.BAT`** (`./clean.sh`) - empties `RELEASE\<GAME>\` for the
   selected game only; other games' output is left alone. The next build
   then converts everything from scratch.
@@ -398,6 +407,32 @@ game folder, so nothing lingers on the card from an earlier build.
 Your database is compiled as DAAD version 3. If you are bringing in a
 game written for version 2, three behaviours change silently - see
 [DAAD V3](daad-v3.md).
+
+### Running in jNext
+
+jNext is an optional second emulator. CSpect cannot play video cutscenes
+and stops a long streamed sound after about a second and a half; jNext
+plays both. CSpect stays the default.
+
+1. Download jNext 1.1.87 or later from
+   https://github.com/jorgegv/jnext/releases. On Windows, extract the
+   x64 zip into `tools\jnext\`. On Linux, install the `.deb` or `.rpm`
+   package or the Flatpak, which puts `jnext` on your PATH.
+2. Start jNext once by itself and let it download its SD-card image
+   (about 1 GB, kept in `.jnext\sdcard\` in your home folder). Close it
+   again.
+3. Add `SET EMULATOR=jnext` to `CONFIG.local.BAT`.
+
+From then on `RUN.BAT` (and a `RUN=1` build) copies that card image to
+`CACHE\jnext\card.img`, adds your game to the copy, and boots NextZXOS,
+which starts the game. It takes a few seconds longer than CSpect. Your
+own copy of the card is never changed.
+
+- Saves made in jNext are lost on the next RUN, because every run starts
+  from a fresh copy of the card.
+- Close jNext before the next RUN; the kit will not start it twice.
+- A jNext run is still an emulator. Check cutscenes and sound on a real
+  Next before you release.
 
 ## What comes out
 
@@ -468,6 +503,11 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `required tool missing` | The named path does not exist. Install that tool there, or fix `TOOLSDIR` / `NEXFILE`. |
 | `wrong DAAD compiler version` | The banner `lib\ndrc.exe` prints does not match the version pinned in `lib\toolversions.txt`. This should not happen with the kit as shipped; if you have replaced `ndrc.exe` yourself, set `NDRCVER` in `CONFIG.local.BAT` to match. |
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
+| `ERROR: EMULATOR=... - use cspect or jnext` | `EMULATOR` holds something else. Set it to `cspect` or `jnext`, or leave it blank for CSpect. |
+| `ERROR: jNext not found at ...` | Install jNext 1.1.87 or later at the path shown, or set `JNEXTDIR` in `CONFIG.local.BAT`. See [Running in jNext](#running-in-jnext). |
+| `ERROR: no jNext SD-card image at ...` | Start jNext once and let it download its SD-card image, or set `JNEXTIMG` in `CONFIG.local.BAT`. |
+| `ERROR: jNext is running - close it before running the game` | Close jNext and run again. |
+| `ERROR: jNext could not write the SD-card image (step N, exit CODE)` | The kit could not add your game to its copy of the card. Run again; if it repeats, check there is free disk space, or run `CLEAN.BAT`, which deletes the copy at `CACHE\jnext\card.img`. |
 | `ndrc failed compiling` | The compiler rejected your source. Its own output above the message names the line. |
 | `WARNING: ... -> on disk as ... (case differs; Linux cannot open it)` / `WARNING: ... -> uses \ (Linux needs /)` | An `#include` or `#incbin` line names a file whose name on disk is spelled with different capitals, or separates folders with `\`. Windows builds it anyway; on Linux the same line is an `ERROR:` and the build stops. Match the case and use `/`. |
 | `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |

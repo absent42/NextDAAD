@@ -52,6 +52,12 @@ each into the kit's <code>tools\</code> folder at the path shown:</p>
 <td>to run the build</td>
 </tr>
 <tr>
+<td>jNext</td>
+<td>optional second emulator that also plays cutscenes and streamed sound</td>
+<td><code>tools\jnext\</code></td>
+<td>to run the build in jNext</td>
+</tr>
+<tr>
 <td>ffmpeg</td>
 <td>reads your video sources</td>
 <td><code>tools\ffmpeg\</code></td>
@@ -103,6 +109,8 @@ optional tools your game uses:</p>
   <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>, or set
   <code>CSPECTCMD</code> in <code>CONFIG.local.BAT</code> to run it some other way (Linux only,
   ignored on Windows).</li>
+<li><strong>jNext</strong>, optional, runs natively on Linux (no mono). See
+  <a href="#running-in-jnext">Running in jNext</a>.</li>
 <li><strong>sjasmplus</strong>, only to rebuild an extern with <code>externs.sh</code>: a
   distribution package where one exists (<code>sudo apt install sjasmplus</code>
   on Debian), otherwise build it from
@@ -156,7 +164,7 @@ Linux names of the five <code>.BAT</code> launchers and take the same arguments.
 <p>Arkos Tracker, CSpect and ffmpeg are general-purpose tools you may well
 have installed already, and there is no need for a second copy.
 There is a directory setting per tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>,
-<code>FFMPEGDIR</code>, <code>GFXDIR</code>, <code>SJASMPLUSDIR</code> - and each one you set in
+<code>FFMPEGDIR</code>, <code>GFXDIR</code>, <code>SJASMPLUSDIR</code>, <code>JNEXTDIR</code> - and each one you set in
 <code>CONFIG.local.BAT</code> is used
 instead of the folder under <code>TOOLSDIR</code>. Anything you leave blank still
 comes from <code>TOOLSDIR</code>, so mixing the two is fine: keep the small stuff
@@ -340,7 +348,11 @@ unchanged. The build only reads these files; it never runs them.</p>
 </tr>
 <tr>
 <td><code>RUN</code></td>
-<td><code>1</code> = launch CSpect after a successful build; <code>0</code> = build only.</td>
+<td><code>1</code> = launch the emulator chosen by <code>EMULATOR</code> after a successful build; <code>0</code> = build only.</td>
+</tr>
+<tr>
+<td><code>EMULATOR</code></td>
+<td>The emulator <code>RUN</code> launches: <code>cspect</code> (blank means this) or <code>jnext</code>. See <a href="#running-in-jnext">Running in jNext</a>.</td>
 </tr>
 <tr>
 <td><code>COLS</code></td>
@@ -353,6 +365,14 @@ unchanged. The build only reads these files; it never runs them.</p>
 <tr>
 <td><code>GFXDIR</code>, <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code></td>
 <td>Where each individual tool lives. Blank means "the folder under <code>TOOLSDIR</code>", so leave them alone for the simple layout and set only the ones you keep elsewhere. See <a href="#what-you-need">What you need</a>.</td>
+</tr>
+<tr>
+<td><code>JNEXTDIR</code></td>
+<td>The folder holding <code>jnext.exe</code>, only for <code>EMULATOR=jnext</code>. Blank means <code>tools\jnext\</code>; on Linux, blank finds <code>jnext</code> on your PATH.</td>
+</tr>
+<tr>
+<td><code>JNEXTIMG</code></td>
+<td>The SD-card image jNext downloaded on its first run. Blank means jNext's own copy in your home folder (<code>.jnext\sdcard\</code>). The kit copies it and never changes it.</td>
 </tr>
 <tr>
 <td><code>VIDTOOLSDIR</code></td>
@@ -403,12 +423,15 @@ it. See <a href="video.html">Video</a>.</p>
 <ul>
 <li><strong><code>BUILD.BAT</code></strong> (Linux: <code>./build.sh</code>) - compiles the database, converts
   graphics and audio, encodes any new video, copies the interpreter,
-  and launches CSpect if <code>RUN=1</code>. It finishes with
+  and launches the emulator if <code>RUN=1</code>. It finishes with
   <code>BUILD OK: RELEASE\MYGAME\ is ready - copy the contents of RELEASE\ to the root of an SD card</code>,
   naming your game.</li>
-<li><strong><code>RUN.BAT</code></strong> (<code>./run.sh</code>) - launches CSpect on the game already built
-  in <code>RELEASE\&lt;GAME&gt;\</code>, without rebuilding. CSpect sees that folder as
-  its SD card, the same shape as the folder you copy to a real card.</li>
+<li><strong><code>RUN.BAT</code></strong> (<code>./run.sh</code>) - launches the emulator chosen by <code>EMULATOR</code>
+  (CSpect unless you say otherwise) on the game already built in
+  <code>RELEASE\&lt;GAME&gt;\</code>, without rebuilding. CSpect sees that folder as its
+  SD card, the same shape as the folder you copy to a real card; jNext
+  gets a card image with the game added, see
+  <a href="#running-in-jnext">Running in jNext</a>.</li>
 <li><strong><code>CLEAN.BAT</code></strong> (<code>./clean.sh</code>) - empties <code>RELEASE\&lt;GAME&gt;\</code> for the
   selected game only; other games' output is left alone. The next build
   then converts everything from scratch.</li>
@@ -429,6 +452,31 @@ game folder, so nothing lingers on the card from an earlier build.</p>
 <p>Your database is compiled as DAAD version 3. If you are bringing in a
 game written for version 2, three behaviours change silently - see
 <a href="daad-v3.html">DAAD V3</a>.</p>
+<h3 id="running-in-jnext">Running in jNext</h3>
+<p>jNext is an optional second emulator. CSpect cannot play video cutscenes
+and stops a long streamed sound after about a second and a half; jNext
+plays both. CSpect stays the default.</p>
+<ol>
+<li>Download jNext 1.1.87 or later from
+   https://github.com/jorgegv/jnext/releases. On Windows, extract the
+   x64 zip into <code>tools\jnext\</code>. On Linux, install the <code>.deb</code> or <code>.rpm</code>
+   package or the Flatpak, which puts <code>jnext</code> on your PATH.</li>
+<li>Start jNext once by itself and let it download its SD-card image
+   (about 1 GB, kept in <code>.jnext\sdcard\</code> in your home folder). Close it
+   again.</li>
+<li>Add <code>SET EMULATOR=jnext</code> to <code>CONFIG.local.BAT</code>.</li>
+</ol>
+<p>From then on <code>RUN.BAT</code> (and a <code>RUN=1</code> build) copies that card image to
+<code>CACHE\jnext\card.img</code>, adds your game to the copy, and boots NextZXOS,
+which starts the game. It takes a few seconds longer than CSpect. Your
+own copy of the card is never changed.</p>
+<ul>
+<li>Saves made in jNext are lost on the next RUN, because every run starts
+  from a fresh copy of the card.</li>
+<li>Close jNext before the next RUN; the kit will not start it twice.</li>
+<li>A jNext run is still an emulator. Check cutscenes and sound on a real
+  Next before you release.</li>
+</ul>
 <h2 id="what-comes-out">What comes out</h2>
 <p>Each game builds into its own folder, <code>RELEASE\&lt;GAME&gt;\</code>. Copy the
 <strong>contents</strong> of <code>RELEASE\</code> (not the <code>RELEASE</code> folder itself) to the
@@ -529,6 +577,26 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <tr>
 <td><code>CSpect is running - close it before building</code></td>
 <td>CSpect holds the <code>RELEASE\</code> files open. Close it and build again.</td>
+</tr>
+<tr>
+<td><code>ERROR: EMULATOR=... - use cspect or jnext</code></td>
+<td><code>EMULATOR</code> holds something else. Set it to <code>cspect</code> or <code>jnext</code>, or leave it blank for CSpect.</td>
+</tr>
+<tr>
+<td><code>ERROR: jNext not found at ...</code></td>
+<td>Install jNext 1.1.87 or later at the path shown, or set <code>JNEXTDIR</code> in <code>CONFIG.local.BAT</code>. See <a href="#running-in-jnext">Running in jNext</a>.</td>
+</tr>
+<tr>
+<td><code>ERROR: no jNext SD-card image at ...</code></td>
+<td>Start jNext once and let it download its SD-card image, or set <code>JNEXTIMG</code> in <code>CONFIG.local.BAT</code>.</td>
+</tr>
+<tr>
+<td><code>ERROR: jNext is running - close it before running the game</code></td>
+<td>Close jNext and run again.</td>
+</tr>
+<tr>
+<td><code>ERROR: jNext could not write the SD-card image (step N, exit CODE)</code></td>
+<td>The kit could not add your game to its copy of the card. Run again; if it repeats, check there is free disk space, or run <code>CLEAN.BAT</code>, which deletes the copy at <code>CACHE\jnext\card.img</code>.</td>
 </tr>
 <tr>
 <td><code>ndrc failed compiling</code></td>

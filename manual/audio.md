@@ -236,13 +236,15 @@ alone. Stop or change it yourself with `SFX n 7` / `SFX 0 8` and
 declining the play-again prompt, `EXIT 0`, a fatal error - silences
 everything.
 
-**A streamed effect needs real hardware to hear in full.** An effect up
-to 24K - about one and a half seconds at the recommended rates - plays
-completely under CSpect, so short effects develop and test fine there.
-A longer effect streams from the card as it plays: under CSpect it
+**A streamed effect needs jNext or real hardware to hear in full.** An
+effect up to 24K - about one and a half seconds at the recommended rates
+- plays completely under CSpect, so short effects develop and test fine
+there. A longer effect streams from the card as it plays: under CSpect it
 plays only that opening ~1.5 seconds, then stops cleanly; under
-ZEsarUX it is inaudible entirely - nothing plays. A real Next plays a
-streamed effect all the way through, however long it runs.
+ZEsarUX it is inaudible entirely - nothing plays. jNext 1.1.87 or later
+plays it through (see [Running in jNext](getting-started.md#running-in-jnext)),
+as does a real Next, however long the effect runs. Judge the final
+timing on a real Next.
 
 **Testing samples in an emulator.** A sample playing over music drags
 the music's tempo down under CSpect. That is the emulator, not your

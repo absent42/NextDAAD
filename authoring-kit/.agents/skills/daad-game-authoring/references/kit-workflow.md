@@ -43,8 +43,9 @@ The build compiles the DSF with the bundled compiler, converts every
 asset that changed, copies the interpreter, and ends with
 `BUILD OK: RELEASE\<GAME>\ is ready - copy the contents of RELEASE\ to the root of an SD card`.
 It is incremental: only changed sources are reconverted. `RUN.BAT`
-launches CSpect on the selected game, with `RELEASE\<GAME>\` as the
-emulated card, if CSpect is installed under `tools\`. `CLEAN.BAT` empties
+launches the emulator `EMULATOR` names (CSpect by default, or jNext) on the
+selected game, if it is installed under `tools\`; CSpect uses
+`RELEASE\<GAME>\` as the emulated card. `CLEAN.BAT` empties
 `RELEASE\<GAME>\` (that game only) for a full rebuild. While `STARTER\`
 is the game, every build prints a warning that kit updates replace it.
 
@@ -70,7 +71,8 @@ a whole `CONFIG.BAT`.
 | Key | Meaning |
 |---|---|
 | `GAME` | The game folder to build; set in `CONFIG.local.BAT` |
-| `RUN` | `1` launches CSpect after a successful build |
+| `RUN` | `1` launches the `EMULATOR` after a successful build |
+| `EMULATOR` | blank or `cspect` = CSpect; `jnext` = jNext, which also plays video and streamed sound |
 | `COLS` | blank = 80 columns, `40` = 40 (the DSF must also issue `GFX 1 18`) |
 | `COMPRESS` | `1` ZX0-compresses pictures |
 | `TOOLSDIR`, `CSPECTDIR`, `ARKOSDIR`, `FFMPEGDIR`, `SJASMPLUSDIR` | Tool locations; blank = under `tools\` |
@@ -84,6 +86,7 @@ the path in `tools\README.txt`.
 | Tool | Needed for |
 |---|---|
 | CSpect | running the build in an emulator |
+| jNext | optional; running with `EMULATOR=jnext`, which plays video |
 | Arkos Tracker 3 | any `.aks` music or effects |
 | ffmpeg | `.mp4` cutscenes |
 | sjasmplus | rebuilding externs with `EXTERNS.BAT` |
@@ -103,6 +106,7 @@ the path in `tools\README.txt`.
 | `GAME.AKY is N bytes, over the 10208 song limit` | shorten or rename to `STREAM_NNN.aks` |
 | `required tool missing` / `... not found` | install under `tools\` or set the `*DIR` key |
 | `CSpect is running - close it before building` | close the emulator |
+| `ERROR: jNext is running - close it before running the game` | close jNext |
 | `does not keep sub-microsecond file times` | move the kit to a local NTFS or ext4 drive |
 
 Warnings are advisory; the build continues.
