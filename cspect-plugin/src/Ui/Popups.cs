@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace NextDAADDebug
 {
@@ -8,6 +9,9 @@ namespace NextDAADDebug
     public abstract class Popup
     {
         public abstract PopupResult Draw(Ui ui);
+
+        // Typed-text entry; true = accepted as if OK or an item was clicked.
+        public virtual bool Type(string text) => false;
     }
 
     // Number entry without a keyboard: digits, back, clear, +/-1, wheel.
@@ -46,6 +50,14 @@ namespace NextDAADDebug
             if (ui.Button(x + 2, y + 9, "OK")) return PopupResult.Ok;
             if (ui.Button(x + 8, y + 9, "Cancel") || ui.In.RightClick) return PopupResult.Cancel;
             return PopupResult.Open;
+        }
+
+        public override bool Type(string text)
+        {
+            int v;
+            if (text == null || !int.TryParse(text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out v) || v < Min || v > Max) return false;
+            Value = v;
+            return true;
         }
 
         void Digit(int d)
@@ -106,6 +118,17 @@ namespace NextDAADDebug
             }
             if (ui.Button(x + 2, y + h - 2, "Cancel") || ui.In.RightClick) return PopupResult.Cancel;
             return PopupResult.Open;
+        }
+
+        // First label starting with the text, ignoring case and the padding of numbered labels.
+        public override bool Type(string text)
+        {
+            string t = text == null ? "" : text.Trim();
+            if (t.Length == 0) return false;
+            int i = Items.FindIndex(p => p.Label.StartsWith(t, StringComparison.OrdinalIgnoreCase) || p.Label.TrimStart().StartsWith(t, StringComparison.OrdinalIgnoreCase));
+            if (i < 0) return false;
+            Selected = Items[i].Value;
+            return true;
         }
     }
 }

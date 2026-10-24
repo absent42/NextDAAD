@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Xunit;
 
@@ -248,6 +249,38 @@ namespace NextDAADDebug.Tests
             wz.Feed(UiDriver.Click(ui, wz.Current.Draw, "Cancel"));
             Assert.Null(wz.Current);
             Assert.Null(wz.Result);
+        }
+
+        [Fact]
+        public void DigitPadAcceptsTypedNumberInRange()
+        {
+            var pad = new DigitPad("Value", 7, 0, 255);
+            Assert.True(pad.Type(" 42 "));
+            Assert.Equal(42, pad.Value);
+            Assert.False(pad.Type("256"));
+            Assert.False(pad.Type("-1"));
+            Assert.False(pad.Type("4x"));
+            Assert.False(pad.Type(""));
+            Assert.Equal(42, pad.Value);
+            var small = new DigitPad("Row", 3, 2, 9);
+            Assert.False(small.Type("1"));
+            Assert.True(small.Type("9"));
+            Assert.Equal(9, small.Value);
+        }
+
+        [Fact]
+        public void PickerAcceptsTypedPrefix()
+        {
+            var pk = new Picker("Noun", new List<PickItem> { new PickItem("  7  Lamp", 7), new PickItem(" 70  Box", 70), new PickItem("LAMP", 1), new PickItem("lantern", 2) });
+            Assert.True(pk.Type("la"));
+            Assert.Equal(1, pk.Selected);                // first label starting with the text, any case
+            Assert.True(pk.Type("7"));
+            Assert.Equal(7, pk.Selected);                // padded number labels match without the padding
+            Assert.True(pk.Type("70"));
+            Assert.Equal(70, pk.Selected);
+            Assert.False(pk.Type("zz"));
+            Assert.False(pk.Type("  "));
+            Assert.Equal(70, pk.Selected);
         }
 
         [Fact]

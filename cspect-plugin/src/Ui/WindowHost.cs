@@ -159,7 +159,7 @@ namespace NextDAADDebug
             if (!input.HasEvent && snap.Serial == lastSerial) return;
             lastSerial = snap.Serial;
             ui.Begin(input);
-            view.Draw(ui, snap, post, inputOk);
+            view.Draw(ui, snap, post);
             screen.Render(pixels, font, palette);
             surface.Blit(pixels);
         }
