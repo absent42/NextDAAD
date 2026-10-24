@@ -14,4 +14,9 @@ if (Test-Path -LiteralPath $rel -PathType Container) {
 } else {
     Write-Host 'nothing to clean'
 }
+$card = Join-Path (Join-Path (Join-Path $kitRoot 'CACHE') 'jnext') 'card.img'
+if (Test-Path -LiteralPath $card -PathType Leaf) {
+    Remove-Item -LiteralPath $card -Force
+    Write-Host "removed $(Join-KitPath @('CACHE', 'jnext', 'card.img'))"
+}
 exit 0
