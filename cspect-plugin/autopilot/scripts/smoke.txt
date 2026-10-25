@@ -1,0 +1,11 @@
+# Smoke walk on DBGFIX: halt at the DEBUG marker, step, run, type a command, quit.
+wait status "HALTED - DEBUG marker" timeout 20
+click " Step "
+wait status "HALTED - step"
+hotkey r
+wait game ">" timeout 20
+game "GET LAMP\n"
+# DBGFIX runs ABILITY 10 50 every turn, so GET 0 (weight 3) succeeds with SYSMESS 36.
+wait game "I now have the brass lamp."
+measure halted-state
+quit

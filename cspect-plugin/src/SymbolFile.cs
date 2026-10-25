@@ -36,6 +36,16 @@ namespace NextDAADDebug
             }
         }
 
+        // Same lookup as the indexer: symbols, then hook addresses.
+        public bool TryGet(string name, out ushort address)
+        {
+            if (syms.TryGetValue(name, out address)) return true;
+            HookInfo h;
+            if (!hooks.TryGetValue(name, out h)) return false;
+            address = h.Address;
+            return true;
+        }
+
         public HookInfo Hook(string name) => hooks[name];
 
         public static SymbolFile Parse(string text)

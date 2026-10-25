@@ -12,6 +12,9 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.4.5" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\src\Autopilot\**\*.cs" Exclude="..\src\Autopilot\AutopilotHost.cs" LinkBase="Autopilot" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\NextDAADDebug.csproj" />
     <Reference Include="Plugin">
       <HintPath>$(CSpectDir)\Plugin.dll</HintPath>

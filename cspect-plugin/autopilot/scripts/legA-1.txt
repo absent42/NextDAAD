@@ -1,0 +1,650 @@
+# Leg A part 1: DBGFIX walk on CSpect 4.0 with the full seed (legA.seed.txt).
+# Strings follow DebuggerView, Lists, Popups, Breakpoint.Describe, BreakController and Session.
+# {CUR} is a literal U+0010, the Condacts current-row glyph, before the padded line number.
+# Cells: rows 0 toolbar, 1 status, 2 top tabs, 3-21 panes, 22 bottom tabs, 23 pane header/buttons,
+# 24-39 list rows; Picker list rows 8-31, A-Z strip row 6 from col 22, Cancel row 33;
+# DigitPad digits 7/8/9 @41/45/49,18, 4/5/6 row 19, 1/2/3 row 20, 0 < C row 21, -1 @54,18, OK/Cancel row 23.
+# glance: Ctrl+Alt+A really hides the window while halted (the autopilot sees the plugin's window state, not the desktop)
+# glance: right-click on a popup cancels it (no script command for a right click)
+# glance: a typed out-of-range value (300 in a flag pop-up) is refused with "not accepted: 300" beside the text box
+# glance: the text box under the picture lights up with its hint while a pop-up is open
+# glance: CSpect's own debugger overlay stays hidden while halted
+# glance: the Source margin dot on a breakpoint line (a disabled one too)
+# glance: Database Vocab A-Z strip: clicking G leaves the 13-word list unchanged (all rows fit, the list cannot scroll)
+# glance: Watches and Breakpoints list ORDER (expect checks presence, not row order)
+
+# 1. Boot: seed loaded, halted at the DEBUG marker (T1)
+wait status "HALTED - DEBUG marker" timeout 30
+measure halted-state
+measure ticks-while-halted
+expect log "source map loaded"
+expect log "window opened 800x672"
+expect log "imgui draw active"
+expect screen "Ctrl+Alt+A/B/N/R"
+expect screen ">0 PRO 0 _ _ :101"
+expect screen "  101 LET 100 7"
+expect screen "  102 LET @100(=7) 3"
+expect screen "  103 DEBUG"
+expect screen "  104 PROCESS 1"
+expect screen " 0401 (end)"
+expect screen "flag  38 Player location      = 0  Hall."
+expect screen "flag 100 fCounter             = 7"
+expect screen "flag   7                      = 3"
+expect screen "obj    0 lamp                 @ 0 Hall."
+expect colour " Break " Dim
+expect colour " Run " Text
+expect colour " Step entry " Text
+expect colour " Run to PARSE " Text
+expect game not "Hall."
+
+# 2. Ctrl+Alt+A twice while halted: the window closes, then comes back with the same state.
+# Linux (run-autopilot.ps1 -Leg Linux): the window cannot close under mono, one press is logged and ignored.
+# windows-only
+hotkey a
+wait window closed timeout 5
+hotkey a
+wait window open timeout 5
+# end windows-only
+# linux: hotkey a
+wait screen "HALTED - DEBUG marker"
+# A closed window keeps its last cells (WindowHost.Screen); a Source-only line proves it draws again.
+click " Source " rows 2-2
+wait screen " 103         DEBUG"
+click " Condacts " rows 2-2
+wait screen "  103 DEBUG"
+expect screen not " 103         DEBUG"
+expect screen "  103 DEBUG"
+# linux: expect log "window cannot be closed under mono - Ctrl+Alt+A ignored while it is open"
+
+# 4. Step into PRO 1 (DEBUG marker and PROCESS 1 are one engine call)
+click " Step " rows 0-0
+wait screen ">1 PRO 1 _ _ :111"
+expect status "HALTED - step"
+expect screen " 0 PRO 0 _ _ :101"
+expect screen "  111 CLS"
+expect screen "  112 ABILITY 10 50"
+expect screen "  113 DESC @38(=0)"
+expect screen "  114 DONE"
+
+# 5. Step across ABILITY, DESC and DONE, back to level 0
+click " Step " rows 0-0
+wait screen "  112 ABILITY 10 50"
+click " Step " rows 0-0
+wait screen "  113 DESC @38(=0)"
+click " Step " rows 0-0
+wait screen "  114 DONE"
+expect game "Hall."
+click " Step " rows 0-0
+wait screen ">0 PRO 0 _ _ :101"
+expect screen " 0401 (end)"
+
+# 6. Step hotkey (measured), into PRO 0's second entry; stay halted at PARSE for 7-17
+measure step-advances
+wait screen ">0 PRO 0 _ _ :105"
+expect screen "  105 PARSE 0"
+expect screen "  106 SYSMESS 6"
+expect screen "  107 REDO"
+
+# 7. Source tab, wheel scroll 2 notches down and back
+click " Source " rows 2-2
+expect screen " 105 > _ _   PARSE 0"
+expect screen "  96 NORTH 0"
+wheel -2 at @50,10
+expect screen not "  96 NORTH 0"
+expect screen " 120             DONE"
+wheel 2 at @50,10
+expect screen "  96 NORTH 0"
+click " Condacts " rows 2-2
+expect screen "  105 PARSE 0"
+
+# 8. Flags tab: wheel over names scrolls, Go to # by mouse
+click " Flags " rows 22-22
+expect screen " w  flag name                 value"
+expect screen " Go to # "
+expect screen "   0 Dark                     0"
+wheel -1 at @10,30
+expect screen not "   0 Dark"
+wheel 1 at @10,30
+expect screen "   0 Dark"
+click " Go to # " rows 23-23
+wait screen " Go to flag "
+click @41,20
+click @41,21
+click @41,21
+click " OK " rows 23-23
+wait screen " 100 fCounter                 7"
+expect screen not " Go to flag "
+
+# 9. Flag edit by mouse: 42, then wheel/-1/C/Cancel leave it at 42
+click @33,24
+wait screen " Flag 100 "
+click @41,19
+click @45,20
+click " OK " rows 23-23
+wait screen " 100 fCounter                42"
+expect colour " 100 fCounter" Changed
+click @33,24
+wait screen " Flag 100 "
+wheel 3 at @45,17
+# Pad value: PadLeft(6) at the box's value cell (Popups.cs DigitPad.Draw).
+expect screen "    45"
+click @54,18
+expect screen "    44"
+click @49,21
+click " Cancel " rows 23-23
+expect screen not " Flag 100 "
+expect screen " 100 fCounter                42"
+
+# 10. Typed Go to
+click " Go to # " rows 23-23
+wait screen " Go to flag "
+type "7"
+expect screen not " Go to flag "
+expect screen "   7                          3"
+
+# 11. Esc cancels a flag pop-up
+click @33,24
+wait screen " Flag 7 "
+key esc
+expect screen not " Flag 7 "
+expect screen "   7                          3"
+
+# 12. Typed value, wheel over the value edits, wheel over the name scrolls
+click @33,24
+wait screen " Flag 7 "
+type "5"
+wait screen "   7                          5"
+wheel -1 at @31,24
+wait screen "   7                          4"
+wheel -1 at @31,24
+wait screen "   7                          3"
+wheel -1 at @10,24
+expect screen not "   7                          3"
+expect screen "  10                          0"
+wheel 1 at @10,24
+expect screen "   7                          3"
+
+# 13. Watch toggle from the Flags list (flag 8, second row)
+click @1,25
+expect screen " *    8"
+click @1,25
+expect screen " +    8"
+
+# 14. Objects tab: location picker by mouse, typed prefix, Esc and Cancel
+click " Objects " rows 22-22
+expect screen " w   obj name             loc  where               wt C W attrs"
+expect screen "   0 lamp                0 Hall."
+expect screen "   1 key               254 carried"
+click @30,24
+wait screen " Move object 0 "
+expect screen "252  not created"
+expect screen "253  worn"
+expect screen "255  here"
+expect screen "  1  Cellar."
+click "254  carried" rows 8-31
+wait screen "   0 lamp              254 carried"
+click @30,24
+wait screen " Move object 0 "
+type "0"
+wait screen "   0 lamp                0 Hall."
+click @30,24
+wait screen " Move object 0 "
+key esc
+expect screen not " Move object 0 "
+click @30,24
+wait screen " Move object 0 "
+click " Cancel " rows 33-33
+expect screen not " Move object 0 "
+expect screen "   0 lamp                0 Hall."
+
+# 15. Database tab
+click " Database " rows 22-22
+click " Messages " rows 23-23
+expect screen "   1  The lamp glows."
+click " SysMess " rows 23-23
+expect screen "   8  I can't do that."
+click " Locations " rows 23-23
+expect screen "   0  Hall."
+expect screen "   1  Cellar."
+click " Objects " rows 23-23
+expect screen "   0  a brass lamp  [LAMP BRASS]"
+expect screen "   1  a key  [KEY _]"
+click " Vocab " rows 23-23
+expect screen "BRASS    2  Adjective"
+expect screen "TAKE    20  Verb"
+click " Connections " rows 23-23
+expect screen "   0  S -> 1"
+expect screen "   1  N -> 0"
+click " Tokens " rows 23-23
+expect screen "   0  '"
+click " Go to # " rows 23-23
+wait screen " Go to row "
+type "10"
+expect screen "  10  '"
+expect screen not "   9  '"
+wheel 2 at @10,30
+expect screen "   4  '"
+expect screen not "   3  '"
+click " Go to # " rows 23-23
+wait screen " Go to row "
+type "34"
+# Ui.List clamps top to count - rows (35 - 16): rows 19-34 show.
+expect screen "  34  '"
+expect screen "  19  '"
+expect screen not "  18  '"
+
+# 16. Watches: + Flag typed, + Object clicked, remove flag 100, + Symbol two-stage
+click " Watches " rows 22-22
+expect screen " + Flag "
+expect screen " + Object "
+expect screen " + Symbol "
+click " + Flag " rows 23-23
+wait screen " Watch flag "
+expect screen "  0  Dark"
+type "33"
+wait screen "flag  33 Verb"
+click " + Object " rows 23-23
+wait screen " Watch object "
+expect screen "  0  lamp"
+click "  1  key" rows 8-31
+wait screen "obj    1 key                  @ 254 carried"
+click @1,25
+expect screen not "flag 100 fCounter"
+click " + Symbol " rows 23-23
+wait screen " Watch symbol "
+click @27,6
+click "fCounter = 100" rows 8-31
+wait screen " Watch 100 as "
+click "as flag" rows 8-31
+wait screen "flag 100 fCounter             = 42"
+expect colour "flag 100 fCounter" Changed
+expect screen "flag  38 Player location"
+expect screen "flag   7 "
+expect screen "obj    0 lamp"
+
+# 17. Breakpoints tab: seed rows, enable toggle, duplicate ignored, Esc
+click " Breakpoints " rows 22-22
+expect screen "[x] DEBUG marker"
+expect screen "[x] runtime error"
+expect screen "[x] PRO 2 entry DROP LAMP"
+expect screen "[x] condact GET"
+expect screen "[x] line 125 of DBGFIX.DSF"
+expect screen "[x] flag 38 = 1"
+expect screen "[x] flag 38 changes"
+expect screen "[x] object 0 (lamp) moves"
+expect screen " del  "
+click @1,31
+wait screen "[ ] object 0 (lamp) moves"
+click @1,31
+wait screen "[x] object 0 (lamp) moves"
+click " Add " rows 23-23
+wait screen " Break on "
+expect screen "Process / entry"
+expect screen "Flag compare"
+expect screen "Object moves"
+expect screen "Runtime error"
+click "DEBUG marker" rows 8-31
+expect screen not " Break on "
+# A duplicate would be a ninth row at row 32 (list from row 24); toggling it would show "[ ] ".
+click @1,32
+expect screen not "[ ] "
+click " Add " rows 23-23
+wait screen " Break on "
+key esc
+expect screen not " Break on "
+
+# 18. Run, GET LAMP: condact GET breakpoint
+click " Run " rows 0-0
+wait status "running"
+expect colour " Break " Text
+expect colour " Run " Dim
+game "GET LAMP\n"
+wait status "HALTED - breakpoint: condact GET"
+expect screen ">1 PRO 2 GET LAMP :119"
+expect screen " 0 PRO 0 _ _ :108"
+expect screen "  119 GET 0 (lamp)"
+expect screen "  120 DONE"
+click " Watches " rows 22-22
+expect screen "obj    0 lamp                 @ 0 Hall."
+
+# 19. Stack row click and Parser tab
+click " 0 PRO 0 _ _ :108" rows 3-21
+wait screen ">0 PRO 0 _ _ :108"
+expect screen "  108 PROCESS 2"
+expect screen "  109 REDO"
+click " 1 PRO 2 GET LAMP :119" rows 3-21
+wait screen ">1 PRO 2 GET LAMP :119"
+expect screen "  119 GET 0 (lamp)"
+click " Parser " rows 22-22
+expect screen "Verb          flag 33 =  20  GET"
+expect screen "Noun1         flag 34 =  50  LAMP"
+expect screen "Adjective1    flag 35 = 255  _"
+expect screen "Adverb        flag 36 = 255  _"
+expect screen "Preposition   flag 43 = 255  _"
+expect screen "Noun2         flag 44 = 255  _"
+expect screen "Adjective2    flag 45 = 255  _"
+
+# 20. Object moved 0 -> 254, credited to GET
+click " Run " rows 0-0
+wait status "HALTED - breakpoint: object 0 moved 0 -> 254 (by GET 0)"
+expect screen "  120 DONE"
+expect game "I now have the brass lamp."
+click " Watches " rows 22-22
+expect screen "obj    0 lamp                 @ 254 carried"
+expect colour "obj    0 lamp" Changed
+
+# 21. T2 DEBUG marker; LET 100 7 reset the edited 42
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen ">0 PRO 0 _ _ :101"
+expect screen "  103 DEBUG"
+expect screen "flag  38 Player location      = 0  Hall."
+expect screen "flag   7                      = 3"
+expect screen "obj    0 lamp                 @ 254 carried"
+expect screen "flag 100 fCounter             = 7"
+
+# 22. Break hotkey while the game waits for input, then DROP LAMP.
+# Step entry twice reaches PARSE (PRO 1 entry, then PRO 0 entry 1), so CLS has run this turn.
+click " Step entry " rows 0-0
+wait screen ">1 PRO 1 _ _ :111"
+click " Step entry " rows 0-0
+wait screen ">0 PRO 0 _ _ :105"
+expect game "Hall."
+expect game not "I now have the brass lamp."
+click " Run " rows 0-0
+wait status "running"
+hotkey b
+expect status "running"
+game "DROP LAMP\n"
+wait status "HALTED - step"
+expect screen ">0 PRO 0 _ _ :108"
+expect screen "  108 PROCESS 2"
+expect screen "  109 REDO"
+
+# 23. Step into the wildcard entry of PRO 2
+click " Step " rows 0-0
+wait screen ">1 PRO 2 _ _ :116"
+expect screen "  116 MOVE 38"
+expect screen "  117 PROCESS 1"
+expect screen "  118 DONE"
+
+# 24. Process/entry breakpoint
+click " Run " rows 0-0
+wait status "HALTED - breakpoint: PRO 2 entry DROP LAMP"
+expect screen ">1 PRO 2 DROP LAMP :121"
+expect screen "  121 DROP 0 (lamp)"
+expect screen "  122 DONE"
+
+# 25. Object moved back 254 -> 0
+click " Run " rows 0-0
+wait status "HALTED - breakpoint: object 0 moved 254 -> 0 (by DROP 0)"
+expect screen "  122 DONE"
+expect game "I've dropped the brass lamp."
+expect screen "obj    0 lamp                 @ 0 Hall."
+
+# 26. T3
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen ">0 PRO 0 _ _ :101"
+
+# 27. Lamp to carried by typed pick, then Run to PARSE with DROP LAMP
+click " Objects " rows 22-22
+click @30,24
+wait screen " Move object 0 "
+type "254"
+wait screen "   0 lamp              254 carried"
+click " Run to PARSE " rows 0-0
+wait status "running"
+game "DROP LAMP\n"
+wait status "HALTED - after PARSE"
+expect screen ">0 PRO 0 _ _ :108"
+expect screen "  108 PROCESS 2"
+
+# 28. Parser after the new command
+click " Parser " rows 22-22
+expect screen "Verb          flag 33 =  21  DROP"
+expect screen "Noun1         flag 34 =  50  LAMP"
+
+# 29. Step entry twice (a step mode reports before the PRO 2 entry breakpoint)
+click " Step entry " rows 0-0
+wait status "HALTED - next entry"
+wait screen ">1 PRO 2 _ _ :116"
+expect screen "  116 MOVE 38"
+click " Step entry " rows 0-0
+wait screen ">1 PRO 2 DROP LAMP :121"
+expect status "HALTED - next entry"
+expect screen "  121 DROP 0 (lamp)"
+
+# 30. Step out: stopped by the object-moved breakpoint, then returns to level 0
+click " Step out " rows 0-0
+wait status "HALTED - breakpoint: object 0 moved 254 -> 0 (by DROP 0)"
+expect screen ">1 PRO 2 DROP LAMP :121"
+expect screen " 0 PRO 0 _ _ :108"
+expect screen "  122 DONE"
+expect game "I've dropped the brass lamp."
+click " Step out " rows 0-0
+wait status "HALTED - returned to level 0"
+expect screen ">0 PRO 0 _ _ :108"
+expect screen "  109 REDO"
+click " Objects " rows 22-22
+expect screen "   0 lamp                0 Hall."
+
+# 31. T4
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen ">0 PRO 0 _ _ :101"
+
+# 32. S: flag compare (listed before flag change)
+click " Run " rows 0-0
+wait status "running"
+game "S\n"
+wait status "HALTED - breakpoint: flag 38 = 1 (by MOVE 38)"
+expect screen ">1 PRO 2 _ _ :116"
+expect screen "  117 PROCESS 1"
+click " Watches " rows 22-22
+expect screen "flag  38 Player location      = 1  Cellar."
+
+# 33. T5
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen "flag  38 Player location      = 1  Cellar."
+expect game "Cellar."
+
+# 34. N: flag change
+click " Run " rows 0-0
+wait status "running"
+game "N\n"
+wait status "HALTED - breakpoint: flag 38 changed 1 -> 0 (by MOVE 38)"
+expect screen ">1 PRO 2 _ _ :116"
+expect screen "  117 PROCESS 1"
+expect screen "flag  38 Player location      = 0  Hall."
+
+# 35. T6
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen "flag  38 Player location      = 0  Hall."
+
+# 36. Break button while the game waits for input, then OPEN
+click " Step entry " rows 0-0
+wait screen ">1 PRO 1 _ _ :111"
+click " Step entry " rows 0-0
+wait screen ">0 PRO 0 _ _ :105"
+expect game "Hall."
+click " Run " rows 0-0
+wait status "running"
+click " Break " rows 0-0
+expect status "running"
+game "OPEN\n"
+wait status "HALTED - step"
+expect screen ">0 PRO 0 _ _ :108"
+expect screen "  108 PROCESS 2"
+
+# 37. Source-line breakpoint on SYSMESS 8, before its text prints
+click " Run " rows 0-0
+wait status "HALTED - breakpoint: source line 125"
+expect screen ">1 PRO 2 _ _ :125"
+expect screen "  125 SYSMESS 8 \"I can't do that.\""
+expect screen "  126 DONE"
+expect game not "I can't do that."
+
+# 38. Wizard by typing (condact SYSMESS), then disable the line breakpoint
+click " Breakpoints " rows 22-22
+click " Add " rows 23-23
+wait screen " Break on "
+type "Condact"
+wait screen "Ä Condact Ä"
+type "SYSMESS"
+wait screen "[x] condact SYSMESS"
+click @1,28
+wait screen "[ ] line 125 of DBGFIX.DSF"
+
+# 39. T7: the new SYSMESS breakpoint does not re-fire on the condact it was added at
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect game "I can't do that."
+expect screen ">0 PRO 0 _ _ :101"
+
+# 40. OPEN again: condact SYSMESS reports, the disabled line breakpoint is ignored
+click " Run " rows 0-0
+wait status "running"
+game "OPEN\n"
+wait status "HALTED - breakpoint: condact SYSMESS"
+expect screen ">1 PRO 2 _ _ :125"
+expect screen "  125 SYSMESS 8"
+
+# 41. T8
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen ">0 PRO 0 _ _ :101"
+
+# 42. Source margin: remove line 125, add line 123, no-code line ignored
+click " Source " rows 2-2
+expect screen " 103         DEBUG"
+wheel -5 at @50,10
+expect screen " 109         REDO"
+expect screen " 127 /PRO 3"
+expect screen " 125 > _ _   SYSMESS 8"
+click @28,19
+click @28,17
+click @28,21
+click " Breakpoints " rows 22-22
+expect screen not "line 125 of DBGFIX.DSF"
+expect screen "[x] line 123 of DBGFIX.DSF"
+expect screen not "line 127 of DBGFIX.DSF"
+click " Condacts " rows 2-2
+
+# 43. Margin-added source-line breakpoint
+click " Run " rows 0-0
+wait status "running"
+game "OPEN KEY\n"
+wait status "HALTED - breakpoint: source line 123"
+expect screen ">1 PRO 2 OPEN KEY :123"
+expect screen " 0 PRO 0 _ _ :108"
+expect screen "  123 PROCESS 3"
+expect screen "  124 DONE"
+
+# 44. Runtime error E3 at process depth 10
+click " Run " rows 0-0
+wait status "HALTED - runtime error E3"
+expect screen ">9 PRO 3 _ _ :128"
+expect screen " 2 PRO 3 _ _ :128"
+expect screen " 1 PRO 2 OPEN KEY :123"
+expect screen " 0 PRO 0 _ _ :108"
+expect screen "  128 PROCESS 3"
+expect screen " 0424 (end)"
+
+# 45. Wizard: duplicates, Process by mouse and by typing
+click " Add " rows 23-23
+wait screen " Break on "
+click "DEBUG marker" rows 8-31
+expect screen not " Break on "
+# Nine rows fill rows 24-32; a duplicate would be row 33.
+click @1,33
+expect screen not "[ ] "
+click " Add " rows 23-23
+wait screen " Break on "
+click "Runtime error" rows 8-31
+expect screen not " Break on "
+click @1,33
+expect screen not "[ ] "
+click " Add " rows 23-23
+wait screen " Break on "
+click "Process / entry" rows 8-31
+wait screen "Ä Process Ä"
+click "PRO 1" rows 8-31
+wait screen " Entry verb "
+click "(any)" rows 8-31
+wait screen " Entry noun "
+click "(any)" rows 8-31
+wait screen "[x] PRO 1 "
+click " Add " rows 23-23
+wait screen " Break on "
+type "Process"
+wait screen "Ä Process Ä"
+type "PRO 2"
+wait screen " Entry verb "
+type "OPEN"
+wait screen " Entry noun "
+type "(any)"
+wait screen "[x] PRO 2 entry OPEN *"
+
+# 46. Wizard: Condact via the A-Z strip, Flag changes typed
+click " Add " rows 23-23
+wait screen " Break on "
+click "Condact" rows 8-31
+wait screen "Ä Condact Ä"
+click @25,6
+expect screen "DESTROY"
+expect screen "DOALL"
+click "DROP" rows 8-31
+wait screen "[x] condact DROP"
+click " Add " rows 23-23
+wait screen " Break on "
+type "Flag changes"
+wait screen "Ä Flag Ä"
+type "100"
+wait screen "[x] flag 100 changes"
+
+# 47. Wizard: Flag compare (four stages), Object moves
+click " Add " rows 23-23
+wait screen " Break on "
+click "Flag compare" rows 8-31
+wait screen "Ä Flag Ä"
+type "7"
+wait screen " Compare "
+type ">"
+wait screen " Value "
+type "5"
+wait screen "[x] flag 7 > 5"
+click " Add " rows 23-23
+wait screen " Break on "
+click "Object moves" rows 8-31
+wait screen "Ä Object Ä"
+click "  1  key" rows 8-31
+wait screen "[x] object 1 (key) moves"
+
+# 48. The 15 rows
+expect screen "[x] DEBUG marker"
+expect screen "[x] runtime error"
+expect screen "[x] PRO 2 entry DROP LAMP"
+expect screen "[x] condact GET"
+expect screen "[x] flag 38 = 1"
+expect screen "[x] flag 38 changes"
+expect screen "[x] object 0 (lamp) moves"
+expect screen "[x] condact SYSMESS"
+expect screen "[x] line 123 of DBGFIX.DSF"
+expect screen "[x] PRO 1 "
+expect screen "[x] PRO 2 entry OPEN *"
+expect screen "[x] condact DROP"
+expect screen "[x] flag 100 changes"
+expect screen "[x] flag 7 > 5"
+expect screen "[x] object 1 (key) moves"
+expect screen not "line 125"
+
+# 49. Resume after the runtime-error halt: the interpreter's fatal display
+click " Run " rows 0-0
+wait status "running"
+wait game "NextDAAD: RUNTIME ERROR - E3"
+expect status "running"
+measure halted-state
+quit

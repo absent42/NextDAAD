@@ -9,7 +9,7 @@ param(
     [string]$Build = ''
 )
 $ErrorActionPreference = 'Stop'
-$symNames  = 'flags','objTable','numObj','procStack','procSP','isDone','curOpcode','curCondact','curProps','indirValid','indirArg2','doallObj','doallLevel','ddbHeader','cprops'
+$symNames  = 'flags','objTable','numObj','procStack','procSP','isDone','curOpcode','curCondact','curProps','indirValid','indirArg2','doallObj','doallLevel','ddbHeader','cprops','tmCols'
 $hookNames = 'eng_exec','err_raise'
 $checkLen  = 32
 

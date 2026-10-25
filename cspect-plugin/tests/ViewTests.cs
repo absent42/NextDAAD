@@ -85,6 +85,36 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void AcceptKeepsPadValue()
+        {
+            var s = Snap();
+            Assert.False(view.Accept());
+            Click(s, " Flags ");
+            int x, y;
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Assert.True(ui.S.Find(" +    7 ", out x, out y, 23, 40));
+            ui.Begin(UiDriver.At(31, y));
+            Draw(ui, s);
+            Assert.True(view.PopupOpen);
+            Assert.True(view.Accept());
+            Assert.False(view.PopupOpen);
+            Assert.Contains(posted, c => c.Kind == CommandKind.SetFlag && c.A == 7 && c.B == 3);
+            Assert.False(view.Accept());
+        }
+
+        [Fact]
+        public void AcceptPickerNeedsSelection()
+        {
+            var s = Snap();
+            Click(s, "Breakpoints");
+            Click(s, " Add ");
+            Assert.True(view.PopupOpen);
+            Assert.False(view.Accept());
+            Assert.True(view.PopupOpen);
+        }
+
+        [Fact]
         public void TypedPrefixPicksAndChainsWizard()
         {
             var s = Snap();
@@ -124,6 +154,18 @@ namespace NextDAADDebug.Tests
             int x, y;
             Assert.True(ui.S.Find("        DEBUG", out x, out y));     // the DSF line, not the status line
             Assert.Equal(0x10, ui.S[29, y].Glyph);
+        }
+
+        [Fact]
+        public void SourceTabSaysWhetherAMapWasLoaded()
+        {
+            var s = new Snapshot { MapProblem = DebugSession.MapUncheckedText };
+            Click(s, " Source ");
+            Assert.True(OnScreen("source map not checked yet - waiting for NextDAAD"));
+            Assert.False(OnScreen("no source map"));
+            ui.Begin(new UiInput());
+            Draw(ui, new Snapshot { MapProblem = "no source map" });
+            Assert.True(OnScreen("no source map"));
         }
 
         [Fact]

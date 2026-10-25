@@ -44,6 +44,19 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SymbolFileTryGet()
+        {
+            string withCols = Sym() + "sym\ttmCols\tB123\n";
+            ushort a;
+            Assert.True(SymbolFile.Parse(withCols).TryGet("tmCols", out a));
+            Assert.Equal(0xB123, a);
+            Assert.False(SymbolFile.Parse(withCols).TryGet("nope", out a));
+            Assert.False(SymbolFile.Parse(Sym()).TryGet("tmCols", out a));
+            Assert.True(SymbolFile.Parse(Sym()).TryGet("eng_exec", out a));
+            Assert.Equal(0x9E21, a);
+        }
+
+        [Fact]
         public void ParsesCrlfAndBom()
         {
             var a = SymbolFile.Parse(Sym());

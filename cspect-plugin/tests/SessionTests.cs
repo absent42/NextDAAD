@@ -9,7 +9,7 @@ namespace NextDAADDebug.Tests
         // DBGFIX PRO 0 entry 0: LET 100 7 / LET @100 3 / DEBUG / PROCESS 1 / (end)
         //          PRO 0 entry 1: PARSE 0 / SYSMESS 6 / REDO
         //          PRO 0 entry 2: PROCESS 2 / REDO
-        //          PRO 1 entry 0: CLS / DESC @38 / DONE
+        //          PRO 1 entry 0: CLS / ABILITY 10 50 / DESC @38 / DONE
         //          PRO 2 entry 1: GET 0 / DONE (GET LAMP)
 
         [Fact]
@@ -208,6 +208,22 @@ namespace NextDAADDebug.Tests
             Assert.Equal(new[] { r.Cond(0, 1, 0).Offset }, r.Snap().Breakpoints[0].Offsets);
             r.Exec(0, 1, 0);
             Assert.Equal(1, r.H.Halts);
+        }
+
+        [Fact]
+        public void LoadedMapIsUncheckedUntilTheDatabaseIsRead()
+        {
+            var r = new Rig();
+            var s = r.Snap();
+            Assert.Null(s.Ddb);
+            Assert.Null(s.Map);
+            Assert.Equal("source map not checked yet - waiting for NextDAAD", s.MapProblem);
+            r.Exec(0, 0, 0);
+            Assert.NotNull(r.Snap().Map);
+            Assert.Null(r.Snap().MapProblem);
+            r.S.Reset();
+            Assert.Equal(DebugSession.MapUncheckedText, r.Snap().MapProblem);
+            Assert.Equal("no source map", new Rig(true, false).Snap().MapProblem);
         }
 
         [Fact]

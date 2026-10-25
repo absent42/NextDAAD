@@ -6,7 +6,7 @@ $work = "$root/tests/out/make-sym"
 if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 New-Item -ItemType Directory -Force "$work/src" | Out-Null
 
-$names = 'flags','objTable','numObj','procStack','procSP','isDone','curOpcode','curCondact','curProps','indirValid','indirArg2','doallObj','doallLevel','ddbHeader','cprops'
+$names = 'flags','objTable','numObj','procStack','procSP','isDone','curOpcode','curCondact','curProps','indirValid','indirArg2','doallObj','doallLevel','ddbHeader','cprops','tmCols'
 function New-Sld([int]$smcAddr, [string]$drop) {
     $l = @('|SLD.data.version|1')
     $addr = 0xA200
@@ -40,6 +40,7 @@ $t = [IO.File]::ReadAllText("$work/OK.SYM")
 if (-not $t.StartsWith("NEXTDAAD-SYM`t1`n")) { throw "make-sym-selftest: bad header" }
 if ($t -notmatch "build`tabc1234`tDEBUG`n") { throw "make-sym-selftest: bad build line" }
 if ($t -notmatch "sym`tflags`tA200`n") { throw "make-sym-selftest: flags sym missing" }
+if ($t -notmatch "sym`ttmCols`t[0-9A-F]{4}`n") { throw "make-sym-selftest: tmCols sym missing" }
 $want = -join (0..31 | ForEach-Object { '{0:X2}' -f (0xA0 + $_) })
 if ($t -notmatch "hook`teng_exec`t9000`t04`t$want`n") { throw "make-sym-selftest: eng_exec hook bytes wrong" }
 $checks++

@@ -27,6 +27,8 @@ namespace NextDAADDebug.Tests
             return r;
         }
 
+        public byte[] PeekPhysicalUla(int a, int n) => PeekPhysical(a, n);
+
         public void Poke(ushort a, byte v) => Mem[a] = v;
         public byte GetNextRegister(byte r) => NextRegs[r];
         public CpuRegs Registers() => Regs;

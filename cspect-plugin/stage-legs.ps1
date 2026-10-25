@@ -66,7 +66,10 @@ function New-Leg([string]$name, [string]$cspectSrc, [string]$seed) {
     }
     New-Item -ItemType Directory -Force "$leg\cspect" | Out-Null
     Set-Content -LiteralPath (Join-Path $leg $marker) -Value 'staged by cspect-plugin\stage-legs.ps1'
-    Copy-Item "$fx\DBGFIX.DDB" "$leg\GAME.DDB"
+    # Kit layout DATA\GAME.DDB: the Release NEX boots E1 with GAME.DDB in the card root.
+    # SYM, DSM, DSF and settings stay in the leg root, the NEXTDAAD_DEBUG folder.
+    New-Item -ItemType Directory -Force "$leg\DATA" | Out-Null
+    Copy-Item "$fx\DBGFIX.DDB" "$leg\DATA\GAME.DDB"
     Copy-Item "$fx\DBGFIX.DSM" "$leg\GAME.DSM"
     Copy-Item "$fx\DBGFIX.DSF" $leg
     Copy-Item "$repo\build\nextdaad.nex" $leg

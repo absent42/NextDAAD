@@ -1,0 +1,48 @@
+# Leg A part 2: relaunch in the same leg folder without re-seeding; DEBUGGER.local.TXT from part 1 is reloaded.
+# {CUR} is a literal U+0010, the Condacts current-row glyph, before the padded line number.
+# glance: after the relaunch the debugger window reopens where it was when CSpect closed
+
+# The wizard-added "flag 100 changes" sees the boot-time 0 -> 7 first
+wait status "HALTED - breakpoint: flag 100 changed 0 -> 7 (by LET 100 7)" timeout 30
+expect log "source map loaded"
+expect screen ">0 PRO 0 _ _ :101"
+expect screen "  102 LET @100(=7) 3"
+
+# Six watches from part 1
+expect screen "flag  38 Player location"
+expect screen "flag   7 "
+expect screen "obj    0 lamp"
+expect screen "flag  33 Verb"
+expect screen "obj    1 key"
+expect screen "flag 100 fCounter"
+
+# Fifteen breakpoints, all enabled
+click " Breakpoints " rows 22-22
+expect screen "[x] DEBUG marker"
+expect screen "[x] runtime error"
+expect screen "[x] PRO 2 entry DROP LAMP"
+expect screen "[x] condact GET"
+expect screen "[x] flag 38 = 1"
+expect screen "[x] flag 38 changes"
+expect screen "[x] object 0 (lamp) moves"
+expect screen "[x] condact SYSMESS"
+expect screen "[x] line 123 of DBGFIX.DSF"
+expect screen "[x] PRO 1 "
+expect screen "[x] PRO 2 entry OPEN *"
+expect screen "[x] condact DROP"
+expect screen "[x] flag 100 changes"
+expect screen "[x] flag 7 > 5"
+expect screen "[x] object 1 (key) moves"
+expect screen not "[ ] "
+expect screen not "line 125"
+
+# Wizard-added breakpoints still fire after the relaunch
+click " Run " rows 0-0
+wait status "HALTED - DEBUG marker"
+expect screen "  103 DEBUG"
+click " Run " rows 0-0
+wait status "HALTED - breakpoint: PRO 1"
+expect screen ">1 PRO 1 _ _ :111"
+expect screen " 0 PRO 0 _ _ :101"
+expect screen "  111 CLS"
+quit

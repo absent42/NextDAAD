@@ -1,0 +1,3 @@
+# Leg C: first trace.txt line on CSpect 3.3.1 (TraceWriter format P<proc> E<entry> C<offset> <condact>).
+# DBGFIX process 0 entry 0 at 0425, first condact LET 100 7 at 03F8 (GAME.DSM lines "entry 0425" / "cond 03F8").
+P0 E0425 C03F8 LET 100 7

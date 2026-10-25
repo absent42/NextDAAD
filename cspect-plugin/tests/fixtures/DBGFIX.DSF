@@ -109,6 +109,7 @@ NORTH 0
         REDO
 /PRO 1
 > _ _   CLS
+        ABILITY 10 50
         DESC @38
         DONE
 /PRO 2

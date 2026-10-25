@@ -202,6 +202,29 @@ namespace NextDAADDebug
         internal void QueueCancel() { lock (gate) pendingCancel = true; }
         internal void DrawFailed(Exception ex) { lock (gate) drawError = ex; }
 
+#if AUTOPILOT
+        // Autopilot seams: once InjectInput is called the ImGui mouse sample is ignored.
+        bool injecting, injectForce;
+        UiInput injected;
+
+        internal CellScreen Screen => screen;
+        internal bool IsOpen { get { lock (gate) return surface != null; } }
+        internal void InjectInput(UiInput u) { lock (gate) { injecting = true; injected = u; } }
+        internal bool AutoType(string text) { lock (gate) { injectForce = true; return view.Type(text); } }
+        internal bool AutoAccept() { lock (gate) { injectForce = true; return view.Accept(); } }
+
+        internal bool AutoCancel()
+        {
+            lock (gate)
+            {
+                injectForce = true;
+                bool open = view.PopupOpen;
+                view.CancelPopup();
+                return open;
+            }
+        }
+#endif
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         ISurface OpenSurface()
         {
@@ -270,6 +293,14 @@ namespace NextDAADDebug
                 force = true;
             }
             UiInput input = mouse.Take();
+#if AUTOPILOT
+            if (injecting)
+            {
+                input = injected ?? new UiInput();
+                injected = null;
+                if (injectForce) { injectForce = false; force = true; }
+            }
+#endif
             if (!force && !input.HasEvent && snap.Serial == lastSerial) return;
             lastSerial = snap.Serial;
             ui.Begin(input);

@@ -134,6 +134,7 @@ namespace NextDAADDebug.Tests
             Assert.Equal(new[] { "LET 100 7", "LET @100 3", "DEBUG", "PROCESS 1", "(end)" }, Texts(d, e0[0].CondactOffset));
             Assert.Equal(new[] { "PARSE 0", "SYSMESS 6", "REDO" }, Texts(d, e0[1].CondactOffset));
             Assert.Equal(new[] { "PROCESS 2", "REDO" }, Texts(d, e0[2].CondactOffset));
+            Assert.Equal(new[] { "CLS", "ABILITY 10 50", "DESC @38", "DONE" }, Texts(d, d.Entries(1)[0].CondactOffset));
             var e2 = d.Entries(2);
             Assert.Equal(5, e2.Count);
             Assert.Equal(20, e2[1].Verb);
