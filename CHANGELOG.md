@@ -36,6 +36,7 @@ All notable changes to NextDAAD are recorded here.
   no buttons and holds `$FBDF`/`$FFDF` at their values from before the
   press, so the game's pointer catches up in one step on the release.
   Clicking a tab no longer ends a loader intro.
+- **NDRC v0.3.0**: adds source map output for CSPect debugger plugin.
 
 ## v0.12.0 24/10/2026
 
