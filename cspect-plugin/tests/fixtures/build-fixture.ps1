@@ -28,6 +28,7 @@ if ($b[0] -ne 3 -or ($b[1] -shr 4) -ne 0x0C -or $b[2] -ne 95) { throw 'DBGFIX.DD
 if (-not (Has @(0x33, 100, 7))) { throw 'LET fCounter 7 did not compile to 33 64 07' }
 if (-not (Has @(0xB3, 100, 3))) { throw 'LET @100 3 did not compile to B3 64 03' }
 if (-not (Has @(0xDC, 0x4B, 1))) { throw 'DEBUG marker DC not kept before PROCESS 1 (4B 01) - was -d honoured?' }
+if (-not (Has @(0x1D, 0x5D, 10, 50))) { throw 'CLS / ABILITY 10 50 did not compile to 1D 5D 0A 32' }
 
 # argc per condact = cprops bits 0-1 (src/engine.asm); fixture walker only
 $argc = @(1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2, 1,1,2,1,0,0,0,0,0,1,1,1,1,0,0,0, 0,0,0,1,2,1,1,1,1,1,1,1,1,2,2,1, 1,2,2,2,0,1,1,2,1,0,1,1,0,2,0,1,

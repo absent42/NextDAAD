@@ -8,8 +8,9 @@ $leg = Join-Path $repo 'tests\out\dbgtrace'
 $outRoot = [IO.Path]::GetFullPath((Join-Path $repo 'tests\out')).TrimEnd('\') + '\'
 if (-not [IO.Path]::GetFullPath($leg).StartsWith($outRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to clear $leg" }
 if (Test-Path -LiteralPath $leg) { Remove-Item -LiteralPath $leg -Recurse -Force }
-New-Item -ItemType Directory -Force $leg | Out-Null
-Copy-Item "$PSScriptRoot\fixtures\DBGFIX.DDB" "$leg\GAME.DDB"
+New-Item -ItemType Directory -Force "$leg\DATA" | Out-Null
+# Kit layout DATA\GAME.DDB: the Release NEX boots E1 with GAME.DDB in the card root.
+Copy-Item "$PSScriptRoot\fixtures\DBGFIX.DDB" "$leg\DATA\GAME.DDB"
 Copy-Item "$repo\build\nextdaad.nex" $leg
 Copy-Item "$repo\build\NEXTDAAD.SYM" $leg
 $trace = Join-Path $leg 'trace.txt'
