@@ -352,8 +352,9 @@ function Find-SharedOffset($m, [int]$file, [int[]]$heads) {
 
 # What legK.txt relies on, read from the kit-built maps in $g: GO A / GO B (bodies written apart)
 # and SEE A / SEE B (synonym headers) each share one offset with two owners, the INDIR line has
-# records at the 7A byte and the target, the include and part 2 are mapped, every seeded line resolves.
-function Test-DbgkitMaps([string]$g) {
+# records at the 7A byte and the target, the include and part 2 are mapped, every seeded line resolves,
+# and the seed names exactly the lines legK.txt halts on (looked up in the sources, not assumed).
+function Test-DbgkitMaps([string]$g, [string]$seed = (Join-Path $ApScripts 'legK.seed.txt')) {
     $why = New-Object Collections.Generic.List[string]
     $ex = New-Object Collections.Generic.List[string]
     $m1 = Read-Dsm (Join-Path $g 'GAME.DSM'); $m2 = Read-Dsm (Join-Path $g 'GAME2.DSM')
@@ -383,12 +384,18 @@ function Test-DbgkitMaps([string]$g) {
     $p2go = Find-SrcLine ([IO.File]::ReadAllLines((Join-Path $g 'PART2\PART2.DSF'))) '^> GO B '
     if ($p2 -lt 0 -or -not @($m2.Conds | Where-Object { $_.File -eq $p2 -and $_.Line -eq $p2go }).Count) { $why.Add("GAME2.DSM maps no condact on line $p2go of PART2/PART2.DSF") }
     if ($p2go -ne $goB) { $why.Add("PART2.DSF GO B is on line $p2go, want $goB (part 1's GO B line)") }
-    foreach ($l in [IO.File]::ReadAllLines((Join-Path $ApScripts 'legK.seed.txt'))) {
+    $hit2 = Find-SrcLine ([IO.File]::ReadAllLines((Join-Path $g 'inc\SHARED.DSF'))) '^> HIT '
+    $ping = Find-SrcLine ([IO.File]::ReadAllLines((Join-Path $g 'PART2\PART2.DSF'))) '^> PING '
+    $wantSeed = @("DBGKIT.DSF $goB", "DBGKIT.DSF $seeB", "DBGKIT.DSF $indir", "inc/SHARED.DSF $hit2", "PART2/PART2.DSF $ping")
+    $gotSeed = New-Object Collections.Generic.List[string]
+    foreach ($l in [IO.File]::ReadAllLines($seed)) {
         if ($l -notmatch "^bp`tSourceLine`t\d`t([^`t]+)`t(\d+)`t") { continue }
         $path = $Matches[1]; $line = [int]$Matches[2]; $hit = $false
+        $gotSeed.Add("$path $line")
         foreach ($m in $m1, $m2) { $fi = Get-DsmFile $m $path; if ($fi -ge 0 -and @($m.Conds | Where-Object { $_.File -eq $fi -and $_.Line -eq $line }).Count) { $hit = $true } }
         if (-not $hit) { $why.Add("seed line $line of $path has no condact in either map") }
     }
+    if (($gotSeed -join ', ') -cne ($wantSeed -join ', ')) { $why.Add("seed lines are '$($gotSeed -join ', ')', the sources give '$($wantSeed -join ', ')'") }
     return [pscustomobject]@{ Reasons = $why; Excerpt = $ex }
 }
 
@@ -424,13 +431,16 @@ function Test-LegKStaging([string]$kit, [string]$g, [string]$csDir, [string]$bef
 }
 
 # NEXTDAAD_DEBUG and the launch arguments from debug.ps1 -NoLaunch; Args is $null unless the
-# printed program is $csDir\CSpect.exe.
+# printed program is $csDir\CSpect.exe. The line joins with spaces and a game name may hold one:
+# flags, then -mmc=<card root ending in a separator>, then the NEX.
 function Get-KitLaunch([string[]]$lines, [string]$csDir) {
     $dbgv = $null; $argv = $null
     $exe = Join-Path $csDir 'CSpect.exe'
     foreach ($x in $lines) {
         if ($x -match '^NEXTDAAD_DEBUG=(.+)$') { $dbgv = $Matches[1] }
-        elseif ($x.StartsWith("launch: $exe ")) { $argv = @($x.Substring("launch: $exe ".Length) -split ' ' | Where-Object { $_ }) }
+        elseif ($x.StartsWith("launch: $exe ") -and $x.Substring("launch: $exe ".Length) -match '^((?:-(?!mmc=)\S+ )*)(-mmc=.*[\\/]) (\S.*)$') {
+            $argv = @(@($Matches[1] -split ' ' | Where-Object { $_ }) + $Matches[2] + $Matches[3])
+        }
     }
     return [pscustomobject]@{ Debug = $dbgv; Args = $argv }
 }
@@ -471,6 +481,13 @@ function Invoke-LegK([string[]]$scripts, [int]$seconds) {
     $recs = @(New-CheckRecord 'K' 'kit staging' $c $dir)
     $recs[0] | Add-Member -NotePropertyName Files -NotePropertyValue 'build.txt, debug-nolaunch.txt, kit\'
     if ($recs[0].Status -ne 'PASS') { Write-Host "leg K staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')"; return $recs }
+    # The swapped-in build must be the version the kit ships, or the walk tests other code.
+    $kv = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $kit 'lib\NextDAADDebug.dll')).Version
+    $av = [Reflection.AssemblyName]::GetAssemblyName("$ApBin\Autopilot\net48\NextDAADDebug.dll").Version
+    if ($kv -ne $av) {
+        $recs = @(New-CheckRecord 'K' 'kit staging' (@($c) + @([pscustomobject]@{ Name = 'k-autopilot-version'; Ok = $false; Detail = "kit $kv, autopilot build $av - rebuild the kit with build.ps1 -Kit" })) $dir)
+        Write-Host "leg K staging failed: kit plugin $kv, autopilot build $av"; return $recs
+    }
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $cs -Force
     Assert-AutopilotDll "$cs\NextDAADDebug.dll"
     $a = @($st.Launch.Args)

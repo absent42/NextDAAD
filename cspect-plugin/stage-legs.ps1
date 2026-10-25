@@ -13,6 +13,16 @@ $legNames = 'LEGDBGW', 'LEGDBG331', 'LEGDBGSTALE', 'LEGDBGBADSYM'
 $T = [string][char]9
 $nl = [string][char]10
 
+# LEGDBG331 proves the below-4.0 gate: an upgraded CSpect there would pass it vacuously.
+function Get-CSpectVersion([string]$dir) {
+    try { return [Reflection.AssemblyName]::GetAssemblyName((Join-Path $dir 'CSpect.exe')).Version }
+    catch { throw "refusing: cannot read the CSpect version in $dir" }
+}
+$vOld = Get-CSpectVersion $csOld
+if ($vOld -ge [Version]'4.0') { throw "refusing: LEGDBG331 needs a CSpect older than 4.0 - $csOld has $vOld" }
+$v40 = Get-CSpectVersion $cs40
+if ($v40 -lt [Version]'4.0') { throw "refusing: the 4.0 legs need CSpect 4.0 or later - $cs40 has $v40" }
+
 foreach ($n in $legNames) {
     $p = Join-Path $repo "sd\$n"
     if ((Test-Path -LiteralPath $p) -and -not (Test-Path -LiteralPath (Join-Path $p $marker))) {

@@ -285,6 +285,16 @@ Check 'i-dsm-synonym-two-owners' ($pairs -contains "$($hdr['SEE A']),$($hdr['SEE
 Check 'i-dsm-go-two-owners' ($pairs -contains "$($hdr['GO A']),$($hdr['GO B'])") "GO $($hdr['GO A']),$($hdr['GO B']) in: $($pairs -join ' ')"
 $t = Test-DbgkitMaps $kg
 Check 'i-dsm-fixture' ($t.Reasons.Count -eq 0) ($t.Reasons -join '; ')
+# A seed line that resolves but is not the one legK.txt halts on fails.
+$badSeed = Join-Path $kr 'bad.seed.txt'
+[IO.File]::WriteAllText($badSeed, ([IO.File]::ReadAllText((Join-Path $ApScripts 'legK.seed.txt')) -replace "DBGKIT\.DSF`t112`t", "DBGKIT.DSF`t110`t"))
+$t = Test-DbgkitMaps $kg $badSeed
+Check 'i-dsm-seed-line-moved-fails' (($t.Reasons -join ';') -like "*seed lines are 'DBGKIT.DSF 110,*") ($t.Reasons -join '; ')
+# Launch lines whose card root and NEX name hold spaces keep each argument whole.
+$sp = Get-KitLaunch @("launch: $kcs\CSpect.exe -w3 -zxnext -esc -mmc=RELEASE\My Game\\ RELEASE\My Game\My Game.NEX") $kcs
+Check 'i-launch-spaced' (($sp.Args.Count -eq 5) -and $sp.Args[3] -ceq '-mmc=RELEASE\My Game\\' -and $sp.Args[4] -ceq 'RELEASE\My Game\My Game.NEX') ($sp.Args -join '|')
+$sp = Get-KitLaunch @("launch: $kcs\CSpect.exe -w3 -zxnext -esc RELEASE\G\G.NEX") $kcs
+Check 'i-launch-no-mmc-refused' ($null -eq $sp.Args) ($sp.Args -join '|')
 # The checker fails a map with one INDIR record dropped, or with GO B's shared records dropped.
 $kn = Join-Path $kr 'neg'
 Copy-Item -LiteralPath $kg $kn -Recurse
