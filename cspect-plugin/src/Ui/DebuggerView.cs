@@ -197,7 +197,7 @@ namespace NextDAADDebug
                 string text = CondactFormatter.Rich(c, s.Ddb, s.Flags);
                 if (i == cur && level == s.Stack.Length - 1 && s.IndirPending >= 0) text += "  [INDIR arg2=" + s.IndirPending + "]";
                 SourceLoc loc;
-                string where = s.Map != null && s.Map.TryLocate(c.Offset, out loc) ? loc.Line.ToString() : c.Offset.ToString("X4");
+                string where = s.Map != null && s.Map.TryLocate(c.Offset, s.Stack[level].EntryPtr, out loc) ? loc.Line.ToString() : c.Offset.ToString("X4");
                 string line = (i == cur ? (char)0x10 : ' ') + where.PadLeft(5) + " " + text;
                 ui.S.Text(RightX, y + r, line.PadRight(w), Theme.Text, i == cur ? Theme.Current : Theme.Bg, w);
             }
@@ -209,7 +209,7 @@ namespace NextDAADDebug
             if (s.Map == null || s.Ddb == null || level < 0 || level >= s.Stack.Length) return false;
             var list = s.Ddb.EntryCondacts(s.Ddb.EntryCondactStart(s.Stack[level].EntryPtr));
             int i = CurrentIndex(s, level, list);
-            return i >= 0 && s.Map.TryLocate(list[i].Offset, out loc);
+            return i >= 0 && s.Map.TryLocate(list[i].Offset, s.Stack[level].EntryPtr, out loc);
         }
 
         static bool HasLineBp(Snapshot s, int file, int line)

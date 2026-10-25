@@ -7,13 +7,17 @@ namespace NextDAADDebug
     // Tab-separated records shared by NEXTDAAD.SYM, GAME.DSM and DEBUGGER.local.TXT.
     public static class RecordFile
     {
-        public static List<string[]> Parse(string text, string magic, int major)
+        public static List<string[]> Parse(string text, string magic, int major) => Parse(text, magic, major, major, out _);
+
+        // Accepts versions minMajor..major; the one found is returned in version.
+        public static List<string[]> Parse(string text, string magic, int minMajor, int major, out int version)
         {
             if (string.IsNullOrEmpty(text)) throw new FormatException("empty file");
             if (text[0] == '\uFEFF') text = text.Substring(1);
             string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
             var records = new List<string[]>();
             bool header = false;
+            version = 0;
             for (int i = 0; i < lines.Length; i++)
             {
                 string line = lines[i].TrimEnd();
@@ -25,8 +29,9 @@ namespace NextDAADDebug
                     int v;
                     if (f.Length < 2 || f[0] != magic || !int.TryParse(f[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out v))
                         throw new FormatException("line " + (i + 1) + ": expected '" + magic + "' header");
-                    if (v != major)
-                        throw new FormatException(magic + " version " + v + " is not supported (this debugger reads version " + major + ")");
+                    if (v < minMajor || v > major)
+                        throw new FormatException(magic + " version " + v + " is not supported (this debugger reads version " + (minMajor == major ? major.ToString() : minMajor + " to " + major) + ")");
+                    version = v;
                     header = true;
                     continue;
                 }

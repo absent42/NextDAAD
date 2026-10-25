@@ -82,6 +82,14 @@ namespace NextDAADDebug
             }
         }
 
+        // A shared tail carries one offset per owning entry; the running entry picks the line.
+        static bool SourceLineHit(Breakpoint bp, ExecEvent e)
+        {
+            for (int i = 0; i < bp.Offsets.Length; i++)
+                if (bp.Offsets[i] == e.Offset && (i >= bp.Entries.Length || bp.Entries[i] < 0 || bp.Entries[i] == e.Top.EntryPtr)) return true;
+            return false;
+        }
+
         string Check(Breakpoint bp, ExecEvent e)
         {
             switch (bp.Kind)
@@ -96,7 +104,7 @@ namespace NextDAADDebug
                 case BreakKind.Condact:
                     return e.Effective != null && !e.Effective.IsEnd && !e.Effective.IsMarker && e.Effective.Number == bp.A ? "breakpoint: condact " + Condacts.Table[bp.A].Name : null;
                 case BreakKind.SourceLine:
-                    return Array.IndexOf(bp.Offsets, e.Offset) >= 0 ? "breakpoint: source line " + bp.B : null;
+                    return SourceLineHit(bp, e) ? "breakpoint: source line " + bp.B : null;
                 case BreakKind.FlagChange:
                     if (prev == null || prev.Flags[bp.A] == e.Flags[bp.A]) return null;
                     return "breakpoint: flag " + bp.A + " changed " + prev.Flags[bp.A] + " -> " + e.Flags[bp.A] + By();

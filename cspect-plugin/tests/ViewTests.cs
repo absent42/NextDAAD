@@ -157,6 +157,26 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SourceTabFollowsRunningEntryOnSharedTail()
+        {
+            // Offset 0x0402 is entry 1's first condact; the map also lists entry 0 as an owner, first.
+            const string dsm = "NDRC-DSM\t2\nddb\tF27FE0F4\t459\nfile\t0\tDBGFIX.DSF\n" +
+                               "cond\t0402\t0425\t0\t103\t9\ncond\t0402\t0429\t0\t106\t9\n";
+            var s = Snap();
+            var d = s.Ddb;
+            var e = d.Entries(0)[1];
+            s.Map = SourceMap.Parse(dsm);
+            s.Stack = new[] { new ProcFrame(0, e.HeaderOffset, 0x402) };
+            s.Offset = 0x402;
+            Click(s, " Source ");
+            int x, y;
+            Assert.True(ui.S.Find("        SYSMESS 6", out x, out y));
+            Assert.Equal(0x10, ui.S[29, y].Glyph);
+            Assert.True(ui.S.Find("        DEBUG", out x, out y));
+            Assert.NotEqual(0x10, ui.S[29, y].Glyph);
+        }
+
+        [Fact]
         public void SourceTabSaysWhetherAMapWasLoaded()
         {
             var s = new Snapshot { MapProblem = DebugSession.MapUncheckedText };

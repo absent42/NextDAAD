@@ -211,6 +211,26 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SharedLineBreakpointFiresOnlyForItsEntry()
+        {
+            const string dsm = "NDRC-DSM\t2\nddb\tF27FE0F4\t459\nfile\t0\tDBGFIX.DSF\n" +
+                               "entry\t0425\t0\t101\nentry\t0429\t0\t120\n" +
+                               "cond\t03F8\t0425\t0\t101\t9\ncond\t03F8\t0429\t0\t120\t9\n";
+            var r = new Rig(SourceMap.Parse(dsm));
+            r.Exec(0, 0, 0);                               // loads the DDB and validates the map
+            r.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 120 });
+            var bp = r.Snap().Breakpoints[0];
+            Assert.Equal(new[] { 0x3F8 }, bp.Offsets);
+            Assert.Equal(new[] { 0x429 }, bp.Entries);
+            r.Exec(0, 0, 0);                               // first owner (0x0425) runs the shared condact
+            Assert.Equal(0, r.H.Halts);
+            r.SetStack(new ProcFrame(0, 0x429, 0x3F8));    // second owner runs it
+            r.M.Regs = new CpuRegs { HL = 0x3F8, PC = r.Sym.Hook("eng_exec").Address };
+            r.S.OnExecHook();
+            Assert.Equal(1, r.H.Halts);
+        }
+
+        [Fact]
         public void LoadedMapIsUncheckedUntilTheDatabaseIsRead()
         {
             var r = new Rig();

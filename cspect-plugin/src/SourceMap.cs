@@ -10,16 +10,30 @@ namespace NextDAADDebug
         public int Col;
     }
 
-    // GAME.DSM, written by NDRC -srcmap.
+    // Entry is the owning entry record offset; -1 for a v1 record.
+    public sealed class CondLoc
+    {
+        public int Entry;
+        public SourceLoc Loc;
+    }
+
+    public struct LineHit
+    {
+        public int Offset;
+        public int Entry;
+    }
+
+    // GAME.DSM, written by NDRC -srcmap. Versions 1 and 2 are read.
     public sealed class SourceMap
     {
         public const string Magic = "NDRC-DSM";
-        public const int Major = 1;
+        public const int Major = 2;
+        const int MinMajor = 1;
 
         public uint DdbCrc;
         public int DdbLength;
         public readonly Dictionary<int, string> Files = new Dictionary<int, string>();
-        public readonly Dictionary<int, SourceLoc> Condacts = new Dictionary<int, SourceLoc>();
+        public readonly Dictionary<int, List<CondLoc>> Condacts = new Dictionary<int, List<CondLoc>>();
         public readonly Dictionary<int, SourceLoc> Entries = new Dictionary<int, SourceLoc>();
         public readonly Dictionary<int, SourceLoc> Processes = new Dictionary<int, SourceLoc>();
         public readonly List<KeyValuePair<string, int>> Symbols = new List<KeyValuePair<string, int>>();
@@ -28,7 +42,8 @@ namespace NextDAADDebug
         {
             var m = new SourceMap();
             bool ddb = false;
-            foreach (string[] f in RecordFile.Parse(text, Magic, Major))
+            int version;
+            foreach (string[] f in RecordFile.Parse(text, Magic, MinMajor, Major, out version))
             {
                 switch (f[0])
                 {
@@ -51,8 +66,17 @@ namespace NextDAADDebug
                         m.Entries[RecordFile.Hex(f[1], "offset")] = new SourceLoc { File = RecordFile.Dec(f[2], "file"), Line = RecordFile.Dec(f[3], "line") };
                         break;
                     case "cond":
-                        RecordFile.Need(f, 5);
-                        m.Condacts[RecordFile.Hex(f[1], "offset")] = new SourceLoc { File = RecordFile.Dec(f[2], "file"), Line = RecordFile.Dec(f[3], "line"), Col = RecordFile.Dec(f[4], "col") };
+                        int at = version >= 2 ? 3 : 2;
+                        RecordFile.Need(f, at + 3);
+                        var cl = new CondLoc
+                        {
+                            Entry = version >= 2 ? RecordFile.Hex(f[2], "entry") : -1,
+                            Loc = new SourceLoc { File = RecordFile.Dec(f[at], "file"), Line = RecordFile.Dec(f[at + 1], "line"), Col = RecordFile.Dec(f[at + 2], "col") }
+                        };
+                        int off = RecordFile.Hex(f[1], "offset");
+                        List<CondLoc> owners;
+                        if (!m.Condacts.TryGetValue(off, out owners)) m.Condacts[off] = owners = new List<CondLoc>();
+                        owners.Add(cl);
                         break;
                     case "sym":
                         RecordFile.Need(f, 3);
@@ -66,15 +90,32 @@ namespace NextDAADDebug
 
         public bool Matches(byte[] ddbImage) => DdbLength > 0 && DdbLength <= ddbImage.Length && Crc32.Compute(ddbImage, 0, DdbLength) == DdbCrc;
 
-        public List<int> OffsetsForLine(int file, int line)
+        public List<LineHit> OffsetsForLine(int file, int line)
         {
-            var r = new List<int>();
-            foreach (var kv in Condacts) if (kv.Value.File == file && kv.Value.Line == line) r.Add(kv.Key);
-            r.Sort();
+            var r = new List<LineHit>();
+            foreach (var kv in Condacts)
+                foreach (var c in kv.Value)
+                    if (c.Loc.File == file && c.Loc.Line == line) r.Add(new LineHit { Offset = kv.Key, Entry = c.Entry });
+            r.Sort((a, b) => a.Offset != b.Offset ? a.Offset.CompareTo(b.Offset) : a.Entry.CompareTo(b.Entry));
             return r;
         }
 
-        public bool TryLocate(int offset, out SourceLoc loc) => Condacts.TryGetValue(offset, out loc);
+        public bool TryLocate(int offset, out SourceLoc loc) => TryLocate(offset, -1, out loc);
+
+        // The record owned by 'entry'; else a v1 record; else the first one.
+        public bool TryLocate(int offset, int entry, out SourceLoc loc)
+        {
+            List<CondLoc> owners;
+            if (!Condacts.TryGetValue(offset, out owners) || owners.Count == 0) { loc = new SourceLoc(); return false; }
+            CondLoc pick = null;
+            foreach (var c in owners)
+                if (c.Entry == entry) { pick = c; break; }
+            if (pick == null)
+                foreach (var c in owners)
+                    if (c.Entry < 0) { pick = c; break; }
+            loc = (pick ?? owners[0]).Loc;
+            return true;
+        }
 
         public List<string> NamesForValue(int value)
         {

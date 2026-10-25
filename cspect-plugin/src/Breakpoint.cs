@@ -15,11 +15,13 @@ namespace NextDAADDebug
         public int C = -1;
         public CompareOp Op;
         public int[] Offsets = new int[0];
+        public int[] Entries = new int[0];            // owning entry per offset, -1 any
 
         public Breakpoint Clone()
         {
             var b = (Breakpoint)MemberwiseClone();
             b.Offsets = (int[])Offsets.Clone();
+            b.Entries = (int[])Entries.Clone();
             return b;
         }
 

@@ -131,12 +131,68 @@ namespace NextDAADDebug.Tests
             Assert.Equal(1, loc.File);
             Assert.Equal(7, loc.Line);
             Assert.False(m.TryLocate(0x141, out loc));
-            Assert.Equal(new[] { 0x124, 0x130 }, m.OffsetsForLine(0, 101).ToArray());
+            Assert.Equal(new[] { 0x124, 0x130 }, m.OffsetsForLine(0, 101).ConvertAll(h => h.Offset).ToArray());
             Assert.Equal(new[] { "fCounter", "oLamp" }, m.NamesForValue(100).ToArray());
             int v;
             Assert.True(m.TryResolveName("LCELLAR", out v));
             Assert.Equal(1, v);
             Assert.False(m.TryResolveName("nope", out v));
+        }
+
+        public static string DsmV2() =>
+            "NDRC-DSM\t2\n" +
+            "ddb\tCBF43926\t9\n" +
+            "file\t0\tGAME.DSF\n" +
+            "entry\t0425\t0\t101\n" +
+            "entry\t0429\t0\t120\n" +
+            "cond\t03F8\t0425\t0\t101\t9\n" +
+            "cond\t03F8\t0429\t0\t120\t13\n" +
+            "cond\t03FB\t0425\t0\t102\t9\n";
+
+        [Fact]
+        public void SourceMapV2KeepsEveryOwner()
+        {
+            var m = SourceMap.Parse(DsmV2());
+            Assert.Equal(2, m.Condacts[0x3F8].Count);
+            SourceLoc loc;
+            Assert.True(m.TryLocate(0x3F8, 0x429, out loc));
+            Assert.Equal(120, loc.Line);
+            Assert.Equal(13, loc.Col);
+            Assert.True(m.TryLocate(0x3F8, 0x425, out loc));
+            Assert.Equal(101, loc.Line);
+            Assert.True(m.TryLocate(0x3F8, 0x999, out loc));       // unknown owner: first record
+            Assert.Equal(101, loc.Line);
+            Assert.True(m.TryLocate(0x3F8, out loc));
+            Assert.Equal(101, loc.Line);
+            var hits = m.OffsetsForLine(0, 120);
+            Assert.Single(hits);
+            Assert.Equal(0x3F8, hits[0].Offset);
+            Assert.Equal(0x429, hits[0].Entry);
+        }
+
+        [Fact]
+        public void SourceMapReadsV1AsAnyEntry()
+        {
+            var m = SourceMap.Parse(Dsm("\n"));
+            var hits = m.OffsetsForLine(0, 101);
+            Assert.Equal(new[] { 0x124, 0x130 }, hits.ConvertAll(h => h.Offset).ToArray());
+            Assert.All(hits, h => Assert.Equal(-1, h.Entry));
+            SourceLoc loc;
+            Assert.True(m.TryLocate(0x140, 0x1234, out loc));      // v1 record answers any entry
+            Assert.Equal(7, loc.Line);
+        }
+
+        [Fact]
+        public void SourceMapRejectsVersion3()
+        {
+            var ex = Assert.Throws<FormatException>(() => SourceMap.Parse(DsmV2().Replace("NDRC-DSM\t2", "NDRC-DSM\t3")));
+            Assert.Contains("version 3", ex.Message);
+        }
+
+        [Fact]
+        public void SourceMapV2NeedsSixFieldCond()
+        {
+            Assert.Throws<FormatException>(() => SourceMap.Parse(DsmV2().Replace("cond\t03FB\t0425\t0\t102\t9", "cond\t03FB\t0\t102\t9")));
         }
 
         [Fact]

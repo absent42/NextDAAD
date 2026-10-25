@@ -222,7 +222,10 @@ namespace NextDAADDebug
 
         void Resolve(Breakpoint b)
         {
-            if (b.Kind == BreakKind.SourceLine) b.Offsets = mapUsable ? map.OffsetsForLine(b.A, b.B).ToArray() : new int[0];
+            if (b.Kind != BreakKind.SourceLine) return;
+            var hits = mapUsable ? map.OffsetsForLine(b.A, b.B) : new List<LineHit>();
+            b.Offsets = hits.Select(h => h.Offset).ToArray();
+            b.Entries = hits.Select(h => h.Entry).ToArray();
         }
 
         static bool Same(byte[] a, byte[] b)
