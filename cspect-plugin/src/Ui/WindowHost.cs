@@ -259,6 +259,7 @@ namespace NextDAADDebug
                 try { CloseLocked(); }
                 catch (Exception ex) { Log.Write("close after draw failure: " + ex.Message); }
                 surface = null;
+                ReleaseGuard();
                 throw new InvalidOperationException("ImGui draw failed", drawError);
             }
             if (toggleRequested)
@@ -278,6 +279,7 @@ namespace NextDAADDebug
                 view.SaveIfChanged();
                 surface.Release();
                 surface = null;
+                ReleaseGuard();
                 wanted = false;
                 return;
             }
@@ -344,8 +346,16 @@ namespace NextDAADDebug
             lock (gate) CloseLocked();
         }
 
+        // No window, no pointer over it: armed or owning must not outlive it.
+        void ReleaseGuard()
+        {
+            var g = Guard;
+            if (g != null) g.Release();
+        }
+
         void CloseLocked()
         {
+            ReleaseGuard();
             if (surface == null) return;
             SavePosition();
             surface.Close();

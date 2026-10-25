@@ -50,10 +50,65 @@ namespace NextDAADDebug.Tests
             g.Sample(false, true);                  // still held, pointer left the window
             g.PassThrough(0x35, 120, 210);
             AssertIdle(g, 0x37, 10, 20);
-            g.Sample(false, false);                 // release
+            g.Sample(false, false);                 // host release
+            Assert.True(g.Owning);
+            g.PassThrough(0x37, 120, 210);          // CSpect's buttons up
             Assert.False(g.Owning);
-            g.PassThrough(0x37, 120, 210);
             AssertPass(g);
+        }
+
+        [Fact]
+        public void ReleaseHoldsIdleUntilCSpectShowsUp()
+        {
+            var g = new MouseGuard();
+            g.PassThrough(0xFF, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);
+            g.PassThrough(0xFD, 1, 2);              // CSpect shows the press
+            g.Sample(true, false);                  // host release seen by the window first
+            AssertIdle(g, 0xFF, 1, 2);
+            g.PassThrough(0xFD, 5, 6);              // CSpect still shows it down
+            AssertIdle(g, 0xFF, 1, 2);
+            g.PassThrough(0xFF, 5, 6);
+            Assert.False(g.Owning);
+            byte v;
+            Assert.False(Answer(g, X, out v));
+            g.Sample(true, false);                  // still over the window: armed again
+            Assert.True(g.Armed);
+        }
+
+        [Fact]
+        public void PressAgainWhileReleasingKeepsOwning()
+        {
+            var g = new MouseGuard();
+            g.PassThrough(0xFF, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);
+            g.PassThrough(0xFD, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);                   // pressed again before CSpect saw the release
+            g.PassThrough(0xFF, 1, 2);              // one up frame between the presses
+            Assert.True(g.Owning);
+            g.PassThrough(0xFD, 1, 2);
+            g.Sample(true, false);
+            g.PassThrough(0xFF, 1, 2);
+            Assert.False(g.Owning);
+        }
+
+        [Fact]
+        public void ReleaseAfterDragOutHoldsIdleUntilCSpectShowsUp()
+        {
+            var g = new MouseGuard();
+            g.PassThrough(0xFF, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);
+            g.PassThrough(0xFD, 1, 2);
+            g.Sample(false, true);                  // dragged out
+            g.Sample(false, false);                 // released outside
+            AssertIdle(g, 0xFF, 1, 2);
+            g.PassThrough(0xFF, 9, 9);
+            AssertPass(g);
+            Assert.False(g.Armed);
         }
 
         [Fact]
@@ -81,6 +136,7 @@ namespace NextDAADDebug.Tests
             Assert.False(g.Owning);
             AssertPass(g);
             g.Sample(true, false);                  // released over the window
+            Assert.False(g.Armed);                  // CSpect still showed the button
             g.PassThrough(0xFF, 1, 2);
             g.Sample(true, false);
             Assert.True(g.Armed);
@@ -108,6 +164,8 @@ namespace NextDAADDebug.Tests
             Assert.True(Answer(g, B, out v)); Assert.Equal(0xFF, v);
             Assert.False(Answer(g, X, out v));
             Assert.False(Answer(g, Y, out v));
+            g.Sample(true, false);                  // nothing to wait for without CSpect's values
+            Assert.False(g.Owning);
         }
 
         [Fact]
@@ -162,6 +220,152 @@ namespace NextDAADDebug.Tests
             host.SampleGuard(800, 10, 800, 672, false);
             Assert.False(g.Armed);
             host.SampleGuard(float.NaN, 10, 800, 672, false);
+            Assert.False(g.Armed);
+        }
+
+        sealed class Surface : ISurface
+        {
+            public bool IsClosed;
+            public int X { get; set; }
+            public int Y { get; set; }
+            public bool Closed => IsClosed;
+            public void Present(uint[] pixels) { }
+            public void Close() { IsClosed = true; }
+            public void Release() { }
+        }
+
+        static MouseGuard Owned(WindowHost host)
+        {
+            var g = new MouseGuard();
+            host.Guard = g;
+            host.SampleGuard(10, 10, 800, 672, false);
+            host.SampleGuard(10, 10, 800, 672, true);
+            Assert.True(g.Owning);
+            return g;
+        }
+
+        [Fact]
+        public void HidingTheWindowReleasesTheGuard()
+        {
+            var surf = new Surface();
+            var host = new WindowHost(() => surf, Settings.Defaults(), null, ".");
+            host.Frame(new Snapshot { Serial = 1 }, c => { });
+            var g = Owned(host);
+            host.Toggle();
+            host.Frame(new Snapshot { Serial = 1 }, c => { });
+            Assert.True(surf.IsClosed);
+            Assert.False(g.Owning);
+            AssertPass(g);
+        }
+
+        [Fact]
+        public void ClosingTheWindowReleasesTheGuard()
+        {
+            var surf = new Surface();
+            var host = new WindowHost(() => surf, Settings.Defaults(), null, ".");
+            host.Frame(new Snapshot { Serial = 1 }, c => { });
+            var g = Owned(host);
+            surf.IsClosed = true;                   // close box
+            host.Frame(new Snapshot { Serial = 1 }, c => { });
+            Assert.False(g.Owning);
+            g = Owned(host);
+            host.Close();                           // CSpect quitting
+            Assert.False(g.Owning);
+        }
+
+        [Fact]
+        public void DrawFailureReleasesTheGuard()
+        {
+            var surf = new Surface();
+            var host = new WindowHost(() => surf, Settings.Defaults(), null, ".");
+            host.Frame(new Snapshot { Serial = 1 }, c => { });
+            var g = Owned(host);
+            host.DrawFailed(new System.Exception("x"));
+            Assert.Throws<System.InvalidOperationException>(() => host.Frame(new Snapshot { Serial = 1 }, c => { }));
+            Assert.False(g.Owning);
+        }
+
+        // MousePorts: the plugin's Read routing and per-Tick sampling, with a fake InPort.
+        [Fact]
+        public void PortsRegisterTheThreeMousePorts()
+        {
+            var list = new System.Collections.Generic.List<Plugin.sIO>();
+            MousePorts.Register(list);
+            Assert.Equal(3, list.Count);
+            foreach (var io in list) Assert.Equal(Plugin.eAccess.Port_Read, io.Type);
+        }
+
+        [Fact]
+        public void ReadRoutesOnlyMouseIdPortReads()
+        {
+            var g = new MouseGuard();
+            var mp = new MousePorts(g, p => 0xFF);
+            bool valid;
+            byte v;
+            Assert.False(mp.Read(Plugin.eAccess.Port_Read, 0x7FFE, 3, out valid, out v));      // autopilot keyboard id
+            Assert.False(mp.Read(Plugin.eAccess.Memory_EXE, B, MousePorts.Id, out valid, out v));
+            Assert.True(mp.Read(Plugin.eAccess.Port_Read, B, MousePorts.Id, out valid, out v));
+            Assert.False(valid);                    // idle guard passes through
+            g.Sample(true, false);
+            Assert.True(mp.Read(Plugin.eAccess.Port_Read, B, MousePorts.Id, out valid, out v));
+            Assert.True(valid);
+            Assert.Equal(0xFF, v);
+        }
+
+        [Fact]
+        public void TickSamplesPastTheGuard()
+        {
+            var g = new MouseGuard();
+            MousePorts mp = null;
+            int calls = 0;
+            mp = new MousePorts(g, p =>
+            {
+                calls++;
+                Assert.True(g.Sampling);
+                bool valid;
+                byte v;
+                Assert.True(mp.Read(Plugin.eAccess.Port_Read, p, MousePorts.Id, out valid, out v));
+                Assert.False(valid);                // CSpect's own value, not the guard's
+                return p == B ? (byte)0x07 : p == X ? (byte)0x11 : (byte)0x22;
+            });
+            g.Sample(true, false);
+            g.Sample(true, true);                   // owning before any sample: X/Y not frozen yet
+            mp.Tick(true);
+            Assert.Equal(3, calls);
+            Assert.False(g.Sampling);
+            g.Release();
+            g.Sample(true, false);
+            g.Sample(true, true);
+            AssertIdle(g, 0x07, 0x11, 0x22);
+        }
+
+        [Fact]
+        public void DeadHostDropsTheGuard()
+        {
+            var g = new MouseGuard();
+            int calls = 0;
+            var mp = new MousePorts(g, p => { calls++; return 0xFF; });
+            g.Sample(true, false);
+            mp.Tick(false);
+            Assert.Null(mp.Guard);
+            Assert.False(g.Armed);
+            bool valid;
+            byte v;
+            Assert.True(mp.Read(Plugin.eAccess.Port_Read, B, MousePorts.Id, out valid, out v));
+            Assert.False(valid);
+            mp.Tick(true);
+            Assert.Equal(0, calls);
+        }
+
+        [Fact]
+        public void FailingInPortDropsTheGuard()
+        {
+            var g = new MouseGuard();
+            var mp = new MousePorts(g, p => { throw new System.InvalidOperationException("no port"); });
+            g.Sample(true, false);
+            mp.Tick(true);
+            Assert.Null(mp.Guard);
+            Assert.False(g.Sampling);
             Assert.False(g.Armed);
         }
     }

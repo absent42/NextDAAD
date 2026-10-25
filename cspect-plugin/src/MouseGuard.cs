@@ -1,3 +1,6 @@
+using System;
+using Plugin;
+
 namespace NextDAADDebug
 {
     // Keeps clicks in the debugger window away from the emulated Kempston mouse.
@@ -11,7 +14,7 @@ namespace NextDAADDebug
         internal const int UpFrames = 25;       // CSpect shows no button this long while owning: a release was missed
         const int ButtonBits = 0x07;            // active-low: bit0 right, bit1 left, bit2 middle
 
-        volatile bool armed, owning, sampled;
+        volatile bool armed, owning, released, sampled;
         volatile int buttons = 0xFF, x, y, frozenX, frozenY;
         int stale, upRun;
         bool down;
@@ -23,18 +26,21 @@ namespace NextDAADDebug
         public bool Owning => owning;
 
         // Window side, every draw: over = pointer inside the debugger window, anyDown = any host button held.
+        // Ownership outlives the host release until CSpect's own buttons read up (PassThrough).
         public void Sample(bool over, bool anyDown)
         {
             stale = 0;
             if (owning)
             {
-                if (!anyDown) owning = false;
+                released = !anyDown;
+                if (released && !sampled) owning = false;
             }
             else if (armed && anyDown && !down)
             {
                 frozenX = x;
                 frozenY = y;
                 upRun = 0;
+                released = false;
                 owning = true;
             }
             down = anyDown;
@@ -50,8 +56,10 @@ namespace NextDAADDebug
             x = px;
             y = py;
             sampled = true;
-            upRun = owning && CSpectButtonsUp ? upRun + 1 : 0;
-            if (upRun > UpFrames) Release();
+            if (!owning) return;
+            bool up = CSpectButtonsUp;
+            upRun = up ? upRun + 1 : 0;
+            if ((released && up) || upRun > UpFrames) Release();
         }
 
         // Emulator side, once per frame.
@@ -64,6 +72,7 @@ namespace NextDAADDebug
         {
             owning = false;
             armed = false;
+            released = false;
             upRun = 0;
             stale = 0;
         }
@@ -84,6 +93,71 @@ namespace NextDAADDebug
             if (port == PortX) { v = (byte)frozenX; return true; }
             if (port == PortY) { v = (byte)frozenY; return true; }
             return false;
+        }
+    }
+
+    // Plugin glue for the guard: port registration, Read routing and the per-frame sample of CSpect's own values.
+    sealed class MousePorts
+    {
+        public const int Id = 4;
+        readonly Func<int, byte> inPort;
+        volatile MouseGuard guard;
+        bool logged;
+
+        public MousePorts(MouseGuard guard, Func<int, byte> inPort)
+        {
+            this.guard = guard;
+            this.inPort = inPort;
+        }
+
+        public MouseGuard Guard => guard;
+
+        public static void Register(System.Collections.Generic.List<sIO> list)
+        {
+            foreach (int p in MouseGuard.Ports) list.Add(new sIO(p, eAccess.Port_Read, Id));
+        }
+
+        // True when the read is one of the guard's; isvalid then says whether the guard answered it.
+        public bool Read(eAccess type, int port, int id, out bool isvalid, out byte v)
+        {
+            isvalid = false;
+            v = 0;
+            if (type != eAccess.Port_Read || id != Id) return false;
+            var g = guard;
+            if (g != null && g.TryAnswer(port, out v)) isvalid = true;
+            return true;
+        }
+
+        // Once per Tick. A dead window or a failing InPort drops the guard for good.
+        public void Tick(bool hostAlive)
+        {
+            var g = guard;
+            if (g == null) return;
+            if (!hostAlive) { Drop(g); return; }
+            byte b, x, y;
+            g.Sampling = true;
+            try
+            {
+                b = inPort(MouseGuard.PortButtons);
+                x = inPort(MouseGuard.PortX);
+                y = inPort(MouseGuard.PortY);
+            }
+            catch (Exception ex)
+            {
+                Log.Write("mouse guard disabled: " + ex.Message);
+                Drop(g);
+                return;
+            }
+            finally { g.Sampling = false; }
+            g.PassThrough(b, x, y);
+            g.Frame();
+            if (!logged) { logged = true; Log.Write("mouse guard: CSpect answers " + b.ToString("X2") + " " + x.ToString("X2") + " " + y.ToString("X2")); }
+        }
+
+        void Drop(MouseGuard g)
+        {
+            g.Release();
+            guard = null;
         }
     }
 }
