@@ -26,6 +26,9 @@ jobs:
       - name: Verify the file classification
         shell: pwsh
         run: ./scripts/kit-files.ps1 -Check
+      - name: Verify NEXTDAAD.SYM pairs with nextdaad.nex
+        shell: pwsh
+        run: ./tests/kit-debug-pairing.ps1
       - name: Zip both kits (modes from git; .BAT/.TXT CRLF and .sh LF from .gitattributes)
         shell: bash
         run: |

@@ -1,13 +1,25 @@
-# The kit's NEXTDAAD.SYM must pair with the kit's nextdaad.nex: every hook line's
-# check bytes must equal the NEX bytes at that address/page, and the SYM must be
-# a Release build. Bank layout as scripts/make-sym.ps1.
+# The kit's NEXTDAAD.SYM must pair with the kit's nextdaad.nex: exactly the hooks the
+# plugin needs (SymbolFile.RequiredHooks), each line's check bytes equal to the NEX bytes
+# at that address/page, and both files Release: the SYM label says so and the NEX loads
+# no BANK_NXB (the DEBUG-only bench bank). Bank layout as scripts/make-sym.ps1.
+# Run by build.ps1 -Kit and the release workflow. -KitDir checks another folder's pair.
+param([string]$KitDir)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$kit = Join-Path $root 'authoring-kit'
+$kit = if ($KitDir) { $KitDir } else { Join-Path $root 'authoring-kit' }
 $symPath = Join-Path $kit 'NEXTDAAD.SYM'
 $nexPath = Join-Path $kit 'nextdaad.nex'
 $mismatch = 'NEXTDAAD.SYM does not match nextdaad.nex - rebuild the kit with build.ps1 -Kit'
 function Fail([string]$m) { throw "kit-debug-pairing: $m" }
+
+$symSrc = [IO.File]::ReadAllText((Join-Path $root 'cspect-plugin/src/SymbolFile.cs'))
+if ($symSrc -notmatch 'RequiredHooks\s*=\s*\{([^}]*)\}') { Fail 'RequiredHooks not found in cspect-plugin/src/SymbolFile.cs' }
+[string[]]$required = @([regex]::Matches($Matches[1], '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+[Array]::Sort($required, [StringComparer]::Ordinal)
+if ($required.Count -eq 0) { Fail 'RequiredHooks lists no hook' }
+$inc = [IO.File]::ReadAllText((Join-Path $root 'src/nextdaad.inc'))
+if ($inc -notmatch '(?m)^BANK_NXB\s+equ\s+(\d+)') { Fail 'BANK_NXB not found in src/nextdaad.inc' }
+$debugBank = [int]$Matches[1]
 
 if (-not (Test-Path -LiteralPath $symPath)) { Fail "no $symPath - $mismatch" }
 if (-not (Test-Path -LiteralPath $nexPath)) { Fail "no $nexPath" }
@@ -20,14 +32,15 @@ if ($variant -ne 'Release') { Fail "SYM build variant is '$variant', the kit mus
 
 $nex = [IO.File]::ReadAllBytes($nexPath)
 if ([Text.Encoding]::ASCII.GetString($nex, 0, 4) -ne 'Next') { Fail 'nextdaad.nex is not a NEX file' }
+if ($nex[18 + $debugBank]) { Fail "nextdaad.nex loads bank $debugBank (BANK_NXB) - it is a DEBUG build; rebuild the kit with build.ps1 -Kit" }
 $bankOff = @{}; $pos = 512
 foreach ($b in @(5, 2, 0, 1, 3, 4) + (6..111)) { if ($nex[18 + $b]) { $bankOff[$b] = $pos; $pos += 16384 } }
 
-$hooks = 0
+$names = New-Object Collections.Generic.List[string]
 foreach ($l in $lines) {
     $f = $l -split "`t"
     if ($f[0] -ne 'hook') { continue }
-    $hooks++
+    $names.Add($f[1])
     $addr = [Convert]::ToInt32($f[2], 16); $page = [Convert]::ToInt32($f[3], 16)
     $want = $f[4].ToUpperInvariant()
     $bank = $page -shr 1
@@ -37,5 +50,7 @@ foreach ($l in $lines) {
     $got = -join ($nex[$start..($start + $n - 1)] | ForEach-Object { '{0:X2}' -f $_ })
     if ($got -ne $want) { Fail "hook $($f[1]) bytes differ: $mismatch" }
 }
-if ($hooks -eq 0) { Fail 'SYM has no hook lines' }
-Write-Output "kit-debug-pairing: $hooks hooks paired, Release"
+[string[]]$have = $names.ToArray()
+[Array]::Sort($have, [StringComparer]::Ordinal)
+if (($have -join ',') -cne ($required -join ',')) { Fail "SYM hooks are '$($have -join ',')', the plugin needs '$($required -join ',')' - $mismatch" }
+Write-Output "kit-debug-pairing: $($have.Count) hooks paired ($($have -join ', ')), Release"

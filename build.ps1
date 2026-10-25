@@ -62,6 +62,8 @@ try {
         Write-Host "placed authoring-kit\intro.nex (kit launcher refreshed)"
         & python "$root\scripts\build_manual.py"
         if ($LASTEXITCODE -ne 0) { throw "manual generation failed - the kit would ship stale or missing docs" }
+        # A kit whose SYM does not pair with its NEX leaves the debugger waiting forever.
+        & "$root\tests\kit-debug-pairing.ps1"
     }
     if ($Run) {
         if ($Leg) {
