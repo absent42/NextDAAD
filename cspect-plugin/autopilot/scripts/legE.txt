@@ -34,7 +34,7 @@ expect screen not "[x] condact"
 click " Watches " rows 22-22
 expect screen " + Flag "
 click " Source " rows 2-2
-expect screen "no source map"
+expect screen "source map not checked yet - waiting for NextDAAD"
 click " Condacts " rows 2-2
 
 # No false halts: GET LAMP, Break hotkey, DROP LAMP; dimmed buttons do nothing

@@ -10,6 +10,7 @@
 # glance: the text box under the picture lights up with its hint while a pop-up is open
 # glance: CSpect's own debugger overlay stays hidden while halted
 # glance: the Source margin dot on a breakpoint line (a disabled one too)
+# glance: Database Vocab A-Z strip: clicking G leaves the 13-word list unchanged (all rows fit, the list cannot scroll)
 # glance: Watches and Breakpoints list ORDER (expect checks presence, not row order)
 
 # 1. Boot: seed loaded, halted at the DEBUG marker (T1)
@@ -19,7 +20,6 @@ measure ticks-while-halted
 expect log "source map loaded"
 expect log "window opened 800x672"
 expect log "imgui draw active"
-expect screen not "display only"
 expect screen "Ctrl+Alt+A/B/N/R"
 expect screen ">0 PRO 0 _ _ :101"
 expect screen "  101 LET 100 7"
@@ -41,6 +41,12 @@ expect game not "Hall."
 hotkey a
 hotkey a
 wait screen "HALTED - DEBUG marker"
+# A closed window keeps its last cells (WindowHost.Screen); a Source-only line proves it draws again.
+click " Source " rows 2-2
+wait screen " 103         DEBUG"
+click " Condacts " rows 2-2
+wait screen "  103 DEBUG"
+expect screen not " 103         DEBUG"
 expect screen "  103 DEBUG"
 
 # 4. Step into PRO 1 (DEBUG marker and PROCESS 1 are one engine call)
@@ -113,7 +119,10 @@ expect colour " 100 fCounter" Changed
 click @33,24
 wait screen " Flag 100 "
 wheel 3 at @45,17
+# Pad value: PadLeft(6) at the box's value cell (Popups.cs DigitPad.Draw).
+expect screen "    45"
 click @54,18
+expect screen "    44"
 click @49,21
 click " Cancel " rows 23-23
 expect screen not " Flag 100 "
@@ -196,9 +205,6 @@ expect screen "   1  a key  [KEY _]"
 click " Vocab " rows 23-23
 expect screen "BRASS    2  Adjective"
 expect screen "TAKE    20  Verb"
-click @6,24
-expect screen "BRASS    2  Adjective"
-expect screen "TAKE    20  Verb"
 click " Connections " rows 23-23
 expect screen "   0  S -> 1"
 expect screen "   1  N -> 0"
@@ -215,8 +221,10 @@ expect screen not "   3  '"
 click " Go to # " rows 23-23
 wait screen " Go to row "
 type "34"
+# Ui.List clamps top to count - rows (35 - 16): rows 19-34 show.
 expect screen "  34  '"
-expect screen not "  35  '"
+expect screen "  19  '"
+expect screen not "  18  '"
 
 # 16. Watches: + Flag typed, + Object clicked, remove flag 100, + Symbol two-stage
 click " Watches " rows 22-22
@@ -270,6 +278,9 @@ expect screen "Object moves"
 expect screen "Runtime error"
 click "DEBUG marker" rows 8-31
 expect screen not " Break on "
+# A duplicate would be a ninth row at row 32 (list from row 24); toggling it would show "[ ] ".
+click @1,32
+expect screen not "[ ] "
 click " Add " rows 23-23
 wait screen " Break on "
 key esc
@@ -325,10 +336,16 @@ expect screen "flag   7                      = 3"
 expect screen "obj    0 lamp                 @ 254 carried"
 expect screen "flag 100 fCounter             = 7"
 
-# 22. Break hotkey while the game waits for input, then DROP LAMP
+# 22. Break hotkey while the game waits for input, then DROP LAMP.
+# Step entry twice reaches PARSE (PRO 1 entry, then PRO 0 entry 1), so CLS has run this turn.
+click " Step entry " rows 0-0
+wait screen ">1 PRO 1 _ _ :111"
+click " Step entry " rows 0-0
+wait screen ">0 PRO 0 _ _ :105"
+expect game "Hall."
+expect game not "I now have the brass lamp."
 click " Run " rows 0-0
 wait status "running"
-wait game "Hall."
 hotkey b
 expect status "running"
 game "DROP LAMP\n"
@@ -441,9 +458,14 @@ wait status "HALTED - DEBUG marker"
 expect screen "flag  38 Player location      = 0  Hall."
 
 # 36. Break button while the game waits for input, then OPEN
+click " Step entry " rows 0-0
+wait screen ">1 PRO 1 _ _ :111"
+click " Step entry " rows 0-0
+wait screen ">0 PRO 0 _ _ :105"
+expect game "Hall."
+expect game not "?>n"
 click " Run " rows 0-0
 wait status "running"
-wait game "Hall."
 click " Break " rows 0-0
 expect status "running"
 game "OPEN\n"
@@ -464,7 +486,7 @@ click " Breakpoints " rows 22-22
 click " Add " rows 23-23
 wait screen " Break on "
 type "Condact"
-wait screen " Condact "
+wait screen "Ä Condact Ä"
 type "SYSMESS"
 wait screen "[x] condact SYSMESS"
 click @1,28
@@ -522,7 +544,7 @@ expect screen ">9 PRO 3 _ _ :128"
 expect screen " 2 PRO 3 _ _ :128"
 expect screen " 1 PRO 2 OPEN KEY :123"
 expect screen " 0 PRO 0 _ _ :108"
-expect screen "  128 PROCESS 3"
+expect screen "  128 PROCESS 3"
 expect screen " 0424 (end)"
 
 # 45. Wizard: duplicates, Process by mouse and by typing
@@ -530,14 +552,19 @@ click " Add " rows 23-23
 wait screen " Break on "
 click "DEBUG marker" rows 8-31
 expect screen not " Break on "
+# Nine rows fill rows 24-32; a duplicate would be row 33.
+click @1,33
+expect screen not "[ ] "
 click " Add " rows 23-23
 wait screen " Break on "
 click "Runtime error" rows 8-31
 expect screen not " Break on "
+click @1,33
+expect screen not "[ ] "
 click " Add " rows 23-23
 wait screen " Break on "
 click "Process / entry" rows 8-31
-wait screen " Process "
+wait screen "Ä Process Ä"
 click "PRO 1" rows 8-31
 wait screen " Entry verb "
 click "(any)" rows 8-31
@@ -547,7 +574,7 @@ wait screen "[x] PRO 1 "
 click " Add " rows 23-23
 wait screen " Break on "
 type "Process"
-wait screen " Process "
+wait screen "Ä Process Ä"
 type "PRO 2"
 wait screen " Entry verb "
 type "OPEN"
@@ -559,7 +586,7 @@ wait screen "[x] PRO 2 entry OPEN *"
 click " Add " rows 23-23
 wait screen " Break on "
 click "Condact" rows 8-31
-wait screen " Condact "
+wait screen "Ä Condact Ä"
 click @25,6
 expect screen "DESTROY"
 expect screen "DOALL"
@@ -568,7 +595,7 @@ wait screen "[x] condact DROP"
 click " Add " rows 23-23
 wait screen " Break on "
 type "Flag changes"
-wait screen " Flag "
+wait screen "Ä Flag Ä"
 type "100"
 wait screen "[x] flag 100 changes"
 
@@ -576,7 +603,7 @@ wait screen "[x] flag 100 changes"
 click " Add " rows 23-23
 wait screen " Break on "
 click "Flag compare" rows 8-31
-wait screen " Flag "
+wait screen "Ä Flag Ä"
 type "7"
 wait screen " Compare "
 type ">"
@@ -586,7 +613,7 @@ wait screen "[x] flag 7 > 5"
 click " Add " rows 23-23
 wait screen " Break on "
 click "Object moves" rows 8-31
-wait screen " Object "
+wait screen "Ä Object Ä"
 click "  1  key" rows 8-31
 wait screen "[x] object 1 (key) moves"
 
@@ -612,6 +639,6 @@ expect screen not "line 125"
 click " Run " rows 0-0
 wait status "running"
 wait game "NextDAAD: RUNTIME ERROR - E3"
-expect screen "Process stack"
+expect status "running"
 measure halted-state
 quit

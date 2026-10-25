@@ -1,4 +1,4 @@
-# Leg D: out-of-date source map (GAME.DSM checksum zeroed) with the stale seed (legD.seed.txt).
+# Leg D: out-of-date source map (GAME.DSM checksum zeroed) with the stale seed plus a flag 100 watch (legD.seed.txt).
 # {CUR} is a literal U+0010, the Condacts current-row glyph, before the padded hex offset.
 
 # Halted at the DEBUG marker; the map is ignored, rows are labelled by hex offset
@@ -11,7 +11,9 @@ expect screen " 03FB LET @100(=7) 3"
 expect screen " 03FE DEBUG"
 expect screen " 03FF PROCESS 1"
 expect screen "flag  38 Player location      = 0  Hall."
-expect screen not "flag 100"
+# Watch row label is Lists.FlagLabel: no symbol names without a usable map.
+expect screen "flag 100                      = 7"
+expect screen not "fCounter"
 
 # Source tab shows the stale message; the line breakpoint is kept but unresolved
 click " Source " rows 2-2
