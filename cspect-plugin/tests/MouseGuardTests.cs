@@ -96,6 +96,79 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void RePressAfterCSpectSawTheReleaseIsStillGuarded()
+        {
+            var g = new MouseGuard();
+            g.PassThrough(0xFF, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);
+            g.PassThrough(0xFD, 1, 2);
+            g.Sample(true, false);                  // host release
+            g.PassThrough(0xFF, 3, 4);              // emulator Tick ends ownership before the next draw
+            Assert.False(g.Owning);
+            Assert.True(g.Armed);
+            byte v;
+            Assert.True(Answer(g, B, out v));
+            g.PassThrough(0xFD, 3, 4);              // re-press reaches CSpect first
+            Assert.True(Answer(g, B, out v)); Assert.Equal(0xFF, v);
+            g.Sample(true, true);
+            Assert.True(g.Owning);
+            AssertIdle(g, 0xFF, 3, 4);
+        }
+
+        [Fact]
+        public void ReleasingEndsWhenCSpectKeepsShowingAButton()
+        {
+            var g = new MouseGuard();
+            g.PassThrough(0xFF, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);
+            g.PassThrough(0xFD, 1, 2);
+            g.Sample(false, false);                 // host release, then a press held in CSpect's window
+            for (int i = 0; i < MouseGuard.ReleaseFrames; i++) { g.PassThrough(0xFD, 1, 2); g.Sample(false, false); }
+            Assert.True(g.Owning);
+            g.PassThrough(0xFD, 7, 8);
+            Assert.False(g.Owning);
+            Assert.False(g.Armed);
+            AssertPass(g);
+            g.Sample(true, false);                  // pointer back over the window while CSpect shows the button
+            Assert.False(g.Armed);
+        }
+
+        [Fact]
+        public void ReleaseCapRestartsOnEachRelease()
+        {
+            var g = new MouseGuard();
+            g.PassThrough(0xFF, 1, 2);
+            g.Sample(true, false);
+            g.Sample(true, true);
+            g.Sample(true, false);
+            for (int i = 0; i < MouseGuard.ReleaseFrames; i++) g.PassThrough(0xFD, 1, 2);
+            g.Sample(true, true);                   // pressed again: not releasing any more
+            g.PassThrough(0xFD, 1, 2);
+            g.Sample(true, false);
+            for (int i = 0; i < MouseGuard.ReleaseFrames; i++) g.PassThrough(0xFD, 1, 2);
+            Assert.True(g.Owning);
+        }
+
+        [Fact]
+        public void ConcurrentSamplesAndTicksKeepAConsistentState()
+        {
+            var g = new MouseGuard();
+            var t = new System.Threading.Thread(() =>
+            {
+                for (int i = 0; i < 200000; i++) g.PassThrough((byte)((i & 8) != 0 ? 0xFD : 0xFF), (byte)i, (byte)i);
+            });
+            t.Start();
+            for (int i = 0; i < 200000; i++) g.Sample((i & 1) == 0, (i & 4) != 0);
+            t.Join();
+            g.Sample(false, false);
+            g.PassThrough(0xFF, 0, 0);
+            Assert.False(g.Owning);
+            Assert.False(g.Armed);
+        }
+
+        [Fact]
         public void ReleaseAfterDragOutHoldsIdleUntilCSpectShowsUp()
         {
             var g = new MouseGuard();

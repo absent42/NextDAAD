@@ -12,12 +12,17 @@ namespace NextDAADDebug
         public static readonly int[] Ports = { PortButtons, PortX, PortY };
         internal const int StaleFrames = 50;    // no window sample this long: the window is gone
         internal const int UpFrames = 25;       // CSpect shows no button this long while owning: a release was missed
+        // CSpect still shows a button this long after the host release: a new press outside the window, not lag.
+        // 10 frames = 200 ms; CSpect followed the host button within a frame in the spike runs.
+        internal const int ReleaseFrames = 10;
         const int ButtonBits = 0x07;            // active-low: bit0 right, bit1 left, bit2 middle
 
-        volatile bool armed, owning, released, sampled;
+        // Transitions run under gate (window and emulator callbacks); TryAnswer only reads the volatiles.
+        readonly object gate = new object();
+        volatile bool armed, owning, sampled;
         volatile int buttons = 0xFF, x, y, frozenX, frozenY;
-        int stale, upRun;
-        bool down;
+        int stale, upRun, releaseRun;
+        bool down, over, released;
 
         // Set while the plugin reads CSpect's own value, so its read is not answered here.
         public volatile bool Sampling;
@@ -29,22 +34,27 @@ namespace NextDAADDebug
         // Ownership outlives the host release until CSpect's own buttons read up (PassThrough).
         public void Sample(bool over, bool anyDown)
         {
-            stale = 0;
-            if (owning)
+            lock (gate)
             {
-                released = !anyDown;
-                if (released && !sampled) owning = false;
+                stale = 0;
+                this.over = over;
+                if (owning)
+                {
+                    if (!anyDown && !released) releaseRun = 0;
+                    released = !anyDown;
+                    if (released && !sampled) owning = false;
+                }
+                else if (armed && anyDown && !down)
+                {
+                    frozenX = x;
+                    frozenY = y;
+                    upRun = 0;
+                    released = false;
+                    owning = true;
+                }
+                down = anyDown;
+                armed = !owning && over && !anyDown && CSpectButtonsUp;
             }
-            else if (armed && anyDown && !down)
-            {
-                frozenX = x;
-                frozenY = y;
-                upRun = 0;
-                released = false;
-                owning = true;
-            }
-            down = anyDown;
-            armed = !owning && over && !anyDown && CSpectButtonsUp;
         }
 
         bool CSpectButtonsUp => (buttons & ButtonBits) == ButtonBits;
@@ -52,28 +62,44 @@ namespace NextDAADDebug
         // Emulator side, once per frame: what CSpect itself answers for the three ports.
         public void PassThrough(byte b, byte px, byte py)
         {
-            buttons = b;
-            x = px;
-            y = py;
-            sampled = true;
-            if (!owning) return;
-            bool up = CSpectButtonsUp;
-            upRun = up ? upRun + 1 : 0;
-            if ((released && up) || upRun > UpFrames) Release();
+            lock (gate)
+            {
+                buttons = b;
+                x = px;
+                y = py;
+                sampled = true;
+                if (!owning) return;
+                bool up = CSpectButtonsUp;
+                upRun = up ? upRun + 1 : 0;
+                if (released && !up) releaseRun++;
+                if (!(released && up) && upRun <= UpFrames && releaseRun <= ReleaseFrames) return;
+                ReleaseLocked();
+                // Still over the window with the host button up: a re-press in the next draw is guarded too.
+                armed = over && !down && up;
+            }
         }
 
         // Emulator side, once per frame.
         public void Frame()
         {
-            if ((armed || owning) && ++stale > StaleFrames) Release();
+            lock (gate)
+            {
+                if ((armed || owning) && ++stale > StaleFrames) ReleaseLocked();
+            }
         }
 
         public void Release()
+        {
+            lock (gate) ReleaseLocked();
+        }
+
+        void ReleaseLocked()
         {
             owning = false;
             armed = false;
             released = false;
             upRun = 0;
+            releaseRun = 0;
             stale = 0;
         }
 
