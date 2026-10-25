@@ -249,6 +249,18 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void Engine_GamePassesOnSentWhileBusy()
+        {
+            var e = Make("game \"L\"");
+            e.Frame();
+            host.Keys.Frame();
+            Assert.True(host.Keys.Busy);
+            e.Frame();
+            Assert.True(e.Finished);
+            Assert.Equal(0, e.Failures);
+        }
+
+        [Fact]
         public void Engine_GameWhileHaltedFails()
         {
             host.State = 1;

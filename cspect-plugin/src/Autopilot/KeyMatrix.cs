@@ -51,6 +51,9 @@ namespace NextDAADDebug.Autopilot
 
         public bool Busy => held || gapLeft > 0 || queue.Count > 0;
 
+        // Every queued key has started its hold (a running frame); the rest of the hold and gap may remain.
+        public bool Sent => queue.Count == 0;
+
         public void Enqueue(string text)
         {
             var keys = new List<KeyPress>();

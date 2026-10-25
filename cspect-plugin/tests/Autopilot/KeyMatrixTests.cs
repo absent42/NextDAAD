@@ -99,6 +99,19 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void Keys_SentAfterOneHeldFrame()
+        {
+            var f = new KeyFeeder();
+            f.Enqueue("L");
+            Assert.False(f.Sent);
+            f.Frame();
+            Assert.True(f.Sent);
+            Assert.True(f.Busy);
+            f.Enqueue("ab");
+            Assert.False(f.Sent);
+        }
+
+        [Fact]
         public void Keys_BusyUntilDrained()
         {
             var f = new KeyFeeder(2, 1);

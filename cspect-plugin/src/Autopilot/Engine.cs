@@ -173,7 +173,7 @@ namespace NextDAADDebug.Autopilot
                         phase = 1;
                         return null;
                     }
-                    if (!host.Keys.Busy) return "PASS";
+                    if (host.Keys.Sent) return "PASS";
                     if (!TimedOut(s)) return null;
                     actual = "keys still queued";
                     return "FAIL";
