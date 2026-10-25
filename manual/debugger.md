@@ -88,11 +88,15 @@ next to the game. It is one fixed layout:
   listed under [Status messages](#status-messages). A problem is shown
   here in red.
 - **Process stack**, top left: the processes running right now, newest
-  at the top. Each line reads like `>1 PRO 1 GET LAMP :111` - the
-  level (`1` here: 0 is the bottom of the stack, the process that called
-  the others), the process number (`PRO 1`), the verb and noun of the entry being run (`_` means
-  any), and the `.DSF` line it starts on. Click a line to look at that
-  level; the `>` marks the one on show.
+  at the top. Each line reads like `>1 PRO 1 GET LAMP :111`:
+  - `1` is the level. Level 0 is the bottom of the stack, the process
+    that called the others.
+  - `PRO 1` is the process number.
+  - `GET LAMP` is the verb and noun of the entry being run (`_` means
+    any).
+  - `:111` is the `.DSF` line the entry starts on.
+
+  Click a line to look at that level; the `>` marks the one on show.
 - **Condacts and Source tabs**, top right:
   - *Condacts* lists every condact of the entry on show, with its
     arguments spelled out - object and flag numbers followed by their
@@ -102,7 +106,9 @@ next to the game. It is one fixed layout:
     `.DSF` line, or the position in the database if there is no source
     map for it.
   - *Source* shows your `.DSF` file, with the current line marked. The
-    two columns at the left are the breakpoint margin - see
+    file's name is written dimly to the right of the two tabs, so you can
+    tell an `#include`d file or a part's file from the main one. The two
+    columns at the left are the breakpoint margin - see
     [Breakpoints on source lines](#breakpoints-on-source-lines).
 - **Bottom tabs**: `Watches`, `Flags`, `Objects`, `Parser`, `Database`
   and `Breakpoints`.
@@ -291,8 +297,9 @@ A `DEBUG` line in a process entry marks a spot in your code. It does
 nothing in play. It exists so the debugger can stop there.
 
 A `DEBUG` marker is only compiled into the game when the source contains
-the directive `#debug`, written in lower case, on a line of its own. The `DEBUG` marker breakpoint is the only part of the debugger
-that needs it.
+the directive `#debug`. Write it in lower case, on a line of its own.
+The `DEBUG` marker breakpoint is the only part of the debugger that
+needs it.
 
 **Every build warns while `#debug` is present:**
 
@@ -328,7 +335,7 @@ On the status line:
 | Message | Meaning |
 |---|---|
 | `waiting for NextDAAD` | The interpreter has not started running your processes yet, for example while a loader intro is playing. |
-| `running` | The game is running. |
+| `running` | The game is running. It shows as soon as the interpreter runs its first condact, and again after each stop. |
 | `HALTED - <reason>` | The game is stopped, for the reason given: `step`, `next entry`, `returned to level N`, `after PARSE`, `DEBUG marker`, `runtime error En`, or `breakpoint: ...` followed by what matched. |
 | `HALTED - ... (N condacts ran past)` | The emulator ran N more condacts before it could stop. What the window shows is the state at the stop itself. |
 
@@ -346,9 +353,10 @@ On the `Source` tab, when there are no lines to show:
 | Message | What to do |
 |---|---|
 | `source map not checked yet - waiting for NextDAAD` | Normal before the game's first condact runs. |
-| `no source map` | There is no `GAME.DSM` in the source folder. Run `DEBUG.BAT` (not `BUILD.BAT`), which writes them. |
-| `GAME<n>.DSM: ...` | No map could be read; the name is the first file that failed (`GAME.DSM` for the main game) and the text after it says why. Run `DEBUG.BAT` again. |
-| `source map is out of date - rebuild` | The database the game loaded is not the one the map was made for: the database was built from changed source after the last `DEBUG.BAT`, so the maps describe older code. Run `DEBUG.BAT` again, which rebuilds the database and the maps together. The `Condacts` tab shows plain positions in place of line numbers until you do. |
+| `no source map` | There is no source map file at all (`GAME.DSM`, or `GAME2.DSM` to `GAME9.DSM`) in the source folder. Run `DEBUG.BAT` (not `BUILD.BAT`), which writes them. |
+| `GAME<n>.DSM: ...` | A map file could not be read, and no other map fits the database the game loaded. The name is the first file that failed (`GAME.DSM` for the main game) and the text after it says why. Run `DEBUG.BAT` again. |
+| `source map is missing (<file>) - rebuild` | No map fits the database the game loaded, and the map file named in brackets (for example `GAME.DSM`) is missing while a later part's map is there. Run `DEBUG.BAT` again. |
+| `source map is out of date - rebuild` | The database the game loaded is not the one the maps were made for: the database was built from changed source after the last `DEBUG.BAT`, so the maps describe older code (or this part's map has been deleted). Run `DEBUG.BAT` again, which rebuilds the database and the maps together. The `Condacts` tab shows plain positions in place of line numbers until you do. |
 | `file N not in the source map` | The map names no file for this stop. Run `DEBUG.BAT` again. |
 
 Other texts you will see: `Process stack` shows `(empty)` when no process
@@ -367,6 +375,9 @@ is running and `waiting for NextDAAD` before the game starts, and the
   The game shows `NextDAAD: DDB missing - E1` as it starts. That is a
   limit of CSpect on Linux, not a fault in your game. Until a CSpect that
   fixes it is released, use the debugger on Windows.
+- **File names keep their case.** A source-line breakpoint on
+  `inc/rooms.dsf` is not one on `inc/ROOMS.DSF`. The Linux build already
+  insists that every `#include` matches the file's case.
 - It needs `pwsh` and mono, as `run.sh` does. See
   [Getting started](getting-started.md#linux-setup).
 

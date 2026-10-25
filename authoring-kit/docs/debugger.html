@@ -113,25 +113,30 @@ next to the game. It is one fixed layout:</p>
   listed under <a href="#status-messages">Status messages</a>. A problem is shown
   here in red.</li>
 <li><strong>Process stack</strong>, top left: the processes running right now, newest
-  at the top. Each line reads like <code>&gt;1 PRO 1 GET LAMP :111</code> - the
-  level (<code>1</code> here: 0 is the bottom of the stack, the process that called
-  the others), the process number (<code>PRO 1</code>), the verb and noun of the entry being run (<code>_</code> means
-  any), and the <code>.DSF</code> line it starts on. Click a line to look at that
-  level; the <code>&gt;</code> marks the one on show.</li>
-<li><strong>Condacts and Source tabs</strong>, top right:</li>
-<li><em>Condacts</em> lists every condact of the entry on show, with its
+  at the top. Each line reads like <code>&gt;1 PRO 1 GET LAMP :111</code>:</li>
+<li><code>1</code> is the level. Level 0 is the bottom of the stack, the process
+    that called the others.</li>
+<li><code>PRO 1</code> is the process number.</li>
+<li><code>GET LAMP</code> is the verb and noun of the entry being run (<code>_</code> means
+    any).</li>
+<li><code>:111</code> is the <code>.DSF</code> line the entry starts on.</li>
+</ul>
+<p>Click a line to look at that level; the <code>&gt;</code> marks the one on show.
+- <strong>Condacts and Source tabs</strong>, top right:
+  - <em>Condacts</em> lists every condact of the entry on show, with its
     arguments spelled out - object and flag numbers followed by their
     names, message numbers followed by their text, the value a
     <code>@flag</code> indirection currently holds. The condact the game is about
     to run is marked with an arrow. The number at the left is the
     <code>.DSF</code> line, or the position in the database if there is no source
-    map for it.</li>
-<li><em>Source</em> shows your <code>.DSF</code> file, with the current line marked. The
-    two columns at the left are the breakpoint margin - see
-    <a href="#breakpoints-on-source-lines">Breakpoints on source lines</a>.</li>
-<li><strong>Bottom tabs</strong>: <code>Watches</code>, <code>Flags</code>, <code>Objects</code>, <code>Parser</code>, <code>Database</code>
-  and <code>Breakpoints</code>.</li>
-</ul>
+    map for it.
+  - <em>Source</em> shows your <code>.DSF</code> file, with the current line marked. The
+    file's name is written dimly to the right of the two tabs, so you can
+    tell an <code>#include</code>d file or a part's file from the main one. The two
+    columns at the left are the breakpoint margin - see
+    <a href="#breakpoints-on-source-lines">Breakpoints on source lines</a>.
+- <strong>Bottom tabs</strong>: <code>Watches</code>, <code>Flags</code>, <code>Objects</code>, <code>Parser</code>, <code>Database</code>
+  and <code>Breakpoints</code>.</p>
 <p>Scroll any list with the mouse wheel.</p>
 <h3 id="the-bottom-tabs">The bottom tabs</h3>
 <ul>
@@ -365,8 +370,9 @@ Leave the file out of anything you share.</p>
 <p>A <code>DEBUG</code> line in a process entry marks a spot in your code. It does
 nothing in play. It exists so the debugger can stop there.</p>
 <p>A <code>DEBUG</code> marker is only compiled into the game when the source contains
-the directive <code>#debug</code>, written in lower case, on a line of its own. The <code>DEBUG</code> marker breakpoint is the only part of the debugger
-that needs it.</p>
+the directive <code>#debug</code>. Write it in lower case, on a line of its own.
+The <code>DEBUG</code> marker breakpoint is the only part of the debugger that
+needs it.</p>
 <p><strong>Every build warns while <code>#debug</code> is present:</strong></p>
 <pre><code>WARNING: MYGAME.DSF has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)
 </code></pre>
@@ -405,7 +411,7 @@ part is back.</p>
 </tr>
 <tr>
 <td><code>running</code></td>
-<td>The game is running.</td>
+<td>The game is running. It shows as soon as the interpreter runs its first condact, and again after each stop.</td>
 </tr>
 <tr>
 <td><code>HALTED - &lt;reason&gt;</code></td>
@@ -459,15 +465,19 @@ part is back.</p>
 </tr>
 <tr>
 <td><code>no source map</code></td>
-<td>There is no <code>GAME.DSM</code> in the source folder. Run <code>DEBUG.BAT</code> (not <code>BUILD.BAT</code>), which writes them.</td>
+<td>There is no source map file at all (<code>GAME.DSM</code>, or <code>GAME2.DSM</code> to <code>GAME9.DSM</code>) in the source folder. Run <code>DEBUG.BAT</code> (not <code>BUILD.BAT</code>), which writes them.</td>
 </tr>
 <tr>
 <td><code>GAME&lt;n&gt;.DSM: ...</code></td>
-<td>No map could be read; the name is the first file that failed (<code>GAME.DSM</code> for the main game) and the text after it says why. Run <code>DEBUG.BAT</code> again.</td>
+<td>A map file could not be read, and no other map fits the database the game loaded. The name is the first file that failed (<code>GAME.DSM</code> for the main game) and the text after it says why. Run <code>DEBUG.BAT</code> again.</td>
+</tr>
+<tr>
+<td><code>source map is missing (&lt;file&gt;) - rebuild</code></td>
+<td>No map fits the database the game loaded, and the map file named in brackets (for example <code>GAME.DSM</code>) is missing while a later part's map is there. Run <code>DEBUG.BAT</code> again.</td>
 </tr>
 <tr>
 <td><code>source map is out of date - rebuild</code></td>
-<td>The database the game loaded is not the one the map was made for: the database was built from changed source after the last <code>DEBUG.BAT</code>, so the maps describe older code. Run <code>DEBUG.BAT</code> again, which rebuilds the database and the maps together. The <code>Condacts</code> tab shows plain positions in place of line numbers until you do.</td>
+<td>The database the game loaded is not the one the maps were made for: the database was built from changed source after the last <code>DEBUG.BAT</code>, so the maps describe older code (or this part's map has been deleted). Run <code>DEBUG.BAT</code> again, which rebuilds the database and the maps together. The <code>Condacts</code> tab shows plain positions in place of line numbers until you do.</td>
 </tr>
 <tr>
 <td><code>file N not in the source map</code></td>
@@ -489,6 +499,9 @@ is running and <code>waiting for NextDAAD</code> before the game starts, and the
   The game shows <code>NextDAAD: DDB missing - E1</code> as it starts. That is a
   limit of CSpect on Linux, not a fault in your game. Until a CSpect that
   fixes it is released, use the debugger on Windows.</li>
+<li><strong>File names keep their case.</strong> A source-line breakpoint on
+  <code>inc/rooms.dsf</code> is not one on <code>inc/ROOMS.DSF</code>. The Linux build already
+  insists that every <code>#include</code> matches the file's case.</li>
 <li>It needs <code>pwsh</code> and mono, as <code>run.sh</code> does. See
   <a href="getting-started.html#linux-setup">Getting started</a>.</li>
 </ul>
