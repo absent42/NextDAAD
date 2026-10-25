@@ -137,6 +137,37 @@ namespace NextDAADDebug.Tests
             Assert.Throws<FormatException>(() => ScriptParser.Parse("key tab"));
             Assert.Throws<FormatException>(() => ScriptParser.Parse("type \"unterminated"));
             Assert.Throws<FormatException>(() => ScriptParser.Parse("measure bogus"));
+            Assert.Throws<FormatException>(() => ScriptParser.Parse("expect running now"));
+            Assert.Throws<FormatException>(() => ScriptParser.Parse("wait window shut"));
+        }
+
+        [Fact]
+        public void EscapesKnownOnly()
+        {
+            Assert.Equal("a\\b\b\"\n", ScriptParser.Parse("game \"a\\\\b\\b\\\"\\n\"")[0].Text);
+            var e = Assert.Throws<FormatException>(() => ScriptParser.Parse("note \"ok\"\ngame \"tab\\there\""));
+            Assert.Contains("line 2", e.Message);
+            Assert.Contains("\\t", e.Message);
+        }
+
+        [Fact]
+        public void ParsesRunningAndWindow()
+        {
+            List<Step> p = ScriptParser.Parse("expect running\nwait window closed timeout 3\nwait window open");
+            Assert.Equal(StepKind.ExpectRunning, p[0].Kind);
+            Assert.Equal(StepKind.WaitWindow, p[1].Kind);
+            Assert.Equal("closed", p[1].Text);
+            Assert.Equal(3, p[1].Timeout);
+            Assert.Equal("open", p[2].Text);
+            Assert.Equal(10, p[2].Timeout);
+        }
+
+        [Fact]
+        public void LoadMissingScriptNamesIt()
+        {
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ndap-missing-" + Guid.NewGuid().ToString("N") + ".txt");
+            var e = Assert.Throws<System.IO.FileNotFoundException>(() => ScriptParser.Load(path));
+            Assert.Equal("script not found: " + path, e.Message);
         }
     }
 }

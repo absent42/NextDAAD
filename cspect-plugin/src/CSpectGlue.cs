@@ -167,11 +167,12 @@ namespace NextDAADDebug
         }
 
 #if AUTOPILOT
-        // Only when NEXTDAAD_DEBUG_AUTOPILOT names an existing script; otherwise this build behaves like Release.
+        // Only when NEXTDAAD_DEBUG_AUTOPILOT is set; otherwise this build behaves like Release.
+        // A missing script is logged and written as a FAIL by AutopilotHost.Start.
         void StartAutopilot(List<sIO> list, SymbolFile sym)
         {
             string script = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_AUTOPILOT");
-            if (string.IsNullOrEmpty(script) || !File.Exists(script)) return;
+            if (string.IsNullOrEmpty(script)) return;
             try
             {
                 var a = new Autopilot.AutopilotHost(cs, sym, Current, () => host, id => KeyPressed(id), folder);

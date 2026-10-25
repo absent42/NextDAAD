@@ -35,6 +35,7 @@ namespace NextDAADDebug.Tests
         public bool Cancel() { Calls.Add("Cancel"); return PopupOpen; }
         public void Hotkey(char k) { Calls.Add("Hotkey:" + k); OnHotkey?.Invoke(k); }
         public int DebuggerState() => State;
+        public bool WindowOpen { get; set; } = true;
         public void Quit() => Calls.Add("Quit");
     }
 
@@ -348,6 +349,71 @@ namespace NextDAADDebug.Tests
             Assert.True(e.Finished);
             Assert.Equal(2, e.Failures);
             Assert.Contains("(game screen not readable)", Lines()[0]);
+        }
+
+        [Fact]
+        public void Engine_WriterFaultCountsFailureAndSkipsRest()
+        {
+            var e = Make("note \"a\"\nnote \"b\"\nnote \"c\"");
+            Directory.CreateDirectory(Path.Combine(dir, "dumps"));
+            using (new FileStream(Path.Combine(dir, "dumps", "001.txt"), FileMode.Create, FileAccess.Write, FileShare.None))
+                e.Frame();
+            Assert.True(e.Finished);
+            Assert.Equal(1, e.Failures);
+            var l = Lines();
+            Assert.StartsWith("STEP 1 PASS line 1 |", l[0]);
+            Assert.StartsWith("STEP 2 FAIL line 2 |", l[1]);
+            Assert.Contains("actual autopilot stopped: writer:", l[1]);
+            Assert.StartsWith("STEP 3 SKIPPED line 3 |", l[2]);
+            Assert.Equal("DONE failures=1", l[l.Length - 1]);
+            Assert.Contains("Quit", host.Calls);
+        }
+
+        [Fact]
+        public void Engine_AbortWritesDumpForFailStep()
+        {
+            var e = Make("wait status \"HALTED\"\nnote \"x\"");
+            e.Frame();
+            e.Abort("host fault");
+            Assert.True(File.Exists(Path.Combine(dir, "dumps", "001.txt")));
+        }
+
+        [Fact]
+        public void Engine_ExpectRunning()
+        {
+            var e = Make("expect running\nexpect running");
+            host.State = 0;
+            e.Frame();
+            host.State = 1;
+            Run(e);
+            Assert.Equal(1, e.Failures);
+            var l = Lines();
+            Assert.StartsWith("STEP 1 PASS", l[0]);
+            Assert.StartsWith("STEP 2 FAIL", l[1]);
+            Assert.Contains("expected debugger running | actual debugger state 1", l[1]);
+        }
+
+        [Fact]
+        public void Engine_WaitWindow()
+        {
+            var e = Make("wait window closed timeout 2\nwait window open timeout 2\nwait window closed timeout 2");
+            e.Frame();
+            Assert.False(e.Finished);
+            host.WindowOpen = false;
+            e.Frame();
+            host.WindowOpen = true;
+            e.Frame();
+            e.Frame();
+            Assert.False(e.Finished);
+            now = 2;
+            e.Frame();
+            Assert.True(e.Finished);
+            Assert.Equal(1, e.Failures);
+            var l = Lines();
+            Assert.StartsWith("STEP 1 PASS", l[0]);
+            Assert.StartsWith("STEP 2 PASS", l[1]);
+            Assert.StartsWith("STEP 3 FAIL", l[2]);
+            Assert.Contains("expected window closed within 2s | actual window open", l[2]);
         }
 
         [Fact]

@@ -13,7 +13,8 @@ namespace NextDAADDebug.Autopilot
         bool Cancel();                      // false = no popup open
         void Hotkey(char k);
         KeyFeeder Keys { get; }
-        int DebuggerState();
+        int DebuggerState();                // 0 running, else halted
+        bool WindowOpen { get; }            // the debugger window is on screen
         int TicksWhileHalted { get; }
         int CurrentOffset { get; }
         void Quit();

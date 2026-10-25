@@ -52,6 +52,8 @@ namespace NextDAADDebug.Tests
             Assert.Equal(0xB123, a);
             Assert.False(SymbolFile.Parse(withCols).TryGet("nope", out a));
             Assert.False(SymbolFile.Parse(Sym()).TryGet("tmCols", out a));
+            Assert.True(SymbolFile.Parse(Sym()).TryGet("eng_exec", out a));
+            Assert.Equal(0x9E21, a);
         }
 
         [Fact]

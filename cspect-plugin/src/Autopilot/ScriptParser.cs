@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
 
 namespace NextDAADDebug.Autopilot
@@ -8,7 +9,7 @@ namespace NextDAADDebug.Autopilot
     public enum StepKind
     {
         WaitStatus, WaitScreen, WaitGame, ExpectStatus, ExpectScreen, ExpectGame, ExpectLog, ExpectColour,
-        Click, ClickCell, Wheel, Type, Key, Hotkey, Game, Dump, Note, Measure, Quit
+        ExpectRunning, WaitWindow, Click, ClickCell, Wheel, Type, Key, Hotkey, Game, Dump, Note, Measure, Quit
     }
 
     public sealed class Step
@@ -24,10 +25,16 @@ namespace NextDAADDebug.Autopilot
         public string Raw;
     }
 
-    // One command per line; '#' comments; "quoted text" with \" \\ \n escapes.
+    // One command per line; '#' comments; "quoted text" with \" \\ \n \b escapes (any other escape is an error).
     public static class ScriptParser
     {
         static readonly string[] Measures = { "halted-state", "ticks-while-halted", "step-advances" };
+
+        public static List<Step> Load(string path)
+        {
+            if (!File.Exists(path)) throw new FileNotFoundException("script not found: " + path, path);
+            return Parse(File.ReadAllText(path));
+        }
 
         public static List<Step> Parse(string text)
         {
@@ -69,7 +76,10 @@ namespace NextDAADDebug.Autopilot
                         if (c == '\\' && i < line.Length)
                         {
                             char e = line[i++];
-                            sb.Append(e == 'n' ? '\n' : e);
+                            if (e == 'n') sb.Append('\n');
+                            else if (e == 'b') sb.Append('\b');
+                            else if (e == '"' || e == '\\') sb.Append(e);
+                            else throw new FormatException("unknown escape \\" + e);
                         }
                         else sb.Append(c);
                     }
@@ -114,6 +124,14 @@ namespace NextDAADDebug.Autopilot
             s.Row = r;
         }
 
+        static void Timeout(Step s, List<string> t, int i)
+        {
+            if (t.Count <= i) return;
+            if (t[i] != "timeout") throw new FormatException("expected 'timeout N'");
+            s.Timeout = NeedInt(t, i + 1, "timeout");
+            NoMore(t, i + 2);
+        }
+
         static void NoMore(List<string> t, int n)
         {
             if (t.Count > n) throw new FormatException("unexpected '" + t[n].TrimStart('"') + "'");
@@ -126,18 +144,26 @@ namespace NextDAADDebug.Autopilot
             {
                 case "wait":
                 {
+                    if (t.Count > 1 && t[1] == "window")
+                    {
+                        s.Kind = StepKind.WaitWindow;
+                        s.Text = t.Count > 2 && (t[2] == "open" || t[2] == "closed") ? t[2] : throw new FormatException("expected window open|closed");
+                        Timeout(s, t, 3);
+                        break;
+                    }
                     s.Kind = Source(t, 1, StepKind.WaitStatus, StepKind.WaitScreen, StepKind.WaitGame, false);
                     s.Text = NeedText(t, 2, "text");
-                    if (t.Count > 3)
-                    {
-                        if (t[3] != "timeout") throw new FormatException("expected 'timeout N'");
-                        s.Timeout = NeedInt(t, 4, "timeout");
-                        NoMore(t, 5);
-                    }
+                    Timeout(s, t, 3);
                     break;
                 }
                 case "expect":
                 {
+                    if (t.Count > 1 && t[1] == "running")
+                    {
+                        s.Kind = StepKind.ExpectRunning;
+                        NoMore(t, 2);
+                        break;
+                    }
                     s.Kind = Source(t, 1, StepKind.ExpectStatus, StepKind.ExpectScreen, StepKind.ExpectGame, true);
                     int i = 2;
                     if (s.Kind == StepKind.ExpectColour)

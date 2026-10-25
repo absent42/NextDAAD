@@ -37,11 +37,10 @@ namespace NextDAADDebug.Autopilot
         {
             if (Finished) return;
             try { Advance(); }
-            catch (Exception)
+            catch (Exception e)
             {
-                // Only the writer can get here; stop rather than retry every frame.
-                Finished = true;
-                try { writer.Finish(Failures); } catch (Exception) { }
+                // Only the writer can get here: the next step FAILs and the rest are SKIPPED.
+                Abort("writer: " + e.Message);
             }
         }
 
@@ -50,18 +49,20 @@ namespace NextDAADDebug.Autopilot
         {
             if (Finished) return;
             Finished = true;
+            Failures++;
             try
             {
                 if (index < steps.Count)
                 {
                     writer.Result(steps[index], "FAIL", Expected(steps[index]), "autopilot stopped: " + reason);
                     index++;
+                    try { DumpNow(index); } catch (Exception) { }
                 }
-                Failures++;
                 for (; index < steps.Count; index++) writer.Result(steps[index], "SKIPPED", Expected(steps[index]), "not run");
                 writer.Finish(Failures);
             }
             catch (Exception) { }
+            try { host.Quit(); } catch (Exception) { }
         }
 
         void Advance()
@@ -82,7 +83,7 @@ namespace NextDAADDebug.Autopilot
             index++;
             begun = false;
             DumpNow(index);
-            bool wait = s.Kind == StepKind.WaitStatus || s.Kind == StepKind.WaitScreen || s.Kind == StepKind.WaitGame;
+            bool wait = s.Kind == StepKind.WaitStatus || s.Kind == StepKind.WaitScreen || s.Kind == StepKind.WaitGame || s.Kind == StepKind.WaitWindow;
             if (wait && verdict == "FAIL") End(hasQuit);
             else if (s.Kind == StepKind.Quit) End(true);
             else if (index >= steps.Count) End(false);
@@ -131,6 +132,19 @@ namespace NextDAADDebug.Autopilot
                     int r = Check(s, out actual);
                     if (r < 0) return "FAIL";
                     return (r == 1) != s.Not ? "PASS" : "FAIL";
+                }
+                case StepKind.WaitWindow:
+                {
+                    bool open = host.WindowOpen;
+                    actual = open ? "window open" : "window closed";
+                    if (open == (s.Text == "open")) return "PASS";
+                    return TimedOut(s) ? "FAIL" : null;
+                }
+                case StepKind.ExpectRunning:
+                {
+                    int st = host.DebuggerState();
+                    actual = "debugger state " + st;
+                    return st == 0 ? "PASS" : "FAIL";
                 }
                 case StepKind.ExpectColour:
                 {
@@ -333,6 +347,8 @@ namespace NextDAADDebug.Autopilot
                 case StepKind.ExpectGame: return "game " + (s.Not ? "lacks " : "contains ") + q;
                 case StepKind.ExpectLog: return "log " + (s.Not ? "lacks " : "contains ") + q;
                 case StepKind.ExpectColour: return q + " in " + s.Theme;
+                case StepKind.ExpectRunning: return "debugger running";
+                case StepKind.WaitWindow: return "window " + s.Text + " within " + s.Timeout + "s";
                 case StepKind.Click: return q + " on screen";
                 case StepKind.ClickCell: return "click @" + s.Col + "," + s.Row;
                 case StepKind.Wheel: return "wheel " + s.Amount;

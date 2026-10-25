@@ -36,15 +36,17 @@ namespace NextDAADDebug.Autopilot
             logPath = Path.Combine(folder, "debugger.log");
         }
 
-        // A script that does not parse is one FAIL line, DONE and a quit.
+        // A missing or unparsable script is one FAIL line, DONE and a quit.
         public void Start(string script, string folder)
         {
             Log.Write("autopilot: started " + script);
             var writer = new ResultWriter(folder);
-            try { engine = new Engine(ScriptParser.Parse(File.ReadAllText(script)), this, writer, () => clock.Elapsed.TotalSeconds); }
+            try { engine = new Engine(ScriptParser.Load(script), this, writer, () => clock.Elapsed.TotalSeconds); }
             catch (Exception ex)
             {
-                writer.Result(new Step { Kind = StepKind.Note, Raw = script }, "FAIL", "script parses", ex.Message);
+                bool missing = ex is FileNotFoundException;
+                if (missing) Log.Write("autopilot: " + ex.Message);
+                writer.Result(new Step { Kind = StepKind.Note, Raw = script }, "FAIL", missing ? "script exists" : "script parses", ex.Message);
                 writer.Finish(1);
                 Log.Write("autopilot: done failures=1");
                 reported = true;
@@ -140,6 +142,7 @@ namespace NextDAADDebug.Autopilot
 
         public KeyFeeder Keys => keys;
         public int DebuggerState() => cs.Debugger(eDebugCommand.GetState, 0);
+        public bool WindowOpen { get { WindowHost w = window(); return w != null && w.IsOpen; } }
         public int TicksWhileHalted => haltedTicks;
         public int CurrentOffset => current().Offset;
         public void Quit() => quitWanted = true;

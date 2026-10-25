@@ -93,9 +93,64 @@ namespace NextDAADDebug.Tests
         public void Keys_UnmappedCharRejected()
         {
             KeyPress k;
-            Assert.False(KeyMatrix.TryMap('~', out k));
-            var e = Assert.Throws<ArgumentException>(() => new KeyFeeder().Enqueue("a~"));
-            Assert.Contains("~", e.Message);
+            Assert.False(KeyMatrix.TryMap('\t', out k));
+            Assert.False(KeyMatrix.TryMap('\0', out k));
+            var e = Assert.Throws<ArgumentException>(() => new KeyFeeder().Enqueue("a£"));
+            Assert.Contains("£", e.Message);
+        }
+
+        // kbMapSym in overlay1.asm: code = row*5 + bit.
+        [Fact]
+        public void KeyMatrix_PunctuationUsesSymbolShift()
+        {
+            KeyPress k;
+            Assert.True(KeyMatrix.TryMap('.', out k)); Assert.True(k.Sym && !k.Caps); Assert.Equal(7, k.Row); Assert.Equal(2, k.Bit);
+            Assert.True(KeyMatrix.TryMap(',', out k)); Assert.True(k.Sym); Assert.Equal(7, k.Row); Assert.Equal(3, k.Bit);
+            Assert.True(KeyMatrix.TryMap('?', out k)); Assert.True(k.Sym); Assert.Equal(0, k.Row); Assert.Equal(3, k.Bit);
+            Assert.True(KeyMatrix.TryMap('"', out k)); Assert.True(k.Sym); Assert.Equal(5, k.Row); Assert.Equal(0, k.Bit);
+            Assert.True(KeyMatrix.TryMap('\'', out k)); Assert.True(k.Sym); Assert.Equal(4, k.Row); Assert.Equal(3, k.Bit);
+            Assert.True(KeyMatrix.TryMap('~', out k)); Assert.True(k.Sym); Assert.Equal(1, k.Row); Assert.Equal(0, k.Bit);
+            Assert.True(KeyMatrix.TryMap('A', out k)); Assert.False(k.Sym || k.Caps);
+        }
+
+        [Fact]
+        public void KeyMatrix_BackspaceUsesCapsShift()
+        {
+            KeyPress k;
+            Assert.True(KeyMatrix.TryMap('\b', out k));
+            Assert.True(k.Caps && !k.Sym);
+            Assert.Equal(4, k.Row);
+            Assert.Equal(0, k.Bit);
+        }
+
+        [Fact]
+        public void Keys_SymbolShiftAnswersBothRows()
+        {
+            var f = new KeyFeeder();
+            f.Enqueue(".");
+            f.Frame();
+            byte v;
+            Assert.True(Read(f, 0x7FFE, out v));
+            Assert.Equal(0xF9, v);
+            Assert.False(Read(f, 0xFEFE, out v));
+            Assert.True(Read(f, 0x00FE, out v));
+            Assert.Equal(0xF9, v);
+        }
+
+        [Fact]
+        public void Keys_CapsShiftAnswersBothRows()
+        {
+            var f = new KeyFeeder();
+            f.Enqueue("\b");
+            f.Frame();
+            byte v;
+            Assert.True(Read(f, 0xFEFE, out v));
+            Assert.Equal(0xFE, v);
+            Assert.True(Read(f, 0xEFFE, out v));
+            Assert.Equal(0xFE, v);
+            Assert.True(Read(f, 0x00FE, out v));
+            Assert.Equal(0xFE, v);
+            Assert.False(Read(f, 0x7FFE, out v));
         }
 
         [Fact]

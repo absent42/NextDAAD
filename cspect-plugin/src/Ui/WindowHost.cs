@@ -208,6 +208,7 @@ namespace NextDAADDebug
         UiInput injected;
 
         internal CellScreen Screen => screen;
+        internal bool IsOpen { get { lock (gate) return surface != null; } }
         internal void InjectInput(UiInput u) { lock (gate) { injecting = true; injected = u; } }
         internal bool AutoType(string text) { lock (gate) { injectForce = true; return view.Type(text); } }
         internal bool AutoAccept() { lock (gate) { injectForce = true; return view.Accept(); } }

@@ -14,21 +14,34 @@ namespace NextDAADDebug.Autopilot
 
     public static class KeyMatrix
     {
-        // Spectrum half-rows, bit 0 first; '\n' is ENTER, ' ' is SPACE, '^' CAPS, '~' SYM (never typed).
+        // Spectrum half-rows, bit 0 first; '\n' ENTER, ' ' SPACE, '\0' the CAPS and SYM keys themselves.
         static readonly string[] Rows =
         {
-            "^ZXCV", "ASDFG", "QWERT", "12345", "09876", "POIUY", "\nLKJH", " ~MNB"
+            "\0ZXCV", "ASDFG", "QWERT", "12345", "09876", "POIUY", "\nLKJH", " \0MNB"
+        };
+
+        // SYM+key characters, same positions (kbMapSym in overlay1.asm); '\0' none.
+        static readonly string[] SymRows =
+        {
+            "\0:`?/", "~|\\{}", "\0\0\0<>", "!@#$%", "_)('&", "\";\0][", "\0=+-^", "\0\0.,*"
         };
 
         public static bool TryMap(char c, out KeyPress k)
         {
-            char u = char.ToUpperInvariant(c);
             k = default(KeyPress);
-            if (u == '^' || u == '~') return false;
+            if (c == '\0') return false;
+            // CAPS+0 is DELETE (kbMapCaps matrix 20 = 8).
+            if (c == '\b') { k.Row = 4; k.Bit = 0; k.Caps = true; return true; }
+            char u = char.ToUpperInvariant(c);
             for (int r = 0; r < Rows.Length; r++)
             {
                 int b = Rows[r].IndexOf(u);
                 if (b >= 0) { k.Row = r; k.Bit = b; return true; }
+            }
+            for (int r = 0; r < SymRows.Length; r++)
+            {
+                int b = SymRows[r].IndexOf(c);
+                if (b >= 0) { k.Row = r; k.Bit = b; k.Sym = true; return true; }
             }
             return false;
         }
