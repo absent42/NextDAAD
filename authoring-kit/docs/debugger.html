@@ -101,8 +101,8 @@ does not write source maps, and the debugger refuses to show line
 numbers from a map that does not match the database the game loaded - see
 <a href="#status-messages">Status messages</a>.</p>
 <h2 id="the-window">The window</h2>
-<p>The window is called "NextDAAD debugger" and opens beside the CSpect
-window. It is one fixed layout:</p>
+<p>The window is called "NextDAAD debugger" and opens as a second window
+next to the game. It is one fixed layout:</p>
 <ul>
 <li><strong>Toolbar</strong>, top row: <code>Run</code>, <code>Break</code>, <code>Step</code>, <code>Step entry</code>,
   <code>Step out</code> and <code>Run to PARSE</code>, with <code>Ctrl+Alt+A/B/N/R</code> written dimly
@@ -114,7 +114,8 @@ window. It is one fixed layout:</p>
   here in red.</li>
 <li><strong>Process stack</strong>, top left: the processes running right now, newest
   at the top. Each line reads like <code>&gt;1 PRO 1 GET LAMP :111</code> - the
-  process number, the verb and noun of the entry being run (<code>_</code> means
+  level (<code>1</code> here: 0 is the bottom of the stack, the process that called
+  the others), the process number (<code>PRO 1</code>), the verb and noun of the entry being run (<code>_</code> means
   any), and the <code>.DSF</code> line it starts on. Click a line to look at that
   level; the <code>&gt;</code> marks the one on show.</li>
 <li><strong>Condacts and Source tabs</strong>, top right:</li>
@@ -343,8 +344,10 @@ to a letter.</p>
 <p>If you would rather type: below the window picture is a text box that
 wakes up while a pop-up is open, with the hint <code>type a number or name,
 Enter = OK, Esc = cancel</code>. In a number pad, type the number. In a list,
-type the first letters of the row (a name, or its number) and the first
-row that starts that way is chosen. If nothing fits, the hint changes to
+type the first letters of the row and the first row that starts that way
+is chosen. In the flag, object and location lists every row starts with
+its number, so type the number there; a name is only matched in the
+word, condact and symbol lists. If nothing fits, the hint changes to
 <code>not accepted:</code> followed by what you typed, and the pop-up stays open.</p>
 <h2 id="settings">Settings</h2>
 <p>The debugger remembers your breakpoints, your watches and where you put
@@ -362,8 +365,7 @@ Leave the file out of anything you share.</p>
 <p>A <code>DEBUG</code> line in a process entry marks a spot in your code. It does
 nothing in play. It exists so the debugger can stop there.</p>
 <p>A <code>DEBUG</code> marker is only compiled into the game when the source contains
-the directive <code>#debug</code>, written in lower case, on a line of its own near
-the top. The <code>DEBUG</code> marker breakpoint is the only part of the debugger
+the directive <code>#debug</code>, written in lower case, on a line of its own. The <code>DEBUG</code> marker breakpoint is the only part of the debugger
 that needs it.</p>
 <p><strong>Every build warns while <code>#debug</code> is present:</strong></p>
 <pre><code>WARNING: MYGAME.DSF has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)
@@ -413,10 +415,6 @@ part is back.</p>
 <td><code>HALTED - ... (N condacts ran past)</code></td>
 <td>The emulator ran N more condacts before it could stop. What the window shows is the state at the stop itself.</td>
 </tr>
-<tr>
-<td><code>disarmed</code></td>
-<td>The debugger switched itself off while the game was stopped, and let it go. See <code>debugger error</code> below.</td>
-</tr>
 </tbody>
 </table>
 <p>Problems, shown in red on the status line:</p>
@@ -438,7 +436,7 @@ part is back.</p>
 </tr>
 <tr>
 <td><code>debugger error, disarmed - see debugger.log: ...</code></td>
-<td>The debugger hit an unexpected fault and shut itself off so as not to disturb the game. Quit CSpect, start <code>DEBUG.BAT</code> again, and if it comes back keep <code>debugger.log</code> for a bug report.</td>
+<td>The debugger hit an unexpected fault and shut itself off so as not to disturb the game; if the game was stopped, it is let go. Quit CSpect, start <code>DEBUG.BAT</code> again, and if it comes back keep <code>debugger.log</code> for a bug report.</td>
 </tr>
 <tr>
 <td><code>init failed: ...</code></td>
@@ -464,12 +462,12 @@ part is back.</p>
 <td>There is no <code>GAME.DSM</code> in the source folder. Run <code>DEBUG.BAT</code> (not <code>BUILD.BAT</code>), which writes them.</td>
 </tr>
 <tr>
-<td><code>GAME.DSM: ...</code></td>
-<td>A map exists but cannot be read; the text after the name says why. Run <code>DEBUG.BAT</code> again.</td>
+<td><code>GAME&lt;n&gt;.DSM: ...</code></td>
+<td>No map could be read; the name is the first file that failed (<code>GAME.DSM</code> for the main game) and the text after it says why. Run <code>DEBUG.BAT</code> again.</td>
 </tr>
 <tr>
 <td><code>source map is out of date - rebuild</code></td>
-<td>The database the game loaded is not the one the map was made for: you rebuilt with <code>BUILD.BAT</code>, or changed the source since. Run <code>DEBUG.BAT</code> again, which rebuilds the database and the maps together. The <code>Condacts</code> tab shows plain positions in place of line numbers until you do.</td>
+<td>The database the game loaded is not the one the map was made for: the database was built from changed source after the last <code>DEBUG.BAT</code>, so the maps describe older code. Run <code>DEBUG.BAT</code> again, which rebuilds the database and the maps together. The <code>Condacts</code> tab shows plain positions in place of line numbers until you do.</td>
 </tr>
 <tr>
 <td><code>file N not in the source map</code></td>
@@ -480,6 +478,20 @@ part is back.</p>
 <p>Other texts you will see: <code>Process stack</code> shows <code>(empty)</code> when no process
 is running and <code>waiting for NextDAAD</code> before the game starts, and the
 <code>Condacts</code> tab says <code>no process running</code> when there is nothing to list.</p>
+<h2 id="differences-on-linux">Differences on Linux</h2>
+<p><code>./debug.sh</code> works the same way, with these differences:</p>
+<ul>
+<li><strong>The window cannot be hidden.</strong> The debugger cannot close its window
+  under mono, so it stays on screen until you quit CSpect, and
+  <code>Ctrl+Alt+A</code> does nothing while it is open. The other shortcuts work.</li>
+<li><strong>E1 until CSpect is fixed.</strong> <code>./debug.sh</code> ends its build output with
+  <code>WARNING: CSpect under mono does not change into the game's DATA folder yet (reported to its author) - the game will stop at E1 until a fixed CSpect is released</code>.
+  The game shows <code>NextDAAD: DDB missing - E1</code> as it starts. That is a
+  limit of CSpect on Linux, not a fault in your game. Until a CSpect that
+  fixes it is released, use the debugger on Windows.</li>
+<li>It needs <code>pwsh</code> and mono, as <code>run.sh</code> does. See
+  <a href="getting-started.html#linux-setup">Getting started</a>.</li>
+</ul>
 <h2 id="when-debugbat-stops">When DEBUG.BAT stops</h2>
 <p><code>DEBUG.BAT</code> stops with a message beginning <code>ERROR:</code> and, on Windows,
 waits for a key before closing the window so you can read it.</p>
@@ -528,6 +540,10 @@ waits for a key before closing the window so you can read it.</p>
 <td><code>NEXTDAAD.SYM</code> or <code>lib\NextDAADDebug.dll</code> is missing from the kit folder. Unzip the kit again over the folder.</td>
 </tr>
 <tr>
+<td><code>ERROR: pwsh (PowerShell 7) not found - see docs/getting-started.html, Linux setup</code></td>
+<td>Linux only, printed by <code>./debug.sh</code> itself: install PowerShell 7 as described in <a href="getting-started.html#linux-setup">Getting started</a>.</td>
+</tr>
+<tr>
 <td>any build error</td>
 <td>Same as for <code>BUILD.BAT</code>: see <a href="getting-started.html#when-the-build-fails">Getting started</a>.</td>
 </tr>
@@ -549,20 +565,6 @@ debugger plugin in tools\CSpect is newer (&lt;version&gt;) - kept
 <p>The second means CSpect's folder already holds a newer plugin than the
 kit's. It is left alone and used. Nothing is printed when the plugin
 there is already the kit's own.</p>
-<h2 id="differences-on-linux">Differences on Linux</h2>
-<p><code>./debug.sh</code> works the same way, with these differences:</p>
-<ul>
-<li><strong>The window cannot be hidden.</strong> The debugger cannot close its window
-  under mono, so it stays on screen until you quit CSpect, and
-  <code>Ctrl+Alt+A</code> does nothing while it is open. The other shortcuts work.</li>
-<li><strong>E1 until CSpect is fixed.</strong> <code>DEBUG.BAT</code> ends its build output with
-  <code>WARNING: CSpect under mono does not change into the game's DATA folder yet (reported to its author) - the game will stop at E1 until a fixed CSpect is released</code>.
-  The game shows <code>NextDAAD: DDB missing - E1</code> as it starts. That is a
-  limit of CSpect on Linux, not a fault in your game. Until a CSpect that
-  fixes it is released, use the debugger on Windows.</li>
-<li>It needs <code>pwsh</code> and mono, as <code>run.sh</code> does. See
-  <a href="getting-started.html#linux-setup">Getting started</a>.</li>
-</ul>
 </main>
 </body>
 </html>
