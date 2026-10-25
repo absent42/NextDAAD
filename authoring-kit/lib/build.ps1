@@ -2,8 +2,10 @@
 # Messages are the v0.11.0 BUILD.BAT wording, pinned by
 # tests\kit-parity\negative.ps1; the outputs by tests\kit-parity\parity.ps1.
 # -SrcMap writes GAME.DSM / GAME<n>.DSM source maps beside the sources (debug.ps1);
-# -NoRun skips the RUN=1 hand-off.
-param([switch]$SrcMap, [switch]$NoRun)
+# -NoRun skips the RUN=1 hand-off. Whole names only: build.sh passes its own arguments
+# through, and a param block would bind a prefix such as -s or -n.
+$SrcMap = $args -contains '-SrcMap'
+$NoRun = $args -contains '-NoRun'
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 . (Join-Path $PSScriptRoot 'kitconfig.ps1')
@@ -274,7 +276,7 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]
     if (Test-Path -LiteralPath $xmb) {
         try { Move-Item -LiteralPath $xmb -Destination (Join-Path $XmbDir '0.XMB') -Force }
         catch { Write-Host "ERROR: could not stage 0.XMB into $XmbDir"; return 1 }
-        Write-Host "  XMB -> $XmbDir\0.XMB"
+        Write-Host "  XMB -> $XmbDir${sep}0.XMB"
     }
     return 0
 }
@@ -322,7 +324,7 @@ if ($introFile) {
         Launcher = $t.INTRONEX; LauncherOut = (Join-Path $relGame "$game.NEX")
     }
     if ((Invoke-Stage 'introc.ps1' $introParams) -ne 0) { Fail 'ERROR: intro compile failed - see the message above' }
-    Write-Host "  intro -> $dataLbl\INTRO\ and $gameLbl\$game.NEX (launch this file)"
+    Write-Host "  intro -> $dataLbl${sep}INTRO$sep and $gameLbl$sep$game.NEX (launch this file)"
 }
 
 # ---- convertible fonts: one source per slot; a ready-made FONT<n>.CHR wins ----
@@ -342,7 +344,7 @@ foreach ($slot in $slots) {
     }
     if ($fsrc) {
         if ((Invoke-Stage 'fontconv.ps1' @{ In = $fsrc.FullName; Out = (Join-Path $rel "FONT$slot.CHR") }) -ne 0) { Fail "ERROR: fontconv failed converting $($fsrc.Name)" }
-        Write-Host "  font $($fsrc.Name) -> $dataLbl\FONT$slot.CHR (converted)"
+        Write-Host "  font $($fsrc.Name) -> $dataLbl${sep}FONT$slot.CHR (converted)"
     }
 }
 
@@ -352,7 +354,7 @@ function Copy-AsIs([string]$Name, [string]$What, [string]$Note) {
     $f = Find-KitFile $src $Name
     if (-not $f) { return }
     Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel $Name) -Force -ErrorAction Continue
-    Write-Host "  $What $Name -> $dataLbl\$Name ($Note)"
+    Write-Host "  $What $Name -> $dataLbl$sep$Name ($Note)"
 }
 foreach ($slot in $slots) { Copy-AsIs "FONT$slot.CHR" 'font' 'ready-made, staged as-is' }
 foreach ($slot in $slots) { Copy-AsIs "POINTER$slot.SPR" 'pointer' 'ready-made, staged as-is' }
@@ -361,7 +363,7 @@ foreach ($slot in $slots) { Copy-AsIs "POINTER$slot.SPR" 'pointer' 'ready-made, 
 $hintsFile = Find-KitFile $src 'HINTS.TXT'
 if ($hintsFile) {
     if ((Invoke-Stage 'hintpack.ps1' @{ In = $hintsFile.FullName; Out = (Join-Path $rel 'GAME.HNT') }) -ne 0) { Fail 'ERROR: hintpack failed - see the message above' }
-    Write-Host "  hints $($hintsFile.Name) -> $dataLbl\GAME.HNT"
+    Write-Host "  hints $($hintsFile.Name) -> $dataLbl${sep}GAME.HNT"
 }
 Copy-AsIs 'GAME.XBN' 'extern' 'staged as-is'
 
@@ -372,7 +374,7 @@ foreach ($n in 2..9) {
     if (-not (Test-Path -LiteralPath $partDir -PathType Container)) { continue }
     $pdsfs = @(Get-ChildItem -LiteralPath $partDir -File | Where-Object { $_.Name -match '(?i)\.DSF$' })
     if ($pdsfs.Count -eq 0) { continue }
-    if ($pdsfs.Count -ne 1) { Fail "ERROR: PART$n\ has $($pdsfs.Count) .DSF files - keep exactly one game source per part folder" }
+    if ($pdsfs.Count -ne 1) { Fail "ERROR: PART$n$sep has $($pdsfs.Count) .DSF files - keep exactly one game source per part folder" }
     $pgame = $pdsfs[0].BaseName
     Write-Host "Building part $n ($pgame) ..."
     # NDRC resolves this part's includes against the source root too (the
@@ -387,11 +389,11 @@ foreach ($n in 2..9) {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
         try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $rel "PART$n") -Force }
         catch {
-            Fail "ERROR: could not stage PART$n\$($f.Name) into $dataLbl\PART$n"
+            Fail "ERROR: could not stage PART$n$sep$($f.Name) into $dataLbl${sep}PART$n"
         }
         $count++
     }
-    Write-Host "  $count asset(s) staged -> $dataLbl\PART$n\"
+    Write-Host "  $count asset(s) staged -> $dataLbl${sep}PART$n$sep"
 }
 
 Write-Host "BUILD OK: RELEASE$sep$game$sep is ready - copy the contents of RELEASE$sep to the root of an SD card"

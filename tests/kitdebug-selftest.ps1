@@ -161,6 +161,15 @@ Assert-Eq ([Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($dsm), $dsmB
 Assert-Eq (Get-Item -LiteralPath $dsm).LastWriteTimeUtc $dsmTime 'build-leaves-maps mtime'
 Assert-Eq (Test-Path -LiteralPath (Join-Path $g1 'GAME2.DSM')) $true 'build-leaves-maps GAME2.DSM'
 
+# ---- build.sh passes its arguments through: a prefix such as -s is not -SrcMap ----
+Remove-Item -LiteralPath $dsm -Force
+$r = Invoke-Kit 'build.ps1' $useG1 @('-s', '-n', 'extra')
+Assert-Eq $r.Rc 0 'prefix-args build exit'
+Assert-Eq (Test-Path -LiteralPath $dsm) $false 'prefix -s writes no GAME.DSM'
+$r = Invoke-Kit 'build.ps1' $useG1 @('-SrcMap')
+Assert-Eq $r.Rc 0 'whole-name -SrcMap build exit'
+Assert-Eq (Test-Path -LiteralPath $dsm) $true 'whole-name -SrcMap writes GAME.DSM'
+
 # ---- plugin DLL ----
 $dllTime = (Get-Item -LiteralPath $dst).LastWriteTimeUtc
 $r = Invoke-Debug $useG1
