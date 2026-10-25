@@ -494,11 +494,11 @@ is running and <code>waiting for NextDAAD</code> before the game starts, and the
 <li><strong>The window cannot be hidden.</strong> The debugger cannot close its window
   under mono, so it stays on screen until you quit CSpect, and
   <code>Ctrl+Alt+A</code> does nothing while it is open. The other shortcuts work.</li>
-<li><strong>E1 until CSpect is fixed.</strong> <code>./debug.sh</code> ends its build output with
-  <code>WARNING: CSpect under mono does not change into the game's DATA folder yet (reported to its author) - the game will stop at E1 until a fixed CSpect is released</code>.
-  The game shows <code>NextDAAD: DDB missing - E1</code> as it starts. That is a
-  limit of CSpect on Linux, not a fault in your game. Until a CSpect that
-  fixes it is released, use the debugger on Windows.</li>
+<li><strong>Starting CSpect yourself.</strong> <code>./debug.sh</code> and <code>./run.sh</code> give CSpect
+  the game folder as <code>-mmc=RELEASE/MYGAME//</code>. If you start CSpect by
+  hand, end the <code>-mmc=</code> folder in <code>//</code> too: with a single <code>/</code>, CSpect on
+  Linux does not find the game's <code>DATA/</code> folder and the game stops at
+  <code>E1</code>.</li>
 <li><strong>File names keep their case.</strong> A source-line breakpoint on
   <code>inc/rooms.dsf</code> is not one on <code>inc/ROOMS.DSF</code>. The Linux build already
   insists that every <code>#include</code> matches the file's case.</li>

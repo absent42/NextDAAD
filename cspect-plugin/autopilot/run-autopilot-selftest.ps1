@@ -291,10 +291,23 @@ $badSeed = Join-Path $kr 'bad.seed.txt'
 $t = Test-DbgkitMaps $kg $badSeed
 Check 'i-dsm-seed-line-moved-fails' (($t.Reasons -join ';') -like "*seed lines are 'DBGKIT.DSF 110,*") ($t.Reasons -join '; ')
 # Launch lines whose card root and NEX name hold spaces keep each argument whole.
-$sp = Get-KitLaunch @("launch: $kcs\CSpect.exe -w3 -zxnext -esc -mmc=RELEASE\My Game\\ RELEASE\My Game\My Game.NEX") $kcs
+$sp = Get-KitLaunch @("launch: $kcs\CSpect.exe -w3 -zxnext -esc -mmc=RELEASE\My Game\\ RELEASE\My Game\My Game.NEX") "$kcs\CSpect.exe"
 Check 'i-launch-spaced' (($sp.Args.Count -eq 5) -and $sp.Args[3] -ceq '-mmc=RELEASE\My Game\\' -and $sp.Args[4] -ceq 'RELEASE\My Game\My Game.NEX') ($sp.Args -join '|')
-$sp = Get-KitLaunch @("launch: $kcs\CSpect.exe -w3 -zxnext -esc RELEASE\G\G.NEX") $kcs
+$sp = Get-KitLaunch @("launch: $kcs\CSpect.exe -w3 -zxnext -esc RELEASE\G\G.NEX") "$kcs\CSpect.exe"
 Check 'i-launch-no-mmc-refused' ($null -eq $sp.Args) ($sp.Args -join '|')
+$sp = Get-KitLaunch @('launch: mono /h/legK/cspect/CSpect.exe -w3 -zxnext -esc -mmc=RELEASE/DBGKIT// RELEASE/DBGKIT/DBGKIT.NEX') 'mono /h/legK/cspect/CSpect.exe'
+Check 'i-launch-linux' (($sp.Args -join '|') -ceq '-w3|-zxnext|-esc|-mmc=RELEASE/DBGKIT//|RELEASE/DBGKIT/DBGKIT.NEX') ($sp.Args -join '|')
+# The kit plugin gate compares bytes, not the version.
+$gk = Join-Path $kr 'gate'
+New-Item -ItemType Directory -Force $gk | Out-Null
+$kitDllSrc = Join-Path $ApKitSrc 'lib\NextDAADDebug.dll'
+Copy-Item $kitDllSrc "$gk\rel.dll"
+Check 'i-gate-same-bytes' ($null -eq (Get-KitPluginRefusal $kitDllSrc "$gk\rel.dll"))
+[IO.File]::WriteAllBytes("$gk\rel.dll", [byte[]]([IO.File]::ReadAllBytes($kitDllSrc) + [byte[]](0)))
+$m = Get-KitPluginRefusal $kitDllSrc "$gk\rel.dll"
+Check 'i-gate-same-version-other-bytes' ($m -like 'kit plugin * is not this tree''s Release build (*) - rebuild the kit with build.ps1 -Kit') $m
+$m = Get-KitPluginRefusal $kitDllSrc "$gk\none.dll"
+Check 'i-gate-no-release-build' ($m -like 'no Release plugin build at *') $m
 # The checker fails a map with one INDIR record dropped, or with GO B's shared records dropped.
 $kn = Join-Path $kr 'neg'
 Copy-Item -LiteralPath $kg $kn -Recurse
@@ -308,15 +321,22 @@ $t = Test-DbgkitMaps $kn
 Check 'i-dsm-go-share-dropped-fails' (($t.Reasons -join ';') -like '*GO A / GO B*') ($t.Reasons -join '; ')
 Check 'i-no-write-authoring-kit' ((Get-Snapshot $ApKitSrc) -ceq $kitSnap)
 Check 'i-no-write-cspect-source' ((Get-Snapshot $ApCs40) -ceq $csSnap)
-# Every report carrying leg K or Linux says why leg K is not run on Linux.
-$l2 = (New-AutopilotReport @() @([pscustomobject]@{ Leg = 'K (Linux)'; Reason = $LegKLinuxReason }) @() @() 'T') -split "`r?`n"
-Check 'i-linux-not-run-row' ($l2 -contains "| K (Linux) | - | SKIPPED | 0 | 0 | 0 | 0 | $LegKLinuxReason |") ($l2 -join '/')
-Check 'i-linux-reason-text' ($LegKLinuxReason -like '*F_CHDIR*')
 $kr2 = (New-CheckRecord 'K' 'kit staging' @([pscustomobject]@{ Name = 'k-a'; Ok = $true; Detail = '' }, [pscustomobject]@{ Name = 'k-b'; Ok = $false; Detail = 'why' }) $kr)
 Check 'i-check-record-fail' ($kr2.Status -eq 'FAIL' -and $kr2.Steps -eq 2 -and $kr2.Fail -eq 1 -and $kr2.Fails[0].Raw -eq 'k-b' -and $kr2.Fails[0].Step -eq 2) ($kr2 | Out-String)
 $kr2 | Add-Member -NotePropertyName Files -NotePropertyValue 'build.txt, debug-nolaunch.txt, kit\'
 $l2 = (New-AutopilotReport @($kr2) @() @() @() 'T') -split "`r?`n"
 Check 'i-check-record-rows' ($l2 -contains '| K | kit staging | FAIL | 2 | 1 | 1 | 0 | DONE failures=1 |' -and $l2 -contains '- K kit staging STEP 2 line -: `k-b` - expected true - actual why' -and $l2 -contains "- K kit staging: $kr (build.txt, debug-nolaunch.txt, kit\)") ($l2 -join '/')
+
+# (g0) Linux staging: leg A's card holds DATA\GAME.DDB only; linux-leg.sh doubles the card-root separator.
+$lst = Join-Path $work 'lstage'
+if ((Test-Path -LiteralPath "$repo\build\nextdaad.nex") -and (Test-Path -LiteralPath $apDll)) {
+    New-LinuxStage $lst (Get-LegScripts 'A' @()).Parts
+    Check 'g-linux-stage-data-ddb' (Test-Path -LiteralPath "$lst\sd\DATA\GAME.DDB")
+    Check 'g-linux-stage-no-root-ddb' (-not (Test-Path -LiteralPath "$lst\sd\GAME.DDB"))
+    Check 'g-linux-stage-script-lf' (-not ([IO.File]::ReadAllText("$lst\linux-leg.sh")).Contains("`r"))
+} else { 'skip g-linux-stage-* (build\nextdaad.nex or the Autopilot DLL not built)' }
+$lsh = [IO.File]::ReadAllText("$PSScriptRoot\linux-leg.sh")
+Check 'g-linux-launch-doubled-root' ($lsh.Contains('"-mmc=$LEG//"') -and -not $lsh.Contains('"-mmc=$LEG/"')) 'linux-leg.sh run launch'
 
 # (g) Linux leg: settings refusals, hash gate, canned results, script variant. ssh is stubbed.
 $script:sshCalls = @()
@@ -439,6 +459,46 @@ $aRec = New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'A1') $false 3
 $null = Save-AutopilotReport (@($aRec) + $lr) @() @() @() 'T'
 $rep = [IO.File]::ReadAllText((Join-Path $work 'report.md')) -split "`r?`n"
 Check 'h-report-written' (($rep -contains '| A | legA-1.txt | FAIL | 3 | 1 | 1 | 1 | DONE failures=1 |') -and @($rep | Where-Object { $_ -like '| Linux | - | FAIL |*Linux leg setup failed: *' }).Count -eq 1) ($rep -join '/')
+
+# (j) Leg K on the VM: the Linux kit staged, facts pulled back and checked here, then one launch of
+# what debug.ps1 printed. ssh and scp are stubbed; the VM's out\ is canned from the leg K build in (i).
+$ApReleaseDll = Join-Path $ApKitSrc 'lib\NextDAADDebug.dll'
+$runK = '/home/placeholder/autopilot-dir/legK'
+$script:mmcOut = '-mmc=RELEASE/DBGKIT//'
+function Invoke-Ssh($s, [string]$cmd) { $script:sshCalls += $cmd }
+function Invoke-Scp($s, [string[]]$from, [string]$to) {
+    $script:scpCalls += "$($from -join ' ') -> $to"
+    if ($from[0] -ne "someone@vm-host:$runK/out") { return }
+    $o = Join-Path $to 'out'
+    New-Item -ItemType Directory -Force $o | Out-Null
+    Copy-Item -LiteralPath $kg "$o\DBGKIT" -Recurse
+    foreach ($n in 'build.rc', 'debug.rc') { [IO.File]::WriteAllText("$o\$n", "0`n") }
+    [IO.File]::WriteAllText("$o\plugin-before.txt", "absent`n")
+    [IO.File]::WriteAllText("$o\plugin-sha.txt", (Get-FileHash -LiteralPath (Join-Path $ApKitSrc 'lib\NextDAADDebug.dll') -Algorithm SHA256).Hash.ToLower() + "`n")
+    foreach ($n in 'tree-before.txt', 'tree-after.txt') { [IO.File]::WriteAllText("$o\$n", "DATA/GAME.DDB|DATA/nextdaad.nex|DBGKIT.NEX`n") }
+    [IO.File]::WriteAllText("$o\build.txt", "BUILD OK`n")
+    [IO.File]::WriteAllText("$o\debug-nolaunch.txt", "  debugger plugin -> $runK/cspect/NextDAADDebug.dll`nNEXTDAAD_DEBUG=$runK/kit/DBGKIT`nlaunch: mono $runK/cspect/CSpect.exe -w3 -zxnext -esc $($script:mmcOut) RELEASE/DBGKIT/DBGKIT.NEX`n")
+}
+$script:sshCalls = @(); $script:scpCalls = @()
+$kRecs = @(Invoke-LinuxLegK 30 $pfOk)
+$kst = @($kRecs | Where-Object { $_.Part -eq 'kit staging' })
+Check 'j-linux-k-staging-pass' ($kst.Count -eq 1 -and $kst[0].Leg -eq 'Linux K' -and $kst[0].Status -eq 'PASS') (($kRecs | ForEach-Object { "$($_.Leg) $($_.Part) $($_.Status) $($_.Note) $(($_.Fails | ForEach-Object { "$($_.Raw)=$($_.Actual)" }) -join ';')" }) -join ' / ')
+Check 'j-linux-k-kit-run' (@($script:sshCalls | Where-Object { $_ -ceq "bash '/home/placeholder/autopilot-dir/linux-leg.sh' kit '$runK'" }).Count -eq 1) ($script:sshCalls -join ';')
+$want = "bash '/home/placeholder/autopilot-dir/linux-leg.sh' kitrun '$runK' 30 legK.txt '-w3' '-zxnext' '-esc' '-mmc=RELEASE/DBGKIT//' '-sound' 'RELEASE/DBGKIT/DBGKIT.NEX'"
+Check 'j-linux-k-launch' (@($script:sshCalls | Where-Object { $_ -ceq $want }).Count -eq 1) ($script:sshCalls -join ';')
+Check 'j-linux-k-killed' (@($script:sshCalls | Where-Object { $_ -like "* kill '$runK'" }).Count -eq 1) ($script:sshCalls -join ';')
+Check 'j-linux-k-part-row' (@($kRecs | Where-Object { $_.Leg -eq 'Linux K' -and $_.Part -eq 'legK.txt' }).Count -eq 1) (($kRecs | ForEach-Object { "$($_.Leg) $($_.Part)" }) -join ' / ')
+$kcfg = [IO.File]::ReadAllText((Join-Path $work 'LinuxK\stage\kit\CONFIG.local.BAT'))
+Check 'j-linux-k-config' ($kcfg -ceq "SET GAME=DBGKIT`nSET RUN=0`nSET EMULATOR=cspect`nSET CSPECTDIR=$runK/cspect`n") $kcfg
+Check 'j-linux-k-linux-kit' ((Test-Path -LiteralPath (Join-Path $work 'LinuxK\stage\kit\debug.sh')) -and -not (Test-Path -LiteralPath (Join-Path $work 'LinuxK\stage\kit\DEBUG.BAT')))
+# A single trailing separator (E1 under mono) fails staging, and nothing is launched.
+$script:mmcOut = '-mmc=RELEASE/DBGKIT/'
+$script:sshCalls = @()
+$kRecs = @(Invoke-LinuxLegK 30 $pfOk)
+Check 'j-linux-k-single-sep-fails' ($kRecs.Count -eq 1 -and $kRecs[0].Status -eq 'FAIL' -and @($kRecs[0].Fails | Where-Object { $_.Raw -eq 'k-launch-card-root' }).Count -eq 1) (($kRecs | ForEach-Object { "$($_.Part) $($_.Status)" }) -join ' / ')
+Check 'j-linux-k-single-sep-no-launch' (@($script:sshCalls | Where-Object { $_ -like '* kitrun *' }).Count -eq 0) ($script:sshCalls -join ';')
+$kRecs = @(Invoke-LinuxLegK 30 (New-RefusedRecord 'Linux leg refused: x'))
+Check 'j-linux-k-refusal-once' ($kRecs.Count -eq 0)
 
 Remove-StagedTree $work $buildRoot
 if ($script:fails) { "selftest: $($script:fails) failing"; exit 1 }

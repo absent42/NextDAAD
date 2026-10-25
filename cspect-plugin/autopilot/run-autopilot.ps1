@@ -3,6 +3,7 @@
 # script part bounded (one launch each), always kills CSpect, writes report.md.
 #   -Leg A|C|D|E|K|Linux|All   -TimeoutSeconds N (per launch, default 120)
 #   Leg K builds DBGKIT in a scratch kit with lib\debug.ps1 -NoLaunch and runs its launch line.
+#   Leg Linux runs leg A and leg K on the VM.
 #   -ScriptOverride <file[,file]>  replaces the part list of one leg (A, D, E or K),
 #                                  e.g. -Leg A -ScriptOverride cspect-plugin\autopilot\scripts\smoke.txt
 # A leg whose script is missing is skipped ("no script yet"). Optional seed:
@@ -29,7 +30,8 @@ $LegTable = @{
 }
 $ApKitSrc = Join-Path $ApRepo 'authoring-kit'
 $ApFixK = Join-Path $ApRepo 'cspect-plugin\tests\fixtures\dbgkit\DBGKIT'
-$LegKLinuxReason = "not run on Linux - CSpect under mono ignores F_CHDIR, so a kit game (DATA\ layout) stops at E1"
+# The kit must ship this tree's Release plugin build (leg K gate).
+$ApReleaseDll = Join-Path $ApBin 'Release\net48\NextDAADDebug.dll'
 $ApDebugSym = Join-Path $ApRepo 'build\NEXTDAAD.DEBUG.SYM'
 $DefaultGlance = @(
     'drag the debugger window, quit and relaunch: it reopens where it was left',
@@ -280,20 +282,31 @@ function Invoke-LegC([int]$seconds) {
 
 # ---- Leg K: DBGKIT built and launched by the kit's own lib\debug.ps1 ----
 
-# Scratch kit in $kit (marked; $root holds it): the Windows kit file list, DBGKIT with the
+# Scratch kit in $kit (marked; $root holds it): the $Platform kit file list, DBGKIT with the
 # leg K seed, and CONFIG.local.BAT selecting DBGKIT and the CSpect in $csDir. Returns the game folder.
-function New-LegKKit([string]$kit, [string]$root, [string]$csDir) {
+function New-LegKKit([string]$kit, [string]$root, [string]$csDir, [string]$Platform = 'windows') {
     Reset-StageFolder $kit $root
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try { $files = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ApRepo 'scripts\kit-files.ps1') -Platform windows | Where-Object { $_ }) }
+    try { $files = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ApRepo 'scripts\kit-files.ps1') -Platform $Platform | Where-Object { $_ }) }
     finally { $ErrorActionPreference = $eap }
-    if ($LASTEXITCODE -or $files.Count -lt 10) { throw "scripts\kit-files.ps1 -Platform windows failed ($LASTEXITCODE)" }
+    if ($LASTEXITCODE -or $files.Count -lt 10) { throw "scripts\kit-files.ps1 -Platform $Platform failed ($LASTEXITCODE)" }
     Copy-ListedFiles $ApKitSrc $kit $files
     $g = Join-Path $kit 'DBGKIT'
     Copy-Item -LiteralPath $ApFixK $g -Recurse
     Copy-Item -LiteralPath (Join-Path $ApScripts 'legK.seed.txt') (Join-Path $g 'DEBUGGER.local.TXT')
-    [IO.File]::WriteAllLines((Join-Path $kit 'CONFIG.local.BAT'), [string[]]@('SET GAME=DBGKIT', 'SET RUN=0', 'SET EMULATOR=cspect', "SET CSPECTDIR=$csDir"), [Text.Encoding]::ASCII)
+    $nl = if ($Platform -eq 'linux') { "`n" } else { "`r`n" }
+    $cfg = @('SET GAME=DBGKIT', 'SET RUN=0', 'SET EMULATOR=cspect', "SET CSPECTDIR=$csDir")
+    [IO.File]::WriteAllText((Join-Path $kit 'CONFIG.local.BAT'), (($cfg -join $nl) + $nl), [Text.Encoding]::ASCII)
     return $g
+}
+
+# $null when the kit plugin has the bytes of the Release build $rel, else why not.
+function Get-KitPluginRefusal([string]$kitDll, [string]$rel = $ApReleaseDll) {
+    if (-not (Test-Path -LiteralPath $rel)) { return "no Release plugin build at $rel" }
+    if ([Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($kitDll), [IO.File]::ReadAllBytes($rel))) { return $null }
+    $kv = [Reflection.AssemblyName]::GetAssemblyName($kitDll).Version
+    $rv = [Reflection.AssemblyName]::GetAssemblyName($rel).Version
+    return "kit plugin $kv is not this tree's Release build ($rv) - rebuild the kit with build.ps1 -Kit"
 }
 
 # A kit script as its launcher runs it (powershell -File, cwd = kit root).
@@ -403,25 +416,26 @@ function Add-Check($list, [string]$name, [bool]$ok, [string]$detail = '') {
     $list.Add([pscustomobject]@{ Name = $name; Ok = $ok; Detail = $detail })
 }
 
-# Staging checks after lib\debug.ps1 -NoLaunch ($dbg): plugin installed into $csDir, maps and SYM
-# beside the sources, RELEASE\DBGKIT as BUILD.BAT left it ($before), the printed variable and launch line.
-function Test-LegKStaging([string]$kit, [string]$g, [string]$csDir, [string]$before, $dbg) {
+# Staging checks after lib\debug.ps1 -NoLaunch. $f: Rc and Lines (its exit and output), Dll (the
+# plugin path its install line names), Installed (that file has the kit's bytes), Before/After
+# (RELEASE\DBGKIT trees around it), Program (the launch text before the arguments), Debug (the
+# NEXTDAAD_DEBUG it must print), MmcEnd (how the card root must end). Maps and SYM are read in $g.
+function Test-LegKFacts([string]$kit, [string]$g, $f) {
     $c = New-Object Collections.Generic.List[object]
-    $out = $dbg.Lines -join "`n"
-    Add-Check $c 'k-debug-exit' ($dbg.Rc -eq 0) "exit $($dbg.Rc): $out"
-    $dst = Join-Path $csDir 'NextDAADDebug.dll'
-    Add-Check $c 'k-plugin-installed-text' ($dbg.Lines -contains "  debugger plugin -> $dst") $out
-    $same = (Test-Path -LiteralPath $dst) -and [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($dst), [IO.File]::ReadAllBytes((Join-Path $kit 'lib\NextDAADDebug.dll')))
-    Add-Check $c 'k-plugin-installed-bytes' $same $dst
+    $out = $f.Lines -join "`n"
+    Add-Check $c 'k-debug-exit' ($f.Rc -eq 0) "exit $($f.Rc): $out"
+    Add-Check $c 'k-plugin-installed-text' ($f.Lines -contains "  debugger plugin -> $($f.Dll)") $out
+    Add-Check $c 'k-plugin-installed-bytes' ([bool]$f.Installed) $f.Dll
     foreach ($n in 'GAME.DSM', 'GAME2.DSM') { Add-Check $c "k-map-$n" (Test-Path -LiteralPath (Join-Path $g $n)) (Join-Path $g $n) }
     $sym = Join-Path $g 'NEXTDAAD.SYM'
     Add-Check $c 'k-sym-kit-copy' ((Test-Path -LiteralPath $sym) -and [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($sym), [IO.File]::ReadAllBytes((Join-Path $kit 'NEXTDAAD.SYM')))) $sym
-    $after = Get-KitTree (Join-Path $kit 'RELEASE\DBGKIT')
-    Add-Check $c 'k-release-unchanged' ($before -and $after -eq $before) "before: $before / after: $after"
-    Add-Check $c 'k-release-no-maps' (-not ($after -split '\|' | Where-Object { $_ -match '\.DSM$|NEXTDAAD\.SYM$|DEBUGGER' })) $after
-    $l = Get-KitLaunch $dbg.Lines $csDir
-    Add-Check $c 'k-env-printed' ($l.Debug -eq $g) "NEXTDAAD_DEBUG=$($l.Debug)"
+    Add-Check $c 'k-release-unchanged' ($f.Before -and $f.After -eq $f.Before) "before: $($f.Before) / after: $($f.After)"
+    Add-Check $c 'k-release-no-maps' (-not ($f.After -split '\|' | Where-Object { $_ -match '\.DSM$|NEXTDAAD\.SYM$|DEBUGGER' })) $f.After
+    $l = Get-KitLaunch $f.Lines $f.Program
+    Add-Check $c 'k-env-printed' ($l.Debug -eq $f.Debug) "NEXTDAAD_DEBUG=$($l.Debug)"
     Add-Check $c 'k-launch-printed' ($null -ne $l.Args) $out
+    $mmc = @($l.Args | Where-Object { $_ -like '-mmc=*' })
+    Add-Check $c 'k-launch-card-root' ($mmc.Count -eq 1 -and $mmc[0].EndsWith($f.MmcEnd) -and -not $mmc[0].EndsWith($f.MmcEnd + $f.MmcEnd[-1])) "$mmc, want it to end in $($f.MmcEnd)"
     Add-Check $c 'k-no-mono-warning' (-not ($out -like '*CSpect under mono*')) $out
     if ((Test-Path -LiteralPath (Join-Path $g 'GAME.DSM')) -and (Test-Path -LiteralPath (Join-Path $g 'GAME2.DSM'))) {
         $t = Test-DbgkitMaps $g
@@ -430,15 +444,23 @@ function Test-LegKStaging([string]$kit, [string]$g, [string]$csDir, [string]$bef
     return [pscustomobject]@{ Checks = $c; Launch = $l }
 }
 
+# Windows staging checks: plugin installed into $csDir, RELEASE\DBGKIT as BUILD.BAT left it ($before).
+function Test-LegKStaging([string]$kit, [string]$g, [string]$csDir, [string]$before, $dbg) {
+    $dst = Join-Path $csDir 'NextDAADDebug.dll'
+    $same = (Test-Path -LiteralPath $dst) -and [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($dst), [IO.File]::ReadAllBytes((Join-Path $kit 'lib\NextDAADDebug.dll')))
+    return Test-LegKFacts $kit $g ([pscustomobject]@{ Rc = $dbg.Rc; Lines = $dbg.Lines; Dll = $dst; Installed = $same; Before = $before
+        After = (Get-KitTree (Join-Path $kit 'RELEASE\DBGKIT')); Program = (Join-Path $csDir 'CSpect.exe'); Debug = $g; MmcEnd = '\' })
+}
+
 # NEXTDAAD_DEBUG and the launch arguments from debug.ps1 -NoLaunch; Args is $null unless the
-# printed program is $csDir\CSpect.exe. The line joins with spaces and a game name may hold one:
+# line starts with "launch: $program ". The line joins with spaces and a game name may hold one:
 # flags, then -mmc=<card root ending in a separator>, then the NEX.
-function Get-KitLaunch([string[]]$lines, [string]$csDir) {
+function Get-KitLaunch([string[]]$lines, [string]$program) {
     $dbgv = $null; $argv = $null
-    $exe = Join-Path $csDir 'CSpect.exe'
+    $pre = "launch: $program "
     foreach ($x in $lines) {
         if ($x -match '^NEXTDAAD_DEBUG=(.+)$') { $dbgv = $Matches[1] }
-        elseif ($x.StartsWith("launch: $exe ") -and $x.Substring("launch: $exe ".Length) -match '^((?:-(?!mmc=)\S+ )*)(-mmc=.*[\\/]) (\S.*)$') {
+        elseif ($x.StartsWith($pre) -and $x.Substring($pre.Length) -match '^((?:-(?!mmc=)\S+ )*)(-mmc=.*[\\/]) (\S.*)$') {
             $argv = @(@($Matches[1] -split ' ' | Where-Object { $_ }) + $Matches[2] + $Matches[3])
         }
     }
@@ -481,12 +503,11 @@ function Invoke-LegK([string[]]$scripts, [int]$seconds) {
     $recs = @(New-CheckRecord 'K' 'kit staging' $c $dir)
     $recs[0] | Add-Member -NotePropertyName Files -NotePropertyValue 'build.txt, debug-nolaunch.txt, kit\'
     if ($recs[0].Status -ne 'PASS') { Write-Host "leg K staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')"; return $recs }
-    # The swapped-in build must be the version the kit ships, or the walk tests other code.
-    $kv = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $kit 'lib\NextDAADDebug.dll')).Version
-    $av = [Reflection.AssemblyName]::GetAssemblyName("$ApBin\Autopilot\net48\NextDAADDebug.dll").Version
-    if ($kv -ne $av) {
-        $recs = @(New-CheckRecord 'K' 'kit staging' (@($c) + @([pscustomobject]@{ Name = 'k-autopilot-version'; Ok = $false; Detail = "kit $kv, autopilot build $av - rebuild the kit with build.ps1 -Kit" })) $dir)
-        Write-Host "leg K staging failed: kit plugin $kv, autopilot build $av"; return $recs
+    # The swapped-in Autopilot build comes from this tree, so the kit must ship this tree's Release build.
+    $why = Get-KitPluginRefusal (Join-Path $kit 'lib\NextDAADDebug.dll')
+    if ($why) {
+        $recs = @(New-CheckRecord 'K' 'kit staging' (@($c) + @([pscustomobject]@{ Name = 'k-kit-plugin-current'; Ok = $false; Detail = $why })) $dir)
+        Write-Host "leg K staging failed: $why"; return $recs
     }
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $cs -Force
     Assert-AutopilotDll "$cs\NextDAADDebug.dll"
@@ -495,7 +516,7 @@ function Invoke-LegK([string[]]$scripts, [int]$seconds) {
     return $recs + @(Invoke-LegParts 'K' $dir $g $kit $csArgs $scripts $seconds)
 }
 
-# Linux leg: leg A on the VM over ssh (key auth). Settings {host,user,remoteDir} are read
+# Linux leg: legs A and K on the VM over ssh (key auth). Settings {host,user,remoteDir} are read
 # from this file only and never written anywhere committed.
 $ApSettings = Join-Path $env:USERPROFILE '.nextdaad\autopilot.json'
 $ApHashRefusal = "the VM's CSpect differs from Windows - update it first"
@@ -538,13 +559,13 @@ function Get-LinuxPreflight([string]$path, [string]$localExe) {
     return [pscustomobject]@{ Settings = $s; Remote = $remote }
 }
 
-function New-RefusedRecord([string]$msg) {
-    return [pscustomobject]@{ Leg = 'Linux'; Part = '-'; Status = 'FAIL'; Steps = 0; Pass = 0; Fail = 0; Skipped = 0; Note = $msg; Fails = @(); Facts = @(); Dir = '' }
+function New-RefusedRecord([string]$msg, [string]$leg = 'Linux') {
+    return [pscustomobject]@{ Leg = $leg; Part = '-'; Status = 'FAIL'; Steps = 0; Pass = 0; Fail = 0; Skipped = 0; Note = $msg; Fails = @(); Facts = @(); Dir = '' }
 }
 
 # Records from the pulled-back parts\<i>-<name>\ (status.txt: exit=<rc>, 124 = timeout bound);
 # step counts come from the Linux script variants in $scriptsDir.
-function Get-LinuxRecords([string]$partsDir, [string[]]$names, [string]$scriptsDir) {
+function Get-LinuxRecords([string]$partsDir, [string[]]$names, [string]$scriptsDir, [string]$leg = 'Linux') {
     $recs = @(); $i = 0
     foreach ($n in $names) {
         $i++
@@ -553,7 +574,7 @@ function Get-LinuxRecords([string]$partsDir, [string[]]$names, [string]$scriptsD
         $timedOut = $st -and $st -match 'exit=(124|137)\b'
         $sc = Join-Path $scriptsDir $n
         $want = if (Test-Path -LiteralPath $sc) { Get-ScriptStepCount $sc } else { -1 }
-        $recs += New-PartRecord 'Linux' $n (Join-Path $pd 'autopilot-result.txt') $pd ([bool]$timedOut) $want
+        $recs += New-PartRecord $leg $n (Join-Path $pd 'autopilot-result.txt') $pd ([bool]$timedOut) $want
     }
     return $recs
 }
@@ -591,16 +612,100 @@ function Get-LinuxPreflightOrRefusal {
 # Upload set in $st: sd\ (leg A card), scripts\ (Linux variants), the DLL, linux-leg.sh.
 function New-LinuxStage([string]$st, [string[]]$scripts) {
     New-Item -ItemType Directory -Force "$st\sd", "$st\scripts" | Out-Null
+    # DATA\GAME.DDB only, as a kit builds it: linux-leg.sh launches with the doubled card-root separator.
     Copy-LegGame 'A' "$st\sd" "$ApRepo\build\nextdaad.nex" "$ApRepo\build\NEXTDAAD.SYM" $ApDebugSym
-    # CSpect 4.0 under mono: with DATA\GAME.DDB only the Release NEX stops at E1 (measured 2026-10-25);
-    # its boot falls back to the launch folder, so a root copy is added.
-    Copy-Item "$st\sd\DATA\GAME.DDB" "$st\sd\GAME.DDB"
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $st
     Assert-AutopilotDll "$st\NextDAADDebug.dll"
     foreach ($p in $scripts) { Convert-LinuxScript $p (Join-Path "$st\scripts" (Split-Path $p -Leaf)) }
-    # LF only: a CRLF checkout of the script would not run under bash.
+    Write-LinuxLegScript $st
+}
+
+# LF only: a CRLF checkout of the script would not run under bash.
+function Write-LinuxLegScript([string]$st) {
     $sh = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'linux-leg.sh')) -replace "`r", ''
     [IO.File]::WriteAllText("$st\linux-leg.sh", $sh, (New-Object Text.UTF8Encoding($false)))
+}
+
+# Leg K upload set in $st: kit\ (the Linux kit file list, DBGKIT, CONFIG.local.BAT naming the CSpect
+# copy in $run), scripts\ (Linux variants), the Autopilot DLL, linux-leg.sh.
+function New-LinuxKStage([string]$st, [string]$run, [string[]]$scripts) {
+    New-Item -ItemType Directory -Force "$st\scripts" | Out-Null
+    $null = New-LegKKit "$st\kit" $st "$run/cspect" 'linux'
+    Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $st
+    Assert-AutopilotDll "$st\NextDAADDebug.dll"
+    foreach ($p in $scripts) { Convert-LinuxScript $p (Join-Path "$st\scripts" (Split-Path $p -Leaf)) }
+    Write-LinuxLegScript $st
+}
+
+# Facts for Test-LegKFacts from linux-leg.sh kit's out\ folder; $kit is the staged kit, $run the VM run folder.
+function Read-LinuxKFacts([string]$out, [string]$kit, [string]$run) {
+    function one([string]$n) { $t = Read-Shared (Join-Path $out $n); if ($null -eq $t) { return '' } else { return $t.Trim() } }
+    $rc = one 'debug.rc'
+    $txt = Read-Shared (Join-Path $out 'debug-nolaunch.txt')
+    $want = (Get-FileHash -LiteralPath (Join-Path $kit 'lib\NextDAADDebug.dll') -Algorithm SHA256).Hash
+    return [pscustomobject]@{
+        Rc = $(if ($rc -match '^\d+$') { [int]$rc } else { -1 }); Lines = @(if ($txt) { $txt -split "`r?`n" | Where-Object { $_ -ne '' } })
+        Dll = "$run/cspect/NextDAADDebug.dll"; Installed = ((one 'plugin-sha.txt') -eq $want); Before = (one 'tree-before.txt'); After = (one 'tree-after.txt')
+        Program = "mono $run/cspect/CSpect.exe"; Debug = "$run/kit/DBGKIT"; MmcEnd = '//'
+        BuildRc = (one 'build.rc'); PluginBefore = (one 'plugin-before.txt') }
+}
+
+# Leg K on the VM: stage, build and debug.ps1 -NoLaunch there, check the pulled-back facts here,
+# then launch what debug.ps1 printed (-sound added) with the Autopilot build swapped in.
+function Invoke-LinuxLegK([int]$seconds, $pf) {
+    if ($pf.PSObject.Properties['Status']) { return @() }
+    $sc = Get-LegScripts 'K' @()
+    if ($sc.Missing.Count) { return @(New-RefusedRecord "no script yet: $($sc.Missing -join ', ')" 'Linux K') }
+    $dir = Join-Path $ApRoot 'LinuxK'
+    $st = Join-Path $dir 'stage'
+    $s = $pf.Settings
+    $tgt = "$($s.user)@$($s.host)"
+    $run = "$($pf.Remote)/legK"
+    $sh = "bash '$($pf.Remote)/linux-leg.sh'"
+    try {
+        Reset-StageFolder $dir $ApRoot
+        New-LinuxKStage $st $run $sc.Parts
+    }
+    catch { Write-Host "Linux leg K setup failed: $($_.Exception.Message)"; return @(New-RefusedRecord "Linux leg K setup failed: $($_.Exception.Message)" 'Linux K') }
+    $why = Get-KitPluginRefusal "$st\kit\lib\NextDAADDebug.dll"
+    if ($why) { Write-Host "Linux leg K staging failed: $why"; return @(New-CheckRecord 'Linux K' 'kit staging' @([pscustomobject]@{ Name = 'k-kit-plugin-current'; Ok = $false; Detail = $why }) $dir) }
+    $c = New-Object Collections.Generic.List[object]
+    $recs = @(); $setupError = $null
+    Push-Location $st
+    try {
+        Invoke-Ssh $s "mkdir -p '$($pf.Remote)'" | Out-Null
+        Invoke-Scp $s @('linux-leg.sh') "${tgt}:$($pf.Remote)/"
+        Invoke-Ssh $s "$sh reset '$run'" | Out-Host
+        Invoke-Scp $s @('kit', 'scripts', 'NextDAADDebug.dll') "${tgt}:$run/"
+        Invoke-Ssh $s "$sh kit '$run'" | Out-Host
+        Invoke-Scp $s @("${tgt}:$run/out") $dir
+        $f = Read-LinuxKFacts "$dir\out" "$st\kit" $run
+        Add-Check $c 'k-cspect-has-no-plugin' ($f.PluginBefore -eq 'absent') "$run/cspect: $($f.PluginBefore)"
+        Add-Check $c 'k-build-exit' ($f.BuildRc -eq '0') ((Read-Shared "$dir\out\build.txt") + '')
+        $t = Test-LegKFacts "$st\kit" "$dir\out\DBGKIT" $f
+        foreach ($k in $t.Checks) { $c.Add($k) }
+        $recs = @(New-CheckRecord 'Linux K' 'kit staging' $c $dir)
+        $recs[0] | Add-Member -NotePropertyName Files -NotePropertyValue 'out\ (build.txt, debug-nolaunch.txt, DBGKIT\), stage\kit\'
+        if ($recs[0].Status -eq 'PASS') {
+            $a = @($t.Launch.Args)
+            $csArgs = @($a[0..($a.Count - 2)]) + '-sound' + $a[-1]
+            $bad = @($csArgs | Where-Object { $_ -notmatch '^[A-Za-z0-9._/=+-]+$' })
+            if ($bad.Count) { throw "launch argument not passable over ssh: $($bad -join ' ')" }
+            $q = ($csArgs | ForEach-Object { "'$_'" }) -join ' '
+            $name = Split-Path $sc.Parts[0] -Leaf
+            try { Invoke-Ssh $s "$sh kitrun '$run' $seconds $name $q" | Out-Host } catch { Write-Host "Linux leg K run: $($_.Exception.Message)" }
+            try { Invoke-Scp $s @("${tgt}:$run/parts") $dir } catch { Write-Host "Linux leg K results: $($_.Exception.Message)" }
+            $recs += Get-LinuxRecords (Join-Path $dir 'parts') @($name) "$st\scripts" 'Linux K'
+        }
+        else { Write-Host "Linux leg K staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')" }
+    }
+    catch { $setupError = $_.Exception.Message }
+    finally {
+        try { Invoke-Ssh $s "$sh kill '$run'" | Out-Host } catch { Write-Host "Linux leg K kill: $($_.Exception.Message)" }
+        Pop-Location
+    }
+    if ($setupError) { Write-Host "Linux leg K setup failed: $setupError"; return @($recs) + @(New-RefusedRecord "Linux leg K setup failed: $setupError" 'Linux K') }
+    return $recs
 }
 
 # Any setup failure becomes one refused FAIL row so the other legs still reach report.md.
@@ -657,7 +762,6 @@ $legs = switch ($Leg) {
 if ($ScriptOverride.Count -and ($legs.Count -ne 1 -or $legs -notin 'A', 'D', 'E', 'K')) { throw '-ScriptOverride needs exactly one of -Leg A, D, E or K' }
 
 $parts = @(); $skips = @(); $legC = @(); $used = @()
-if ($legs -contains 'K' -or $legs -contains 'Linux') { $skips += [pscustomobject]@{ Leg = 'K (Linux)'; Reason = $LegKLinuxReason } }
 $linuxPf = if ($legs -contains 'Linux') { Get-LinuxPreflightOrRefusal } else { $null }
 $linuxRuns = $linuxPf -and -not $linuxPf.PSObject.Properties['Status']
 # A refused Linux-only run has nothing to build; leg K needs only the plugin (the kit has its own NEX).
@@ -682,6 +786,9 @@ foreach ($l in $legs) {
         $sc = Get-LegScripts 'A' @()
         if (-not $sc.Missing.Count) { $used += $sc.Parts }
         $parts += Invoke-LinuxLeg $TimeoutSeconds $linuxPf
+        $sk = Get-LegScripts 'K' @()
+        if (-not $sk.Missing.Count) { $used += $sk.Parts }
+        $parts += Invoke-LinuxLegK $TimeoutSeconds $linuxPf
         continue
     }
     if ($l -eq 'C') { $legC += Invoke-LegC $TimeoutSeconds; continue }

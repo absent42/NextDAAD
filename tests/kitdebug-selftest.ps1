@@ -102,7 +102,8 @@ function Get-Tree([string]$Dir) {
 $useG1 = @('SET GAME=G1', "SET CSPECTDIR=$cs40")
 $relG1 = Join-KitPath @($kit, 'RELEASE', 'G1')
 $dst = Join-Path $cs40 'NextDAADDebug.dll'
-$monoWarn = "WARNING: CSpect under mono does not change into the game's DATA folder yet (reported to its author) - the game will stop at E1 until a fixed CSpect is released"
+# Linux card roots end in two separators: CSpect's esxDOS plugin trims one and needs one left.
+function Get-MmcArg([string]$Card) { if ($OnWindows) { return "-mmc=$Card" } else { return "-mmc=$Card$sep" } }
 function Get-DebugWarning([string]$File) { return "WARNING: $File has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)" }
 
 # ---- refusals before any build ----
@@ -149,8 +150,11 @@ Assert-Eq (Test-SameBytes $dst $kitDll) $true 'dll-installed bytes'
 Assert-Has $r "NEXTDAAD_DEBUG=$g1" 'env-and-launch-line: NEXTDAAD_DEBUG is SrcRoot'
 $mmc = "RELEASE${sep}G1${sep}"
 $prog = if ($OnWindows) { Join-Path $cs40 $cspName } else { "sh $(Join-Path $cs40 $cspName)" }
-Assert-Has $r "launch: $prog -w3 -zxnext -esc -mmc=$mmc ${mmc}G1.NEX" 'env-and-launch-line: run.ps1 launch line'
-if ($OnWindows) { Assert-Lacks $r '*CSpect under mono*' 'no mono warning on Windows' } else { Assert-Has $r $monoWarn 'mono warning on Linux' }
+Assert-Has $r "launch: $prog -w3 -zxnext -esc $(Get-MmcArg $mmc) ${mmc}G1.NEX" 'env-and-launch-line: run.ps1 launch line'
+Assert-Lacks $r '*CSpect under mono*' 'no mono E1 warning'
+$script:checks++
+$e1 = @(Get-ChildItem -LiteralPath (Join-Path $kitSrc 'lib') -File | Where-Object { [IO.File]::ReadAllText($_.FullName) -match 'stop at E1|does not change into the game' })
+if ($e1.Count) { throw "kitdebug-selftest: E1 warning text still in lib: $($e1.Name -join ', ')" }
 
 # ---- build-leaves-maps ----
 $dsm = Join-Path $g1 'GAME.DSM'
@@ -316,7 +320,7 @@ Write-TestPng (Join-Path $i1 'p.png')
 $r = Invoke-Debug @('SET GAME=I1', "SET CSPECTDIR=$cs40", "SET GFXDIR=$(Join-KitPath @($kitSrc, 'tools', 'gfx2next'))")
 Assert-Eq $r.Rc 0 'intro-game-launch-line exit'
 $mmc = "RELEASE${sep}I1${sep}"
-Assert-Has $r "launch: $prog -w3 -zxnext -esc -mmc=$mmc ${mmc}I1.NEX" 'intro-game-launch-line launches the intro launcher'
+Assert-Has $r "launch: $prog -w3 -zxnext -esc $(Get-MmcArg $mmc) ${mmc}I1.NEX" 'intro-game-launch-line launches the intro launcher'
 Assert-Eq (Test-Path -LiteralPath (Join-KitPath @($kit, 'RELEASE', 'I1', 'DATA', 'nextdaad.nex'))) $true 'intro game interpreter in DATA'
 Assert-Eq (Test-Path -LiteralPath (Join-Path $i1 'GAME.DSM')) $true 'intro game map'
 
@@ -342,7 +346,7 @@ $got = @(Get-Content -LiteralPath $log -Encoding ASCII | ForEach-Object { $_.Tri
 Assert-Eq ($got[0] -replace '[ :]', '') 'TRACEunset' 'child has NEXTDAAD_DEBUG_TRACE removed'
 Assert-Eq $got[1] "DEBUG=$g1" 'child has NEXTDAAD_DEBUG'
 $mmc = "RELEASE${sep}G1${sep}"
-Assert-Eq $got[2] "ARGS=-w3 -zxnext -esc -mmc=$mmc ${mmc}G1.NEX" 'child arguments'
+Assert-Eq $got[2] "ARGS=-w3 -zxnext -esc $(Get-MmcArg $mmc) ${mmc}G1.NEX" 'child arguments'
 Assert-Eq $env:NEXTDAAD_DEBUG_TRACE '1' 'NEXTDAAD_DEBUG_TRACE restored'
 Assert-Eq (Test-Path Env:NEXTDAAD_DEBUG) $false 'NEXTDAAD_DEBUG restored (unset)'
 Remove-Item Env:NEXTDAAD_DEBUG_TRACE, Env:FAKE_LAUNCH_LOG

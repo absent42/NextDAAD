@@ -55,9 +55,6 @@ if ([IO.Path]::GetFullPath($symOut) -ne [IO.Path]::GetFullPath($sym)) {
 # ---- plugin: install when missing, older, or the same version with other bytes ----
 if (-not (Install-KitPlugin -Source $dll -Dir $cspAbs -Label $cspDir)) { exit 1 }
 
-if (-not $OnWindows) {
-    Write-Host "WARNING: CSpect under mono does not change into the game's DATA folder yet (reported to its author) - the game will stop at E1 until a fixed CSpect is released"
-}
 # The plugin's own test switches stay out of an author's session.
 $envs = @{ NEXTDAAD_DEBUG = $g.SrcRoot }
 foreach ($k in 'NEXTDAAD_DEBUG_TRACE', 'NEXTDAAD_DEBUG_NOWINDOW', 'NEXTDAAD_DEBUG_SETTINGS', 'NEXTDAAD_DEBUG_AUTOPILOT') { $envs[$k] = $null }

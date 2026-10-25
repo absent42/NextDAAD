@@ -63,6 +63,9 @@ function Start-KitCSpect {
     $mmc = "RELEASE$sep$($Game.Name)$sep"
     $launch = "$mmc$nexName"
     $mmcArg = "-mmc=$mmc"
+    # CSpect's esxDOS plugin trims the card root's trailing separator and, off Windows, loses
+    # the F_CHDIR into DATA (E1) unless one is left: end it in two.
+    if (-not $OnWindows) { $mmcArg += $sep }
     # Legacy argument passing (5.1, 7.0-7.2) quotes a spaced argument without
     # escaping its trailing \, which would swallow the closing quote: double it.
     $pass = "$(Get-Variable PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue)"
