@@ -169,6 +169,24 @@ namespace NextDAADDebug.Tests
             Assert.False(OnScreen("DBGFIX.DSF"));
         }
 
+        [Fact]
+        public void LongSourcePathKeepsItsFileName()
+        {
+            // 52 columns right of the tabs: a longer path loses its head, not the file name.
+            string fit = "inc/" + new string('d', 37) + "/DBGFIX.DSF", wide = "x" + fit;
+            Assert.Equal(52, fit.Length);
+            Assert.Equal(fit, DebuggerView.FitPath(fit, 52));
+            Assert.Equal("..." + wide.Substring(wide.Length - 49), DebuggerView.FitPath(wide, 52));
+            var s = Snap();
+            s.Map = SourceMap.Parse(File.ReadAllText(Repo.Fixture("DBGFIX.DSM")).Replace("\tDBGFIX.DSF", "\t" + wide));
+            Click(s, " Source ");
+            int x, y;
+            Assert.True(ui.S.Find("..." + wide.Substring(wide.Length - 49), out x, out y));
+            Assert.Equal(48, x);
+            Assert.Equal(2, y);
+            Assert.Equal((byte)'F', ui.S[99, 2].Glyph);
+        }
+
         void ClickMargin(Snapshot s, int line)
         {
             ui.Begin(new UiInput());

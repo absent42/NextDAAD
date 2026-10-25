@@ -220,8 +220,12 @@ namespace NextDAADDebug
             mapState = maps.Maps.Count == 0 ? maps.NothingLoadedText : active != null ? null : maps.NoMatchText;
             foreach (var b in Controller.Breakpoints) Resolve(b);
             var bps = Controller.Breakpoints;
+            // A converted legacy row can repeat a path row: the first row stays, enabled if either was.
             for (int i = bps.Count - 1; i > 0; i--)
-                if (bps.FindIndex(x => x.SameAs(bps[i])) < i) bps.RemoveAt(i);      // a converted legacy row can repeat a path row
+            {
+                int j = bps.FindIndex(x => x.SameAs(bps[i]));
+                if (j < i) { bps[j].Enabled |= bps[i].Enabled; bps.RemoveAt(i); }
+            }
         }
 
         string UncheckedState() => maps.Maps.Count == 0 ? maps.NothingLoadedText : MapUncheckedText;

@@ -384,6 +384,21 @@ namespace NextDAADDebug.Tests
             Assert.Single(r.Snap().Breakpoints);
         }
 
+        [Theory]
+        [InlineData(false, true, true)]
+        [InlineData(true, false, true)]
+        [InlineData(false, false, false)]
+        public void MergedLegacyRowIsEnabledIfEitherRowWas(bool pathOn, bool legacyOn, bool merged)
+        {
+            var r = new Rig(PartMaps(), true, false,
+                new Breakpoint { Kind = BreakKind.SourceLine, Path = "DBGFIX.DSF", B = 101, Enabled = pathOn },
+                new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 101, Enabled = legacyOn });
+            r.Exec(0, 0, 0);
+            var bp = Assert.Single(r.Snap().Breakpoints);
+            Assert.Equal("DBGFIX.DSF", bp.Path);
+            Assert.Equal(merged, bp.Enabled);
+        }
+
         [Fact]
         public void LegacyIndexOutsideTheMapStaysUnresolved()
         {

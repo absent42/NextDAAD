@@ -221,6 +221,9 @@ namespace NextDAADDebug
         // The file on show, right of the top tabs.
         static readonly int PathX = RightX + TopTabs.Sum(t => t.Length + 3);
 
+        // Too long for w: the head is cut, so the file name stays.
+        internal static string FitPath(string p, int w) => p.Length <= w ? p : "..." + p.Substring(p.Length - (w - 3));
+
         void SourcePane(Ui ui, Snapshot s, Action<Command> post, bool follow)
         {
             int y = TopY + 1, w = Cols - RightX, h = TopH - 1;
@@ -230,7 +233,7 @@ namespace NextDAADDebug
             int file = hasCur ? cur.File : 0;
             string path;
             if (!s.Map.Files.TryGetValue(file, out path)) { ui.S.Text(RightX, y, "file " + file + " not in the source map", Theme.Dim, Theme.Bg, w); return; }
-            ui.S.Text(PathX, TopY, path, Theme.Dim, Theme.Bg, Cols - PathX);
+            ui.S.Text(PathX, TopY, FitPath(path, Cols - PathX), Theme.Dim, Theme.Bg, Cols - PathX);
             string[] lines = sources.Lines(path);
             if (follow && hasCur) srcTop = Math.Max(0, cur.Line - 1 - h / 2);
             int hit = ui.List(ref srcTop, RightX, y, w, h, lines.Length);
