@@ -1,5 +1,6 @@
 # Selftest for run-autopilot.ps1: staging refusal, DLL marker check, report
-# generation and the leg C checker. No build, no CSpect launch.
+# generation, the leg C checker and leg K staging (DBGKIT compiled in a scratch
+# kit by lib\debug.ps1 -NoLaunch against a stand-in CSpect). No CSpect launch.
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 . "$PSScriptRoot\run-autopilot.ps1"
@@ -236,6 +237,76 @@ Check 'f-A-dsm-same' ([IO.File]::ReadAllText("$work\gameA\GAME.DSM") -eq $fxDsm)
 Check 'f-A-sym-release' ((Get-Content "$work\gameA\NEXTDAAD.SYM")[1] -match 'Release$')
 Check 'f-A-seed' (Test-Path -LiteralPath "$work\gameA\DEBUGGER.local.TXT")
 Check 'f-A-ddb-in-data' (Test-Path -LiteralPath "$work\gameA\DATA\GAME.DDB")
+
+# (i) leg K: scratch kit only in a folder it marked, DBGKIT built by lib\debug.ps1 -NoLaunch
+$kr = Join-Path $work 'K'
+Reset-StageFolder $kr $work
+$kcs = Join-Path $kr 'cspect'
+New-Item -ItemType Directory -Force $kcs | Out-Null
+Add-Type -TypeDefinition '[assembly: System.Reflection.AssemblyVersion("4.0.0.0")] public class KStandIn40 {}' -OutputAssembly "$kcs\stand-in.dll" -OutputType Library
+Move-Item -LiteralPath "$kcs\stand-in.dll" "$kcs\CSpect.exe"
+$kf = Join-Path $kr 'foreign'
+New-Item -ItemType Directory -Force $kf | Out-Null
+Set-Content -LiteralPath "$kf\keep.txt" -Value 'x'
+$m = Throws { New-LegKKit $kf $kr $kcs }
+Check 'i-kit-unmarked-refused' ($m -like 'refusing:*') $m
+Check 'i-kit-unmarked-untouched' (@(Get-ChildItem -LiteralPath $kf -Force).Count -eq 1 -and (Test-Path -LiteralPath "$kf\keep.txt"))
+$m = Throws { New-LegKKit $ApKitSrc $ApRepo $kcs }
+Check 'i-kit-repo-tree-refused' ($m -like 'refusing:*') $m
+$m = Throws { New-LegKKit (Join-Path $repo 'build\autopilot-elsewhere\kit') $kr $kcs }
+Check 'i-kit-outside-root-refused' ($m -like 'refusing:*' -and -not (Test-Path -LiteralPath (Join-Path $repo 'build\autopilot-elsewhere'))) $m
+Set-Content -LiteralPath "$kr\src.txt" -Value 'x'
+$m = Throws { Copy-ListedFiles $kr (Join-Path $kr 'cl') @('src.txt', '..\escape.txt') }
+Check 'i-copy-escape-refused' ($m -like 'refusing:*' -and -not (Test-Path -LiteralPath "$kr\escape.txt")) $m
+function Get-Snapshot([string]$d) {
+    if (-not (Test-Path -LiteralPath $d)) { return '' }
+    return (@(Get-ChildItem -LiteralPath $d -Recurse -File -Force | ForEach-Object { "$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)" }) -join "`n")
+}
+$kitSnap = Get-Snapshot $ApKitSrc; $csSnap = Get-Snapshot $ApCs40
+$kk = Join-Path $kr 'kit'
+$kg = New-LegKKit $kk $kr $kcs
+Check 'i-kit-marked' (Test-Path -LiteralPath (Join-Path $kk $StageMarker))
+Check 'i-kit-no-plugin-yet' (-not (Test-Path -LiteralPath "$kcs\NextDAADDebug.dll"))
+$kb = Invoke-KitScript $kk 'build.ps1'
+Check 'i-kit-build' ($kb.Rc -eq 0) ($kb.Lines -join '/')
+$krel = Get-KitTree (Join-Path $kk 'RELEASE\DBGKIT')
+$kd = Invoke-KitScript $kk 'debug.ps1' @('-NoLaunch')
+$kst = Test-LegKStaging $kk $kg $kcs $krel $kd
+foreach ($k in $kst.Checks) { Check "i-$($k.Name)" $k.Ok $k.Detail }
+Check 'i-launch-args' (($kst.Launch.Args -join ' ') -ceq '-w3 -zxnext -esc -mmc=RELEASE\DBGKIT\ RELEASE\DBGKIT\DBGKIT.NEX') ($kst.Launch.Args -join ' ')
+# Two owners at one offset, read straight from GAME.DSM: entry records give the two header lines.
+$dsm = [IO.File]::ReadAllLines("$kg\GAME.DSM")
+$src = [IO.File]::ReadAllLines("$kg\DBGKIT.DSF")
+$hdr = @{}; for ($i = 0; $i -lt $src.Count; $i++) { if ($src[$i] -match '^> (GO|SEE) ([AB])\b') { $hdr["$($Matches[1]) $($Matches[2])"] = $i + 1 } }
+$ent = @{}; foreach ($l in $dsm) { if ($l -match "^entry`t([0-9A-F]{4})`t0`t(\d+)$") { $ent[$Matches[1]] = [int]$Matches[2] } }
+$own = @{}; foreach ($l in $dsm) { if ($l -match "^cond`t([0-9A-F]{4})`t([0-9A-F]{4})`t") { $own[$Matches[1]] = @($own[$Matches[1]]) + $Matches[2] } }
+$pairs = @(foreach ($o in $own.Keys) { $u = @($own[$o] | Where-Object { $_ } | Select-Object -Unique); if ($u.Count -ge 2) { (@($u | ForEach-Object { $ent[$_] }) | Sort-Object) -join ',' } })
+Check 'i-dsm-synonym-two-owners' ($pairs -contains "$($hdr['SEE A']),$($hdr['SEE B'])") "SEE $($hdr['SEE A']),$($hdr['SEE B']) in: $($pairs -join ' ')"
+Check 'i-dsm-go-two-owners' ($pairs -contains "$($hdr['GO A']),$($hdr['GO B'])") "GO $($hdr['GO A']),$($hdr['GO B']) in: $($pairs -join ' ')"
+$t = Test-DbgkitMaps $kg
+Check 'i-dsm-fixture' ($t.Reasons.Count -eq 0) ($t.Reasons -join '; ')
+# The checker fails a map with one INDIR record dropped, or with GO B's shared records dropped.
+$kn = Join-Path $kr 'neg'
+Copy-Item -LiteralPath $kg $kn -Recurse
+$ir = @($dsm | Where-Object { $_ -match "^cond`t[0-9A-F]{4}`t[0-9A-F]{4}`t0`t119`t" })
+[IO.File]::WriteAllLines("$kn\GAME.DSM", [string[]]@($dsm | Where-Object { $_ -ne $ir[-1] }))
+$t = Test-DbgkitMaps $kn
+Check 'i-dsm-indir-dropped-fails' (($t.Reasons -join ';') -like '*INDIR line 119*') ($t.Reasons -join '; ')
+$gb = @($ent.Keys | Where-Object { $ent[$_] -eq $hdr['GO B'] })[0]
+[IO.File]::WriteAllLines("$kn\GAME.DSM", [string[]]@($dsm | Where-Object { $_ -notmatch "^cond`t[0-9A-F]{4}`t$gb`t" }))
+$t = Test-DbgkitMaps $kn
+Check 'i-dsm-go-share-dropped-fails' (($t.Reasons -join ';') -like '*GO A / GO B*') ($t.Reasons -join '; ')
+Check 'i-no-write-authoring-kit' ((Get-Snapshot $ApKitSrc) -ceq $kitSnap)
+Check 'i-no-write-cspect-source' ((Get-Snapshot $ApCs40) -ceq $csSnap)
+# Every report carrying leg K or Linux says why leg K is not run on Linux.
+$l2 = (New-AutopilotReport @() @([pscustomobject]@{ Leg = 'K (Linux)'; Reason = $LegKLinuxReason }) @() @() 'T') -split "`r?`n"
+Check 'i-linux-not-run-row' ($l2 -contains "| K (Linux) | - | SKIPPED | 0 | 0 | 0 | 0 | $LegKLinuxReason |") ($l2 -join '/')
+Check 'i-linux-reason-text' ($LegKLinuxReason -like '*F_CHDIR*')
+$kr2 = (New-CheckRecord 'K' 'kit staging' @([pscustomobject]@{ Name = 'k-a'; Ok = $true; Detail = '' }, [pscustomobject]@{ Name = 'k-b'; Ok = $false; Detail = 'why' }) $kr)
+Check 'i-check-record-fail' ($kr2.Status -eq 'FAIL' -and $kr2.Steps -eq 2 -and $kr2.Fail -eq 1 -and $kr2.Fails[0].Raw -eq 'k-b' -and $kr2.Fails[0].Step -eq 2) ($kr2 | Out-String)
+$kr2 | Add-Member -NotePropertyName Files -NotePropertyValue 'build.txt, debug-nolaunch.txt, kit\'
+$l2 = (New-AutopilotReport @($kr2) @() @() @() 'T') -split "`r?`n"
+Check 'i-check-record-rows' ($l2 -contains '| K | kit staging | FAIL | 2 | 1 | 1 | 0 | DONE failures=1 |' -and $l2 -contains '- K kit staging STEP 2 line -: `k-b` - expected true - actual why' -and $l2 -contains "- K kit staging: $kr (build.txt, debug-nolaunch.txt, kit\)") ($l2 -join '/')
 
 # (g) Linux leg: settings refusals, hash gate, canned results, script variant. ssh is stubbed.
 $script:sshCalls = @()

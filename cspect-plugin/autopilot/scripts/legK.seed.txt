@@ -1,0 +1,8 @@
+NEXTDAAD-DEBUGGER	1
+# leg K: line breakpoints by path, relative to the game folder (GAME.DSM)
+bp	SourceLine	1	DBGKIT.DSF	112	-1	Eq
+bp	SourceLine	1	DBGKIT.DSF	115	-1	Eq
+bp	SourceLine	1	DBGKIT.DSF	119	-1	Eq
+bp	SourceLine	1	inc/SHARED.DSF	2	-1	Eq
+bp	SourceLine	1	PART2/PART2.DSF	93	-1	Eq
+window	-1	-1
