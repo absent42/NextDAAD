@@ -37,6 +37,11 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   longer stops at <code>NextDAAD: DDB missing - E1</code> under CSpect, from
   <code>RUN.BAT</code> or <code>DEBUG.BAT</code>. The interpreter now looks for <code>GAME.DDB</code> in
   the folder it starts in before it tries <code>DATA\</code>.</li>
+<li><strong>Debugger clicks stay out of the game.</strong> A click in the debugger
+  window, such as on the <code>Source</code> tab, no longer reaches the game's
+  mouse, so it does not end a loader intro or click in the game. The
+  game's pointer stays put while the button is held and catches up in one
+  step when it is released.</li>
 </ul>
 <h2 id="0120-24-october-2026">0.12.0 - 24 October 2026</h2>
 <ul>

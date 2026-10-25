@@ -30,6 +30,12 @@ All notable changes to NextDAAD are recorded here.
   `DEBUG.BAT`, Windows and Linux). The interpreter tries `GAME.DDB` in
   its start folder first and changes into `DATA\` only when it is not
   there; CSpect's esxDOS accepted the change into a missing `DATA\DATA`.
+- **Debugger clicks kept off the Kempston mouse**: a press that starts
+  in the debugger window no longer reaches the emulated mouse; until
+  every button is released the plugin (0.2.3) answers port `$FADF` with
+  no buttons and holds `$FBDF`/`$FFDF` at their values from before the
+  press, so the game's pointer catches up in one step on the release.
+  Clicking a tab no longer ends a loader intro.
 
 ## v0.12.0 24/10/2026
 

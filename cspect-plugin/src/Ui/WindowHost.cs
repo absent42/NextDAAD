@@ -98,6 +98,7 @@ namespace NextDAADDebug
                     ImGui.Image(texture, new Vector2(width, height));
                     var o = ImGui.GetItemRectMin();
                     host.Sample(io.MousePos.X, io.MousePos.Y, o.X, o.Y, io.MouseDown[0], io.MouseDown[1], io.MouseWheel);
+                    host.SampleGuard(io.MousePos.X, io.MousePos.Y, io.DisplaySize.X, io.DisplaySize.Y, io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2]);
                     TypedLine();
                     if (!loggedActive) { loggedActive = true; Log.Write("imgui draw active " + (int)io.DisplaySize.X + "x" + (int)io.DisplaySize.Y); }
                 }
@@ -199,6 +200,15 @@ namespace NextDAADDebug
             lock (gate) mouse.Sample(mx, my, ox, oy, left, right, wheel);
         }
 
+        internal MouseGuard Guard;
+
+        // MousePos is -FLT_MAX when the window is not hovered.
+        internal void SampleGuard(float mx, float my, float w, float h, bool anyDown)
+        {
+            var g = Guard;
+            if (g != null) g.Sample(mx >= 0 && my >= 0 && mx < w && my < h, anyDown);
+        }
+
         internal void QueueTyped(string text) { lock (gate) pendingTyped = text ?? ""; }
         internal void QueueCancel() { lock (gate) pendingCancel = true; }
         internal void DrawFailed(Exception ex) { lock (gate) drawError = ex; }
@@ -249,6 +259,7 @@ namespace NextDAADDebug
                 try { CloseLocked(); }
                 catch (Exception ex) { Log.Write("close after draw failure: " + ex.Message); }
                 surface = null;
+                ReleaseGuard();
                 throw new InvalidOperationException("ImGui draw failed", drawError);
             }
             if (toggleRequested)
@@ -268,6 +279,7 @@ namespace NextDAADDebug
                 view.SaveIfChanged();
                 surface.Release();
                 surface = null;
+                ReleaseGuard();
                 wanted = false;
                 return;
             }
@@ -334,8 +346,16 @@ namespace NextDAADDebug
             lock (gate) CloseLocked();
         }
 
+        // No window, no pointer over it: armed or owning must not outlive it.
+        void ReleaseGuard()
+        {
+            var g = Guard;
+            if (g != null) g.Release();
+        }
+
         void CloseLocked()
         {
+            ReleaseGuard();
             if (surface == null) return;
             SavePosition();
             surface.Close();

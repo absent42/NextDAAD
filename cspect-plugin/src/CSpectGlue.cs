@@ -95,6 +95,7 @@ namespace NextDAADDebug
         string settingsPath, folder, problem;
         bool disarmed, interactive;
         WindowHost host;
+        MousePorts mouse;
 #if AUTOPILOT
         Autopilot.AutopilotHost autopilot;
         const int IdKeys = 3;
@@ -154,6 +155,13 @@ namespace NextDAADDebug
             {
                 try { host = new WindowHost(cs, settings, settingsPath, folder); }
                 catch (Exception ex) { Log.Write("window disabled: " + ex.Message); }
+                if (host != null)
+                {
+                    var g = new MouseGuard();
+                    host.Guard = g;
+                    mouse = new MousePorts(g, p => cs.InPort((ushort)p));
+                    MousePorts.Register(list);
+                }
             }
 #if AUTOPILOT
             StartAutopilot(list, sym);
@@ -201,6 +209,8 @@ namespace NextDAADDebug
         public byte Read(eAccess type, int port, int id, out bool isvalid)
         {
             isvalid = false;
+            byte m;
+            if (mouse != null && mouse.Read(type, port, id, out isvalid, out m)) return m;
 #if AUTOPILOT
             // Hot path (hundreds of reads per frame): no allocation, no logging.
             if (type == eAccess.Port_Read)
@@ -230,6 +240,7 @@ namespace NextDAADDebug
                 catch (Exception ex) { Disarm(ex); }
             }
             if (host != null && !PlatformFacts.WindowFromOSTick) Frame();
+            if (mouse != null) mouse.Tick(host != null);
 #if AUTOPILOT
             if (autopilot != null) autopilot.Tick();
 #endif
