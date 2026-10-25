@@ -162,6 +162,7 @@ namespace NextDAADDebug
         readonly bool supported;
         readonly bool closeWorks;
         bool warnedNoClose, positionBroken;
+        int lastX = -1, lastY = -1;     // read while open: a close-box close leaves no position to read
         ISurface surface;
         bool wanted = true;
         long lastSerial = -1;
@@ -263,7 +264,8 @@ namespace NextDAADDebug
             if (!supported || !wanted) return;
             if (surface != null && surface.Closed)
             {
-                SavePosition();
+                if (lastX >= 0) { settings.WinX = lastX; settings.WinY = lastY; }
+                view.SaveIfChanged();
                 surface.Release();
                 surface = null;
                 wanted = false;
@@ -277,6 +279,7 @@ namespace NextDAADDebug
                 lastSerial = -1;
                 Log.Write("window opened " + WindowW + "x" + WindowH);
             }
+            Position(() => { lastX = surface.X; lastY = surface.Y; });
             bool force = false;
             if (pendingTyped != null)
             {

@@ -23,8 +23,10 @@ namespace NextDAADDebug.Tests
         {
             public int Closes, Presents, Releases;
             public bool IsClosed;
-            public int X { get; set; }
-            public int Y { get; set; }
+            int x, y;
+            // A closed window no longer knows where it was.
+            public int X { get { return IsClosed ? 0 : x; } set { x = value; } }
+            public int Y { get { return IsClosed ? 0 : y; } set { y = value; } }
             public bool Closed => IsClosed;
             public void Present(uint[] pixels) { Presents++; }
             public void Close() { Closes++; IsClosed = true; }
@@ -128,6 +130,21 @@ namespace NextDAADDebug.Tests
             surf.IsClosed = false;
             host.Frame(new Snapshot(), c => { });
             Assert.Equal(2, opens);
+        }
+
+        [Fact]
+        public void CloseBoxKeepsLastPosition()
+        {
+            var surf = new FakeSurface();
+            var settings = Settings.Defaults();
+            var host = new WindowHost(() => surf, settings, null, ".");
+            host.Frame(new Snapshot(), c => { });
+            surf.X = 300; surf.Y = 200;                     // dragged while open
+            host.Frame(new Snapshot(), c => { });
+            surf.IsClosed = true;                           // close box: OnClosed fired
+            host.Frame(new Snapshot(), c => { });
+            Assert.Equal(300, settings.WinX);
+            Assert.Equal(200, settings.WinY);
         }
 
         [Fact]
