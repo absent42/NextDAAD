@@ -48,6 +48,8 @@ namespace NextDAADDebug
     public sealed class DebugSession
     {
         public const string MismatchText = "symbol file does not match this interpreter build";
+        // GAME.DSM loaded but not yet compared with the game's database (no guarded eng_exec yet).
+        public const string MapUncheckedText = "source map not checked yet - waiting for NextDAAD";
         readonly IMachine m;
         readonly EngineReader reader;
         readonly IHalter halter;
@@ -85,7 +87,7 @@ namespace NextDAADDebug
             this.interactive = interactive;
             Controller.BreakpointsActive = interactive;
             if (breakpoints != null) foreach (var b in breakpoints) Controller.Breakpoints.Add(b.Clone());
-            mapState = map == null ? (mapProblem ?? "no source map") : null;
+            mapState = map == null ? (mapProblem ?? "no source map") : MapUncheckedText;
             Publish(true);
         }
 
@@ -294,6 +296,7 @@ namespace NextDAADDebug
             Controller.SetMode(RunMode.Run, 0);
             Controller.SetDdb(null);
             mapUsable = false;
+            mapState = map == null ? (mapProblem ?? "no source map") : MapUncheckedText;
             status = "waiting for NextDAAD";
             Publish(true);
         }

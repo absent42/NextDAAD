@@ -157,6 +157,18 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SourceTabSaysWhetherAMapWasLoaded()
+        {
+            var s = new Snapshot { MapProblem = DebugSession.MapUncheckedText };
+            Click(s, " Source ");
+            Assert.True(OnScreen("source map not checked yet - waiting for NextDAAD"));
+            Assert.False(OnScreen("no source map"));
+            ui.Begin(new UiInput());
+            Draw(ui, new Snapshot { MapProblem = "no source map" });
+            Assert.True(OnScreen("no source map"));
+        }
+
+        [Fact]
         public void EditFlagViaDigitPad()
         {
             var s = Snap();

@@ -211,6 +211,22 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void LoadedMapIsUncheckedUntilTheDatabaseIsRead()
+        {
+            var r = new Rig();
+            var s = r.Snap();
+            Assert.Null(s.Ddb);
+            Assert.Null(s.Map);
+            Assert.Equal("source map not checked yet - waiting for NextDAAD", s.MapProblem);
+            r.Exec(0, 0, 0);
+            Assert.NotNull(r.Snap().Map);
+            Assert.Null(r.Snap().MapProblem);
+            r.S.Reset();
+            Assert.Equal(DebugSession.MapUncheckedText, r.Snap().MapProblem);
+            Assert.Equal("no source map", new Rig(true, false).Snap().MapProblem);
+        }
+
+        [Fact]
         public void DdbReloadsWhenHeaderChanges()
         {
             var r = new Rig();
