@@ -135,6 +135,66 @@ Check 'f-A-sym-release' ((Get-Content "$work\gameA\NEXTDAAD.SYM")[1] -match 'Rel
 Check 'f-A-seed' (Test-Path -LiteralPath "$work\gameA\DEBUGGER.local.TXT")
 Check 'f-A-ddb-in-data' (Test-Path -LiteralPath "$work\gameA\DATA\GAME.DDB")
 
+# (g) Linux leg: settings refusals, hash gate, canned results, script variant. ssh is stubbed.
+$script:sshCalls = @()
+$script:vmHash = ''
+function Invoke-Ssh($s, [string]$cmd) {
+    $script:sshCalls += $cmd
+    if ($cmd -eq 'true') { return }
+    if ($cmd -like 'echo $HOME*') { return '/home/placeholder' }
+    if ($cmd -like 'sha256sum *') { return "$($script:vmHash)  /home/placeholder/nextdaad/tools/CSpect/CSpect.exe" }
+    throw "unexpected ssh command: $cmd"
+}
+$exe = Join-Path $work 'CSpect.exe'
+[IO.File]::WriteAllText($exe, 'fake cspect')
+$m = Throws { Get-LinuxPreflight (Join-Path $work 'nosettings.json') $exe }
+Check 'g-missing-refused' ($m -like 'Linux leg refused: *missing*') $m
+Check 'g-missing-no-ssh' ($script:sshCalls.Count -eq 0) ($script:sshCalls -join ';')
+$bad = Join-Path $work 'bad.json'
+[IO.File]::WriteAllText($bad, '{"host": "vm-host", "user": ')
+$m = Throws { Get-LinuxPreflight $bad $exe }
+Check 'g-malformed-refused' ($m -like 'Linux leg refused: *not valid JSON*') $m
+[IO.File]::WriteAllText($bad, '{"host": "vm-host", "remoteDir": "~/x"}')
+$m = Throws { Get-LinuxPreflight $bad $exe }
+Check 'g-field-missing-refused' ($m -like 'Linux leg refused: *user*') $m
+[IO.File]::WriteAllText($bad, '{"host": "vm-host", "user": "someone", "remoteDir": "~/x y"}')
+$m = Throws { Get-LinuxPreflight $bad $exe }
+Check 'g-remotedir-refused' ($m -like 'Linux leg refused: *remoteDir*') $m
+Check 'g-malformed-no-ssh' ($script:sshCalls.Count -eq 0) ($script:sshCalls -join ';')
+$good = Join-Path $work 'good.json'
+[IO.File]::WriteAllText($good, '{"host": "vm-host", "user": "someone", "remoteDir": "~/autopilot-dir"}')
+$script:vmHash = '00' * 32
+$m = Throws { Get-LinuxPreflight $good $exe }
+Check 'g-hash-mismatch-exact' ($m -ceq "the VM's CSpect differs from Windows - update it first") $m
+$script:vmHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLower()
+$m = Throws { $script:pf = Get-LinuxPreflight $good $exe }
+Check 'g-hash-match' ($null -eq $m -and $script:pf.Remote -eq '/home/placeholder/autopilot-dir') "$m $($script:pf.Remote)"
+$ref = New-RefusedRecord "the VM's CSpect differs from Windows - update it first"
+$lp = Join-Path $work 'lparts'
+New-Item -ItemType Directory -Force "$lp\1-legA-1", "$lp\2-legA-2" | Out-Null
+Copy-Item $r1 "$lp\1-legA-1\autopilot-result.txt"
+Set-Content -LiteralPath "$lp\1-legA-1\status.txt" -Value 'exit=0 ms=61000'
+Set-Content -LiteralPath "$lp\2-legA-2\status.txt" -Value 'exit=124 ms=120000'
+$lrec = @(Get-LinuxRecords $lp @('legA-1.txt', 'legA-2.txt'))
+$md3 = New-AutopilotReport ($parts + $lrec + @($ref)) @() @() @() 'T'
+$l3 = $md3 -split "`r?`n"
+Check 'g-linux-total-1' ($l3 -contains '| Linux | legA-1.txt | FAIL | 3 | 1 | 1 | 1 | DONE failures=1 |') ($l3 -join '/')
+Check 'g-linux-total-2' ($l3 -contains '| Linux | legA-2.txt | FAIL | 0 | 0 | 0 | 0 | no result file (timed out) |')
+Check 'g-linux-refused' ($l3 -contains "| Linux | - | FAIL | 0 | 0 | 0 | 0 | the VM's CSpect differs from Windows - update it first |")
+Check 'g-linux-fact' ($l3 -contains '| Linux | legA-1.txt | step-ms | 40 |')
+Check 'g-linux-fail-line' ($l3 -contains '- Linux legA-1.txt STEP 2 line 3: `click " Step "` - expected " Step " on screen - actual not found')
+Check 'g-linux-overall' ($l3 -contains 'Overall: FAIL (6 failing parts)')
+$ls = Join-Path $work 'lsrc.txt'
+$ae = [string][char]0xC4
+[IO.File]::WriteAllText($ls, "a`n# windows-only`nhotkey a`n# end windows-only`n# linux: expect log `"x`"`nb $ae`n", (New-Object Text.UTF8Encoding($false)))
+$ld = Join-Path $work 'ldst.txt'
+Convert-LinuxScript $ls $ld
+Check 'g-linux-script' ([IO.File]::ReadAllText($ld) -ceq "a`nexpect log `"x`"`nb $ae`n") ([IO.File]::ReadAllText($ld))
+$real = Join-Path $work 'legA-1.linux.txt'
+Convert-LinuxScript "$PSScriptRoot\scripts\legA-1.txt" $real
+$rt = [IO.File]::ReadAllText($real)
+Check 'g-legA1-no-double-toggle' (-not ($rt -match "(?m)^hotkey a\nhotkey a$") -and $rt -match '(?m)^expect log "window cannot be closed under mono')
+
 Remove-Item -LiteralPath $work -Recurse -Force
 if ($script:fails) { "selftest: $($script:fails) failing"; exit 1 }
 'selftest: all pass'

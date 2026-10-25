@@ -37,9 +37,13 @@ expect colour " Step entry " Text
 expect colour " Run to PARSE " Text
 expect game not "Hall."
 
-# 2. Ctrl+Alt+A twice while halted: the window comes back with the same state
+# 2. Ctrl+Alt+A twice while halted: the window comes back with the same state.
+# Linux (run-autopilot.ps1 -Leg Linux): the window cannot close under mono, one press is logged and ignored.
+# windows-only
 hotkey a
 hotkey a
+# end windows-only
+# linux: hotkey a
 wait screen "HALTED - DEBUG marker"
 # A closed window keeps its last cells (WindowHost.Screen); a Source-only line proves it draws again.
 click " Source " rows 2-2
@@ -48,6 +52,7 @@ click " Condacts " rows 2-2
 wait screen "  103 DEBUG"
 expect screen not " 103         DEBUG"
 expect screen "  103 DEBUG"
+# linux: expect log "window cannot be closed under mono - Ctrl+Alt+A ignored while it is open"
 
 # 4. Step into PRO 1 (DEBUG marker and PROCESS 1 are one engine call)
 click " Step " rows 0-0

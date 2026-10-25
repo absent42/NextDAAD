@@ -108,7 +108,7 @@ function New-AutopilotReport($parts, $skips, $legC, $glance, [string]$stamp) {
     $o.Add(''); $o.Add('## Owner glance (real-window-only, not automated)'); $o.Add('')
     foreach ($g in $glance) { $o.Add("- $g") }
     $o.Add(''); $o.Add('## Files'); $o.Add('')
-    foreach ($p in $parts) { $o.Add("- $($p.Leg) $($p.Part): $($p.Dir) (autopilot-result.txt, dumps\, debugger.log, stdout.txt)") }
+    foreach ($p in $parts | Where-Object { $_.Dir }) { $o.Add("- $($p.Leg) $($p.Part): $($p.Dir) (autopilot-result.txt, dumps\, debugger.log, stdout.txt)") }
     foreach ($c in $legC) { $o.Add("- $($c.Leg): $($c.Folder) (sd\debugger.log, sd\trace.txt, stdout.txt)") }
     return ($o -join "`r`n") + "`r`n"
 }
@@ -234,6 +234,118 @@ function Invoke-LegC([int]$seconds) {
     return $c
 }
 
+# Linux leg: leg A on the VM over ssh (key auth). Settings {host,user,remoteDir} are read
+# from this file only and never written anywhere committed.
+$ApSettings = Join-Path $env:USERPROFILE '.nextdaad\autopilot.json'
+$ApHashRefusal = "the VM's CSpect differs from Windows - update it first"
+
+function Invoke-Ssh($s, [string]$cmd) {
+    $ErrorActionPreference = 'Continue'
+    $out = & ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 "$($s.user)@$($s.host)" $cmd
+    if ($LASTEXITCODE) { throw "ssh exit $LASTEXITCODE for: $cmd" }
+    return $out
+}
+
+function Invoke-Scp($s, [string[]]$from, [string]$to) {
+    $ErrorActionPreference = 'Continue'
+    & scp -o BatchMode=yes -o ConnectTimeout=8 -r -q @from $to
+    if ($LASTEXITCODE) { throw "scp exit ${LASTEXITCODE}: $($from -join ' ') -> $to" }
+}
+
+# Settings, reachability and the CSpect hash gate; throws the refusal text.
+function Get-LinuxPreflight([string]$path, [string]$localExe) {
+    if (-not (Test-Path -LiteralPath $path)) { throw "Linux leg refused: settings file $path missing (needs host, user, remoteDir)" }
+    try { $s = [IO.File]::ReadAllText($path) | ConvertFrom-Json } catch { $s = $null }
+    if ($null -eq $s -or $s -isnot [pscustomobject]) { throw "Linux leg refused: $path is not valid JSON" }
+    foreach ($f in 'host', 'user', 'remoteDir') {
+        $v = $s.PSObject.Properties[$f]
+        if ($null -eq $v -or $v.Value -isnot [string] -or -not $v.Value) { throw "Linux leg refused: $path lacks '$f'" }
+    }
+    if ($s.host -notmatch '^[A-Za-z0-9._-]+$' -or $s.user -notmatch '^[A-Za-z0-9._-]+$') { throw "Linux leg refused: host or user in $path has unexpected characters" }
+    if ($s.remoteDir -notmatch '^(~/|/)[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*/?$' -or $s.remoteDir -match '(^|/)\.\.?(/|$)') { throw "Linux leg refused: remoteDir must be ~/<dir> or /<dir> (letters, digits, . _ - only)" }
+    try { Invoke-Ssh $s 'true' | Out-Null } catch { throw "Linux leg refused: VM unreachable over ssh with key auth ($($_.Exception.Message))" }
+    $vmHome = "$(Invoke-Ssh $s 'echo $HOME')".Trim()
+    if ($vmHome -notmatch '^/') { throw "Linux leg refused: VM home not found" }
+    $remote = $(if ($s.remoteDir.StartsWith('~/')) { $vmHome.TrimEnd('/') + $s.remoteDir.Substring(1) } else { $s.remoteDir }).TrimEnd('/')
+    try { $vm = "$(Invoke-Ssh $s 'sha256sum ~/nextdaad/tools/CSpect/CSpect.exe')".Trim() } catch { throw "Linux leg refused: no CSpect.exe in ~/nextdaad/tools/CSpect on the VM" }
+    $win = (Get-FileHash -LiteralPath $localExe -Algorithm SHA256).Hash
+    if (($vm -split '\s+')[0] -ne $win) { throw $ApHashRefusal }
+    return [pscustomobject]@{ Settings = $s; Remote = $remote }
+}
+
+function New-RefusedRecord([string]$msg) {
+    return [pscustomobject]@{ Leg = 'Linux'; Part = '-'; Status = 'FAIL'; Steps = 0; Pass = 0; Fail = 0; Skipped = 0; Note = $msg; Fails = @(); Facts = @(); Dir = '' }
+}
+
+# Records from the pulled-back parts\<i>-<name>\ (status.txt: exit=<rc>, 124 = timeout bound).
+function Get-LinuxRecords([string]$partsDir, [string[]]$names) {
+    $recs = @(); $i = 0
+    foreach ($n in $names) {
+        $i++
+        $pd = Join-Path $partsDir ("$i-" + [IO.Path]::GetFileNameWithoutExtension($n))
+        $st = Read-Shared (Join-Path $pd 'status.txt')
+        $timedOut = $st -and $st -match 'exit=(124|137)\b'
+        $recs += New-PartRecord 'Linux' $n (Join-Path $pd 'autopilot-result.txt') $pd ([bool]$timedOut)
+    }
+    return $recs
+}
+
+# Linux variant of a script: drops "# windows-only" .. "# end windows-only" blocks and
+# un-comments "# linux: <line>" lines (the window cannot close under mono).
+function Convert-LinuxScript([string]$src, [string]$dest) {
+    $out = New-Object Collections.Generic.List[string]
+    $skip = $false
+    foreach ($l in ([IO.File]::ReadAllText($src, [Text.Encoding]::UTF8) -split "`r?`n")) {
+        if ($l -cmatch '^\s*#\s*windows-only\s*$') { $skip = $true; continue }
+        if ($l -cmatch '^\s*#\s*end windows-only\s*$') { $skip = $false; continue }
+        if ($skip) { continue }
+        if ($l -cmatch '^\s*#\s*linux:\s?(.*)$') { $out.Add($Matches[1]); continue }
+        $out.Add($l)
+    }
+    [IO.File]::WriteAllText($dest, ($out -join "`n"), (New-Object Text.UTF8Encoding($false)))
+}
+
+function Invoke-LinuxLeg([int]$seconds) {
+    try { $pf = Get-LinuxPreflight $ApSettings (Join-Path $ApCs40 'CSpect.exe') }
+    catch { Write-Host $_.Exception.Message; return @(New-RefusedRecord $_.Exception.Message) }
+    $sc = Get-LegScripts 'A' @()
+    if ($sc.Missing.Count) { return @(New-RefusedRecord "no script yet: $($sc.Missing -join ', ')") }
+    $dir = Join-Path $ApRoot 'Linux'
+    Reset-StageFolder $dir $ApRoot
+    $st = Join-Path $dir 'stage'
+    New-Item -ItemType Directory -Force "$st\sd", "$st\scripts" | Out-Null
+    Copy-LegGame 'A' "$st\sd" "$ApRepo\build\nextdaad.nex" "$ApRepo\build\NEXTDAAD.SYM" $ApDebugSym
+    # CSpect 4.0 under mono: with DATA\GAME.DDB only the Release NEX stops at E1 (measured 2026-10-25);
+    # its boot falls back to the launch folder, so a root copy is added.
+    Copy-Item "$st\sd\DATA\GAME.DDB" "$st\sd\GAME.DDB"
+    Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $st
+    Assert-AutopilotDll "$st\NextDAADDebug.dll"
+    $names = @($sc.Parts | ForEach-Object { Split-Path $_ -Leaf })
+    foreach ($p in $sc.Parts) { Convert-LinuxScript $p (Join-Path "$st\scripts" (Split-Path $p -Leaf)) }
+    # LF only: a CRLF checkout of the script would not run under bash.
+    $sh = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'linux-leg.sh')) -replace "`r", ''
+    [IO.File]::WriteAllText("$st\linux-leg.sh", $sh, (New-Object Text.UTF8Encoding($false)))
+    $s = $pf.Settings
+    $tgt = "$($s.user)@$($s.host)"
+    $run = "$($pf.Remote)/legA"
+    $sh = "bash '$($pf.Remote)/linux-leg.sh'"
+    Push-Location $st
+    try {
+        Invoke-Ssh $s "mkdir -p '$($pf.Remote)'" | Out-Null
+        Invoke-Scp $s @('linux-leg.sh') "${tgt}:$($pf.Remote)/"
+        Invoke-Ssh $s "$sh reset '$run'" | Out-Host
+        Invoke-Scp $s @('sd', 'scripts', 'NextDAADDebug.dll') "${tgt}:$run/"
+        try { Invoke-Ssh $s "$sh run '$run' $seconds $($names -join ' ')" | Out-Host }
+        catch { Write-Host "Linux run: $($_.Exception.Message)" }
+    }
+    finally {
+        try { Invoke-Ssh $s "$sh kill '$run'" | Out-Host } catch { Write-Host "Linux kill: $($_.Exception.Message)" }
+        Pop-Location
+    }
+    try { Invoke-Scp $s @("${tgt}:$run/parts") $dir } catch { Write-Host "Linux results: $($_.Exception.Message)" }
+    return Get-LinuxRecords (Join-Path $dir 'parts') $names
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $legs = switch ($Leg) {
@@ -244,7 +356,7 @@ $legs = switch ($Leg) {
 if ($ScriptOverride.Count -and ($legs.Count -ne 1 -or $legs -notin 'A', 'D', 'E')) { throw '-ScriptOverride needs exactly one of -Leg A, D or E' }
 
 $parts = @(); $skips = @(); $legC = @(); $used = @()
-if (@($legs | Where-Object { $_ -ne 'Linux' }).Count) {
+if ($legs.Count) {
     $proj = Join-Path $ApRepo 'cspect-plugin\NextDAADDebug.csproj'
     foreach ($cfg in 'Release', 'Autopilot') {
         & dotnet build $proj -c $cfg "-p:CSpectDir=$ApCs40" | Out-Host
@@ -260,9 +372,9 @@ if (@($legs | Where-Object { $_ -ne 'Linux' }).Count) {
 }
 foreach ($l in $legs) {
     if ($l -eq 'Linux') {
-        # Task 11 replaces this branch.
-        'Linux leg not implemented yet'
-        $skips += [pscustomobject]@{ Leg = 'Linux'; Reason = 'Linux leg not implemented yet' }
+        $sc = Get-LegScripts 'A' @()
+        if (-not $sc.Missing.Count) { $used += $sc.Parts }
+        $parts += Invoke-LinuxLeg $TimeoutSeconds
         continue
     }
     if ($l -eq 'C') { $legC += Invoke-LegC $TimeoutSeconds; continue }
