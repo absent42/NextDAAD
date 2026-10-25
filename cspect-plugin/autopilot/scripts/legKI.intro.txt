@@ -1,0 +1,6 @@
+; Leg KI loader intro: one timed slide, then the game. The intro enters DATA\ and chains
+; DATA\nextdaad.nex, so the interpreter boots with DATA\ already current.
+SKIP NONE
+SLIDE INTRO\SLIDE.NX2 IN CUT HOLD 1.0
+  TEXT 30 CENTRE "DBGKIT intro" INK 255
+END CUT

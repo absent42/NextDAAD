@@ -25,6 +25,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
   Before, it stopped at `E1` as it started, because CSpect under mono
   did not find the `DATA` folder. If you start CSpect by hand, end the
   `-mmc=` folder in `//`, as in `-mmc=RELEASE/MYGAME//`.
+- **Loader intros run under CSpect.** A game with a loader intro no
+  longer stops at `NextDAAD: DDB missing - E1` under CSpect, from
+  `RUN.BAT` or `DEBUG.BAT`. The interpreter now looks for `GAME.DDB` in
+  the folder it starts in before it tries `DATA\`.
 
 ## 0.12.0 - 24 October 2026
 

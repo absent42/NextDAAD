@@ -534,7 +534,9 @@ and the files externs keep, such as <code>GAME.HPR</code> (hint progress),
 <code>GAME.HST</code> (high scores) and <code>TRANS.TXT</code> (a transcript), all land in
 <code>&lt;GAME&gt;\DATA\</code> on the card.</p>
 <p>Games built by kits before v0.12.0 put every file loose at the card
-root. The interpreter still runs a game laid out that way.</p>
+root. The interpreter still runs a game laid out that way: it looks for
+<code>GAME.DDB</code> in the game's folder first and then in <code>DATA\</code>, so do not
+leave an old <code>GAME.DDB</code> in the root of a game folder.</p>
 <h2 id="the-starter-game">The starter game</h2>
 <p><code>STARTER\</code> ships with the kit, holding <code>STARTER.DSF</code> along with example
 graphics, audio and video, so a first build works before you have

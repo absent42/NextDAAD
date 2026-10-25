@@ -238,7 +238,8 @@ ddb_load:
 ; DBG_DDB_FALLBACK_DIR, nextdaad.inc - edit that ONE DEFINE if it ever
 ; moves), so plain ddb_load's first attempt can come back DDB_E_FILE even
 ; though the card genuinely has the file. main.asm's ddb_load_boot
-; tail-jumps here in place of plain ddb_load (DEBUG only). On DDB_E_FILE
+; tail-jumps here after a good DIR DATA, or to ddb_load_debug_fallback
+; when DIR DATA failed (the launch folder already missed). On DDB_E_FILE
 ; only, F_CHDIR into the fallback directory and retry ddb_load exactly
 ; once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR/DDB_E_MACHINE) from
 ; the first attempt returns immediately, untouched: a database that IS
@@ -257,6 +258,7 @@ ddb_load_debug_retry:
     cp DDB_E_FILE
     ret nz                       ; success, or a non-"missing" failure:
                                   ; no retry, pass through unchanged
+ddb_load_debug_fallback:
     ld a, '*'                    ; esxDOS F_CHDIR: '*' = default drive
     ld ix, dbgDdbFallbackDir
     call esx_fchdir

@@ -25,6 +25,11 @@ All notable changes to NextDAAD are recorded here.
   started. `run.sh` and `debug.sh` end the `-mmc=` card folder in `//`,
   because CSpect's esxDOS plugin under mono needs the second separator
   to change into `DATA`.
+- **Loader intros run under CSpect**: a game with a loader intro no
+  longer stops at "DDB missing - E1" under CSpect (`RUN.BAT`,
+  `DEBUG.BAT`, Windows and Linux). The interpreter tries `GAME.DDB` in
+  its start folder first and changes into `DATA\` only when it is not
+  there; CSpect's esxDOS accepted the change into a missing `DATA\DATA`.
 
 ## v0.12.0 24/10/2026
 
