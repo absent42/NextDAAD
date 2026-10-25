@@ -79,7 +79,9 @@ optional tools your game uses:
   (`sudo apt install mono-devel`), to play the result. Extract into
   `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`, or set
   `CSPECTCMD` in `CONFIG.local.BAT` to run it some other way (Linux only,
-  ignored on Windows).
+  ignored on Windows). The kit ends the card folder it gives CSpect in
+  `//`, which works around a CSpect bug on Linux; see
+  [Debugger](debugger.md#differences-on-linux).
 - **jNext**, optional, runs natively on Linux (no mono). See
   [Running in jNext](#running-in-jnext).
 - **sjasmplus**, only to rebuild an extern with `externs.sh`: a

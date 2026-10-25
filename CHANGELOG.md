@@ -9,10 +9,10 @@ All notable changes to NextDAAD are recorded here.
   later with a debugger window beside it. The plugin,
   `lib\NextDAADDebug.dll`, is installed into the CSpect folder on the
   first run and replaced when the kit's copy differs, unless the one
-  installed is a newer version. Break,
-  `DEBUG` markers and breakpoints stop the game; step one condact, one
-  entry or out of a process while the window shows the process stack,
-  the condacts, the flags, objects, parser words and database. The
+  installed is a newer version. Break, `DEBUG` markers and breakpoints
+  stop the game; step one condact, one entry or out of a process while
+  the window shows the process stack, the condacts, the flags, objects,
+  parser words and database. The
   Source tab shows your own `.DSF` lines from the NDRC 0.3.0 source
   maps (`GAME.DSM`), and a click in its margin sets a line breakpoint.
   Every part of a multi-part game gets its own map, and a line

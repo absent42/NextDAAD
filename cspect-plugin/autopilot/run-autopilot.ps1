@@ -416,10 +416,9 @@ function Add-Check($list, [string]$name, [bool]$ok, [string]$detail = '') {
     $list.Add([pscustomobject]@{ Name = $name; Ok = $ok; Detail = $detail })
 }
 
-# Staging checks after lib\debug.ps1 -NoLaunch. $f: Rc and Lines (its exit and output), Dll (the
-# plugin path its install line names), Installed (that file has the kit's bytes), Before/After
-# (RELEASE\DBGKIT trees around it), Program (the launch text before the arguments), Debug (the
-# NEXTDAAD_DEBUG it must print), MmcEnd (how the card root must end). Maps and SYM are read in $g.
+# Staging checks after debug.ps1 -NoLaunch. $f: Rc, Lines, Dll (install-line path), Installed (kit bytes),
+# Before/After (RELEASE\DBGKIT trees), Program (launch text before the arguments), Debug (NEXTDAAD_DEBUG),
+# MmcEnd (card-root ending). Maps and SYM are read in $g.
 function Test-LegKFacts([string]$kit, [string]$g, $f) {
     $c = New-Object Collections.Generic.List[object]
     $out = $f.Lines -join "`n"
