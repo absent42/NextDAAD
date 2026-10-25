@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Linq;
 using Xunit;
@@ -310,6 +311,78 @@ namespace NextDAADDebug.Tests
             Assert.Null(second.Map);
             Assert.Contains("out of date", second.MapProblem);
             Assert.Empty(second.Breakpoints[0].Offsets);
+        }
+
+        // Part 1 is the fixture image; part 2 is the same image with header byte 5 changed.
+        static SourceMap[] PartMaps()
+        {
+            byte[] p1 = File.ReadAllBytes(Repo.Fixture("DBGFIX.DDB"));
+            byte[] p2 = (byte[])p1.Clone();
+            p2[5] ^= 1;
+            Func<byte[], string, string> dsm = (img, file) => "NDRC-DSM\t2\nddb\t" + Crc32.Compute(img, 0, 0x459).ToString("X8") + "\t459\nfile\t0\t" + file + "\n" +
+                "entry\t0425\t0\t101\ncond\t03F8\t0425\t0\t101\t9\n";
+            return new[] { SourceMap.Parse(dsm(p1, "DBGFIX.DSF")), SourceMap.Parse(dsm(p2, "PART2/PART2.DSF")) };
+        }
+
+        [Fact]
+        public void ActiveMapFollowsLoadedPart()
+        {
+            var maps = PartMaps();
+            var r = new Rig(maps);
+            r.Exec(0, 0, 0);
+            Assert.Same(maps[0], r.Snap().Map);
+            Assert.Equal("DBGFIX.DSF", r.Snap().Map.Files[0]);
+            r.M.Phys[0x40000 + 5] ^= 1;                    // part 2 header
+            r.Exec(0, 0, 0);
+            Assert.Same(maps[1], r.Snap().Map);
+            Assert.Equal("PART2/PART2.DSF", r.Snap().Map.Files[0]);
+            Assert.Null(r.Snap().MapProblem);
+            r.M.Phys[0x40000 + 5] ^= 3;                    // a part with no map
+            r.Exec(0, 0, 0);
+            Assert.Null(r.Snap().Map);
+            Assert.Equal("source map is out of date - rebuild", r.Snap().MapProblem);
+        }
+
+        [Fact]
+        public void PartOneLineBreakpointIgnoredInPartTwo()
+        {
+            var r = new Rig(PartMaps());
+            r.Exec(0, 0, 0);
+            r.Add(new Breakpoint { Kind = BreakKind.SourceLine, Path = "dbgfix.dsf", B = 101 });
+            Assert.Equal(new[] { 0x3F8 }, r.Snap().Breakpoints[0].Offsets);
+            r.M.Phys[0x40000 + 5] ^= 1;                    // part 2 also maps file 0 line 101 at 0x3F8
+            r.Exec(0, 0, 0);
+            Assert.Empty(r.Snap().Breakpoints[0].Offsets);
+            Assert.Equal(0, r.H.Halts);
+        }
+
+        [Fact]
+        public void LegacyIndexBreakpointUsesActiveMap()
+        {
+            var r = new Rig(PartMaps());
+            r.Exec(0, 0, 0);
+            r.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 101 });
+            Assert.Equal(new[] { 0x3F8 }, r.Snap().Breakpoints[0].Offsets);
+            Assert.Equal("line 101 of DBGFIX.DSF", r.Snap().Breakpoints[0].Describe(r.Ddb, r.Snap().Map));
+            Assert.Equal("line 101 of file 0", r.Snap().Breakpoints[0].Describe(r.Ddb, null));
+        }
+
+        [Fact]
+        public void LineBreakpointIdentityIgnoresSlashAndCase()
+        {
+            var map = PartMaps()[1];
+            var byPath = new Breakpoint { Kind = BreakKind.SourceLine, Path = "part2\\part2.dsf", B = 7 };
+            Assert.True(byPath.SameAs(new Breakpoint { Kind = BreakKind.SourceLine, Path = "PART2/PART2.DSF", B = 7 }));
+            Assert.False(byPath.SameAs(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 7 }));
+            Assert.True(byPath.IsLine(map, "PART2/PART2.DSF", 7));
+            Assert.True(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 7 }.IsLine(map, "PART2/PART2.DSF", 7));
+            Assert.False(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 7 }.IsLine(null, "PART2/PART2.DSF", 7));
+        }
+
+        [Fact]
+        public void NoMapsReportsNoSourceMap()
+        {
+            Assert.Equal("no source map", new Rig(new SourceMap[0]).Snap().MapProblem);
         }
 
         static int MapLine(Rig r, int proc, int entry, int index)

@@ -5,7 +5,7 @@ namespace NextDAADDebug
     public enum CompareOp { Eq, Ne, Lt, Gt }
 
     // A/B/C per kind: Process A proc, B verb (-1 any), C noun (-1 any); Condact A number;
-    // SourceLine A file, B line; FlagChange A flag; FlagCompare A flag, Op, B value; ObjectMoved A object.
+    // SourceLine Path file (A is the legacy file index when Path is null), B line; FlagChange A flag; FlagCompare A flag, Op, B value; ObjectMoved A object.
     public sealed class Breakpoint
     {
         public BreakKind Kind;
@@ -13,6 +13,7 @@ namespace NextDAADDebug
         public int A;
         public int B = -1;
         public int C = -1;
+        public string Path;
         public CompareOp Op;
         public int[] Offsets = new int[0];
         public int[] Entries = new int[0];            // owning entry per offset, -1 any
@@ -25,7 +26,18 @@ namespace NextDAADDebug
             return b;
         }
 
-        public bool SameAs(Breakpoint o) => o != null && Kind == o.Kind && A == o.A && B == o.B && C == o.C && Op == o.Op;
+        public bool SameAs(Breakpoint o) => o != null && Kind == o.Kind && A == o.A && B == o.B && C == o.C && Op == o.Op && SamePathAs(o);
+
+        bool SamePathAs(Breakpoint o) => Path == null || o.Path == null ? Path == o.Path : SourceMap.SamePath(Path, o.Path);
+
+        // A source-line breakpoint on 'line' of 'path'; a legacy index is read through 'map'.
+        public bool IsLine(SourceMap map, string path, int line)
+        {
+            if (Kind != BreakKind.SourceLine || B != line) return false;
+            string f;
+            if (Path != null) return SourceMap.SamePath(Path, path);
+            return map != null && map.Files.TryGetValue(A, out f) && SourceMap.SamePath(f, path);
+        }
 
         public static bool Compare(int v, CompareOp op, int rhs)
         {
@@ -52,6 +64,7 @@ namespace NextDAADDebug
                 case BreakKind.Condact: return "condact " + (A >= 0 && A < 128 ? Condacts.Table[A].Name : A.ToString());
                 case BreakKind.SourceLine:
                     string f;
+                    if (Path != null) return "line " + B + " of " + Path;
                     return "line " + B + " of " + (map != null && map.Files.TryGetValue(A, out f) ? f : "file " + A);
                 case BreakKind.FlagChange: return "flag " + A + " changes";
                 case BreakKind.FlagCompare: return "flag " + A + " " + OpText(Op) + " " + B;

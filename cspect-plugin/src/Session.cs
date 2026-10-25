@@ -54,7 +54,7 @@ namespace NextDAADDebug
         readonly EngineReader reader;
         readonly IHalter halter;
         readonly HookInfo execHook, errorHook;
-        readonly SourceMap map;
+        readonly IReadOnlyList<SourceMap> maps;
         readonly string mapProblem;
         readonly TraceWriter trace;
         readonly bool interactive;
@@ -65,7 +65,8 @@ namespace NextDAADDebug
 
         Ddb ddb;
         byte[] ddbHeader;
-        bool mapUsable, guardPassed, halted, refireArmed;
+        SourceMap active;                              // the map matching the loaded database
+        bool guardPassed, halted, refireArmed;
         string mapState, status = "waiting for NextDAAD";
         int ranPast, haltOffset = -1, haltNumObj, haltIndir = -1;
         ExecEvent last;
@@ -74,20 +75,20 @@ namespace NextDAADDebug
         Snapshot latest = new Snapshot();
         DateTime lastPublish = DateTime.MinValue, lastMismatchCheck = DateTime.MinValue;
 
-        public DebugSession(IMachine machine, SymbolFile symbols, IHalter halter, SourceMap map, string mapProblem, TraceWriter trace, bool interactive, IEnumerable<Breakpoint> breakpoints)
+        public DebugSession(IMachine machine, SymbolFile symbols, IHalter halter, IReadOnlyList<SourceMap> maps, string mapProblem, TraceWriter trace, bool interactive, IEnumerable<Breakpoint> breakpoints)
         {
             m = machine;
             reader = new EngineReader(machine, symbols);
             this.halter = halter;
             execHook = symbols.Hook("eng_exec");
             errorHook = symbols.Hook("err_raise");
-            this.map = map;
+            this.maps = maps ?? new SourceMap[0];
             this.mapProblem = mapProblem;
             this.trace = trace;
             this.interactive = interactive;
             Controller.BreakpointsActive = interactive;
             if (breakpoints != null) foreach (var b in breakpoints) Controller.Breakpoints.Add(b.Clone());
-            mapState = map == null ? (mapProblem ?? "no source map") : MapUncheckedText;
+            mapState = UncheckedState();
             Publish(true);
         }
 
@@ -215,15 +216,23 @@ namespace NextDAADDebug
             ddbHeader = h;
             ddb = new Ddb(reader.DdbImage());
             Controller.SetDdb(ddb);
-            mapUsable = map != null && map.Matches(ddb.Image);
-            mapState = map == null ? (mapProblem ?? "no source map") : mapUsable ? null : "source map is out of date - rebuild";
+            active = maps.FirstOrDefault(m => m.Matches(ddb.Image));
+            mapState = maps.Count == 0 ? (mapProblem ?? "no source map") : active != null ? null : "source map is out of date - rebuild";
             foreach (var b in Controller.Breakpoints) Resolve(b);
         }
 
+        string UncheckedState() => maps.Count == 0 ? (mapProblem ?? "no source map") : MapUncheckedText;
+
+        // A path names a file in the active map; a legacy breakpoint carries the file index.
         void Resolve(Breakpoint b)
         {
             if (b.Kind != BreakKind.SourceLine) return;
-            var hits = mapUsable ? map.OffsetsForLine(b.A, b.B) : new List<LineHit>();
+            var hits = new List<LineHit>();
+            if (active != null)
+            {
+                int file = b.Path != null ? active.FileIndex(b.Path) : b.A;
+                if (file >= 0) hits = active.OffsetsForLine(file, b.B);
+            }
             b.Offsets = hits.Select(h => h.Offset).ToArray();
             b.Entries = hits.Select(h => h.Entry).ToArray();
         }
@@ -249,7 +258,7 @@ namespace NextDAADDebug
                 Problem = Problem,
                 Status = halted && ranPast > 0 ? status + " (" + ranPast + " condacts ran past)" : status,
                 Ddb = ddb,
-                Map = mapUsable ? map : null,
+                Map = active,
                 MapProblem = mapState,
                 Breakpoints = Controller.Breakpoints.Select(b => b.Clone()).ToArray(),
                 ChangedBase = baseFlags,
@@ -298,8 +307,8 @@ namespace NextDAADDebug
             baseFlags = baseObj = haltFlags = haltObj = null;
             Controller.SetMode(RunMode.Run, 0);
             Controller.SetDdb(null);
-            mapUsable = false;
-            mapState = map == null ? (mapProblem ?? "no source map") : MapUncheckedText;
+            active = null;
+            mapState = UncheckedState();
             status = "waiting for NextDAAD";
             Publish(true);
         }

@@ -90,6 +90,18 @@ namespace NextDAADDebug
 
         public bool Matches(byte[] ddbImage) => DdbLength > 0 && DdbLength <= ddbImage.Length && Crc32.Compute(ddbImage, 0, DdbLength) == DdbCrc;
 
+        // Map paths are relative to the DSM; '\' and '/' and letter case are not significant.
+        public static bool SamePath(string a, string b) =>
+            string.Equals(a.Replace('\\', '/'), b.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
+
+        public int FileIndex(string path)
+        {
+            int best = -1;
+            foreach (var kv in Files)
+                if (SamePath(kv.Value, path) && (best < 0 || kv.Key < best)) best = kv.Key;
+            return best;
+        }
+
         public List<LineHit> OffsetsForLine(int file, int line)
         {
             var r = new List<LineHit>();
