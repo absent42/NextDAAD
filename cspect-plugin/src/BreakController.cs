@@ -83,11 +83,19 @@ namespace NextDAADDebug
         }
 
         // A shared tail carries one offset per owning entry; the running entry picks the line.
-        static bool SourceLineHit(Breakpoint bp, ExecEvent e)
+        static bool OnLine(Breakpoint bp, int offset, int entry)
         {
             for (int i = 0; i < bp.Offsets.Length; i++)
-                if (bp.Offsets[i] == e.Offset && (i >= bp.Entries.Length || bp.Entries[i] < 0 || bp.Entries[i] == e.Top.EntryPtr)) return true;
+                if (bp.Offsets[i] == offset && (i >= bp.Entries.Length || bp.Entries[i] < 0 || bp.Entries[i] == entry)) return true;
             return false;
+        }
+
+        // An INDIR prefix and its target are two executions of one line: halt once, at the prefix.
+        bool SourceLineHit(Breakpoint bp, ExecEvent e)
+        {
+            if (!OnLine(bp, e.Offset, e.Top.EntryPtr)) return false;
+            return !(prev != null && prev.Condact != null && prev.Condact.Number == Condacts.Indir && !prev.Condact.IsMarker && !prev.Condact.IsEnd
+                     && prev.Top.EntryPtr == e.Top.EntryPtr && e.Offset == prev.Offset + prev.Condact.Length && OnLine(bp, prev.Offset, e.Top.EntryPtr));
         }
 
         string Check(Breakpoint bp, ExecEvent e)

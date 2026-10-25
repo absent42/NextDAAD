@@ -230,6 +230,54 @@ namespace NextDAADDebug.Tests
             Assert.Equal(1, r.H.Halts);
         }
 
+        // INDIR prefix at 0x100 (2 bytes), target at 0x102, both mapped to one line of entry 0x50.
+        static ExecEvent IndirEvent(int offset, int number, int length, int entry = 0x50) => new ExecEvent
+        {
+            Offset = offset,
+            Stack = new[] { new ProcFrame(0, entry, offset) },
+            Condact = new DecodedCondact { Offset = offset, Number = number, Length = length },
+        };
+
+        static BreakController IndirController()
+        {
+            var map = SourceMap.Parse("NDRC-DSM\t2\nddb\tCBF43926\t9\nfile\t0\tG.DSF\ncond\t0100\t0050\t0\t10\t9\ncond\t0102\t0050\t0\t10\t9\n");
+            var hits = map.OffsetsForLine(0, 10);
+            var c = new BreakController();
+            c.Breakpoints.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 10, Offsets = hits.Select(h => h.Offset).ToArray(), Entries = hits.Select(h => h.Entry).ToArray() });
+            return c;
+        }
+
+        [Fact]
+        public void IndirLineBreakpointHaltsOnce()
+        {
+            var c = IndirController();
+            Assert.Contains("source line 10", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            Assert.Null(c.OnExec(IndirEvent(0x102, 29, 1)));                       // the target, same line
+            Assert.Contains("source line 10", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));   // next pass halts again
+        }
+
+        [Fact]
+        public void LineBreakpointStillHaltsAtTargetWithoutIndirPrefix()
+        {
+            var c = IndirController();
+            Assert.Null(c.OnExec(IndirEvent(0x80, 29, 2)));
+            Assert.Contains("source line 10", c.OnExec(IndirEvent(0x102, 29, 1)));
+            c = new BreakController();                                            // v1 map: any entry matches
+            c.Breakpoints.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 10, Offsets = new[] { 0x100, 0x102 }, Entries = new[] { -1, -1 } });
+            Assert.NotNull(c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            Assert.NotNull(c.OnExec(IndirEvent(0x102, 29, 1, 0x60)));             // different entry: not the same line pass
+        }
+
+        [Fact]
+        public void SteppingStopsOnBothIndirExecutions()
+        {
+            var c = IndirController();
+            c.SetMode(RunMode.Step, 0);
+            Assert.Equal("step", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            c.SetMode(RunMode.Step, 0);
+            Assert.Equal("step", c.OnExec(IndirEvent(0x102, 29, 1)));
+        }
+
         [Fact]
         public void LoadedMapIsUncheckedUntilTheDatabaseIsRead()
         {

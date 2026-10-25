@@ -177,6 +177,32 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SourceTabFollowsSelectedLowerLevelOnSharedTail()
+        {
+            // Level 0 (PRO 0 entry 0) sits on its PROCESS 1 at 0x03FF, which another entry also owns, listed first.
+            var s = Snap();
+            int h0 = s.Ddb.Entries(0)[0].HeaderOffset, h1 = s.Ddb.Entries(1)[0].HeaderOffset;
+            string dsm = "NDRC-DSM\t2\nddb\tF27FE0F4\t459\nfile\t0\tDBGFIX.DSF\n" +
+                         "cond\t03FF\t" + h1.ToString("X4") + "\t0\t107\t9\n" +
+                         "cond\t03FF\t" + h0.ToString("X4") + "\t0\t104\t9\n" +
+                         "cond\t040A\t" + h1.ToString("X4") + "\t0\t111\t9\n";
+            s.Map = SourceMap.Parse(dsm);
+            s.Stack = new[] { new ProcFrame(0, h0, 0x401), new ProcFrame(1, h1, 0x40A) };
+            s.Offset = 0x40A;
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Click(s, " 0 PRO 0");                                  // select the lower level
+            Click(s, " Source ");
+            int x, y;
+            Assert.True(ui.S.Find(" 104         PROCESS 1", out x, out y));
+            Assert.Equal(0x10, ui.S[29, y].Glyph);
+            Assert.True(ui.S.Find(" 107         REDO", out x, out y));
+            Assert.NotEqual(0x10, ui.S[29, y].Glyph);
+            Assert.True(ui.S.Find(" 111 > _ _   CLS", out x, out y));
+            Assert.NotEqual(0x10, ui.S[29, y].Glyph);
+        }
+
+        [Fact]
         public void SourceTabSaysWhetherAMapWasLoaded()
         {
             var s = new Snapshot { MapProblem = DebugSession.MapUncheckedText };
