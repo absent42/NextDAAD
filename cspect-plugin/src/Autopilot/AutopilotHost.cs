@@ -57,8 +57,9 @@ namespace NextDAADDebug.Autopilot
             if (failed) return;
             try
             {
-                keys.Frame();
+                // Held keys wait for resume: the Z80 does not poll the keyboard while halted.
                 if (DebuggerState() != 0) haltedTicks++;
+                else keys.Frame();
                 if (quitWanted && !quitSent)
                 {
                     quitSent = true;
@@ -83,10 +84,14 @@ namespace NextDAADDebug.Autopilot
             catch (Exception ex) { Fail(ex); }
         }
 
+        // Still ends the result file and attempts the quit, so the runner does not wait for its bound.
         void Fail(Exception ex)
         {
             failed = true;
             try { Log.Write("autopilot: stopped - " + ex); } catch (Exception) { }
+            if (engine != null) engine.Abort(ex.Message);
+            try { if (engine != null && !reported) { reported = true; Log.Write("autopilot: done failures=" + engine.Failures); } } catch (Exception) { }
+            try { cs.SetGlobal(eGlobal.DoQuit, true); } catch (Exception) { }
         }
 
         WindowHost Win()

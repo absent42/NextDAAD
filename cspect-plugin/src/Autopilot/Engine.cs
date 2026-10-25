@@ -45,6 +45,25 @@ namespace NextDAADDebug.Autopilot
             }
         }
 
+        // Host fault: the current step FAILs, the rest are SKIPPED, DONE is written. No-op once finished.
+        public void Abort(string reason)
+        {
+            if (Finished) return;
+            Finished = true;
+            try
+            {
+                if (index < steps.Count)
+                {
+                    writer.Result(steps[index], "FAIL", Expected(steps[index]), "autopilot stopped: " + reason);
+                    index++;
+                }
+                Failures++;
+                for (; index < steps.Count; index++) writer.Result(steps[index], "SKIPPED", Expected(steps[index]), "not run");
+                writer.Finish(Failures);
+            }
+            catch (Exception) { }
+        }
+
         void Advance()
         {
             if (index >= steps.Count) { End(false); return; }
@@ -146,7 +165,14 @@ namespace NextDAADDebug.Autopilot
                     host.Hotkey(s.Text[0]);
                     return "PASS";
                 case StepKind.Game:
-                    if (phase == 0) { host.Keys.Enqueue(s.Text); phase = 1; return null; }
+                    if (phase == 0)
+                    {
+                        // Keys only advance while running; typing into a halted game could never be read.
+                        if (host.DebuggerState() != 0) { actual = "game typed while halted"; return "FAIL"; }
+                        host.Keys.Enqueue(s.Text);
+                        phase = 1;
+                        return null;
+                    }
                     if (!host.Keys.Busy) return "PASS";
                     if (!TimedOut(s)) return null;
                     actual = "keys still queued";

@@ -249,6 +249,37 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void Engine_GameWhileHaltedFails()
+        {
+            host.State = 1;
+            var e = Make("game \"LOOK\\n\"\nnote \"after\"");
+            Run(e);
+            Assert.Equal(1, e.Failures);
+            Assert.False(host.Keys.Busy);
+            var l = Lines();
+            Assert.StartsWith("STEP 1 FAIL", l[0]);
+            Assert.Contains("actual game typed while halted", l[0]);
+            Assert.StartsWith("STEP 2 PASS", l[1]);
+        }
+
+        [Fact]
+        public void Engine_AbortWritesFailAndDone()
+        {
+            var e = Make("wait status \"HALTED\"\nnote \"x\"");
+            e.Frame();
+            e.Abort("host fault");
+            Assert.True(e.Finished);
+            Assert.Equal(1, e.Failures);
+            var l = Lines();
+            Assert.StartsWith("STEP 1 FAIL line 1 |", l[0]);
+            Assert.Contains("actual autopilot stopped: host fault", l[0]);
+            Assert.StartsWith("STEP 2 SKIPPED", l[1]);
+            Assert.Equal("DONE failures=1", l[l.Length - 1]);
+            e.Abort("again");
+            Assert.Equal(l.Length, Lines().Length);
+        }
+
+        [Fact]
         public void Engine_ExpectColour()
         {
             host.Screen.Text(0, 4, "flag 5", Theme.Changed, Theme.Bg);
