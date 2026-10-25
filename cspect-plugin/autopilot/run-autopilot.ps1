@@ -49,8 +49,14 @@ function Get-LegScripts([string]$leg, [string[]]$override, [string]$dir = $ApScr
     return [pscustomobject]@{ Parts = $parts; Missing = $missing }
 }
 
-# Parses one autopilot-result.txt into a totals/FAIL/FACT record.
-function New-PartRecord([string]$leg, [string]$part, [string]$resultFile, [string]$dir, [bool]$timedOut) {
+# Script steps as ScriptParser counts them: every line whose first non-blank character is not '#'.
+function Get-ScriptStepCount([string]$path) {
+    return @([IO.File]::ReadAllLines($path) | Where-Object { $_.Trim() -and -not $_.TrimStart().StartsWith('#') }).Count
+}
+
+# Parses one autopilot-result.txt into a totals/FAIL/FACT record; $want = the script's step count.
+# PASS needs DONE failures=0, no FAIL line and exactly $want STEP lines.
+function New-PartRecord([string]$leg, [string]$part, [string]$resultFile, [string]$dir, [bool]$timedOut, [int]$want = -1) {
     $rec = [pscustomobject]@{ Leg = $leg; Part = $part; Status = 'FAIL'; Steps = 0; Pass = 0; Fail = 0; Skipped = 0; Note = ''; Fails = @(); Facts = @(); Dir = $dir }
     $text = Read-Shared $resultFile
     if ($null -eq $text) { $rec.Note = if ($timedOut) { 'no result file (timed out)' } else { 'no result file' }; return $rec }
@@ -68,6 +74,8 @@ function New-PartRecord([string]$leg, [string]$part, [string]$resultFile, [strin
         elseif ($l -match '^DONE failures=(\d+)') { $done = [int]$Matches[1] }
     }
     if ($null -eq $done) { $rec.Note = if ($timedOut) { 'no DONE line (timed out)' } else { 'no DONE line' }; return $rec }
+    if ($rec.Steps -eq 0) { $rec.Note = "no steps reported (DONE failures=$done)"; return $rec }
+    if ($want -lt 1 -or $rec.Steps -ne $want) { $rec.Note = "steps: $($rec.Steps) reported, script has $(if ($want -lt 1) { 'unknown' } else { $want }) (DONE failures=$done)"; return $rec }
     $rec.Note = "DONE failures=$done"
     if ($done -eq 0 -and $rec.Fail -eq 0) { $rec.Status = 'PASS' }
     return $rec
@@ -78,9 +86,10 @@ function Cell([string]$s) { return ($s -replace '\|', '\|') }
 function New-AutopilotReport($parts, $skips, $legC, $glance, [string]$stamp) {
     $o = New-Object Collections.Generic.List[string]
     $failing = @($parts | Where-Object { $_.Status -ne 'PASS' }).Count + @($legC | Where-Object { -not $_.Pass }).Count
+    $ran = @($parts).Count + @($legC).Count
     $o.Add('# CSpect autopilot report'); $o.Add('')
     $o.Add("Run: $stamp"); $o.Add('')
-    $o.Add($(if ($failing) { "Overall: FAIL ($failing failing parts)" } else { 'Overall: PASS' })); $o.Add('')
+    $o.Add($(if ($failing) { "Overall: FAIL ($failing failing parts)" } elseif (-not $ran) { 'Overall: FAIL (nothing ran)' } else { 'Overall: PASS' })); $o.Add('')
     $o.Add('## Totals'); $o.Add('')
     $o.Add('| Leg | Part | Result | Steps | Pass | Fail | Skipped | Note |')
     $o.Add('|---|---|---|---|---|---|---|---|')
@@ -96,7 +105,8 @@ function New-AutopilotReport($parts, $skips, $legC, $glance, [string]$stamp) {
         foreach ($f in $p.Fails) {
             $any = $true
             $o.Add("- $($p.Leg) $($p.Part) STEP $($f.Step) line $($f.Line): ``$($f.Raw)`` - expected $($f.Expected) - actual $($f.Actual)")
-            $o.Add('  dump: ' + (Join-Path $p.Dir ('dumps\' + $f.Step.ToString('D3') + '.txt')))
+            $dump = Join-Path $p.Dir ('dumps\' + $f.Step.ToString('D3') + '.txt')
+            $o.Add($(if (Test-Path -LiteralPath $dump) { "  dump: $dump" } else { '  dump: none written' }))
         }
         if ($p.Note -notlike 'DONE*') { $any = $true; $o.Add("- $($p.Leg) $($p.Part): $($p.Note)") }
     }
@@ -114,7 +124,7 @@ function New-AutopilotReport($parts, $skips, $legC, $glance, [string]$stamp) {
 }
 
 function Get-TooOldText([string]$file = (Join-Path $ApRepo 'cspect-plugin\src\PlatformFacts.cs')) {
-    $m = [regex]::Match([IO.File]::ReadAllText($file), 'const string TooOld = "([^"]*)"')
+    $m = [regex]::Match([IO.File]::ReadAllText($file), 'const string TooOld = "([^"]+)"')
     if (-not $m.Success) { throw "VersionGate.TooOld not found in $file" }
     return $m.Groups[1].Value
 }
@@ -128,7 +138,7 @@ function Test-LegC([string]$log, [string]$trace, [string]$expect, [string]$tooOl
     $tt = Read-Shared $trace
     $got = if ($tt) { ($tt -split "`r?`n")[0] } else { '' }
     if (-not $got) { $reasons += 'trace.txt missing or empty' }
-    elseif ($got -ne $want) { $reasons += "trace.txt first line: got `"$got`", want `"$want`"" }
+    elseif ($got -cne $want) { $reasons += "trace.txt first line: got `"$got`", want `"$want`"" }
     return [pscustomobject]@{ Leg = 'C'; Pass = ($reasons.Count -eq 0); Reasons = $reasons; Folder = (Split-Path $log) }
 }
 
@@ -141,8 +151,11 @@ function Get-Glance([string[]]$scripts) {
 }
 
 # One bounded launch. Stops early once $doneWhen is true; CSpect is killed by id in every case.
+# The caller's NEXTDAAD_DEBUG* variables are cleared for the launch and restored after it.
 function Invoke-CSpect([string]$csDir, [string]$legDir, [string[]]$csArgs, [hashtable]$vars, [int]$seconds, [string]$stdout, [scriptblock]$doneWhen, [object[]]$doneArgs) {
     $names = 'NEXTDAAD_DEBUG', 'NEXTDAAD_DEBUG_AUTOPILOT', 'NEXTDAAD_DEBUG_TRACE', 'NEXTDAAD_DEBUG_NOWINDOW', 'NEXTDAAD_DEBUG_SETTINGS'
+    $saved = @{}
+    foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
     $p = $null; $timedOut = $false; $self = $false
     $sw = [Diagnostics.Stopwatch]::StartNew()
     try {
@@ -159,7 +172,7 @@ function Invoke-CSpect([string]$csDir, [string]$legDir, [string[]]$csArgs, [hash
         }
     }
     finally {
-        foreach ($n in $names) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+        foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n], 'Process') }
         if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; $p.WaitForExit(10000) | Out-Null }
     }
     return [pscustomobject]@{ TimedOut = $timedOut; ExitedSelf = $self; Ms = $sw.ElapsedMilliseconds }
@@ -210,13 +223,13 @@ function Invoke-ScriptLeg([string]$leg, [string[]]$scripts, [int]$seconds) {
         New-Item -ItemType Directory -Force $pd | Out-Null
         $res = Join-Path $g 'autopilot-result.txt'
         Remove-Item -LiteralPath $res -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath "$g\dumps") { Remove-Item -LiteralPath "$g\dumps" -Recurse -Force }
+        if (Test-Path -LiteralPath "$g\dumps") { Remove-StagedTree "$g\dumps" $dir }
         $r = Invoke-CSpect "$dir\cspect" $g @('-w2', '-zxnext', '-esc', '-sound', "-mmc=$g\", "$g\nextdaad.nex") @{ NEXTDAAD_DEBUG = $g; NEXTDAAD_DEBUG_AUTOPILOT = $s } $seconds "$pd\stdout.txt" { param($f) $t = Read-Shared $f; $t -and $t -match '(?m)^DONE ' } @($res)
         Write-Host "leg $leg part $i ${name}: $($r.Ms) ms, $(if ($r.ExitedSelf) { 'exited by itself' } elseif ($r.TimedOut) { "killed at the $seconds s bound" } else { 'killed after DONE' })"
         if (Test-Path -LiteralPath $res) { Move-Item -LiteralPath $res $pd }
         if (Test-Path -LiteralPath "$g\dumps") { Move-Item -LiteralPath "$g\dumps" $pd }
         if (Test-Path -LiteralPath "$g\debugger.log") { Copy-Item "$g\debugger.log" $pd }
-        $recs += New-PartRecord $leg $name (Join-Path $pd 'autopilot-result.txt') $pd $r.TimedOut
+        $recs += New-PartRecord $leg $name (Join-Path $pd 'autopilot-result.txt') $pd $r.TimedOut (Get-ScriptStepCount $s)
     }
     return $recs
 }
@@ -281,15 +294,18 @@ function New-RefusedRecord([string]$msg) {
     return [pscustomobject]@{ Leg = 'Linux'; Part = '-'; Status = 'FAIL'; Steps = 0; Pass = 0; Fail = 0; Skipped = 0; Note = $msg; Fails = @(); Facts = @(); Dir = '' }
 }
 
-# Records from the pulled-back parts\<i>-<name>\ (status.txt: exit=<rc>, 124 = timeout bound).
-function Get-LinuxRecords([string]$partsDir, [string[]]$names) {
+# Records from the pulled-back parts\<i>-<name>\ (status.txt: exit=<rc>, 124 = timeout bound);
+# step counts come from the Linux script variants in $scriptsDir.
+function Get-LinuxRecords([string]$partsDir, [string[]]$names, [string]$scriptsDir) {
     $recs = @(); $i = 0
     foreach ($n in $names) {
         $i++
         $pd = Join-Path $partsDir ("$i-" + [IO.Path]::GetFileNameWithoutExtension($n))
         $st = Read-Shared (Join-Path $pd 'status.txt')
         $timedOut = $st -and $st -match 'exit=(124|137)\b'
-        $recs += New-PartRecord 'Linux' $n (Join-Path $pd 'autopilot-result.txt') $pd ([bool]$timedOut)
+        $sc = Join-Path $scriptsDir $n
+        $want = if (Test-Path -LiteralPath $sc) { Get-ScriptStepCount $sc } else { -1 }
+        $recs += New-PartRecord 'Linux' $n (Join-Path $pd 'autopilot-result.txt') $pd ([bool]$timedOut) $want
     }
     return $recs
 }
@@ -373,7 +389,7 @@ function Invoke-LinuxLeg([int]$seconds, $pf) {
     }
     if ($setupError) { Write-Host "Linux leg setup failed: $setupError"; return @(New-RefusedRecord "Linux leg setup failed: $setupError") }
     try { Invoke-Scp $s @("${tgt}:$run/parts") $dir } catch { Write-Host "Linux results: $($_.Exception.Message)" }
-    return Get-LinuxRecords (Join-Path $dir 'parts') $names
+    return Get-LinuxRecords (Join-Path $dir 'parts') $names "$st\scripts"
 }
 
 function Save-AutopilotReport($parts, $skips, $legC, [string[]]$used, [string]$stamp) {

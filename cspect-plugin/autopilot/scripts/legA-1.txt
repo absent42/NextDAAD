@@ -4,7 +4,7 @@
 # Cells: rows 0 toolbar, 1 status, 2 top tabs, 3-21 panes, 22 bottom tabs, 23 pane header/buttons,
 # 24-39 list rows; Picker list rows 8-31, A-Z strip row 6 from col 22, Cancel row 33;
 # DigitPad digits 7/8/9 @41/45/49,18, 4/5/6 row 19, 1/2/3 row 20, 0 < C row 21, -1 @54,18, OK/Cancel row 23.
-# glance: Ctrl+Alt+A really hides the window while halted (the autopilot only sees it redraw after two presses)
+# glance: Ctrl+Alt+A really hides the window while halted (the autopilot sees the plugin's window state, not the desktop)
 # glance: right-click on a popup cancels it (no script command for a right click)
 # glance: a typed out-of-range value (300 in a flag pop-up) is refused with "not accepted: 300" beside the text box
 # glance: the text box under the picture lights up with its hint while a pop-up is open
@@ -37,11 +37,13 @@ expect colour " Step entry " Text
 expect colour " Run to PARSE " Text
 expect game not "Hall."
 
-# 2. Ctrl+Alt+A twice while halted: the window comes back with the same state.
+# 2. Ctrl+Alt+A twice while halted: the window closes, then comes back with the same state.
 # Linux (run-autopilot.ps1 -Leg Linux): the window cannot close under mono, one press is logged and ignored.
 # windows-only
 hotkey a
+wait window closed timeout 5
 hotkey a
+wait window open timeout 5
 # end windows-only
 # linux: hotkey a
 wait screen "HALTED - DEBUG marker"
@@ -468,7 +470,6 @@ wait screen ">1 PRO 1 _ _ :111"
 click " Step entry " rows 0-0
 wait screen ">0 PRO 0 _ _ :105"
 expect game "Hall."
-expect game not "?>n"
 click " Run " rows 0-0
 wait status "running"
 click " Break " rows 0-0

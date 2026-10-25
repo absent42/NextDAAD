@@ -13,9 +13,10 @@ function Throws([scriptblock]$b) {
     try { & $b; return $null } catch { return $_.Exception.Message }
 }
 
+$buildRoot = Join-Path $repo 'build'
 if (Test-Path -LiteralPath $work) {
     if (-not (Test-Path -LiteralPath (Join-Path $work $StageMarker))) { throw "refusing: $work has no $StageMarker" }
-    Remove-Item -LiteralPath $work -Recurse -Force
+    Remove-StagedTree $work $buildRoot
 }
 New-Item -ItemType Directory -Force $work | Out-Null
 Set-Content -LiteralPath (Join-Path $work $StageMarker) -Value 'selftest'
@@ -34,6 +35,20 @@ Reset-StageFolder $ok $work
 Set-Content -LiteralPath "$ok\old.txt" -Value 'x'
 Reset-StageFolder $ok $work
 Check 'a-marked-replaced' ((Test-Path -LiteralPath (Join-Path $ok $StageMarker)) -and -not (Test-Path -LiteralPath "$ok\old.txt"))
+# A junction inside a marked folder is refused; its target (also under $work) is untouched.
+$jt = Join-Path $work 'jtarget'
+New-Item -ItemType Directory -Force $jt | Out-Null
+Set-Content -LiteralPath "$jt\keep.txt" -Value 'x'
+$jdir = Join-Path $work 'jmarked'
+Reset-StageFolder $jdir $work
+New-Item -ItemType Junction -Path "$jdir\link" -Target $jt | Out-Null
+$m = Throws { Reset-StageFolder $jdir $work }
+Check 'a-junction-refused' ($m -like 'refusing:*reparse point*') $m
+$m = Throws { Remove-StagedTree "$jdir\link" $work }
+Check 'a-junction-itself-refused' ($m -like 'refusing:*reparse point*') $m
+Check 'a-junction-target-untouched' (Test-Path -LiteralPath "$jt\keep.txt")
+[IO.Directory]::Delete("$jdir\link", $false)
+Check 'a-junction-removed-link-only' ((Test-Path -LiteralPath "$jt\keep.txt") -and -not (Test-Path -LiteralPath "$jdir\link"))
 
 # (b) a Release DLL is refused; one carrying the marker (UTF-16, as in the #US heap) is accepted
 $rel = Join-Path $work 'release.dll'
@@ -62,10 +77,12 @@ $r1 = Join-Path $work 'r1.txt'
     'DONE failures=1'))
 $r2 = Join-Path $work 'r2.txt'
 [IO.File]::WriteAllLines($r2, [string[]]@('STEP 1 PASS line 1 | hotkey r | expected - | actual '))
+New-Item -ItemType Directory -Force "$work\A1\dumps" | Out-Null
+Set-Content -LiteralPath "$work\A1\dumps\002.txt" -Value 'dump'
 $parts = @(
-    (New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'A1') $false),
-    (New-PartRecord 'A' 'legA-2.txt' $r2 (Join-Path $work 'A2') $true),
-    (New-PartRecord 'D' 'legD.txt' (Join-Path $work 'none.txt') (Join-Path $work 'D1') $false))
+    (New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'A1') $false 3),
+    (New-PartRecord 'A' 'legA-2.txt' $r2 (Join-Path $work 'A2') $true 1),
+    (New-PartRecord 'D' 'legD.txt' (Join-Path $work 'none.txt') (Join-Path $work 'D1') $false 1))
 $skips = @([pscustomobject]@{ Leg = 'E'; Reason = 'no script yet: legE.txt' })
 $legC = [pscustomobject]@{ Leg = 'C'; Pass = $false; Reasons = @('trace.txt first line: got "x", want "y"'); Folder = 'C:\c' }
 $md = New-AutopilotReport $parts $skips @($legC) @('drag the window and relaunch') 'TESTSTAMP'
@@ -82,8 +99,52 @@ Check 'c-fact-2' ($lines -contains '| A | legA-1.txt | step-ms | 40 |')
 Check 'c-legC' ($lines -contains '| C | - | FAIL | 0 | 0 | 0 | 0 | trace.txt first line: got "x", want "y" |')
 Check 'c-glance' ($lines -contains '- drag the window and relaunch')
 Check 'c-overall' ($lines -contains 'Overall: FAIL (4 failing parts)')
-$md2 = New-AutopilotReport @((New-PartRecord 'A' 'smoke.txt' $r1 (Join-Path $work 'A1') $false)) @() @() @() 'T'
-Check 'c-skipped-not-failure' (($md2 -split "`r?`n") -contains 'Overall: FAIL (1 failing parts)')
+# Clean PASS, skipped legs beside it, nothing ran, and the step-count gate.
+$rp = Join-Path $work 'rpass.txt'
+[IO.File]::WriteAllLines($rp, [string[]]@(
+    'STEP 1 PASS line 2 | note "a" | expected - | actual a',
+    'STEP 2 PASS line 3 | quit | expected - | actual ',
+    'DONE failures=0'))
+$pass = New-PartRecord 'A' 'smoke.txt' $rp (Join-Path $work 'P1') $false 2
+$l2 = (New-AutopilotReport @($pass) $skips @() @() 'T') -split "`r?`n"
+Check 'c-clean-pass-row' ($l2 -contains '| A | smoke.txt | PASS | 2 | 2 | 0 | 0 | DONE failures=0 |') ($l2 -join '/')
+Check 'c-skipped-not-failure' ($l2 -contains 'Overall: PASS') ($l2 -join '/')
+$l2 = (New-AutopilotReport @() $skips @() @() 'T') -split "`r?`n"
+Check 'c-nothing-ran' ($l2 -contains 'Overall: FAIL (nothing ran)') ($l2 -join '/')
+$l2 = (New-AutopilotReport @() @() @() @() 'T') -split "`r?`n"
+Check 'c-empty-run' ($l2 -contains 'Overall: FAIL (nothing ran)') ($l2 -join '/')
+$rf = Join-Path $work 'rfail0.txt'
+[IO.File]::WriteAllLines($rf, [string[]]@(
+    'STEP 1 FAIL line 2 | expect running | expected debugger running | actual debugger state 1',
+    'DONE failures=0'))
+$rec = New-PartRecord 'A' 'x.txt' $rf (Join-Path $work 'X1') $false 1
+Check 'c-done0-with-fail-line' ($rec.Status -eq 'FAIL' -and $rec.Fail -eq 1) "$($rec.Status) $($rec.Note)"
+$rz = Join-Path $work 'rzero.txt'
+[IO.File]::WriteAllLines($rz, [string[]]@('DONE failures=0'))
+$rec = New-PartRecord 'A' 'x.txt' $rz (Join-Path $work 'X1') $false 5
+Check 'c-zero-steps' ($rec.Status -eq 'FAIL' -and $rec.Note -like 'no steps reported*') "$($rec.Status) $($rec.Note)"
+$rec = New-PartRecord 'A' 'x.txt' $rp (Join-Path $work 'X1') $false 528
+Check 'c-step-mismatch' ($rec.Status -eq 'FAIL' -and $rec.Note -eq 'steps: 2 reported, script has 528 (DONE failures=0)') "$($rec.Status) $($rec.Note)"
+$rec = New-PartRecord 'A' 'x.txt' $rp (Join-Path $work 'X1') $false
+Check 'c-step-count-unknown' ($rec.Status -eq 'FAIL' -and $rec.Note -like 'steps: 2 reported, script has unknown*') "$($rec.Status) $($rec.Note)"
+$l2 = (New-AutopilotReport @($rec) @() @() @() 'T') -split "`r?`n"
+Check 'c-step-mismatch-listed' ($l2 -contains '- A x.txt: steps: 2 reported, script has unknown (DONE failures=0)') ($l2 -join '/')
+$l2 = (New-AutopilotReport @((New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'NoDumps') $false 3)) @() @() @() 'T') -split "`r?`n"
+Check 'c-dump-not-written' ($l2 -contains '  dump: none written') ($l2 -join '/')
+$sc = Join-Path $work 'count.txt'
+[IO.File]::WriteAllLines($sc, [string[]]@('# c', '', '   ', 'note "a # b"', '  # indented comment', '  quit  # trailing'))
+Check 'c-step-count' ((Get-ScriptStepCount $sc) -eq 2) (Get-ScriptStepCount $sc)
+# The runner's count agrees with ScriptParser in the Autopilot DLL for every shipped script.
+$apDll = Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Autopilot\net48\NextDAADDebug.dll'
+if (Test-Path -LiteralPath $apDll) {
+    $asm = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($apDll))
+    $parser = $asm.GetType('NextDAADDebug.Autopilot.ScriptParser')
+    foreach ($p in Get-ChildItem -LiteralPath $ApScripts -Filter '*.txt' | Where-Object { $_.Name -notlike '*.seed.txt' -and $_.Name -notlike '*.expect.txt' }) {
+        $n = $parser.GetMethod('Parse').Invoke($null, @([IO.File]::ReadAllText($p.FullName))).Count
+        Check "c-step-count-real $($p.Name)" ((Get-ScriptStepCount $p.FullName) -eq $n) "$(Get-ScriptStepCount $p.FullName) vs $n"
+    }
+}
+else { 'skip c-step-count-real (Autopilot not built)' }
 
 # (d) leg C checker on canned logs
 $tooOld = Get-TooOldText
@@ -105,6 +166,23 @@ $c = Test-LegC $log $tr $exp $tooOld
 Check 'd-no-tooold' ((-not $c.Pass) -and ($c.Reasons -join ';') -like '*TooOld*')
 $c = Test-LegC (Join-Path $work 'nolog.txt') (Join-Path $work 'notrace.txt') $exp $tooOld
 Check 'd-missing-files' ((-not $c.Pass) -and $c.Reasons.Count -eq 2)
+[IO.File]::WriteAllLines($tr, [string[]]@('p0 e0422 c03f8 let 100 7'))
+$c = Test-LegC $log $tr $exp $tooOld
+Check 'd-trace-case-sensitive' ((-not $c.Pass) -and ($c.Reasons -join ';') -like '*trace.txt first line*') ($c.Reasons -join ';')
+$pfc = Join-Path $work 'PlatformFacts.cs'
+[IO.File]::WriteAllText($pfc, 'public const string TooOld = "";')
+$m = Throws { Get-TooOldText $pfc }
+Check 'd-tooold-empty-refused' ($m -like 'VersionGate.TooOld not found*') $m
+
+# Invoke-CSpect restores the caller's NEXTDAAD_DEBUG* variables (a stand-in exe that exits at once).
+$fcs = Join-Path $work 'fakecs'
+New-Item -ItemType Directory -Force $fcs | Out-Null
+Copy-Item (Join-Path $env:SystemRoot 'System32\whoami.exe') "$fcs\CSpect.exe"
+$env:NEXTDAAD_DEBUG = 'owner-folder'; Remove-Item Env:NEXTDAAD_DEBUG_TRACE -ErrorAction SilentlyContinue
+$r = Invoke-CSpect $fcs $work @('/?') @{ NEXTDAAD_DEBUG = 'leg-folder'; NEXTDAAD_DEBUG_TRACE = 'leg-trace' } 10 (Join-Path $work 'fake-stdout.txt') { $false } @()
+Check 'e-env-restored' ($env:NEXTDAAD_DEBUG -eq 'owner-folder' -and $null -eq $env:NEXTDAAD_DEBUG_TRACE) "$env:NEXTDAAD_DEBUG / $env:NEXTDAAD_DEBUG_TRACE"
+Check 'e-fake-exited' ($r.ExitedSelf) ($r | Out-String)
+Remove-Item Env:NEXTDAAD_DEBUG -ErrorAction SilentlyContinue
 
 # script table: missing scripts skip a leg
 $miss = Get-LegScripts 'A' $null (Join-Path $work 'noscripts')
@@ -178,7 +256,10 @@ New-Item -ItemType Directory -Force "$lp\1-legA-1", "$lp\2-legA-2" | Out-Null
 Copy-Item $r1 "$lp\1-legA-1\autopilot-result.txt"
 Set-Content -LiteralPath "$lp\1-legA-1\status.txt" -Value 'exit=0 ms=61000'
 Set-Content -LiteralPath "$lp\2-legA-2\status.txt" -Value 'exit=124 ms=120000'
-$lrec = @(Get-LinuxRecords $lp @('legA-1.txt', 'legA-2.txt'))
+$lsd = Join-Path $work 'lscripts'
+New-Item -ItemType Directory -Force $lsd | Out-Null
+[IO.File]::WriteAllLines("$lsd\legA-1.txt", [string[]]@('# x', 'note "a"', 'note "b"', 'quit'))
+$lrec = @(Get-LinuxRecords $lp @('legA-1.txt', 'legA-2.txt') $lsd)
 $md3 = New-AutopilotReport ($parts + $lrec + @($ref)) @() @() @() 'T'
 $l3 = $md3 -split "`r?`n"
 Check 'g-linux-total-1' ($l3 -contains '| Linux | legA-1.txt | FAIL | 3 | 1 | 1 | 1 | DONE failures=1 |') ($l3 -join '/')
@@ -249,11 +330,11 @@ Check 'h-setup-failure-killed' (@($script:sshCalls | Where-Object { $_ -like "* 
 Check 'h-setup-failure-no-run' (@($script:sshCalls | Where-Object { $_ -like "* run '*" }).Count -eq 0)
 $lr2 = @(Invoke-LinuxLeg 30 (New-RefusedRecord 'Linux leg refused: x'))
 Check 'h-refused-passthrough' ($lr2.Count -eq 1 -and $lr2[0].Note -eq 'Linux leg refused: x')
-$aRec = New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'A1') $false
+$aRec = New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'A1') $false 3
 $null = Save-AutopilotReport (@($aRec) + $lr) @() @() @() 'T'
 $rep = [IO.File]::ReadAllText((Join-Path $work 'report.md')) -split "`r?`n"
 Check 'h-report-written' (($rep -contains '| A | legA-1.txt | FAIL | 3 | 1 | 1 | 1 | DONE failures=1 |') -and @($rep | Where-Object { $_ -like '| Linux | - | FAIL |*Linux leg setup failed: *' }).Count -eq 1) ($rep -join '/')
 
-Remove-Item -LiteralPath $work -Recurse -Force
+Remove-StagedTree $work $buildRoot
 if ($script:fails) { "selftest: $($script:fails) failing"; exit 1 }
 'selftest: all pass'

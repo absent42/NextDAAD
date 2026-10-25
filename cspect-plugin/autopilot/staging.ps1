@@ -11,14 +11,21 @@ function Assert-UnderRoot([string]$path, [string]$root) {
     if ($f -eq $r -or -not $f.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing: $path is not under $root" }
 }
 
+# Recursive delete of $path under $root; refuses if $path or anything inside it is a reparse point.
+function Remove-StagedTree([string]$path, [string]$root) {
+    Assert-UnderRoot $path $root
+    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "refusing: $path is a reparse point" }
+    $rp = Get-ChildItem -LiteralPath $path -Recurse -Force -Attributes ReparsePoint | Select-Object -First 1
+    if ($rp) { throw "refusing: $($rp.FullName) is a reparse point inside $path" }
+    Remove-Item -LiteralPath $path -Recurse -Force
+}
+
 # Empties $dir for staging; only a folder this runner marked is ever deleted.
 function Reset-StageFolder([string]$dir, [string]$root) {
     Assert-UnderRoot $dir $root
     if (Test-Path -LiteralPath $dir) {
         if (-not (Test-Path -LiteralPath (Join-Path $dir $StageMarker))) { throw "refusing: $dir exists and was not staged by the autopilot runner (no $StageMarker)" }
-        $rp = Get-ChildItem -LiteralPath $dir -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1
-        if ($rp) { throw "refusing: $($rp.FullName) is a reparse point inside $dir" }
-        Remove-Item -LiteralPath $dir -Recurse -Force
+        Remove-StagedTree $dir $root
     }
     New-Item -ItemType Directory -Force $dir | Out-Null
     Set-Content -LiteralPath (Join-Path $dir $StageMarker) -Value 'staged by cspect-plugin\autopilot\run-autopilot.ps1'

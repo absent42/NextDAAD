@@ -6,6 +6,7 @@
 # The game boots, is not halted, and the window reports the mismatch
 wait status "symbol file does not match this interpreter build" timeout 30
 measure halted-state
+expect running
 expect log "DEBUG, source map loaded"
 expect colour "symbol file does not match this interpreter build" Error
 expect screen "waiting for NextDAAD"
@@ -40,9 +41,13 @@ click " Condacts " rows 2-2
 # No false halts: GET LAMP, Break hotkey, DROP LAMP; dimmed buttons do nothing
 click " Run " rows 0-0
 click " Step " rows 0-0
+expect running
 game "GET LAMP\n"
+expect running
 hotkey b
+expect running
 game "DROP LAMP\n"
+expect running
 measure halted-state
 expect status "symbol file does not match this interpreter build"
 expect screen "waiting for NextDAAD"
