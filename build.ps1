@@ -44,6 +44,18 @@ try {
     # Only -Kit publishes the interpreter into the shippable authoring kit, so
     # routine -Release dev builds never overwrite the kit's committed nextdaad.nex.
     if ($Kit) {
+        # The kit never ships without the debugger plugin: fail before touching it.
+        $cspectDir = if ($env:CSPECT_DIR) { $env:CSPECT_DIR } else { 'D:\ZXNextDev\cspect' }
+        if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'ERROR: build.ps1 -Kit needs the dotnet SDK on PATH to build the debugger plugin' }
+        if (-not (Test-Path -LiteralPath "$cspectDir\Plugin.dll")) { throw "ERROR: build.ps1 -Kit needs the CSpect 4.0 reference assemblies at $cspectDir (set CSPECT_DIR) to build the debugger plugin" }
+        & dotnet build "$root\cspect-plugin\NextDAADDebug.csproj" -c Release "-p:CSpectDir=$cspectDir" --nologo -v q
+        if ($LASTEXITCODE -ne 0) { throw 'ERROR: build.ps1 -Kit could not build the debugger plugin' }
+        $pluginDll = "$root\build\cspect-plugin\bin\NextDAADDebug\Release\net48\NextDAADDebug.dll"
+        if (-not (Test-Path -LiteralPath $pluginDll)) { throw "ERROR: build.ps1 -Kit needs $pluginDll after the plugin build" }
+        Copy-Item $pluginDll "$root\authoring-kit\lib\NextDAADDebug.dll" -Force
+        Write-Host "placed authoring-kit\lib\NextDAADDebug.dll (debugger plugin)"
+        Copy-Item "$root\build\NEXTDAAD.SYM" "$root\authoring-kit\NEXTDAAD.SYM" -Force
+        Write-Host "placed authoring-kit\NEXTDAAD.SYM (pairs with the kit interpreter)"
         Copy-Item "$root\build\nextdaad.nex" "$root\authoring-kit\nextdaad.nex" -Force
         Write-Host "placed authoring-kit\nextdaad.nex (kit interpreter refreshed)"
         Copy-Item "$root\build\intro.nex" "$root\authoring-kit\intro.nex" -Force

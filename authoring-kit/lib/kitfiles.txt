@@ -24,6 +24,7 @@ both CONFIG.local.BAT.sample
 both README.txt
 both STARTER/**
 both nextdaad.nex
+both NEXTDAAD.SYM
 both intro.nex
 both xbn.inc
 both xbnmod.inc
@@ -36,6 +37,7 @@ both lib/*.ps1
 both lib/*.py
 both lib/vidtune/**
 both lib/default.chr
+both lib/NextDAADDebug.dll
 both lib/toolversions.txt
 both lib/kitfiles.txt
 both tools/README.txt

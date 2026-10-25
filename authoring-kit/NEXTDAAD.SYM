@@ -1,0 +1,20 @@
+NEXTDAAD-SYM	1
+build	dd652a3	Release
+sym	flags	A200
+sym	objTable	A300
+sym	numObj	A900
+sym	procStack	A901
+sym	procSP	A933
+sym	isDone	A935
+sym	curOpcode	A936
+sym	curCondact	A937
+sym	curProps	A938
+sym	indirValid	9EDF
+sym	indirArg2	9EDE
+sym	doallObj	A947
+sym	doallLevel	A948
+sym	ddbHeader	8689
+sym	cprops	9F90
+sym	tmCols	83DE
+hook	eng_exec	9E21	04	CD8782CD5295CD6A953236A9FEFFCAC19EFEDC28F1E67F3237A921909FED317E
+hook	err_raise	A973	05	32A6A93E0232078C01000016013ADE835F3E20CD868B2124F6CD6C863AA6A9C6
