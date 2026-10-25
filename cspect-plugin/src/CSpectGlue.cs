@@ -87,7 +87,7 @@ namespace NextDAADDebug
 
     public sealed class DebugPlugin : iPlugin
     {
-        const int IdExec = 1, IdError = 2, KeyToggle = 10, KeyBreak = 11, KeyStep = 12, KeyRun = 13;
+        const int IdExec = 1, IdError = 2, IdMouse = 4, KeyToggle = 10, KeyBreak = 11, KeyStep = 12, KeyRun = 13;
         iCSpect cs;
         DebugSession session;
         TraceWriter trace;
@@ -95,6 +95,8 @@ namespace NextDAADDebug
         string settingsPath, folder, problem;
         bool disarmed, interactive;
         WindowHost host;
+        volatile MouseGuard guard;
+        bool mouseLogged;
 #if AUTOPILOT
         Autopilot.AutopilotHost autopilot;
         const int IdKeys = 3;
@@ -154,6 +156,12 @@ namespace NextDAADDebug
             {
                 try { host = new WindowHost(cs, settings, settingsPath, folder); }
                 catch (Exception ex) { Log.Write("window disabled: " + ex.Message); }
+                if (host != null)
+                {
+                    guard = new MouseGuard();
+                    host.Guard = guard;
+                    foreach (int p in MouseGuard.Ports) list.Add(new sIO(p, eAccess.Port_Read, IdMouse));
+                }
             }
 #if AUTOPILOT
             StartAutopilot(list, sym);
@@ -201,6 +209,13 @@ namespace NextDAADDebug
         public byte Read(eAccess type, int port, int id, out bool isvalid)
         {
             isvalid = false;
+            if (type == eAccess.Port_Read && id == IdMouse)
+            {
+                byte m;
+                var g = guard;
+                if (g != null && g.TryAnswer(port, out m)) { isvalid = true; return m; }
+                return 0;
+            }
 #if AUTOPILOT
             // Hot path (hundreds of reads per frame): no allocation, no logging.
             if (type == eAccess.Port_Read)
@@ -230,6 +245,7 @@ namespace NextDAADDebug
                 catch (Exception ex) { Disarm(ex); }
             }
             if (host != null && !PlatformFacts.WindowFromOSTick) Frame();
+            if (guard != null) SampleMouse();
 #if AUTOPILOT
             if (autopilot != null) autopilot.Tick();
 #endif
@@ -246,6 +262,31 @@ namespace NextDAADDebug
 #if AUTOPILOT
             if (autopilot != null) autopilot.Frame();
 #endif
+        }
+
+        // CSpect's own mouse values, read once per frame past the guard; a failure turns the guard off.
+        void SampleMouse()
+        {
+            if (host == null) { guard.Release(); guard = null; return; }
+            byte b, x, y;
+            try
+            {
+                guard.Sampling = true;
+                b = cs.InPort(MouseGuard.PortButtons);
+                x = cs.InPort(MouseGuard.PortX);
+                y = cs.InPort(MouseGuard.PortY);
+            }
+            catch (Exception ex)
+            {
+                Log.Write("mouse guard disabled: " + ex.Message);
+                guard.Release();
+                guard = null;
+                return;
+            }
+            finally { if (guard != null) guard.Sampling = false; }
+            guard.PassThrough(b, x, y);
+            guard.Frame();
+            if (!mouseLogged) { mouseLogged = true; Log.Write("mouse guard: CSpect answers " + b.ToString("X2") + " " + x.ToString("X2") + " " + y.ToString("X2")); }
         }
 
         // A UI failure turns the window off; the hooks and trace keep running.
