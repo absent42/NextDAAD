@@ -32,26 +32,39 @@ namespace NextDAADDebug.Tests
 
         static bool Has(byte[] b, string s) => Contains(b, s, Encoding.ASCII) || Contains(b, s, Encoding.Unicode);
 
-        // Every type declared under src/Autopilot.
+        // Every type declared under src/Autopilot (comments and strings stripped first).
         static List<string> AutopilotTypes()
         {
             var names = new List<string>();
             foreach (string f in Directory.GetFiles(Path.Combine(Src, "Autopilot"), "*.cs"))
-                foreach (Match m in Regex.Matches(File.ReadAllText(f), @"\b(?:class|struct|interface|enum)\s+(\w+)"))
-                    names.Add(m.Groups[1].Value);
+                names.AddRange(TypeNames(File.ReadAllText(f)));
             Assert.NotEmpty(names);
             return names;
         }
 
-        // A DLL older than its compiled sources was not rebuilt: dotnet test only builds Debug.
+        static IEnumerable<string> TypeNames(string src) =>
+            Regex.Matches(StripNoise(src), @"(?m)^[ \t]*(?:(?:public|internal|private|protected|static|sealed|abstract|partial|unsafe)\s+)*(?:class|struct|interface|enum)\s+(\w+)")
+                .Cast<Match>().Select(m => m.Groups[1].Value);
+
+        [Fact]
+        public void TypeNamesIgnoreCommentsAndStrings()
+        {
+            string src = "// a class that x\n/* an enum of y */\nvar s = \"a struct here\";\ninternal sealed class Real { }\nenum Kind { A }\n";
+            Assert.Equal(new[] { "Real", "Kind" }, TypeNames(src).ToArray());
+        }
+
+        static string StripNoise(string s) =>
+            Regex.Replace(s, @"//[^\n]*|/\*.*?\*/|@""(?:[^""]|"""")*""|""(?:[^""\\\n]|\\.)*""|'(?:[^'\\\n]|\\.)*'", " ", RegexOptions.Singleline);
+
+        // A DLL older than any build input (src files, csproj, props) was not rebuilt: dotnet test only builds Debug.
         static byte[] Fresh(string config, bool withAutopilot)
         {
             var p = Dll(config);
             Assert.True(File.Exists(p), "build -c " + config + " first");
             DateTime dll = File.GetLastWriteTimeUtc(p);
-            var inputs = Directory.GetFiles(Src, "*.cs", SearchOption.AllDirectories)
+            var inputs = Directory.GetFiles(Src, "*", SearchOption.AllDirectories)
                 .Where(f => withAutopilot || f.IndexOf(Path.DirectorySeparatorChar + "Autopilot" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) < 0)
-                .Concat(new[] { Path.Combine(Repo.Root, "cspect-plugin", "NextDAADDebug.csproj") });
+                .Concat(new[] { Path.Combine(Repo.Root, "cspect-plugin", "NextDAADDebug.csproj"), Path.Combine(Repo.Root, "cspect-plugin", "Directory.Build.props") });
             foreach (string f in inputs)
                 Assert.True(File.GetLastWriteTimeUtc(f) <= dll, config + " DLL is older than " + f + ": rebuild -c " + config);
             return File.ReadAllBytes(p);

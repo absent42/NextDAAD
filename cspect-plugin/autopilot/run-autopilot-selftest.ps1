@@ -134,17 +134,22 @@ Check 'c-dump-not-written' ($l2 -contains '  dump: none written') ($l2 -join '/'
 $sc = Join-Path $work 'count.txt'
 [IO.File]::WriteAllLines($sc, [string[]]@('# c', '', '   ', 'note "a # b"', '  # indented comment', '  quit  # trailing'))
 Check 'c-step-count' ((Get-ScriptStepCount $sc) -eq 2) (Get-ScriptStepCount $sc)
-# The runner's count agrees with ScriptParser in the Autopilot DLL for every shipped script.
+# The runner's count agrees with ScriptParser in the Autopilot DLL for every shipped script,
+# Windows and Linux-converted variants.
 $apDll = Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Autopilot\net48\NextDAADDebug.dll'
+Check 'c-autopilot-dll-present' (Test-Path -LiteralPath $apDll) "build -c Autopilot first: $apDll"
 if (Test-Path -LiteralPath $apDll) {
     $asm = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($apDll))
     $parser = $asm.GetType('NextDAADDebug.Autopilot.ScriptParser')
     foreach ($p in Get-ChildItem -LiteralPath $ApScripts -Filter '*.txt' | Where-Object { $_.Name -notlike '*.seed.txt' -and $_.Name -notlike '*.expect.txt' }) {
-        $n = $parser.GetMethod('Parse').Invoke($null, @([IO.File]::ReadAllText($p.FullName))).Count
-        Check "c-step-count-real $($p.Name)" ((Get-ScriptStepCount $p.FullName) -eq $n) "$(Get-ScriptStepCount $p.FullName) vs $n"
+        $lin = Join-Path $work ('real-linux-' + $p.Name)
+        Convert-LinuxScript $p.FullName $lin
+        foreach ($v in @(@('', $p.FullName), @('linux ', $lin))) {
+            $n = $parser.GetMethod('Parse').Invoke($null, @([IO.File]::ReadAllText($v[1]))).Count
+            Check "c-step-count-real $($v[0])$($p.Name)" ((Get-ScriptStepCount $v[1]) -eq $n) "$(Get-ScriptStepCount $v[1]) vs $n"
+        }
     }
 }
-else { 'skip c-step-count-real (Autopilot not built)' }
 
 # (d) leg C checker on canned logs
 $tooOld = Get-TooOldText
