@@ -77,6 +77,10 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 - **EXTERN support and API** - load and run external machine code binaries up 
   to 16KB in size, either once or on an interrupt, passing flags, object 
   table, message text etc
+- **CSpect debugger plugin** - Stop your game in the middle of a turn and look inside it. You can step one condact at a time,
+stop automatically when a flag changes or an object moves, and change
+flags and objects while the game is stopped. It shows the lines of your
+own `.DSF` as you step through them.
 - Skills for AI assistants to aid in writing Z80 externs, and DAAD games
 
 ## For authors
