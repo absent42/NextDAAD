@@ -1,0 +1,49 @@
+# Leg E: DEBUG-build NEXTDAAD.SYM on the Release NEX, no settings file (Settings.Defaults).
+# The hooks never arm, so the game is typed into freely and must never halt.
+# Game text is not readable here: GameRows finds tmCols through the mismatched SYM.
+# glance: leg E game screen shows "Hall." and its prompt, then the "now have" and "dropped" messages for GET LAMP / DROP LAMP
+
+# The game boots, is not halted, and the window reports the mismatch
+wait status "symbol file does not match this interpreter build" timeout 30
+measure halted-state
+expect log "DEBUG, source map loaded"
+expect colour "symbol file does not match this interpreter build" Error
+expect screen "waiting for NextDAAD"
+expect colour " Run " Dim
+expect colour " Break " Dim
+expect colour " Step " Dim
+expect colour " Step entry " Dim
+expect colour " Step out " Dim
+expect colour " Run to PARSE " Dim
+
+# Every tab draws with no data
+click " Flags " rows 22-22
+expect screen "   0 Dark                     0"
+expect screen "  15                          0"
+click " Objects " rows 22-22
+expect screen " w   obj name             loc  where               wt C W attrs"
+expect screen not "lamp"
+click " Parser " rows 22-22
+expect screen "Verb          flag 33 ="
+click " Database " rows 22-22
+expect screen "Connections"
+click " Breakpoints " rows 22-22
+expect screen "[x] DEBUG marker"
+expect screen "[x] runtime error"
+expect screen not "[x] condact"
+click " Watches " rows 22-22
+expect screen " + Flag "
+click " Source " rows 2-2
+expect screen "no source map"
+click " Condacts " rows 2-2
+
+# No false halts: GET LAMP, Break hotkey, DROP LAMP; dimmed buttons do nothing
+click " Run " rows 0-0
+click " Step " rows 0-0
+game "GET LAMP\n"
+hotkey b
+game "DROP LAMP\n"
+measure halted-state
+expect status "symbol file does not match this interpreter build"
+expect screen "waiting for NextDAAD"
+quit

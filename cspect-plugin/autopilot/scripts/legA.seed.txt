@@ -1,0 +1,14 @@
+NEXTDAAD-DEBUGGER	1
+bp	DebugMarker	1	0	-1	-1	Eq
+bp	RuntimeError	1	0	-1	-1	Eq
+bp	Process	1	2	21	50	Eq
+bp	Condact	1	40	-1	-1	Eq
+bp	SourceLine	1	0	125	-1	Eq
+bp	FlagCompare	1	38	1	-1	Eq
+bp	FlagChange	1	38	-1	-1	Eq
+bp	ObjectMoved	1	0	-1	-1	Eq
+watch	flag	38
+watch	flag	100
+watch	flag	7
+watch	object	0
+window	-1	-1

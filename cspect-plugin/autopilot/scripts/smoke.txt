@@ -5,7 +5,7 @@ wait status "HALTED - step"
 hotkey r
 wait game ">" timeout 20
 game "GET LAMP\n"
-# DBGFIX never runs ABILITY, so flag 52 (max weight) is 0 and GET 0 (weight 3) prints SYSMESS 43.
-wait game "weighs too much"
+# DBGFIX runs ABILITY 10 50 every turn, so GET 0 (weight 3) succeeds with SYSMESS 36.
+wait game "I now have the brass lamp."
 measure halted-state
 quit

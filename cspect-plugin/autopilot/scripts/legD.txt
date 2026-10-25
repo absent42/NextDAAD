@@ -1,0 +1,39 @@
+# Leg D: out-of-date source map (GAME.DSM checksum zeroed) with the stale seed (legD.seed.txt).
+# {CUR} is a literal U+0010, the Condacts current-row glyph, before the padded hex offset.
+
+# Halted at the DEBUG marker; the map is ignored, rows are labelled by hex offset
+wait status "HALTED - DEBUG marker" timeout 30
+expect log "source map loaded"
+expect screen ">0 PRO 0 _ _ "
+expect screen not ":101"
+expect screen " 03F8 LET 100 7"
+expect screen " 03FB LET @100(=7) 3"
+expect screen " 03FE DEBUG"
+expect screen " 03FF PROCESS 1"
+expect screen "flag  38 Player location      = 0  Hall."
+expect screen not "flag 100"
+
+# Source tab shows the stale message; the line breakpoint is kept but unresolved
+click " Source " rows 2-2
+expect screen "source map is out of date - rebuild"
+click " Breakpoints " rows 22-22
+expect screen "[x] DEBUG marker"
+expect screen "[x] runtime error"
+expect screen "[x] line 125 of file 0"
+click " Condacts " rows 2-2
+
+# Stepping works without a map
+click " Step " rows 0-0
+wait screen ">1 PRO 1 _ _ "
+expect status "HALTED - step"
+expect screen " 0 PRO 0 _ _ "
+expect screen not ":111"
+expect screen " 040A CLS"
+
+# The source-line breakpoint is inert: the message prints, then the next turn's DEBUG marker halts
+click " Run " rows 0-0
+wait status "running"
+game "OPEN\n"
+wait status "HALTED - DEBUG marker"
+expect game "I can't do that."
+quit

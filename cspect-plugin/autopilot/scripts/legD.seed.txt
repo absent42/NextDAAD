@@ -1,0 +1,6 @@
+NEXTDAAD-DEBUGGER	1
+bp	DebugMarker	1	0	-1	-1	Eq
+bp	RuntimeError	1	0	-1	-1	Eq
+bp	SourceLine	1	0	125	-1	Eq
+watch	flag	38
+window	-1	-1
