@@ -14,13 +14,14 @@ $ApRepo = (Resolve-Path "$PSScriptRoot\..\..").Path
 $ApScripts = Join-Path $PSScriptRoot 'scripts'
 $ApRoot = Join-Path $ApRepo 'build\autopilot'
 $ApCs40 = 'D:\ZXNextDev\cspect'
-$ApCs331 = Join-Path $ApRepo 'tools\CSpect'
+# Leg C needs a below-4.0 CSpect (tools\CSpect is 4.0 now); only read.
+$ApCsOld = 'D:\ZXNextDev\CSpect3_4_1_0_BETA'
 $ApBin = Join-Path $ApRepo 'build\cspect-plugin\bin\NextDAADDebug'
 
 # Script parts per leg; each part is one CSpect launch in the same leg folder.
 $LegTable = @{
     A = @{ CSpect = $ApCs40; Parts = @('legA-1.txt', 'legA-2.txt') }
-    C = @{ CSpect = $ApCs331; Parts = @() }
+    C = @{ CSpect = $ApCsOld; Parts = @() }
     D = @{ CSpect = $ApCs40; Parts = @('legD.txt'); Variant = 'StaleDsm' }
     E = @{ CSpect = $ApCs40; Parts = @('legE.txt'); Variant = 'DebugSym' }
 }
@@ -119,7 +120,7 @@ function New-AutopilotReport($parts, $skips, $legC, $glance, [string]$stamp) {
     foreach ($g in $glance) { $o.Add("- $g") }
     $o.Add(''); $o.Add('## Files'); $o.Add('')
     foreach ($p in $parts | Where-Object { $_.Dir }) { $o.Add("- $($p.Leg) $($p.Part): $($p.Dir) (autopilot-result.txt, dumps\, debugger.log, stdout.txt)") }
-    foreach ($c in $legC) { $o.Add("- $($c.Leg): $($c.Folder) (sd\debugger.log, sd\trace.txt, stdout.txt)") }
+    foreach ($c in $legC | Where-Object { $_.Folder }) { $o.Add("- $($c.Leg): $($c.Folder) (sd\debugger.log, sd\trace.txt, stdout.txt)") }
     return ($o -join "`r`n") + "`r`n"
 }
 
@@ -234,8 +235,23 @@ function Invoke-ScriptLeg([string]$leg, [string[]]$scripts, [int]$seconds) {
     return $recs
 }
 
+# Refusal text when $csDir's CSpect.exe is not older than 4.0 (or unreadable), else $null;
+# an upgraded leg C CSpect must never pass the version gate check vacuously.
+function Get-LegCVersionRefusal([string]$csDir) {
+    $exe = Join-Path $csDir 'CSpect.exe'
+    try { $v = [Reflection.AssemblyName]::GetAssemblyName($exe).Version }
+    catch { return "leg C needs a CSpect older than 4.0 - cannot read the version of $exe" }
+    if ($v -ge [Version]'4.0') { return "leg C needs a CSpect older than 4.0 - found $v" }
+    return $null
+}
+
 function Invoke-LegC([int]$seconds) {
-    $dir = New-LegFolder 'C' $ApCs331
+    $refusal = Get-LegCVersionRefusal $ApCsOld
+    if ($refusal) {
+        Write-Host $refusal
+        return [pscustomobject]@{ Leg = 'C'; Pass = $false; Reasons = @($refusal); Folder = $null }
+    }
+    $dir = New-LegFolder 'C' $ApCsOld
     $g = Join-Path $dir 'sd'
     $tooOld = Get-TooOldText
     $log = Join-Path $g 'debugger.log'

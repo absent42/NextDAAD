@@ -1,11 +1,12 @@
 # Stages the debugger bench legs. Each sd\LEG* folder is complete: game,
 # interpreter, SYM, source map and its own CSpect copy with the plugin.
-# tools\CSpect (3.3.1) and D:\ZXNextDev\cspect (4.0) are only read.
+# D:\ZXNextDev\CSpect3_4_1_0_BETA (3.4.1.0, below the 4.0 gate) and D:\ZXNextDev\cspect (4.0) are only read.
 # A leg folder is only ever replaced when it carries the marker this script wrote.
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot
 $fx = Join-Path $PSScriptRoot 'tests\fixtures'
 $cs40 = 'D:\ZXNextDev\cspect'
+$csOld = 'D:\ZXNextDev\CSpect3_4_1_0_BETA'
 $dll = Join-Path $repo 'build\cspect-plugin\bin\NextDAADDebug\Release\net48\NextDAADDebug.dll'
 $marker = '.cspect-debugger-leg'
 $legNames = 'LEGDBGW', 'LEGDBG331', 'LEGDBGSTALE', 'LEGDBGBADSYM'
@@ -83,7 +84,7 @@ function New-Leg([string]$name, [string]$cspectSrc, [string]$seed) {
 }
 
 New-Leg 'LEGDBGW' $cs40 $seedFull | Out-Null
-New-Leg 'LEGDBG331' (Join-Path $repo 'tools\CSpect') $null | Out-Null
+New-Leg 'LEGDBG331' $csOld $null | Out-Null      # folder name kept for the run sheet
 $stale = New-Leg 'LEGDBGSTALE' $cs40 $seedStale
 $dsm = [IO.File]::ReadAllText("$stale\GAME.DSM") -replace '(?m)^ddb\t[0-9A-Fa-f]+\t', "ddb`t00000000`t"
 [IO.File]::WriteAllText("$stale\GAME.DSM", $dsm, (New-Object Text.UTF8Encoding($false)))

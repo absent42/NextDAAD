@@ -178,6 +178,25 @@ $pfc = Join-Path $work 'PlatformFacts.cs'
 [IO.File]::WriteAllText($pfc, 'public const string TooOld = "";')
 $m = Throws { Get-TooOldText $pfc }
 Check 'd-tooold-empty-refused' ($m -like 'VersionGate.TooOld not found*') $m
+# Leg C version gate: stand-in CSpect.exe assemblies at 4.0.0.0 and 3.4.1.0, and none at all.
+foreach ($v in '4.0.0.0', '3.4.1.0') {
+    $vd = Join-Path $work "cs-$v"
+    New-Item -ItemType Directory -Force $vd | Out-Null
+    $cls = 'V' + ($v -replace '\.', '_')
+    Add-Type -TypeDefinition "[assembly: System.Reflection.AssemblyVersion(`"$v`")] public class $cls {}" -OutputAssembly "$vd\stand-in.dll" -OutputType Library
+    Move-Item -LiteralPath "$vd\stand-in.dll" "$vd\CSpect.exe"      # a .exe output would need Main
+}
+$m = Get-LegCVersionRefusal (Join-Path $work 'cs-4.0.0.0')
+Check 'd-legc-40-refused' ($m -eq 'leg C needs a CSpect older than 4.0 - found 4.0.0.0') $m
+$m = Get-LegCVersionRefusal (Join-Path $work 'cs-3.4.1.0')
+Check 'd-legc-341-accepted' ($null -eq $m) $m
+$m = Get-LegCVersionRefusal (Join-Path $work 'cs-none')
+Check 'd-legc-missing-refused' ($m -like 'leg C needs a CSpect older than 4.0 - cannot read*') $m
+$l2 = (New-AutopilotReport @() @() @([pscustomobject]@{ Leg = 'C'; Pass = $false; Reasons = @('leg C needs a CSpect older than 4.0 - found 4.0.0.0'); Folder = $null }) @() 'T') -split "`r?`n"
+Check 'd-legc-refusal-row' ($l2 -contains '| C | - | FAIL | 0 | 0 | 0 | 0 | leg C needs a CSpect older than 4.0 - found 4.0.0.0 |' -and $l2 -contains 'Overall: FAIL (1 failing parts)') ($l2 -join '/')
+# The real folders, when present: leg C's is below 4.0, the 4.0 one is refused.
+if (Test-Path -LiteralPath "$ApCsOld\CSpect.exe") { $m = Get-LegCVersionRefusal $ApCsOld; Check 'd-legc-real-old-accepted' ($null -eq $m) $m } else { "skip d-legc-real-old-accepted (no $ApCsOld)" }
+if (Test-Path -LiteralPath "$ApCs40\CSpect.exe") { $m = Get-LegCVersionRefusal $ApCs40; Check 'd-legc-real-40-refused' ($m -like '*found 4.*') $m } else { "skip d-legc-real-40-refused (no $ApCs40)" }
 
 # Invoke-CSpect restores the caller's NEXTDAAD_DEBUG* variables (a stand-in exe that exits at once).
 $fcs = Join-Path $work 'fakecs'
