@@ -115,6 +115,9 @@ next to the game. It is one fixed layout:
 
 Scroll any list with the mouse wheel.
 
+Clicks in the debugger window do not reach the game's mouse, so a click
+on a tab does not end a loader intro or click in a mouse-driven game.
+
 ### The bottom tabs
 
 - **Watches** - the flags and objects you picked to keep in view. The
