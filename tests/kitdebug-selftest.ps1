@@ -338,5 +338,33 @@ Assert-Eq $env:NEXTDAAD_DEBUG_TRACE '1' 'NEXTDAAD_DEBUG_TRACE restored'
 Assert-Eq (Test-Path Env:NEXTDAAD_DEBUG) $false 'NEXTDAAD_DEBUG restored (unset)'
 Remove-Item Env:NEXTDAAD_DEBUG_TRACE, Env:FAKE_LAUNCH_LOG
 
+# ---- Install-KitPlugin: a failed swap, injected ----
+$pd = Join-Path $base 'plug'
+New-Item -ItemType Directory -Path $pd -Force | Out-Null
+$pdst = Join-Path $pd 'NextDAADDebug.dll'
+function Invoke-Install([scriptblock]$Replace) {
+    $res = @(Install-KitPlugin -Source $kitDll -Dir $pd -Replace $Replace 6>&1)
+    return @{ Ok = @($res | Where-Object { $_ -is [bool] })[0]; Lines = @($res | Where-Object { $_ -isnot [bool] } | ForEach-Object { "$_" }); Out = '' }
+}
+$lockedMsg = "ERROR: cannot update $pdst - close CSpect and try again"
+# ERROR_UNABLE_TO_MOVE_REPLACEMENT: ReplaceFile removed the old file and left the new one under its temp name.
+Copy-Item -LiteralPath $fakeOld -Destination $pdst -Force
+$r = Invoke-Install { param($s, $d) Remove-Item -LiteralPath $d -Force; throw 'simulated ERROR_UNABLE_TO_MOVE_REPLACEMENT' }
+Assert-Eq $r.Ok $false 'unable-to-move-replacement returns failure'
+Assert-Has $r $lockedMsg 'unable-to-move-replacement text'
+Assert-Eq (Test-SameBytes $pdst $kitDll) $true 'unable-to-move-replacement leaves the new plugin in place'
+Assert-Eq (Test-Path -LiteralPath "$pdst.new") $false 'unable-to-move-replacement leaves no temp file'
+# A swap refused outright (a locked file, on any host).
+Copy-Item -LiteralPath $fakeOld -Destination $pdst -Force
+$r = Invoke-Install { param($s, $d) throw 'simulated sharing violation' }
+Assert-Eq $r.Ok $false 'refused swap returns failure'
+Assert-Has $r $lockedMsg 'refused swap text'
+Assert-Eq (Test-SameBytes $pdst $fakeOld) $true 'refused swap leaves the installed plugin'
+Assert-Eq (Test-Path -LiteralPath "$pdst.new") $false 'refused swap leaves no temp file'
+$r = Invoke-Install { param($s, $d) [IO.File]::Replace($s, $d, [NullString]::Value) }
+Assert-Eq $r.Ok $true 'default swap returns success'
+Assert-Has $r "  debugger plugin -> $pdst" 'default swap text'
+Assert-Eq (Test-SameBytes $pdst $kitDll) $true 'default swap installs the plugin'
+
 Remove-Item -LiteralPath $base -Recurse -Force
 Write-Output "kitdebug-selftest: $checks checks passed"

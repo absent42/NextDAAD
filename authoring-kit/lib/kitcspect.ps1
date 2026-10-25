@@ -16,6 +16,42 @@ function Test-KitCSpect($Tools) {
     return $true
 }
 
+# Puts Source in Dir unless Dir holds a newer version or the same bytes; prints
+# what it did and returns $false when it could not. -Replace is the swap (tests inject one).
+function Install-KitPlugin {
+    param([Parameter(Mandatory = $true)][string]$Source, [Parameter(Mandatory = $true)][string]$Dir, [string]$Label = $Dir,
+          [scriptblock]$Replace = { param($s, $d) [IO.File]::Replace($s, $d, [NullString]::Value) })
+    $leaf = Split-Path -Leaf $Source
+    $dst = Join-Path $Dir $leaf
+    $dstLbl = Join-Path $Label $leaf
+    $want = [Reflection.AssemblyName]::GetAssemblyName($Source).Version
+    if (Test-Path -LiteralPath $dst -PathType Leaf) {
+        $have = $null
+        try { $have = [Reflection.AssemblyName]::GetAssemblyName($dst).Version } catch { $have = $null }
+        if ($null -ne $have -and $have -gt $want) { Write-Host "  debugger plugin in $Label is newer ($have) - kept"; return $true }
+        if ($null -ne $have -and $have -eq $want -and
+            [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($dst), [IO.File]::ReadAllBytes($Source))) { return $true }
+    }
+    # Copy beside it, then swap: a locked plugin is left whole. Not *.dll, so
+    # CSpect never loads a leftover. [NullString]: a bare $null reaches .NET as ''.
+    $tmp = "$dst.new"
+    try {
+        Copy-Item -LiteralPath $Source -Destination $tmp -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $dst) { & $Replace $tmp $dst } else { [IO.File]::Move($tmp, $dst) }
+    } catch {
+        # ERROR_UNABLE_TO_MOVE_REPLACEMENT: the old file is gone, the new one
+        # still has the temp name - finish the move so CSpect keeps a plugin.
+        if (-not (Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $tmp)) {
+            try { [IO.File]::Move($tmp, $dst) } catch { }
+        }
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        Write-Host "ERROR: cannot update $dstLbl - close CSpect and try again"
+        return $false
+    }
+    Write-Host "  debugger plugin -> $dstLbl"
+    return $true
+}
+
 # Runs CSpect on RELEASE\<GAME>\ and waits for it. -Env sets (or, for $null,
 # removes) variables for the child only. -NoLaunch prints them and the line instead.
 function Start-KitCSpect {

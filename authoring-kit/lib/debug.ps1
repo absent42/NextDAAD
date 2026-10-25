@@ -53,33 +53,7 @@ if ([IO.Path]::GetFullPath($symOut) -ne [IO.Path]::GetFullPath($sym)) {
 }
 
 # ---- plugin: install when missing, older, or the same version with other bytes ----
-$dst = Join-Path $cspAbs 'NextDAADDebug.dll'
-$dstLbl = Join-Path $cspDir 'NextDAADDebug.dll'
-$want = [Reflection.AssemblyName]::GetAssemblyName($dll).Version
-$copy = $true
-if (Test-Path -LiteralPath $dst -PathType Leaf) {
-    $have = $null
-    try { $have = [Reflection.AssemblyName]::GetAssemblyName($dst).Version } catch { $have = $null }
-    if ($null -ne $have -and $have -gt $want) {
-        Write-Host "  debugger plugin in $cspDir is newer ($have) - kept"; $copy = $false
-    } elseif ($null -ne $have -and $have -eq $want) {
-        $copy = -not [Linq.Enumerable]::SequenceEqual([IO.File]::ReadAllBytes($dst), [IO.File]::ReadAllBytes($dll))
-    }
-}
-if ($copy) {
-    # Copy beside it, then swap: a locked plugin is left whole. Not *.dll, so
-    # CSpect never loads a leftover.
-    $tmp = "$dst.new"
-    try {
-        Copy-Item -LiteralPath $dll -Destination $tmp -Force
-        # [NullString]: a bare $null reaches .NET as '' (no backup file wanted).
-        if (Test-Path -LiteralPath $dst) { [IO.File]::Replace($tmp, $dst, [NullString]::Value) } else { [IO.File]::Move($tmp, $dst) }
-    } catch {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-        Write-Host "ERROR: cannot update $dstLbl - close CSpect and try again"; exit 1
-    }
-    Write-Host "  debugger plugin -> $dstLbl"
-}
+if (-not (Install-KitPlugin -Source $dll -Dir $cspAbs -Label $cspDir)) { exit 1 }
 
 if (-not $OnWindows) {
     Write-Host "WARNING: CSpect under mono does not change into the game's DATA folder yet (reported to its author) - the game will stop at E1 until a fixed CSpect is released"

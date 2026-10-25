@@ -95,7 +95,7 @@ function Test-Executable([string]$Path) {
 }
 foreach ($need in @($t.NDRC, $t.GFX)) {
     if ((Test-Path -LiteralPath $need -PathType Leaf) -and -not (Test-Executable $need)) {
-        Fail "ERROR: $need is not executable - run: chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next"
+        Fail "ERROR: $need is not executable - run: chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next"
     }
 }
 # BUILD.BAT judged "echo(banner | findstr": echo added the trailing space.
