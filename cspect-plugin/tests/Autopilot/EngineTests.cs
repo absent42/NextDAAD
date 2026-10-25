@@ -15,7 +15,7 @@ namespace NextDAADDebug.Tests
         public string Log = "";
         public readonly List<UiInput> Injected = new List<UiInput>();
         public readonly List<string> Calls = new List<string>();
-        public KeyFeeder Keys { get; } = new KeyFeeder(1, 1);
+        public KeyFeeder Keys { get; set; } = new KeyFeeder(1, 1);
         public int State;
         public int TicksWhileHalted { get; set; }
         public int CurrentOffset { get; set; }
@@ -251,8 +251,12 @@ namespace NextDAADDebug.Tests
         [Fact]
         public void Engine_GamePassesOnSentWhileBusy()
         {
+            host.Keys = new KeyFeeder(3, 3);
             var e = Make("game \"L\"");
             e.Frame();
+            host.Keys.Frame();
+            e.Frame();
+            Assert.False(e.Finished);
             host.Keys.Frame();
             Assert.True(host.Keys.Busy);
             e.Frame();

@@ -105,6 +105,8 @@ namespace NextDAADDebug.Tests
             f.Enqueue("L");
             Assert.False(f.Sent);
             f.Frame();
+            Assert.False(f.Sent);
+            f.Frame();
             Assert.True(f.Sent);
             Assert.True(f.Busy);
             f.Enqueue("ab");
