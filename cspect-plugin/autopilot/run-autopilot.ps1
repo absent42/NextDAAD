@@ -495,6 +495,8 @@ function Invoke-LegK([string[]]$scripts, [int]$seconds, [string]$leg = 'K') {
     try {
         Reset-StageFolder $dir $ApRoot
         Copy-CSpect $LegTable[$leg].CSpect $cs
+        # Guards Copy-CSpect's plugin exclusion (true by construction while it holds); the
+        # kit install itself is proved by k-plugin-installed-text and -bytes.
         Add-Check $c 'k-cspect-has-no-plugin' (-not (Test-Path -LiteralPath (Join-Path $cs 'NextDAADDebug.dll'))) $cs
         $g = New-LegKKit $kit $dir $cs 'windows' ([bool]$LegTable[$leg].Intro)
         $b = Invoke-KitScript $kit 'build.ps1'
@@ -689,6 +691,7 @@ function Invoke-LinuxLegK([int]$seconds, $pf, [string]$leg = 'K') {
         Invoke-Ssh $s "$sh kit '$run'" | Out-Host
         Invoke-Scp $s @("${tgt}:$run/out") $dir
         $f = Read-LinuxKFacts "$dir\out" "$st\kit" $run
+        # Guards linux-leg.sh copy_cspect's plugin exclusion (true by construction while it holds).
         Add-Check $c 'k-cspect-has-no-plugin' ($f.PluginBefore -eq 'absent') "$run/cspect: $($f.PluginBefore)"
         Add-Check $c 'k-build-exit' ($f.BuildRc -eq '0') ((Read-Shared "$dir\out\build.txt") + '')
         $t = Test-LegKFacts "$st\kit" "$dir\out\DBGKIT" $f

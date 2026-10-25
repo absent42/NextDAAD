@@ -491,7 +491,9 @@ and the files externs keep, such as `GAME.HPR` (hint progress),
 `<GAME>\DATA\` on the card.
 
 Games built by kits before v0.12.0 put every file loose at the card
-root. The interpreter still runs a game laid out that way.
+root. The interpreter still runs a game laid out that way: it looks for
+`GAME.DDB` in the game's folder first and then in `DATA\`, so do not
+leave an old `GAME.DDB` in the root of a game folder.
 
 ## The starter game
 
