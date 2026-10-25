@@ -1,10 +1,11 @@
 # Autopilot runner: builds the plugin (Release + Autopilot) and the Release NEX,
 # stages each leg to build\autopilot\<leg>\ with its own CSpect copy, runs every
 # script part bounded (one launch each), always kills CSpect, writes report.md.
-#   -Leg A|C|D|E|K|Linux|All   -TimeoutSeconds N (per launch, default 120)
+#   -Leg A|C|D|E|K|KI|Linux|All   -TimeoutSeconds N (per launch, default 120)
 #   Leg K builds DBGKIT in a scratch kit with lib\debug.ps1 -NoLaunch and runs its launch line.
-#   Leg Linux runs leg A and leg K on the VM.
-#   -ScriptOverride <file[,file]>  replaces the part list of one leg (A, D, E or K),
+#   Leg KI is leg K with a loader intro (INTRO.TXT from scripts\legKI.intro.txt).
+#   Leg Linux runs legs A, K and KI on the VM.
+#   -ScriptOverride <file[,file]>  replaces the part list of one leg (A, D, E, K or KI),
 #                                  e.g. -Leg A -ScriptOverride cspect-plugin\autopilot\scripts\smoke.txt
 # A leg whose script is missing is skipped ("no script yet"). Optional seed:
 # scripts\leg<X>.seed.txt is staged as DEBUGGER.local.TXT. Script lines
@@ -27,6 +28,7 @@ $LegTable = @{
     D = @{ CSpect = $ApCs40; Parts = @('legD.txt'); Variant = 'StaleDsm' }
     E = @{ CSpect = $ApCs40; Parts = @('legE.txt'); Variant = 'DebugSym' }
     K = @{ CSpect = $ApCs40; Parts = @('legK.txt') }
+    KI = @{ CSpect = $ApCs40; Parts = @('legKI.txt'); Intro = $true }
 }
 $ApKitSrc = Join-Path $ApRepo 'authoring-kit'
 $ApFixK = Join-Path $ApRepo 'cspect-plugin\tests\fixtures\dbgkit\DBGKIT'
@@ -284,7 +286,8 @@ function Invoke-LegC([int]$seconds) {
 
 # Scratch kit in $kit (marked; $root holds it): the $Platform kit file list, DBGKIT with the
 # leg K seed, and CONFIG.local.BAT selecting DBGKIT and the CSpect in $csDir. Returns the game folder.
-function New-LegKKit([string]$kit, [string]$root, [string]$csDir, [string]$Platform = 'windows') {
+# $Intro adds INTRO.TXT (scripts\legKI.intro.txt) and its slide (the starter's DAAD.NX2).
+function New-LegKKit([string]$kit, [string]$root, [string]$csDir, [string]$Platform = 'windows', [bool]$Intro = $false) {
     Reset-StageFolder $kit $root
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try { $files = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ApRepo 'scripts\kit-files.ps1') -Platform $Platform | Where-Object { $_ }) }
@@ -294,6 +297,11 @@ function New-LegKKit([string]$kit, [string]$root, [string]$csDir, [string]$Platf
     $g = Join-Path $kit 'DBGKIT'
     Copy-Item -LiteralPath $ApFixK $g -Recurse
     Copy-Item -LiteralPath (Join-Path $ApScripts 'legK.seed.txt') (Join-Path $g 'DEBUGGER.local.TXT')
+    if ($Intro) {
+        Copy-Item -LiteralPath (Join-Path $ApScripts 'legKI.intro.txt') (Join-Path $g 'INTRO.TXT')
+        New-Item -ItemType Directory -Force (Join-Path $g 'INTRO') | Out-Null
+        Copy-Item -LiteralPath (Join-Path $ApKitSrc 'STARTER\DAAD.NX2') (Join-Path $g 'INTRO\SLIDE.NX2')
+    }
     $nl = if ($Platform -eq 'linux') { "`n" } else { "`r`n" }
     $cfg = @('SET GAME=DBGKIT', 'SET RUN=0', 'SET EMULATOR=cspect', "SET CSPECTDIR=$csDir")
     [IO.File]::WriteAllText((Join-Path $kit 'CONFIG.local.BAT'), (($cfg -join $nl) + $nl), [Text.Encoding]::ASCII)
@@ -478,17 +486,17 @@ function New-CheckRecord([string]$leg, [string]$part, [object[]]$checks, [string
 
 # Stage leg K, check the kit's own path, then launch what debug.ps1 printed (-sound added, as on
 # every leg) with the Autopilot plugin build swapped in: the kit ships the Release build.
-function Invoke-LegK([string[]]$scripts, [int]$seconds) {
-    $dir = Join-Path $ApRoot 'K'
+function Invoke-LegK([string[]]$scripts, [int]$seconds, [string]$leg = 'K') {
+    $dir = Join-Path $ApRoot $leg
     $cs = Join-Path $dir 'cspect'
     $kit = Join-Path $dir 'kit'
     $c = New-Object Collections.Generic.List[object]
     $st = $null
     try {
         Reset-StageFolder $dir $ApRoot
-        Copy-CSpect $LegTable['K'].CSpect $cs
+        Copy-CSpect $LegTable[$leg].CSpect $cs
         Add-Check $c 'k-cspect-has-no-plugin' (-not (Test-Path -LiteralPath (Join-Path $cs 'NextDAADDebug.dll'))) $cs
-        $g = New-LegKKit $kit $dir $cs
+        $g = New-LegKKit $kit $dir $cs 'windows' ([bool]$LegTable[$leg].Intro)
         $b = Invoke-KitScript $kit 'build.ps1'
         [IO.File]::WriteAllLines((Join-Path $dir 'build.txt'), [string[]]$b.Lines)
         Add-Check $c 'k-build-exit' ($b.Rc -eq 0) ($b.Lines -join "`n")
@@ -499,20 +507,21 @@ function Invoke-LegK([string[]]$scripts, [int]$seconds) {
         foreach ($k in $st.Checks) { $c.Add($k) }
     }
     catch { Add-Check $c 'k-staging' $false $_.Exception.Message }
-    $recs = @(New-CheckRecord 'K' 'kit staging' $c $dir)
+    $recs = @(New-CheckRecord $leg 'kit staging' $c $dir)
     $recs[0] | Add-Member -NotePropertyName Files -NotePropertyValue 'build.txt, debug-nolaunch.txt, kit\'
-    if ($recs[0].Status -ne 'PASS') { Write-Host "leg K staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')"; return $recs }
+    if ($recs[0].Status -ne 'PASS') { Write-Host "leg $leg staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')"; return $recs }
     # The swapped-in Autopilot build comes from this tree, so the kit must ship this tree's Release build.
     $why = Get-KitPluginRefusal (Join-Path $kit 'lib\NextDAADDebug.dll')
     if ($why) {
-        $recs = @(New-CheckRecord 'K' 'kit staging' (@($c) + @([pscustomobject]@{ Name = 'k-kit-plugin-current'; Ok = $false; Detail = $why })) $dir)
-        Write-Host "leg K staging failed: $why"; return $recs
+        Add-Check $c 'k-kit-plugin-current' $false $why
+        $recs = @(New-CheckRecord $leg 'kit staging' $c $dir)
+        Write-Host "leg $leg staging failed: $why"; return $recs
     }
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $cs -Force
     Assert-AutopilotDll "$cs\NextDAADDebug.dll"
     $a = @($st.Launch.Args)
     $csArgs = @($a[0..($a.Count - 2)]) + '-sound' + $a[-1]
-    return $recs + @(Invoke-LegParts 'K' $dir $g $kit $csArgs $scripts $seconds)
+    return $recs + @(Invoke-LegParts $leg $dir $g $kit $csArgs $scripts $seconds)
 }
 
 # Linux leg: legs A and K on the VM over ssh (key auth). Settings {host,user,remoteDir} are read
@@ -627,9 +636,9 @@ function Write-LinuxLegScript([string]$st) {
 
 # Leg K upload set in $st: kit\ (the Linux kit file list, DBGKIT, CONFIG.local.BAT naming the CSpect
 # copy in $run), scripts\ (Linux variants), the Autopilot DLL, linux-leg.sh.
-function New-LinuxKStage([string]$st, [string]$run, [string[]]$scripts) {
+function New-LinuxKStage([string]$st, [string]$run, [string[]]$scripts, [bool]$Intro = $false) {
     New-Item -ItemType Directory -Force "$st\scripts" | Out-Null
-    $null = New-LegKKit "$st\kit" $st "$run/cspect" 'linux'
+    $null = New-LegKKit "$st\kit" $st "$run/cspect" 'linux' $Intro
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $st
     Assert-AutopilotDll "$st\NextDAADDebug.dll"
     foreach ($p in $scripts) { Convert-LinuxScript $p (Join-Path "$st\scripts" (Split-Path $p -Leaf)) }
@@ -651,23 +660,24 @@ function Read-LinuxKFacts([string]$out, [string]$kit, [string]$run) {
 
 # Leg K on the VM: stage, build and debug.ps1 -NoLaunch there, check the pulled-back facts here,
 # then launch what debug.ps1 printed (-sound added) with the Autopilot build swapped in.
-function Invoke-LinuxLegK([int]$seconds, $pf) {
+function Invoke-LinuxLegK([int]$seconds, $pf, [string]$leg = 'K') {
     if ($pf.PSObject.Properties['Status']) { return @() }
-    $sc = Get-LegScripts 'K' @()
-    if ($sc.Missing.Count) { return @(New-RefusedRecord "no script yet: $($sc.Missing -join ', ')" 'Linux K') }
-    $dir = Join-Path $ApRoot 'LinuxK'
+    $sc = Get-LegScripts $leg @()
+    $ln = "Linux $leg"
+    if ($sc.Missing.Count) { return @(New-RefusedRecord "no script yet: $($sc.Missing -join ', ')" $ln) }
+    $dir = Join-Path $ApRoot "Linux$leg"
     $st = Join-Path $dir 'stage'
     $s = $pf.Settings
     $tgt = "$($s.user)@$($s.host)"
-    $run = "$($pf.Remote)/legK"
+    $run = "$($pf.Remote)/leg$leg"
     $sh = "bash '$($pf.Remote)/linux-leg.sh'"
     try {
         Reset-StageFolder $dir $ApRoot
-        New-LinuxKStage $st $run $sc.Parts
+        New-LinuxKStage $st $run $sc.Parts ([bool]$LegTable[$leg].Intro)
     }
-    catch { Write-Host "Linux leg K setup failed: $($_.Exception.Message)"; return @(New-RefusedRecord "Linux leg K setup failed: $($_.Exception.Message)" 'Linux K') }
+    catch { Write-Host "$ln setup failed: $($_.Exception.Message)"; return @(New-RefusedRecord "$ln setup failed: $($_.Exception.Message)" $ln) }
     $why = Get-KitPluginRefusal "$st\kit\lib\NextDAADDebug.dll"
-    if ($why) { Write-Host "Linux leg K staging failed: $why"; return @(New-CheckRecord 'Linux K' 'kit staging' @([pscustomobject]@{ Name = 'k-kit-plugin-current'; Ok = $false; Detail = $why }) $dir) }
+    if ($why) { Write-Host "$ln staging failed: $why"; return @(New-CheckRecord $ln 'kit staging' @([pscustomobject]@{ Name = 'k-kit-plugin-current'; Ok = $false; Detail = $why }) $dir) }
     $c = New-Object Collections.Generic.List[object]
     $recs = @(); $setupError = $null
     Push-Location $st
@@ -683,7 +693,7 @@ function Invoke-LinuxLegK([int]$seconds, $pf) {
         Add-Check $c 'k-build-exit' ($f.BuildRc -eq '0') ((Read-Shared "$dir\out\build.txt") + '')
         $t = Test-LegKFacts "$st\kit" "$dir\out\DBGKIT" $f
         foreach ($k in $t.Checks) { $c.Add($k) }
-        $recs = @(New-CheckRecord 'Linux K' 'kit staging' $c $dir)
+        $recs = @(New-CheckRecord $ln 'kit staging' $c $dir)
         $recs[0] | Add-Member -NotePropertyName Files -NotePropertyValue 'out\ (build.txt, debug-nolaunch.txt, DBGKIT\), stage\kit\'
         if ($recs[0].Status -eq 'PASS') {
             $a = @($t.Launch.Args)
@@ -692,18 +702,18 @@ function Invoke-LinuxLegK([int]$seconds, $pf) {
             if ($bad.Count) { throw "launch argument not passable over ssh: $($bad -join ' ')" }
             $q = ($csArgs | ForEach-Object { "'$_'" }) -join ' '
             $name = Split-Path $sc.Parts[0] -Leaf
-            try { Invoke-Ssh $s "$sh kitrun '$run' $seconds $name $q" | Out-Host } catch { Write-Host "Linux leg K run: $($_.Exception.Message)" }
-            try { Invoke-Scp $s @("${tgt}:$run/parts") $dir } catch { Write-Host "Linux leg K results: $($_.Exception.Message)" }
-            $recs += Get-LinuxRecords (Join-Path $dir 'parts') @($name) "$st\scripts" 'Linux K'
+            try { Invoke-Ssh $s "$sh kitrun '$run' $seconds $name $q" | Out-Host } catch { Write-Host "$ln run: $($_.Exception.Message)" }
+            try { Invoke-Scp $s @("${tgt}:$run/parts") $dir } catch { Write-Host "$ln results: $($_.Exception.Message)" }
+            $recs += Get-LinuxRecords (Join-Path $dir 'parts') @($name) "$st\scripts" $ln
         }
-        else { Write-Host "Linux leg K staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')" }
+        else { Write-Host "$ln staging failed: $(($recs[0].Fails | ForEach-Object { $_.Raw }) -join ', ')" }
     }
     catch { $setupError = $_.Exception.Message }
     finally {
-        try { Invoke-Ssh $s "$sh kill '$run'" | Out-Host } catch { Write-Host "Linux leg K kill: $($_.Exception.Message)" }
+        try { Invoke-Ssh $s "$sh kill '$run'" | Out-Host } catch { Write-Host "$ln kill: $($_.Exception.Message)" }
         Pop-Location
     }
-    if ($setupError) { Write-Host "Linux leg K setup failed: $setupError"; return @($recs) + @(New-RefusedRecord "Linux leg K setup failed: $setupError" 'Linux K') }
+    if ($setupError) { Write-Host "$ln setup failed: $setupError"; return @($recs) + @(New-RefusedRecord "$ln setup failed: $setupError" $ln) }
     return $recs
 }
 
@@ -754,11 +764,11 @@ function Save-AutopilotReport($parts, $skips, $legC, [string[]]$used, [string]$s
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $legs = switch ($Leg) {
-    'All' { 'A', 'C', 'D', 'E', 'K', 'Linux' }
-    { $_ -in 'A', 'C', 'D', 'E', 'K', 'Linux' } { $Leg }
-    default { throw "-Leg must be A, C, D, E, K, Linux or All (got '$Leg')" }
+    'All' { 'A', 'C', 'D', 'E', 'K', 'KI', 'Linux' }
+    { $_ -in 'A', 'C', 'D', 'E', 'K', 'KI', 'Linux' } { $Leg }
+    default { throw "-Leg must be A, C, D, E, K, KI, Linux or All (got '$Leg')" }
 }
-if ($ScriptOverride.Count -and ($legs.Count -ne 1 -or $legs -notin 'A', 'D', 'E', 'K')) { throw '-ScriptOverride needs exactly one of -Leg A, D, E or K' }
+if ($ScriptOverride.Count -and ($legs.Count -ne 1 -or $legs -notin 'A', 'D', 'E', 'K', 'KI')) { throw '-ScriptOverride needs exactly one of -Leg A, D, E, K or KI' }
 
 $parts = @(); $skips = @(); $legC = @(); $used = @()
 $linuxPf = if ($legs -contains 'Linux') { Get-LinuxPreflightOrRefusal } else { $null }
@@ -785,9 +795,11 @@ foreach ($l in $legs) {
         $sc = Get-LegScripts 'A' @()
         if (-not $sc.Missing.Count) { $used += $sc.Parts }
         $parts += Invoke-LinuxLeg $TimeoutSeconds $linuxPf
-        $sk = Get-LegScripts 'K' @()
-        if (-not $sk.Missing.Count) { $used += $sk.Parts }
-        $parts += Invoke-LinuxLegK $TimeoutSeconds $linuxPf
+        foreach ($kl in 'K', 'KI') {
+            $sk = Get-LegScripts $kl @()
+            if (-not $sk.Missing.Count) { $used += $sk.Parts }
+            $parts += Invoke-LinuxLegK $TimeoutSeconds $linuxPf $kl
+        }
         continue
     }
     if ($l -eq 'C') { $legC += Invoke-LegC $TimeoutSeconds; continue }
@@ -798,7 +810,7 @@ foreach ($l in $legs) {
         continue
     }
     $used += $sc.Parts
-    $parts += if ($l -eq 'K') { Invoke-LegK $sc.Parts $TimeoutSeconds } else { Invoke-ScriptLeg $l $sc.Parts $TimeoutSeconds }
+    $parts += if ($l -in 'K', 'KI') { Invoke-LegK $sc.Parts $TimeoutSeconds $l } else { Invoke-ScriptLeg $l $sc.Parts $TimeoutSeconds }
 }
 $stamp = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ', commit ' + (& git -C $ApRepo rev-parse --short HEAD)
 $md = Save-AutopilotReport $parts $skips $legC $used $stamp

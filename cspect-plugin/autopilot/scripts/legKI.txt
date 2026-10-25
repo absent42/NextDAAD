@@ -1,0 +1,13 @@
+# Leg KI: leg K's DBGKIT with a loader intro (legKI.intro.txt as INTRO.TXT, the starter slide).
+# The intro leaves DATA\ current; the interpreter must load GAME.DDB there and the debugger arm.
+
+# 1. The intro hands over: the game text appears, both maps load, the debugger is running
+wait game "DBGKIT part one." timeout 60
+expect log "source maps loaded (2)"
+expect running
+
+# 2. A command runs under the debugger
+game "GO A\n"
+wait game "Entry A ran."
+expect running
+quit

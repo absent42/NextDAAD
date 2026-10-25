@@ -32,10 +32,10 @@ kill_run() {
 
 need_mark() { [ -f "$RUN/$MARK" ] || { echo "refusing: $RUN has no $MARK" >&2; exit 2; }; }
 
-# Private copy without *.mmc and *.sd; the original is only read.
+# Private copy without *.mmc, *.sd or an installed plugin; the original is only read.
 copy_cspect() {
     mkdir -p "$RUN/cspect"
-    (cd "$SRC" && tar cf - --exclude='*.mmc' --exclude='*.sd' .) | (cd "$RUN/cspect" && tar xf -) || { echo "CSpect copy failed" >&2; exit 3; }
+    (cd "$SRC" && tar cf - --exclude='*.mmc' --exclude='*.sd' --exclude='NextDAADDebug.dll' .) | (cd "$RUN/cspect" && tar xf -) || { echo "CSpect copy failed" >&2; exit 3; }
 }
 
 x11_env() {

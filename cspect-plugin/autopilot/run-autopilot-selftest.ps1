@@ -142,7 +142,7 @@ Check 'c-autopilot-dll-present' (Test-Path -LiteralPath $apDll) "build -c Autopi
 if (Test-Path -LiteralPath $apDll) {
     $asm = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($apDll))
     $parser = $asm.GetType('NextDAADDebug.Autopilot.ScriptParser')
-    foreach ($p in Get-ChildItem -LiteralPath $ApScripts -Filter '*.txt' | Where-Object { $_.Name -notlike '*.seed.txt' -and $_.Name -notlike '*.expect.txt' }) {
+    foreach ($p in Get-ChildItem -LiteralPath $ApScripts -Filter '*.txt' | Where-Object { $_.Name -notlike '*.seed.txt' -and $_.Name -notlike '*.expect.txt' -and $_.Name -notlike '*.intro.txt' }) {
         $lin = Join-Path $work ('real-linux-' + $p.Name)
         Convert-LinuxScript $p.FullName $lin
         foreach ($v in @(@('', $p.FullName), @('linux ', $lin))) {

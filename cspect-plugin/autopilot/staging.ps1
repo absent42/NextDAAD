@@ -34,7 +34,8 @@ function Reset-StageFolder([string]$dir, [string]$root) {
 function Copy-CSpect([string]$src, [string]$dest) {
     if (-not (Test-Path -LiteralPath (Join-Path $src 'CSpect.exe'))) { throw "no CSpect.exe in $src" }
     New-Item -ItemType Directory -Force $dest | Out-Null
-    & robocopy $src $dest /E /XJ /XF *.mmc *.sd /NFL /NDL /NJH /NJS | Out-Null
+    # A plugin a kit DEBUG run installed in the source is left out: each leg stages its own.
+    & robocopy $src $dest /E /XJ /XF *.mmc *.sd NextDAADDebug.dll /NFL /NDL /NJH /NJS | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
     $global:LASTEXITCODE = 0
     # The copy inherits Zone.Identifier from a downloaded CSpect; unattended launches would stop at a hidden prompt.
