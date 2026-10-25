@@ -11,7 +11,7 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
-<h2 id="0130-25-october-2026">0.13.0 - 25 October 2026</h2>
+<h2 id="0121-25-october-2026">0.12.1 - 25 October 2026</h2>
 <ul>
 <li><strong>Debugger.</strong> <code>DEBUG.BAT</code> (Linux: <code>./debug.sh</code>) builds the selected
   game and starts CSpect with a debugger window beside it. Stop the game
@@ -26,9 +26,13 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   a multi-part game gets its own source map. Every build now prints a
   warning while the source contains <code>#debug</code>, because the markers it
   compiles in stay in the release; other DAAD interpreters read a marker
-  as <code>NEWTEXT</code>. On Linux the debugger window cannot be closed and
-  CSpect under mono stops the game at <code>E1</code>, so it is mainly for Windows
-  for now. See Debugger.</li>
+  as <code>NEWTEXT</code>. On Linux the debugger window cannot be closed. See
+  Debugger.</li>
+<li><strong>CSpect on Linux runs kit games.</strong> A game whose files are in <code>DATA\</code>
+  now runs under CSpect on Linux, from <code>./run.sh</code> and <code>./debug.sh</code>.
+  Before, it stopped at <code>E1</code> as it started, because CSpect under mono
+  did not find the <code>DATA</code> folder. If you start CSpect by hand, end the
+  <code>-mmc=</code> folder in <code>//</code>, as in <code>-mmc=RELEASE/MYGAME//</code>.</li>
 </ul>
 <h2 id="0120-24-october-2026">0.12.0 - 24 October 2026</h2>
 <ul>

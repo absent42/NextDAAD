@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.13.0 - 25 October 2026
+## 0.12.1 - 25 October 2026
 
 - **Debugger.** `DEBUG.BAT` (Linux: `./debug.sh`) builds the selected
   game and starts CSpect with a debugger window beside it. Stop the game
@@ -18,9 +18,13 @@ game behaves, how it builds, or what the kit gives you, it is here.
   a multi-part game gets its own source map. Every build now prints a
   warning while the source contains `#debug`, because the markers it
   compiles in stay in the release; other DAAD interpreters read a marker
-  as `NEWTEXT`. On Linux the debugger window cannot be closed and
-  CSpect under mono stops the game at `E1`, so it is mainly for Windows
-  for now. See Debugger.
+  as `NEWTEXT`. On Linux the debugger window cannot be closed. See
+  Debugger.
+- **CSpect on Linux runs kit games.** A game whose files are in `DATA\`
+  now runs under CSpect on Linux, from `./run.sh` and `./debug.sh`.
+  Before, it stopped at `E1` as it started, because CSpect under mono
+  did not find the `DATA` folder. If you start CSpect by hand, end the
+  `-mmc=` folder in `//`, as in `-mmc=RELEASE/MYGAME//`.
 
 ## 0.12.0 - 24 October 2026
 
