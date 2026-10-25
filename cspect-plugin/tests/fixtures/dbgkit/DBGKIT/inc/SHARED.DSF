@@ -1,0 +1,3 @@
+; DBGKIT include: one entry of /PRO 1 kept in its own file.
+> HIT _   MESSAGE 2
+          DONE

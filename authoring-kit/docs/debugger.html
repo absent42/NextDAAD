@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debugger - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="debugger">Debugger</h1>
+<p>The debugger lets you stop your game in the middle of a turn and look
+inside it: which process and entry is running, which condact is next,
+what every flag and object holds. You can step one condact at a time,
+stop automatically when a flag changes or an object moves, and change
+flags and objects while the game is stopped. It shows the lines of your
+own <code>.DSF</code> as you step through them.</p>
+<p>Use it when a game does something you did not write: a message that
+never appears, a door that opens at the wrong time, a flag that is not
+the value you expected. Instead of adding <code>PRINT</code> lines and rebuilding,
+you stop the game at the spot and read the answer.</p>
+<p>It runs inside the CSpect emulator, as a second window beside the game.</p>
+<h2 id="what-you-need">What you need</h2>
+<ul>
+<li><strong>CSpect 4.0 or later</strong>, installed as described in
+  <a href="getting-started.html#what-you-need">Getting started</a>. Older CSpect
+  builds still run your game with <code>RUN.BAT</code>, but not the debugger.</li>
+<li><strong><code>EMULATOR=cspect</code></strong>, which is what you get when <code>EMULATOR</code> is blank.
+  The debugger does not run in jNext. If <code>CONFIG.local.BAT</code> sets
+  <code>EMULATOR=jnext</code>, remove that line or change it to <code>cspect</code>;
+  <code>RUN.BAT</code> keeps using whatever <code>EMULATOR</code> says.</li>
+<li>A mouse. The debugger window is driven by clicking, with a few
+  keyboard shortcuts for stepping.</li>
+</ul>
+<p>You do not need to change your game. Every part of the debugger except
+the <code>DEBUG</code> marker breakpoint works on a game with no <code>DEBUG</code> lines in
+it - see <a href="#debug-markers">DEBUG markers</a>.</p>
+<h2 id="starting-the-debugger">Starting the debugger</h2>
+<p>Double-click <code>DEBUG.BAT</code> (Linux: <code>./debug.sh</code>) instead of <code>BUILD.BAT</code>
+and <code>RUN.BAT</code>. It builds the game selected by <code>GAME</code>, then starts CSpect
+on it with the debugger attached, and waits until you close CSpect.</p>
+<p>The build is the same compile <code>BUILD.BAT</code> does. Two things are added,
+and both are for the debugger only:</p>
+<ul>
+<li><strong>Source maps</strong> are written into your game's source folder, beside
+  your <code>.DSF</code>: <code>GAME.DSM</code> for the main game and <code>GAME2.DSM</code>,
+  <code>GAME3.DSM</code> and so on for each part of a
+  <a href="multi-part-games.html">multi-part game</a>. A source map tells the
+  debugger which <code>.DSF</code> line each condact came from.</li>
+<li><strong><code>NEXTDAAD.SYM</code></strong>, which describes the interpreter the kit ships,
+  is copied into the same folder.</li>
+</ul>
+<p><code>DEBUG.BAT</code> also puts the debugger plugin, <code>NextDAADDebug.dll</code>, in
+CSpect's own folder the first time, and again when the kit ships a newer
+one. The plugin does nothing when CSpect is started any other way, so
+<code>RUN.BAT</code> and your normal builds are not affected by it being there.</p>
+<p><code>DEBUG.BAT</code> does not use the <code>RUN</code> setting: it always starts CSpect once
+the build succeeds.</p>
+<p>Where the files go:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Where</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GAME.DSM</code>, <code>GAME2.DSM</code> ...</td>
+<td>your game's source folder</td>
+<td>source maps</td>
+</tr>
+<tr>
+<td><code>NEXTDAAD.SYM</code></td>
+<td>your game's source folder</td>
+<td>interpreter symbols</td>
+</tr>
+<tr>
+<td><code>DEBUGGER.local.TXT</code></td>
+<td>your game's source folder</td>
+<td>your breakpoints, watches and window position, see <a href="#settings">Settings</a></td>
+</tr>
+<tr>
+<td><code>debugger.log</code></td>
+<td>your game's source folder</td>
+<td>a short log of the session, for bug reports</td>
+</tr>
+<tr>
+<td><code>NextDAADDebug.dll</code></td>
+<td>CSpect's folder</td>
+<td>the debugger plugin</td>
+</tr>
+</tbody>
+</table>
+<p><code>RELEASE\&lt;GAME&gt;\</code> comes out exactly as <code>BUILD.BAT</code> makes it. None of
+the files above go to the SD card, and <code>CLEAN.BAT</code> leaves them alone.
+They are safe to delete; the next <code>DEBUG.BAT</code> writes them again.</p>
+<p>Run <code>DEBUG.BAT</code> again after you change the <code>.DSF</code>. A plain <code>BUILD.BAT</code>
+does not write source maps, and the debugger refuses to show line
+numbers from a map that does not match the database the game loaded - see
+<a href="#status-messages">Status messages</a>.</p>
+<h2 id="the-window">The window</h2>
+<p>The window is called "NextDAAD debugger" and opens as a second window
+next to the game. It is one fixed layout:</p>
+<ul>
+<li><strong>Toolbar</strong>, top row: <code>Run</code>, <code>Break</code>, <code>Step</code>, <code>Step entry</code>,
+  <code>Step out</code> and <code>Run to PARSE</code>, with <code>Ctrl+Alt+A/B/N/R</code> written dimly
+  at the right as a reminder of the <a href="#shortcuts">shortcuts</a>. A button
+  that does not apply right now is dimmed: all but <code>Break</code> need the game
+  to be stopped, and <code>Break</code> needs it to be running.</li>
+<li><strong>Status line</strong>, second row: what the game is doing. Messages are
+  listed under <a href="#status-messages">Status messages</a>. A problem is shown
+  here in red.</li>
+<li><strong>Process stack</strong>, top left: the processes running right now, newest
+  at the top. Each line reads like <code>&gt;1 PRO 1 GET LAMP :111</code>:</li>
+<li><code>1</code> is the level. Level 0 is the bottom of the stack, the process
+    that called the others.</li>
+<li><code>PRO 1</code> is the process number.</li>
+<li><code>GET LAMP</code> is the verb and noun of the entry being run (<code>_</code> means
+    any).</li>
+<li><code>:111</code> is the <code>.DSF</code> line the entry starts on.</li>
+</ul>
+<p>Click a line to look at that level; the <code>&gt;</code> marks the one on show.
+- <strong>Condacts and Source tabs</strong>, top right:
+  - <em>Condacts</em> lists every condact of the entry on show, with its
+    arguments spelled out - object and flag numbers followed by their
+    names, message numbers followed by their text, the value a
+    <code>@flag</code> indirection currently holds. The condact the game is about
+    to run is marked with an arrow. The number at the left is the
+    <code>.DSF</code> line, or the position in the database if there is no source
+    map for it.
+  - <em>Source</em> shows your <code>.DSF</code> file, with the current line marked. The
+    file's name is written dimly to the right of the two tabs, so you can
+    tell an <code>#include</code>d file or a part's file from the main one. The two
+    columns at the left are the breakpoint margin - see
+    <a href="#breakpoints-on-source-lines">Breakpoints on source lines</a>.
+- <strong>Bottom tabs</strong>: <code>Watches</code>, <code>Flags</code>, <code>Objects</code>, <code>Parser</code>, <code>Database</code>
+  and <code>Breakpoints</code>.</p>
+<p>Scroll any list with the mouse wheel.</p>
+<h3 id="the-bottom-tabs">The bottom tabs</h3>
+<ul>
+<li><strong>Watches</strong> - the flags and objects you picked to keep in view. The
+  three buttons at the top, <code>+ Flag</code>, <code>+ Object</code> and <code>+ Symbol</code>, open a
+  list to pick from. <code>+ Symbol</code> lists the names you <code>#define</code>d in your
+  source; after you pick one it asks whether that number is a flag or
+  an object. Click the <code>x</code> at the left of a row to remove it.</li>
+<li><strong>Flags</strong> - all 256 flags with their values. The kit's system flags
+  carry their names (<code>Player location</code>, <code>Score</code>, <code>Verb</code> and so on);
+  flags you gave a <code>#define</code> name in your source carry that name. For the
+  parser and location flags the word or place is shown after the value.
+  Click the <code>+</code> at the left of a row to put the flag in Watches (it
+  becomes <code>*</code>). <code>Go to #</code> jumps to a flag number.</li>
+<li><strong>Objects</strong> - every object with its location and where that is, its
+  weight, whether it is a container (<code>C</code>) or wearable (<code>W</code>), and its
+  attribute bytes in hex. Locations 252 to 255 read <code>not created</code>,
+  <code>worn</code>, <code>carried</code> and <code>here</code>. Same <code>+</code> column and <code>Go to #</code> button as
+  Flags.</li>
+<li><strong>Parser</strong> - the last sentence the parser understood: verb, noun,
+  adjective, adverb, preposition, second noun and second adjective, each
+  with its flag number, value and word.</li>
+<li><strong>Database</strong> - the compiled game's text and tables, to look things up
+  without leaving the debugger. Sub-tabs: <code>Messages</code>, <code>SysMess</code>,
+  <code>Locations</code>, <code>Objects</code>, <code>Vocab</code>, <code>Tokens</code>, <code>Connections</code>. <code>Go to #</code>
+  jumps to a row; the <code>Vocab</code> sub-tab also has an A to Z strip to jump to
+  a letter.</li>
+<li><strong>Breakpoints</strong> - see <a href="#breakpoints">Breakpoints</a>.</li>
+</ul>
+<p>Values that have changed since the game last stopped are drawn in yellow,
+so after a step you can see at a glance what that condact did.</p>
+<h2 id="stopping-and-stepping">Stopping and stepping</h2>
+<p>While the game runs, use <code>Break</code> to stop it at the next condact. While
+it is stopped, the other buttons move it on:</p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Run</code></td>
+<td>Lets the game run until a breakpoint stops it, or you press <code>Break</code>.</td>
+</tr>
+<tr>
+<td><code>Step</code></td>
+<td>Runs one condact. A <code>PROCESS</code> condact steps into the process it calls.</td>
+</tr>
+<tr>
+<td><code>Step entry</code></td>
+<td>Runs until the next process entry starts, in this process or one it calls.</td>
+</tr>
+<tr>
+<td><code>Step out</code></td>
+<td>Runs until the current process has finished and the game is back in the one that called it.</td>
+</tr>
+<tr>
+<td><code>Run to PARSE</code></td>
+<td>Runs until a <code>PARSE</code> condact has finished, and stops on the condact after it.</td>
+</tr>
+<tr>
+<td><code>Break</code></td>
+<td>Stops the game at its next condact.</td>
+</tr>
+</tbody>
+</table>
+<p>The game must actually be running condacts for a stop to happen. While
+it waits for you to type an order, nothing is running: press <code>Break</code>,
+then type an order in the game, and it stops on the first condact that
+follows.</p>
+<p>When the game is stopped, the emulated Next is frozen and its screen
+stops updating. The game picks up where it left off when you run or step
+it.</p>
+<h3 id="shortcuts">Shortcuts</h3>
+<p>Four shortcuts work from the keyboard. Click the CSpect window (the one
+showing your game) first, because that is where the keys go:</p>
+<table>
+<thead>
+<tr>
+<th>Keys</th>
+<th>Same as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+Alt+A</code></td>
+<td>Show or hide the debugger window</td>
+</tr>
+<tr>
+<td><code>Ctrl+Alt+B</code></td>
+<td><code>Break</code></td>
+</tr>
+<tr>
+<td><code>Ctrl+Alt+N</code></td>
+<td><code>Step</code> (N for next)</td>
+</tr>
+<tr>
+<td><code>Ctrl+Alt+R</code></td>
+<td><code>Run</code></td>
+</tr>
+</tbody>
+</table>
+<p>The shortcuts work whether or not the debugger window is on show.
+Closing the window, with its close box or <code>Ctrl+Alt+A</code>, does not stop
+the debugger: breakpoints still halt the game, and <code>Ctrl+Alt+A</code> brings
+the window back. If the game stops and no window is showing, press
+<code>Ctrl+Alt+A</code>.</p>
+<h2 id="breakpoints">Breakpoints</h2>
+<p>A breakpoint stops the game automatically. The <code>Breakpoints</code> tab lists
+them. <code>Add</code> builds a new one by asking a few questions; click the <code>[x]</code>
+at the left of a row to switch it off and on without deleting it, or
+<code>del</code> at the right to remove it.</p>
+<p>A game with no saved settings starts with two: <code>DEBUG marker</code> and
+<code>Runtime error</code>.</p>
+<p>The kinds <code>Add</code> offers:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Stops when</th>
+<th>Asks for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DEBUG marker</code></td>
+<td>the game reaches a <code>DEBUG</code> line in your source</td>
+<td>nothing</td>
+</tr>
+<tr>
+<td><code>Process / entry</code></td>
+<td>a given process starts a given entry</td>
+<td>the process, then the entry verb and noun; <code>(any)</code> matches every verb or noun</td>
+</tr>
+<tr>
+<td><code>Condact</code></td>
+<td>the game is about to run a given condact, anywhere</td>
+<td>the condact name</td>
+</tr>
+<tr>
+<td><code>Flag changes</code></td>
+<td>a given flag gets a new value</td>
+<td>the flag</td>
+</tr>
+<tr>
+<td><code>Flag compare</code></td>
+<td>a flag becomes equal to, different from, below or above a value</td>
+<td>the flag, the comparison (<code>=</code>, <code>&lt;&gt;</code>, <code>&lt;</code>, <code>&gt;</code>), the value</td>
+</tr>
+<tr>
+<td><code>Object moves</code></td>
+<td>a given object gets a new location</td>
+<td>the object</td>
+</tr>
+<tr>
+<td><code>Runtime error</code></td>
+<td>the interpreter raises a runtime error (<code>E1</code>, <code>E4</code> ...)</td>
+<td>nothing</td>
+</tr>
+</tbody>
+</table>
+<p><code>Flag changes</code>, <code>Flag compare</code> and <code>Object moves</code> stop on the condact
+<em>after</em> the one that made the change, and the status line names the
+condact that did it, for example <code>breakpoint: flag 100 changed 7 -&gt; 8 (by
+LET 100 8)</code>. A <code>Flag compare</code> stops when the test turns from false to true,
+not on every condact while it stays true.</p>
+<h3 id="breakpoints-on-source-lines">Breakpoints on source lines</h3>
+<p>Open the <code>Source</code> tab. The two columns at the left of each line are the
+breakpoint margin. Click a line's margin to put a breakpoint on it - a
+red dot appears - and click again to remove it. Only lines that compile
+to something can take one; clicking a comment or a blank line does
+nothing.</p>
+<p>A source-line breakpoint is kept by file name and line number, so it
+follows the file through <code>#include</code>s and parts. If you edit the <code>.DSF</code>
+and lines move, look the breakpoints over in the <code>Breakpoints</code> tab. They
+appear there as <code>line 42 of MYGAME.DSF</code>.</p>
+<h3 id="which-breakpoint-is-reported">Which breakpoint is reported</h3>
+<p>When a stop has more than one possible cause, the status line names one:</p>
+<ol>
+<li>A stepping command in progress (<code>Step</code>, <code>Step entry</code>, <code>Step out</code>,
+   <code>Run to PARSE</code>, or <code>Break</code>) comes first. Its stop says <code>step</code>,
+   <code>next entry</code>, <code>returned to level N</code> or <code>after PARSE</code>.</li>
+<li>Otherwise, the first switched-on breakpoint in the <code>Breakpoints</code> list
+   that matches names the stop. Breakpoints are listed in the order you
+   added them.</li>
+</ol>
+<p>A <code>Runtime error</code> breakpoint is separate: it stops at the error itself,
+with the message <code>runtime error En</code>.</p>
+<h2 id="changing-flags-and-objects">Changing flags and objects</h2>
+<p>While the game is stopped you can change it, to test what happens next
+without playing back to the spot:</p>
+<ul>
+<li><strong>A flag:</strong> on the <code>Flags</code> tab click the value. A number pad opens.
+  Or roll the mouse wheel over the value to change it by one.</li>
+<li><strong>An object's location:</strong> on the <code>Objects</code> tab click its location. A
+  list of locations opens; pick one. The special places
+  252 to 255 are at the top.</li>
+</ul>
+<p>The change goes straight into the running game. It is not written to your
+<code>.DSF</code>, and a change you make here does not itself trigger a <code>Flag
+changes</code>, <code>Flag compare</code> or <code>Object moves</code> breakpoint.</p>
+<p>The edit controls are inactive while the game is running.</p>
+<h3 id="number-pads-and-lists">Number pads and lists</h3>
+<p>Choosing a flag, object, process, condact or word opens a pop-up over the
+window. Click an entry (or a digit and <code>OK</code>) to choose, <code>Cancel</code> or a
+right-click to back out. The A to Z strip at the top of a long list jumps
+to a letter.</p>
+<p>If you would rather type: below the window picture is a text box that
+wakes up while a pop-up is open, with the hint <code>type a number or name,
+Enter = OK, Esc = cancel</code>. In a number pad, type the number. In a list,
+type the first letters of the row and the first row that starts that way
+is chosen. In the flag, object and location lists every row starts with
+its number, so type the number there; a name is only matched in the
+word, condact and symbol lists. If nothing fits, the hint changes to
+<code>not accepted:</code> followed by what you typed, and the pop-up stays open.</p>
+<h2 id="settings">Settings</h2>
+<p>The debugger remembers your breakpoints, your watches and where you put
+its window. They are saved for each game in <code>DEBUGGER.local.TXT</code> in the
+game's source folder, which means every game keeps its own set and they
+are back the next time you run <code>DEBUG.BAT</code>.</p>
+<p>The file is written for you as soon as you add, switch or remove a
+breakpoint or watch. The window position is saved when you close the window or
+quit CSpect. The file is a plain text list; you do not need to edit it.
+Delete it to go back to the two starting breakpoints. A file the debugger
+cannot read is ignored in the same way.</p>
+<p>The <code>local</code> in the name is a reminder that these are your own settings.
+Leave the file out of anything you share.</p>
+<h2 id="debug-markers">DEBUG markers</h2>
+<p>A <code>DEBUG</code> line in a process entry marks a spot in your code. It does
+nothing in play. It exists so the debugger can stop there.</p>
+<p>A <code>DEBUG</code> marker is only compiled into the game when the source contains
+the directive <code>#debug</code>. Write it in lower case, on a line of its own.
+The <code>DEBUG</code> marker breakpoint is the only part of the debugger that
+needs it.</p>
+<p><strong>Every build warns while <code>#debug</code> is present:</strong></p>
+<pre><code>WARNING: MYGAME.DSF has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)
+</code></pre>
+<p>The file named is the one holding the directive, which can be an
+<code>#include</code>d file, and it is reported once per build. The warning appears
+whether you build with <code>BUILD.BAT</code> or <code>DEBUG.BAT</code>, because the markers
+end up in the game either way, including in <code>RELEASE\</code>.</p>
+<p>NextDAAD steps over a marker when there is no debugger attached, so a
+game built with <code>#debug</code> plays correctly here. Other DAAD interpreters
+do not know the marker. They read it as <code>NEWTEXT</code>, which throws away the
+rest of a multi-command order. Remove <code>#debug</code> before you release a game
+that anyone might play anywhere else. See also
+<a href="platform-notes.html#debug-builds">Platform notes</a>.</p>
+<h2 id="multi-part-games">Multi-part games</h2>
+<p><code>DEBUG.BAT</code> writes a source map for every part: <code>GAME.DSM</code> for the main
+game and <code>GAME2.DSM</code> to <code>GAME9.DSM</code> for parts 2 to 9, all in the game's
+source folder (not inside the <code>PART&lt;n&gt;\</code> folders). Whenever the game
+loads a database, the debugger picks the map that matches it, so the
+<code>Source</code> tab, the line numbers and the source-line breakpoints follow you
+as you switch parts. A source-line breakpoint in a file that the loaded
+part does not use waits in the list and starts working again when its
+part is back.</p>
+<h2 id="status-messages">Status messages</h2>
+<p>On the status line:</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>waiting for NextDAAD</code></td>
+<td>The interpreter has not started running your processes yet, for example while a loader intro is playing.</td>
+</tr>
+<tr>
+<td><code>running</code></td>
+<td>The game is running. It shows as soon as the interpreter runs its first condact, and again after each stop.</td>
+</tr>
+<tr>
+<td><code>HALTED - &lt;reason&gt;</code></td>
+<td>The game is stopped, for the reason given: <code>step</code>, <code>next entry</code>, <code>returned to level N</code>, <code>after PARSE</code>, <code>DEBUG marker</code>, <code>runtime error En</code>, or <code>breakpoint: ...</code> followed by what matched.</td>
+</tr>
+<tr>
+<td><code>HALTED - ... (N condacts ran past)</code></td>
+<td>The emulator ran N more condacts before it could stop. What the window shows is the state at the stop itself.</td>
+</tr>
+</tbody>
+</table>
+<p>Problems, shown in red on the status line:</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>symbol file does not match this interpreter build</code></td>
+<td>The game is running an interpreter other than the kit's own <code>nextdaad.nex</code>, for example because <code>NEXFILE</code> names another one. Take that setting out while you debug.</td>
+</tr>
+<tr>
+<td><code>NEXTDAAD.SYM: ...</code></td>
+<td>The interpreter symbols in your game folder could not be read. Run <code>DEBUG.BAT</code> again; it copies a fresh one.</td>
+</tr>
+<tr>
+<td><code>debugger error, disarmed - see debugger.log: ...</code></td>
+<td>The debugger hit an unexpected fault and shut itself off so as not to disturb the game; if the game was stopped, it is let go. Quit CSpect, start <code>DEBUG.BAT</code> again, and if it comes back keep <code>debugger.log</code> for a bug report.</td>
+</tr>
+<tr>
+<td><code>init failed: ...</code></td>
+<td>The plugin could not start. Same advice.</td>
+</tr>
+</tbody>
+</table>
+<p>On the <code>Source</code> tab, when there are no lines to show:</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>source map not checked yet - waiting for NextDAAD</code></td>
+<td>Normal before the game's first condact runs.</td>
+</tr>
+<tr>
+<td><code>no source map</code></td>
+<td>There is no source map file at all (<code>GAME.DSM</code>, or <code>GAME2.DSM</code> to <code>GAME9.DSM</code>) in the source folder. Run <code>DEBUG.BAT</code> (not <code>BUILD.BAT</code>), which writes them.</td>
+</tr>
+<tr>
+<td><code>GAME&lt;n&gt;.DSM: ...</code></td>
+<td>A map file could not be read, and no other map fits the database the game loaded. The name is the first file that failed (<code>GAME.DSM</code> for the main game) and the text after it says why. Run <code>DEBUG.BAT</code> again.</td>
+</tr>
+<tr>
+<td><code>source map is missing (&lt;file&gt;) - rebuild</code></td>
+<td>No map fits the database the game loaded, and the map file named in brackets (for example <code>GAME.DSM</code>) is missing while a later part's map is there. Run <code>DEBUG.BAT</code> again.</td>
+</tr>
+<tr>
+<td><code>source map is out of date - rebuild</code></td>
+<td>The database the game loaded is not the one the maps were made for: the database was built from changed source after the last <code>DEBUG.BAT</code>, so the maps describe older code (or this part's map has been deleted). Run <code>DEBUG.BAT</code> again, which rebuilds the database and the maps together. The <code>Condacts</code> tab shows plain positions in place of line numbers until you do.</td>
+</tr>
+<tr>
+<td><code>file N not in the source map</code></td>
+<td>The map names no file for this stop. Run <code>DEBUG.BAT</code> again.</td>
+</tr>
+</tbody>
+</table>
+<p>Other texts you will see: <code>Process stack</code> shows <code>(empty)</code> when no process
+is running and <code>waiting for NextDAAD</code> before the game starts, and the
+<code>Condacts</code> tab says <code>no process running</code> when there is nothing to list.</p>
+<h2 id="differences-on-linux">Differences on Linux</h2>
+<p><code>./debug.sh</code> works the same way, with these differences:</p>
+<ul>
+<li><strong>The window cannot be hidden.</strong> The debugger cannot close its window
+  under mono, so it stays on screen until you quit CSpect, and
+  <code>Ctrl+Alt+A</code> does nothing while it is open. The other shortcuts work.</li>
+<li><strong>Starting CSpect yourself.</strong> <code>./debug.sh</code> and <code>./run.sh</code> give CSpect
+  the game folder as <code>-mmc=RELEASE/MYGAME//</code>. If you start CSpect by
+  hand, end the <code>-mmc=</code> folder in <code>//</code> too: with a single <code>/</code>, CSpect on
+  Linux does not find the game's <code>DATA/</code> folder and the game stops at
+  <code>E1</code>.</li>
+<li><strong>File names keep their case.</strong> A source-line breakpoint on
+  <code>inc/rooms.dsf</code> is not one on <code>inc/ROOMS.DSF</code>. The Linux build already
+  insists that every <code>#include</code> matches the file's case.</li>
+<li>It needs <code>pwsh</code> and mono, as <code>run.sh</code> does. See
+  <a href="getting-started.html#linux-setup">Getting started</a>.</li>
+</ul>
+<h2 id="when-debugbat-stops">When DEBUG.BAT stops</h2>
+<p><code>DEBUG.BAT</code> stops with a message beginning <code>ERROR:</code> and, on Windows,
+waits for a key before closing the window so you can read it.</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>(the game could not be chosen)</td>
+<td>Same cause and fix as for <code>BUILD.BAT</code>: see <a href="getting-started.html#choosing-the-game">Choosing the game</a>.</td>
+</tr>
+<tr>
+<td><code>ERROR: the debugger runs in CSpect - set EMULATOR=cspect in CONFIG.local.BAT (RUN.BAT still runs jNext)</code></td>
+<td><code>EMULATOR=jnext</code> is set. Change it, or remove the line. On Linux the message names <code>run.sh</code>.</td>
+</tr>
+<tr>
+<td><code>ERROR: EMULATOR=&lt;name&gt; - use cspect or jnext</code></td>
+<td><code>EMULATOR</code> holds something else. Set it to <code>cspect</code>.</td>
+</tr>
+<tr>
+<td><code>ERROR: CSpect not found at &lt;path&gt;</code></td>
+<td>CSpect is not installed there. Install it in <code>tools\CSpect\</code>, or set <code>CSPECTDIR</code> in <code>CONFIG.local.BAT</code> to the folder you have it in.</td>
+</tr>
+<tr>
+<td><code>ERROR: &lt;program&gt; not found - CSpect needs mono on Linux (sudo apt install mono-devel), or set CSPECTCMD in CONFIG.BAT</code></td>
+<td>Linux only: mono is missing.</td>
+</tr>
+<tr>
+<td><code>ERROR: the debugger needs CSpect 4.0 or later - found &lt;version&gt; in &lt;folder&gt;</code></td>
+<td>Install CSpect 4.0 or later. Older builds still run with <code>RUN.BAT</code>.</td>
+</tr>
+<tr>
+<td><code>ERROR: could not read the CSpect version in &lt;folder&gt; - the debugger needs CSpect 4.0 or later</code></td>
+<td>The version of <code>CSpect.exe</code> could not be read, and the folder lacks the files CSpect 4.0 brings. Install CSpect 4.0 or later.</td>
+</tr>
+<tr>
+<td><code>note: could not read the CSpect version - assuming 4.0 or later</code></td>
+<td>Not an error. The version could not be read, but the folder has the files CSpect 4.0 brings. The debugger carries on.</td>
+</tr>
+<tr>
+<td><code>ERROR: &lt;file&gt; not found - the kit is incomplete</code></td>
+<td><code>NEXTDAAD.SYM</code> or <code>lib\NextDAADDebug.dll</code> is missing from the kit folder. Unzip the kit again over the folder.</td>
+</tr>
+<tr>
+<td><code>ERROR: pwsh (PowerShell 7) not found - see docs/getting-started.html, Linux setup</code></td>
+<td>Linux only, printed by <code>./debug.sh</code> itself: install PowerShell 7 as described in <a href="getting-started.html#linux-setup">Getting started</a>.</td>
+</tr>
+<tr>
+<td>any build error</td>
+<td>Same as for <code>BUILD.BAT</code>: see <a href="getting-started.html#when-the-build-fails">Getting started</a>.</td>
+</tr>
+<tr>
+<td><code>ERROR: could not copy NEXTDAAD.SYM into &lt;folder&gt;</code></td>
+<td>The game's source folder is read-only or locked.</td>
+</tr>
+<tr>
+<td><code>ERROR: cannot update &lt;path&gt; - close CSpect and try again</code></td>
+<td>A CSpect that is still open has the plugin file locked. Quit it and run <code>DEBUG.BAT</code> again.</td>
+</tr>
+</tbody>
+</table>
+<p>When it installs the plugin, or finds a newer one already there, it
+prints one of:</p>
+<pre><code>debugger plugin -&gt; tools\CSpect\NextDAADDebug.dll
+debugger plugin in tools\CSpect is newer (&lt;version&gt;) - kept
+</code></pre>
+<p>The second means CSpect's folder already holds a newer plugin than the
+kit's. It is left alone and used. Nothing is printed when the plugin
+there is already the kit's own.</p>
+</main>
+</body>
+</html>

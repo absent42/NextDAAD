@@ -22,7 +22,7 @@ namespace NextDAADDebug
     {
         public long Serial;
         public bool Active, Halted;
-        public string Status = "waiting for NextDAAD", Problem, MapProblem;
+        public string Status = DebugSession.WaitingText, Problem, MapProblem;
         public ProcFrame[] Stack = new ProcFrame[0];
         public int Offset = -1, IndirPending = -1, NumObjects;
         public byte[] Flags = new byte[256], ChangedBase;
@@ -50,12 +50,12 @@ namespace NextDAADDebug
         public const string MismatchText = "symbol file does not match this interpreter build";
         // GAME.DSM loaded but not yet compared with the game's database (no guarded eng_exec yet).
         public const string MapUncheckedText = "source map not checked yet - waiting for NextDAAD";
+        public const string WaitingText = "waiting for NextDAAD", RunningText = "running";
         readonly IMachine m;
         readonly EngineReader reader;
         readonly IHalter halter;
         readonly HookInfo execHook, errorHook;
-        readonly SourceMap map;
-        readonly string mapProblem;
+        readonly MapSet maps;
         readonly TraceWriter trace;
         readonly bool interactive;
         readonly ConcurrentQueue<Command> commands = new ConcurrentQueue<Command>();
@@ -65,8 +65,9 @@ namespace NextDAADDebug
 
         Ddb ddb;
         byte[] ddbHeader;
-        bool mapUsable, guardPassed, halted, refireArmed;
-        string mapState, status = "waiting for NextDAAD";
+        SourceMap active;                              // the map matching the loaded database
+        bool guardPassed, halted, refireArmed;
+        string mapState, status = WaitingText;
         int ranPast, haltOffset = -1, haltNumObj, haltIndir = -1;
         ExecEvent last;
         byte[] haltFlags, haltObj, baseFlags, baseObj;
@@ -74,20 +75,19 @@ namespace NextDAADDebug
         Snapshot latest = new Snapshot();
         DateTime lastPublish = DateTime.MinValue, lastMismatchCheck = DateTime.MinValue;
 
-        public DebugSession(IMachine machine, SymbolFile symbols, IHalter halter, SourceMap map, string mapProblem, TraceWriter trace, bool interactive, IEnumerable<Breakpoint> breakpoints)
+        public DebugSession(IMachine machine, SymbolFile symbols, IHalter halter, MapSet maps, TraceWriter trace, bool interactive, IEnumerable<Breakpoint> breakpoints)
         {
             m = machine;
             reader = new EngineReader(machine, symbols);
             this.halter = halter;
             execHook = symbols.Hook("eng_exec");
             errorHook = symbols.Hook("err_raise");
-            this.map = map;
-            this.mapProblem = mapProblem;
+            this.maps = maps ?? new MapSet();
             this.trace = trace;
             this.interactive = interactive;
             Controller.BreakpointsActive = interactive;
             if (breakpoints != null) foreach (var b in breakpoints) Controller.Breakpoints.Add(b.Clone());
-            mapState = map == null ? (mapProblem ?? "no source map") : MapUncheckedText;
+            mapState = UncheckedState();
             Publish(true);
         }
 
@@ -100,6 +100,7 @@ namespace NextDAADDebug
             if (!reader.GuardOk(execHook)) return;
             if (halted) { ranPast++; return; }
             guardPassed = true;
+            if (status == WaitingText) status = RunningText;
             if (Problem == MismatchText) Problem = null;
             EnsureDdb();
             int off = m.Registers().HL;
@@ -173,11 +174,11 @@ namespace NextDAADDebug
                     if (halted) { reader.WriteObjectLocation(c.A, (byte)c.B); Refresh(); }
                     break;
                 case CommandKind.AddBreakpoint:
-                    if (c.Bp != null && !Controller.Breakpoints.Exists(b => b.SameAs(c.Bp)))
+                    if (c.Bp != null)
                     {
                         var b = c.Bp.Clone();
                         Resolve(b);
-                        Controller.Breakpoints.Add(b);
+                        if (!Controller.Breakpoints.Exists(x => x.SameAs(b))) Controller.Breakpoints.Add(b);
                     }
                     break;
                 case CommandKind.RemoveBreakpoint:
@@ -196,7 +197,7 @@ namespace NextDAADDebug
             Controller.SetMode(mode, last != null ? last.Stack.Length : 0);
             halted = false;
             refireArmed = true;
-            status = "running";
+            status = RunningText;
             halter.Resume();
         }
 
@@ -215,14 +216,35 @@ namespace NextDAADDebug
             ddbHeader = h;
             ddb = new Ddb(reader.DdbImage());
             Controller.SetDdb(ddb);
-            mapUsable = map != null && map.Matches(ddb.Image);
-            mapState = map == null ? (mapProblem ?? "no source map") : mapUsable ? null : "source map is out of date - rebuild";
+            active = maps.Maps.FirstOrDefault(m => m.Matches(ddb.Image));
+            mapState = maps.Maps.Count == 0 ? maps.NothingLoadedText : active != null ? null : maps.NoMatchText;
             foreach (var b in Controller.Breakpoints) Resolve(b);
+            var bps = Controller.Breakpoints;
+            // A converted legacy row can repeat a path row: the first row stays, enabled if either was.
+            for (int i = bps.Count - 1; i > 0; i--)
+            {
+                int j = bps.FindIndex(x => x.SameAs(bps[i]));
+                if (j < i) { bps[j].Enabled |= bps[i].Enabled; bps.RemoveAt(i); }
+            }
         }
 
+        string UncheckedState() => maps.Maps.Count == 0 ? maps.NothingLoadedText : MapUncheckedText;
+
+        // A path names a file in the active map. A legacy file index takes the path it names in
+        // the first map that resolves it, so it cannot fire on another part's file of that index.
         void Resolve(Breakpoint b)
         {
-            if (b.Kind == BreakKind.SourceLine) b.Offsets = mapUsable ? map.OffsetsForLine(b.A, b.B).ToArray() : new int[0];
+            if (b.Kind != BreakKind.SourceLine) return;
+            var hits = new List<LineHit>();
+            if (active != null)
+            {
+                string f;
+                if (b.Path == null && active.Files.TryGetValue(b.A, out f)) { b.Path = f; b.A = 0; }
+                int file = b.Path != null ? active.FileIndex(b.Path) : -1;
+                if (file >= 0) hits = active.OffsetsForLine(file, b.B);
+            }
+            b.Offsets = hits.Select(h => h.Offset).ToArray();
+            b.Entries = hits.Select(h => h.Entry).ToArray();
         }
 
         static bool Same(byte[] a, byte[] b)
@@ -246,7 +268,7 @@ namespace NextDAADDebug
                 Problem = Problem,
                 Status = halted && ranPast > 0 ? status + " (" + ranPast + " condacts ran past)" : status,
                 Ddb = ddb,
-                Map = mapUsable ? map : null,
+                Map = active,
                 MapProblem = mapState,
                 Breakpoints = Controller.Breakpoints.Select(b => b.Clone()).ToArray(),
                 ChangedBase = baseFlags,
@@ -295,9 +317,9 @@ namespace NextDAADDebug
             baseFlags = baseObj = haltFlags = haltObj = null;
             Controller.SetMode(RunMode.Run, 0);
             Controller.SetDdb(null);
-            mapUsable = false;
-            mapState = map == null ? (mapProblem ?? "no source map") : MapUncheckedText;
-            status = "waiting for NextDAAD";
+            active = null;
+            mapState = UncheckedState();
+            status = WaitingText;
             Publish(true);
         }
     }

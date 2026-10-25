@@ -197,7 +197,7 @@ namespace NextDAADDebug
                 string text = CondactFormatter.Rich(c, s.Ddb, s.Flags);
                 if (i == cur && level == s.Stack.Length - 1 && s.IndirPending >= 0) text += "  [INDIR arg2=" + s.IndirPending + "]";
                 SourceLoc loc;
-                string where = s.Map != null && s.Map.TryLocate(c.Offset, out loc) ? loc.Line.ToString() : c.Offset.ToString("X4");
+                string where = s.Map != null && s.Map.TryLocate(c.Offset, s.Stack[level].EntryPtr, out loc) ? loc.Line.ToString() : c.Offset.ToString("X4");
                 string line = (i == cur ? (char)0x10 : ' ') + where.PadLeft(5) + " " + text;
                 ui.S.Text(RightX, y + r, line.PadRight(w), Theme.Text, i == cur ? Theme.Current : Theme.Bg, w);
             }
@@ -209,14 +209,20 @@ namespace NextDAADDebug
             if (s.Map == null || s.Ddb == null || level < 0 || level >= s.Stack.Length) return false;
             var list = s.Ddb.EntryCondacts(s.Ddb.EntryCondactStart(s.Stack[level].EntryPtr));
             int i = CurrentIndex(s, level, list);
-            return i >= 0 && s.Map.TryLocate(list[i].Offset, out loc);
+            return i >= 0 && s.Map.TryLocate(list[i].Offset, s.Stack[level].EntryPtr, out loc);
         }
 
-        static bool HasLineBp(Snapshot s, int file, int line)
+        static Breakpoint FindLineBp(Snapshot s, string path, int line)
         {
-            foreach (var b in s.Breakpoints) if (b.Kind == BreakKind.SourceLine && b.A == file && b.B == line) return true;
-            return false;
+            foreach (var b in s.Breakpoints) if (b.IsLine(s.Map, path, line)) return b;
+            return null;
         }
+
+        // The file on show, right of the top tabs.
+        static readonly int PathX = RightX + TopTabs.Sum(t => t.Length + 3);
+
+        // Too long for w: the head is cut, so the file name stays.
+        internal static string FitPath(string p, int w) => p.Length <= w ? p : "..." + p.Substring(p.Length - (w - 3));
 
         void SourcePane(Ui ui, Snapshot s, Action<Command> post, bool follow)
         {
@@ -227,21 +233,25 @@ namespace NextDAADDebug
             int file = hasCur ? cur.File : 0;
             string path;
             if (!s.Map.Files.TryGetValue(file, out path)) { ui.S.Text(RightX, y, "file " + file + " not in the source map", Theme.Dim, Theme.Bg, w); return; }
+            ui.S.Text(PathX, TopY, FitPath(path, Cols - PathX), Theme.Dim, Theme.Bg, Cols - PathX);
             string[] lines = sources.Lines(path);
             if (follow && hasCur) srcTop = Math.Max(0, cur.Line - 1 - h / 2);
             int hit = ui.List(ref srcTop, RightX, y, w, h, lines.Length);
             if (hit >= 0 && ui.In.Col - RightX < 2)
             {
-                var bp = new Breakpoint { Kind = BreakKind.SourceLine, A = file, B = hit + 1 };
-                if (HasLineBp(s, file, hit + 1)) post(Command.For(CommandKind.RemoveBreakpoint, bp));
-                else if (s.Map.OffsetsForLine(file, hit + 1).Count > 0) post(Command.For(CommandKind.AddBreakpoint, bp));
+                // Every row on the line goes: a path row and a legacy-index row can both name it.
+                if (FindLineBp(s, path, hit + 1) != null)
+                {
+                    foreach (var b in s.Breakpoints) if (b.IsLine(s.Map, path, hit + 1)) post(Command.For(CommandKind.RemoveBreakpoint, b));
+                }
+                else if (s.Map.OffsetsForLine(file, hit + 1).Count > 0) post(Command.For(CommandKind.AddBreakpoint, new Breakpoint { Kind = BreakKind.SourceLine, Path = path, B = hit + 1 }));
             }
             for (int r = 0; r < h && srcTop + r < lines.Length; r++)
             {
                 int ln = srcTop + r + 1;
                 bool isCur = hasCur && cur.Line == ln;
                 byte bg = isCur ? Theme.Current : Theme.Bg;
-                ui.S.Put(RightX, y + r, HasLineBp(s, file, ln) ? (byte)0x07 : (byte)' ', Theme.Break, bg);
+                ui.S.Put(RightX, y + r, FindLineBp(s, path, ln) != null ? (byte)0x07 : (byte)' ', Theme.Break, bg);
                 ui.S.Put(RightX + 1, y + r, isCur ? (byte)0x10 : (byte)' ', Theme.Text, bg);
                 ui.S.Text(RightX + 2, y + r, (ln.ToString().PadLeft(4) + " " + lines[ln - 1]).PadRight(w - 2), Theme.Text, bg, w - 2);
             }

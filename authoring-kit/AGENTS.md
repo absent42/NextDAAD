@@ -5,7 +5,10 @@ lives in its own game folder, `<GAME>\<GAME>.DSF` plus its `IMAGES\`,
 `AUDIO\`, `VIDEO\` and other files. `SET GAME=<GAME>` in `CONFIG.local.BAT`
 selects the game; `BUILD.BAT` (Windows) or `./build.sh` (Linux) compiles it
 and stages it in `RELEASE\<GAME>\`: `<GAME>.NEX` to launch, everything else
-in `DATA\`.
+in `DATA\`. `DEBUG.BAT` / `./debug.sh` builds the same way and starts CSpect
+with a debugger window (stepping, breakpoints, flags and objects); it is
+an interactive tool for the person at the keyboard, so do not run it from
+an agent session.
 
 `STARTER\` is the shipped starter game and every kit update replaces it.
 Never write a game in it: copy it to a new game folder first (rename

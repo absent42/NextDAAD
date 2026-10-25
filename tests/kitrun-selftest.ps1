@@ -145,6 +145,37 @@ $r = Invoke-Kit 'run.ps1' @('SET EMULATOR=', 'SET CSPECTDIR=nosuch')
 Assert-Eq $r.Rc 1 'cspect unchanged exit'
 Assert-Like $r.Out '*ERROR: CSpect not found at*' 'cspect unchanged text'
 
+# CSpect launch: a stand-in CSpect.exe logs one argument per line. On Linux the card root
+# ends in two separators: CSpect's esxDOS plugin trims one and needs one left to enter DATA.
+$csd = Join-Path $base 'fakecs'
+. "$root/authoring-kit/lib/kittools.ps1"
+# The file name the kit looks for in CSPECTDIR; Resolve-KitTools sets env as a side effect.
+$envSaved = @{}; foreach ($k in 'TOOLSDIR', 'FFMPEG', 'VIDENC') { $envSaved[$k] = [Environment]::GetEnvironmentVariable($k) }
+$csExe = Join-Path $csd (Split-Path -Leaf (Resolve-KitTools @{} $kit).CSPECT)
+foreach ($k in $envSaved.Keys) { [Environment]::SetEnvironmentVariable($k, $envSaved[$k]) }
+New-Item -ItemType Directory -Path $csd -Force | Out-Null
+$csLog = Join-Path $base 'cspect.log'
+$env:FAKE_CSPECT_LOG = $csLog
+$csLocal = @('SET EMULATOR=cspect', "SET CSPECTDIR=$csd")
+$haveFake = $true
+if ($OnWindows) {
+    try { Add-Type -TypeDefinition 'public static class FakeCSpect { public static void Main(string[] a) { System.IO.File.WriteAllLines(System.Environment.GetEnvironmentVariable("FAKE_CSPECT_LOG"), a); } }' -OutputAssembly $csExe -OutputType ConsoleApplication }
+    catch { $haveFake = $false }
+} else {
+    [IO.File]::WriteAllText($csExe, "for a in `"`$@`"; do echo `"`$a`"; done > `"`$FAKE_CSPECT_LOG`"`n")
+    $csLocal += 'SET CSPECTCMD=sh'
+}
+if (-not $haveFake) { Write-Output 'skip: cspect launch line (this host cannot compile a console stand-in)' }
+else {
+    $r = Invoke-Kit 'run.ps1' $csLocal
+    Assert-Eq $r.Rc 0 'cspect launch exit'
+    $a = @(Get-Content -LiteralPath $csLog)
+    $s = [IO.Path]::DirectorySeparatorChar
+    $mmcWant = if ($OnWindows) { "-mmc=RELEASE${s}G1${s}" } else { "-mmc=RELEASE${s}G1${s}${s}" }
+    Assert-Eq ($a -join '|') "-w3|-zxnext|-esc|$mmcWant|RELEASE${s}G1${s}G1.NEX" 'cspect launch arguments'
+}
+Remove-Item Env:FAKE_CSPECT_LOG
+
 Remove-Item Env:FAKE_JNEXT_RC, Env:FAKE_JNEXT_LOG
 Remove-Item -LiteralPath $base -Recurse -Force
 Write-Output "kitrun-selftest: $checks checks passed"

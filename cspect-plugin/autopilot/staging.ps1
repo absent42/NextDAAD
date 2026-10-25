@@ -41,6 +41,16 @@ function Copy-CSpect([string]$src, [string]$dest) {
     Get-ChildItem -LiteralPath $dest -Recurse -File | Unblock-File
 }
 
+# Copies relative paths $files from $src into $dest; refuses any target outside $dest.
+function Copy-ListedFiles([string]$src, [string]$dest, [string[]]$files) {
+    foreach ($f in $files) {
+        $to = Join-Path $dest $f
+        Assert-UnderRoot $to $dest
+        New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $src $f) $to
+    }
+}
+
 function Test-BytesContain([byte[]]$hay, [byte[]]$needle) {
     $first = $needle[0]
     $i = [Array]::IndexOf($hay, $first)

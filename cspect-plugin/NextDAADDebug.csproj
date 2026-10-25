@@ -5,9 +5,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>NextDAADDebug</AssemblyName>
     <RootNamespace>NextDAADDebug</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.2</Version>
     <CSpectDir Condition="'$(CSpectDir)'==''">D:\ZXNextDev\cspect</CSpectDir>
     <Configurations>Debug;Release;Autopilot</Configurations>
+  </PropertyGroup>
+  <!-- the shipped build carries no PDB path of the build machine -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <DebugType>none</DebugType>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Autopilot'">
     <DefineConstants>$(DefineConstants);AUTOPILOT</DefineConstants>

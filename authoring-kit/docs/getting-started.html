@@ -74,7 +74,8 @@ each into the kit's <code>tools\</code> folder at the path shown:</p>
 <p><code>tools\README.txt</code> lists the download addresses and the exact executable
 paths the build checks for.</p>
 <p>Double-click <code>BUILD.BAT</code> to build, <code>RUN.BAT</code> to play the result in
-CSpect (or jNext, see <code>EMULATOR</code>), <code>CLEAN.BAT</code> to start over. On a fresh kit the first build makes
+CSpect (or jNext, see <code>EMULATOR</code>), <code>CLEAN.BAT</code> to start over. <code>DEBUG.BAT</code>
+builds and plays the game in the <a href="debugger.html">debugger</a>. On a fresh kit the first build makes
 the starter game; read <a href="#where-your-files-go">Where your files go</a>
 before you start your own.</p>
 <h3 id="linux-setup">Linux setup</h3>
@@ -108,7 +109,9 @@ optional tools your game uses:</p>
   (<code>sudo apt install mono-devel</code>), to play the result. Extract into
   <code>tools/CSpect/</code>; <code>run.sh</code> starts it as <code>mono CSpect.exe</code>, or set
   <code>CSPECTCMD</code> in <code>CONFIG.local.BAT</code> to run it some other way (Linux only,
-  ignored on Windows).</li>
+  ignored on Windows). The kit ends the card folder it gives CSpect in
+  <code>//</code>, which works around a CSpect bug on Linux; see
+  <a href="debugger.html#differences-on-linux">Debugger</a>.</li>
 <li><strong>jNext</strong>, optional, runs natively on Linux (no mono). See
   <a href="#running-in-jnext">Running in jNext</a>.</li>
 <li><strong>sjasmplus</strong>, only to rebuild an extern with <code>externs.sh</code>: a
@@ -139,7 +142,7 @@ and Ubuntu, add them with:</p>
 <pre><code>sudo apt install libgl1 libegl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0
 </code></pre>
 <p>Then build and play:</p>
-<pre><code>chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
+<pre><code>chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
 ./build.sh
 ./run.sh
 </code></pre>
@@ -148,8 +151,9 @@ build ends with <code>ERROR: CSpect not found</code> after the build succeeds; s
 <code>RUN=0</code> in <code>CONFIG.local.BAT</code> to build without an emulator.</p>
 <p>On a fresh kit the first build makes the starter game; read
 <a href="#where-your-files-go">Where your files go</a> before you start your own.</p>
-<p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code> and <code>vidtune.sh</code> are the
-Linux names of the five <code>.BAT</code> launchers and take the same arguments.</p>
+<p><code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code>, <code>vidtune.sh</code> and <code>debug.sh</code>
+are the Linux names of the six <code>.BAT</code> launchers and take the same
+arguments.</p>
 <p>Two things differ from Windows:</p>
 <ul>
 <li><strong>File names are case-sensitive.</strong> Use the names this manual shows:
@@ -440,11 +444,17 @@ it. See <a href="video.html">Video</a>.</p>
   selected game only; other games' output is left alone. It also deletes
   <code>CACHE\jnext\</code>, the jNext card copy. The next build
   then converts everything from scratch.</li>
+<li><strong><code>DEBUG.BAT</code></strong> (<code>./debug.sh</code>) - builds the game as <code>BUILD.BAT</code> does,
+  also writing the source maps the debugger reads, then starts CSpect
+  with the debugger attached. It needs CSpect 4.0 or later and
+  <code>EMULATOR=cspect</code>; <code>RELEASE\&lt;GAME&gt;\</code> is the same as <code>BUILD.BAT</code> makes.
+  See <a href="debugger.html">Debugger</a>.</li>
 </ul>
-<p>All three work on the game <code>GAME</code> selects (see
+<p>All four work on the game <code>GAME</code> selects (see
 <a href="#choosing-the-game">Choosing the game</a>). Each launcher is a few lines
 that start the matching script in <code>lib\</code> (<code>build.ps1</code>, <code>run.ps1</code>,
-<code>clean.ps1</code>); the build itself is the same code on both platforms.</p>
+<code>clean.ps1</code>, <code>debug.ps1</code>); the build itself is the same code on both
+platforms.</p>
 <p>The build stops at the first error, with a message naming the cause.</p>
 <p>Pictures, sprite sets, sounds, tunes and video are only converted or
 copied when their source has changed since the last build. Everything
@@ -726,10 +736,10 @@ see <a href="#moving-from-v011-to-v0120">Moving from v0.11 to v0.12.0</a> below.
 <ul>
 <li><code>CONFIG.BAT</code> and <code>CONFIG.local.BAT.sample</code></li>
 <li>the launchers: <code>BUILD.BAT</code>, <code>RUN.BAT</code>, <code>CLEAN.BAT</code>, <code>EXTERNS.BAT</code>,
-  <code>VIDTUNE.BAT</code> (Linux: <code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>, <code>externs.sh</code>,
-  <code>vidtune.sh</code>)</li>
+  <code>VIDTUNE.BAT</code>, <code>DEBUG.BAT</code> (Linux: <code>build.sh</code>, <code>run.sh</code>, <code>clean.sh</code>,
+  <code>externs.sh</code>, <code>vidtune.sh</code>, <code>debug.sh</code>)</li>
 <li>the folders <code>lib\</code>, <code>docs\</code>, <code>externs\</code> and <code>.agents\</code></li>
-<li><code>AGENTS.md</code>, <code>README.txt</code>, <code>xbn.inc</code>, <code>xbnmod.inc</code></li>
+<li><code>AGENTS.md</code>, <code>README.txt</code>, <code>NEXTDAAD.SYM</code>, <code>xbn.inc</code>, <code>xbnmod.inc</code></li>
 <li><code>nextdaad.nex</code> and <code>intro.nex</code></li>
 <li><code>tools\gfx2next\</code> and <code>tools\vidtools\</code></li>
 <li><code>STARTER\</code>, the starter game</li>

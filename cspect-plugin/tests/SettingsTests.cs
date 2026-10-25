@@ -68,6 +68,61 @@ namespace NextDAADDebug.Tests
             Assert.Equal(77, t.Breakpoints[1].B);
         }
 
+        static Settings LoadText(string body)
+        {
+            string path = Path.GetTempFileName();
+            File.WriteAllText(path, Settings.Magic + "\t1\n" + body);
+            return Settings.Load(path);
+        }
+
+        [Fact]
+        public void SourceLinePathRoundTrip()
+        {
+            var s = LoadText("bp\tSourceLine\t1\tinc/SHARED.DSF\t12\t-1\tEq\n");
+            Assert.Single(s.Breakpoints);
+            Assert.Equal("inc/SHARED.DSF", s.Breakpoints[0].Path);
+            Assert.Equal(12, s.Breakpoints[0].B);
+            Assert.Equal(Settings.Magic + "\t1\nbp\tSourceLine\t1\tinc/SHARED.DSF\t12\t-1\tEq\nwindow\t-1\t-1\n", s.Serialize(s.Breakpoints));
+        }
+
+        [Fact]
+        public void SourceLineLegacyIndexStillReads()
+        {
+            var s = LoadText("bp\tSourceLine\t1\t0\t125\t-1\tEq\n");
+            Assert.Single(s.Breakpoints);
+            Assert.Null(s.Breakpoints[0].Path);
+            Assert.Equal(0, s.Breakpoints[0].A);
+            Assert.Contains("bp\tSourceLine\t1\t0\t125\t-1\tEq\n", s.Serialize(s.Breakpoints));
+        }
+
+        [Fact]
+        public void OnlyPlainDigitsAreALegacyIndex()
+        {
+            var s = LoadText("bp\tSourceLine\t1\t+1\t5\t-1\tEq\nbp\tSourceLine\t1\t-2\t6\t-1\tEq\nbp\tFlagChange\t1\t+7\t-1\t-1\tEq\n");
+            Assert.Equal(2, s.Breakpoints.Count);
+            Assert.Equal("+1", s.Breakpoints[0].Path);
+            Assert.Equal("-2", s.Breakpoints[1].Path);
+        }
+
+        [Fact]
+        public void AllDigitPathRoundTrips()
+        {
+            var bps = new[] { new Breakpoint { Kind = BreakKind.SourceLine, Path = "123", B = 4 } };
+            string text = new Settings().Serialize(bps);
+            Assert.Contains("bp\tSourceLine\t1\t./123\t4\t", text);
+            var s = LoadText(text.Substring(text.IndexOf('\n') + 1));
+            Assert.Equal("123", s.Breakpoints[0].Path);
+            Assert.True(s.Breakpoints[0].SameAs(bps[0]));
+        }
+
+        [Fact]
+        public void OtherKindsStillNumeric()
+        {
+            var s = LoadText("bp\tCondact\t1\tDROP\t-1\t-1\tEq\nbp\tFlagChange\t1\t40\t-1\t-1\tEq\n");
+            Assert.Single(s.Breakpoints);
+            Assert.Equal(BreakKind.FlagChange, s.Breakpoints[0].Kind);
+        }
+
         [Fact]
         public void CorruptFileGivesDefaults()
         {

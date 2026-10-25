@@ -96,9 +96,9 @@ function Apply-Setup([string]$setup) {
         else { throw "negative: unknown setup step '$s'" }
     }
 }
-# Verb build, run or clean: the kit launcher of that name.
+# Verb build, run, clean or debug: the kit launcher of that name.
 function Run-Launcher([string]$Verb) {
-    if ($Verb -notin 'build', 'run', 'clean') { throw "negative: unknown verb '$Verb'" }
+    if ($Verb -notin 'build', 'run', 'clean', 'debug') { throw "negative: unknown verb '$Verb'" }
     Push-Location $kit
     # A native tool's stderr becomes a terminating error under -Stop merged
     # with 2>&1, even on exit code 0 (parity.ps1's Invoke-Launcher note).

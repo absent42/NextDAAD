@@ -52,6 +52,13 @@ process 3 (extra text after a room description) and the tail of process 6
    The first error names the line. `references/dsf-source-format.md` ends
    with the messages you will meet and what each means.
 4. **Play it.** `RUN.BAT` / `./run.sh` launches the emulator on `RELEASE\<GAME>\`.
+   To stop the game and look inside it, the author runs `DEBUG.BAT` /
+   `./debug.sh` instead (CSpect 4.0 or later; `docs/debugger.html`): a
+   window with stepping, breakpoints and live flags and objects. It is
+   interactive, so tell the author to run it rather than running it
+   yourself. `#debug` in the DSF compiles `DEBUG` lines into markers
+   the debugger stops on, and every build warns while it is present -
+   remove it before release.
    Walk every exit, try every puzzle in the wrong state and the right one,
    and try each verb with no noun. Doubled messages and "I can't do that"
    after a real response are fall-through bugs (`references/pitfalls.md`).

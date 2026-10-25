@@ -369,19 +369,27 @@ to pick up the current values.
 
 ## Debug builds
 
-### A `-D` build plays exactly like a normal one
+### A game built with `#debug` plays exactly like a normal one
 
-Compiling with the debug flag writes a marker into the process tables
-wherever you put a `DEBUG` line. NextDAAD steps over those markers and
-carries on.
+A `DEBUG` line in a process entry is compiled into the game as a marker
+when your source contains the directive `#debug` (lower case, on a line
+of its own). `DEBUG.BAT` does not add it for you: you write `#debug`
+yourself, and every build warns while it is there.
+
+NextDAAD steps over those markers and carries on, whenever no debugger
+is attached.
 
 **This is the only DAAD interpreter where that works.** Everywhere else
 the marker is read as `NEWTEXT`, which throws away the rest of a
-multi-command order - so a debug build stops obeying `GET SWORD AND KILL
-ORC` half way through, with nothing on screen to say why. Here it does
-not, so you can leave `DEBUG` lines in your source while you work and
-build with or without the flag without the game changing under you.
+multi-command order - so a game built with `#debug` stops obeying `GET
+SWORD AND KILL ORC` half way through, with nothing on screen to say why.
+Here it does not, so you can leave `DEBUG` lines in your source while you
+work and build with or without `#debug` without the game changing under
+you. Take `#debug` out before you release a game that anyone might play
+on another interpreter, because the markers are in the release build
+too.
 
-What a `DEBUG` line does not give you is a breakpoint. There is no
-debugger attached to it on this target, so the line is simply inert. Do
-not write one expecting the run to stop.
+With the [debugger](debugger.md) attached, the same markers become
+stopping points: the game halts on each one and you can look around.
+Without the debugger a `DEBUG` line is inert. Do not write one expecting
+the run to stop.

@@ -60,8 +60,8 @@ pwsh -NoProfile -File scripts/kit-files.ps1 -Check
 cd authoring-kit
 pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform linux | zip -q -@ /k/kit.zip
 cd /k
-x=`$(unzip -Z kit.zip build.sh clean.sh externs.sh run.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "`$x" = 7 ]
-n=`$(unzip -l kit.zip | grep -v ' CONFIG\.BAT`$' | grep -cE '\.(BAT|exe|dll)`$' || true); [ "`$n" = 0 ]
+x=`$(unzip -Z kit.zip build.sh clean.sh externs.sh run.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "`$x" = 8 ]
+n=`$(unzip -l kit.zip | grep -v ' CONFIG\.BAT`$' | grep -v ' lib/NextDAADDebug\.dll`$' | grep -cE '\.(BAT|exe|dll)`$' || true); [ "`$n" = 0 ]
 echo "zip: `$(unzip -l kit.zip | tail -n 1)"
 cp kit.zip /w/kit.zip
 "@)
@@ -69,7 +69,7 @@ cp kit.zip /w/kit.zip
     if ($code -ne 0) { Write-Host 'install-test: zip cut or its assertions FAILED'; exit 1 }
     Move-Item -LiteralPath (Join-Path $cut 'kit.zip') -Destination $dryZip -Force
     Remove-Item -LiteralPath $cut -Recurse -Force
-    Write-Host "install-test: $dryZip (seven 0755 entries, no .BAT but CONFIG.BAT, no .exe/.dll)"
+    Write-Host "install-test: $dryZip (eight 0755 entries, no .BAT but CONFIG.BAT, no .exe/.dll but lib/NextDAADDebug.dll)"
 }
 
 if (-not $Zip) { $Zip = $dryZip }
@@ -300,7 +300,7 @@ echo "== sh build.sh exit $c2:"; printf '%s\n' "$out2"
 [ "$c1" != 0 ] || { echo "== ./build.sh did not fail"; exit 1; }
 case "$out1" in *"Permission denied"*) ;; *) echo "== no Permission denied line"; exit 1 ;; esac
 [ "$c2" != 0 ] || { echo "== sh build.sh did not fail"; exit 1; }
-printf '%s\n' "$out2" | grep -qF 'is not executable - run: chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next' || { echo "== no build.ps1 chmod message"; exit 1; }
+printf '%s\n' "$out2" | grep -qF 'is not executable - run: chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next' || { echo "== no build.ps1 chmod message"; exit 1; }
 fix=$(printf '%s\n' "$out2" | sed -n 's/.* is not executable - run: \(chmod +x .*\)$/\1/p' | head -n 1)
 echo "== applying: $fix"
 sh -c "$fix"

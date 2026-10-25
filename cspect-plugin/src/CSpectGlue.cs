@@ -140,21 +140,15 @@ namespace NextDAADDebug
             catch (Exception ex) { problem = "NEXTDAAD.SYM: " + ex.Message; Log.Write(problem); }
             if (sym != null)
             {
-                SourceMap map = null;
-                string mapProblem = null;
-                string dsm = Path.Combine(folder, "GAME.DSM");
-                if (File.Exists(dsm))
-                {
-                    try { map = SourceMap.Parse(File.ReadAllText(dsm)); }
-                    catch (Exception ex) { mapProblem = "GAME.DSM: " + ex.Message; Log.Write(mapProblem); }
-                }
+                var maps = MapSet.Load(folder);
+                foreach (string p in maps.Problems) Log.Write(p);
                 string tp = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_TRACE");
                 if (!string.IsNullOrEmpty(tp)) trace = new TraceWriter(tp);
                 IHalter halter = interactive ? Halters.Create(cs, () => session.Pump()) : new NullHalter();
-                session = new DebugSession(new CSpectMachine(cs), sym, halter, map, mapProblem, trace, interactive, settings.Breakpoints);
+                session = new DebugSession(new CSpectMachine(cs), sym, halter, maps, trace, interactive, settings.Breakpoints);
                 list.Add(new sIO(sym.Hook("eng_exec").Address, eAccess.Memory_EXE, IdExec));
                 list.Add(new sIO(sym.Hook("err_raise").Address, eAccess.Memory_EXE, IdError));
-                Log.Write("armed: build " + sym.Build + " " + sym.Variant + (map == null ? ", no source map" : ", source map loaded"));
+                Log.Write("armed: build " + sym.Build + " " + sym.Variant + maps.LogText);
             }
             if (interactive)
             {

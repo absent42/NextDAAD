@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Linq;
 using Xunit;
@@ -211,6 +212,74 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SharedLineBreakpointFiresOnlyForItsEntry()
+        {
+            const string dsm = "NDRC-DSM\t2\nddb\tF27FE0F4\t459\nfile\t0\tDBGFIX.DSF\n" +
+                               "entry\t0425\t0\t101\nentry\t0429\t0\t120\n" +
+                               "cond\t03F8\t0425\t0\t101\t9\ncond\t03F8\t0429\t0\t120\t9\n";
+            var r = new Rig(SourceMap.Parse(dsm));
+            r.Exec(0, 0, 0);                               // loads the DDB and validates the map
+            r.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 120 });
+            var bp = r.Snap().Breakpoints[0];
+            Assert.Equal(new[] { 0x3F8 }, bp.Offsets);
+            Assert.Equal(new[] { 0x429 }, bp.Entries);
+            r.Exec(0, 0, 0);                               // first owner (0x0425) runs the shared condact
+            Assert.Equal(0, r.H.Halts);
+            r.SetStack(new ProcFrame(0, 0x429, 0x3F8));    // second owner runs it
+            r.M.Regs = new CpuRegs { HL = 0x3F8, PC = r.Sym.Hook("eng_exec").Address };
+            r.S.OnExecHook();
+            Assert.Equal(1, r.H.Halts);
+        }
+
+        // INDIR prefix at 0x100 (2 bytes), target at 0x102, both mapped to one line of entry 0x50.
+        static ExecEvent IndirEvent(int offset, int number, int length, int entry = 0x50) => new ExecEvent
+        {
+            Offset = offset,
+            Stack = new[] { new ProcFrame(0, entry, offset) },
+            Condact = new DecodedCondact { Offset = offset, Number = number, Length = length },
+        };
+
+        static BreakController IndirController()
+        {
+            var map = SourceMap.Parse("NDRC-DSM\t2\nddb\tCBF43926\t9\nfile\t0\tG.DSF\ncond\t0100\t0050\t0\t10\t9\ncond\t0102\t0050\t0\t10\t9\n");
+            var hits = map.OffsetsForLine(0, 10);
+            var c = new BreakController();
+            c.Breakpoints.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 10, Offsets = hits.Select(h => h.Offset).ToArray(), Entries = hits.Select(h => h.Entry).ToArray() });
+            return c;
+        }
+
+        [Fact]
+        public void IndirLineBreakpointHaltsOnce()
+        {
+            var c = IndirController();
+            Assert.Contains("source line 10", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            Assert.Null(c.OnExec(IndirEvent(0x102, 29, 1)));                       // the target, same line
+            Assert.Contains("source line 10", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));   // next pass halts again
+        }
+
+        [Fact]
+        public void LineBreakpointStillHaltsAtTargetWithoutIndirPrefix()
+        {
+            var c = IndirController();
+            Assert.Null(c.OnExec(IndirEvent(0x80, 29, 2)));
+            Assert.Contains("source line 10", c.OnExec(IndirEvent(0x102, 29, 1)));
+            c = new BreakController();                                            // v1 map: any entry matches
+            c.Breakpoints.Add(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 10, Offsets = new[] { 0x100, 0x102 }, Entries = new[] { -1, -1 } });
+            Assert.NotNull(c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            Assert.NotNull(c.OnExec(IndirEvent(0x102, 29, 1, 0x60)));             // different entry: not the same line pass
+        }
+
+        [Fact]
+        public void SteppingStopsOnBothIndirExecutions()
+        {
+            var c = IndirController();
+            c.SetMode(RunMode.Step, 0);
+            Assert.Equal("step", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            c.SetMode(RunMode.Step, 0);
+            Assert.Equal("step", c.OnExec(IndirEvent(0x102, 29, 1)));
+        }
+
+        [Fact]
         public void LoadedMapIsUncheckedUntilTheDatabaseIsRead()
         {
             var r = new Rig();
@@ -242,6 +311,217 @@ namespace NextDAADDebug.Tests
             Assert.Null(second.Map);
             Assert.Contains("out of date", second.MapProblem);
             Assert.Empty(second.Breakpoints[0].Offsets);
+        }
+
+        // Part 1 is the fixture image; part 2 is the same image with header byte 5 changed.
+        static SourceMap[] PartMaps()
+        {
+            byte[] p1 = File.ReadAllBytes(Repo.Fixture("DBGFIX.DDB"));
+            byte[] p2 = (byte[])p1.Clone();
+            p2[5] ^= 1;
+            Func<byte[], string, string> dsm = (img, file) => "NDRC-DSM\t2\nddb\t" + Crc32.Compute(img, 0, 0x459).ToString("X8") + "\t459\nfile\t0\t" + file + "\n" +
+                "entry\t0425\t0\t101\ncond\t03F8\t0425\t0\t101\t9\n";
+            return new[] { SourceMap.Parse(dsm(p1, "DBGFIX.DSF")), SourceMap.Parse(dsm(p2, "PART2/PART2.DSF")) };
+        }
+
+        [Fact]
+        public void ActiveMapFollowsLoadedPart()
+        {
+            var maps = PartMaps();
+            var r = new Rig(maps);
+            r.Exec(0, 0, 0);
+            Assert.Same(maps[0], r.Snap().Map);
+            Assert.Equal("DBGFIX.DSF", r.Snap().Map.Files[0]);
+            r.M.Phys[0x40000 + 5] ^= 1;                    // part 2 header
+            r.Exec(0, 0, 0);
+            Assert.Same(maps[1], r.Snap().Map);
+            Assert.Equal("PART2/PART2.DSF", r.Snap().Map.Files[0]);
+            Assert.Null(r.Snap().MapProblem);
+            r.M.Phys[0x40000 + 5] ^= 3;                    // a part with no map
+            r.Exec(0, 0, 0);
+            Assert.Null(r.Snap().Map);
+            Assert.Equal("source map is out of date - rebuild", r.Snap().MapProblem);
+        }
+
+        [Fact]
+        public void PartOneLineBreakpointIgnoredInPartTwo()
+        {
+            var r = new Rig(PartMaps());
+            r.Exec(0, 0, 0);
+            r.Add(new Breakpoint { Kind = BreakKind.SourceLine, Path = "dbgfix.dsf", B = 101 });
+            Assert.Equal(new[] { 0x3F8 }, r.Snap().Breakpoints[0].Offsets);
+            r.M.Phys[0x40000 + 5] ^= 1;                    // part 2 also maps file 0 line 101 at 0x3F8
+            r.Exec(0, 0, 0);
+            Assert.Empty(r.Snap().Breakpoints[0].Offsets);
+            Assert.Equal(0, r.H.Halts);
+        }
+
+        [Fact]
+        public void LegacyIndexBreakpointTakesThePathOfTheFirstMap()
+        {
+            var r = new Rig(PartMaps(), true, false, new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 101 });
+            Assert.Equal("line 101 of file 0", r.Snap().Breakpoints[0].Describe(r.Ddb, null));
+            r.Exec(0, 0, 0);
+            var bp = r.Snap().Breakpoints[0];
+            Assert.Equal(new[] { 0x3F8 }, bp.Offsets);
+            Assert.Equal("DBGFIX.DSF", bp.Path);
+            Assert.Equal("line 101 of DBGFIX.DSF", bp.Describe(r.Ddb, null));
+            Assert.Equal(1, r.H.Halts);                    // line 101 is this condact
+            r.Run(CommandKind.Run);
+            r.M.Phys[0x40000 + 5] ^= 1;                    // part 2 maps its own file 0 line 101 at 0x3F8
+            r.Exec(0, 0, 0);
+            Assert.Empty(r.Snap().Breakpoints[0].Offsets);
+            Assert.Equal(1, r.H.Halts);
+        }
+
+        [Fact]
+        public void ConvertedLegacyRowMergesWithItsPathRow()
+        {
+            var r = new Rig(PartMaps(), true, false,
+                new Breakpoint { Kind = BreakKind.SourceLine, Path = "DBGFIX.DSF", B = 101 },
+                new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 101 });
+            r.Exec(0, 0, 0);
+            Assert.Single(r.Snap().Breakpoints);
+        }
+
+        [Theory]
+        [InlineData(false, true, true)]
+        [InlineData(true, false, true)]
+        [InlineData(false, false, false)]
+        public void MergedLegacyRowIsEnabledIfEitherRowWas(bool pathOn, bool legacyOn, bool merged)
+        {
+            var r = new Rig(PartMaps(), true, false,
+                new Breakpoint { Kind = BreakKind.SourceLine, Path = "DBGFIX.DSF", B = 101, Enabled = pathOn },
+                new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 101, Enabled = legacyOn });
+            r.Exec(0, 0, 0);
+            var bp = Assert.Single(r.Snap().Breakpoints);
+            Assert.Equal("DBGFIX.DSF", bp.Path);
+            Assert.Equal(merged, bp.Enabled);
+        }
+
+        [Fact]
+        public void LegacyIndexOutsideTheMapStaysUnresolved()
+        {
+            var r = new Rig(PartMaps(), true, false, new Breakpoint { Kind = BreakKind.SourceLine, A = 4, B = 101 });
+            r.Exec(0, 0, 0);
+            var bp = r.Snap().Breakpoints[0];
+            Assert.Null(bp.Path);
+            Assert.Empty(bp.Offsets);
+        }
+
+        [Fact]
+        public void StatusReadsRunningOnceTheInterpreterRuns()
+        {
+            var r = new Rig();
+            Assert.Equal(DebugSession.WaitingText, r.Snap().Status);
+            r.M.Mem[0x9E21] ^= 0xFF;                       // a loader intro: not NextDAAD's code at the hook
+            r.Exec(0, 0, 0);
+            Assert.Equal(DebugSession.WaitingText, r.Snap().Status);
+            r.InstallCode();
+            r.Exec(0, 0, 0);
+            Assert.Equal("running", r.Snap().Status);
+            Assert.Equal(0, r.H.Halts);
+            r.S.Reset();
+            Assert.Equal(DebugSession.WaitingText, r.Snap().Status);
+            r.Exec(0, 0, 0);
+            Assert.Equal("running", r.Snap().Status);
+        }
+
+        [Fact]
+        public void FirstCondactHaltKeepsTheHaltText()
+        {
+            var r = new Rig();
+            r.Run(CommandKind.Break);
+            r.Exec(0, 0, 0);
+            Assert.Equal("HALTED - step", r.Snap().Status);
+        }
+
+        [Fact]
+        public void LineBreakpointAddedWhileHaltedAtIndirSkipsItsTarget()
+        {
+            var c = IndirController();
+            var bp = c.Breakpoints[0];
+            c.Breakpoints.Clear();
+            c.SetMode(RunMode.Step, 0);
+            Assert.Equal("step", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));   // halted at the prefix
+            c.Breakpoints.Add(bp);                                                  // line 10 added there
+            Assert.Null(c.OnExec(IndirEvent(0x102, 29, 1)));                        // its target: same pass
+            bp.Enabled = false;
+            c.SetMode(RunMode.Step, 0);
+            Assert.Equal("step", c.OnExec(IndirEvent(0x100, Condacts.Indir, 2)));
+            bp.Enabled = true;                                                      // enabled while there
+            Assert.Null(c.OnExec(IndirEvent(0x102, 29, 1)));
+        }
+
+        static string WriteMaps(params string[] namesAndTexts)
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "dsm-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            for (int i = 0; i < namesAndTexts.Length; i += 2) File.WriteAllText(Path.Combine(dir, namesAndTexts[i]), namesAndTexts[i + 1]);
+            return dir;
+        }
+
+        [Fact]
+        public void MapSetLoadsPartsAndReportsProblems()
+        {
+            string good = File.ReadAllText(Repo.Fixture("DBGFIX.DSM"));
+            var s = MapSet.Load(WriteMaps("GAME.DSM", good, "GAME2.DSM", "NDRC-DSM\t2\nfile\t0\tX.DSF\n", "GAME4.DSM", good));
+            Assert.Equal(2, s.Maps.Count);
+            Assert.Equal(new[] { "GAME2.DSM: missing ddb record" }, s.Problems.ToArray());
+            Assert.Equal(new[] { "GAME3.DSM" }, s.Missing.ToArray());
+            Assert.Equal(", source maps loaded (2)", s.LogText);
+            Assert.Equal("GAME2.DSM: missing ddb record", s.NoMatchText);
+            var one = MapSet.Load(WriteMaps("GAME.DSM", good));
+            Assert.Equal(", source map loaded", one.LogText);
+            Assert.Equal(MapSet.OutOfDateText, one.NoMatchText);
+            Assert.Empty(one.Missing);
+            var none = MapSet.Load(WriteMaps());
+            Assert.Equal(", no source map", none.LogText);
+            Assert.Equal("no source map", none.NothingLoadedText);
+            var bad = MapSet.Load(WriteMaps("GAME.DSM", "junk"));
+            Assert.Empty(bad.Maps);
+            Assert.StartsWith("GAME.DSM: ", bad.NothingLoadedText);
+        }
+
+        [Fact]
+        public void MissingPartOneMapIsNamedWhenItsDatabasePlays()
+        {
+            string good = File.ReadAllText(Repo.Fixture("DBGFIX.DSM"));
+            string other = good.Replace("ddb\tF27FE0F4", "ddb\t00000000");
+            var r = new Rig(MapSet.Load(WriteMaps("GAME2.DSM", other)));
+            r.Exec(0, 0, 0);
+            Assert.Null(r.Snap().Map);
+            Assert.Equal("source map is missing (GAME.DSM) - rebuild", r.Snap().MapProblem);
+        }
+
+        [Fact]
+        public void LineBreakpointIdentityIgnoresSlashAndCase()
+        {
+            var map = PartMaps()[1];
+            var byPath = new Breakpoint { Kind = BreakKind.SourceLine, Path = "part2\\part2.dsf", B = 7 };
+            Assert.True(byPath.SameAs(new Breakpoint { Kind = BreakKind.SourceLine, Path = "PART2/PART2.DSF", B = 7 }));
+            Assert.False(byPath.SameAs(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 7 }));
+            Assert.True(byPath.IsLine(map, "PART2/PART2.DSF", 7));
+            Assert.True(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 7 }.IsLine(map, "PART2/PART2.DSF", 7));
+            Assert.False(new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 7 }.IsLine(null, "PART2/PART2.DSF", 7));
+        }
+
+        [Fact]
+        public void PathCaseCountsWhereTheFileSystemCountsIt()
+        {
+            Assert.True(SourceMap.SamePath("inc\\a.dsf", "INC/A.DSF", true));
+            Assert.False(SourceMap.SamePath("inc/a.dsf", "inc/A.DSF", false));
+            Assert.True(SourceMap.SamePath("inc\\A.DSF", "inc/A.DSF", false));
+            var map = SourceMap.Parse("NDRC-DSM\t2\nddb\t00000000\t1\nfile\t0\tinc/a.dsf\nfile\t1\tinc/A.DSF\n");
+            Assert.Equal(1, map.FileIndex("inc/A.DSF", false));
+            Assert.Equal(0, map.FileIndex("inc/A.DSF", true));
+            Assert.Equal(Path.DirectorySeparatorChar == '\\', SourceMap.SamePath("a.dsf", "A.DSF"));
+        }
+
+        [Fact]
+        public void NoMapsReportsNoSourceMap()
+        {
+            Assert.Equal("no source map", new Rig(new SourceMap[0]).Snap().MapProblem);
         }
 
         static int MapLine(Rig r, int proc, int entry, int index)

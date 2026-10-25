@@ -20,3 +20,5 @@ authoring-kit/lib/ndrc binary
 authoring-kit/tools/gfx2next/gfx2next binary
 authoring-kit/**/*.CFG text eol=crlf
 cspect-plugin/**/*.sh text eol=lf
+authoring-kit/NEXTDAAD.SYM text eol=lf
+authoring-kit/lib/NextDAADDebug.dll binary

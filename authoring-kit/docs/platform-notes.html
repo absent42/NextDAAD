@@ -302,19 +302,26 @@ values, so an old save restores flag 29 as 0 and takes the no-graphics
 branch of <code>HASAT GMODE</code> until something rewrites it. Start a fresh game
 to pick up the current values.</p>
 <h2 id="debug-builds">Debug builds</h2>
-<h3 id="a-d-build-plays-exactly-like-a-normal-one">A <code>-D</code> build plays exactly like a normal one</h3>
-<p>Compiling with the debug flag writes a marker into the process tables
-wherever you put a <code>DEBUG</code> line. NextDAAD steps over those markers and
-carries on.</p>
+<h3 id="a-game-built-with-debug-plays-exactly-like-a-normal-one">A game built with <code>#debug</code> plays exactly like a normal one</h3>
+<p>A <code>DEBUG</code> line in a process entry is compiled into the game as a marker
+when your source contains the directive <code>#debug</code> (lower case, on a line
+of its own). <code>DEBUG.BAT</code> does not add it for you: you write <code>#debug</code>
+yourself, and every build warns while it is there.</p>
+<p>NextDAAD steps over those markers and carries on, whenever no debugger
+is attached.</p>
 <p><strong>This is the only DAAD interpreter where that works.</strong> Everywhere else
 the marker is read as <code>NEWTEXT</code>, which throws away the rest of a
-multi-command order - so a debug build stops obeying <code>GET SWORD AND KILL
-ORC</code> half way through, with nothing on screen to say why. Here it does
-not, so you can leave <code>DEBUG</code> lines in your source while you work and
-build with or without the flag without the game changing under you.</p>
-<p>What a <code>DEBUG</code> line does not give you is a breakpoint. There is no
-debugger attached to it on this target, so the line is simply inert. Do
-not write one expecting the run to stop.</p>
+multi-command order - so a game built with <code>#debug</code> stops obeying <code>GET
+SWORD AND KILL ORC</code> half way through, with nothing on screen to say why.
+Here it does not, so you can leave <code>DEBUG</code> lines in your source while you
+work and build with or without <code>#debug</code> without the game changing under
+you. Take <code>#debug</code> out before you release a game that anyone might play
+on another interpreter, because the markers are in the release build
+too.</p>
+<p>With the <a href="debugger.html">debugger</a> attached, the same markers become
+stopping points: the game halts on each one and you can look around.
+Without the debugger a <code>DEBUG</code> line is inert. Do not write one expecting
+the run to stop.</p>
 </main>
 </body>
 </html>

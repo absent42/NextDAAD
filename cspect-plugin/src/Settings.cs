@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 
@@ -41,12 +42,11 @@ namespace NextDAADDebug
                         {
                             Kind = (BreakKind)Enum.Parse(typeof(BreakKind), f[1]),
                             Enabled = f[2] == "1",
-                            A = RecordFile.Dec(f[3], "a"),
                             B = RecordFile.Dec(f[4], "b"),
                             C = RecordFile.Dec(f[5], "c"),
                             Op = (CompareOp)Enum.Parse(typeof(CompareOp), f[6]),
                         };
-                        if (Valid(bp)) s.Breakpoints.Add(bp);
+                        if (ReadA(bp, f[3]) && Valid(bp)) s.Breakpoints.Add(bp);
                         else Log.Write("settings: dropped invalid breakpoint: " + string.Join(" ", f));
                     }
                     else if (f[0] == "watch" && f.Length >= 3)
@@ -69,6 +69,30 @@ namespace NextDAADDebug
             }
         }
 
+        // Only SourceLine takes a path in the A column; plain digits there are a legacy file index.
+        // An all-digit path is written as "./<path>" (WriteA) so it is not read as an index.
+        static bool ReadA(Breakpoint bp, string text)
+        {
+            int v;
+            if (AllDigits(text) && int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out v)) { bp.A = v; return true; }
+            if (bp.Kind != BreakKind.SourceLine) return false;
+            bp.Path = text.StartsWith("./", StringComparison.Ordinal) && AllDigits(text.Substring(2)) ? text.Substring(2) : text;
+            return true;
+        }
+
+        static string WriteA(Breakpoint b)
+        {
+            if (b.Kind != BreakKind.SourceLine || b.Path == null) return b.A.ToString(CultureInfo.InvariantCulture);
+            return AllDigits(b.Path) ? "./" + b.Path : b.Path;
+        }
+
+        static bool AllDigits(string s)
+        {
+            if (s.Length == 0) return false;
+            foreach (char ch in s) if (ch < '0' || ch > '9') return false;
+            return true;
+        }
+
         static bool In(int v, int lo, int hi) => v >= lo && v <= hi;
 
         static bool Valid(Breakpoint b)
@@ -81,7 +105,7 @@ namespace NextDAADDebug
                 case BreakKind.FlagChange: return In(b.A, 0, 255);
                 case BreakKind.FlagCompare: return In(b.A, 0, 255) && In(b.B, 0, 255);
                 case BreakKind.ObjectMoved: return In(b.A, 0, 255);
-                case BreakKind.SourceLine: return b.A >= 0 && b.B >= 1;
+                case BreakKind.SourceLine: return (b.Path != null ? b.Path.Length > 0 : b.A >= 0) && b.B >= 1;
             }
             return true;
         }
@@ -89,7 +113,7 @@ namespace NextDAADDebug
         public string Serialize(IEnumerable<Breakpoint> bps)
         {
             var sb = new StringBuilder(Magic + "\t1\n");
-            foreach (var b in bps) sb.Append("bp\t" + b.Kind + "\t" + (b.Enabled ? 1 : 0) + "\t" + b.A + "\t" + b.B + "\t" + b.C + "\t" + b.Op + "\n");
+            foreach (var b in bps) sb.Append("bp\t" + b.Kind + "\t" + (b.Enabled ? 1 : 0) + "\t" + WriteA(b) + "\t" + b.B + "\t" + b.C + "\t" + b.Op + "\n");
             foreach (var w in Watches) sb.Append("watch\t" + (w.IsObject ? "object" : "flag") + "\t" + w.Number + "\n");
             sb.Append("window\t" + WinX + "\t" + WinY + "\n");
             return sb.ToString();

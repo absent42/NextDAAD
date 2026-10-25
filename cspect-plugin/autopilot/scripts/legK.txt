@@ -1,0 +1,112 @@
+# Leg K: DBGKIT built in a scratch kit by lib\debug.ps1 -NoLaunch and launched with the line it printed.
+# Seed (legK.seed.txt): line breakpoints by path - DBGKIT.DSF 112 (GO B), 115 (SEE A / SEE B body),
+# 119 (LET 100 @101), inc/SHARED.DSF 2 (HIT), PART2/PART2.DSF 93 (PING).
+# GO A and GO B share bytes, each line owned by its own entry; SEE A and SEE B are synonym headers.
+# {CUR} is a literal U+0010, the current-row glyph (Condacts and Source tabs).
+
+# 1. Boot: both maps loaded, no DEBUG marker, the five breakpoints listed by path
+wait game "DBGKIT part one." timeout 30
+expect log "source maps loaded (2)"
+expect running
+click " Breakpoints " rows 22-22
+expect screen "[x] line 112 of DBGKIT.DSF"
+expect screen "[x] line 115 of DBGKIT.DSF"
+expect screen "[x] line 119 of DBGKIT.DSF"
+expect screen "[x] line 2 of inc/SHARED.DSF"
+expect screen "[x] line 93 of PART2/PART2.DSF"
+
+# 2. GO A runs the bytes GO B shares; line 112 is owned by GO B only, so no halt
+game "GO A\n"
+wait game "Entry A ran."
+expect running
+
+# 3. GO B halts on its own line; stack, Condacts and Source show entry B; Source names DBGKIT.DSF
+game "GO B\n"
+wait status "HALTED - breakpoint: source line 112"
+expect screen ">1 PRO 1 GO B :112"
+expect screen "  112 MESSAGE @34(=11)"
+expect game not "Entry B ran."
+click " Source " rows 2-2
+expect screen " 112 > GO B  MESSAGE @34"
+expect screen " Source  DBGKIT.DSF"
+expect screen not " 110"
+click " Condacts " rows 2-2
+click " Run " rows 0-0
+wait game "Entry B ran."
+expect running
+
+# 4. Synonym headers share one body line: line 115 halts for SEE A and for SEE B
+game "SEE A\n"
+wait status "HALTED - breakpoint: source line 115"
+expect screen ">1 PRO 1 SEE A :114"
+expect screen "  115 MESSAGE @34(=10)"
+click " Run " rows 0-0
+wait game "Synonym body ran."
+expect game "Entry A ran."
+expect running
+game "SEE B\n"
+wait status "HALTED - breakpoint: source line 115"
+expect screen ">1 PRO 1 SEE B :115"
+expect screen "  115 MESSAGE @34(=11)"
+click " Run " rows 0-0
+wait game "Synonym body ran."
+expect game "Entry B ran."
+expect running
+
+# 5. INDIR line: one halt per pass, at the prefix; its target on the same line does not halt again
+game "PUSH\n"
+wait status "HALTED - breakpoint: source line 119"
+expect screen ">1 PRO 1 PUSH _ :118"
+expect screen "  119 INDIR 101"
+expect game not "INDIR line ran."
+click " Run " rows 0-0
+wait game "INDIR line ran."
+expect running
+game "PUSH\n"
+wait status "HALTED - breakpoint: source line 119"
+expect screen "  119 INDIR 101"
+click " Run " rows 0-0
+wait game "INDIR line ran."
+expect running
+
+# 6. A condact in the included file: the Source tab names and shows inc/SHARED.DSF
+game "HIT\n"
+wait status "HALTED - breakpoint: source line 2"
+expect screen ">1 PRO 1 HIT _ :2"
+click " Source " rows 2-2
+expect screen " Source  inc/SHARED.DSF"
+expect screen "   2 > HIT _   MESSAGE 2"
+expect screen "   1 ; DBGKIT include"
+click " Condacts " rows 2-2
+click " Run " rows 0-0
+wait game "Shared condact ran."
+expect running
+
+# 7. SWITCH loads part 2 (EXTERN 2 4); the part 1 breakpoints stay listed by path
+game "SWITCH\n"
+wait game "DBGKIT part two."
+expect running
+click " Breakpoints " rows 22-22
+expect screen "[x] line 112 of DBGKIT.DSF"
+expect screen "[x] line 93 of PART2/PART2.DSF"
+
+# 8. Part 2's GO B is on line 112 of PART2.DSF: the DBGKIT.DSF line 112 breakpoint does not fire
+game "GO B\n"
+wait game "Part two GO B ran."
+expect running
+
+# 9. PING halts on the part 2 breakpoint; the Source tab names and shows PART2/PART2.DSF
+game "PING\n"
+wait status "HALTED - breakpoint: source line 93"
+expect screen ">1 PRO 1 PING _ :93"
+expect screen "   93 MESSAGE 1"
+expect game not "Part two answers."
+click " Source " rows 2-2
+expect screen " Source  PART2/PART2.DSF"
+expect screen "  93 > PING _  MESSAGE 1"
+expect screen "  84         SET 103"
+click " Condacts " rows 2-2
+click " Run " rows 0-0
+wait game "Part two answers."
+expect running
+quit

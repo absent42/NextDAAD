@@ -6,6 +6,7 @@ windows RUN.BAT
 windows CLEAN.BAT
 windows EXTERNS.BAT
 windows VIDTUNE.BAT
+windows DEBUG.BAT
 windows lib/ndrc.exe
 windows tools/gfx2next/gfx2next.exe
 windows tools/gfx2next/msys-2.0.dll
@@ -15,6 +16,7 @@ linux run.sh
 linux clean.sh
 linux externs.sh
 linux vidtune.sh
+linux debug.sh
 linux lib/ndrc
 linux tools/gfx2next/gfx2next
 linux lib/requirements.txt
@@ -24,6 +26,7 @@ both CONFIG.local.BAT.sample
 both README.txt
 both STARTER/**
 both nextdaad.nex
+both NEXTDAAD.SYM
 both intro.nex
 both xbn.inc
 both xbnmod.inc
@@ -36,6 +39,7 @@ both lib/*.ps1
 both lib/*.py
 both lib/vidtune/**
 both lib/default.chr
+both lib/NextDAADDebug.dll
 both lib/toolversions.txt
 both lib/kitfiles.txt
 both tools/README.txt

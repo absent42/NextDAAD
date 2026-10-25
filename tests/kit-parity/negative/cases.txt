@@ -22,3 +22,5 @@ run-not-built|layout folder|ERROR: nothing built yet for PARITY|run
 clean-scoped|layout folder; write RELEASE/OTHER/OTHER.NEX x|OK:|build,clean|+RELEASE/OTHER/OTHER.NEX -RELEASE/PARITY/PARITY.NEX
 starter-music|layout folder; copy PARITY/AUDIO/PARITY.aks PARITY/AUDIO/STARTER.aks; remove PARITY/AUDIO/PARITY.aks; remove PARITY/INTRO.TXT|OK:WARNING: AUDIO{sep}STARTER.aks is not used - rename it to PARITY.aks to make it this game's music
 starter-fx|layout folder; rename PARITY/AUDIO/PARITY_FX.aks STARTER_FX.aks|OK:WARNING: AUDIO{sep}STARTER_FX.aks is not used - rename it to PARITY_FX.aks to make it this game's sound effects
+debug-jnext|layout folder; set EMULATOR=jnext|ERROR: the debugger runs in CSpect - set EMULATOR=cspect in CONFIG.local.BAT|debug|-RELEASE/PARITY/PARITY.NEX -PARITY/GAME.DSM
+debug-cspect-missing|layout folder; set CSPECTDIR=nosuch|ERROR: CSpect not found at|debug|-RELEASE/PARITY/PARITY.NEX -PARITY/GAME.DSM

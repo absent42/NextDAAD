@@ -2,6 +2,8 @@
 # Runs on the VM for run-autopilot.ps1 -Leg Linux. Writes only inside the run folder.
 #   linux-leg.sh reset <run>            empty <run> (only if this script marked it)
 #   linux-leg.sh run <run> <secs> <part>...   private CSpect copy, one bounded launch per part
+#   linux-leg.sh kit <run>              leg K: CSpect copy, ./build.sh and ./debug.sh -NoLaunch in <run>/kit, facts in <run>/out
+#   linux-leg.sh kitrun <run> <secs> <part> <arg>...   leg K: the Autopilot DLL swapped in, one launch from <run>/kit
 #   linux-leg.sh kill <run>             kill CSpect started from <run>
 set -u -o pipefail
 MARK=.cspect-autopilot-stage
@@ -28,6 +30,49 @@ kill_run() {
     echo "killed leftover CSpect:" $pids
 }
 
+need_mark() { [ -f "$RUN/$MARK" ] || { echo "refusing: $RUN has no $MARK" >&2; exit 2; }; }
+
+# Private copy without *.mmc and *.sd; the original is only read.
+copy_cspect() {
+    mkdir -p "$RUN/cspect"
+    (cd "$SRC" && tar cf - --exclude='*.mmc' --exclude='*.sd' .) | (cd "$RUN/cspect" && tar xf -) || { echo "CSpect copy failed" >&2; exit 3; }
+}
+
+x11_env() {
+    local uid auth
+    uid=$(id -u)
+    # The Xwayland auth file name changes per login.
+    auth=$(ls /run/user/$uid/.mutter-Xwaylandauth.* 2>/dev/null | head -1)
+    [ -n "$auth" ] || { echo "no Xwayland auth file under /run/user/$uid" >&2; exit 3; }
+    export DISPLAY=:0 XAUTHORITY="$auth" XDG_RUNTIME_DIR=/run/user/$uid
+}
+
+# launch_part <i> <part> <cwd> <NEXTDAAD_DEBUG folder> <CSpect argument>...; results into parts/<i>-<part>/.
+launch_part() {
+    local i=$1 p=$2 cwd=$3 g=$4 pd t0 rc ms
+    shift 4
+    pd="$RUN/parts/$i-${p%.txt}"
+    mkdir -p "$pd"
+    rm -f "$g/autopilot-result.txt"; rm -rf "$g/dumps"
+    t0=$(date +%s%N)
+    # Same debugger variables as the Windows launch; nothing inherited from the login.
+    (cd "$cwd" && env -u NEXTDAAD_DEBUG_TRACE -u NEXTDAAD_DEBUG_NOWINDOW -u NEXTDAAD_DEBUG_SETTINGS \
+        NEXTDAAD_DEBUG="$g" NEXTDAAD_DEBUG_AUTOPILOT="$RUN/scripts/$p" \
+        timeout -k 5 "$SECS" mono "$RUN/cspect/CSpect.exe" "$@" \
+        > "$pd/stdout.txt" 2> "$pd/stdout.txt.err")
+    rc=$?
+    ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+    kill_run
+    echo "exit=$rc ms=$ms" > "$pd/status.txt"
+    echo "part $i $p: exit $rc after $ms ms"
+    [ -f "$g/autopilot-result.txt" ] && mv "$g/autopilot-result.txt" "$pd/"
+    [ -d "$g/dumps" ] && mv "$g/dumps" "$pd/"
+    [ -f "$g/debugger.log" ] && cp "$g/debugger.log" "$pd/"
+}
+
+# RELEASE/DBGKIT files, sorted, '|'-joined.
+release_tree() { (cd RELEASE/DBGKIT 2>/dev/null && find . -type f | sed 's|^\./||' | LC_ALL=C sort | paste -sd'|' -); }
+
 case "$cmd" in
 reset)
     if [ -e "$RUN" ]; then
@@ -43,41 +88,46 @@ kill)
     ;;
 run)
     SECS=$3; shift 3
-    [ -f "$RUN/$MARK" ] || { echo "refusing: $RUN has no $MARK" >&2; exit 2; }
+    need_mark
     trap kill_run EXIT
-    # Private copy without *.mmc and *.sd; the original is only read.
-    mkdir -p "$RUN/cspect"
-    (cd "$SRC" && tar cf - --exclude='*.mmc' --exclude='*.sd' .) | (cd "$RUN/cspect" && tar xf -) || { echo "CSpect copy failed" >&2; exit 3; }
+    copy_cspect
     cp "$RUN/NextDAADDebug.dll" "$RUN/cspect/"
-    uid=$(id -u)
-    # The Xwayland auth file name changes per login.
-    auth=$(ls /run/user/$uid/.mutter-Xwaylandauth.* 2>/dev/null | head -1)
-    [ -n "$auth" ] || { echo "no Xwayland auth file under /run/user/$uid" >&2; exit 3; }
-    export DISPLAY=:0 XAUTHORITY="$auth" XDG_RUNTIME_DIR=/run/user/$uid
+    x11_env
     LEG="$RUN/sd"
     i=0
     for p in "$@"; do
         i=$((i + 1))
-        pd="$RUN/parts/$i-${p%.txt}"
-        mkdir -p "$pd"
-        rm -f "$LEG/autopilot-result.txt"; rm -rf "$LEG/dumps"
-        t0=$(date +%s%N)
-        # Same debugger variables as the Windows launch; nothing inherited from the login.
-        (cd "$LEG" && env -u NEXTDAAD_DEBUG_TRACE -u NEXTDAAD_DEBUG_NOWINDOW -u NEXTDAAD_DEBUG_SETTINGS \
-            NEXTDAAD_DEBUG="$LEG" NEXTDAAD_DEBUG_AUTOPILOT="$RUN/scripts/$p" \
-            timeout -k 5 "$SECS" mono "$RUN/cspect/CSpect.exe" -w2 -zxnext -esc -sound "-mmc=$LEG/" "$LEG/nextdaad.nex" \
-            > "$pd/stdout.txt" 2> "$pd/stdout.txt.err")
-        rc=$?
-        ms=$(( ($(date +%s%N) - t0) / 1000000 ))
-        kill_run
-        echo "exit=$rc ms=$ms" > "$pd/status.txt"
-        echo "part $i $p: exit $rc after $ms ms"
-        [ -f "$LEG/autopilot-result.txt" ] && mv "$LEG/autopilot-result.txt" "$pd/"
-        [ -d "$LEG/dumps" ] && mv "$LEG/dumps" "$pd/"
-        [ -f "$LEG/debugger.log" ] && cp "$LEG/debugger.log" "$pd/"
+        # The esxDOS plugin trims one trailing separator and needs one left to enter DATA.
+        launch_part "$i" "$p" "$LEG" "$LEG" -w2 -zxnext -esc -sound "-mmc=$LEG//" "$LEG/nextdaad.nex"
     done
     exit 0
     ;;
+kit)
+    need_mark
+    copy_cspect
+    OUT="$RUN/out"
+    mkdir -p "$OUT"
+    if [ -e "$RUN/cspect/NextDAADDebug.dll" ]; then echo present; else echo absent; fi > "$OUT/plugin-before.txt"
+    cd "$RUN/kit" || exit 3
+    # scp carries no modes: the chmod line build.ps1 asks an author for.
+    chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next || exit 3
+    ./build.sh > "$OUT/build.txt" 2>&1; echo $? > "$OUT/build.rc"
+    release_tree > "$OUT/tree-before.txt"
+    ./debug.sh -NoLaunch > "$OUT/debug-nolaunch.txt" 2>&1; echo $? > "$OUT/debug.rc"
+    release_tree > "$OUT/tree-after.txt"
+    if [ -f "$RUN/cspect/NextDAADDebug.dll" ]; then sha256sum < "$RUN/cspect/NextDAADDebug.dll" | cut -d' ' -f1; else echo none; fi > "$OUT/plugin-sha.txt"
+    cp -r DBGKIT "$OUT/"
+    exit 0
+    ;;
+kitrun)
+    SECS=$3; P=$4; shift 4
+    need_mark
+    trap kill_run EXIT
+    cp "$RUN/NextDAADDebug.dll" "$RUN/cspect/"
+    x11_env
+    launch_part 1 "$P" "$RUN/kit" "$RUN/kit/DBGKIT" "$@"
+    exit 0
+    ;;
 *)
-    echo "usage: linux-leg.sh reset|run|kill <run> ..." >&2; exit 2 ;;
+    echo "usage: linux-leg.sh reset|run|kit|kitrun|kill <run> ..." >&2; exit 2 ;;
 esac

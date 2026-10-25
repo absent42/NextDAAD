@@ -39,7 +39,8 @@ each into the kit's `tools\` folder at the path shown:
 paths the build checks for.
 
 Double-click `BUILD.BAT` to build, `RUN.BAT` to play the result in
-CSpect (or jNext, see `EMULATOR`), `CLEAN.BAT` to start over. On a fresh kit the first build makes
+CSpect (or jNext, see `EMULATOR`), `CLEAN.BAT` to start over. `DEBUG.BAT`
+builds and plays the game in the [debugger](debugger.md). On a fresh kit the first build makes
 the starter game; read [Where your files go](#where-your-files-go)
 before you start your own.
 
@@ -78,7 +79,9 @@ optional tools your game uses:
   (`sudo apt install mono-devel`), to play the result. Extract into
   `tools/CSpect/`; `run.sh` starts it as `mono CSpect.exe`, or set
   `CSPECTCMD` in `CONFIG.local.BAT` to run it some other way (Linux only,
-  ignored on Windows).
+  ignored on Windows). The kit ends the card folder it gives CSpect in
+  `//`, which works around a CSpect bug on Linux; see
+  [Debugger](debugger.md#differences-on-linux).
 - **jNext**, optional, runs natively on Linux (no mono). See
   [Running in jNext](#running-in-jnext).
 - **sjasmplus**, only to rebuild an extern with `externs.sh`: a
@@ -114,7 +117,7 @@ and Ubuntu, add them with:
 
 Then build and play:
 
-    chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
+    chmod +x build.sh run.sh clean.sh externs.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next   # only if your unzip dropped the execute bits
     ./build.sh
     ./run.sh
 
@@ -125,8 +128,9 @@ build ends with `ERROR: CSpect not found` after the build succeeds; set
 On a fresh kit the first build makes the starter game; read
 [Where your files go](#where-your-files-go) before you start your own.
 
-`build.sh`, `run.sh`, `clean.sh`, `externs.sh` and `vidtune.sh` are the
-Linux names of the five `.BAT` launchers and take the same arguments.
+`build.sh`, `run.sh`, `clean.sh`, `externs.sh`, `vidtune.sh` and `debug.sh`
+are the Linux names of the six `.BAT` launchers and take the same
+arguments.
 
 Two things differ from Windows:
 
@@ -389,11 +393,17 @@ it. See [Video](video.md).
   selected game only; other games' output is left alone. It also deletes
   `CACHE\jnext\`, the jNext card copy. The next build
   then converts everything from scratch.
+- **`DEBUG.BAT`** (`./debug.sh`) - builds the game as `BUILD.BAT` does,
+  also writing the source maps the debugger reads, then starts CSpect
+  with the debugger attached. It needs CSpect 4.0 or later and
+  `EMULATOR=cspect`; `RELEASE\<GAME>\` is the same as `BUILD.BAT` makes.
+  See [Debugger](debugger.md).
 
-All three work on the game `GAME` selects (see
+All four work on the game `GAME` selects (see
 [Choosing the game](#choosing-the-game)). Each launcher is a few lines
 that start the matching script in `lib\` (`build.ps1`, `run.ps1`,
-`clean.ps1`); the build itself is the same code on both platforms.
+`clean.ps1`, `debug.ps1`); the build itself is the same code on both
+platforms.
 
 The build stops at the first error, with a message naming the cause.
 
@@ -578,10 +588,10 @@ An update replaces the kit's own files and leaves yours alone.
 
 - `CONFIG.BAT` and `CONFIG.local.BAT.sample`
 - the launchers: `BUILD.BAT`, `RUN.BAT`, `CLEAN.BAT`, `EXTERNS.BAT`,
-  `VIDTUNE.BAT` (Linux: `build.sh`, `run.sh`, `clean.sh`, `externs.sh`,
-  `vidtune.sh`)
+  `VIDTUNE.BAT`, `DEBUG.BAT` (Linux: `build.sh`, `run.sh`, `clean.sh`,
+  `externs.sh`, `vidtune.sh`, `debug.sh`)
 - the folders `lib\`, `docs\`, `externs\` and `.agents\`
-- `AGENTS.md`, `README.txt`, `xbn.inc`, `xbnmod.inc`
+- `AGENTS.md`, `README.txt`, `NEXTDAAD.SYM`, `xbn.inc`, `xbnmod.inc`
 - `nextdaad.nex` and `intro.nex`
 - `tools\gfx2next\` and `tools\vidtools\`
 - `STARTER\`, the starter game

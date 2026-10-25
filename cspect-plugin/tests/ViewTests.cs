@@ -157,6 +157,115 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SourceTabNamesTheFileRightOfTheTabs()
+        {
+            Click(Snap(), " Source ");
+            int x, y;
+            Assert.True(ui.S.Find(" Source  DBGFIX.DSF", out x, out y));
+            Assert.Equal(2, y);
+            Assert.Equal(Theme.Dim, ui.S[48, 2].Fg);
+            ui.Begin(new UiInput());
+            Draw(ui, new Snapshot { MapProblem = MapSet.OutOfDateText });
+            Assert.False(OnScreen("DBGFIX.DSF"));
+        }
+
+        [Fact]
+        public void LongSourcePathKeepsItsFileName()
+        {
+            // 52 columns right of the tabs: a longer path loses its head, not the file name.
+            string fit = "inc/" + new string('d', 37) + "/DBGFIX.DSF", wide = "x" + fit;
+            Assert.Equal(52, fit.Length);
+            Assert.Equal(fit, DebuggerView.FitPath(fit, 52));
+            Assert.Equal("..." + wide.Substring(wide.Length - 49), DebuggerView.FitPath(wide, 52));
+            var s = Snap();
+            s.Map = SourceMap.Parse(File.ReadAllText(Repo.Fixture("DBGFIX.DSM")).Replace("\tDBGFIX.DSF", "\t" + wide));
+            Click(s, " Source ");
+            int x, y;
+            Assert.True(ui.S.Find("..." + wide.Substring(wide.Length - 49), out x, out y));
+            Assert.Equal(48, x);
+            Assert.Equal(2, y);
+            Assert.Equal((byte)'F', ui.S[99, 2].Glyph);
+        }
+
+        void ClickMargin(Snapshot s, int line)
+        {
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            int x, y;
+            Assert.True(ui.S.Find(line.ToString().PadLeft(4) + " ", out x, out y, 3, 21));
+            ui.Begin(UiDriver.At(28, y));
+            Draw(ui, s);
+        }
+
+        [Fact]
+        public void MarginClickAddsAndRemovesEveryRowOfTheLine()
+        {
+            var s = Snap();
+            Click(s, " Source ");
+            ClickMargin(s, 103);                                  // DEBUG
+            Assert.Single(posted);
+            Assert.Equal(CommandKind.AddBreakpoint, posted[0].Kind);
+            Assert.Equal("DBGFIX.DSF", posted[0].Bp.Path);
+            Assert.Equal(103, posted[0].Bp.B);
+            posted.Clear();
+            ClickMargin(s, 100);                                  // /PRO 0 compiles to nothing
+            Assert.Empty(posted);
+            s.Breakpoints = new[] {
+                new Breakpoint { Kind = BreakKind.SourceLine, Path = "DBGFIX.DSF", B = 103 },
+                new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 103 } };
+            ClickMargin(s, 103);
+            Assert.Equal(2, posted.Count);
+            Assert.All(posted, c => Assert.Equal(CommandKind.RemoveBreakpoint, c.Kind));
+            Assert.Same(s.Breakpoints[1], posted[1].Bp);
+        }
+
+        [Fact]
+        public void SourceTabFollowsRunningEntryOnSharedTail()
+        {
+            // Offset 0x0402 is entry 1's first condact; the map also lists entry 0 as an owner, first.
+            const string dsm = "NDRC-DSM\t2\nddb\tF27FE0F4\t459\nfile\t0\tDBGFIX.DSF\n" +
+                               "cond\t0402\t0425\t0\t103\t9\ncond\t0402\t0429\t0\t106\t9\n";
+            var s = Snap();
+            var d = s.Ddb;
+            var e = d.Entries(0)[1];
+            s.Map = SourceMap.Parse(dsm);
+            s.Stack = new[] { new ProcFrame(0, e.HeaderOffset, 0x402) };
+            s.Offset = 0x402;
+            Click(s, " Source ");
+            int x, y;
+            Assert.True(ui.S.Find("        SYSMESS 6", out x, out y));
+            Assert.Equal(0x10, ui.S[29, y].Glyph);
+            Assert.True(ui.S.Find("        DEBUG", out x, out y));
+            Assert.NotEqual(0x10, ui.S[29, y].Glyph);
+        }
+
+        [Fact]
+        public void SourceTabFollowsSelectedLowerLevelOnSharedTail()
+        {
+            // Level 0 (PRO 0 entry 0) sits on its PROCESS 1 at 0x03FF, which another entry also owns, listed first.
+            var s = Snap();
+            int h0 = s.Ddb.Entries(0)[0].HeaderOffset, h1 = s.Ddb.Entries(1)[0].HeaderOffset;
+            string dsm = "NDRC-DSM\t2\nddb\tF27FE0F4\t459\nfile\t0\tDBGFIX.DSF\n" +
+                         "cond\t03FF\t" + h1.ToString("X4") + "\t0\t107\t9\n" +
+                         "cond\t03FF\t" + h0.ToString("X4") + "\t0\t104\t9\n" +
+                         "cond\t040A\t" + h1.ToString("X4") + "\t0\t111\t9\n";
+            s.Map = SourceMap.Parse(dsm);
+            s.Stack = new[] { new ProcFrame(0, h0, 0x401), new ProcFrame(1, h1, 0x40A) };
+            s.Offset = 0x40A;
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Click(s, " 0 PRO 0");                                  // select the lower level
+            Click(s, " Source ");
+            int x, y;
+            Assert.True(ui.S.Find(" 104         PROCESS 1", out x, out y));
+            Assert.Equal(0x10, ui.S[29, y].Glyph);
+            Assert.True(ui.S.Find(" 107         REDO", out x, out y));
+            Assert.NotEqual(0x10, ui.S[29, y].Glyph);
+            Assert.True(ui.S.Find(" 111 > _ _   CLS", out x, out y));
+            Assert.NotEqual(0x10, ui.S[29, y].Glyph);
+        }
+
+        [Fact]
         public void SourceTabSaysWhetherAMapWasLoaded()
         {
             var s = new Snapshot { MapProblem = DebugSession.MapUncheckedText };

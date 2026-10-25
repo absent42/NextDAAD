@@ -1,9 +1,13 @@
-# Builds DBGFIX.DDB with ndrc -d, asserts the stimulus bytes, and writes
-# DBGFIX.DSM by pairing each DDB condact with its DSF line (one per line).
+# Builds DBGFIX.DDB and DBGFIX.DSM with ndrc -d -srcmap, asserts the stimulus bytes,
+# and checks every map record against an oracle pairing each DDB condact with its DSF line.
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $repo = (Resolve-Path "$here\..\..\..").Path
-$ndrc = if ($env:NEXTDAAD_NDRC) { $env:NEXTDAAD_NDRC } else { Join-Path $repo 'authoring-kit\lib\ndrc.exe' }
+# -srcmap needs NDRC 0.3.0+
+$ndrc = if ($env:NEXTDAAD_NDRC) { $env:NEXTDAAD_NDRC }
+        elseif (Test-Path (Join-Path $repo 'build\ndrc-0.3.0\ndrc.exe')) { Join-Path $repo 'build\ndrc-0.3.0\ndrc.exe' }
+        else { Join-Path $repo 'authoring-kit\lib\ndrc.exe' }
+if (-not (Test-Path -LiteralPath $ndrc -PathType Leaf)) { throw "no ndrc at $ndrc - set NEXTDAAD_NDRC to an NDRC 0.3.0+ executable" }
 $work = Join-Path $repo 'tests\out\dbgfix'
 $outRoot = [IO.Path]::GetFullPath((Join-Path $repo 'tests\out')).TrimEnd('\') + '\'
 if (-not [IO.Path]::GetFullPath($work).StartsWith($outRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to clear $work" }
@@ -11,8 +15,10 @@ if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -For
 New-Item -ItemType Directory -Force $work | Out-Null
 Copy-Item "$here\DBGFIX.DSF" $work
 Push-Location $work
-try { & $ndrc nextdaad EN DBGFIX.DSF DBGFIX.DDB -v3 -d; if ($LASTEXITCODE) { throw 'ndrc failed' } }
+# quoted: PowerShell splits an unquoted -opt=a.b at the dot
+try { & $ndrc nextdaad EN DBGFIX.DSF DBGFIX.DDB -v3 -d '-srcmap=DBGFIX.DSM'; if ($LASTEXITCODE) { throw 'ndrc failed' } }
 finally { Pop-Location }
+if (-not (Test-Path -LiteralPath "$work\DBGFIX.DSM")) { throw "$ndrc wrote no DBGFIX.DSM - NDRC 0.3.0+ needed (set NEXTDAAD_NDRC)" }
 
 $b = [IO.File]::ReadAllBytes("$work\DBGFIX.DDB")
 function W([int]$o) { [int]$b[$o] + 256 * [int]$b[$o + 1] }
@@ -63,27 +69,27 @@ public static class FixCrc {
 }
 '@
 
-$out = New-Object Text.StringBuilder
-[void]$out.Append("NDRC-DSM`t1`n")
-[void]$out.Append(("ddb`t{0:X8}`t{1:X}`n" -f [FixCrc]::Compute($b), $b.Length))
-[void]$out.Append("file`t0`tDBGFIX.DSF`n")
+# Oracle: the expected v2 records, in NDRC's order (procs, entries, conds, sym)
+$want = New-Object System.Collections.ArrayList
+[void]$want.Add("NDRC-DSM`t2")
+[void]$want.Add(("ddb`t{0:X8}`t{1:X}" -f [FixCrc]::Compute($b), $b.Length))
+[void]$want.Add("file`t0`tDBGFIX.DSF")
+$ents = New-Object System.Collections.ArrayList
+$conds = New-Object System.Collections.ArrayList
 $procList = W 10
-$seen = @{}
 for ($p = 0; $p -lt $b[7]; $p++) {
-    [void]$out.Append("proc`t$p`t0`t$($procLine[$p])`n")
+    [void]$want.Add("proc`t$p`t0`t$($procLine[$p])")
     $e = W ($procList + 2 * $p); $k = 0
     while ($b[$e] -ne 0) {
         $src = $procs[$p][$k]
-        [void]$out.Append(("entry`t{0:X4}`t0`t{1}`n" -f $e, $src.Line))
+        [void]$ents.Add(("entry`t{0:X4}`t0`t{1}" -f $e, $src.Line))
         $c = W ($e + 2); $n = 0
         while ($true) {
             $raw = $b[$c]
             if ($raw -eq 0xFF) { break }
             if ($n -ge $src.Conds.Count) { throw "PRO $p entry $k has more DDB condacts than DSF lines" }
             $sl = $src.Conds[$n]
-            if ($seen.ContainsKey($c)) { throw ("DDB offset {0:X4} has two cond records: lines {1} and {2} (DRB tail sharing)" -f $c, $seen[$c], $sl.Line) }
-            $seen[$c] = $sl.Line
-            [void]$out.Append(("cond`t{0:X4}`t0`t{1}`t{2}`n" -f $c, $sl.Line, $sl.Col))
+            [void]$conds.Add(("cond`t{0:X4}`t{1:X4}`t0`t{2}`t{3}" -f $c, $e, $sl.Line, $sl.Col))
             $n++
             if ($raw -eq 0xDC) { $c++; continue }
             $c += 1 + $argc[$raw -band 0x7F]
@@ -93,7 +99,25 @@ for ($p = 0; $p -lt $b[7]; $p++) {
         $e += 4; $k++
     }
 }
-[void]$out.Append("sym`tfCounter`t100`n")
+$want.AddRange($ents); $want.AddRange($conds)
+[void]$want.Add("sym`tfCounter`t100")
+
+# First differing record, or $null when the map equals the oracle.
+function Compare-Dsm([string[]]$got) {
+    for ($i = 0; $i -lt [Math]::Max($got.Count, $want.Count); $i++) {
+        if ($got[$i] -cne $want[$i]) { return "DBGFIX.DSM record $($i + 1): ndrc '$($got[$i])', oracle '$($want[$i])'" }
+    }
+    return $null
+}
+$got = @([IO.File]::ReadAllLines("$work\DBGFIX.DSM") | Where-Object { $_ -ne '' })
+# The oracle must catch a moved line, a lost record and an extra one.
+$ci = [Array]::FindIndex([string[]]$got, [Predicate[string]]{ param($r) $r.StartsWith("cond`t") })
+$moved = [string[]]$got.Clone(); $f = $moved[$ci] -split "`t"; $f[4] = [string]([int]$f[4] + 1); $moved[$ci] = $f -join "`t"
+foreach ($bad in @(, $moved) + @(, [string[]]($got | Select-Object -SkipLast 1)) + @(, [string[]]($got + $got[$ci]))) {
+    if (-not (Compare-Dsm $bad)) { throw 'oracle self-check: a corrupted DBGFIX.DSM compared equal' }
+}
+$diff = Compare-Dsm $got
+if ($diff) { throw $diff }
 Copy-Item "$work\DBGFIX.DDB" "$here\DBGFIX.DDB" -Force
-[IO.File]::WriteAllText("$here\DBGFIX.DSM", $out.ToString(), (New-Object Text.UTF8Encoding $false))
-"wrote DBGFIX.DDB ($($b.Length) bytes) and DBGFIX.DSM"
+Copy-Item "$work\DBGFIX.DSM" "$here\DBGFIX.DSM" -Force
+"wrote DBGFIX.DDB ($($b.Length) bytes) and DBGFIX.DSM ($($conds.Count) cond records agree with the oracle)"

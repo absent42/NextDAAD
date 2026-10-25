@@ -82,6 +82,22 @@ namespace NextDAADDebug
             }
         }
 
+        // A shared tail carries one offset per owning entry; the running entry picks the line.
+        static bool OnLine(Breakpoint bp, int offset, int entry)
+        {
+            for (int i = 0; i < bp.Offsets.Length; i++)
+                if (bp.Offsets[i] == offset && (i >= bp.Entries.Length || bp.Entries[i] < 0 || bp.Entries[i] == entry)) return true;
+            return false;
+        }
+
+        // An INDIR prefix and its target are two executions of one line: halt once, at the prefix.
+        bool SourceLineHit(Breakpoint bp, ExecEvent e)
+        {
+            if (!OnLine(bp, e.Offset, e.Top.EntryPtr)) return false;
+            return !(prev != null && prev.Condact != null && prev.Condact.Number == Condacts.Indir && !prev.Condact.IsMarker && !prev.Condact.IsEnd
+                     && prev.Top.EntryPtr == e.Top.EntryPtr && e.Offset == prev.Offset + prev.Condact.Length && OnLine(bp, prev.Offset, e.Top.EntryPtr));
+        }
+
         string Check(Breakpoint bp, ExecEvent e)
         {
             switch (bp.Kind)
@@ -96,7 +112,7 @@ namespace NextDAADDebug
                 case BreakKind.Condact:
                     return e.Effective != null && !e.Effective.IsEnd && !e.Effective.IsMarker && e.Effective.Number == bp.A ? "breakpoint: condact " + Condacts.Table[bp.A].Name : null;
                 case BreakKind.SourceLine:
-                    return Array.IndexOf(bp.Offsets, e.Offset) >= 0 ? "breakpoint: source line " + bp.B : null;
+                    return SourceLineHit(bp, e) ? "breakpoint: source line " + bp.B : null;
                 case BreakKind.FlagChange:
                     if (prev == null || prev.Flags[bp.A] == e.Flags[bp.A]) return null;
                     return "breakpoint: flag " + bp.A + " changed " + prev.Flags[bp.A] + " -> " + e.Flags[bp.A] + By();
