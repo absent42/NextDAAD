@@ -163,6 +163,7 @@ $retry                              ; local label, target for SKIP $retry
 | `#include file.dsf` | Unquoted, one level only; `/END` stays in the main file |
 | `#echo "text"` | Prints at compile time |
 | `#classic` | Refused by the kit |
+| `#debug` | Keeps `DEBUG` lines as debugger stopping points. Lower case only (`#DEBUG` is a syntax error). Every build warns while it is present; remove it before release |
 
 Built-in symbols: `CARRIED`, `WORN`, `NOT_CREATED`, `HERE`, `COLS`, `ROWS`,
 `NUM_OBJECTS`, `NUM_LOCATIONS`, `NUM_CARRIED`, `NUM_WORN`, `LAST_OBJECT`,

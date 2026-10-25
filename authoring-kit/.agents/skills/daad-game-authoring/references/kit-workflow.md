@@ -60,6 +60,16 @@ interactive window: leave running it to the author. While the DSF has
 ship in the release and other DAAD interpreters read them as `NEWTEXT`.
 Full behaviour: `docs/debugger.html`.
 
+Helping the author with a bug you cannot see yourself:
+- Suggest where to stop: a source line (click its left margin in the
+  `Source` tab), a flag that changes or reaches a value, an object that
+  moves, a condact, or a process entry. Name the exact line or flag
+  number from the DSF.
+- `source map is out of date - rebuild` means the source changed since the
+  last `DEBUG.BAT`: run `DEBUG.BAT` again, not `BUILD.BAT`.
+- If the debugger window misbehaves, read `<GAME>\debugger.log`; it names
+  the build, the maps loaded and any fault.
+
 The compile line the build runs, for when you want to check a DSF without
 converting assets. Run it from inside the game folder, as the build does,
 so `#include` lines resolve there:

@@ -190,6 +190,7 @@ Handy symbol values for `HASAT`: `WEARABLE` 23, `CONTAINER` 31, `LISTED` 55,
 | `DOALL loc+` | Run the rest of the table once for each object at loc+ (HERE allowed), each in turn becoming the referenced object (flag 51); flag 50 holds the location; cannot be nested; when nothing is there it does NEWTEXT and NOTDONE |
 | `END` | Ask system message 13 "play again?"; restarts, or quits |
 | `EXIT 0` | Leave to the loader; any other value restarts the game |
+| `DEBUG` | A stopping point for the debugger (`DEBUG.BAT`). Compiled only when the DSF has `#debug`, otherwise dropped; NextDAAD steps over it when no debugger is attached, but other DAAD interpreters read it as `NEWTEXT` |
 
 Anything written after `DONE`, `NOTDONE`, `OK`, `SKIP`, `RESTART` or `REDO`
 in the same entry is discarded by the compiler.

@@ -171,6 +171,17 @@ fallthrough entry that handles the refusal, exactly as STARTER's `TIME` and
 **Rule.** Flags 25-27, 39-40 and 224-251 are not free. Keep game data in
 64-223, or 64-255 only if the game ships without the extern collection.
 
+## Commands stop half way on another interpreter
+
+**Symptom.** The build prints `WARNING: <file> has #debug - DEBUG markers
+are compiled into the game; remove it before release`, or a released game
+drops the rest of `GET SWORD AND KILL ORC` on another DAAD interpreter.
+
+**Rule.** `#debug` compiles every `DEBUG` line into the release as a
+marker, and other interpreters read a marker as `NEWTEXT`. Keep `#debug`
+only while debugging; delete the directive (the `DEBUG` lines can stay)
+before release.
+
 ## The build refuses to start
 
 **Symptom.** `set GAME in CONFIG.local.BAT (found ... .DSF files and ...
