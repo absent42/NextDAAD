@@ -10,6 +10,8 @@ Quick start:
   2. Run BUILD.BAT - on a fresh kit it builds the starter game, STARTER\
   3. Run RUN.BAT to play the result
   On Linux the launchers are ./build.sh and ./run.sh.
+  DEBUG.BAT (./debug.sh) builds and runs the game in the debugger
+  (CSpect 4.0 or later) - see docs\debugger.html.
 
 Writing your own game:
   1. Copy STARTER\ to a folder named after your game, e.g. MYGAME\, and

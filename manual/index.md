@@ -22,6 +22,7 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 
 ## Good to know
 
+- [Debugger](debugger.md) - stop a running game, step through your source, watch and change flags and objects
 - [Platform notes](platform-notes.md) - how this target differs from other DAAD interpreters
 - [Known differences](known-differences.md) - differences compared to other interpreters
 - [What changed](changes.md) - author-visible changes by version

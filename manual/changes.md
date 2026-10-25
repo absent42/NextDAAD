@@ -3,6 +3,25 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.13.0 - 25 October 2026
+
+- **Debugger.** `DEBUG.BAT` (Linux: `./debug.sh`) builds the selected
+  game and starts CSpect with a debugger window beside it. Stop the game
+  with `Break`, a `DEBUG` marker or a breakpoint, and step one condact at
+  a time while the window shows the process stack, the condacts and your
+  own `.DSF` lines, and the flags, objects, parser words and database. A
+  breakpoint can be set on a source line, a process entry, a condact, a
+  flag changing or reaching a value, an object moving, or a runtime
+  error. Flags and objects can be changed while the game is stopped.
+  Your breakpoints and watches are kept per game in `DEBUGGER.local.TXT`
+  in the game's folder. It needs CSpect 4.0 or later, and every part of
+  a multi-part game gets its own source map. Every build now prints a
+  warning while the source contains `#debug`, because the markers it
+  compiles in stay in the release; other DAAD interpreters read a marker
+  as `NEWTEXT`. On Linux the debugger window cannot be closed and
+  CSpect under mono stops the game at `E1`, so it is mainly for Windows
+  for now. See Debugger.
+
 ## 0.12.0 - 24 October 2026
 
 - **Multi-game kit support.** Game folders and a `DATA\` folder on the 

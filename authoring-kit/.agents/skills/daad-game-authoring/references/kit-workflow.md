@@ -36,8 +36,8 @@ root `.DSF`, but it has no `.CFG` and its files sit among the kit's own.
 
 ## Build, run, clean
 
-Windows: double-click or run `BUILD.BAT`, `RUN.BAT`, `CLEAN.BAT`.
-Linux: `./build.sh`, `./run.sh`, `./clean.sh` (needs PowerShell 7 as `pwsh`).
+Windows: double-click or run `BUILD.BAT`, `RUN.BAT`, `CLEAN.BAT`, `DEBUG.BAT`.
+Linux: `./build.sh`, `./run.sh`, `./clean.sh`, `./debug.sh` (needs PowerShell 7 as `pwsh`).
 
 The build compiles the DSF with the bundled compiler, converts every
 asset that changed, copies the interpreter, and ends with
@@ -48,6 +48,17 @@ selected game, if it is installed under `tools\`; CSpect uses
 `RELEASE\<GAME>\` as the emulated card. `CLEAN.BAT` empties
 `RELEASE\<GAME>\` (that game only) and `CACHE\jnext\` for a full rebuild. While `STARTER\`
 is the game, every build prints a warning that kit updates replace it.
+
+`DEBUG.BAT` builds the same way, also writes source maps (`GAME.DSM`,
+`GAME<n>.DSM`) and copies `NEXTDAAD.SYM` into the game folder, installs
+the debugger plugin into CSpect's folder, and starts CSpect with the
+debugger window. It needs CSpect 4.0 or later and `EMULATOR=cspect` (it
+refuses jNext), and ignores `RUN`. Breakpoints and watches persist in
+`<GAME>\DEBUGGER.local.TXT`. `RELEASE\<GAME>\` is unchanged. It is an
+interactive window: leave running it to the author. While the DSF has
+`#debug` (lower case only) every build warns, because the `DEBUG` markers
+ship in the release and other DAAD interpreters read them as `NEWTEXT`.
+Full behaviour: `docs/debugger.html`.
 
 The compile line the build runs, for when you want to check a DSF without
 converting assets. Run it from inside the game folder, as the build does,
@@ -72,7 +83,7 @@ a whole `CONFIG.BAT`.
 |---|---|
 | `GAME` | The game folder to build; set in `CONFIG.local.BAT` |
 | `RUN` | `1` launches the `EMULATOR` after a successful build |
-| `EMULATOR` | blank or `cspect` = CSpect; `jnext` = jNext, which also plays video and streamed sound |
+| `EMULATOR` | blank or `cspect` = CSpect; `jnext` = jNext, which also plays video and streamed sound. `DEBUG.BAT` needs CSpect |
 | `COLS` | blank = 80 columns, `40` = 40 (the DSF must also issue `GFX 1 18`) |
 | `COMPRESS` | `1` ZX0-compresses pictures |
 | `JNEXTDIR`, `JNEXT` | jNext folder (blank = `tools\jnext\`, or `jnext` on PATH on Linux) and full path to the program, for `EMULATOR=jnext` |
