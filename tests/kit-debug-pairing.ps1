@@ -11,7 +11,7 @@ function Fail([string]$m) { throw "kit-debug-pairing: $m" }
 
 if (-not (Test-Path -LiteralPath $symPath)) { Fail "no $symPath - $mismatch" }
 if (-not (Test-Path -LiteralPath $nexPath)) { Fail "no $nexPath" }
-$lines = [IO.File]::ReadAllText($symPath) -split "`n" | Where-Object { $_ -ne '' }
+$lines = [IO.File]::ReadAllText($symPath) -split '\r?\n' | Where-Object { $_ -ne '' }
 if ($lines[0] -ne "NEXTDAAD-SYM`t1") { Fail "bad SYM header '$($lines[0])'" }
 $build = $lines | Where-Object { $_.StartsWith("build`t") } | Select-Object -First 1
 if (-not $build) { Fail 'SYM has no build line' }
