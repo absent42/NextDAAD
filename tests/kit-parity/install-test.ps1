@@ -61,7 +61,7 @@ cd authoring-kit
 pwsh -NoProfile -File ../scripts/kit-files.ps1 -Platform linux | zip -q -@ /k/kit.zip
 cd /k
 x=`$(unzip -Z kit.zip build.sh clean.sh externs.sh run.sh vidtune.sh debug.sh lib/ndrc tools/gfx2next/gfx2next | grep -c -- '-rwxr-xr-x' || true); [ "`$x" = 8 ]
-n=`$(unzip -l kit.zip | grep -v ' CONFIG\.BAT`$' | grep -cE '\.(BAT|exe|dll)`$' || true); [ "`$n" = 0 ]
+n=`$(unzip -l kit.zip | grep -v ' CONFIG\.BAT`$' | grep -v ' lib/NextDAADDebug\.dll`$' | grep -cE '\.(BAT|exe|dll)`$' || true); [ "`$n" = 0 ]
 echo "zip: `$(unzip -l kit.zip | tail -n 1)"
 cp kit.zip /w/kit.zip
 "@)
@@ -69,7 +69,7 @@ cp kit.zip /w/kit.zip
     if ($code -ne 0) { Write-Host 'install-test: zip cut or its assertions FAILED'; exit 1 }
     Move-Item -LiteralPath (Join-Path $cut 'kit.zip') -Destination $dryZip -Force
     Remove-Item -LiteralPath $cut -Recurse -Force
-    Write-Host "install-test: $dryZip (eight 0755 entries, no .BAT but CONFIG.BAT, no .exe/.dll)"
+    Write-Host "install-test: $dryZip (eight 0755 entries, no .BAT but CONFIG.BAT, no .exe/.dll but lib/NextDAADDebug.dll)"
 }
 
 if (-not $Zip) { $Zip = $dryZip }
