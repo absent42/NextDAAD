@@ -52,6 +52,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'ERROR: build.ps1 -Kit could not build the debugger plugin' }
         $pluginDll = "$root\build\cspect-plugin\bin\NextDAADDebug\Release\net48\NextDAADDebug.dll"
         if (-not (Test-Path -LiteralPath $pluginDll)) { throw "ERROR: build.ps1 -Kit needs $pluginDll after the plugin build" }
+        # A SYM that does not pair with its NEX leaves the debugger waiting forever: check build\ first,
+        # so a failure leaves the kit untouched.
+        & "$root\tests\kit-debug-pairing.ps1" -KitDir "$root\build"
         Copy-Item $pluginDll "$root\authoring-kit\lib\NextDAADDebug.dll" -Force
         Write-Host "placed authoring-kit\lib\NextDAADDebug.dll (debugger plugin)"
         Copy-Item "$root\build\NEXTDAAD.SYM" "$root\authoring-kit\NEXTDAAD.SYM" -Force
@@ -62,7 +65,7 @@ try {
         Write-Host "placed authoring-kit\intro.nex (kit launcher refreshed)"
         & python "$root\scripts\build_manual.py"
         if ($LASTEXITCODE -ne 0) { throw "manual generation failed - the kit would ship stale or missing docs" }
-        # A kit whose SYM does not pair with its NEX leaves the debugger waiting forever.
+        # The copies pair too.
         & "$root\tests\kit-debug-pairing.ps1"
     }
     if ($Run) {
