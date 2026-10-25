@@ -1,0 +1,11 @@
+# Smoke walk on DBGFIX: halt at the DEBUG marker, step, run, type a command, quit.
+wait status "HALTED - DEBUG marker" timeout 20
+click " Step "
+wait status "HALTED - step"
+hotkey r
+wait game ">" timeout 20
+game "GET LAMP\n"
+# DBGFIX never runs ABILITY, so flag 52 (max weight) is 0 and GET 0 (weight 3) prints SYSMESS 43.
+wait game "weighs too much"
+measure halted-state
+quit

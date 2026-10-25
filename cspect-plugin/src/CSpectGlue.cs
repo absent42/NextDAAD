@@ -95,6 +95,10 @@ namespace NextDAADDebug
         string settingsPath, folder, problem;
         bool disarmed, interactive;
         WindowHost host;
+#if AUTOPILOT
+        Autopilot.AutopilotHost autopilot;
+        const int IdKeys = 3;
+#endif
 
         public List<sIO> Init(iCSpect _CSpect)
         {
@@ -157,7 +161,27 @@ namespace NextDAADDebug
                 try { host = new WindowHost(cs, settings, settingsPath, folder); }
                 catch (Exception ex) { Log.Write("window disabled: " + ex.Message); }
             }
+#if AUTOPILOT
+            StartAutopilot(list, sym);
+#endif
         }
+
+#if AUTOPILOT
+        // Only when NEXTDAAD_DEBUG_AUTOPILOT names an existing script; otherwise this build behaves like Release.
+        void StartAutopilot(List<sIO> list, SymbolFile sym)
+        {
+            string script = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_AUTOPILOT");
+            if (string.IsNullOrEmpty(script) || !File.Exists(script)) return;
+            try
+            {
+                var a = new Autopilot.AutopilotHost(cs, sym, Current, () => host, id => KeyPressed(id), folder);
+                a.Start(script, folder);
+                foreach (int p in Autopilot.AutopilotHost.Ports) list.Add(new sIO(p, eAccess.Port_Read, IdKeys));
+                autopilot = a;
+            }
+            catch (Exception ex) { Log.Write("autopilot: not started - " + ex); }
+        }
+#endif
 
         void Post(Command c)
         {
@@ -182,6 +206,15 @@ namespace NextDAADDebug
         public byte Read(eAccess type, int port, int id, out bool isvalid)
         {
             isvalid = false;
+#if AUTOPILOT
+            // Hot path (hundreds of reads per frame): no allocation, no logging.
+            if (type == eAccess.Port_Read)
+            {
+                byte v;
+                if (autopilot != null && autopilot.Keys.TryAnswerPort(port, out v)) { isvalid = true; return v; }
+                return 0;
+            }
+#endif
             if (type != eAccess.Memory_EXE || session == null || disarmed) return 0;
             try
             {
@@ -202,6 +235,9 @@ namespace NextDAADDebug
                 catch (Exception ex) { Disarm(ex); }
             }
             if (host != null && !PlatformFacts.WindowFromOSTick) Frame();
+#if AUTOPILOT
+            if (autopilot != null) autopilot.Tick();
+#endif
         }
 
         public void OSTick()
@@ -212,6 +248,9 @@ namespace NextDAADDebug
                 catch (Exception ex) { Disarm(ex); }
             }
             if (host != null && PlatformFacts.WindowFromOSTick) Frame();
+#if AUTOPILOT
+            if (autopilot != null) autopilot.Frame();
+#endif
         }
 
         // A UI failure turns the window off; the hooks and trace keep running.

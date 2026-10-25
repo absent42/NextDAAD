@@ -45,6 +45,14 @@ namespace NextDAADDebug
             return true;
         }
 
+        // OK on the open DigitPad or Picker with its current value; a Picker needs a selection.
+        public bool Accept()
+        {
+            if (!(popup is DigitPad) && !(popup is Picker && ((Picker)popup).Selected >= 0)) return false;
+            Finish(PopupResult.Ok);
+            return true;
+        }
+
         public void CancelPopup()
         {
             if (popup != null) Finish(PopupResult.Cancel);

@@ -85,6 +85,36 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void AcceptKeepsPadValue()
+        {
+            var s = Snap();
+            Assert.False(view.Accept());
+            Click(s, " Flags ");
+            int x, y;
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            Assert.True(ui.S.Find(" +    7 ", out x, out y, 23, 40));
+            ui.Begin(UiDriver.At(31, y));
+            Draw(ui, s);
+            Assert.True(view.PopupOpen);
+            Assert.True(view.Accept());
+            Assert.False(view.PopupOpen);
+            Assert.Contains(posted, c => c.Kind == CommandKind.SetFlag && c.A == 7 && c.B == 3);
+            Assert.False(view.Accept());
+        }
+
+        [Fact]
+        public void AcceptPickerNeedsSelection()
+        {
+            var s = Snap();
+            Click(s, "Breakpoints");
+            Click(s, " Add ");
+            Assert.True(view.PopupOpen);
+            Assert.False(view.Accept());
+            Assert.True(view.PopupOpen);
+        }
+
+        [Fact]
         public void TypedPrefixPicksAndChainsWizard()
         {
             var s = Snap();
