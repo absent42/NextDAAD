@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace NextDAADDebug
 {
@@ -90,15 +91,22 @@ namespace NextDAADDebug
 
         public bool Matches(byte[] ddbImage) => DdbLength > 0 && DdbLength <= ddbImage.Length && Crc32.Compute(ddbImage, 0, DdbLength) == DdbCrc;
 
-        // Map paths are relative to the DSM; '\' and '/' and letter case are not significant.
-        public static bool SamePath(string a, string b) =>
-            string.Equals(a.Replace('\\', '/'), b.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase);
+        // Case is ignored only where the file system ignores it; the Linux kit build requires exact case.
+        static readonly bool HostIgnoresCase = Path.DirectorySeparatorChar == '\\';
 
-        public int FileIndex(string path)
+        // Map paths are relative to the DSM; '\' and '/' are not significant.
+        public static bool SamePath(string a, string b) => SamePath(a, b, HostIgnoresCase);
+
+        public static bool SamePath(string a, string b, bool ignoreCase) =>
+            string.Equals(a.Replace('\\', '/'), b.Replace('\\', '/'), ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+        public int FileIndex(string path) => FileIndex(path, HostIgnoresCase);
+
+        public int FileIndex(string path, bool ignoreCase)
         {
             int best = -1;
             foreach (var kv in Files)
-                if (SamePath(kv.Value, path) && (best < 0 || kv.Key < best)) best = kv.Key;
+                if (SamePath(kv.Value, path, ignoreCase) && (best < 0 || kv.Key < best)) best = kv.Key;
             return best;
         }
 

@@ -218,6 +218,9 @@ namespace NextDAADDebug
             return null;
         }
 
+        // The file on show, right of the top tabs.
+        static readonly int PathX = RightX + TopTabs.Sum(t => t.Length + 3);
+
         void SourcePane(Ui ui, Snapshot s, Action<Command> post, bool follow)
         {
             int y = TopY + 1, w = Cols - RightX, h = TopH - 1;
@@ -227,13 +230,17 @@ namespace NextDAADDebug
             int file = hasCur ? cur.File : 0;
             string path;
             if (!s.Map.Files.TryGetValue(file, out path)) { ui.S.Text(RightX, y, "file " + file + " not in the source map", Theme.Dim, Theme.Bg, w); return; }
+            ui.S.Text(PathX, TopY, path, Theme.Dim, Theme.Bg, Cols - PathX);
             string[] lines = sources.Lines(path);
             if (follow && hasCur) srcTop = Math.Max(0, cur.Line - 1 - h / 2);
             int hit = ui.List(ref srcTop, RightX, y, w, h, lines.Length);
             if (hit >= 0 && ui.In.Col - RightX < 2)
             {
-                var existing = FindLineBp(s, path, hit + 1);
-                if (existing != null) post(Command.For(CommandKind.RemoveBreakpoint, existing));
+                // Every row on the line goes: a path row and a legacy-index row can both name it.
+                if (FindLineBp(s, path, hit + 1) != null)
+                {
+                    foreach (var b in s.Breakpoints) if (b.IsLine(s.Map, path, hit + 1)) post(Command.For(CommandKind.RemoveBreakpoint, b));
+                }
                 else if (s.Map.OffsetsForLine(file, hit + 1).Count > 0) post(Command.For(CommandKind.AddBreakpoint, new Breakpoint { Kind = BreakKind.SourceLine, Path = path, B = hit + 1 }));
             }
             for (int r = 0; r < h && srcTop + r < lines.Length; r++)

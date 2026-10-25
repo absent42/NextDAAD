@@ -140,15 +140,15 @@ namespace NextDAADDebug
             catch (Exception ex) { problem = "NEXTDAAD.SYM: " + ex.Message; Log.Write(problem); }
             if (sym != null)
             {
-                string mapProblem;
-                var maps = LoadMaps(folder, out mapProblem);
+                var maps = MapSet.Load(folder);
+                foreach (string p in maps.Problems) Log.Write(p);
                 string tp = Environment.GetEnvironmentVariable("NEXTDAAD_DEBUG_TRACE");
                 if (!string.IsNullOrEmpty(tp)) trace = new TraceWriter(tp);
                 IHalter halter = interactive ? Halters.Create(cs, () => session.Pump()) : new NullHalter();
-                session = new DebugSession(new CSpectMachine(cs), sym, halter, maps, mapProblem, trace, interactive, settings.Breakpoints);
+                session = new DebugSession(new CSpectMachine(cs), sym, halter, maps, trace, interactive, settings.Breakpoints);
                 list.Add(new sIO(sym.Hook("eng_exec").Address, eAccess.Memory_EXE, IdExec));
                 list.Add(new sIO(sym.Hook("err_raise").Address, eAccess.Memory_EXE, IdError));
-                Log.Write("armed: build " + sym.Build + " " + sym.Variant + (maps.Count == 0 ? ", no source map" : maps.Count == 1 ? ", source map loaded" : ", source maps loaded (" + maps.Count + ")"));
+                Log.Write("armed: build " + sym.Build + " " + sym.Variant + maps.LogText);
             }
             if (interactive)
             {
@@ -158,27 +158,6 @@ namespace NextDAADDebug
 #if AUTOPILOT
             StartAutopilot(list, sym);
 #endif
-        }
-
-        // GAME.DSM is part 1, GAME2.DSM..GAME9.DSM the other parts; a bad file is logged and skipped.
-        static List<SourceMap> LoadMaps(string folder, out string firstProblem)
-        {
-            var maps = new List<SourceMap>();
-            firstProblem = null;
-            for (int part = 1; part <= 9; part++)
-            {
-                string name = part == 1 ? "GAME.DSM" : "GAME" + part + ".DSM";
-                string path = Path.Combine(folder, name);
-                if (!File.Exists(path)) continue;
-                try { maps.Add(SourceMap.Parse(File.ReadAllText(path))); }
-                catch (Exception ex)
-                {
-                    string p = name + ": " + ex.Message;
-                    if (firstProblem == null) firstProblem = p;
-                    Log.Write(p);
-                }
-            }
-            return maps;
         }
 
 #if AUTOPILOT

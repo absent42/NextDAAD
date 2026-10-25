@@ -96,6 +96,26 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void OnlyPlainDigitsAreALegacyIndex()
+        {
+            var s = LoadText("bp\tSourceLine\t1\t+1\t5\t-1\tEq\nbp\tSourceLine\t1\t-2\t6\t-1\tEq\nbp\tFlagChange\t1\t+7\t-1\t-1\tEq\n");
+            Assert.Equal(2, s.Breakpoints.Count);
+            Assert.Equal("+1", s.Breakpoints[0].Path);
+            Assert.Equal("-2", s.Breakpoints[1].Path);
+        }
+
+        [Fact]
+        public void AllDigitPathRoundTrips()
+        {
+            var bps = new[] { new Breakpoint { Kind = BreakKind.SourceLine, Path = "123", B = 4 } };
+            string text = new Settings().Serialize(bps);
+            Assert.Contains("bp\tSourceLine\t1\t./123\t4\t", text);
+            var s = LoadText(text.Substring(text.IndexOf('\n') + 1));
+            Assert.Equal("123", s.Breakpoints[0].Path);
+            Assert.True(s.Breakpoints[0].SameAs(bps[0]));
+        }
+
+        [Fact]
         public void OtherKindsStillNumeric()
         {
             var s = LoadText("bp\tCondact\t1\tDROP\t-1\t-1\tEq\nbp\tFlagChange\t1\t40\t-1\t-1\tEq\n");

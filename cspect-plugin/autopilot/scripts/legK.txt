@@ -20,7 +20,7 @@ game "GO A\n"
 wait game "Entry A ran."
 expect running
 
-# 3. GO B halts on its own line; stack, Condacts and Source show entry B
+# 3. GO B halts on its own line; stack, Condacts and Source show entry B; Source names DBGKIT.DSF
 game "GO B\n"
 wait status "HALTED - breakpoint: source line 112"
 expect screen ">1 PRO 1 GO B :112"
@@ -28,7 +28,7 @@ expect screen "  112 MESSAGE @34(=11)"
 expect game not "Entry B ran."
 click " Source " rows 2-2
 expect screen " 112 > GO B  MESSAGE @34"
-expect screen " 110 > GO A  MESSAGE @34"
+expect screen " Source  DBGKIT.DSF"
 expect screen not " 110"
 click " Condacts " rows 2-2
 click " Run " rows 0-0
@@ -69,11 +69,12 @@ click " Run " rows 0-0
 wait game "INDIR line ran."
 expect running
 
-# 6. A condact in the included file: the Source tab shows inc/SHARED.DSF
+# 6. A condact in the included file: the Source tab names and shows inc/SHARED.DSF
 game "HIT\n"
 wait status "HALTED - breakpoint: source line 2"
 expect screen ">1 PRO 1 HIT _ :2"
 click " Source " rows 2-2
+expect screen " Source  inc/SHARED.DSF"
 expect screen "   2 > HIT _   MESSAGE 2"
 expect screen "   1 ; DBGKIT include"
 click " Condacts " rows 2-2
@@ -94,13 +95,14 @@ game "GO B\n"
 wait game "Part two GO B ran."
 expect running
 
-# 9. PING halts on the part 2 breakpoint; the Source tab shows PART2/PART2.DSF
+# 9. PING halts on the part 2 breakpoint; the Source tab names and shows PART2/PART2.DSF
 game "PING\n"
 wait status "HALTED - breakpoint: source line 93"
 expect screen ">1 PRO 1 PING _ :93"
 expect screen "   93 MESSAGE 1"
 expect game not "Part two answers."
 click " Source " rows 2-2
+expect screen " Source  PART2/PART2.DSF"
 expect screen "  93 > PING _  MESSAGE 1"
 expect screen "  84         SET 103"
 click " Condacts " rows 2-2

@@ -63,13 +63,18 @@ namespace NextDAADDebug.Tests
         }
 
         public Rig(IReadOnlyList<SourceMap> maps, bool interactive = true, bool withTrace = false, params Breakpoint[] bps)
+            : this(new MapSet(maps), interactive, withTrace, bps)
+        {
+        }
+
+        public Rig(MapSet maps, bool interactive = true, bool withTrace = false, params Breakpoint[] bps)
         {
             byte[] img = File.ReadAllBytes(Repo.Fixture("DBGFIX.DDB"));
             Array.Copy(img, 0, M.Phys, 0x40000, img.Length);
             Ddb = new Ddb(img);
             InstallCode();
             if (withTrace) { TracePath = Path.GetTempFileName(); trace = new TraceWriter(TracePath); }
-            S = new DebugSession(M, Sym, H, maps, null, trace, interactive, bps);
+            S = new DebugSession(M, Sym, H, maps, trace, interactive, bps);
         }
 
         public void InstallCode()

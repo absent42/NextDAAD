@@ -157,6 +157,51 @@ namespace NextDAADDebug.Tests
         }
 
         [Fact]
+        public void SourceTabNamesTheFileRightOfTheTabs()
+        {
+            Click(Snap(), " Source ");
+            int x, y;
+            Assert.True(ui.S.Find(" Source  DBGFIX.DSF", out x, out y));
+            Assert.Equal(2, y);
+            Assert.Equal(Theme.Dim, ui.S[48, 2].Fg);
+            ui.Begin(new UiInput());
+            Draw(ui, new Snapshot { MapProblem = MapSet.OutOfDateText });
+            Assert.False(OnScreen("DBGFIX.DSF"));
+        }
+
+        void ClickMargin(Snapshot s, int line)
+        {
+            ui.Begin(new UiInput());
+            Draw(ui, s);
+            int x, y;
+            Assert.True(ui.S.Find(line.ToString().PadLeft(4) + " ", out x, out y, 3, 21));
+            ui.Begin(UiDriver.At(28, y));
+            Draw(ui, s);
+        }
+
+        [Fact]
+        public void MarginClickAddsAndRemovesEveryRowOfTheLine()
+        {
+            var s = Snap();
+            Click(s, " Source ");
+            ClickMargin(s, 103);                                  // DEBUG
+            Assert.Single(posted);
+            Assert.Equal(CommandKind.AddBreakpoint, posted[0].Kind);
+            Assert.Equal("DBGFIX.DSF", posted[0].Bp.Path);
+            Assert.Equal(103, posted[0].Bp.B);
+            posted.Clear();
+            ClickMargin(s, 100);                                  // /PRO 0 compiles to nothing
+            Assert.Empty(posted);
+            s.Breakpoints = new[] {
+                new Breakpoint { Kind = BreakKind.SourceLine, Path = "DBGFIX.DSF", B = 103 },
+                new Breakpoint { Kind = BreakKind.SourceLine, A = 0, B = 103 } };
+            ClickMargin(s, 103);
+            Assert.Equal(2, posted.Count);
+            Assert.All(posted, c => Assert.Equal(CommandKind.RemoveBreakpoint, c.Kind));
+            Assert.Same(s.Breakpoints[1], posted[1].Bp);
+        }
+
+        [Fact]
         public void SourceTabFollowsRunningEntryOnSharedTail()
         {
             // Offset 0x0402 is entry 1's first condact; the map also lists entry 0 as an owner, first.

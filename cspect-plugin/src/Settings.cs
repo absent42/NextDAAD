@@ -69,13 +69,27 @@ namespace NextDAADDebug
             }
         }
 
-        // Only SourceLine takes a path in the A column; a number there is a legacy file index.
+        // Only SourceLine takes a path in the A column; plain digits there are a legacy file index.
+        // An all-digit path is written as "./<path>" (WriteA) so it is not read as an index.
         static bool ReadA(Breakpoint bp, string text)
         {
             int v;
-            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out v)) { bp.A = v; return true; }
+            if (AllDigits(text) && int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out v)) { bp.A = v; return true; }
             if (bp.Kind != BreakKind.SourceLine) return false;
-            bp.Path = text;
+            bp.Path = text.StartsWith("./", StringComparison.Ordinal) && AllDigits(text.Substring(2)) ? text.Substring(2) : text;
+            return true;
+        }
+
+        static string WriteA(Breakpoint b)
+        {
+            if (b.Kind != BreakKind.SourceLine || b.Path == null) return b.A.ToString(CultureInfo.InvariantCulture);
+            return AllDigits(b.Path) ? "./" + b.Path : b.Path;
+        }
+
+        static bool AllDigits(string s)
+        {
+            if (s.Length == 0) return false;
+            foreach (char ch in s) if (ch < '0' || ch > '9') return false;
             return true;
         }
 
@@ -99,7 +113,7 @@ namespace NextDAADDebug
         public string Serialize(IEnumerable<Breakpoint> bps)
         {
             var sb = new StringBuilder(Magic + "\t1\n");
-            foreach (var b in bps) sb.Append("bp\t" + b.Kind + "\t" + (b.Enabled ? 1 : 0) + "\t" + (b.Kind == BreakKind.SourceLine && b.Path != null ? b.Path : b.A.ToString()) + "\t" + b.B + "\t" + b.C + "\t" + b.Op + "\n");
+            foreach (var b in bps) sb.Append("bp\t" + b.Kind + "\t" + (b.Enabled ? 1 : 0) + "\t" + WriteA(b) + "\t" + b.B + "\t" + b.C + "\t" + b.Op + "\n");
             foreach (var w in Watches) sb.Append("watch\t" + (w.IsObject ? "object" : "flag") + "\t" + w.Number + "\n");
             sb.Append("window\t" + WinX + "\t" + WinY + "\n");
             return sb.ToString();
