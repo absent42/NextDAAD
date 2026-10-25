@@ -34,7 +34,8 @@ All notable changes to NextDAAD are recorded here.
   in the debugger window no longer reaches the emulated mouse; until
   every button is released the plugin (0.2.3) answers port `$FADF` with
   no buttons and holds `$FBDF`/`$FFDF` at their values from before the
-  press. Clicking a tab no longer ends a loader intro.
+  press, so the game's pointer catches up in one step on the release.
+  Clicking a tab no longer ends a loader intro.
 
 ## v0.12.0 24/10/2026
 
