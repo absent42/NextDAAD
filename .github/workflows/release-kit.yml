@@ -43,8 +43,11 @@ jobs:
           # CONFIG.BAT and lib/NextDAADDebug.dll ship on both platforms (kitfiles.txt: both;
           # the plugin runs in CSpect under mono): exclude exactly those two paths.
           n=$(unzip -l "NextDAAD-AuthoringKit-$TAG-linux.zip" | grep -v ' CONFIG\.BAT$' | grep -v ' lib/NextDAADDebug\.dll$' | grep -cE '\.(BAT|exe|dll)$' || true); [ "$n" = 0 ]
-          n=$(unzip -l "NextDAAD-AuthoringKit-$TAG.zip" | grep -cE '(\.sh|lib/ndrc)$' || true); [ "$n" = 0 ]
-          n=$(unzip -l "NextDAAD-AuthoringKit-$TAG.zip" | grep -c '\.gitignore' || true); [ "$n" = 0 ]
+          # The Windows zip carries no Linux launcher, no Linux ndrc and no .gitignore; it must exist,
+          # or the "|| true" counts read 0 from a failed unzip.
+          w="NextDAAD-AuthoringKit-$TAG-windows.zip"; [ -f "$w" ]
+          n=$(unzip -l "$w" | grep -cE '(\.sh|lib/ndrc)$' || true); [ "$n" = 0 ]
+          n=$(unzip -l "$w" | grep -c '\.gitignore' || true); [ "$n" = 0 ]
       - uses: actions/upload-artifact@v7
         with:
           name: kits-${{ env.TAG }}
