@@ -6,6 +6,8 @@
     <AssemblyName>NextDAADDebug</AssemblyName>
     <RootNamespace>NextDAADDebug</RootNamespace>
     <Version>0.2.2</Version>
+    <!-- no commit hash in the version: an unchanged plugin builds the same bytes -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <CSpectDir Condition="'$(CSpectDir)'==''">D:\ZXNextDev\cspect</CSpectDir>
     <Configurations>Debug;Release;Autopilot</Configurations>
   </PropertyGroup>
