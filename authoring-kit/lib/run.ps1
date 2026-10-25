@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kittools.ps1')
 . (Join-Path $PSScriptRoot 'kitgame.ps1')
 . (Join-Path $PSScriptRoot 'kitjnext.ps1')
+. (Join-Path $PSScriptRoot 'kitcspect.ps1')
 $kitRoot = (Get-Location).Path
 $cfg0 = Read-KitConfig $kitRoot
 try { $g = Resolve-KitGame $cfg0 $kitRoot } catch { Write-Host "$($_.Exception.Message)"; exit 1 }
@@ -43,27 +44,6 @@ if ($t.EMULATOR -eq 'jnext') {
     if ($jrc -notin @(0, 130, 143)) { Write-Host "note: jNext exited with code $jrc" }
     exit 0
 }
-if (-not (Test-Path -LiteralPath $t.CSPECT -PathType Leaf)) {
-    Write-Host "ERROR: CSpect not found at $($t.CSPECT)"
-    Write-Host '       Install CSpect there, or set CSPECTDIR in CONFIG.BAT to an'
-    Write-Host '       existing install.'
-    exit 1
-}
-if (-not $OnWindows -and -not (Get-Command $t.CSPECTCMD -CommandType Application -ErrorAction SilentlyContinue)) {
-    Write-Host "ERROR: $($t.CSPECTCMD) not found - CSpect needs mono on Linux (sudo apt install mono-devel), or set CSPECTCMD in CONFIG.BAT"
-    exit 1
-}
-# The card root is the game folder, as an author copies it.
-$sep = [IO.Path]::DirectorySeparatorChar
-$mmc = "RELEASE$sep$($g.Name)$sep"
-$launch = "$mmc$($nexFile.Name)"
-$mmcArg = "-mmc=$mmc"
-# Legacy argument passing (5.1, 7.0-7.2) quotes a spaced argument without
-# escaping its trailing \, which would swallow the closing quote: double it.
-$pass = "$(Get-Variable PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue)"
-if ($OnWindows -and ($pass -in @('', 'Legacy')) -and $mmcArg -match '\s') { $mmcArg += $sep }
-# The call operator quotes each argument on both hosts (Start-Process
-# -ArgumentList does not); piping to Out-Null waits for CSpect to exit.
-if ($OnWindows) { & $t.CSPECT '-w3' '-zxnext' '-esc' $mmcArg $launch | Out-Null }
-else { & $t.CSPECTCMD $t.CSPECT '-w3' '-zxnext' '-esc' $mmcArg $launch | Out-Null }
+if (-not (Test-KitCSpect $t)) { exit 1 }
+Start-KitCSpect -Tools $t -Game $g
 exit 0

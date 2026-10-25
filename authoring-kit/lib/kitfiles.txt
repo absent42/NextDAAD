@@ -6,6 +6,7 @@ windows RUN.BAT
 windows CLEAN.BAT
 windows EXTERNS.BAT
 windows VIDTUNE.BAT
+windows DEBUG.BAT
 windows lib/ndrc.exe
 windows tools/gfx2next/gfx2next.exe
 windows tools/gfx2next/msys-2.0.dll
@@ -15,6 +16,7 @@ linux run.sh
 linux clean.sh
 linux externs.sh
 linux vidtune.sh
+linux debug.sh
 linux lib/ndrc
 linux tools/gfx2next/gfx2next
 linux lib/requirements.txt

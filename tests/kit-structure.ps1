@@ -36,7 +36,7 @@ $libPy = @(Get-ChildItem -LiteralPath (Join-Path $kit 'lib') -Filter *.py -File 
 $externPs = @(Get-ChildItem -LiteralPath (Join-Path $kit 'externs') -Filter build.ps1 -File -Recurse | ForEach-Object { $_.FullName })
 
 if ($Rules -contains 'launchers') {
-    foreach ($name in 'BUILD.BAT', 'RUN.BAT', 'CLEAN.BAT', 'EXTERNS.BAT', 'VIDTUNE.BAT', 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh') {
+    foreach ($name in 'BUILD.BAT', 'RUN.BAT', 'CLEAN.BAT', 'EXTERNS.BAT', 'VIDTUNE.BAT', 'DEBUG.BAT', 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh', 'debug.sh') {
         $p = Join-Path $kit $name
         if (-not (Test-Path -LiteralPath $p)) { continue }
         $lines = @([IO.File]::ReadAllLines($p) | Where-Object { $_.Trim() -and $_ -notmatch '^\s*(REM\b|@REM\b|::|#)' })
@@ -46,7 +46,7 @@ if ($Rules -contains 'launchers') {
     }
     # Every .sh launcher exists, is executable in the index, is LF, and
     # refuses cleanly when pwsh is missing (the manual promises that line).
-    foreach ($sh in 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh') {
+    foreach ($sh in 'build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh', 'debug.sh') {
         $p = Join-Path $kit $sh
         if (-not (Test-Path -LiteralPath $p)) { $failures.Add("launchers: $sh missing"); continue }
         $mode = ((& git -C $kit ls-files -s -- $sh) -split '\s+')[0]
@@ -57,7 +57,7 @@ if ($Rules -contains 'launchers') {
     }
     $page = [IO.File]::ReadAllText((Join-Path $root 'manual/getting-started.md'))
     foreach ($m in [regex]::Matches($page, '`\./(\w+\.sh)`')) {
-        if ('build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh' -notcontains $m.Groups[1].Value) { $failures.Add("launchers: getting-started.md names unknown launcher $($m.Groups[1].Value)") }
+        if ('build.sh', 'run.sh', 'clean.sh', 'externs.sh', 'vidtune.sh', 'debug.sh' -notcontains $m.Groups[1].Value) { $failures.Add("launchers: getting-started.md names unknown launcher $($m.Groups[1].Value)") }
     }
 }
 if ($Rules -contains 'python-candidates') {

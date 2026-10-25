@@ -1,6 +1,9 @@
 # build.ps1 - the kit build. Launched by BUILD.BAT with cwd = kit root.
 # Messages are the v0.11.0 BUILD.BAT wording, pinned by
 # tests\kit-parity\negative.ps1; the outputs by tests\kit-parity\parity.ps1.
+# -SrcMap writes GAME.DSM / GAME<n>.DSM source maps beside the sources (debug.ps1);
+# -NoRun skips the RUN=1 hand-off.
+param([switch]$SrcMap, [switch]$NoRun)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kitplatform.ps1')
 . (Join-Path $PSScriptRoot 'kitconfig.ps1')
@@ -160,6 +163,32 @@ function Test-DsfIncludes([string]$DsfPath) {
 foreach ($p in (Test-DsfIncludes $dsfFile.FullName)) {
     if ($OnWindows) { Write-Host "WARNING: $p" } else { Fail "ERROR: $p" }
 }
+# NDRC's lexer takes #debug in lower case only, as a whole token after optional
+# blanks. Scans the .DSF and its #include files; each file is reported once.
+$debugWarned = @{}
+function Write-DebugDirectiveWarnings([string]$DsfPath, [string]$Label) {
+    $files = @(, @($DsfPath, $Label))
+    foreach ($line in [IO.File]::ReadAllLines($DsfPath, [Text.Encoding]::GetEncoding(28591))) {
+        if ($line -cnotmatch '^#include\b') { continue }
+        $name = if ($line.Length -gt 9) { $line.Substring(9) } else { '' }
+        $semi = $name.IndexOf(';'); if ($semi -ge 0) { $name = $name.Substring(0, $semi) }
+        $name = $name.Trim()
+        if ($name) { $files += , @((Join-Path $src $name), $name) }
+    }
+    foreach ($f in $files) {
+        if (-not (Test-Path -LiteralPath $f[0] -PathType Leaf)) { continue }
+        $full = [IO.Path]::GetFullPath($f[0])
+        if ($debugWarned.ContainsKey($full)) { continue }
+        foreach ($line in [IO.File]::ReadAllLines($full, [Text.Encoding]::GetEncoding(28591))) {
+            if ($line -cmatch '^\s*#debug(?![^\s;])') {
+                $debugWarned[$full] = $true
+                Write-Host "WARNING: $($f[1]) has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)"
+                break
+            }
+        }
+    }
+}
+Write-DebugDirectiveWarnings $dsfFile.FullName $dsfFile.Name
 
 # ---- prepare RELEASE\<GAME>\DATA\ : outputs rebuilt every run are removed ----
 # Pictures, sprite sets, audio and video are left to assets.ps1.
@@ -212,7 +241,7 @@ Write-Host "Building $game ..."
 # relative to $src: a hardcoded ".DSF" suffix would miss a lowercase-extension
 # source on Linux. ndrc runs in $src, so every other path here is absolute.
 $ndrcExe = [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($t.NDRC)) { $t.NDRC } else { Join-Path $kitRoot $t.NDRC }))
-function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir) {
+function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]$MapName) {
     $DdbOut = [IO.Path]::GetFullPath($DdbOut); $XmbDir = [IO.Path]::GetFullPath($XmbDir)
     $xmb = Join-Path $src '0.XMB'
     if (-not (Test-Path -LiteralPath $XmbDir)) { New-Item -ItemType Directory $XmbDir | Out-Null }
@@ -221,6 +250,8 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir) {
     # $ndrcArgs, not $args: $args is PowerShell's automatic variable.
     $ndrcArgs = @($drTarget, 'EN', $DsfPath, $DdbOut, '-v3', '-auto-tokens')
     if ($cols) { $ndrcArgs += "-cols=$cols" }
+    # The map's file paths are relative to its folder, the source root; the DDB is unchanged.
+    if ($SrcMap) { $ndrcArgs += "-srcmap=$(Join-Path $src $MapName)" }
     Push-Location -LiteralPath $src
     try { $code = Invoke-Native $ndrcExe $ndrcArgs } finally { Pop-Location }
     # Any non-zero code fails, negative Windows crash codes (0xC0000005) included.
@@ -247,7 +278,7 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir) {
     }
     return 0
 }
-if ((Invoke-Ddb $dsfFile.Name (Join-Path $rel 'GAME.DDB') $rel) -ne 0) { exit 1 }
+if ((Invoke-Ddb $dsfFile.Name (Join-Path $rel 'GAME.DDB') $rel 'GAME.DSM') -ne 0) { exit 1 }
 
 # ---- pictures, audio, video ----
 if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress; Src = $src; Data = $rel }) -ne 0) { exit 1 }
@@ -349,7 +380,8 @@ foreach ($n in 2..9) {
     foreach ($p in (Test-DsfIncludes $pdsfs[0].FullName)) {
         if ($OnWindows) { Write-Host "WARNING: $p" } else { Fail "ERROR: $p" }
     }
-    if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path $rel "GAME$n.DDB") (Join-Path $rel $part)) -ne 0) { exit 1 }
+    Write-DebugDirectiveWarnings $pdsfs[0].FullName (Join-Path $part $pdsfs[0].Name)
+    if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path $rel "GAME$n.DDB") (Join-Path $rel $part) "GAME$n.DSM") -ne 0) { exit 1 }
     $count = 0
     foreach ($f in Get-KitFiles $partDir '*') {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
@@ -363,7 +395,7 @@ foreach ($n in 2..9) {
 }
 
 Write-Host "BUILD OK: RELEASE$sep$game$sep is ready - copy the contents of RELEASE$sep to the root of an SD card"
-if ((cfg 'RUN') -eq '1') {
+if ((cfg 'RUN') -eq '1' -and -not $NoRun) {
     # BUILD.BAT exited 0 after RUN.BAT whatever it returned. On Windows a
     # failed run pauses so its error stays readable in a double-clicked console.
     $runScript = Join-Path $lib 'run.ps1'
