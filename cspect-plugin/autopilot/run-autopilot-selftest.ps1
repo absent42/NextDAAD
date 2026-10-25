@@ -112,6 +112,29 @@ Check 'e-missing-script' ($miss.Missing.Count -gt 0)
 $sm = Get-LegScripts 'A' @("$PSScriptRoot\scripts\smoke.txt") (Join-Path $work 'noscripts')
 Check 'e-override' ($sm.Missing.Count -eq 0 -and $sm.Parts.Count -eq 1)
 
+# (f) per-leg game files: D stale DSM CRC, E DEBUG SYM and no seed, A unchanged
+$fsrc = Join-Path $work 'fsrc'
+New-Item -ItemType Directory -Force $fsrc | Out-Null
+[IO.File]::WriteAllText("$fsrc\nextdaad.nex", 'NEX')
+[IO.File]::WriteAllLines("$fsrc\rel.sym", [string[]]@("NEXTDAAD-SYM`t1", "build`tabc1234`tRelease"))
+[IO.File]::WriteAllLines("$fsrc\dbg.sym", [string[]]@("NEXTDAAD-SYM`t1", "build`tabc1234`tDEBUG"))
+$fxDsm = [IO.File]::ReadAllText("$repo\cspect-plugin\tests\fixtures\DBGFIX.DSM")
+foreach ($l in 'A', 'D', 'E') {
+    $g = Join-Path $work "game$l"
+    New-Item -ItemType Directory -Force $g | Out-Null
+    Copy-LegGame $l $g "$fsrc\nextdaad.nex" "$fsrc\rel.sym" "$fsrc\dbg.sym"
+}
+$dD = [IO.File]::ReadAllText("$work\gameD\GAME.DSM")
+Check 'f-D-crc-zero' ($dD -match "(?m)^ddb`t00000000`t") (($dD -split "`n")[1])
+Check 'f-D-rest-same' (($dD -replace "(?m)^ddb`t[0-9A-Fa-f]+`t", '') -eq ($fxDsm -replace "(?m)^ddb`t[0-9A-Fa-f]+`t", ''))
+Check 'f-D-seed' (Test-Path -LiteralPath "$work\gameD\DEBUGGER.local.TXT")
+Check 'f-E-sym-debug' ((Get-Content "$work\gameE\NEXTDAAD.SYM")[1] -match "^build`t\S+`tDEBUG$")
+Check 'f-E-no-seed' (-not (Test-Path -LiteralPath "$work\gameE\DEBUGGER.local.TXT"))
+Check 'f-A-dsm-same' ([IO.File]::ReadAllText("$work\gameA\GAME.DSM") -eq $fxDsm)
+Check 'f-A-sym-release' ((Get-Content "$work\gameA\NEXTDAAD.SYM")[1] -match 'Release$')
+Check 'f-A-seed' (Test-Path -LiteralPath "$work\gameA\DEBUGGER.local.TXT")
+Check 'f-A-ddb-in-data' (Test-Path -LiteralPath "$work\gameA\DATA\GAME.DDB")
+
 Remove-Item -LiteralPath $work -Recurse -Force
 if ($script:fails) { "selftest: $($script:fails) failing"; exit 1 }
 'selftest: all pass'

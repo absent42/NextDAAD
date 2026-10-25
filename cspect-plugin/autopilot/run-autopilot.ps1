@@ -21,9 +21,10 @@ $ApBin = Join-Path $ApRepo 'build\cspect-plugin\bin\NextDAADDebug'
 $LegTable = @{
     A = @{ CSpect = $ApCs40; Parts = @('legA-1.txt', 'legA-2.txt') }
     C = @{ CSpect = $ApCs331; Parts = @() }
-    D = @{ CSpect = $ApCs40; Parts = @('legD.txt') }
-    E = @{ CSpect = $ApCs40; Parts = @('legE.txt') }
+    D = @{ CSpect = $ApCs40; Parts = @('legD.txt'); Variant = 'StaleDsm' }
+    E = @{ CSpect = $ApCs40; Parts = @('legE.txt'); Variant = 'DebugSym' }
 }
+$ApDebugSym = Join-Path $ApRepo 'build\NEXTDAAD.DEBUG.SYM'
 $DefaultGlance = @(
     'drag the debugger window, quit and relaunch: it reopens where it was left',
     'the window close box',
@@ -164,22 +165,34 @@ function Invoke-CSpect([string]$csDir, [string]$legDir, [string[]]$csArgs, [hash
     return [pscustomobject]@{ TimedOut = $timedOut; ExitedSelf = $self; Ms = $sw.ElapsedMilliseconds }
 }
 
+# Game files for one leg into card root $g. D and E match stage-legs.ps1's
+# LEGDBGSTALE (DSM ddb CRC zeroed) and LEGDBGBADSYM (DEBUG SYM, no seed).
+function Copy-LegGame([string]$leg, [string]$g, [string]$nex, [string]$sym, [string]$debugSym) {
+    $fx = Join-Path $ApRepo 'cspect-plugin\tests\fixtures'
+    $v = $LegTable[$leg].Variant
+    New-Item -ItemType Directory -Force "$g\DATA" | Out-Null
+    # Kit layout DATA\GAME.DDB: the Release NEX booted E1 on CSpect with GAME.DDB only in the card root.
+    Copy-Item "$fx\DBGFIX.DDB" "$g\DATA\GAME.DDB"
+    Copy-Item "$fx\DBGFIX.DSM" "$g\GAME.DSM"
+    Copy-Item "$fx\DBGFIX.DSF" $g
+    Copy-Item $nex "$g\nextdaad.nex"
+    Copy-Item $(if ($v -eq 'DebugSym') { $debugSym } else { $sym }) "$g\NEXTDAAD.SYM"
+    if ($v -eq 'StaleDsm') {
+        $dsm = [IO.File]::ReadAllText("$g\GAME.DSM") -replace '(?m)^ddb\t[0-9A-Fa-f]+\t', "ddb`t00000000`t"
+        [IO.File]::WriteAllText("$g\GAME.DSM", $dsm, (New-Object Text.UTF8Encoding($false)))
+    }
+    $seed = Join-Path $ApScripts "leg$leg.seed.txt"
+    if ($v -ne 'DebugSym' -and (Test-Path -LiteralPath $seed)) { Copy-Item $seed "$g\DEBUGGER.local.TXT" }
+}
+
 # Leg layout: sd\ (card root and NEXTDAAD_DEBUG folder), cspect\, parts\;
 # the CSpect copy and results stay off the emulated card.
 function New-LegFolder([string]$leg, [string]$csSrc) {
     $dir = Join-Path $ApRoot $leg
     Reset-StageFolder $dir $ApRoot
     $g = Join-Path $dir 'sd'
-    New-Item -ItemType Directory -Force "$g\DATA" | Out-Null
-    $fx = Join-Path $ApRepo 'cspect-plugin\tests\fixtures'
-    # Kit layout DATA\GAME.DDB: the Release NEX booted E1 on CSpect with GAME.DDB only in the card root.
-    Copy-Item "$fx\DBGFIX.DDB" "$g\DATA\GAME.DDB"
-    Copy-Item "$fx\DBGFIX.DSM" "$g\GAME.DSM"
-    Copy-Item "$fx\DBGFIX.DSF" $g
-    Copy-Item "$ApRepo\build\nextdaad.nex" $g
-    Copy-Item "$ApRepo\build\NEXTDAAD.SYM" $g
-    $seed = Join-Path $ApScripts "leg$leg.seed.txt"
-    if (Test-Path -LiteralPath $seed) { Copy-Item $seed "$g\DEBUGGER.local.TXT" }
+    New-Item -ItemType Directory -Force $g | Out-Null
+    Copy-LegGame $leg $g "$ApRepo\build\nextdaad.nex" "$ApRepo\build\NEXTDAAD.SYM" $ApDebugSym
     Copy-CSpect $csSrc "$dir\cspect"
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" "$dir\cspect" -Force
     Assert-AutopilotDll "$dir\cspect\NextDAADDebug.dll"
@@ -237,6 +250,10 @@ if (@($legs | Where-Object { $_ -ne 'Linux' }).Count) {
         & dotnet build $proj -c $cfg "-p:CSpectDir=$ApCs40" | Out-Host
         if ($LASTEXITCODE) { throw "plugin $cfg build failed" }
     }
+    # DEBUG first for leg E's mismatched SYM, then Release for the staged NEX and SYM (stage-legs.ps1 order).
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ApRepo 'build.ps1') | Out-Host
+    if ($LASTEXITCODE) { throw 'build.ps1 (DEBUG) failed' }
+    Copy-Item (Join-Path $ApRepo 'build\NEXTDAAD.SYM') $ApDebugSym -Force
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ApRepo 'build.ps1') -Release | Out-Host
     if ($LASTEXITCODE) { throw 'build.ps1 -Release failed' }
     New-Item -ItemType Directory -Force $ApRoot | Out-Null
