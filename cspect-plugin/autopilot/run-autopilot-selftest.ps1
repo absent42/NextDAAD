@@ -138,9 +138,12 @@ Check 'f-A-ddb-in-data' (Test-Path -LiteralPath "$work\gameA\DATA\GAME.DDB")
 # (g) Linux leg: settings refusals, hash gate, canned results, script variant. ssh is stubbed.
 $script:sshCalls = @()
 $script:vmHash = ''
+$script:sshMode = 'ok'
 function Invoke-Ssh($s, [string]$cmd) {
     $script:sshCalls += $cmd
-    if ($cmd -eq 'true') { return }
+    if ($cmd -eq 'true') { if ($script:sshMode -eq 'unreach') { throw 'ssh exit 255 for: true' }; return }
+    if ($cmd -like 'mkdir -p *' -or $cmd -like "* kill '*") { return }
+    if ($cmd -like "* reset '*") { throw 'ssh exit 2 for: reset' }
     if ($cmd -like 'echo $HOME*') { return '/home/placeholder' }
     if ($cmd -like 'sha256sum *') { return "$($script:vmHash)  /home/placeholder/nextdaad/tools/CSpect/CSpect.exe" }
     throw "unexpected ssh command: $cmd"
@@ -194,6 +197,62 @@ $real = Join-Path $work 'legA-1.linux.txt'
 Convert-LinuxScript "$PSScriptRoot\scripts\legA-1.txt" $real
 $rt = [IO.File]::ReadAllText($real)
 Check 'g-legA1-no-double-toggle' (-not ($rt -match "(?m)^hotkey a\nhotkey a$") -and $rt -match '(?m)^expect log "window cannot be closed under mono')
+
+# (h) Linux leg hardening: unreachable and bad host, remoteDir placement, markers, setup failure
+$script:sshCalls = @(); $script:sshMode = 'unreach'
+$m = Throws { Get-LinuxPreflight $good $exe }
+Check 'h-unreachable-refused' ($m -like 'Linux leg refused: VM unreachable*') $m
+Check 'h-unreachable-one-ssh' ($script:sshCalls.Count -eq 1) ($script:sshCalls -join ';')
+$script:sshCalls = @(); $script:sshMode = 'ok'
+[IO.File]::WriteAllText($bad, '{"host": "vm host;x", "user": "someone", "remoteDir": "~/x"}')
+$m = Throws { Get-LinuxPreflight $bad $exe }
+Check 'h-bad-host-refused' ($m -like 'Linux leg refused: host or user*') $m
+Check 'h-bad-host-no-ssh' ($script:sshCalls.Count -eq 0) ($script:sshCalls -join ';')
+foreach ($rd in '/home/placeholder', '/home', '~/nextdaad', '~/nextdaad/tools/CSpect', '~/nextdaad/x') {
+    $script:sshCalls = @()
+    [IO.File]::WriteAllText($bad, "{`"host`": `"vm-host`", `"user`": `"someone`", `"remoteDir`": `"$rd`"}")
+    $m = Throws { Get-LinuxPreflight $bad $exe }
+    Check "h-remotedir-placement $rd" ("$m" -like 'Linux leg refused: remoteDir must be a dedicated folder*') $m
+    Check "h-remotedir-no-write $rd" (@($script:sshCalls | Where-Object { $_ -notin 'true', 'echo $HOME' -and $_ -notlike 'sha256sum *' }).Count -eq 0) ($script:sshCalls -join ';')
+}
+[IO.File]::WriteAllText($bad, '{"host": "vm-host", "user": "someone", "remoteDir": "~/nextdaad-autopilot"}')
+Check 'h-remotedir-sibling-ok' ($null -eq (Throws { $null = Get-LinuxPreflight $bad $exe }))
+foreach ($case in @("a`n# windows-only`nb`n", "# windows-only`n# windows-only`n# end windows-only`n", "# end windows-only`n")) {
+    [IO.File]::WriteAllText($ls, $case)
+    $m = Throws { Convert-LinuxScript $ls $ld }
+    Check "h-marker-refused $(($case -split "`n")[0..1] -join '/')" ("$m" -like 'windows-only marker*') $m
+}
+$gb = Join-Path $env:ProgramFiles 'Git\bin\bash.exe'
+if (Test-Path -LiteralPath $gb) {
+    $oldHome = $env:HOME; $oldEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        # Unguarded, these would write only under $work (POSIX form for Git bash).
+        $ph = '/' + $work.Substring(0, 1).ToLower() + ($work.Substring(2) -replace '\\', '/') + '/fakehome'
+        $env:HOME = $ph
+        $o = & $gb "$PSScriptRoot\linux-leg.sh" reset "$ph/nextdaad/tools/CSpect/legA" 2>&1 | Out-String
+        Check 'h-sh-run-under-src-refused' ($LASTEXITCODE -eq 2 -and $o -like '*refusing*') "$LASTEXITCODE $o"
+        $o = & $gb "$PSScriptRoot\linux-leg.sh" kill "$ph/nextdaad/tools/x" 2>&1 | Out-String
+        Check 'h-sh-run-under-tools-refused' ($LASTEXITCODE -eq 2 -and $o -like '*refusing*') "$LASTEXITCODE $o"
+    }
+    finally { $env:HOME = $oldHome; $ErrorActionPreference = $oldEap; $global:LASTEXITCODE = 0 }
+}
+else { 'skip h-sh-* (no Git bash)' }
+# Setup failure (reset refused on the VM) is a refused FAIL row; the report still carries other legs.
+$ApRoot = $work
+$script:sshCalls = @(); $script:scpCalls = @()
+function Invoke-Scp($s, [string[]]$from, [string]$to) { $script:scpCalls += "$($from -join ' ') -> $to" }
+function New-LinuxStage([string]$st, [string[]]$scripts) { New-Item -ItemType Directory -Force $st | Out-Null }
+$pfOk = [pscustomobject]@{ Settings = [pscustomobject]@{ host = 'vm-host'; user = 'someone'; remoteDir = '~/autopilot-dir' }; Remote = '/home/placeholder/autopilot-dir' }
+$lr = @(Invoke-LinuxLeg 30 $pfOk)
+Check 'h-setup-failure-row' ($lr.Count -eq 1 -and $lr[0].Status -eq 'FAIL' -and $lr[0].Note -like 'Linux leg setup failed: *') (($lr | ForEach-Object { $_.Note }) -join ';')
+Check 'h-setup-failure-killed' (@($script:sshCalls | Where-Object { $_ -like "* kill '*" }).Count -eq 1) ($script:sshCalls -join ';')
+Check 'h-setup-failure-no-run' (@($script:sshCalls | Where-Object { $_ -like "* run '*" }).Count -eq 0)
+$lr2 = @(Invoke-LinuxLeg 30 (New-RefusedRecord 'Linux leg refused: x'))
+Check 'h-refused-passthrough' ($lr2.Count -eq 1 -and $lr2[0].Note -eq 'Linux leg refused: x')
+$aRec = New-PartRecord 'A' 'legA-1.txt' $r1 (Join-Path $work 'A1') $false
+$null = Save-AutopilotReport (@($aRec) + $lr) @() @() @() 'T'
+$rep = [IO.File]::ReadAllText((Join-Path $work 'report.md')) -split "`r?`n"
+Check 'h-report-written' (($rep -contains '| A | legA-1.txt | FAIL | 3 | 1 | 1 | 1 | DONE failures=1 |') -and @($rep | Where-Object { $_ -like '| Linux | - | FAIL |*Linux leg setup failed: *' }).Count -eq 1) ($rep -join '/')
 
 Remove-Item -LiteralPath $work -Recurse -Force
 if ($script:fails) { "selftest: $($script:fails) failing"; exit 1 }

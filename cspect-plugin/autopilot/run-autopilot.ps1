@@ -265,8 +265,12 @@ function Get-LinuxPreflight([string]$path, [string]$localExe) {
     if ($s.remoteDir -notmatch '^(~/|/)[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*/?$' -or $s.remoteDir -match '(^|/)\.\.?(/|$)') { throw "Linux leg refused: remoteDir must be ~/<dir> or /<dir> (letters, digits, . _ - only)" }
     try { Invoke-Ssh $s 'true' | Out-Null } catch { throw "Linux leg refused: VM unreachable over ssh with key auth ($($_.Exception.Message))" }
     $vmHome = "$(Invoke-Ssh $s 'echo $HOME')".Trim()
-    if ($vmHome -notmatch '^/') { throw "Linux leg refused: VM home not found" }
-    $remote = $(if ($s.remoteDir.StartsWith('~/')) { $vmHome.TrimEnd('/') + $s.remoteDir.Substring(1) } else { $s.remoteDir }).TrimEnd('/')
+    if ($vmHome -notmatch '^/[A-Za-z0-9._/-]*$') { throw "Linux leg refused: VM home missing or has unexpected characters" }
+    $vmHome = $vmHome.TrimEnd('/')
+    $remote = $(if ($s.remoteDir.StartsWith('~/')) { $vmHome + $s.remoteDir.Substring(1) } else { $s.remoteDir }).TrimEnd('/')
+    # Never the home folder, an ancestor of it, or ~/nextdaad (the VM toolchain) and below.
+    $nd = "$vmHome/nextdaad"
+    if ("$vmHome/".StartsWith("$remote/") -or $remote -eq $nd -or $remote.StartsWith("$nd/")) { throw "Linux leg refused: remoteDir must be a dedicated folder, not the home folder, an ancestor of it, or ~/nextdaad and below" }
     try { $vm = "$(Invoke-Ssh $s 'sha256sum ~/nextdaad/tools/CSpect/CSpect.exe')".Trim() } catch { throw "Linux leg refused: no CSpect.exe in ~/nextdaad/tools/CSpect on the VM" }
     $win = (Get-FileHash -LiteralPath $localExe -Algorithm SHA256).Hash
     if (($vm -split '\s+')[0] -ne $win) { throw $ApHashRefusal }
@@ -292,27 +296,36 @@ function Get-LinuxRecords([string]$partsDir, [string[]]$names) {
 
 # Linux variant of a script: drops "# windows-only" .. "# end windows-only" blocks and
 # un-comments "# linux: <line>" lines (the window cannot close under mono).
+# Unbalanced markers throw: a lost end marker would silently drop the rest of the script.
 function Convert-LinuxScript([string]$src, [string]$dest) {
     $out = New-Object Collections.Generic.List[string]
-    $skip = $false
+    $skip = $false; $n = 0
     foreach ($l in ([IO.File]::ReadAllText($src, [Text.Encoding]::UTF8) -split "`r?`n")) {
-        if ($l -cmatch '^\s*#\s*windows-only\s*$') { $skip = $true; continue }
-        if ($l -cmatch '^\s*#\s*end windows-only\s*$') { $skip = $false; continue }
+        $n++
+        if ($l -cmatch '^\s*#\s*windows-only\s*$') {
+            if ($skip) { throw "windows-only marker opened twice (line $n of $src)" }
+            $skip = $true; continue
+        }
+        if ($l -cmatch '^\s*#\s*end windows-only\s*$') {
+            if (-not $skip) { throw "windows-only marker end without start (line $n of $src)" }
+            $skip = $false; continue
+        }
         if ($skip) { continue }
         if ($l -cmatch '^\s*#\s*linux:\s?(.*)$') { $out.Add($Matches[1]); continue }
         $out.Add($l)
     }
+    if ($skip) { throw "windows-only marker not closed by end of $src" }
     [IO.File]::WriteAllText($dest, ($out -join "`n"), (New-Object Text.UTF8Encoding($false)))
 }
 
-function Invoke-LinuxLeg([int]$seconds) {
-    try { $pf = Get-LinuxPreflight $ApSettings (Join-Path $ApCs40 'CSpect.exe') }
-    catch { Write-Host $_.Exception.Message; return @(New-RefusedRecord $_.Exception.Message) }
-    $sc = Get-LegScripts 'A' @()
-    if ($sc.Missing.Count) { return @(New-RefusedRecord "no script yet: $($sc.Missing -join ', ')") }
-    $dir = Join-Path $ApRoot 'Linux'
-    Reset-StageFolder $dir $ApRoot
-    $st = Join-Path $dir 'stage'
+# Preflight result or refusal record, so a refusal shows before the minutes-long build.
+function Get-LinuxPreflightOrRefusal {
+    try { return Get-LinuxPreflight $ApSettings (Join-Path $ApCs40 'CSpect.exe') }
+    catch { Write-Host $_.Exception.Message; return New-RefusedRecord $_.Exception.Message }
+}
+
+# Upload set in $st: sd\ (leg A card), scripts\ (Linux variants), the DLL, linux-leg.sh.
+function New-LinuxStage([string]$st, [string[]]$scripts) {
     New-Item -ItemType Directory -Force "$st\sd", "$st\scripts" | Out-Null
     Copy-LegGame 'A' "$st\sd" "$ApRepo\build\nextdaad.nex" "$ApRepo\build\NEXTDAAD.SYM" $ApDebugSym
     # CSpect 4.0 under mono: with DATA\GAME.DDB only the Release NEX stops at E1 (measured 2026-10-25);
@@ -320,15 +333,30 @@ function Invoke-LinuxLeg([int]$seconds) {
     Copy-Item "$st\sd\DATA\GAME.DDB" "$st\sd\GAME.DDB"
     Copy-Item "$ApBin\Autopilot\net48\NextDAADDebug.dll" $st
     Assert-AutopilotDll "$st\NextDAADDebug.dll"
-    $names = @($sc.Parts | ForEach-Object { Split-Path $_ -Leaf })
-    foreach ($p in $sc.Parts) { Convert-LinuxScript $p (Join-Path "$st\scripts" (Split-Path $p -Leaf)) }
+    foreach ($p in $scripts) { Convert-LinuxScript $p (Join-Path "$st\scripts" (Split-Path $p -Leaf)) }
     # LF only: a CRLF checkout of the script would not run under bash.
     $sh = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'linux-leg.sh')) -replace "`r", ''
     [IO.File]::WriteAllText("$st\linux-leg.sh", $sh, (New-Object Text.UTF8Encoding($false)))
+}
+
+# Any setup failure becomes one refused FAIL row so the other legs still reach report.md.
+function Invoke-LinuxLeg([int]$seconds, $pf) {
+    if ($pf.PSObject.Properties['Status']) { return @($pf) }
+    $sc = Get-LegScripts 'A' @()
+    if ($sc.Missing.Count) { return @(New-RefusedRecord "no script yet: $($sc.Missing -join ', ')") }
+    $dir = Join-Path $ApRoot 'Linux'
+    $st = Join-Path $dir 'stage'
+    $names = @($sc.Parts | ForEach-Object { Split-Path $_ -Leaf })
+    try {
+        Reset-StageFolder $dir $ApRoot
+        New-LinuxStage $st $sc.Parts
+    }
+    catch { Write-Host "Linux leg setup failed: $($_.Exception.Message)"; return @(New-RefusedRecord "Linux leg setup failed: $($_.Exception.Message)") }
     $s = $pf.Settings
     $tgt = "$($s.user)@$($s.host)"
     $run = "$($pf.Remote)/legA"
     $sh = "bash '$($pf.Remote)/linux-leg.sh'"
+    $setupError = $null
     Push-Location $st
     try {
         Invoke-Ssh $s "mkdir -p '$($pf.Remote)'" | Out-Null
@@ -338,12 +366,21 @@ function Invoke-LinuxLeg([int]$seconds) {
         try { Invoke-Ssh $s "$sh run '$run' $seconds $($names -join ' ')" | Out-Host }
         catch { Write-Host "Linux run: $($_.Exception.Message)" }
     }
+    catch { $setupError = $_.Exception.Message }
     finally {
         try { Invoke-Ssh $s "$sh kill '$run'" | Out-Host } catch { Write-Host "Linux kill: $($_.Exception.Message)" }
         Pop-Location
     }
+    if ($setupError) { Write-Host "Linux leg setup failed: $setupError"; return @(New-RefusedRecord "Linux leg setup failed: $setupError") }
     try { Invoke-Scp $s @("${tgt}:$run/parts") $dir } catch { Write-Host "Linux results: $($_.Exception.Message)" }
     return Get-LinuxRecords (Join-Path $dir 'parts') $names
+}
+
+function Save-AutopilotReport($parts, $skips, $legC, [string[]]$used, [string]$stamp) {
+    $md = New-AutopilotReport $parts $skips $legC (Get-Glance $used) $stamp
+    New-Item -ItemType Directory -Force $ApRoot | Out-Null
+    [IO.File]::WriteAllText((Join-Path $ApRoot 'report.md'), $md, (New-Object Text.UTF8Encoding($false)))
+    return $md
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }
@@ -356,7 +393,9 @@ $legs = switch ($Leg) {
 if ($ScriptOverride.Count -and ($legs.Count -ne 1 -or $legs -notin 'A', 'D', 'E')) { throw '-ScriptOverride needs exactly one of -Leg A, D or E' }
 
 $parts = @(); $skips = @(); $legC = @(); $used = @()
-if ($legs.Count) {
+$linuxPf = if ($legs -contains 'Linux') { Get-LinuxPreflightOrRefusal } else { $null }
+# A refused Linux-only run has nothing to build.
+if (@($legs | Where-Object { $_ -ne 'Linux' }).Count -or ($linuxPf -and -not $linuxPf.PSObject.Properties['Status'])) {
     $proj = Join-Path $ApRepo 'cspect-plugin\NextDAADDebug.csproj'
     foreach ($cfg in 'Release', 'Autopilot') {
         & dotnet build $proj -c $cfg "-p:CSpectDir=$ApCs40" | Out-Host
@@ -374,7 +413,7 @@ foreach ($l in $legs) {
     if ($l -eq 'Linux') {
         $sc = Get-LegScripts 'A' @()
         if (-not $sc.Missing.Count) { $used += $sc.Parts }
-        $parts += Invoke-LinuxLeg $TimeoutSeconds
+        $parts += Invoke-LinuxLeg $TimeoutSeconds $linuxPf
         continue
     }
     if ($l -eq 'C') { $legC += Invoke-LegC $TimeoutSeconds; continue }
@@ -388,10 +427,8 @@ foreach ($l in $legs) {
     $parts += Invoke-ScriptLeg $l $sc.Parts $TimeoutSeconds
 }
 $stamp = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ', commit ' + (& git -C $ApRepo rev-parse --short HEAD)
-$md = New-AutopilotReport $parts $skips $legC (Get-Glance $used) $stamp
-New-Item -ItemType Directory -Force $ApRoot | Out-Null
+$md = Save-AutopilotReport $parts $skips $legC $used $stamp
 $report = Join-Path $ApRoot 'report.md'
-[IO.File]::WriteAllText($report, $md, (New-Object Text.UTF8Encoding($false)))
 $md
 "report: $report"
 if ($md -match '(?m)^Overall: FAIL') { exit 1 }

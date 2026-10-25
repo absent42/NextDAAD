@@ -3,7 +3,7 @@
 #   linux-leg.sh reset <run>            empty <run> (only if this script marked it)
 #   linux-leg.sh run <run> <secs> <part>...   private CSpect copy, one bounded launch per part
 #   linux-leg.sh kill <run>             kill CSpect started from <run>
-set -u
+set -u -o pipefail
 MARK=.cspect-autopilot-stage
 SRC="$HOME/nextdaad/tools/CSpect"
 cmd=${1:-}; RUN=${2:-}
@@ -11,16 +11,21 @@ case "$RUN" in
     /*/*) ;;
     *) echo "refusing: run folder must be absolute: '$RUN'" >&2; exit 2 ;;
 esac
+# Never inside the VM's own NextDAAD tree (SRC lives there).
+case "$RUN/" in
+    "$HOME/nextdaad/"*) echo "refusing: run folder is under $HOME/nextdaad: '$RUN'" >&2; exit 2 ;;
+esac
 
-# Matches the exe path, so only CSpect launched from this run folder is killed.
+# The exe path as one whole argument, regex-escaped, so only CSpect from this run folder matches.
+EXE_RE="(^| )$(printf '%s' "$RUN/cspect/CSpect.exe" | sed 's/[.]/[.]/g')( |$)"
 kill_run() {
-    local pids
-    pids=$(pgrep -f -- "$RUN/cspect/CSpect.exe")
+    local pids left
+    pids=$(pgrep -f -- "$EXE_RE")
     [ -n "$pids" ] || return 0
     kill $pids 2>/dev/null; sleep 2
-    pids=$(pgrep -f -- "$RUN/cspect/CSpect.exe")
-    [ -n "$pids" ] && kill -9 $pids 2>/dev/null
-    echo "killed leftover CSpect: $pids"
+    left=$(pgrep -f -- "$EXE_RE")
+    [ -n "$left" ] && kill -9 $left 2>/dev/null
+    echo "killed leftover CSpect:" $pids
 }
 
 case "$cmd" in
@@ -57,7 +62,9 @@ run)
         mkdir -p "$pd"
         rm -f "$LEG/autopilot-result.txt"; rm -rf "$LEG/dumps"
         t0=$(date +%s%N)
-        (cd "$LEG" && NEXTDAAD_DEBUG="$LEG" NEXTDAAD_DEBUG_AUTOPILOT="$RUN/scripts/$p" \
+        # Same debugger variables as the Windows launch; nothing inherited from the login.
+        (cd "$LEG" && env -u NEXTDAAD_DEBUG_TRACE -u NEXTDAAD_DEBUG_NOWINDOW -u NEXTDAAD_DEBUG_SETTINGS \
+            NEXTDAAD_DEBUG="$LEG" NEXTDAAD_DEBUG_AUTOPILOT="$RUN/scripts/$p" \
             timeout -k 5 "$SECS" mono "$RUN/cspect/CSpect.exe" -w2 -zxnext -esc -sound "-mmc=$LEG/" "$LEG/nextdaad.nex" \
             > "$pd/stdout.txt" 2> "$pd/stdout.txt.err")
         rc=$?
