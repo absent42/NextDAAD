@@ -29,7 +29,7 @@ main:
     call bank_table_init
     call ram_diag
     call bank_selftest
-    call ddb_load_boot           ; DATA\ first, then the launch folder
+    call ddb_load_boot           ; launch folder first, then DATA\
     or a
     jr z, .loaded
     dec a
@@ -1603,9 +1603,13 @@ kb_flush_frame:
     pop hl
     jp kb_flush
 
-; Boot DDB load: F_CHDIR into DATA\ (a failure is ignored, the launch
-; folder stays current), then the normal loader. Out: as ddb_load.
+; Boot DDB load: the current folder first (an intro already sits in DATA\),
+; then F_CHDIR DATA\ and retry on DDB_E_FILE only. CSpect's esxDOS accepts
+; a chdir to a missing folder, so DATA\ must not be entered blind. Out: as ddb_load.
 ddb_load_boot:
+    call ddb_load
+    cp DDB_E_FILE
+    ret nz                      ; loaded, or present but refused
     ld a, '*'                   ; '*' = default drive
     ld ix, dataDirName
     call esx_fchdir
@@ -1613,8 +1617,11 @@ ddb_load_boot:
     sbc a, a                    ; CF=fail: A = 0 on fail, 1 on success
     inc a
     ld (dataDirOk), a
-    jp ddb_load_debug_retry     ; DeZog root-cwd fallback, file.asm
+    jp nz, ddb_load_debug_retry ; DATA\, then the DeZog fallback (file.asm)
+    jp ddb_load_debug_fallback
  ELSE
+    ld a, DDB_E_FILE            ; LD keeps CF
+    ret c                       ; no DATA\ folder
     jp ddb_load
  ENDIF
 
@@ -1627,7 +1634,7 @@ esx_fchdir:
     jp cardBusy_clear           ; preserves A and F
 
  IFDEF DEBUG
-dataDirOk:  db 0                ; ddb_diag row 5: 1 = DIR DATA
+dataDirOk:  db 0                ; ddb_diag row 5: 1 = DIR DATA ran (launch folder had no DDB)
 msgDirData: db " DIR "          ; runs on into dataDirName
     ASSERT msgDirData + 5 == dataDirName
  ENDIF
