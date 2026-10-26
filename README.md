@@ -21,6 +21,24 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https
 
 <img src="demo/nextdaad.png" alt="NextDAAD" width="934">
 
+NextDAAD
+
+
+<img src="demo/nextdaad-40-column.png" alt="NextDAAD 40 column mode" width="934">
+
+NextDAAD 40 column mode
+
+
+<img src="demo/vidtune.png" alt="NextDAAD VidTune" width="934">
+
+VidTune video encoder
+
+
+<img src="demo/debugger.png" alt="NextDAAD debugger" width="934">
+
+NextDAAD CSpect debugger
+
+
 ## Requirements
 
 - A ZX Spectrum Next (or an emulator) with an SD card. Video
