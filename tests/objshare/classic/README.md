@@ -9,9 +9,11 @@ build (same source copied to `CTL.DSF`, no `-auto-tokens`).
 - `drive_zx48.py` - ZX 48K driver (ZEsarUX 13 over ZRCP, headless)
 - `drive_cpc.py` - CPC driver (ZEsarUX 13 CPC 6128 over ZRCP, headless)
 - `drive_msx1.py` - MSX1 driver (openMSX 0.15 `-control stdio`, renderer none)
+- `drive_pc.py` - PC driver (DOSBox 0.74-3 debug build, SDL dummy drivers,
+  pseudo console; `pc_kbtsr.s` INT 16h TSR feeds keys and dumps mode 13h)
 - `classic_leg.py`, `cscreen.py`, `omsx.py` - shared walk loop and
   compare, CPC/MSX screen decoders, openMSX control client
-- `zx48/`, `cpc/`, `msx1/` - evidence, see each folder's README.md
+- `zx48/`, `cpc/`, `msx1/`, `pc/` - evidence, see each folder's README.md
 
 ## Legs (2026-10-27, ndrc 0.4.0 at NDRC commit 4b2f776)
 
@@ -22,14 +24,16 @@ Every row is emulated, not hardware.
 | ZX 48K | DS48IE3.BIN (ASSETS\ZX\48K) | yes, TAP | scripted, ZEsarUX 13 | PASSED 2026-10-27, 37 of 37 steps equal the control; emulated, not hardware |
 | CPC | DCPCIEF3.BIN | yes, DSK | scripted, ZEsarUX 13 (CPC 6128) | PASSED 2026-10-27, 37 of 37 steps equal the control; emulated, not hardware |
 | MSX1 | DMSXIEF3.BIN | yes, DSK | scripted, openMSX 0.15 (Philips NMS 8250, headless) | PASSED 2026-10-27, 37 of 37 steps equal the control; emulated, not hardware |
-| PC | PCDAAD.EXE (VGA256) | yes, DOSBox tree | staged for owner, sd\LEGCPC | PENDING owner; emulated, not hardware |
+| PC | PCDAAD.EXE (VGA256) | yes, DOSBox tree | scripted, DOSBox 0.74-3 (debug build, headless) | PASSED 2026-10-27, 37 of 37 steps equal the control; emulated, not hardware |
 
 CPC and MSX1 ran the sd\LEGCCPC and sd\LEGCMSX images unchanged; their
 control transcripts equal jDAAD's and the ZX 48K control's, and their test
 transcripts equal the ZX 48K test's. MSX1 is not on ZEsarUX because its
-MSX1 machine has no disk drive. PC stays an owner sitting: the bundled
-DOSBox (ASSETS\PC\dosbox.exe) is 0.74 (2010) and has no AUTOTYPE
-command, so the walk cannot be typed in from the conf.
+MSX1 machine has no disk drive. PC ran the sd\LEGCPC trees unchanged on
+DOSBox 0.74-3 (no AUTOTYPE there either; keys and screen dumps go through
+a TSR on INT 16h, see pc/README.md); its transcripts equal the ZX 48K
+ones word for word with wrap ignored, and PCDAAD's silent More... pauses
+fall at steps 2, 27, 29 and 37 in both builds.
 
 History: the first ZX 48K run (2026-10-27, NDRC b6611c2, before the
 classic article-strip rule) FAILED at step 3 (EXAMINE LAMP), 23 of 37
@@ -155,8 +159,8 @@ skipped.
 
 ## Staged legs (owner-run)
 
-sd\LEGCCPC and sd\LEGCMSX are discharged by the scripted runs above;
-sd\LEGCPC remains for the owner. As staged:
+sd\LEGCCPC, sd\LEGCMSX and sd\LEGCPC are discharged by the scripted runs
+above. As staged:
 sd\LEGCCPC (OBJCTL.DSK, OBJTEST.DSK), sd\LEGCMSX (OBJCTL.DSK,
 OBJTEST.DSK, init.cfg), sd\LEGCPC (CTL\ and TEST\ DOSBox trees), each
 with a STEPS.TXT: launch line, the 37 walk.txt commands with the ZX 48K
