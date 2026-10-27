@@ -1,0 +1,169 @@
+== 01 LOOK
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Location number 1
+== 02 I
+I have with me:
+a lamp
+the key
+some coins
+a map of the winding river
+valley
+a scroll sealed by the old king
+a lamp
+I am wearing:
+a woollen cloak with a frayed
+hem
+a silver ring from the old king
+== 03 EXAMINE LAMP
+You examine  closely.
+It is a lamp. Not the key, not
+some coins, just a lamp.
+== 04 EXAMINE KEY
+You examine  closely.
+It is the key. Not a lamp, not
+some coins, just the key.
+== 05 EXAMINE COINS
+You examine  closely.
+It is some coins. Not a lamp,
+not the key, just some coins.
+== 06 EXAMINE MAP
+You examine map of the winding
+river valley closely.
+The map shows the course of the
+winding river valley.
+== 07 EXAMINE SCROLL
+You examine  closely.
+The scroll is sealed by the old
+king.
+== 08 EXAMINE CLOAK
+You examine cloak with a frayed
+hem closely.
+The cloak with a frayed hem is
+warm.
+== 09 EXAMINE RING
+You examine  closely.
+The ring bears the seal of the
+old king.
+== 10 EXAMINE LANTERN
+You examine  closely.
+@ is here, with some coins.
+A second lamp, the twin of a
+lamp.
+== 11 DROP LAMP
+I've dropped the .
+== 12 GET LAMP
+I now have the .
+== 13 DROP KEY
+I've dropped the .
+== 14 GET KEY
+I now have the .
+== 15 DROP COINS
+I've dropped the .
+== 16 GET COINS
+I now have the .
+== 17 DROP MAP
+I've dropped the map of the
+winding river valley.
+== 18 GET MAP
+I now have the map of the
+winding river valley.
+== 19 DROP SCROLL
+I've dropped the .
+== 20 GET SCROLL
+I now have the .
+== 21 DROP LANTERN
+I've dropped the .
+== 22 GET LANTERN
+I now have the .
+== 23 REMOVE CLOAK
+I've removed the cloak with a
+frayed hem.
+== 24 WEAR CLOAK
+I'm now wearing the cloak with a
+frayed hem.
+== 25 REMOVE RING
+I've removed the .
+== 26 WEAR RING
+I'm now wearing the .
+== 27 PAIRS
+Sysmess pair:
+SM pair: this system text is
+stored once.
+SM pair: this system text is
+stored once.
+Message pair:
+MTX pair: this message text is
+stored once.
+MTX pair: this message text is
+stored once.
+Location pair:
+A long white corridor of the
+winding river valley. Exits
+north and south.
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Pairs done.
+== 28 EMPTY
+Empty pair follows:
+Empty pair done.
+== 29 TEST
+Some coins, the key and a lamp
+lie by the winding river valley.
+The old king hid some coins and
+the key in the winding river
+valley.
+Look for a lamp, the key and
+some coins.
+Then a lamp, then the key, then
+some coins.
+First the winding river valley,
+then the old king.
+== 30 DROP COINS
+I've dropped the .
+== 31 LOOK
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Location number 1
+I can also see:
+some coins
+== 32 NORTH
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Location number 2
+== 33 LOOK
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Location number 2
+== 34 SOUTH
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Location number 1
+I can also see:
+some coins
+== 35 GET COINS
+I now have the .
+== 36 LOOK
+A long white corridor of the
+winding river valley. Exits
+north and south.
+Location number 1
+== 37 I
+I have with me:
+a lamp
+the key
+some coins
+a map of the winding river
+valley
+a scroll sealed by the old king
+a lamp
+I am wearing:
+a woollen cloak with a frayed
+hem
+a silver ring from the old king
