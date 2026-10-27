@@ -9,31 +9,28 @@ build (same source copied to `CTL.DSF`, no `-auto-tokens`).
 - `drive_zx48.py` - ZX 48K driver (ZEsarUX 13 over ZRCP, headless)
 - `zx48/` - ZX 48K evidence, see `zx48/README.md`
 
-## Legs (2026-10-27, ndrc 0.4.0)
+## Legs (2026-10-27, ndrc 0.4.0 at NDRC commit 4b2f776)
 
 Every row is emulated, not hardware.
 
 | Leg | Interpreter | Packaged | Run | Result |
 |-----|-------------|----------|-----|--------|
-| ZX 48K | DS48IE3.BIN (ASSETS\ZX\48K) | yes, TAP | scripted, ZEsarUX 13 | FAILED, first failing step 3 (EXAMINE LAMP); emulated, not hardware |
+| ZX 48K | DS48IE3.BIN (ASSETS\ZX\48K) | yes, TAP | scripted, ZEsarUX 13 | PASSED 2026-10-27, 37 of 37 steps equal the control; emulated, not hardware |
 | CPC | DCPCIEF3.BIN | yes, DSK | staged for owner, sd\LEGCCPC | PENDING owner; emulated, not hardware |
 | MSX1 | DMSXIEF3.BIN | yes, DSK | staged for owner, sd\LEGCMSX | PENDING owner; emulated, not hardware |
 | PC | PCDAAD.EXE (VGA256) | yes, DOSBox tree | staged for owner, sd\LEGCPC | PENDING owner; emulated, not hardware |
 
-ZX 48K finding: 23 of 37 steps differ from the control, all in '_'
-substitution of an object name (EXAMINE via MTX 2, SM36-SM39 in
-GET/DROP/WEAR/REMOVE). The test build prints the name empty ("You
-examine  closely.", "I've dropped the .") for objects 0, 1, 2, 4, 6, 7
-and without its first word for object 5 ("cloak with a frayed hem" for
-"woollen cloak with a frayed hem"). Object 3, the inventory lists, the
-duplicate pairs, the empty messages, the location texts and the final
-LOOK and I match the control. The pattern fits an article skip that
-scans the stored bytes for the first literal space: a space inside a
-token reference is not seen, so the skip runs on to the next literal
-space (object 5: "en " after "a[ w]o[oll]") or to the end of the text
-when there is none (0, 1, 2, 4, 6, 7). Object 3 ("a m...") keeps a
-literal space after the article and prints whole. Fixture, compiler and
-interpreter untouched.
+History: the first ZX 48K run (2026-10-27, NDRC b6611c2, before the
+classic article-strip rule) FAILED at step 3 (EXAMINE LAMP), 23 of 37
+steps different, all in '_' substitution of an object name: the name
+printed empty ("You examine  closely.", "I've dropped the .") or without
+its first word ("cloak with a frayed hem"). The original Z80 '_' printer
+scans the stored bytes for the first literal space, so a space inside a
+token reference is not seen. Since 4b2f776 ndrc keeps, on every target
+except NEXTDAAD, the first word of each object text and the space run
+after it literal, leaves a text with no space uncompressed, and uses no
+token containing '.' in object texts. The CPC, MSX1 and PC images were
+re-staged from 4b2f776.
 
 ## Compile and assert
 
@@ -52,24 +49,37 @@ CPC.BAT:59, MSX1.BAT:64, PC.BAT:82):
     ndrc PC VGA256 EN CTL.DSF ctl.ddb -v3
     python -I ..\assert_stim.py test.ddb ctl.ddb
 
+assert_stim.py runs in classic mode on these builds (machine id in the
+high nibble of header byte 1 is not 0x0C): per object text, the first
+stored byte is literal, no reference precedes the end of the space run
+after the first word, a text with no space holds no reference, and no
+referenced token contains '.'. These replace the NEXTDAAD-only "starts
+with a reference" and "is a single reference" checks, which the rule
+makes impossible.
+
 | Target | Base | test.ddb | ctl.ddb | assert_stim.py |
 |--------|-----:|---------:|--------:|----------------|
-| ZX 48K | 0x8400 | 2236 | 2679 | PASS, control clean, rc 0 |
-| CPC | 0x2880 | 2236 | 2679 | PASS, control clean, rc 0 |
-| MSX | 0x0100 | 2236 | 2679 | PASS, control clean, rc 0 |
-| PC VGA256 | 0x0000 | 2308 | 2772 | PASS, control clean, rc 0 |
+| ZX 48K | 0x8400 | 2240 | 2679 | PASS, control clean, rc 0 |
+| CPC | 0x2880 | 2240 | 2679 | PASS, control clean, rc 0 |
+| MSX | 0x0100 | 2240 | 2679 | PASS, control clean, rc 0 |
+| PC VGA256 | 0x0000 | 2320 | 2772 | PASS, control clean, rc 0 |
 
-All four report the same object texts and token references (the
-'_'/'@' exclusion dropped none of them):
+All four report the same object texts and token references; every
+object text keeps references after its first word:
 
-    0: [20]   1: [62][58][40]   2: [7]   3: a m[79][42][25][1][8]
-    4: a[66]cr[48][52][19][25][9]   5: a[73]o[48]en [32][21][5]
-    6: a[66]ilv[49]r[51][75]r[85][25][9]   7: [20]
-    [1] 'winding rive' (12)  [5] 'a frayed hem' (12)  [7] 'some coins'
-    [20] 'a lamp'  [32] 'cloak'  [40] 'key'  [62] 'th'  [58] 'e '
+    0: a [64]   1: the [5]   2: some [86]   3: a m[54][12][1][14][15]
+    4: a [55]r[48][35][83][1][21]   5: a wo[48]en [75][77]
+    6: a silv[65]r[34][28]r[72][1][21]   7: a [64]
+    [1] ' the '  [5] 'key'  [14] 'winding rive' (12)  [64] 'lamp'
+    [75] 'cloak with a' (12)  [77] ' frayed hem'  [86] 'coins'
     shared lookup groups: sysmess [11 14 17-22 34] [48 51] [63 64],
     messages [0 25 26] [23 24], locations [1 2], objects [0 7]
-    17 checks OK (5 object-text, 5 sharing, expansion, 6 control)
+    23 checks OK (1 object-text, 8 article-strip, ends-with, 12-byte
+    token, 5 sharing, expansion, 6 control)
+
+Every object text in the fixture has a space, so the no-space case is
+not exercised; no object-text token contains '.'. The control DDBs are
+byte-identical to the b6611c2 builds.
 
 ## Packaging
 
@@ -87,7 +97,7 @@ ZX 48K (ZX48.BAT:84, 102-115):
     move IMAGES\ZX\INDEX.BIN . & move IMAGES\ZX\PAGE0.TMP .
     TOOLS\DRC\daadmaker.exe %GAME%.TAP ASSETS\ZX\48K\DS48IE3.BIN %GAME%.DDB ASSETS\CHARSET\AD8x6.CHR INDEX.BIN DAAD.SDG /48
 
-INDEX.BIN = FF FF 00 00 00 C0 (no images). OBJTEST.TAP 11450 bytes,
+INDEX.BIN = FF FF 00 00 00 C0 (no images). OBJTEST.TAP 11454 bytes,
 OBJCTL.TAP 11893.
 
 CPC (CPC.BAT:44, 61, 67-69, 85):
@@ -138,7 +148,8 @@ sd\LEGCCPC (OBJCTL.DSK, OBJTEST.DSK), sd\LEGCMSX (OBJCTL.DSK,
 OBJTEST.DSK, init.cfg), sd\LEGCPC (CTL\ and TEST\ DOSBox trees), each
 with a STEPS.TXT: launch line, the 37 walk.txt commands with the ZX 48K
 control text per step (matches jDAAD's control transcript), control
-first, then test, and the pass criterion. Launch lines:
+first, then test, and the pass criterion. Re-staged 2026-10-27 from
+4b2f776; the control images hold the same DDB as before. Launch lines:
 
     cd /d tools\DAAD-READY\TOOLS\CPCE
     CPCE95 -v+ ..\..\..\..\sd\LEGCCPC\OBJCTL.DSK

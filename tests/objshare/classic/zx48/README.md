@@ -3,10 +3,22 @@
 Emulated, not hardware: ZEsarUX 13.0 (`--machine 48k`, headless
 `--vo null --ao null`, ZRCP port 10778), DAAD-READY's
 ASSETS\ZX\48K\DS48IE3.BIN packaged by daadmaker /48 (see
-`../README.md`). Run 2026-10-27, ndrc 0.4.0.
+`../README.md`). Run 2026-10-27, ndrc 0.4.0 at NDRC commit 4b2f776
+(classic article-strip rule).
 
-Result: FAILED. First failing step 3 (EXAMINE LAMP). 23 of 37 steps
-differ from the control; boot screen identical.
+Result: PASSED. All 37 steps equal the control (text and More...
+pauses); every final screen PNG is byte-identical to the control's; boot
+screen identical.
+
+History: the first run (2026-10-27, NDRC b6611c2) FAILED at step 3
+(EXAMINE LAMP), 23 of 37 steps different, all '_' object-name
+substitutions (EXAMINE via MTX 2, SM36-SM39): the name printed empty
+for objects 0, 1, 2, 4, 6, 7 and without its first word for object 5.
+The interpreter's article skip scans the stored bytes for the first
+literal space, so a space inside a token reference is not seen and the
+skip runs on to the next literal space or the end of the text. 4b2f776
+keeps the first word and the space run after it literal on classic
+targets; this run replaces that evidence.
 
 ## Method
 
@@ -37,33 +49,18 @@ verdict.
 
 The control transcript matches jDAAD's control transcript (HTML build of
 the same source, tests/parser/jleg.js) on all 37 steps once the prompt
-lines are removed. A second pair of runs gave the same 23 failing steps.
+lines are removed, and is unchanged from the first run.
 
 ## Results
 
 `results.md` holds the full per-step table (control text, test text).
-
-| Steps | Result | What differs |
-|-------|--------|--------------|
-| 1-2 (LOOK, I) | PASS | - |
-| 3-5, 7, 9, 10 (EXAMINE lamp, key, coins, scroll, ring, lantern) | FAIL | "You examine  closely." (name empty) |
-| 6 (EXAMINE MAP) | PASS | - |
-| 8 (EXAMINE CLOAK) | FAIL | "You examine cloak with a frayed hem closely." (first word "woollen" lost) |
-| 11-16, 19-22, 25-26, 30, 35 (GET/DROP/WEAR/REMOVE of objects 0, 1, 2, 4, 6, 7) | FAIL | "I've dropped the .", "I now have the .", "I've removed the .", "I'm now wearing the ." |
-| 17-18 (DROP/GET MAP) | PASS | - |
-| 23-24 (REMOVE/WEAR CLOAK) | FAIL | "the cloak with a frayed hem" (first word lost) |
-| 27 (PAIRS) | PASS | both SM, MTX and location pair members print |
-| 28 (EMPTY) | PASS | markers only, nothing between |
-| 29 (TEST) | PASS | - |
-| 31-34, 36 (LOOK, NORTH, LOOK, SOUTH, LOOK) | PASS | duplicate locations 1 and 2 both print |
-| 37 (I) | PASS | final inventory clean, no corruption |
-
-Inventory listing (LISTAT, steps 2 and 37) prints every compressed
-object text whole, including the single-reference texts 0, 2 and 7 and
-the More... pause inside the list. Only the '_' article skip loses
-text: it appears to look for the first literal space byte in the
-stored text, so a space inside a token reference is skipped over (see
-`../README.md`).
+37 steps, 0 FAIL. More... pauses at steps 2, 27 (two), 29, 31, 34 and
+37 in both builds. Object names print whole in the inventory (steps 2,
+37), in EXAMINE ("You examine lamp closely.", "You examine woollen
+cloak with a / frayed hem closely.") and through '_' in GET, DROP, WEAR
+and REMOVE ("I've dropped the lamp.", "I'm now wearing the woollen /
+cloak with a frayed hem."). PAIRS, EMPTY, TEST, the duplicate locations
+and the final LOOK and I match the control.
 
 ## Files
 

@@ -53,15 +53,21 @@ Classic legs use the same commands with `ZX 48K`, `CPC`, `MSX` or
 
 ## Assertions
 
-`assert_stim.py test.ddb ctl.ddb [--base N]` exits 0 only when all pass.
-The base address is derived from the end-address word at 0x20 minus the
-file length unless `--base` is given.
+`assert_stim.py test.ddb ctl.ddb [--base N] [--classic|--nextdaad]`
+exits 0 only when all pass. The base address is derived from the
+end-address word at 0x20 minus the file length unless `--base` is given.
+The mode comes from the machine id in the high nibble of header byte 1
+(0x0C NEXTDAAD, anything else classic) unless a switch is given.
 
 Test DDB:
 - an object text holds a token reference
-- an object text starts with a reference
+- NEXTDAAD: an object text starts with a reference
+- NEXTDAAD: an object text is a single reference
+- classic, per object text (article-strip rule): the first stored byte
+  is literal, no reference before the end of the space run after the
+  first word, no reference in a text with no space, no referenced token
+  containing '.'
 - an object text ends with a reference (last byte before 0x0A)
-- an object text is a single reference
 - a 12-byte token (the selector maximum) lands in an object text
 - each duplicate pair shares one lookup word
 - every text in all four tables expands to the control's text
@@ -71,7 +77,7 @@ shares a lookup word.
 
 ## Results (ndrc 0.4.0, 2026-10-27)
 
-All six targets PASS, control clean.
+All six targets PASS, control clean (first run, NDRC b6611c2).
 
 | Target | test.ddb | ctl.ddb |
 |--------|---------:|--------:|
@@ -79,8 +85,12 @@ All six targets PASS, control clean.
 | ZX 48K, CPC, MSX | 2236 | 2679 |
 | PC VGA256, HTML | 2308 | 2772 |
 
-Object texts in the test build (NEXTDAAD; classic targets identical shape,
-token numbers shifted by the '_'/'@' exclusion):
+At NDRC 4b2f776 (classic article-strip rule, table most-referenced
+first) NEXTDAAD stays 2228 with the same shape below; ZX 48K, CPC and
+MSX give 2240 and PC VGA256 2320, all PASS in classic mode (see
+`classic/README.md`).
+
+Object texts in the test build (NEXTDAAD):
 - 0 and 7: single reference ("a lamp"), one shared copy
 - 2: single reference ("some coins")
 - 1: three references ("th", "e ", "key") - starts and ends with one

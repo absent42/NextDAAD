@@ -17,15 +17,15 @@ a woollen cloak with a frayed
 hem
 a silver ring from the old king
 == 03 EXAMINE LAMP
-You examine  closely.
+You examine lamp closely.
 It is a lamp. Not the key, not
 some coins, just a lamp.
 == 04 EXAMINE KEY
-You examine  closely.
+You examine key closely.
 It is the key. Not a lamp, not
 some coins, just the key.
 == 05 EXAMINE COINS
-You examine  closely.
+You examine coins closely.
 It is some coins. Not a lamp,
 not the key, just some coins.
 == 06 EXAMINE MAP
@@ -34,35 +34,37 @@ river valley closely.
 The map shows the course of the
 winding river valley.
 == 07 EXAMINE SCROLL
-You examine  closely.
+You examine scroll sealed by the
+old king closely.
 The scroll is sealed by the old
 king.
 == 08 EXAMINE CLOAK
-You examine cloak with a frayed
-hem closely.
+You examine woollen cloak with a
+frayed hem closely.
 The cloak with a frayed hem is
 warm.
 == 09 EXAMINE RING
-You examine  closely.
+You examine silver ring from the
+old king closely.
 The ring bears the seal of the
 old king.
 == 10 EXAMINE LANTERN
-You examine  closely.
+You examine lamp closely.
 @ is here, with some coins.
 A second lamp, the twin of a
 lamp.
 == 11 DROP LAMP
-I've dropped the .
+I've dropped the lamp.
 == 12 GET LAMP
-I now have the .
+I now have the lamp.
 == 13 DROP KEY
-I've dropped the .
+I've dropped the key.
 == 14 GET KEY
-I now have the .
+I now have the key.
 == 15 DROP COINS
-I've dropped the .
+I've dropped the coins.
 == 16 GET COINS
-I now have the .
+I now have the coins.
 == 17 DROP MAP
 I've dropped the map of the
 winding river valley.
@@ -70,23 +72,27 @@ winding river valley.
 I now have the map of the
 winding river valley.
 == 19 DROP SCROLL
-I've dropped the .
+I've dropped the scroll sealed
+by the old king.
 == 20 GET SCROLL
-I now have the .
+I now have the scroll sealed by
+the old king.
 == 21 DROP LANTERN
-I've dropped the .
+I've dropped the lamp.
 == 22 GET LANTERN
-I now have the .
+I now have the lamp.
 == 23 REMOVE CLOAK
-I've removed the cloak with a
-frayed hem.
+I've removed the woollen cloak
+with a frayed hem.
 == 24 WEAR CLOAK
-I'm now wearing the cloak with a
-frayed hem.
+I'm now wearing the woollen
+cloak with a frayed hem.
 == 25 REMOVE RING
-I've removed the .
+I've removed the silver ring
+from the old king.
 == 26 WEAR RING
-I'm now wearing the .
+I'm now wearing the silver ring
+from the old king.
 == 27 PAIRS
 Sysmess pair:
 SM pair: this system text is
@@ -122,7 +128,7 @@ some coins.
 First the winding river valley,
 then the old king.
 == 30 DROP COINS
-I've dropped the .
+I've dropped the coins.
 == 31 LOOK
 A long white corridor of the
 winding river valley. Exits
@@ -148,7 +154,7 @@ Location number 1
 I can also see:
 some coins
 == 35 GET COINS
-I now have the .
+I now have the coins.
 == 36 LOOK
 A long white corridor of the
 winding river valley. Exits
