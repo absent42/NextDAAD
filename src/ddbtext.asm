@@ -162,7 +162,7 @@ msg_seek:
     ld h, a
     ld a, $80                   ; format 2: empty bit buffer (huffdec.asm)
     ld (hfBuf), a
-    jp rd_seek                  ; leaves the reader at the message text
+    jp msg_seek_tail            ; leaves the reader at the message text
 
 ; A = next decoded character from the current reader stream, expanding
 ; token references inline. CF set = end of message (decoded $0A).

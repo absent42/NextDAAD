@@ -21,6 +21,14 @@ text2_load:
     pop af
     ret
 
+; msg_seek's tail: HL = text pointer; format 1 file offset, format 2
+; region offset. Same contract as rd_seek (CF clear).
+msg_seek_tail:
+    ld a, (textFormat)
+    or a
+    jp z, rd_seek
+    ; falls into t2_seek
+
 ; HL = region offset. Maps page regionPage + (regionOff + HL) >> 13 (17-bit
 ; sum) via rd_seek_page. Preserves BC, DE; CF clear (rd_seek_page's OR).
 t2_seek:
@@ -179,21 +187,22 @@ t2_next:
     call t2_entry
     jr .intok
 
-; HL = 128 + token number. Seeks its entry; tokRemain = its length.
+; HL = 128 + token number. Seeks its entry via t2_seek (index and entry
+; are region offsets); tokRemain = its length.
 ; Corrupts AF, DE, HL.
 t2_entry:
     add hl, hl
     ld de, (text2Index)
     add hl, de
     dec h                       ; index + 2*(HL-128)
-    call rd_seek
+    call t2_seek
     call rd_next
     ld e, a
     call rd_next
     ld d, a
     ld hl, (text2Block)
     add hl, de
-    call rd_seek
+    call t2_seek
     call rd_next
     ld (tokRemain), a
     ret
