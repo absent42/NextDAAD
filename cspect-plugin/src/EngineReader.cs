@@ -5,7 +5,7 @@ namespace NextDAADDebug
     // Interpreter state through IMachine. Sizes from src/nextdaad.inc (PROC_DEPTH, PREC_SIZE, OBJ_SIZE).
     public sealed class EngineReader
     {
-        public const int DdbPhysical = 0x40000, DdbMax = 0x10000, ProcDepth = 10, PrecSize = 5, ObjSize = 6;
+        public const int DdbPhysical = 0x40000, DdbMax = 0x20000, ProcDepth = 10, PrecSize = 5, ObjSize = 6;
         readonly IMachine m;
         readonly SymbolFile s;
 

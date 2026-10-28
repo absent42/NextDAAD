@@ -122,6 +122,42 @@ namespace NextDAADDebug.Tests
             Assert.Equal("?", new Ddb(img).Message(0));
         }
 
+        // Over-64K layout: part A of length a, then the text region (block at +0, one stream per table).
+        static byte[] RegionImage(int a)
+        {
+            var img = new byte[a + 150];
+            img[0] = 0x83; img[1] = 0xC0; img[2] = 95;
+            img[3] = img[4] = img[5] = img[6] = 1;
+            img[12] = 34; img[14] = 36; img[16] = 38; img[18] = 40;      // obj, loc, msg, sys tables
+            img[32] = (byte)a; img[33] = (byte)(a >> 8);
+            // region offsets of the streams: obj 146, loc 147, msg 148, sys 149
+            img[34] = 146; img[36] = 147; img[38] = 148; img[40] = 149;
+            int r = a;
+            img[r] = (byte)'H'; img[r + 1] = (byte)'2'; img[r + 3] = 2;
+            img[r + 7 + 5] = 0x02; img[r + 7 + 48] = 0x20; img[r + 7 + 64] = 0x22;
+            img[r + 135] = 139; img[r + 137] = 142;
+            img[r + 139] = 2; img[r + 140] = (byte)'x'; img[r + 141] = (byte)'y';
+            img[r + 142] = 2; img[r + 143] = 0x80; img[r + 144] = (byte)'!';
+            img[r + 146] = 0xA0;        // tok0 tok0 end
+            img[r + 147] = 0x60;        // a tok0 end
+            img[r + 148] = 0xC0;        // tok1 end
+            img[r + 149] = 0x50;        // a a end
+            return img;
+        }
+
+        [Theory]
+        [InlineData(0x100)]
+        [InlineData(0xFFF0)]
+        public void Format2TextRegion(int a)
+        {
+            var d = new Ddb(RegionImage(a));
+            Assert.Equal("xyxy", d.ObjectText(0));
+            Assert.Equal("axy", d.Location(0));
+            Assert.Equal("xy!", d.Message(0));
+            Assert.Equal("aa", d.SysMessage(0));
+            Assert.Equal("xy!", d.Token(1));
+        }
+
         [Fact]
         public void Format2CorruptNeverThrows()
         {

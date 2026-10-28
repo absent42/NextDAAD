@@ -52,6 +52,8 @@ namespace NextDAADDebug
         public int NumSysMessages => Byte(6);
         public int NumProcesses => Byte(7);
         int TokensPtr => Word(8);
+        // Format 2: header word 32 = part A length = text region file offset; lookup words and the block are region-relative.
+        int RegionBase => TextFormat == 2 ? Word(32) : 0;
         int ProcList => Word(10);
         int ObjList => Word(12);
         int LocList => Word(14);
@@ -146,7 +148,7 @@ namespace NextDAADDebug
         {
             if (huff != null) return huff;
             var h = huff = new Huff();
-            int blk = TokensPtr;
+            int blk = RegionBase + TokensPtr;
             if (blk < 0 || blk + 7 > b.Length || b[blk] != 'H' || b[blk + 1] != '2') return h;
             bool wide = (b[blk + 2] & 1) != 0;
             int nlen = wide ? 256 : 128, ntok = Word(blk + 3), lens = blk + 7, index = lens + nlen;
@@ -197,7 +199,7 @@ namespace NextDAADDebug
             var h = H();
             if (!h.Ok) return "?";
             var sb = new StringBuilder();
-            long bit = (long)ptr * 8, end = (long)b.Length * 8;
+            long bit = ((long)RegionBase + ptr) * 8, end = (long)b.Length * 8;
             if (ptr < 0) return "?";
             for (int guard = 0; guard < 2048; guard++)
             {
