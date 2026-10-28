@@ -3,7 +3,7 @@
 
 ; --- Version ---
 ; Boot-time version stamp, printed by the DEBUG build only (overlay0.asm msgTitle).
-    DEFINE VERSION_STR "NEXTDAAD V0.12.0"
+    DEFINE VERSION_STR "NEXTDAAD V0.13.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
