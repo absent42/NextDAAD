@@ -200,6 +200,28 @@ DDB_E_FILE      equ 1       ; missing or read error
 DDB_E_SIZE      equ 2       ; over 128K
 DDB_E_HDR       equ 3       ; failed validation
 DDB_E_MACHINE   equ 4       ; built for another target machine
+DDB_E_TEXT2     equ 5       ; text format 2 block refused (huffdec.asm)
+
+; --- Text format 2 (header byte 0 bit 7; block at HDR_TOKENS) ---
+DDB_VER_TEXT2   equ $80     ; header byte 0 bit 7 = format 2 text
+TEXT2_MAGIC     equ 0       ; "H2"
+TEXT2_FLAGS     equ 2       ; bit 0 = 511-symbol alphabet; bits 1-7 zero
+TEXT2_NTOK      equ 3       ; u16 LE, 1..128 or 1..383
+TEXT2_FP        equ 5       ; u16 LE, CRC-16 CCITT (init $FFFF) of the lengths
+TEXT2_LENGTHS   equ 7       ; 128 or 256 bytes, 4-bit length per symbol, low nibble even
+TEXT2_NTOK_MAX0 equ 128
+TEXT2_NTOK_MAX1 equ 383
+HF_MAXLEN       equ 15      ; longest code
+HF_SYM_MAX      equ 256     ; used-symbol list capacity; more is DDB_E_TEXT2
+; text2Err: which format 2 check refused the DDB (0 = none)
+T2E_MAGIC       equ 1
+T2E_FLAGS       equ 2
+T2E_NTOK        equ 3
+T2E_FP          equ 4
+T2E_EOM         equ 5       ; symbol 10 has no code
+T2E_SYM         equ 6       ; a token symbol at or past 128+ntok has a code
+T2E_KRAFT       equ 7       ; lengths over-subscribe a code length
+T2E_BUDGET      equ 8       ; more than HF_SYM_MAX used symbols
 
 ; --- XBN extern binary (authoring-kit/xbn.inc is the authoring side) ---
 XBN_MAX_SIZE    equ $4000    ; one 16K bank, header included
@@ -228,6 +250,7 @@ ERR_BORDER_MISSING  equ 2   ; red
 ERR_BORDER_OVERSIZE equ 3   ; magenta
 ERR_BORDER_BADHDR   equ 6   ; yellow
 ERR_BORDER_MACHINE  equ 5   ; cyan
+ERR_BORDER_TEXT2    equ 4   ; green
 
 ; --- esxDOS API ---
 ESX_GETSETDRV   equ $89

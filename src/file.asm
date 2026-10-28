@@ -103,7 +103,8 @@ esx_filemap:
 ; esx_fchdir lives in main.asm's resident tail (post-anchor).
 
 ; Load GAME.DDB into 8K pages DDB_PAGE_FIRST.. via slot 6.
-; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR or DDB_E_MACHINE.
+; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR, DDB_E_MACHINE or
+; DDB_E_TEXT2.
 ddb_load:
     call data_save
     ld a, $FF
@@ -192,6 +193,7 @@ ddb_load:
     ; LD A,(nn) - the machine test is 2 bytes cheaper than it looks.
     ld hl, (ddbHeader)
     ld a, l
+    and $FF ^ DDB_VER_TEXT2     ; bit 7 = text format 2, tested in text2_load
     sub DDB_VERSION             ; 2 -> 0, 3 -> 1, anything else >= 2
     cp 2                        ; (0/1 wrap high and fail the same way)
     jr nc, .badhdr
@@ -210,8 +212,7 @@ ddb_load:
     ld a, (ddbHeader+2)
     cp DDB_MAGIC
     jr nz, .badhdr
-    xor a                   ; DDB_OK
-    ret
+    jp text2_load           ; DDB_OK, or DDB_E_TEXT2 for a bad format 2 block
 .badhdr:
     ld a, DDB_E_HDR
     ret

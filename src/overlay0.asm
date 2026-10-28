@@ -3702,6 +3702,10 @@ ptrNameExt:   db ".SPR", 0
 msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
 ; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop).
 msgRdStack:    db "NextDAAD: RD STACK - E9", 0
+; ddb_load DDB_E_TEXT2 (main.asm ddb_err_machine).
+msgText2:      db "NextDAAD: DDB text format - E5", 0
+
+    INCLUDE "huffbuild.asm"
 
 
  IFDEF DEBUG

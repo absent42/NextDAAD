@@ -38,9 +38,9 @@ main:
     jr z, .oversize
     dec a
     dec a
-    jp z, ddb_err_machine   ; 4 = DDB_E_MACHINE, tested EXPLICITLY so the
-    ld a, ERR_BORDER_BADHDR ; chain still falls through to bad-header for
-    ld hl, msgBadHdr        ; 3 and for any code the loader never returns.
+    jp p, ddb_err_machine   ; A = code-4: 4 (Z) = DDB_E_MACHINE, 5 = DDB_E_TEXT2;
+    ld a, ERR_BORDER_BADHDR ; the chain still falls through to bad-header for
+    ld hl, msgBadHdr        ; 3.
     jp fatal                ; Its arm lives POST-anchor (resident tail,
                             ; below the INCLUDEs) - everything here is
                             ; pre-anchor and spends the pre-flags pad,
@@ -375,12 +375,15 @@ isr_hook_body:
 .done:
     jp xbn_isr_mmu_restore
 
-; DDB_E_MACHINE arm for the boot dispatch at the top of this file, which
-; is pre-anchor and could not afford the eight bytes. Reached by its
-; JP Z, and ends in fatal(), so nothing returns here.
+; DDB_E_MACHINE and DDB_E_TEXT2 arms for the boot dispatch at the top of
+; this file, which is pre-anchor. Reached by its JP P with Z set for
+; DDB_E_MACHINE; ends in fatal(), so nothing returns here.
 ddb_err_machine:
     ld a, ERR_BORDER_MACHINE
     ld hl, msgWrongMach
+    jp z, fatal                 ; LD keeps Z from the dispatch
+    ld a, ERR_BORDER_TEXT2
+    ld hl, msgText2             ; overlay0 string: fatal_puts maps it
     jp fatal
 
 ; --- XBN dispatch (resident; overlay0 callers would unmap themselves) ---
@@ -1639,6 +1642,8 @@ msgDirData: db " DIR "          ; runs on into dataDirName
     ASSERT msgDirData + 5 == dataDirName
  ENDIF
 dataDirName: db "DATA", 0
+
+    INCLUDE "huffdec.asm"
 
 ; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
 ; static ret table here every call and runs the chain with SP on it, so an
