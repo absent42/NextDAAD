@@ -33,6 +33,7 @@ namespace NextDAADDebug
         readonly byte[] b;
         List<string> tokens;
         List<VocabEntry> vocab;
+        Huff huff;
 
         public Ddb(byte[] image) { b = image ?? new byte[0]; }
 
@@ -40,7 +41,9 @@ namespace NextDAADDebug
         public int Byte(int o) => o >= 0 && o < b.Length ? b[o] : 0;
         public int Word(int o) => Byte(o) | (Byte(o + 1) << 8);
 
-        public int Version => Byte(0);
+        public int Version => Byte(0) & 0x7F;
+        // Byte 0 bit 7: format 2 (Huffman text block at HDR_TOKENS).
+        public int TextFormat => (Byte(0) & 0x80) != 0 ? 2 : 1;
         public int Machine => Byte(1) >> 4;
         public int Language => Byte(1) & 0x0F;
         public int NumObjects => Byte(3);
@@ -62,9 +65,10 @@ namespace NextDAADDebug
         int ObjExtrPtr => Word(30);
 
         public static bool LooksLikeNextDaad(byte[] h) =>
-            h != null && h.Length >= HeaderSize && (h[0] == 2 || h[0] == 3) && (h[1] >> 4) == 0x0C && h[2] == 95;
+            h != null && h.Length >= HeaderSize && ((h[0] & 0x7F) == 2 || (h[0] & 0x7F) == 3) && (h[1] >> 4) == 0x0C && h[2] == 95;
 
         // Token n is the (n+1)th bit-7-terminated string: string 0 is a placeholder (src/overlay0.asm skips n+1).
+        // Format 2: entry n expanded (references resolved one level).
         public string Token(int n)
         {
             if (tokens == null) tokens = ReadTokens();
@@ -86,6 +90,7 @@ namespace NextDAADDebug
 
         List<string> ReadTokens()
         {
+            if (TextFormat == 2) return H().Tokens;
             var list = new List<string>();
             var sb = new StringBuilder();
             int p = TokensPtr, strings = 0, limit = TokensEnd();
@@ -105,6 +110,7 @@ namespace NextDAADDebug
         // Bytes are XOR $FF; $0A ends; >= 128 is a token; $0D is a newline; other controls show as {XX}.
         public string Text(int ptr)
         {
+            if (TextFormat == 2) return Text2(ptr);
             var sb = new StringBuilder();
             int p = ptr;
             for (int guard = 0; guard < 2048 && p >= 0 && p < b.Length; guard++)
@@ -115,6 +121,99 @@ namespace NextDAADDebug
                 if (c == 0x0D) { sb.Append('\n'); continue; }
                 if (c < 32) { sb.Append('{').Append(c.ToString("X2")).Append('}'); continue; }
                 sb.Append((char)c);
+            }
+            return sb.ToString();
+        }
+
+        static void AppendChar(StringBuilder sb, int c)
+        {
+            if (c == 0x0D) sb.Append('\n');
+            else if (c < 32) sb.Append('{').Append(c.ToString("X2")).Append('}');
+            else sb.Append((char)c);
+        }
+
+        // Format 2 text block: "H2", flags, ntok, fingerprint, 4-bit lengths, u16 index, entries.
+        sealed class Huff
+        {
+            public bool Ok;
+            public int Symbols;
+            public readonly int[] First = new int[16], Count = new int[16], Base = new int[16];
+            public int[] List = new int[0];
+            public List<string> Tokens = new List<string>();
+        }
+
+        Huff H()
+        {
+            if (huff != null) return huff;
+            var h = huff = new Huff();
+            int blk = TokensPtr;
+            if (blk < 0 || blk + 7 > b.Length || b[blk] != 'H' || b[blk + 1] != '2') return h;
+            bool wide = (b[blk + 2] & 1) != 0;
+            int nlen = wide ? 256 : 128, ntok = Word(blk + 3), lens = blk + 7, index = lens + nlen;
+            if (ntok > (wide ? 383 : 128) || index + 2 * ntok > b.Length) return h;
+            h.Symbols = wide ? 511 : 256;
+            var len = new int[h.Symbols];
+            for (int s = 0; s < h.Symbols; s++) { len[s] = (b[lens + (s >> 1)] >> ((s & 1) * 4)) & 0x0F; h.Count[len[s]]++; }
+            h.Count[0] = 0;
+            var list = new List<int>();
+            int code = 0;
+            for (int l = 1; l < 16; l++)
+            {
+                h.First[l] = code;
+                h.Base[l] = list.Count;
+                for (int s = 0; s < h.Symbols; s++) if (len[s] == l) list.Add(s);
+                code = (code + h.Count[l]) << 1;
+            }
+            h.List = list.ToArray();
+            var raw = new List<byte[]>();
+            for (int k = 0; k < ntok; k++)
+            {
+                int e = blk + Word(index + 2 * k), n = Byte(e);
+                if (e < 0 || e + 1 + n > b.Length) return h;
+                var r = new byte[n];
+                Array.Copy(b, e + 1, r, 0, n);
+                raw.Add(r);
+            }
+            var sb = new StringBuilder();
+            foreach (var r in raw)
+            {
+                sb.Clear();
+                foreach (byte c in r)
+                {
+                    if (c < 128) { sb.Append((char)c); continue; }
+                    int t = c - 128;
+                    if (t >= raw.Count) { sb.Append('?'); continue; }
+                    foreach (byte d in raw[t]) sb.Append(d < 128 ? (char)d : '?');
+                }
+                h.Tokens.Add(sb.ToString());
+            }
+            h.Ok = true;
+            return h;
+        }
+
+        // MSB-first canonical Huffman stream; symbol 10 ends; 128+k is token k.
+        string Text2(int ptr)
+        {
+            var h = H();
+            if (!h.Ok) return "?";
+            var sb = new StringBuilder();
+            long bit = (long)ptr * 8, end = (long)b.Length * 8;
+            if (ptr < 0) return "?";
+            for (int guard = 0; guard < 2048; guard++)
+            {
+                int code = 0, sym = -1;
+                for (int l = 1; l < 16; l++)
+                {
+                    if (bit >= end) return sb.Append('?').ToString();
+                    code = (code << 1) | ((b[bit >> 3] >> (7 - (int)(bit & 7))) & 1);
+                    bit++;
+                    int i = code - h.First[l];
+                    if (i >= 0 && i < h.Count[l]) { sym = h.List[h.Base[l] + i]; break; }
+                }
+                if (sym < 0) return sb.Append('?').ToString();
+                if (sym == 0x0A) break;
+                if (sym >= 128) { foreach (char c in Token(sym - 128)) AppendChar(sb, c); continue; }
+                AppendChar(sb, sym);
             }
             return sb.ToString();
         }

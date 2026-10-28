@@ -88,6 +88,55 @@ namespace NextDAADDebug.Tests
             Assert.Equal("the !", new Ddb(img).Message(0));
         }
 
+        // Format 2: codes 10=00 'a'=01 tok0=10 tok1=11; tok1 references tok0.
+        static byte[] Format2Image()
+        {
+            var img = new byte[182];
+            img[0] = 0x83; img[1] = 0xC0; img[2] = 95;
+            img[5] = 1;                 // NumMessages
+            img[8] = 34;                // TokensPtr
+            img[16] = 179;              // MsgList
+            img[34] = (byte)'H'; img[35] = (byte)'2'; img[37] = 2;   // flags 0, ntok 2
+            img[41 + 5] = 0x02; img[41 + 48] = 0x20; img[41 + 64] = 0x22;
+            img[169] = 139; img[171] = 142;
+            img[173] = 2; img[174] = (byte)'x'; img[175] = (byte)'y';
+            img[176] = 2; img[177] = 0x80; img[178] = (byte)'!';
+            img[179] = 181;
+            img[181] = 0x78;            // a tok1 tok0 end
+            return img;
+        }
+
+        [Fact]
+        public void Format2Text()
+        {
+            var img = Format2Image();
+            var d = new Ddb(img);
+            Assert.True(Ddb.LooksLikeNextDaad(img));
+            Assert.Equal(2, d.TextFormat);
+            Assert.Equal(3, d.Version);
+            Assert.Equal(2, d.TokenCount);
+            Assert.Equal("xy!", d.Token(1));
+            Assert.Equal("?", d.Token(2));
+            Assert.Equal("axy!xy", d.Message(0));
+            img[34] = (byte)'X';
+            Assert.Equal("?", new Ddb(img).Message(0));
+        }
+
+        [Fact]
+        public void Format2CorruptNeverThrows()
+        {
+            var rnd = new Random(77);
+            for (int k = 0; k < 2000; k++)
+            {
+                var img = Format2Image();
+                for (int i = 0; i < 4; i++) img[rnd.Next(34, img.Length)] = (byte)rnd.Next(256);
+                if (k % 3 == 0) Array.Resize(ref img, rnd.Next(34, img.Length));
+                var d = new Ddb(img);
+                d.Message(0); d.Text(rnd.Next(-5, 300));
+                for (int n = -1; n < 400; n++) d.Token(n);
+            }
+        }
+
         [Fact]
         public void Vocabulary()
         {
