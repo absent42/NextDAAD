@@ -55,6 +55,7 @@
 #   -Text2Xmb            sd\TEXT2X\    NEST4 -nxtext DDB with the -auto-tokens 0.XMB (expect E5 at READ)
 #   -Text2XmbPart        sd\TEXT2X2\   NDPARTA (format 1) + root 0.XMB, GAME2.DDB = NEST4 -nxtext, no
 #                                      PART2\ (part 2's READ falls back to the root 0.XMB: expect E5)
+#   -Text2XmbFp          sd\TEXT2X3\   NEST4 -nxtext DDB + its 0.XMB, "X2" kept, fingerprint XORed (expect E5 at READ)
 #   (the -Text2* legs need an NDRC with -nxtext, 0.4.0 or later:
 #    set NEXTDAAD_NDRC=D:\NDRC\ndrc.exe - the kit's ndrc lacks it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
@@ -415,7 +416,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -452,7 +453,7 @@ if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
         'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad',
-        'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb', 'Text2XmbPart'
+        'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb', 'Text2XmbPart', 'Text2XmbFp'
     ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
     if ($otherLegSwitches.Count -gt 0) {
         throw "-IntroMusic was given with -$($otherLegSwitches -join ' -') but not -Intro - that leg switch picks a different leg, so the combination is ambiguous. Pass -Intro explicitly, or drop the other switch."
@@ -508,6 +509,7 @@ if ($Text2Nest)        { $legName = 'TEXT2N' }
 if ($Text2NestCtl)     { $legName = 'TEXT2NC' }
 if ($Text2Xmb)         { $legName = 'TEXT2X' }
 if ($Text2XmbPart)     { $legName = 'TEXT2X2' }
+if ($Text2XmbFp)       { $legName = 'TEXT2X3' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -528,7 +530,7 @@ function Reset-LegDir {
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD',
-               'TEXT2WC', 'TEXT2N', 'TEXT2NC', 'TEXT2X', 'TEXT2X2')
+               'TEXT2WC', 'TEXT2N', 'TEXT2NC', 'TEXT2X', 'TEXT2X2', 'TEXT2X3')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -3214,7 +3216,7 @@ $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (
 # OBJVERIF3.DSF has more prose, enough for the 383-token alphabet.
 # NEST4.DSF (reader nesting, XMESSAGE) compiles in its own folders: ndrc
 # writes 0.XMB beside the DDB, one per format.
-$text2Any = $Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad -or $Text2WideCtl -or $Text2Nest -or $Text2NestCtl -or $Text2Xmb -or $Text2XmbPart
+$text2Any = $Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad -or $Text2WideCtl -or $Text2Nest -or $Text2NestCtl -or $Text2Xmb -or $Text2XmbPart -or $Text2XmbFp
 if ($text2Any) {
     $t2Work = Join-Path $root 'tests\out\text2-work'
     Remove-Item $t2Work -Recurse -Force -ErrorAction SilentlyContinue
@@ -3281,6 +3283,11 @@ if ($text2Any) {
     if ($n4Xmb[0] -ne [byte][char]'X' -or $n4Xmb[1] -ne [byte][char]'2') { throw "nest4-nx.xmb: no X2 header" }
     & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\nest4-nx.ddb" "$root\tests\out\nest4-tok.ddb" --xmb "$root\tests\out\nest4-nx.xmb" "$root\tests\out\nest4-tok.xmb" --offs 0
     if ($LASTEXITCODE -ne 0) { throw "nest4: format 2 texts differ from the -auto-tokens control" }
+    # -Text2XmbFp: "X2" intact, fingerprint word (bytes 2-3) XORed
+    $n4Bad = [byte[]]$n4Xmb.Clone()
+    $n4Bad[2] = [byte]($n4Bad[2] -bxor 0xFF)
+    $n4Bad[3] = [byte]($n4Bad[3] -bxor 0xFF)
+    [System.IO.File]::WriteAllBytes("$root\tests\out\nest4-nx-badfp.xmb", $n4Bad)
 
     # -Text2Bad: one patched copy per t2_build refusal (T2E_* in nextdaad.inc).
     function Get-Text2Crc([byte[]]$b, [int]$off, [int]$n) {
@@ -5762,6 +5769,11 @@ if ($legName -eq 'TEXT2X2') {
     Copy-Item "$root\tests\out\nest4-nx.ddb" "$leg\GAME2.DDB" -Force
     "staged NDPARTA (format 1) + its 0.XMB, nest4-nx.ddb -> sd\$legName\GAME2.DDB, no PART2\"
 }
+if ($legName -eq 'TEXT2X3') {
+    Copy-Item "$root\tests\out\nest4-nx.ddb" "$leg\GAME.DDB" -Force
+    Copy-Item "$root\tests\out\nest4-nx-badfp.xmb" "$leg\0.XMB" -Force
+    "staged nest4-nx.ddb + nest4-nx-badfp.xmb -> sd\$legName\GAME.DDB + 0.XMB"
+}
 if ($legName -eq 'TEXT2BAD') {
     Copy-Item (Join-Path $t2BadDir 'MAGIC.DDB') "$leg\GAME.DDB" -Force
     foreach ($v in $t2BadSet) {
@@ -5836,6 +5848,7 @@ elseif ($legName -eq 'TEXT2WC') { "active: objverif3 format 1 control (-auto-tok
 elseif ($legName -eq 'TEXT2N') { "active: nest4 text format 2 (-nxtext) + format 2 0.XMB" }
 elseif ($legName -eq 'TEXT2NC') { "active: nest4 format 1 control (-auto-tokens) + its 0.XMB" }
 elseif ($legName -eq 'TEXT2X2') { "active: NDPARTA format 1 -> part 2 NEST4 format 2 with only the root 0.XMB - READ in part 2 must give E5 (text2Err 8)" }
+elseif ($legName -eq 'TEXT2X3') { "active: nest4 text format 2 with its 0.XMB, fingerprint XORed - READ must give E5 (text2Err 8)" }
 elseif ($legName -eq 'TEXT2X') { "active: nest4 text format 2 with the format 1 0.XMB - READ must give E5 (text2Err 8)" }
 elseif ($legName -eq 'TEXT2BAD') { "active: text2bad - one card per refusal in sd\TEXT2BAD\<name>\, each boots to E5" }
 elseif ($BigDdbTok) { "active: bigddb-autotok ($bigTokLen bytes, past the 31744 classic ceiling, per-game token table)" }

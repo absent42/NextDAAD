@@ -73,5 +73,14 @@
    "result": "RECORDED",
    "evidence": "reader/timing_release.json"
   }
+ ],
+ "xmb_fp_refused": [
+  {
+   "test": "xmb_fp_refused LEGT2X3",
+   "expect": "boots; READ -> E5 screen, text2Err 8",
+   "got": "boot seen, XMB fp 6A56 vs text2Fp 95A9, row0 'NextDAAD: DDB text format - E5', text2Err 8",
+   "result": "PASS",
+   "evidence": "reader/TEXT2X3_release/"
+  }
  ]
 }

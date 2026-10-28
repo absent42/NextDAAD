@@ -1,7 +1,8 @@
 """Task 6 reader legs on CSpect 4.3 over MCP (port 23456).
 
 python tests/text2/drive_cspect.py TEST [...]
-Tests: objverif_walk, nest4_walk, xmb_walk, xmb_mismatch_refused, timing,
+Tests: objverif_walk, nest4_walk, xmb_walk, xmb_mismatch_refused,
+xmb_fp_refused, timing,
 tools (print the MCP tool list). Each leg is one CSpect launch, killed by
 PID. Walk screens (tilemap text per step, PNG at the end of each step)
 go to tests/text2/reader/<LEG>/; results.md is rewritten from all
@@ -220,6 +221,28 @@ def t_mismatch():
              'evidence': 'reader/TEXT2X%s/' % TAG}]
 
 
+def t_fp_mismatch():
+    """Card sd\\LEGT2X3: NEST4 format 2 + its own 0.XMB, "X2" kept, fingerprint XORed."""
+    sym = symbols()
+    L = Leg('LEGT2X3')
+    try:
+        st = L.walk(['READ'], 'TEXT2X3' + TAG)
+        L.m.call('pause')
+        err = L.m.mem(sym['TEXT2ERR'], 1)[0]
+        fp = L.m.mem(sym['TEXT2FP'], 2)
+        r = rows(L.m, 2)
+    finally:
+        L.close()
+    hdr = open(os.path.join(ROOT, 'sd', 'LEGT2X3', '0.XMB'), 'rb').read(4)
+    booted = any('NEST4' in x for x in st[0]['rows'] or []) and 'NextDAAD' not in st[0]['rows'][0]
+    ok = booted and hdr[:2] == b'X2' and list(hdr[2:]) != fp and (
+        r[0].startswith('NextDAAD: DDB text format - E5') and err == 8)
+    return [{'test': 'xmb_fp_refused LEGT2X3', 'expect': 'boots; READ -> E5 screen, text2Err 8',
+             'got': 'boot %s, XMB fp %02X%02X vs text2Fp %02X%02X, row0 %r, text2Err %d' % (
+                 'seen' if booted else 'MISSING', hdr[3], hdr[2], fp[1], fp[0], r[0], err),
+             'result': 'PASS' if ok else 'FAIL', 'evidence': 'reader/TEXT2X3%s/' % TAG}]
+
+
 def regs_of(g):
     import re
     r = {k: int(v, 16) for k, v in re.findall(r"\b(AF|BC|DE|HL|SP|PC) \$([0-9A-F]{4})", g)}
@@ -341,7 +364,7 @@ def t_tools():
 
 
 TESTS = {'objverif_walk': t_objverif, 'nest4_walk': t_nest4, 'xmb_walk': t_xmb,
-         'xmb_mismatch_refused': t_mismatch, 'xmb_part_fallback': t_part_fallback, 'timing': t_timing, 'f1_walks': t_f1_walks,
+         'xmb_mismatch_refused': t_mismatch, 'xmb_fp_refused': t_fp_mismatch, 'xmb_part_fallback': t_part_fallback, 'timing': t_timing, 'f1_walks': t_f1_walks,
          'f1_identity': t_f1_identity, 'tools': t_tools}
 
 

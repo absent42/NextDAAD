@@ -9,6 +9,7 @@ Interpreter: Release build (build.ps1 -Release)
 | nest4_walk TEXT2N vs TEXT2NC | 32 steps, screens equal per step | equal (10 More... prompts answered) | PASS | reader/TEXT2N_release/, reader/TEXT2NC_release/ |
 | xmb_walk TEXT2N vs TEXT2NC | 3 steps, screens equal per step | equal (3 More... prompts answered) | PASS | reader/TEXT2N_xmb_release/, reader/TEXT2NC_xmb_release/ |
 | xmb_mismatch_refused TEXT2X | LOOK plays; READ -> E5 screen, text2Err 8 | row0 'NextDAAD: DDB text format - E5' text2Err 8 | PASS | reader/TEXT2X_release/ |
+| xmb_fp_refused LEGT2X3 | boots; READ -> E5 screen, text2Err 8 | boot seen, XMB fp 6A56 vs text2Fp 95A9, row0 'NextDAAD: DDB text format - E5', text2Err 8 | PASS | reader/TEXT2X3_release/ |
 | timing STORY (MESSAGE 48) print_msg | recorded, format 2 vs format 1 (311 lines x 64 us per frame) | TEXT2N [33.09, 33.09, 33.09] ms; TEXT2NC [53.31, 53.31, 53.31] ms | RECORDED | reader/timing_release.json |
 | f1_identity TEXT2C _base84c43e3 vs _release | format 1 screens equal per step (37 steps) | equal | PASS | reader/TEXT2C_f1_base84c43e3/, reader/TEXT2C_f1_release/ |
 | f1_identity TEXT2WC _base84c43e3 vs _release | format 1 screens equal per step (37 steps) | equal | PASS | reader/TEXT2WC_f1_base84c43e3/, reader/TEXT2WC_f1_release/ |
