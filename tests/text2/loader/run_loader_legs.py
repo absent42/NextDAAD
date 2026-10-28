@@ -2,7 +2,7 @@
 format 2 cells and tables, compare with tests/text2/t2model.py, screenshot.
 
 python tests/text2/loader/run_loader_legs.py [card ...]   (default: all)
-Cards: TEXT2, TEXT2C, TEXT2BAD/<name>. One CSpect at a time, killed by PID.
+Cards: TEXT2, TEXT2W, TEXT2C, TEXT2BAD/<name>. One CSpect at a time, killed by PID.
 Writes results.md and the screenshots beside this file.
 """
 import json, os, re, subprocess, sys, time, urllib.request, base64
@@ -16,7 +16,7 @@ CSPECT = r'D:\ZXNextDev\cspect\CSpect.exe'
 NEX = ROOT + r'\build\nextdaad.nex'
 URL = 'http://127.0.0.1:23456/mcp'
 TAG = os.environ.get('T5_TAG', '')     # e.g. _release: separate shots/results
-BAD = ['MAGIC', 'FLAGS', 'NTOK', 'FP', 'EOM', 'SYM', 'KRAFT', 'BUDGET']
+BAD = ['MAGIC', 'FLAGS', 'NTOK', 'FP', 'EOM', 'SYM', 'KRAFT']
 
 
 class Mcp:
@@ -110,7 +110,7 @@ def run_card(card, sym, log):
         res['shot'] = shot
         m.call('pause')
         base = sym['TEXTFORMAT']
-        n = sym['HFSYM'] + 256 - base
+        n = sym['HFSYM'] + 511 - base          # HF_SYM_MAX
         cells = m.mem(base, n)
 
         def at(name, k=1):
@@ -152,7 +152,7 @@ def run_card(card, sym, log):
 
 
 def main():
-    cards = sys.argv[1:] or ['TEXT2', 'TEXT2C'] + ['TEXT2BAD\\' + b for b in BAD]
+    cards = sys.argv[1:] or ['TEXT2', 'TEXT2W', 'TEXT2C'] + ['TEXT2BAD\\' + b for b in BAD]
     sym = symbols()
     log, results = [], []
     for c in cards:

@@ -1,0 +1,477 @@
+; OBJVERIF3 - OBJVERIF plus more unreachable prose (MTX 28-87) so ndrc -nxtext
+; picks the 383-token alphabet; every reachable text and the walk are unchanged.
+;
+; OBJVERIF - compressed object texts and shared duplicate texts.
+;
+; BLANK_EN template shape (DAAD V2, English). Plain DAAD condacts only,
+; 7-bit ASCII text, so it compiles for NEXTDAAD and the classic targets.
+;
+; Stimuli (byte-asserted by assert_stim.py):
+;   object texts carrying token references: one starting with a token,
+;   one ending with one, one a single token, one holding a 12-byte token;
+;   articles "a lamp", "the key", "some coins";
+;   '_' messages (EXAMINE, SM36-SM39) and one '@' message;
+;   duplicate pairs: OTX 0/7, STX 63/64, MTX 23/24, LTX 1/2, empty MTX 25/26.
+; Window is 32x10 so More... fires inside the inventory list.
+
+#define fDark               0
+#define fObjectsCarried     1
+#define fDarkF              28
+#define fGFlags             29
+#define fScore              30
+#define fTurns              31
+#define fTurnsHi            32
+#define fVerb               33
+#define fNoun               34
+#define fAdject1            35
+#define fAdverb             36
+#define fMaxCarr            37
+#define fPlayer             38
+#define fPrep               43
+#define fNoun2              44
+#define fAdject2            45
+#define fCPronounNoun       46
+#define fCPronounAdject     47
+#define fTimeout            48
+#define fTimeoutFlags       49
+#define fDoallObjNo         50
+#define fRefObject          51
+#define fStrength           52
+#define fObjFlags           53
+
+#define TIMEOUT   87
+
+
+/CTL
+_
+
+
+;------------------------------------------------------------------------------
+/VOC
+
+N       2       noun
+NORTH   2       noun
+S       3       noun
+SOUTH   3       noun
+
+I       14      noun
+INVEN   14      noun
+
+LAMP    50      noun
+KEY     51      noun
+COINS   52      noun
+MAP     53      noun
+SCROL   54      noun
+CLOAK   55      noun
+RING    56      noun
+LANTE   57      noun
+
+GET     20      verb
+TAKE    20      verb
+DROP    21      verb
+REMOV   22      verb
+WEAR    23      verb
+LOOK    30      verb
+L       30      verb
+EXAMI   32      verb
+X       32      verb
+PAIRS   33      verb
+EMPTY   34      verb
+TEST    35      verb
+
+AND     2       conjugation
+THEN    2       conjugation
+
+
+;------------------------------------------------------------------------------
+/STX
+/0 "It's too dark to see anything."
+/1 "I can also see: "
+/2 "#nWhat now?"
+/3 "#nWhat next?"
+/4 "#nWhat should I do now?"
+/5 "#nWhat should I do next?"
+/6 "#nI was not able to understand any of that.  Please try again."
+/7 "#nI can't go in that direction."
+/8 "I can't do that.#n"
+/9 "I have with me:#n"
+/10 "I am wearing:#n"
+/11 ""
+/12 "Are you sure? "
+/13 "Would you like another go? "
+/14 ""
+/15 "OK.#n"
+/16 "Press any key to continue.#n"
+/17 ""
+/18 ""
+/19 ""
+/20 ""
+/21 ""
+/22 ""
+/23 "I'm not wearing one of those.#n"
+/24 "I can't.  I'm wearing the _."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 "#n>"
+/34 ""
+/35 "#nTime passes...#n"
+/36 "I now have the _.#n"
+/37 "I'm now wearing the _.#n"
+/38 "I've removed the _.#n"
+/39 "I've dropped the _.#n"
+/40 "I can't wear the _.#n"
+/41 "I can't remove the _.#n"
+/42 "I can't remove the _.  My hands are full.#n"
+/43 "The _ weighs too much for me.#n"
+/44 "#nThe _ is in the "
+/45 "The _ isn't in the "
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _.#n"
+/50 "I'm not wearing the _.#n"
+/51 ".#n"
+/52 "There isn't one of those in the "
+/53 "Nothing.#n"
+/54 "T"
+/55 "D"
+/56 "Drive not ready - press any key to retry.#n"
+/57 "I/O Error.#n"
+/58 "Disc or Directory may be full."
+/59 "Invalid filename."
+/60 "Type in name of file:"
+/61 "Start tape.#n"
+/62 "Tape or Disc?"
+/63 "SM pair: this system text is stored once.#n"
+/64 "SM pair: this system text is stored once.#n"
+
+
+;------------------------------------------------------------------------------
+/MTX
+/0 ""
+/1 "OBJVERIF - compressed object texts."
+/2 "You examine _ closely."
+/3 "@ is here, with some coins."
+/4 "It is a lamp. Not the key, not some coins, just a lamp."
+/5 "It is the key. Not a lamp, not some coins, just the key."
+/6 "It is some coins. Not a lamp, not the key, just some coins."
+/7 "The map shows the course of the winding river valley."
+/8 "The scroll is sealed by the old king."
+/9 "The cloak with a frayed hem is warm."
+/10 "The ring bears the seal of the old king."
+/11 "A second lamp, the twin of a lamp."
+/12 "Some coins, the key and a lamp lie by the winding river valley."
+/13 "The old king hid some coins and the key in the winding river valley."
+/14 "Look for a lamp, the key and some coins."
+/15 "Then a lamp, then the key, then some coins."
+/16 "First the winding river valley, then the old king."
+/17 "Sysmess pair:"
+/18 "Message pair:"
+/19 "Empty pair follows:"
+/20 "Empty pair done."
+/21 "Location pair:"
+/22 "Pairs done."
+/23 "MTX pair: this message text is stored once."
+/24 "MTX pair: this message text is stored once."
+/25 ""
+/26 ""
+/27 "Location number "
+/28 "The river bends east below the old mill, where the water runs slow and brown over the stones."
+/29 "A narrow path climbs from the valley floor through a wood of beech and holly towards the ridge."
+/30 "Rain has fallen all night and the track is soft underfoot, the ruts filled with cold grey water."
+/31 "Beyond the gate the fields open out, green and wet, with a line of willows marking the stream."
+/32 "The farmhouse stands empty, its shutters closed and its chimney cold, the yard grown over with nettles."
+/33 "From the top of the hill you can see the whole valley laid out below, the river shining in the sun."
+/34 "An old stone bridge crosses the water here, its arches low and its parapet worn smooth by many hands."
+/35 "The wind comes down from the moor in long gusts, bending the grass and rattling the dry bracken."
+/36 "A heron stands motionless in the shallows, watching the water for the flicker of a passing fish."
+/37 "The lane runs between high hedges thick with bramble, and the smell of wet earth hangs in the air."
+/38 "Smoke rises from a cottage in the trees, and somewhere a dog is barking at the edge of the wood."
+/39 "The church tower stands above the village roofs, its clock stopped at a quarter past some old hour."
+/40 "Under the trees the light is green and dim, and the only sound is the drip of water from the leaves."
+/41 "A long wall of dry stone follows the slope of the hill, broken here and there where sheep have pushed through."
+/42 "The mill race is silent now, its wheel rotted and still, the water turned aside into the old channel."
+/43 "Mist lies along the valley in the early morning, and the far bank of the river is lost in grey."
+/44 "The road is older than the village and older than the church, and nobody can say who first laid it."
+/45 "In the orchard the apples have fallen and lie rotting in the grass, and wasps drift lazily between them."
+/46 "The inn sign creaks on its iron bracket, the painted swan faded almost to nothing by sun and rain."
+/47 "A cart track leads off to the north, rutted and overgrown, towards the quarry on the far side of the hill."
+/48 "The river bends east below the old mill, where the water runs slow and brown over the stones. A heron stands motionless in the shallows, watching the water for the flicker of a passing fish."
+/49 "A narrow path climbs from the valley floor through a wood of beech and holly towards the ridge. The lane runs between high hedges thick with bramble, and the smell of wet earth hangs in the air."
+/50 "Rain has fallen all night and the track is soft underfoot, the ruts filled with cold grey water. Smoke rises from a cottage in the trees, and somewhere a dog is barking at the edge of the wood."
+/51 "Beyond the gate the fields open out, green and wet, with a line of willows marking the stream. The church tower stands above the village roofs, its clock stopped at a quarter past some old hour."
+/52 "The farmhouse stands empty, its shutters closed and its chimney cold, the yard grown over with nettles. Under the trees the light is green and dim, and the only sound is the drip of water from the leaves."
+/53 "From the top of the hill you can see the whole valley laid out below, the river shining in the sun. A long wall of dry stone follows the slope of the hill, broken here and there where sheep have pushed through."
+/54 "An old stone bridge crosses the water here, its arches low and its parapet worn smooth by many hands. The mill race is silent now, its wheel rotted and still, the water turned aside into the old channel."
+/55 "The wind comes down from the moor in long gusts, bending the grass and rattling the dry bracken. Mist lies along the valley in the early morning, and the far bank of the river is lost in grey."
+/56 "A heron stands motionless in the shallows, watching the water for the flicker of a passing fish. The road is older than the village and older than the church, and nobody can say who first laid it."
+/57 "The lane runs between high hedges thick with bramble, and the smell of wet earth hangs in the air. In the orchard the apples have fallen and lie rotting in the grass, and wasps drift lazily between them."
+/58 "Smoke rises from a cottage in the trees, and somewhere a dog is barking at the edge of the wood. The inn sign creaks on its iron bracket, the painted swan faded almost to nothing by sun and rain."
+/59 "The church tower stands above the village roofs, its clock stopped at a quarter past some old hour. A cart track leads off to the north, rutted and overgrown, towards the quarry on the far side of the hill."
+/60 "Under the trees the light is green and dim, and the only sound is the drip of water from the leaves. The river bends east below the old mill, where the water runs slow and brown over the stones."
+/61 "A long wall of dry stone follows the slope of the hill, broken here and there where sheep have pushed through. A narrow path climbs from the valley floor through a wood of beech and holly towards the ridge."
+/62 "The mill race is silent now, its wheel rotted and still, the water turned aside into the old channel. Rain has fallen all night and the track is soft underfoot, the ruts filled with cold grey water."
+/63 "Mist lies along the valley in the early morning, and the far bank of the river is lost in grey. Beyond the gate the fields open out, green and wet, with a line of willows marking the stream."
+/64 "The road is older than the village and older than the church, and nobody can say who first laid it. The farmhouse stands empty, its shutters closed and its chimney cold, the yard grown over with nettles."
+/65 "In the orchard the apples have fallen and lie rotting in the grass, and wasps drift lazily between them. From the top of the hill you can see the whole valley laid out below, the river shining in the sun."
+/66 "The inn sign creaks on its iron bracket, the painted swan faded almost to nothing by sun and rain. An old stone bridge crosses the water here, its arches low and its parapet worn smooth by many hands."
+/67 "A cart track leads off to the north, rutted and overgrown, towards the quarry on the far side of the hill. The wind comes down from the moor in long gusts, bending the grass and rattling the dry bracken."
+/68 "The river bends east below the old mill, where the water runs slow and brown over the stones. Mist lies along the valley in the early morning, and the far bank of the river is lost in grey."
+/69 "A narrow path climbs from the valley floor through a wood of beech and holly towards the ridge. The road is older than the village and older than the church, and nobody can say who first laid it."
+/70 "Rain has fallen all night and the track is soft underfoot, the ruts filled with cold grey water. In the orchard the apples have fallen and lie rotting in the grass, and wasps drift lazily between them."
+/71 "Beyond the gate the fields open out, green and wet, with a line of willows marking the stream. The inn sign creaks on its iron bracket, the painted swan faded almost to nothing by sun and rain."
+/72 "The farmhouse stands empty, its shutters closed and its chimney cold, the yard grown over with nettles. A cart track leads off to the north, rutted and overgrown, towards the quarry on the far side of the hill."
+/73 "From the top of the hill you can see the whole valley laid out below, the river shining in the sun. The river bends east below the old mill, where the water runs slow and brown over the stones."
+/74 "An old stone bridge crosses the water here, its arches low and its parapet worn smooth by many hands. A narrow path climbs from the valley floor through a wood of beech and holly towards the ridge."
+/75 "The wind comes down from the moor in long gusts, bending the grass and rattling the dry bracken. Rain has fallen all night and the track is soft underfoot, the ruts filled with cold grey water."
+/76 "A heron stands motionless in the shallows, watching the water for the flicker of a passing fish. Beyond the gate the fields open out, green and wet, with a line of willows marking the stream."
+/77 "The lane runs between high hedges thick with bramble, and the smell of wet earth hangs in the air. The farmhouse stands empty, its shutters closed and its chimney cold, the yard grown over with nettles."
+/78 "Smoke rises from a cottage in the trees, and somewhere a dog is barking at the edge of the wood. From the top of the hill you can see the whole valley laid out below, the river shining in the sun."
+/79 "The church tower stands above the village roofs, its clock stopped at a quarter past some old hour. An old stone bridge crosses the water here, its arches low and its parapet worn smooth by many hands."
+/80 "Under the trees the light is green and dim, and the only sound is the drip of water from the leaves. The wind comes down from the moor in long gusts, bending the grass and rattling the dry bracken."
+/81 "A long wall of dry stone follows the slope of the hill, broken here and there where sheep have pushed through. A heron stands motionless in the shallows, watching the water for the flicker of a passing fish."
+/82 "The mill race is silent now, its wheel rotted and still, the water turned aside into the old channel. The lane runs between high hedges thick with bramble, and the smell of wet earth hangs in the air."
+/83 "Mist lies along the valley in the early morning, and the far bank of the river is lost in grey. Smoke rises from a cottage in the trees, and somewhere a dog is barking at the edge of the wood."
+/84 "The road is older than the village and older than the church, and nobody can say who first laid it. The church tower stands above the village roofs, its clock stopped at a quarter past some old hour."
+/85 "In the orchard the apples have fallen and lie rotting in the grass, and wasps drift lazily between them. Under the trees the light is green and dim, and the only sound is the drip of water from the leaves."
+/86 "The inn sign creaks on its iron bracket, the painted swan faded almost to nothing by sun and rain. A long wall of dry stone follows the slope of the hill, broken here and there where sheep have pushed through."
+/87 "A cart track leads off to the north, rutted and overgrown, towards the quarry on the far side of the hill. The mill race is silent now, its wheel rotted and still, the water turned aside into the old channel."
+
+
+;------------------------------------------------------------------------------
+/OTX
+/0 "a lamp"
+/1 "the key"
+/2 "some coins"
+/3 "a map of the winding river valley"
+/4 "a scroll sealed by the old king"
+/5 "a woollen cloak with a frayed hem"
+/6 "a silver ring from the old king"
+/7 "a lamp"
+
+
+;------------------------------------------------------------------------------
+/LTX
+/0 "Boot."
+/1 "A long white corridor of the winding river valley. Exits north and south."
+/2 "A long white corridor of the winding river valley. Exits north and south."
+
+
+;------------------------------------------------------------------------------
+/CON
+/0
+/1
+N 2
+/2
+S 1
+
+
+;------------------------------------------------------------------------------
+/OBJ
+;obj  starts  weight    c w  5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0    noun   adjective
+/0      CARRIED 1       _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    LAMP   _
+/1      CARRIED 1       _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    KEY    _
+/2      CARRIED 1       _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    COINS  _
+/3      CARRIED 1       _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    MAP    _
+/4      CARRIED 1       _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    SCROL  _
+/5      WORN    1       _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    CLOAK  _
+/6      WORN    1       _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    RING   _
+/7      CARRIED 1       _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    LANTE  _
+
+
+;------------------------------------------------------------------------------
+/PRO 0
+
+> _       _     AT      0
+                PROCESS 6
+
+> _       _     WINDOW  0
+                CLEAR   fDarkF
+
+> _       _     WINDOW  1
+                NOTZERO fDarkF
+                SYSMESS 0
+
+> _       _     ZERO    fDarkF
+                DESC    @fPlayer
+
+> _       _     PROCESS 3
+
+> _       _     PROCESS 1
+
+;------------------------------------------------------------------------------
+/PRO 1
+> _       _     PROCESS 4
+
+> _       _     PARSE   0
+                PROCESS 2
+                REDO
+
+> _       _     EQ      fTurns   255
+                PLUS    fTurnsHi 1
+                CLEAR   fTurns
+                SKIP    $noCarry
+
+> _       _     PLUS    fTurns   1
+$noCarry
+> _       _     PROCESS 5
+                ISDONE
+                REDO
+
+> _       _     MOVE    fPlayer
+                RESTART
+
+> _       _     NEWTEXT
+                LT      fVerb    14
+                SYSMESS 7
+                REDO
+
+> _       _     SYSMESS 8
+                REDO
+
+
+;------------------------------------------------------------------------------
+/PRO 2
+> _       _     HASAT TIMEOUT
+                SYSMESS 35
+                DONE
+
+> _       _     SYSMESS 6
+
+;------------------------------------------------------------------------------
+/PRO 3
+> _       _     NEWLINE
+                MES     27
+                PRINT   fPlayer
+                NEWLINE
+
+> _       _     NEWLINE
+                ZERO    fDarkF
+                LISTOBJ
+
+;------------------------------------------------------------------------------
+/PRO 4
+;------------------------------------------------------------------------------
+/PRO 5
+
+> I       _     SYSMESS 9
+                LISTAT  CARRIED
+                SYSMESS 10
+                LISTAT  WORN
+                DONE
+
+> GET     _     AUTOG
+                DONE
+
+> DROP    _     AUTOD
+                DONE
+
+> REMOV   _     AUTOR
+                DONE
+
+> WEAR    _     AUTOW
+                DONE
+
+> LOOK    _     RESTART
+
+> EXAMI   LAMP  WHATO
+                MESSAGE 2
+                MESSAGE 4
+                DONE
+
+> EXAMI   KEY   WHATO
+                MESSAGE 2
+                MESSAGE 5
+                DONE
+
+> EXAMI   COINS WHATO
+                MESSAGE 2
+                MESSAGE 6
+                DONE
+
+> EXAMI   MAP   WHATO
+                MESSAGE 2
+                MESSAGE 7
+                DONE
+
+> EXAMI   SCROL WHATO
+                MESSAGE 2
+                MESSAGE 8
+                DONE
+
+> EXAMI   CLOAK WHATO
+                MESSAGE 2
+                MESSAGE 9
+                DONE
+
+> EXAMI   RING  WHATO
+                MESSAGE 2
+                MESSAGE 10
+                DONE
+
+> EXAMI   LANTE WHATO
+                MESSAGE 2
+                MESSAGE 3
+                MESSAGE 11
+                DONE
+
+> PAIRS   _     MESSAGE 17
+                SYSMESS 63
+                SYSMESS 64
+                MESSAGE 18
+                MESSAGE 23
+                MESSAGE 24
+                MESSAGE 21
+                DESC    1
+                NEWLINE
+                DESC    2
+                NEWLINE
+                MESSAGE 22
+                DONE
+
+> EMPTY   _     MESSAGE 19
+                MES     25
+                MES     26
+                MESSAGE 20
+                DONE
+
+> TEST    _     MESSAGE 12
+                MESSAGE 13
+                MESSAGE 14
+                MESSAGE 15
+                MESSAGE 16
+                DONE
+
+;------------------------------------------------------------------------------
+/PRO 6
+
+> _       _     WINDOW  1
+
+> _       _     WINAT   0        0
+                WINSIZE 10       32
+                CLS
+                MESSAGE 1
+                SET     255
+
+$resetLoop
+> _       _     MINUS   255 1
+                NOTEQ   255  fGFlags
+                CLEAR   @255
+
+> _       _     NOTZERO 255
+                SKIP    $resetLoop
+
+> _       _     RESET
+                LET     fStrength 50
+                LET     fMaxCarr  20
+                SET     fCPronounNoun
+                SET     fCPronounAdject
+                GOTO    1
+
+/END

@@ -7,8 +7,8 @@ mirroring the check order of t2_build.
 import struct, sys
 
 HF_MAXLEN = 15
-HF_SYM_MAX = 256
-T2E = dict(MAGIC=1, FLAGS=2, NTOK=3, FP=4, EOM=5, SYM=6, KRAFT=7, BUDGET=8)
+HF_SYM_MAX = 511
+T2E = dict(MAGIC=1, FLAGS=2, NTOK=3, FP=4, EOM=5, SYM=6, KRAFT=7)
 
 
 def crc16_ccitt(data):
@@ -59,8 +59,7 @@ def t2_model(ddb):
             return {'err': T2E['KRAFT']}
         base += count[L]
         first = (lim << 1) & 0xFFFF
-    if base > HF_SYM_MAX:
-        return {'err': T2E['BUDGET'], 'used': base}
+    assert base <= HF_SYM_MAX            # SYM above leaves at most 511 coded symbols
     syms, hi = [], [0xFFFF] * HF_MAXLEN
     for L in range(1, HF_MAXLEN + 1):
         for s, n in enumerate(lens):

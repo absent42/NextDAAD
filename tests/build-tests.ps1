@@ -47,8 +47,9 @@
 #   -Intro               sd\INTRO\     tests\condacts.dsf + a scripted show (SHOW.NEX launches it)
 #   -Text2               sd\TEXT2\     tests\text2\OBJVERIF2.DSF -nxtext (text format 2, header 0x82)
 #   -Text2Ctl            sd\TEXT2C\    tests\text2\OBJVERIF2.DSF -auto-tokens (format 1 control)
+#   -Text2Wide           sd\TEXT2W\    tests\text2\OBJVERIF3.DSF -nxtext (383-token alphabet, symbols >= 256)
 #   -Text2Bad            sd\TEXT2BAD\  patched format 2 copies, one card per sd\TEXT2BAD\<name>\
-#   (the three -Text2* legs need an NDRC with -nxtext, 0.4.0 or later:
+#   (the -Text2* legs need an NDRC with -nxtext, 0.4.0 or later:
 #    set NEXTDAAD_NDRC=D:\NDRC\ndrc.exe - the kit's ndrc lacks it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
@@ -408,7 +409,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Bad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -444,7 +445,7 @@ if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
         'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
         'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
-        'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Bad'
+        'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad'
     ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
     if ($otherLegSwitches.Count -gt 0) {
         throw "-IntroMusic was given with -$($otherLegSwitches -join ' -') but not -Intro - that leg switch picks a different leg, so the combination is ambiguous. Pass -Intro explicitly, or drop the other switch."
@@ -493,6 +494,7 @@ if ($Xbn)              { $legName = 'XBN' }
 if ($Intro)            { $legName = 'INTRO' }
 if ($Text2)            { $legName = 'TEXT2' }
 if ($Text2Ctl)         { $legName = 'TEXT2C' }
+if ($Text2Wide)        { $legName = 'TEXT2W' }
 if ($Text2Bad)         { $legName = 'TEXT2BAD' }
 $leg = Join-Path $sd $legName
 
@@ -513,7 +515,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2BAD')
+               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -3192,22 +3194,27 @@ $truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
 $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (promised, not delivered)
 [System.IO.File]::WriteAllBytes("$root\tests\out\truncwav.bin", $truncWav.ToArray())
 
-# Text format 2 fixtures (-Text2 / -Text2Ctl / -Text2Bad only): the kit's
+# Text format 2 fixtures (-Text2 / -Text2Ctl / -Text2Wide / -Text2Bad only): the kit's
 # ndrc has no -nxtext, so these need NEXTDAAD_NDRC=D:\NDRC\ndrc.exe (0.4.0+).
 # tests\text2\OBJVERIF2.DSF = OBJVERIF plus unreachable prose, enough for
 # -nxtext to choose format 2; -auto-tokens on the same source is the control.
-if ($Text2 -or $Text2Ctl -or $Text2Bad) {
+# OBJVERIF3.DSF has more prose, enough for the 383-token alphabet.
+if ($Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad) {
     $t2Work = Join-Path $root 'tests\out\text2-work'
     Remove-Item $t2Work -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $t2Work | Out-Null
     Copy-Item "$PSScriptRoot\text2\OBJVERIF2.DSF" "$t2Work\OBJVERIF2.DSF" -Force
+    Copy-Item "$PSScriptRoot\text2\OBJVERIF3.DSF" "$t2Work\OBJVERIF3.DSF" -Force
     Push-Location $t2Work
     try {
         & $ndrc @drcTarget EN OBJVERIF2.DSF OBJV2NX.DDB -nxtext
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (OBJVERIF2 -nxtext) - the -Text2* legs need an NDRC with -nxtext: set NEXTDAAD_NDRC=D:\NDRC\ndrc.exe" }
         & $ndrc @drcTarget EN OBJVERIF2.DSF OBJV2TOK.DDB -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (OBJVERIF2 -auto-tokens)" }
+        & $ndrc @drcTarget EN OBJVERIF3.DSF OBJV3NX.DDB -nxtext
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (OBJVERIF3 -nxtext)" }
         Copy-Item OBJV2NX.DDB "$root\tests\out\objverif2-nx.ddb" -Force
+        Copy-Item OBJV3NX.DDB "$root\tests\out\objverif3-nx.ddb" -Force
         Copy-Item OBJV2TOK.DDB "$root\tests\out\objverif2-tok.ddb" -Force
     }
     finally { Pop-Location }
@@ -3217,6 +3224,11 @@ if ($Text2 -or $Text2Ctl -or $Text2Bad) {
     if ($t2Tok[0] -ne 2) { throw "objverif2-tok: header byte 0 is $('0x{0:X2}' -f $t2Tok[0]), expected 0x02 (format 1)" }
     & python "$PSScriptRoot\text2\t2model.py" --err 0 "$root\tests\out\objverif2-nx.ddb"
     if ($LASTEXITCODE -ne 0) { throw "objverif2-nx: tests\text2\t2model.py refuses the block" }
+    $t3Nx = [System.IO.File]::ReadAllBytes("$root\tests\out\objverif3-nx.ddb")
+    $t3Blk = $t3Nx[8] + 256 * $t3Nx[9]
+    if ($t3Nx[0] -ne 0x82 -or $t3Nx[$t3Blk + 2] -ne 1) { throw "objverif3-nx: expected header 0x82 and block flags 1 (383-token alphabet), got $('0x{0:X2}' -f $t3Nx[0]) / $($t3Nx[$t3Blk + 2])" }
+    & python "$PSScriptRoot\text2\t2model.py" --err 0 "$root\tests\out\objverif3-nx.ddb"
+    if ($LASTEXITCODE -ne 0) { throw "objverif3-nx: tests\text2\t2model.py refuses the block" }
 
     # -Text2Bad: one patched copy per t2_build refusal (T2E_* in nextdaad.inc).
     function Get-Text2Crc([byte[]]$b, [int]$off, [int]$n) {
@@ -3249,14 +3261,8 @@ if ($Text2 -or $Text2Ctl -or $Text2Bad) {
         @('FP', 4, { param($b) $b[$t2Blk + 5] = [byte]($b[$t2Blk + 5] -bxor 0xFF) }),
         @('EOM', 5, { param($b) Set-Text2Len $b 10 0; Set-Text2Fp $b 128 }),
         @('SYM', 6, { param($b) $b[$t2Blk + 3] = 1; $b[$t2Blk + 4] = 0 }),
-        @('KRAFT', 7, { param($b) Set-Text2Len $b 10 1; Set-Text2Len $b 32 1; Set-Text2Len $b 101 1; Set-Text2Fp $b 128 }),
-        # 511 alphabet, 300 symbols of length 9: valid code, over HF_SYM_MAX (256)
-        @('BUDGET', 8, { param($b)
-            $b[$t2Blk + 2] = 1; $b[$t2Blk + 3] = 0x7F; $b[$t2Blk + 4] = 1
-            for ($i = 0; $i -lt 256; $i++) { $b[$t2Blk + 7 + $i] = [byte]$(if ($i -lt 150) { 0x99 } else { 0 }) }
-            Set-Text2Fp $b 256 })
+        @('KRAFT', 7, { param($b) Set-Text2Len $b 10 1; Set-Text2Len $b 32 1; Set-Text2Len $b 101 1; Set-Text2Fp $b 128 })
     )
-    if ($t2Blk + 7 + 256 -gt $t2Nx.Length) { throw "objverif2-nx: text block at $t2Blk too near the end for the BUDGET patch" }
     $t2BadDir = Join-Path $root 'tests\out\text2bad'
     Remove-Item $t2BadDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $t2BadDir | Out-Null
@@ -5666,11 +5672,11 @@ else {
     "WARNING: no build\nextdaad.nex - sd\$legName\ has no interpreter to launch (run .\build.ps1)"
 }
 
-# -Text2 / -Text2Ctl / -Text2Bad (compiled above). -Text2Bad is one card
+# -Text2 / -Text2Ctl / -Text2Wide / -Text2Bad (compiled above). -Text2Bad is one card
 # per refusal: sd\TEXT2BAD\<name>\ holds NEXTDAAD.NEX + GAME.DDB; the leg
 # root boots the MAGIC variant (the checks below read its GAME.DDB).
 # CSpect-lock: see header.
-if ($Text2 -or $Text2Ctl -or $Text2Bad) {
+if ($Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
@@ -5682,6 +5688,10 @@ if ($legName -eq 'TEXT2') {
 if ($legName -eq 'TEXT2C') {
     Copy-Item "$root\tests\out\objverif2-tok.ddb" "$leg\GAME.DDB" -Force
     "staged objverif2-tok.ddb -> sd\$legName\GAME.DDB (format 1 control, -auto-tokens)"
+}
+if ($legName -eq 'TEXT2W') {
+    Copy-Item "$root\tests\out\objverif3-nx.ddb" "$leg\GAME.DDB" -Force
+    "staged objverif3-nx.ddb -> sd\$legName\GAME.DDB (text format 2, 383-token alphabet)"
 }
 if ($legName -eq 'TEXT2BAD') {
     Copy-Item (Join-Path $t2BadDir 'MAGIC.DDB') "$leg\GAME.DDB" -Force
@@ -5751,6 +5761,7 @@ elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance tes
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($BigDdb) { "active: bigddb ($bigLen bytes, past the 31744 classic ceiling)" }
 elseif ($legName -eq 'TEXT2') { "active: objverif2 text format 2 (-nxtext)" }
+elseif ($legName -eq 'TEXT2W') { "active: objverif3 text format 2, 383-token alphabet (-nxtext)" }
 elseif ($legName -eq 'TEXT2C') { "active: objverif2 format 1 control (-auto-tokens)" }
 elseif ($legName -eq 'TEXT2BAD') { "active: text2bad - one card per refusal in sd\TEXT2BAD\<name>\, each boots to E5" }
 elseif ($BigDdbTok) { "active: bigddb-autotok ($bigTokLen bytes, past the 31744 classic ceiling, per-game token table)" }
