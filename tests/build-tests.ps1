@@ -56,6 +56,12 @@
 #   -Text2XmbPart        sd\TEXT2X2\   NDPARTA (format 1) + root 0.XMB, GAME2.DDB = NEST4 -nxtext, no
 #                                      PART2\ (part 2's READ falls back to the root 0.XMB: expect E5)
 #   -Text2XmbFp          sd\TEXT2X3\   NEST4 -nxtext DDB + its 0.XMB, "X2" kept, fingerprint XORed (expect E5 at READ)
+#   -Text2Region         sd\TEXT2REG\  REGION.DSF -nxtext (tests\text2\gen_region.py), file over 64K
+#   -Text2RegionCtl      sd\TEXT2REGC\ REGIONC.DSF -auto-tokens (REGION with messages 30+ trimmed, format 1 control)
+#   -Text2RegionPart     sd\TEXT2REGP\ REGPART1.DSF -nxtext + its 0.XMB + 001.NXI (part 1), GAME2.DDB = REGION -nxtext
+#   -Text2RegionBad      sd\TEXT2REGBAD\ patched copies, one card per sd\TEXT2REGBAD\<name>\: REGION -nxtext with
+#                                      word 32 = 59 (A59), region over 65535 (REGOVER), word 8 = 2 (BLK2);
+#                                      REGIONC padded past 65536 (F1BIG)
 #   (the -Text2* legs need an NDRC with -nxtext, 0.4.0 or later:
 #    set NEXTDAAD_NDRC=D:\NDRC\ndrc.exe - the kit's ndrc lacks it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
@@ -416,7 +422,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -453,7 +459,8 @@ if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
         'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad',
-        'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb', 'Text2XmbPart', 'Text2XmbFp'
+        'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb', 'Text2XmbPart', 'Text2XmbFp',
+        'Text2Region', 'Text2RegionCtl', 'Text2RegionPart', 'Text2RegionBad'
     ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
     if ($otherLegSwitches.Count -gt 0) {
         throw "-IntroMusic was given with -$($otherLegSwitches -join ' -') but not -Intro - that leg switch picks a different leg, so the combination is ambiguous. Pass -Intro explicitly, or drop the other switch."
@@ -510,6 +517,10 @@ if ($Text2NestCtl)     { $legName = 'TEXT2NC' }
 if ($Text2Xmb)         { $legName = 'TEXT2X' }
 if ($Text2XmbPart)     { $legName = 'TEXT2X2' }
 if ($Text2XmbFp)       { $legName = 'TEXT2X3' }
+if ($Text2Region)      { $legName = 'TEXT2REG' }
+if ($Text2RegionCtl)   { $legName = 'TEXT2REGC' }
+if ($Text2RegionPart)  { $legName = 'TEXT2REGP' }
+if ($Text2RegionBad)   { $legName = 'TEXT2REGBAD' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -530,7 +541,8 @@ function Reset-LegDir {
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD',
-               'TEXT2WC', 'TEXT2N', 'TEXT2NC', 'TEXT2X', 'TEXT2X2', 'TEXT2X3')
+               'TEXT2WC', 'TEXT2N', 'TEXT2NC', 'TEXT2X', 'TEXT2X2', 'TEXT2X3',
+               'TEXT2REG', 'TEXT2REGC', 'TEXT2REGP', 'TEXT2REGBAD')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -3216,7 +3228,7 @@ $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (
 # OBJVERIF3.DSF has more prose, enough for the 383-token alphabet.
 # NEST4.DSF (reader nesting, XMESSAGE) compiles in its own folders: ndrc
 # writes 0.XMB beside the DDB, one per format.
-$text2Any = $Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad -or $Text2WideCtl -or $Text2Nest -or $Text2NestCtl -or $Text2Xmb -or $Text2XmbPart -or $Text2XmbFp
+$text2Any = $Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad -or $Text2WideCtl -or $Text2Nest -or $Text2NestCtl -or $Text2Xmb -or $Text2XmbPart -or $Text2XmbFp -or $Text2Region -or $Text2RegionCtl -or $Text2RegionPart -or $Text2RegionBad
 if ($text2Any) {
     $t2Work = Join-Path $root 'tests\out\text2-work'
     Remove-Item $t2Work -Recurse -Force -ErrorAction SilentlyContinue
@@ -3259,6 +3271,25 @@ if ($text2Any) {
         Copy-Item "$paDir\NDPARTA.DDB" "$root\tests\out\t2x2-parta.ddb" -Force
         Copy-Item "$paDir\0.XMB" "$root\tests\out\t2x2-parta.xmb" -Force
         Copy-Item OBJV2NX.DDB "$root\tests\out\objverif2-nx.ddb" -Force
+        # Region fixtures: generated, not committed (tests\text2\gen_region.py, fixed seed).
+        $rgDir = Join-Path $t2Work 'region'
+        & python "$PSScriptRoot\text2\gen_region.py" $rgDir
+        if ($LASTEXITCODE -ne 0) { throw "tests\text2\gen_region.py failed" }
+        foreach ($rg in @(@('REGION', '-nxtext', 'region-nx'), @('REGIONC', '-auto-tokens', 'region-tok'), @('REGPART1', '-nxtext', 'regpart1-nx'))) {
+            $rgSub = Join-Path $rgDir $rg[2]
+            New-Item -ItemType Directory -Force $rgSub | Out-Null
+            Move-Item (Join-Path $rgDir "$($rg[0]).DSF") "$rgSub\$($rg[0]).DSF" -Force
+            Push-Location $rgSub
+            try {
+                & $ndrc @drcTarget EN "$($rg[0]).DSF" "$($rg[0]).DDB" $rg[1]
+                if ($LASTEXITCODE -ne 0) { throw "ndrc failed ($($rg[0]) $($rg[1]))" }
+            }
+            finally { Pop-Location }
+            Copy-Item "$rgSub\$($rg[0]).DDB" "$root\tests\out\$($rg[2]).ddb" -Force
+        }
+        if (Test-Path "$rgDir\region-nx\0.XMB") { throw "REGION.DSF produced a 0.XMB - TEXT2REGP stages no PART2\" }
+        if (-not (Test-Path "$rgDir\regpart1-nx\0.XMB")) { throw "REGPART1.DSF produced no 0.XMB - XMESSAGE missing?" }
+        Copy-Item "$rgDir\regpart1-nx\0.XMB" "$root\tests\out\regpart1-nx.xmb" -Force
         Copy-Item OBJV3NX.DDB "$root\tests\out\objverif3-nx.ddb" -Force
         Copy-Item OBJV2TOK.DDB "$root\tests\out\objverif2-tok.ddb" -Force
     }
@@ -3270,7 +3301,7 @@ if ($text2Any) {
     & python "$PSScriptRoot\text2\t2model.py" --err 0 "$root\tests\out\objverif2-nx.ddb"
     if ($LASTEXITCODE -ne 0) { throw "objverif2-nx: tests\text2\t2model.py refuses the block" }
     $t3Nx = [System.IO.File]::ReadAllBytes("$root\tests\out\objverif3-nx.ddb")
-    $t3Blk = $t3Nx[8] + 256 * $t3Nx[9]
+    $t3Blk = $t3Nx[0x20] + 256 * $t3Nx[0x21] + $t3Nx[8] + 256 * $t3Nx[9]   # region base + block offset
     if ($t3Nx[0] -ne 0x82 -or $t3Nx[$t3Blk + 2] -ne 1) { throw "objverif3-nx: expected header 0x82 and block flags 1 (383-token alphabet), got $('0x{0:X2}' -f $t3Nx[0]) / $($t3Nx[$t3Blk + 2])" }
     & python "$PSScriptRoot\text2\t2model.py" --err 0 "$root\tests\out\objverif3-nx.ddb"
     if ($LASTEXITCODE -ne 0) { throw "objverif3-nx: tests\text2\t2model.py refuses the block" }
@@ -3301,7 +3332,7 @@ if ($text2Any) {
         }
         return $crc
     }
-    $t2Blk = $t2Nx[8] + 256 * $t2Nx[9]
+    $t2Blk = $t2Nx[0x20] + 256 * $t2Nx[0x21] + $t2Nx[8] + 256 * $t2Nx[9]   # region base + block offset
     function Set-Text2Len([byte[]]$b, [int]$sym, [int]$len) {
         $i = $t2Blk + 7 + [math]::Floor($sym / 2)
         if ($sym % 2) { $b[$i] = [byte](($b[$i] -band 0x0F) -bor ($len -shl 4)) }
@@ -3333,6 +3364,49 @@ if ($text2Any) {
         & python "$PSScriptRoot\text2\t2model.py" --err $v[1] $f
         if ($LASTEXITCODE -ne 0) { throw "text2bad $($v[0]): tests\text2\t2model.py does not refuse it with T2E $($v[1])" }
     }
+
+    # Region fixtures: REGION -nxtext passes 64K with one location across file offset 65536.
+    $rgNx = [System.IO.File]::ReadAllBytes("$root\tests\out\region-nx.ddb")
+    $rgTok = [System.IO.File]::ReadAllBytes("$root\tests\out\region-tok.ddb")
+    $rgP1 = [System.IO.File]::ReadAllBytes("$root\tests\out\regpart1-nx.ddb")
+    $rgA = $rgNx[0x20] + 256 * $rgNx[0x21]
+    if ($rgNx[0] -ne 0x82 -or $rgNx.Length -le 65535) { throw "region-nx: expected header 0x82 and over 65535 bytes, got $('0x{0:X2}' -f $rgNx[0]) / $($rgNx.Length)" }
+    if ($rgTok[0] -ne 2 -or $rgTok.Length -gt 65535) { throw "region-tok: expected header 0x02 and at most 65535 bytes, got $('0x{0:X2}' -f $rgTok[0]) / $($rgTok.Length)" }
+    if ($rgP1[0] -ne 0x82) { throw "regpart1-nx: header byte 0 is $('0x{0:X2}' -f $rgP1[0]), expected 0x82 (text format 2)" }
+    & python "$PSScriptRoot\text2\t2model.py" --err 0 "$root\tests\out\region-nx.ddb"
+    if ($LASTEXITCODE -ne 0) { throw "region-nx: tests\text2\t2model.py refuses the block" }
+    $rgCross = & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\region-nx.ddb" --cross 65536
+    if ($LASTEXITCODE -ne 0) { throw "region-nx: no text crosses file offset 65536" }
+    $rgCross | Where-Object { $_ -match '^(format 2: file|crosses)' }
+    if (-not ($rgCross -match '^crosses 65536: locations ')) { throw "region-nx: the text across file offset 65536 is not a location text" }
+    # shared texts: all but messages 30+ (gen_region.py CTL_KEEP)
+    & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\region-nx.ddb" "$root\tests\out\region-tok.ddb" --keep-msgs 30 | Where-Object { $_ -match '^(texts compared|DIFF)' }
+    if ($LASTEXITCODE -ne 0) { throw "region: format 2 shared texts differ from the -auto-tokens control" }
+    & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\regpart1-nx.ddb" --xmb "$root\tests\out\regpart1-nx.xmb" --offs 0 | Where-Object { $_ -match '^XMB' }
+    if ($LASTEXITCODE -ne 0) { throw "regpart1: 0.XMB is not X2 with the DDB's fingerprint" }
+
+    # -Text2RegionBad: text2_load region refusals (T2E_REGION 9), plus a format 1 file over 64K.
+    $rgBadSet = @(
+        @('A59', { param($b) $b[0x20] = 59; $b[0x21] = 0 }),
+        @('REGOVER', { param($b) $w = $b.Length - 65536; $b[0x20] = [byte]($w -band 0xFF); $b[0x21] = [byte]($w -shr 8) }),
+        @('BLK2', { param($b) $b[8] = 2; $b[9] = 0 })
+    )
+    $rgBadDir = Join-Path $root 'tests\out\text2regbad'
+    Remove-Item $rgBadDir -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $rgBadDir | Out-Null
+    foreach ($v in $rgBadSet) {
+        $b = [byte[]]$rgNx.Clone()
+        & $v[1] $b
+        $f = Join-Path $rgBadDir "$($v[0]).DDB"
+        [System.IO.File]::WriteAllBytes($f, $b)
+        & python "$PSScriptRoot\text2\t2model.py" --err 9 $f
+        if ($LASTEXITCODE -ne 0) { throw "text2regbad $($v[0]): tests\text2\t2model.py does not refuse it with T2E 9" }
+    }
+    # F1BIG: the format 1 control with zero filler appended to 66560 bytes, header untouched
+    $f1Big = New-Object byte[] 66560
+    [Array]::Copy($rgTok, $f1Big, $rgTok.Length)
+    [System.IO.File]::WriteAllBytes((Join-Path $rgBadDir 'F1BIG.DDB'), $f1Big)
+    "text2regbad: A59 REGOVER BLK2 (T2E 9), F1BIG ($($f1Big.Length) bytes, format 1)"
 }
 
 # ===================================================================
@@ -5774,6 +5848,35 @@ if ($legName -eq 'TEXT2X3') {
     Copy-Item "$root\tests\out\nest4-nx-badfp.xmb" "$leg\0.XMB" -Force
     "staged nest4-nx.ddb + nest4-nx-badfp.xmb -> sd\$legName\GAME.DDB + 0.XMB"
 }
+if ($legName -eq 'TEXT2REG') {
+    Copy-Item "$root\tests\out\region-nx.ddb" "$leg\GAME.DDB" -Force
+    "staged region-nx.ddb -> sd\$legName\GAME.DDB (text format 2, $($rgNx.Length) bytes, part A $rgA)"
+}
+if ($legName -eq 'TEXT2REGC') {
+    Copy-Item "$root\tests\out\region-tok.ddb" "$leg\GAME.DDB" -Force
+    "staged region-tok.ddb -> sd\$legName\GAME.DDB (format 1 control, -auto-tokens, $($rgTok.Length) bytes)"
+}
+if ($legName -eq 'TEXT2REGP') {
+    Copy-Item "$root\tests\out\regpart1-nx.ddb" "$leg\GAME.DDB" -Force
+    Copy-Item "$root\tests\out\regpart1-nx.xmb" "$leg\0.XMB" -Force
+    Copy-Item "$root\tests\out\region-nx.ddb" "$leg\GAME2.DDB" -Force
+    # picture 1: the synthetic -SfxDi card, 256x128 (tilemap rows 4-19; text window rows 20-31)
+    & python "$PSScriptRoot\art\mkl2card.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2card.py failed" }
+    Copy-Item "$root\tests\out\l2card.nxi" "$leg\001.NXI" -Force
+    "staged regpart1-nx.ddb + .xmb + l2card.nxi -> sd\$legName\GAME.DDB + 0.XMB + 001.NXI, region-nx.ddb -> GAME2.DDB, no PART2\"
+}
+if ($legName -eq 'TEXT2REGBAD') {
+    Copy-Item (Join-Path $rgBadDir 'A59.DDB') "$leg\GAME.DDB" -Force
+    foreach ($n in @('A59', 'REGOVER', 'BLK2', 'F1BIG')) {
+        $card = Join-Path $leg $n
+        New-Item -ItemType Directory -Force $card | Out-Null
+        Copy-Item (Join-Path $rgBadDir "$n.DDB") "$card\GAME.DDB" -Force
+        if (Test-Path $nexSrc) { Copy-Item $nexSrc "$card\NEXTDAAD.NEX" -Force }
+        $why = if ($n -eq 'F1BIG') { 'format 1 over 64K, expect the DDB_E_SIZE boot error' } else { 'expect E5, text2Err = 9' }
+        "staged text2regbad\$n.DDB -> sd\$legName\$n\GAME.DDB ($why)"
+    }
+}
 if ($legName -eq 'TEXT2BAD') {
     Copy-Item (Join-Path $t2BadDir 'MAGIC.DDB') "$leg\GAME.DDB" -Force
     foreach ($v in $t2BadSet) {
@@ -5850,6 +5953,10 @@ elseif ($legName -eq 'TEXT2NC') { "active: nest4 format 1 control (-auto-tokens)
 elseif ($legName -eq 'TEXT2X2') { "active: NDPARTA format 1 -> part 2 NEST4 format 2 with only the root 0.XMB - READ in part 2 must give E5 (text2Err 8)" }
 elseif ($legName -eq 'TEXT2X3') { "active: nest4 text format 2 with its 0.XMB, fingerprint XORed - READ must give E5 (text2Err 8)" }
 elseif ($legName -eq 'TEXT2X') { "active: nest4 text format 2 with the format 1 0.XMB - READ must give E5 (text2Err 8)" }
+elseif ($legName -eq 'TEXT2REG') { "active: region text format 2 (-nxtext), file over 64K" }
+elseif ($legName -eq 'TEXT2REGC') { "active: region format 1 control (-auto-tokens, messages 30+ trimmed)" }
+elseif ($legName -eq 'TEXT2REGP') { "active: REGPART1 format 2 (picture + XMESSAGE) -> part 2 REGION format 2 over 64K" }
+elseif ($legName -eq 'TEXT2REGBAD') { "active: text2regbad - one card per refusal in sd\TEXT2REGBAD\<name>\" }
 elseif ($legName -eq 'TEXT2BAD') { "active: text2bad - one card per refusal in sd\TEXT2BAD\<name>\, each boots to E5" }
 elseif ($BigDdbTok) { "active: bigddb-autotok ($bigTokLen bytes, past the 31744 classic ceiling, per-game token table)" }
 elseif ($Intro) { "active: intro (scripted show - LAUNCH SHOW.NEX)" }

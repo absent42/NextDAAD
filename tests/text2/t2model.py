@@ -2,13 +2,19 @@
 
 t2_model(ddb) -> dict of the resident cells and tables t2_build writes, or
 {'err': T2E code} for a block the loader must refuse. Pure integer logic,
-mirroring the check order of t2_build.
+mirroring the check order of text2_load (region) then t2_build.
+Format 2 layout: part A, then the text region at file offset A = header
+word 32; the block sits at region offset word 8 (must be 0). Block and
+index cells are region offsets; 'blockFile' is the block's file offset.
 """
 import struct, sys
 
 HF_MAXLEN = 15
 HF_SYM_MAX = 511
-T2E = dict(MAGIC=1, FLAGS=2, NTOK=3, FP=4, EOM=5, SYM=6, KRAFT=7)
+T2E = dict(MAGIC=1, FLAGS=2, NTOK=3, FP=4, EOM=5, SYM=6, KRAFT=7, XMB=8, REGION=9)
+DDB_PAGE_FIRST = 32
+REGION_MIN_A = 60          # header plus the four table words the loader needs
+REGION_MIN_BLOCK = 135     # "H2" + flags + ntok + fp + 128 length bytes
 
 
 def crc16_ccitt(data):
@@ -21,9 +27,18 @@ def crc16_ccitt(data):
     return crc
 
 
+def region_base(ddb):
+    """File offset of the text region (header word 32) for format 2, else 0."""
+    return struct.unpack_from('<H', ddb, 0x20)[0] if ddb[0] & 0x80 else 0
+
+
 def t2_model(ddb):
+    a = region_base(ddb)
     blk = struct.unpack_from('<H', ddb, 8)[0]
-    b = ddb[blk:]
+    if (a < REGION_MIN_A or a + REGION_MIN_BLOCK > len(ddb)
+            or len(ddb) - a > 65535 or blk != 0):
+        return {'err': T2E['REGION']}
+    b = ddb[a + blk:]
     if b[0:2] != b'H2':
         return {'err': T2E['MAGIC']}
     alpha = b[2]
@@ -70,7 +85,9 @@ def t2_model(ddb):
     return {'err': 0, 'textFormat': 1, 'text2Alpha': alpha, 'text2Ntok': ntok,
             'text2Block': blk, 'text2Index': blk + 7 + nbytes, 'text2Fp': fp,
             'hfLimit': limit, 'hfOffs': offs, 'hfHi': hi,
-            'hfSym': [s & 0xFF for s in syms], 'used': base, 'lens': lens}
+            'hfSym': [s & 0xFF for s in syms], 'used': base, 'lens': lens,
+            'regionBase': a, 'regionLen': len(ddb) - a, 'blockFile': a + blk,
+            'regionPage': DDB_PAGE_FIRST + (a >> 13), 'regionOff': a & 0x1FFF}
 
 
 def decode_check(m, ddb):
