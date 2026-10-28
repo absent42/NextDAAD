@@ -1,0 +1,72 @@
+[
+ {
+  "leg": "TEXT2N",
+  "runs": [
+   {
+    "ret": "$E04A",
+    "pc_after": "$E04A",
+    "frames": 1,
+    "line0": 2,
+    "line1": 208,
+    "lines": 517,
+    "ms": 33.09,
+    "nr": "NextReg $1E = $00  %00000000\r\nNextReg $1F = $02  %00000010"
+   },
+   {
+    "ret": "$E04A",
+    "pc_after": "$E04A",
+    "frames": 1,
+    "line0": 2,
+    "line1": 208,
+    "lines": 517,
+    "ms": 33.09,
+    "nr": "NextReg $1E = $00  %00000000\r\nNextReg $1F = $02  %00000010"
+   },
+   {
+    "ret": "$E04A",
+    "pc_after": "$E04A",
+    "frames": 1,
+    "line0": 2,
+    "line1": 208,
+    "lines": 517,
+    "ms": 33.09,
+    "nr": "NextReg $1E = $00  %00000000\r\nNextReg $1F = $02  %00000010"
+   }
+  ]
+ },
+ {
+  "leg": "TEXT2NC",
+  "runs": [
+   {
+    "ret": "$E04A",
+    "pc_after": "$E04A",
+    "frames": 2,
+    "line0": 2,
+    "line1": 213,
+    "lines": 833,
+    "ms": 53.31,
+    "nr": "NextReg $1E = $00  %00000000\r\nNextReg $1F = $02  %00000010"
+   },
+   {
+    "ret": "$E04A",
+    "pc_after": "$E04A",
+    "frames": 2,
+    "line0": 2,
+    "line1": 213,
+    "lines": 833,
+    "ms": 53.31,
+    "nr": "NextReg $1E = $00  %00000000\r\nNextReg $1F = $02  %00000010"
+   },
+   {
+    "ret": "$E04A",
+    "pc_after": "$E04A",
+    "frames": 2,
+    "line0": 2,
+    "line1": 213,
+    "lines": 833,
+    "ms": 53.31,
+    "nr": "NextReg $1E = $00  %00000000\r\nNextReg $1F = $02  %00000010"
+   }
+  ]
+ }
+]

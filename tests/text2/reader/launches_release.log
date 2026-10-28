@@ -1,0 +1,28 @@
+02:58:00 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2C\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 41624
+03:00:12 killed PID 41624
+03:00:13 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2WC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 75364
+03:02:26 killed PID 75364
+03:02:27 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2NC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 69956
+03:04:32 killed PID 69956
+03:04:33 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 48548
+03:06:46 killed PID 48548
+03:06:47 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2C\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 77524
+03:09:00 killed PID 77524
+03:09:01 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2W\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 69460
+03:11:14 killed PID 69460
+03:11:15 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2WC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 64312
+03:13:27 killed PID 64312
+03:13:29 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2N\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 33144
+03:15:26 killed PID 33144
+03:15:28 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2NC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 43348
+03:17:25 killed PID 43348
+03:17:26 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2N\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 68240
+03:17:47 killed PID 68240
+03:17:49 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2NC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 79320
+03:18:10 killed PID 79320
+03:18:11 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2X\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 79536
+03:18:27 killed PID 79536
+03:18:28 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2N\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 68024
+03:19:05 killed PID 68024
+03:19:07 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2NC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\rel_final\nextdaad.nex` PID 33704
+03:19:44 killed PID 33704
