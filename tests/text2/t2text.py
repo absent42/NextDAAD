@@ -1,6 +1,6 @@
 """Decode every text of a DDB in either text format; compare two DDBs.
 
-python tests/text2/t2text.py A.DDB [B.DDB] [--cross N] [--keep-msgs N] [--xmb A.XMB [B.XMB]] [--offs N,...]
+python tests/text2/t2text.py A.DDB [B.DDB] [--cross N] [--keep-msgs N] [--gen] [--xmb A.XMB [B.XMB]] [--offs N,...]
   One DDB: print a coverage summary (tokens, nested references, texts
   that use nested entries). Format 2: lookup words are region offsets,
   the region starts at file offset word 32. --cross N: print the file
@@ -8,7 +8,8 @@ python tests/text2/t2text.py A.DDB [B.DDB] [--cross N] [--keep-msgs N] [--xmb A.
   unless one does. Two DDBs: exit 1 unless every text decodes
   identically (format 2 vs its format 1 control); --keep-msgs N
   compares messages below N only (a control with later messages
-  trimmed). --xmb also decodes the
+  trimmed). --gen: exit 1 unless every text of A equals the string
+  tests/text2/gen_region.py wrote for it (REGION only). --xmb also decodes the
   XMESSAGE texts at the given offsets (format 2 offsets include the
   4-byte header; --offs lists the format 1 offsets, +4 is applied).
 Format 2 per src/huffdec.asm and tests/text2/t2model.py; format 1 per
@@ -138,8 +139,20 @@ def all_texts(d):
     return r, out, spans
 
 
+def gen_texts():
+    """Every text of REGION.DSF as gen_region.py writes it, #n as 13."""
+    import gen_region as g
+    msgs, locs = g.texts()
+    out = {('messages', i): m if isinstance(m, str) else ' '.join(m) for i, m in enumerate(msgs)}
+    out.update((('locations', i), t) for i, t in enumerate(locs))
+    out.update((('objects', i), t) for i, (t, _, _) in enumerate(g.OBJECTS))
+    out.update((('sysmess', i), t) for i, t in enumerate(g.SYSMESS))
+    return {k: v.replace('#n', chr(13)) for k, v in out.items()}
+
+
 def main(a):
-    xmb, cross, keep = None, None, None
+    xmb, cross, keep, gen = None, None, None, '--gen' in a
+    a = [x for x in a if x != '--gen']
     if '--keep-msgs' in a:
         j = a.index('--keep-msgs'); keep = int(a[j + 1]); a = a[:j] + a[j + 2:]
     if '--cross' in a:
@@ -171,6 +184,13 @@ def main(a):
         if not hits:
             print('no text crosses file offset %d' % cross)
             ok = False
+    if gen:
+        ref = gen_texts()
+        bad = [k for k in sorted(set(t0) | set(ref)) if t0.get(k, ('?',))[0] != ref.get(k)]
+        for k in bad:
+            print('GENDIFF %s %d: %r vs %r' % (k[0], k[1], t0.get(k, ('?',))[0], ref.get(k)))
+        ok = ok and not bad
+        print('gen_region texts compared: %d, %s' % (len(ref), 'DIFFERENT' if bad else 'identical'))
     if len(ds) == 2:
         _, t1, _ = res[1]
         for key in sorted(set(t0) | set(t1)):

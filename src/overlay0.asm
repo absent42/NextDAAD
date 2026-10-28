@@ -2270,6 +2270,8 @@ ext_xmes:
  ENDIF
     ret
 
+; A region token read never hits xmsBank's upper page: xmsBank is FREE
+; (so unfilled) when allocated and is freed before every DDB claim (.probe).
 .f2loop:                        ; format 2: print_msg.loop plus a stop once
     call txt_next_decoded       ; a byte past the loaded 8K page was read
     jr c, .f2done
@@ -2324,7 +2326,8 @@ xms_boot_reset:
     ret
 
 ; Free every picture-cache bank (gfxBankList[0 .. gfxBankNext-1]), then
-; reset the cache as gfx_cache_reset does. Corrupts AF, BC, E, HL.
+; empty the cache (gfx_cache_empty: draw target and L2 roles kept).
+; Corrupts AF, B, HL.
 gfx_cache_free_banks:
     ld a, (gfxBankNext)
     or a
@@ -2337,7 +2340,7 @@ gfx_cache_free_banks:
     inc hl
     djnz .free
 .reset:
-    jp gfx_cache_reset
+    jp gfx_cache_empty
 
 ; Boot-only: probe GAME.XBN, load + validate into one allocated 16K
 ; bank. Any failure frees the bank (if one was allocated) and leaves
@@ -2636,7 +2639,8 @@ xbn_boot_load:
 ; or n == curPart) return with CF set, which EXTERN being action-typed
 ; means eng_exec never consults. curPart is not written until
 ; switch_to_part has a confirmed-successful probe, so both failure
-; exits here leave the current part fully untouched. Out-of-range n
+; exits here leave the current part fully untouched (a refusal inside
+; switch_to_part does not: see its header). Out-of-range n
 ; gets a DEBUG marker; n == curPart stays silent on purpose (a
 ; same-part EXTERN is a benign author idiom, not an error).
 h_xpart:
@@ -2690,9 +2694,10 @@ h_xpart:
 ; (the OLD part's object count, for the install's min(old,new) rule)
 ; are already populated - h_xpart does this from live state; LOAD's
 ; auto-switch populates them from a save file's payload instead and
-; reuses this same entry point. On probe failure: CF set, ret, current
-; part untouched. On success: NEVER RETURNS - resets SP and enters the
-; new part fresh at PRO 0.
+; reuses this same entry point. On failure: CF set, ret, current part
+; kept; a .probe refusal has also stopped sprites and emptied the picture,
+; sprite and XMES caches. On success: NEVER RETURNS - resets SP and enters
+; the new part fresh at PRO 0.
 ;
 ; eng_init_game has no label between its flag/object init and the
 ; rest, so this runs the FULL eng_init_game against the newly-loaded
@@ -2732,6 +2737,8 @@ switch_to_part:
                                   ; read error/bad header mid-load is an
                                   ; accepted documented residual (brief
                                   ; Step 3b), not handled specially
+    call gfx_cache_reset          ; committed: draw target, colour cycle
+                                  ; and L2 roles reset only here
     ld a, (xpartTarget)
     ld (curPart), a
     call eng_init_game            ; resident; full re-init from the
@@ -2813,8 +2820,9 @@ switch_to_part:
     scf
     ret
 ; A = probe handle. Frees the picture cache, XMES and sprite banks so the
-; DDB can claim pool C, then the pre-check: banks 20-23 a file over 64K
-; fills must be BT_FREE or BT_RESERVED. Closes the handle. CF set = refuse.
+; DDB can claim pool C (draw target, colour cycle and L2 roles untouched),
+; then the pre-check: banks 20-23 a file over 64K fills must be BT_FREE or
+; BT_RESERVED. Closes the handle. CF set = refuse.
 .probe:
     push af
     call gfx_cache_free_banks     ; MMU7 is OVL0_PAGE here

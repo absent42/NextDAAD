@@ -180,18 +180,13 @@ gfxBankList: ds GFX_BANKLIST_MAX
 ; re-entry (see boot_data_init's header) would otherwise leave stale
 ; cache entries pointing at banks the allocator just recycled. The part
 ; switch frees them first via gfx_cache_free_banks (overlay0.asm).
+; gfx_cache_reset also clears the draw target, stops sprites and the
+; colour cycle and resets the L2 roles; gfx_cache_empty is the cache only.
 ; Corrupts AF, BC, E, HL (E via gfx_drawtarget_clear's fall-through into
 ; the composer).
 gfx_cache_reset:
-    ld a, GFX_EMPTY
-    ld (stagedPic), a
-    ld (stagedEntry), a
     xor a
-    ld (gfxTick), a
-    ld (stagedMode), a
-    ld (stagedHeight), a
-    ld (gfxBankNext), a
-    call gfx_drawtarget_clear    ; A still 0 here; the 3-byte CALL beats
+    call gfx_drawtarget_clear    ; A = 0 on entry; the 3-byte CALL beats
                                   ; 9 bytes of inline stores out of the
                                   ; scarce pre-flags pad, and also
                                   ; re-asserts the layer order to NR $15
@@ -207,6 +202,14 @@ gfx_cache_reset:
     ld (l2FrontBank), a
     ld a, BANK_L2BACK_FIRST
     ld (l2BackBank), a
+gfx_cache_empty:
+    ASSERT stagedPic == gfxTick+1 && stagedEntry == stagedHeight+1
+    ld hl, GFX_EMPTY<<8
+    ld (gfxTick), hl             ; gfxTick 0, stagedPic empty
+    ld (stagedHeight), hl        ; stagedHeight 0, stagedEntry empty
+    xor a
+    ld (stagedMode), a
+    ld (gfxBankNext), a
     ld hl, gfxCache
     ld b, GFX_CACHE_MAX
 .slot:

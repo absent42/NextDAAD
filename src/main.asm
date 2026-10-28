@@ -214,7 +214,7 @@ bank_table_init:
     ld a, BT_FREE
     ld (bankTable+BANK_POOL_A), a
     ld (bankTable+BANK_POOL_A_END), a
-    ld hl, bankTable+BANK_POOL_C     ; 20-23: released from the DDB
+    ld hl, bankTable+BANK_POOL_C     ; 20-23: handed out last; a DDB over 64K reserves them
     ld b, BANK_POOL_C_END-BANK_POOL_C+1
 .poolc:
     ld (hl), a

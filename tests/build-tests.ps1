@@ -61,7 +61,8 @@
 #   -Text2RegionPart     sd\TEXT2REGP\ REGPART1.DSF -nxtext + its 0.XMB + 001.NXI (part 1), GAME2.DDB = REGION -nxtext
 #   -Text2RegionBad      sd\TEXT2REGBAD\ patched copies, one card per sd\TEXT2REGBAD\<name>\: REGION -nxtext with
 #                                      word 32 = 59 (A59), region over 65535 (REGOVER), word 8 = 2 (BLK2);
-#                                      REGIONC padded past 65536 (F1BIG)
+#                                      REGIONC padded past 65536 (F1BIG), to exactly 65536 (F1EQ,
+#                                      loads) and to 65537 (F1P1, E2)
 #   (the -Text2* legs need an NDRC with -nxtext, 0.4.0 or later:
 #    set NEXTDAAD_NDRC=D:\NDRC\ndrc.exe - the kit's ndrc lacks it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
@@ -3382,6 +3383,9 @@ if ($text2Any) {
     # shared texts: all but messages 30+ (gen_region.py CTL_KEEP)
     & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\region-nx.ddb" "$root\tests\out\region-tok.ddb" --keep-msgs 30 | Where-Object { $_ -match '^(texts compared|DIFF)' }
     if ($LASTEXITCODE -ne 0) { throw "region: format 2 shared texts differ from the -auto-tokens control" }
+    # every text, messages 30+ included, against the generator's own strings
+    & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\region-nx.ddb" --gen | Where-Object { $_ -match '^(gen_region texts|GENDIFF)' }
+    if ($LASTEXITCODE -ne 0) { throw "region-nx: decoded texts differ from tests\text2\gen_region.py" }
     & python "$PSScriptRoot\text2\t2text.py" "$root\tests\out\regpart1-nx.ddb" --xmb "$root\tests\out\regpart1-nx.xmb" --offs 0 | Where-Object { $_ -match '^XMB' }
     if ($LASTEXITCODE -ne 0) { throw "regpart1: 0.XMB is not X2 with the DDB's fingerprint" }
 
@@ -3406,7 +3410,13 @@ if ($text2Any) {
     $f1Big = New-Object byte[] 66560
     [Array]::Copy($rgTok, $f1Big, $rgTok.Length)
     [System.IO.File]::WriteAllBytes((Join-Path $rgBadDir 'F1BIG.DDB'), $f1Big)
-    "text2regbad: A59 REGOVER BLK2 (T2E 9), F1BIG ($($f1Big.Length) bytes, format 1)"
+    # F1EQ / F1P1: the same padded to the format 1 limit and one byte past it
+    foreach ($f1 in @(@('F1EQ', 65536), @('F1P1', 65537))) {
+        $f1b = New-Object byte[] $f1[1]
+        [Array]::Copy($rgTok, $f1b, $rgTok.Length)
+        [System.IO.File]::WriteAllBytes((Join-Path $rgBadDir "$($f1[0]).DDB"), $f1b)
+    }
+    "text2regbad: A59 REGOVER BLK2 (T2E 9), F1BIG ($($f1Big.Length) bytes), F1EQ (65536), F1P1 (65537), format 1"
 }
 
 # ===================================================================
@@ -5868,12 +5878,14 @@ if ($legName -eq 'TEXT2REGP') {
 }
 if ($legName -eq 'TEXT2REGBAD') {
     Copy-Item (Join-Path $rgBadDir 'A59.DDB') "$leg\GAME.DDB" -Force
-    foreach ($n in @('A59', 'REGOVER', 'BLK2', 'F1BIG')) {
+    foreach ($n in @('A59', 'REGOVER', 'BLK2', 'F1BIG', 'F1EQ', 'F1P1')) {
         $card = Join-Path $leg $n
         New-Item -ItemType Directory -Force $card | Out-Null
         Copy-Item (Join-Path $rgBadDir "$n.DDB") "$card\GAME.DDB" -Force
         if (Test-Path $nexSrc) { Copy-Item $nexSrc "$card\NEXTDAAD.NEX" -Force }
-        $why = if ($n -eq 'F1BIG') { 'format 1 over 64K, expect the DDB_E_SIZE boot error' } else { 'expect E5, text2Err = 9' }
+        $why = if ($n -eq 'F1EQ') { 'format 1 at exactly 64K, expect it to load' }
+               elseif ($n -like 'F1*') { 'format 1 over 64K, expect the DDB_E_SIZE boot error' }
+               else { 'expect E5, text2Err = 9' }
         "staged text2regbad\$n.DDB -> sd\$legName\$n\GAME.DDB ($why)"
     }
 }

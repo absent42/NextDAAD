@@ -19,7 +19,7 @@ NEX = ROOT + r'\build\nextdaad.nex'
 URL = 'http://127.0.0.1:23456/mcp'
 TAG = os.environ.get('T5_TAG', '')     # e.g. _release: separate shots/results
 BAD = ['MAGIC', 'FLAGS', 'NTOK', 'FP', 'EOM', 'SYM', 'KRAFT']
-REGBAD = ['A59', 'REGOVER', 'BLK2', 'F1BIG']
+REGBAD = ['A59', 'REGOVER', 'BLK2', 'F1BIG', 'F1EQ', 'F1P1']
 POOL_C = 20
 
 
