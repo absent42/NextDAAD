@@ -25,3 +25,5 @@ tests/parser/out/*
 .interface-design/*
 scratch_out/
 tests/text2/reader/
+tests/text2/loader/*
+!tests/text2/loader/run_loader_legs.py
