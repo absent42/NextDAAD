@@ -184,6 +184,9 @@ dbg_engage_tilemap:
 boot_banner:
     ld hl, boot_banner_o
     jr dbg_ovl0_go
+ram_diag:
+    ld hl, ram_diag_o
+    jr dbg_ovl0_go
 bank_selftest:
     ld hl, bank_selftest_o
     jr dbg_ovl0_go
@@ -267,50 +270,6 @@ dbg_space:
     ld a, ' '
     jp dbg_putc
 
-ram_diag:
-    ld b, 2
-    call dbg_at0
-    ld a, (ramExpanded)
-    or a
-    jr z, .base
-    ld hl, msgRam2M
-    jr .print
-.base:
-    ld hl, msgRam1M
-.print:
-    call dbg_puts
-    call bank_count_free
-    jp dbg_hex8
-
-; Blank the bottom tilemap row (TM_ROWS-1, left opaque by overlay2's
-; l2_testcard) with plain white-on-black spaces, then print the
-; ASCIIZ string at HL there via the existing dbg_puts/dbg_at console -
-; a fixed clear-then-print avoids stale trailing characters when a new
-; status line is shorter than the one it replaces. Corrupts everything.
-;
-; SP14c batch B DBG6: B=row, D=height. Fills a tmCols-wide white-ink/
-; black-paper, space-glyph bar - the exact 8-instruction sequence
-; l2dbg_status/l2dbg_status2 each repeated verbatim.
-; Corrupts AF, BC, DE, HL (tm_fill_rect's own contract).
-dbg_bar_white:
-    ld c, 0
-    ld a, (tmCols)
-    ld e, a
-    ld a, TM_ATTR_DEFAULT        ; reserved pair 0: white ink on black paper
-    ld (tmAttr), a
-    ld a, GLYPH_SPACE
-    jp tm_fill_rect               ; tail call - returns to OUR caller
-
-l2dbg_status:
-    push hl
-    ld b, TM_ROWS-1
-    ld d, 1
-    call dbg_bar_white
-    ld b, TM_ROWS-1
-    call dbg_at0
-    pop hl
-    jp dbg_puts
-
 ; --- Bare-metal isolation ladder ---
 ; Permanent bring-up diagnostic for Layer 2 regressions. Hold P from
 ; power-on (checked at the very top of main:, BEFORE hw_init/im2_init/
@@ -333,50 +292,24 @@ l2dbg_status:
 ; Each stage waits for P released then pressed before advancing. After
 ; stage 3 it wraps back to stage 0 rather than returning, so the ladder
 ; re-runs without a reset - a dead end by design. P not held: returns
-; immediately, nothing touched.
+; immediately with only slot 7 mapped.
 
-; ZF set if P is currently held (row $DF, bit 0 - see keyRows in
-; overlay0.asm for the same matrix layout). Samples up to 10 times
-; with a short busy-wait between samples rather than a single read,
-; for the same reason a frame-counted poll would - except this
-; runs BEFORE im2_init, so frameCounter isn't ticking yet and the
-; pacing has to be a plain busy-wait, not frame-synced. Corrupts
-; AF, BC, DE.
-l2dbg_p_held:
-    ld d, 10
-.sample:
-    ld bc, $DFFE
-    in a, (c)
-    bit 0, a
-    ret z                         ; held on this sample: done, ZF set
-    ld bc, $3000
-.wait:
-    dec bc
-    ld a, b
-    or c
-    jr nz, .wait
-    dec d
-    jr nz, .sample
-    ld a, 1
-    or a                          ; guarantee ZF clear: not held
-    ret
-
-; Resident half of the ladder: the P test, then overlay0's body.
-; P not held: returns with nothing touched.
+; Maps overlay0 (slot 7 is free at boot) and runs the ladder there; it
+; returns at once when P is not held.
 l2_bareprobe_hook:
-    call l2dbg_p_held
-    ret nz
     ld a, OVL0_PAGE
     call ovl_map_page
     jp l2_bareprobe_ladder
 
-; Ladder helper: call overlay2 routine HL (A passed through) from
+; Ladder helper: call overlay2 routine IX (A, HL passed through) from
 ; overlay0, then map overlay0 back. Corrupts what the routine does.
 l2dbg_ovl2_call:
     nextreg NR_MMU7, OVL2_PAGE
-    call jphl
+    call .ix
     nextreg NR_MMU7, OVL0_PAGE
     ret
+.ix:
+    jp (ix)
 
 ; --- DEBUG EXTERN probe routes (overlay0.asm's extVec vectors 6 and
 ; 8-14 point here) - relocated from overlay0.asm: its DEBUG headroom
@@ -533,8 +466,6 @@ ring2_chk:
 .msgok: db "OK", 0
 
 msgFrames:  db "FRAMES ", 0
-msgRam2M:     db "RAM 1792K FREE ", 0
-msgRam1M:     db "RAM 768K FREE ", 0
 
  ELSE
 

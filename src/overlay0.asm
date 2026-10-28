@@ -3717,9 +3717,27 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
 ; dbg_engage_tilemap replay onto the tilemap.
 dbg_replay_o:
     call boot_banner_o
-    call ram_diag
+    call ram_diag_o
     call bank_selftest_show_o
     jp ddb_diag_o
+
+ram_diag_o:
+    ld b, 2
+    call dbg_at0
+    ld a, (ramExpanded)
+    or a
+    jr z, .base
+    ld hl, msgRam2M
+    jr .print
+.base:
+    ld hl, msgRam1M
+.print:
+    call dbg_puts
+    call bank_count_free
+    jp dbg_hex8
+
+msgRam2M:     db "RAM 1792K FREE ", 0
+msgRam1M:     db "RAM 768K FREE ", 0
 
 boot_banner_o:
     ld b, 0
@@ -3919,7 +3937,8 @@ msgTgt:      db " TGT ", 0
 ; register state alongside what is on screen (a correct-looking enable
 ; write can still leave Layer 2 invisible). Corrupts everything.
 l2dbg_status_regs:
-    call l2dbg_status
+    ld ix, l2dbg_status
+    call l2dbg_ovl2_call
     ld hl, msgRegDump
     call dbg_puts
     ld e, NR_DISPLAY_CTRL
@@ -3938,7 +3957,6 @@ l2dbg_status_regs:
     call nr_read
     jp dbg_hex8
 
-msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
 msgRegDump:      db " 69/70/12/15=", 0
 
 ; Raw busy-wait press/release detection (row $DF, bit 0): stage 0 has
@@ -3957,35 +3975,63 @@ l2dbg_p_wait_press:
     jr nz, l2dbg_p_wait_press
     ret
 
-msgBareStage2: db "STAGE 2 - TILEMAP + TRANSPARENT CLEAR", 0
+
+; ZF set if P is currently held (row $DF, bit 0 - see keyRows in
+; overlay0.asm for the same matrix layout). Samples up to 10 times
+; with a short busy-wait between samples rather than a single read,
+; for the same reason a frame-counted poll would - except this
+; runs BEFORE im2_init, so frameCounter isn't ticking yet and the
+; pacing has to be a plain busy-wait, not frame-synced. Corrupts
+; AF, BC, DE.
+l2dbg_p_held:
+    ld d, 10
+.sample:
+    ld bc, $DFFE
+    in a, (c)
+    bit 0, a
+    ret z                         ; held on this sample: done, ZF set
+    ld bc, $3000
+.wait:
+    dec bc
+    ld a, b
+    or c
+    jr nz, .wait
+    dec d
+    jr nz, .sample
+    ld a, 1
+    or a                          ; guarantee ZF clear: not held
+    ret
 
 ; Entered from l2_bareprobe_hook (debug.asm) with this page in slot 7;
-; overlay2 routines are reached through l2dbg_ovl2_call. Never returns.
+; overlay2 routines are reached through l2dbg_ovl2_call. Returns at
+; once when P is not held, otherwise never returns.
 l2_bareprobe_ladder:
+    call l2dbg_p_held
+    ret nz
 .stage0:
     call hw_init
     xor a
-    ld hl, l2_bareprobe_draw
+    ld ix, l2_bareprobe_draw
     call l2dbg_ovl2_call
     xor a
-    ld hl, l2_bareprobe_marker
+    ld ix, l2_bareprobe_marker
     call l2dbg_ovl2_call          ; 1 block
     call l2dbg_p_wait_release
     call l2dbg_p_wait_press
 .stage1:
     call im2_init                 ; also EI's - ISR now live
     xor a
-    ld hl, l2_bareprobe_draw
+    ld ix, l2_bareprobe_draw
     call l2dbg_ovl2_call
     ld a, 1
-    ld hl, l2_bareprobe_marker
+    ld ix, l2_bareprobe_marker
     call l2dbg_ovl2_call          ; 2 blocks
     call l2dbg_p_wait_release
     call l2dbg_p_wait_press
 .stage2:
     call txt_init
     xor a
-    ld hl, l2_bareprobe_draw
+    ld ix, l2_bareprobe_draw
     call l2dbg_ovl2_call
     ld bc, 0
     ld d, TM_ROWS-1
@@ -3993,19 +4039,20 @@ l2_bareprobe_ladder:
     ld e, a
     call tm_clear_blank
     ld a, 2
-    ld hl, l2_bareprobe_marker
+    ld ix, l2_bareprobe_marker
     call l2dbg_ovl2_call          ; 3 blocks
     ld hl, msgBareStage2
-    call l2dbg_status
+    ld ix, l2dbg_status
+    call l2dbg_ovl2_call
     call l2dbg_p_wait_release
     call l2dbg_p_wait_press
 .stage3:
     xor a
-    ld hl, l2_testcard
+    ld ix, l2_testcard
     call l2dbg_ovl2_call           ; the full existing testcard flow
     ld hl, msgTestcard256
     call l2dbg_status_regs
-    ld hl, l2dbg_status2
+    ld ix, l2dbg_status2
     call l2dbg_ovl2_call
     call l2dbg_p_wait_release
     call l2dbg_p_wait_press

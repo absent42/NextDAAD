@@ -5230,6 +5230,39 @@ msgL2s9: db "LS256 STATIC XOFS 256 M1", 0
 msgL2sX9: db " NR71=", 0
 msgL2sDone: db "L2SCROLL DONE - OFFSETS 0, CLIP FULL", 0
 
+; Blank the bottom tilemap row (TM_ROWS-1, left opaque by overlay2's
+; l2_testcard) with plain white-on-black spaces, then print the
+; ASCIIZ string at HL there via the existing dbg_puts/dbg_at console -
+; a fixed clear-then-print avoids stale trailing characters when a new
+; status line is shorter than the one it replaces. Corrupts everything.
+;
+; SP14c batch B DBG6: B=row, D=height. Fills a tmCols-wide white-ink/
+; black-paper, space-glyph bar - the exact 8-instruction sequence
+; l2dbg_status/l2dbg_status2 each repeated verbatim.
+; Corrupts AF, BC, DE, HL (tm_fill_rect's own contract).
+dbg_bar_white:
+    ld c, 0
+    ld a, (tmCols)
+    ld e, a
+    ld a, TM_ATTR_DEFAULT        ; reserved pair 0: white ink on black paper
+    ld (tmAttr), a
+    ld a, GLYPH_SPACE
+    jp tm_fill_rect               ; tail call - returns to OUR caller
+
+l2dbg_status:
+    push hl
+    ld b, TM_ROWS-1
+    ld d, 1
+    call dbg_bar_white
+    ld b, TM_ROWS-1
+    call dbg_at0
+    pop hl
+    jp dbg_puts
+
+; Ladder strings: printed by l2dbg_status above while this page is mapped.
+msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
+msgBareStage2: db "STAGE 2 - TILEMAP + TRANSPARENT CLEAR", 0
+
 ; Second status row (TM_ROWS-2, also reserved by overlay2's
 ; l2_testcard): NR $14 (global transparency colour, expect $E3), the
 ; Layer 2 clip window SHADOW (clipW= - overlay2's l2ClipX1/X2/Y1/Y2,
