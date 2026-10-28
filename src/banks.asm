@@ -86,27 +86,8 @@ ram_detect:
 ; every byte comes out of the pre-flags pad; the tail has room to spare.
 ; Its only caller is main.asm's boot sequence.
 
-; Allocate the lowest free bank. Out: A = bank, CF clear.
-; CF set when nothing is free - A is then undefined. Never touches D.
-bank_alloc:
-    ld hl, bankTable
-    ld b, BANK_TABLE_SIZE
-    ld c, 0
-.scan:
-    ld a, (hl)
-    cp BT_FREE
-    jr z, .got
-    inc hl
-    inc c
-    djnz .scan
-    scf
-    ret
-.got:
-    ld a, BT_USED
-    ld (hl), a
-    ld a, c
-    or a                    ; clear CF
-    ret
+; bank_alloc lives in main.asm's post-anchor resident tail: the pool C
+; last scan outgrew this pre-anchor file's share of the pre-flags pad.
 
 ; Free bank A.
 ; No bounds check - bankTable is followed by code; an out-of-range free corrupts it.

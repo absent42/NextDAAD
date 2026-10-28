@@ -178,7 +178,8 @@ gfxBankList: ds GFX_BANKLIST_MAX
 ; Banks are NOT freed here: the caller (boot_data_init) runs on a path
 ; where bank_table_init rebuilds the whole allocator anyway, and a warm
 ; re-entry (see boot_data_init's header) would otherwise leave stale
-; cache entries pointing at banks the allocator just recycled.
+; cache entries pointing at banks the allocator just recycled. The part
+; switch frees them first via gfx_cache_free_banks (overlay0.asm).
 ; Corrupts AF, BC, E, HL (E via gfx_drawtarget_clear's fall-through into
 ; the composer).
 gfx_cache_reset:

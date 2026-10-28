@@ -198,8 +198,7 @@ boot_data_init:
 ; freed. MOVED HERE from banks.asm (2026-08-12): it runs once at boot,
 ; and banks.asm is entirely pre-anchor, so 53 bytes of one-shot boot
 ; code were being paid for out of the scarcest region in the project.
-; The rest of the allocator stays there - bank_alloc, bank_free and
-; data_map_page are hot and belong beside each other.
+; bank_free and data_map_page stay there; bank_alloc follows below.
 ; What is free is decided HERE and asserted by debug.asm's
 ; bank_selftest; the two must be changed together.
 bank_table_init:
@@ -244,6 +243,35 @@ bank_table_init:
     djnz .exp
 .boot:
     jp spr_boot_init            ; both exits reach the sprite state init
+
+; Allocate the lowest free bank, pool C (20-23) only when nothing else is
+; free: it is the DDB text region's growth room. Out: A = bank, CF clear;
+; CF set when nothing is free (A undefined). Corrupts BC, HL. Never touches DE.
+bank_alloc:
+    ld hl, bankTable
+    ld bc, BANK_POOL_C<<8                         ; banks 0-19
+    call .run
+    ret nc
+    ld hl, bankTable+BANK_POOL_C_END+1
+    ld bc, (BANK_TABLE_SIZE-BANK_POOL_C_END-1)<<8 | (BANK_POOL_C_END+1)
+    call .run
+    ret nc
+    ld hl, bankTable+BANK_POOL_C
+    ld bc, (BANK_POOL_C_END-BANK_POOL_C+1)<<8 | BANK_POOL_C
+.run:                           ; B banks from index C at HL
+    ld a, (hl)
+    cp BT_FREE
+    jr z, .got
+    inc hl
+    inc c
+    djnz .run
+    scf
+    ret
+.got:
+    ld (hl), BT_USED
+    ld a, c
+    or a                        ; clear CF
+    ret
 
 ; ---- Sprite animation (SP20): the resident part. State lives on SPR_PAGE;
 ; only what must be reachable with that page unmapped is here.

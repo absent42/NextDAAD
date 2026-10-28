@@ -2311,10 +2311,33 @@ xmsNamePart: ds 12
 ; before that call. A warm re-entry (nextreg 2,1 soft reset) must not
 ; leave xmsBank pointing at a bank bank_table_init has since recycled
 ; to a new owner - see main.asm for why this runs on every boot.
+; Part switch: free the claimed bank, then the boot reset. Boot keeps the
+; bare entry - bank_table_init has rebuilt the table and a stale xmsBank
+; from a warm re-entry must not free a bank someone else now owns.
+xms_part_reset:
+    ld a, (xmsBank)
+    cp $FF
+    call nz, bank_free
 xms_boot_reset:
     ld a, $FF
     ld (xmsBank), a
     ret
+
+; Free every picture-cache bank (gfxBankList[0 .. gfxBankNext-1]), then
+; reset the cache as gfx_cache_reset does. Corrupts AF, BC, E, HL.
+gfx_cache_free_banks:
+    ld a, (gfxBankNext)
+    or a
+    jr z, .reset
+    ld b, a
+    ld hl, gfxBankList
+.free:
+    ld a, (hl)
+    call bank_free              ; preserves BC, DE, HL (banks.asm)
+    inc hl
+    djnz .free
+.reset:
+    jp gfx_cache_reset
 
 ; Boot-only: probe GAME.XBN, load + validate into one allocated 16K
 ; bank. Any failure frees the bank (if one was allocated) and leaves
@@ -2701,6 +2724,8 @@ switch_to_part:
     call esx_fopen
     jr c, .fail                  ; missing -> current part untouched
     call esx_fclose               ; probe only; ddb_load reopens fresh
+    call gfx_cache_free_banks     ; release before ddb_load so the DDB can
+    call xms_part_reset           ; claim pool C; MMU7 is OVL0_PAGE here
     call ddb_load                 ; destructive from here. Return code
                                   ; intentionally unchecked: the probe
                                   ; already confirmed the file opens - a
@@ -2709,10 +2734,6 @@ switch_to_part:
                                   ; Step 3b), not handled specially
     ld a, (xpartTarget)
     ld (curPart), a
-    call gfx_cache_reset          ; resident (gfxcache.asm) - free to
-                                  ; call from overlay0 (context note 2)
-    call xms_boot_reset           ; overlay0-local; MMU7 is already
-                                  ; OVL0_PAGE throughout this routine
     call eng_init_game            ; resident; full re-init from the
                                   ; just-loaded ddbHeader (h_end already
                                   ; calls this from overlay0 - overlay0.
@@ -3988,9 +4009,9 @@ bank_selftest_o:
     cp BANK_POOL_A_END
     ld a, 3
     jr nz, .fail
-    call bank_alloc         ; check 4: then bank 20, the first of the
-                            ; pool released from the DDB reservation
-    cp BANK_POOL_C
+    call bank_alloc         ; check 4: then bank 37 - pool C (20-23) is
+                            ; handed out last, kept for the DDB text region
+    cp BANK_POOL_B
     ld a, 4
     jr nz, .fail
     ld a, BANK_POOL_A_END   ; check 5: freed bank is reused first
@@ -4021,7 +4042,7 @@ bank_selftest_o:
     call bank_free
     ld a, BANK_POOL_A_END
     call bank_free
-    ld a, BANK_POOL_C
+    ld a, BANK_POOL_B
     call bank_free
     call bank_count_free
     cp d
