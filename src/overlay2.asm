@@ -4550,7 +4550,7 @@ font_load:
     ret c                         ; no FONT.CHR either: silent, table untouched
 .opened:
     ld (fontHandle), a
-    call bank_alloc                ; transient scratch bank (banks.asm)
+    call bank_alloc                ; transient scratch bank (main.asm)
     jr nc, .haveBank
  IFDEF DEBUG                        ; pool exhausted: no-op with a marker, same
     ld b, 29                        ; idiom as .bad below. bank_alloc has no

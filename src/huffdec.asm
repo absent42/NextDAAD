@@ -2,10 +2,10 @@
 ; built at load by t2_build (huffbuild.asm). Length-L code c hits when
 ; c < hfLimit; index = c + hfOffs; symbol = hfSym[index] + 256 if index >= hfHi.
 
-; ddb_load's tail. Out: A = DDB_OK or DDB_E_TEXT2 (text2Err says why).
-; Maps overlay0 at slot 7 and leaves it there. At boot that is harmless
-; (the stack is resident; later callers map their own page); from
-; overlay0's XPART the page is already mapped.
+; ddb_load's tail. Out: A = DDB_OK, DDB_E_SIZE (format 1 over 64K) or
+; DDB_E_TEXT2 (text2Err says why). Maps overlay0 at slot 7 and leaves it
+; there. At boot that is harmless (the stack is resident; later callers
+; map their own page); from overlay0's XPART the page is already mapped.
 text2_load:
     xor a
     ld (text2Err), a
@@ -13,20 +13,37 @@ text2_load:
     rlca
     and 1
     ld (textFormat), a
-    ret z                       ; format 1: A = DDB_OK
     call data_save
     nextreg NR_MMU7, OVL0_PAGE
-    call t2_build
+    call t2_region              ; huffbuild.asm
     push af
     call data_restore
     pop af
     ret
 
+; HL = region offset. Maps page regionPage + (regionOff + HL) >> 13 (17-bit
+; sum) via rd_seek_page. Preserves BC, DE; CF clear (rd_seek_page's OR).
+t2_seek:
+    push de
+    ld de, (regionOff)
+    add hl, de
+    ld a, h
+    rra                         ; bit 16 into bit 7
+    swapnib
+    and $0F                     ; sum >> 13
+    ld e, a
+    ld a, (regionPage)
+    add a, e
+    pop de
+    jp rd_seek_page             ; masks the in-page offset with $1F
+
 textFormat: db 0                ; 0 = format 1 text, 1 = format 2
 text2Alpha: db 0                ; flags bit 0: 1 = 511-symbol alphabet
 text2Err:   db 0                ; T2E_* of the refusing check, 0 = none
+regionPage: db 0                ; 8K page holding region offset 0
+regionOff:  dw 0                ; its offset within that page
 text2Ntok:  dw 0
-text2Block: dw 0                ; absolute DDB address of the text block
+text2Block: dw 0                ; region offset of the text block (0)
 text2Index: dw 0                ; text2Block + TEXT2_LENGTHS + lengths size
 text2Fp:    dw 0                ; block fingerprint (XMB header check)
 hfLimit:    ds HF_MAXLEN*2      ; first code + count, per length

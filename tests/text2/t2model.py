@@ -44,6 +44,8 @@ def t2_model(ddb):
     alpha = b[2]
     if alpha >= 2:
         return {'err': T2E['FLAGS']}
+    if alpha and len(ddb) - a < 7 + 256:   # t2_build: 511 lengths past the region end
+        return {'err': T2E['REGION']}
     ntok = struct.unpack_from('<H', b, 3)[0]
     if ntok == 0 or ntok > (383 if alpha else 128):
         return {'err': T2E['NTOK']}

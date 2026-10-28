@@ -2101,7 +2101,7 @@ ext_xmes:
     inc a                       ; $FF = unclaimed
     jr nz, .have
     call bank_alloc             ; out: A = bank, CF clear; CF set = none
-    jp c, .fail                 ; free (banks.asm ~99-117)
+    jp c, .fail                 ; free (main.asm resident tail)
     ld (xmsBank), a
 .have:
     ; SP11 T5 PARTn probe - keep in step with the other four sites
@@ -2302,6 +2302,13 @@ xmsHdr:     ds 4                ; format 2 header: "X2", fingerprint
 ; + 6 (xmsName's own size, "0.XMB\0") = 12.
 xmsNamePart: ds 12
 
+; Part switch: free the claimed bank, then the boot reset. Boot keeps the
+; bare entry - bank_table_init has rebuilt the table and a stale xmsBank
+; from a warm re-entry must not free a bank someone else now owns.
+xms_part_reset:
+    ld a, (xmsBank)
+    cp $FF
+    call nz, bank_free
 ; Boot-time reset for xmsBank. This byte lives in overlay0's own data
 ; (mapped into slot 7 only when the dispatcher or a caller explicitly
 ; maps OVL0_PAGE there), so it cannot be poked directly from resident
@@ -2311,13 +2318,6 @@ xmsNamePart: ds 12
 ; before that call. A warm re-entry (nextreg 2,1 soft reset) must not
 ; leave xmsBank pointing at a bank bank_table_init has since recycled
 ; to a new owner - see main.asm for why this runs on every boot.
-; Part switch: free the claimed bank, then the boot reset. Boot keeps the
-; bare entry - bank_table_init has rebuilt the table and a stale xmsBank
-; from a warm re-entry must not free a bank someone else now owns.
-xms_part_reset:
-    ld a, (xmsBank)
-    cp $FF
-    call nz, bank_free
 xms_boot_reset:
     ld a, $FF
     ld (xmsBank), a
@@ -2723,9 +2723,8 @@ switch_to_part:
     ld b, ESX_MODE_READ
     call esx_fopen
     jr c, .fail                  ; missing -> current part untouched
-    call esx_fclose               ; probe only; ddb_load reopens fresh
-    call gfx_cache_free_banks     ; release before ddb_load so the DDB can
-    call xms_part_reset           ; claim pool C; MMU7 is OVL0_PAGE here
+    call .probe                   ; frees, pre-check, closes the handle
+    jr c, .fail                   ; current part untouched
     call ddb_load                 ; destructive from here. Return code
                                   ; intentionally unchecked: the probe
                                   ; already confirmed the file opens - a
@@ -2774,9 +2773,6 @@ switch_to_part:
     ; still valid here (before the "point of no return" SP reset just
     ; below), so this call/ret is fully balanced and leaves nothing
     ; behind.
-    call spr_stop_all            ; before pointer_load rescans pointerMask
-    ld hl, spr_cache_flush       ; set numbers are per part
-    call spr_call
     ld a, $FF
     ld (ptrCur), a               ; part switch re-probes the base shape
     xor a
@@ -2814,6 +2810,47 @@ switch_to_part:
     pop bc
  ENDIF
     scf
+    ret
+; A = probe handle. Frees the picture cache, XMES and sprite banks so the
+; DDB can claim pool C, then the pre-check: banks 20-23 a file over 64K
+; fills must be BT_FREE or BT_RESERVED. Closes the handle. CF set = refuse.
+.probe:
+    push af
+    call gfx_cache_free_banks     ; MMU7 is OVL0_PAGE here
+    call xms_part_reset
+    call spr_stop_all
+    ld hl, spr_cache_flush        ; set numbers are per part
+    call spr_call
+    pop af
+    push af
+    ld ix, xbn_boot_load.statbuf  ; boot-only buffer, free after boot
+    call esx_fstat
+    jr c, .close
+    ld hl, (xbn_boot_load.statbuf+9)
+    ld a, h
+    or a
+    ld a, 2                       ; 16M or more: as 128K
+    jr nz, .big
+    ld a, l
+.big:
+    ld hl, (xbn_boot_load.statbuf+7)
+    call pool_c_need              ; B = banks, HL = bankTable+20, CF clear
+    inc b
+    jr .pcnext
+.pcbank:
+    ld a, (hl)
+    cp BT_USED
+    ccf
+    jr c, .close                  ; in use
+    inc hl
+.pcnext:
+    djnz .pcbank
+.close:
+    pop hl
+    ld a, h                       ; handle; CF kept
+    push af
+    call esx_fclose               ; probe only; ddb_load reopens fresh
+    pop af
     ret
 
 ; Part A (1-9) -> ddbName (errors.asm's resident 10-byte buffer): n=1

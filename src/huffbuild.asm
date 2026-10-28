@@ -1,11 +1,109 @@
 ; Text format 2 block validation and decode-table build (overlay0, run once
-; per ddb_load through text2_load). Reads the block with rd_seek/rd_next.
+; per ddb_load through text2_load). Reads the block with t2_seek/rd_next;
+; text2Block, t2Lens and text2Index are region offsets.
+
+; Banks 20-23 the loaded file fills: BT_RESERVED; the rest of a previous
+; claim back to BT_FREE. Out: A = DDB_OK. Corrupts F, BC, HL.
+t2_claim:
+    ld hl, (ddbSize)
+    ld a, (ddbSizeHi)
+    call pool_c_need
+    ld c, BANK_POOL_C_END-BANK_POOL_C+1
+.k:
+    ld a, b
+    or a
+    jr z, .rel
+    dec b
+    ld (hl), BT_RESERVED
+    jr .next
+.rel:
+    or (hl)
+    jr nz, .next
+    inc (hl)                    ; BT_RESERVED -> BT_FREE
+.next:
+    inc hl
+    dec c
+    jr nz, .k
+    xor a                       ; DDB_OK
+    ret
+    ASSERT BT_RESERVED == 0 && BT_FREE == 1
+
+; A:HL = file size (A = bits 16-23). Out: B = 16K banks past 64K (0-4),
+; HL = bankTable + BANK_POOL_C, CF clear. Corrupts AF.
+pool_c_need:
+    ld b, 0
+    or a
+    jr z, .tab
+    ld b, 4
+    dec a
+    jr nz, .tab                 ; 128K or more
+    ld bc, $3FFF                ; round up to whole banks
+    add hl, bc
+    ld a, h
+    rra                         ; bit 16 into bit 7
+    rlca
+    rlca
+    rlca
+    and 7
+    ld b, a
+.tab:
+    ld hl, bankTable+BANK_POOL_C
+    ret
+
+; text2_load's body (overlay0). Format 1: DDB_E_SIZE over 64K, else DDB_OK.
+; Format 2: region bounds, regionPage/regionOff, bank claim, then t2_build.
+t2_region:
+    ld a, (textFormat)
+    or a
+    jr nz, .fmt2
+    ld a, (ddbSizeHi)
+    or a
+    ld a, DDB_E_SIZE
+    ret nz
+    jr t2_claim                 ; no region: frees a previous part's claim
+.region:
+    ld a, T2E_REGION
+    ld (text2Err), a
+    ld a, DDB_E_TEXT2
+    ret
+.fmt2:                          ; region = file offsets A .. size-1
+    ld de, (ddbHeader+HDR_REGION)
+    ld hl, -REGION_MIN_A
+    add hl, de
+    jr nc, .region              ; A < 60
+    ld hl, (ddbSize)
+    or a
+    sbc hl, de
+    ld a, (ddbSizeHi)
+    sbc a, 0
+    jr nz, .region              ; size - A over 65535 or negative; CF clear
+    ld bc, -REGION_MIN_LEN
+    add hl, bc
+    jr nc, .region              ; size - A < 135
+    ld (t2Lens), hl             ; size - A - 135, until t2_build sets t2Lens
+    ld hl, (ddbHeader+HDR_TOKENS)
+    ld a, h
+    or l
+    jr nz, .region              ; block not at region offset 0
+    ld a, d
+    and $1F
+    ld h, a
+    ld l, e
+    ld (regionOff), hl
+    ld a, d
+    rlca
+    rlca
+    rlca
+    and 7
+    add a, DDB_PAGE_FIRST
+    ld (regionPage), a
+    call t2_claim               ; then on into t2_build
 
 ; Out: A = DDB_OK, or DDB_E_TEXT2 with text2Err = T2E_*. Corrupts all.
 t2_build:
-    ld hl, (ddbHeader+HDR_TOKENS)
+    ld hl, 0                    ; block at region offset 0 (text2_load)
     ld (text2Block), hl
-    call rd_seek
+    call t2_seek
     call rd_next
     cp 'H'
     jr nz, .magic
@@ -19,6 +117,14 @@ t2_build:
     cp 2
     jp nc, .fail
     ld (text2Alpha), a
+    or a
+    jr z, .lenok
+    ld hl, (t2Lens)             ; 511 alphabet: region must hold 7 + 256
+    ld de, -128
+    add hl, de
+    ld c, T2E_REGION
+    jp nc, .fail
+.lenok:
     call rd_next
     ld l, a
     call rd_next
@@ -71,7 +177,7 @@ t2_build:
     ld hl, (t2Lens)             ; symbol 10 = lengths byte 5, low nibble
     ld de, 5
     add hl, de
-    call rd_seek
+    call t2_seek
     call rd_next
     and $0F
     ld c, T2E_EOM
@@ -111,7 +217,7 @@ t2_build:
 ; and the field's CRC-16 into t2Crc. IX must preserve DE and IX.
 t2_walk:
     ld hl, (t2Lens)
-    call rd_seek
+    call t2_seek
     ld hl, $FFFF
     ld (t2Crc), hl
     ld de, 0
@@ -258,7 +364,7 @@ t2_place:
     ld (hl), c
     ret
 
-t2Lens:   dw 0                  ; absolute address of the lengths field
+t2Lens:   dw 0                  ; region offset of the lengths field
 t2Bytes:  db 0                  ; lengths size, 0 = 256
 t2Crc:    dw 0
 t2Last:   dw 0

@@ -77,18 +77,12 @@ BANK_L2_FIRST   equ 9       ; 9-13 Layer 2 boot FRONT surface (5 banks covers
 BANK_L2_LAST    equ 13      ; 320x256); flips swap roles with 30-34
 BANK_POOL_A     equ 14      ; 14-15 allocator pool
 BANK_POOL_A_END equ 15
-BANK_DDB_FIRST  equ 16      ; 16-19 DDB, 64K maximum. FOUR banks because
-BANK_DDB_LAST   equ 19      ; 64K is the interpreter's addressable extent,
-                            ; not a capacity choice: rd_seek (ddbtext.asm)
-                            ; masks the page index with AND 7, so a DDB
-                            ; pointer reaches 8 pages of 8K and no more,
-                            ; whatever the file size. This was 16-23/128K
-                            ; until 2026-08-12; the upper four banks could
-                            ; never hold an addressable byte. Do not
-                            ; "restore" them - raising this without also
-                            ; widening rd_seek's mask achieves nothing.
-BANK_POOL_C     equ 20      ; 20-23 allocator pool, released from the old
-BANK_POOL_C_END equ 23      ; DDB over-reservation
+BANK_DDB_FIRST  equ 16      ; 16-19 DDB part A, 64K: rd_seek (ddbtext.asm)
+BANK_DDB_LAST   equ 19      ; masks the page index with AND 7. A format 2
+                            ; text region past 64K continues into 20-23,
+                            ; read through t2_seek (huffdec.asm).
+BANK_POOL_C     equ 20      ; 20-23 allocator pool, handed out last; a
+BANK_POOL_C_END equ 23      ; DDB over 64K marks the banks it fills BT_RESERVED
 BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
 BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
@@ -141,12 +135,11 @@ BT_FREE         equ 1
 BT_USED         equ 2
 
 ; --- DDB ---
-DDB_MAX_BANKS   equ 4       ; 64K. ddb_load's chunk cap is DDB_MAX_BANKS*2
-                            ; 8K chunks, so a larger file returns
-                            ; DDB_E_SIZE instead of loading a part of
-                            ; itself that no pointer could reach. Tied to
-                            ; BANK_DDB_FIRST/LAST above - see the note
-                            ; there before changing either.
+DDB_MAX_BANKS   equ 8       ; 128K: ddb_load's chunk cap is DDB_MAX_BANKS*2
+                            ; 8K chunks into banks 16-23. text2_load refuses
+                            ; a format 1 file over 64K with DDB_E_SIZE.
+REGION_MIN_A    equ 60      ; format 2: part A holds the header and extvec
+REGION_MIN_LEN  equ 135     ; format 2: block header + 128 length bytes
 DDB_HEADER_SIZE equ 34
 DDB_VERSION     equ 2       ; lowest accepted header version; ddb_load
                             ; takes 2 AND 3 (SP16 A1 - DAAD-READY's own
@@ -197,7 +190,7 @@ DDB_MACHINE_NXD equ $0C     ; NextDAAD's own machine nibble. PROVISIONAL
 ; --- ddb_load result codes ---
 DDB_OK          equ 0
 DDB_E_FILE      equ 1       ; missing or read error
-DDB_E_SIZE      equ 2       ; over 128K
+DDB_E_SIZE      equ 2       ; over 128K, or format 1 over 64K
 DDB_E_HDR       equ 3       ; failed validation
 DDB_E_MACHINE   equ 4       ; built for another target machine
 DDB_E_TEXT2     equ 5       ; text format 2 block refused (huffdec.asm)
@@ -222,6 +215,7 @@ T2E_EOM         equ 5       ; symbol 10 has no code
 T2E_SYM         equ 6       ; a token symbol at or past 128+ntok has a code
 T2E_KRAFT       equ 7       ; lengths over-subscribe a code length
 T2E_XMB         equ 8       ; 0.XMB header not "X2" + this DDB's fingerprint
+T2E_REGION      equ 9       ; text region bounds (header words 8 and 32)
 
 ; --- XBN extern binary (authoring-kit/xbn.inc is the authoring side) ---
 XBN_MAX_SIZE    equ $4000    ; one 16K bank, header included
@@ -449,7 +443,7 @@ TXT_TRANSP_COLOUR equ L2_TRANSP_COLOUR
                             ; renders magenta rather than transparent.
 
 ; --- Banking skeleton (sub-project 3) ---
-DDB_PAGE_FIRST  equ BANK_DDB_FIRST*2  ; 8K pages 32..39
+DDB_PAGE_FIRST  equ BANK_DDB_FIRST*2  ; 8K pages 32..47 (40-47 only past 64K)
 BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)
 OVL0_PAGE       equ BANK_OVL0*2
 OVL_ORG         equ $E000
@@ -611,6 +605,7 @@ HDR_OBJLOC      equ 24
 HDR_OBJNAME     equ 26
 HDR_OBJATTR     equ 28
 HDR_OBJEXTR     equ 30
+HDR_REGION      equ 32      ; format 2: part A length = text region file offset
 
 ; --- Audio (sub-project 7) ---
 AUD_PAGE_LO     equ BANK_AUDIO_FIRST*2      ; audio bank, lower 8K
