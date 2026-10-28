@@ -2894,10 +2894,10 @@ ext_forward:
     jp ext_build_contract       ; resident; B/C still hold param1/fn
 
 ; DEBUG EXTERN probe routes (vectors 6, 8-14): the trampoline bodies
-; (KTEST, L2MOD/LHIDE/LSHOW, LSxxx, NXB) and the ring-2 probe verbs
-; live in debug.asm's resident DEBUG tail, not on this page - this
-; overlay's DEBUG headroom had none to spare. h_extern dispatches with
-; resident always mapped, so the extVec rows below point straight at
+; for vectors 6 and 8-12 (KTEST, L2MOD/LHIDE/LSHOW, LSxxx, NXB) live in
+; debug.asm's resident DEBUG tail; the ring-2 probe verbs (13/14) live
+; on this page, mapped while extVec dispatches. h_extern dispatches
+; with resident always mapped, so rows 6 and 8-12 point straight at
 ; resident addresses. extVec is DATA, not code - the IFDEFs on the
 ; rows cost nothing in Release (byte-identical). Release forwards
 ; vectors 6 and 8-14 to the XBN (same as 5); DEBUG reserves them for
@@ -3760,10 +3760,9 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
  IFDEF DEBUG
 ; --- DEBUG one-shot boot printers and the Layer 2 ladder body ---
 ; Moved out of the resident area; debug.asm keeps trampolines
-; (boot_banner, bank_selftest, ddb_diag, dbg_engage_tilemap,
-; l2_bareprobe_hook) that map this page first.
+; (boot_banner, ram_diag, bank_selftest, ddb_diag, err_raise_dbg,
+; dbg_engage_tilemap, l2_bareprobe_hook) that map this page first.
 
-; dbg_engage_tilemap replay onto the tilemap.
 ; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1): moved from
 ; debug.asm for resident room; reached through extVec vectors 13/14 with
 ; overlay0 mapped. A debugger CALL needs overlay0 in slot 7.
@@ -3779,7 +3778,7 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
 ; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
 ; dbg_engage_tilemap has run - boot has reached the parser). Before
 ; that point dbg_puts/dbg_putc route through the ULA-pixel fallback
-; above, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
+; in debug.asm, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
 ; on H=$40-$47, overlapping this exact candidate ($44-$47). An early
 ; call would have its OWN status print corrupt the region under test.
 ; Neither routine calls dbg_cls for the same reason: it unconditionally
@@ -3902,6 +3901,7 @@ msgXpartFail:  db "XPART?", 0
 msgMouseUnk:   db "MOUSE? ", 0
 msgPtrBad:     db "PTR BAD", 0
 
+; dbg_engage_tilemap replay onto the tilemap.
 dbg_replay_o:
     call boot_banner_o
     call ram_diag_o

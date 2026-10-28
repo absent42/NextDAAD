@@ -1,6 +1,6 @@
-02:51:24 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2C\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\base\rel.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\base\rel.nex` PID 59552
+02:51:24 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2C\ -map=<scratchpad>\base\rel.map <scratchpad>\base\rel.nex` PID 59552
 02:53:38 killed PID 59552
-02:53:39 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2WC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\base\rel.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\base\rel.nex` PID 62764
+02:53:39 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2WC\ -map=<scratchpad>\base\rel.map <scratchpad>\base\rel.nex` PID 62764
 02:55:52 killed PID 62764
-02:55:53 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2NC\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\base\rel.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\base\rel.nex` PID 56964
+02:55:53 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2NC\ -map=<scratchpad>\base\rel.map <scratchpad>\base\rel.nex` PID 56964
 02:57:58 killed PID 56964

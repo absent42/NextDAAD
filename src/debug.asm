@@ -282,7 +282,8 @@ l2dbg_ovl2_call:
     jp (ix)
 
 ; --- DEBUG EXTERN probe routes (overlay0.asm's extVec vectors 6 and
-; 8-14 point here) - relocated from overlay0.asm: its DEBUG headroom
+; 8-12 point here; 13/14, the ring-2 probe verbs, stay in overlay0) -
+; relocated from overlay0.asm: its DEBUG headroom
 ; hit exactly 0 while this resident tail had ~1.2KB free, and h_extern
 ; dispatches with resident always mapped, so the extVec rows reach
 ; these bodies directly at zero overlay cost. Each trampoline is the

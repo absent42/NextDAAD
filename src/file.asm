@@ -252,8 +252,8 @@ ddb_load:
 ; normal Browser launch (cwd already holds GAME.DDB) never reaches the
 ; F_CHDIR at all: the first ddb_load already returns DDB_OK and this
 ; returns immediately, same as it always has.
-; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR or DDB_E_MACHINE -
-; identical contract to ddb_load.
+; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR, DDB_E_MACHINE or
+; DDB_E_TEXT2 - identical contract to ddb_load.
 ddb_load_debug_retry:
     call ddb_load
     cp DDB_E_FILE

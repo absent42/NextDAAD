@@ -42,5 +42,4 @@ Notes (Task 5b, HEAD after the 511-symbol list):
 - TEXT2W is OBJVERIF3 (383-token alphabet, flags 1, ntok 243, 299 used symbols, 115 of them >= 256): hfHi = 163 at length 9 and 270 at length 10, $FFFF elsewhere; hfSym (299 bytes) and every other cell match tests/text2/t2model.py (tables_TEXT2W.json).
 - The former BUDGET card (more than 256 used symbols) is retired: HF_SYM_MAX is now 511 and no valid block can exceed it; TEXT2W is the real-compile positive case.
 - TEXT2C screenshot is still pixel-identical to baseline_TEXT2C_2779ca9.png.
-- TEXT2 and TEXT2W print nothing legible: the format 1 reader cannot read format 2 text; printing is Task 6.
 - An earlier run (Task 5, now superseded) found and fixed a carry out of t2_tables at length 15 that refused the good card at T2E_KRAFT.

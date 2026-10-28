@@ -3,8 +3,9 @@
 ; c < hfLimit; index = c + hfOffs; symbol = hfSym[index] + 256 if index >= hfHi.
 
 ; ddb_load's tail. Out: A = DDB_OK or DDB_E_TEXT2 (text2Err says why).
-; Maps overlay0 at slot 7: ddb_load runs at boot (slot 7 free) or from
-; overlay0's XPART, so the mapping is left as found.
+; Maps overlay0 at slot 7 and leaves it there. At boot that is harmless
+; (the stack is resident; later callers map their own page); from
+; overlay0's XPART the page is already mapped.
 text2_load:
     xor a
     ld (text2Err), a
