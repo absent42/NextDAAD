@@ -44,3 +44,5 @@
 03:24:41 killed PID 34404
 03:39:20 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\ERR4\ -map=C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\dbg_fix1\nextdaad.map C:\Users\dan\AppData\Local\Temp\claude\d--NextDAAD\27257005-03b9-463e-ba60-d21d50a87be4\scratchpad\dbg_fix1\nextdaad.nex` PID 14456
 03:39:37 killed PID 14456
+03:41:17 launch `D:\ZXNextDev\cspect\CSpect.exe -w2 -zxnext -esc -mcp=23456 -mmc=D:\NextDAAD\sd\TEXT2X2\ -map=D:\NextDAAD\build\nextdaad.map D:\NextDAAD\build\nextdaad.nex` PID 61092
+03:41:31 killed PID 61092

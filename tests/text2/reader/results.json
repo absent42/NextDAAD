@@ -50,5 +50,14 @@
    "result": "RECORDED",
    "evidence": "reader/timing.json"
   }
+ ],
+ "xmb_part_fallback": [
+  {
+   "test": "xmb_part_fallback TEXT2X2",
+   "expect": "part 2 (NEST4, format 2) boots; READ -> E5, text2Err 8",
+   "got": "part 2 screen seen, curPart 2, textFormat 1, row0 'NextDAAD: DDB text format - E5', text2Err 8",
+   "result": "PASS",
+   "evidence": "reader/TEXT2X2/"
+  }
  ]
 }

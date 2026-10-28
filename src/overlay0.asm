@@ -2234,10 +2234,10 @@ ext_xmes:
                                  ; SM32) brackets its own window use
     ; print: a fresh data_save, reader onto the XMES page via
     ; rd_seek_page (replaces print_msg's msg_seek/rd_seek step),
-    ; tokActive reset, then REUSE print_msg's own decode loop rather
-    ; than duplicate it - print_msg.loop's local .done tail already
-    ; ends in prn_flush + data_restore, so it closes THIS bracket;
-    ; do not add a second data_restore after calling it.
+    ; tokActive reset, then print_msg's own decode loop (format 1) or
+    ; .f2loop (format 2, the same loop plus the page-end stop); both end
+    ; in print_msg.done (prn_flush + data_restore), which closes THIS
+    ; bracket - do not add a second data_restore.
     call data_save
     ld a, (xmsBank)
     add a, a

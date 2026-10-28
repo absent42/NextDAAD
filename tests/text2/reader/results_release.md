@@ -1,6 +1,6 @@
 # Task 6 reader legs (CSpect 4.3 MCP) _release
 
-Interpreter: Release build of the reader commit (build.ps1 -Release)
+Interpreter: Release build (build.ps1 -Release)
 
 | test | expect | got | result | evidence |
 |---|---|---|---|---|
@@ -21,3 +21,4 @@ Notes:
 - Timing: print_msg entry (breakpoint, A = 1, E = 48) to its return address, frameCounter and the raster line (NR $1E/$1F) read at both stops; ms = lines x 64 us. CSpect 4.3, emulated core timing: not a silicon figure; re-measure on hardware, and again after the core that drops the 28 MHz wait states.
 - f1_identity: the format 1 controls walked on the 84c43e3 Release build (_base84c43e3) and on this Release build (_release) give equal screens at every step.
 - Launch records: launches*.log (each CSpect killed by PID).
+- xmb_part_fallback (TEXT2X2): NDPARTA (format 1, -v3) boots, XPARTs to GAME2.DDB = NEST4 format 2; no PART2 folder, so READ's 0.XMB comes from the root (format 1).

@@ -281,6 +281,28 @@ def t_timing():
              'result': 'RECORDED', 'evidence': 'reader/timing%s.json' % TAG}]
 
 
+def t_part_fallback():
+    """Part 1 (format 1) switches to part 2 = NEST4 format 2; no PART2 folder, so READ
+    reads the root format 1 0.XMB through ext_xmes's fallback: E5, text2Err 8."""
+    sym = symbols()
+    L = Leg('TEXT2X2')
+    try:
+        st = L.walk(['READ'], 'TEXT2X2' + TAG)
+        L.m.call('pause')
+        err = L.m.mem(sym['TEXT2ERR'], 1)[0]
+        part = L.m.mem(sym['CURPART'], 1)[0]
+        fmt = L.m.mem(sym['TEXTFORMAT'], 1)[0]
+        r = rows(L.m, 2)
+    finally:
+        L.close()
+    booted = any('NEST4' in x for x in st[0]['rows'] or [])
+    ok = booted and r[0].startswith('NextDAAD: DDB text format - E5') and err == 8 and part == 2 and fmt == 1
+    return [{'test': 'xmb_part_fallback TEXT2X2', 'expect': 'part 2 (NEST4, format 2) boots; READ -> E5, text2Err 8',
+             'got': 'part 2 screen %s, curPart %d, textFormat %d, row0 %r, text2Err %d' % (
+                 'seen' if booted else 'MISSING', part, fmt, r[0], err),
+             'result': 'PASS' if ok else 'FAIL', 'evidence': 'reader/TEXT2X2%s/' % TAG}]
+
+
 def t_f1_walks():
     """Format 1 controls only, into <LEG>_f1<TAG>; f1_identity compares two tags."""
     ov = read_walk(os.path.join(ROOT, 'tests', 'objshare', 'walk.txt'))
@@ -319,7 +341,7 @@ def t_tools():
 
 
 TESTS = {'objverif_walk': t_objverif, 'nest4_walk': t_nest4, 'xmb_walk': t_xmb,
-         'xmb_mismatch_refused': t_mismatch, 'timing': t_timing, 'f1_walks': t_f1_walks,
+         'xmb_mismatch_refused': t_mismatch, 'xmb_part_fallback': t_part_fallback, 'timing': t_timing, 'f1_walks': t_f1_walks,
          'f1_identity': t_f1_identity, 'tools': t_tools}
 
 
@@ -336,12 +358,15 @@ def main():
     json.dump(allr, open(rj, 'w'), indent=1)
     with open(os.path.join(OUT, 'results%s.md' % TAG), 'w', newline='\n') as f:
         f.write('# Task 6 reader legs (CSpect 4.3 MCP)%s\n\n' % (' ' + TAG if TAG else ''))
-        f.write('Interpreter: %s\n\n' % NEX)
+        f.write('Interpreter: %s\n\n' % os.environ.get('T6_NEX_NAME', 'DEBUG build (build.ps1)'))
         f.write('| test | expect | got | result | evidence |\n|---|---|---|---|---|\n')
         for t in TESTS:
             for r in allr.get(t, []):
                 f.write('| %s | %s | %s | %s | %s |\n' % (r['test'], r['expect'],
                         r['got'].replace('|', '/'), r['result'], r['evidence']))
+        notes = os.path.join(OUT, 'notes.md')
+        if os.path.exists(notes):
+            f.write('\n' + open(notes).read())
 
 
 if __name__ == '__main__':

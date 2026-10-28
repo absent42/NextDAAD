@@ -33,6 +33,7 @@ hfOffs:     ds HF_MAXLEN*2      ; list base - first code (mod 65536)
 hfHi:       ds HF_MAXLEN*2      ; first index holding a symbol >= 256, $FFFF = none
 hfSym:      ds HF_SYM_MAX       ; symbols low byte, canonical order
     ASSERT hfOffs == hfLimit + HF_MAXLEN*2
+    ASSERT hfHi == hfOffs + HF_MAXLEN*2
 
 ; Next format 2 symbol: canonical bit-serial decode, MSB first, from hfBuf
 ; (unread bits, then a 1 sentinel; $80 = empty). Out: HL = symbol 0-510,
