@@ -140,7 +140,7 @@ def run_card(card, sym, log):
         want_c = [0] * claim + [1] * (4 - claim)
         res['poolc'] = 'bankTable[20..23] %s want %s, free %d' % (
             bt[POOL_C:POOL_C + 4], want_c, bt.count(1))
-        if len(ddb) > 65535 and not fmt2:
+        if len(ddb) > 65536 and not fmt2:
             res['expect'] = 'E2 oversize screen, pool C free'
             ok = rows[0].startswith('NextDAAD: DDB oversize - E2')
             res['got'] = 'row0 %r' % rows[0]

@@ -29,7 +29,7 @@ t2_claim:
     ASSERT BT_RESERVED == 0 && BT_FREE == 1
 
 ; A:HL = file size (A = bits 16-23). Out: B = 16K banks past 64K (0-4),
-; HL = bankTable + BANK_POOL_C, CF clear. Corrupts AF.
+; HL = bankTable + BANK_POOL_C, CF clear. Corrupts AF, C.
 pool_c_need:
     ld b, 0
     or a
@@ -56,7 +56,12 @@ t2_region:
     ld a, (textFormat)
     or a
     jr nz, .fmt2
+    ld hl, (ddbSize)            ; refuse 65537 or more; 65536 loads
+    ld a, h
+    or l
     ld a, (ddbSizeHi)
+    jr nz, $+3
+    dec a                       ; size - 1, high byte
     or a
     ld a, DDB_E_SIZE
     ret nz

@@ -2101,7 +2101,7 @@ ext_xmes:
     inc a                       ; $FF = unclaimed
     jr nz, .have
     call bank_alloc             ; out: A = bank, CF clear; CF set = none
-    jp c, .fail                 ; free (main.asm resident tail)
+    jp c, .fail                 ; free (bank_alloc: main.asm resident tail)
     ld (xmsBank), a
 .have:
     ; SP11 T5 PARTn probe - keep in step with the other four sites
@@ -2724,7 +2724,8 @@ switch_to_part:
     call esx_fopen
     jr c, .fail                  ; missing -> current part untouched
     call .probe                   ; frees, pre-check, closes the handle
-    jr c, .fail                   ; current part untouched
+    jr c, .fail                   ; refused: part kept, but sprites stopped and
+                                  ; picture, sprite and XMES banks freed
     call ddb_load                 ; destructive from here. Return code
                                   ; intentionally unchecked: the probe
                                   ; already confirmed the file opens - a
