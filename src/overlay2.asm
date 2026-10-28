@@ -3544,7 +3544,14 @@ gfx_pos_mode:
     ld b, 29
     call dbg_markcol
     ld hl, msgPosMode
-    call dbg_mark
+    push bc                     ; dbg_mark's shape (it lives in overlay0)
+    push de
+    push hl
+    call dbg_at
+    call dbg_puts
+    pop hl
+    pop de
+    pop bc
  ENDIF
     scf
     ret

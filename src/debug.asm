@@ -33,39 +33,6 @@ dbg_markcol:
     ld c, a
     ret
 
-; One-call DEBUG marker: B = row, C = column, HL = ASCIIZ message.
-; Preserves BC, DE, HL; corrupts AF. dbg_mark_hex also prints A as hex.
-dbg_mark:
-    push bc
-    push de
-    push hl
-    call dbg_at
-    call dbg_puts
-    pop hl
-    pop de
-    pop bc
-    ret
-dbg_mark_hex:
-    push af
-    call dbg_mark
-    pop af
-    push bc
-    push de
-    push hl
-    call dbg_hex8
-    pop hl
-    pop de
-    pop bc
-    ret
-
-; overlay0.asm's six DEBUG marker sites and the XBN load failure marker.
-msgStub:       db "STUB ", 0
-msgXmesFail:   db "XMES?", 0
-msgXbnFail:    db "XBN?", 0
-msgXpartRange: db "XPART N? ", 0
-msgXpartFail:  db "XPART?", 0
-msgMouseUnk:   db "MOUSE? ", 0
-msgPtrBad:     db "PTR BAD", 0
 
 ; A = character. 13 = newline. Corrupts AF, BC, DE, HL.
 dbg_putc:
@@ -192,6 +159,9 @@ bank_selftest:
     jr dbg_ovl0_go
 ddb_diag:
     ld hl, ddb_diag_o
+    jr dbg_ovl0_go
+err_raise_dbg:                  ; err_raise's row-30 readout (terminal path)
+    ld hl, err_raise_dbg_o
 dbg_ovl0_go:
     push hl
     ld a, OVL0_PAGE
@@ -395,75 +365,6 @@ nxb_trampoline:
     ld a, VID_PAGE
     jp ovl_map_page
 
-; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1) - back in
-; its original home: Task 9 landed these here, Task 10 pushed them to
-; overlay0.asm when this tail had only 3 bytes free, and the same
-; squeeze in reverse (overlay0 at exactly 0 headroom, this tail ~1.2KB
-; free) brings them back. extVec vectors 13/14 (overlay0.asm) point
-; here directly - resident is always mapped, so dispatch needs no
-; trampoline and a debugger CALL to either symbol works regardless of
-; what slot 7 holds. ---------------------------------------------------
-; V1 silicon instruments for the AUD_STAGE2 candidate: $4400-$47FF (1K)
-; inside the classic ULA pixel screen ($4000-$57FF), believed dead once
-; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
-; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
-; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
-; via a debugger CALL to the symbol or tests/sfxlong.dsf's R2FILL/
-; R2CHK verbs - no automatic call site exists anywhere in the boot or
-; engine flow, so Release carries none of this.
-;
-; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
-; dbg_engage_tilemap has run - boot has reached the parser). Before
-; that point dbg_puts/dbg_putc route through the ULA-pixel fallback
-; above, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
-; on H=$40-$47, overlapping this exact candidate ($44-$47). An early
-; call would have its OWN status print corrupt the region under test.
-; Neither routine calls dbg_cls for the same reason: it unconditionally
-; clears the WHOLE ULA screen via ula_cls (hardware.asm).
-RING2_BASE equ $4400
-RING2_LEN  equ $0400              ; 1K
-RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
-                                  ; not scroll
-
-; Fill RING2_BASE..+RING2_LEN-1 with $A5. No screen output (RING2CHK,
-; called right after, both confirms the fill and reports it). Corrupts
-; AF, BC, DE, HL.
-ring2_fill:
-    ld hl, RING2_BASE
-    ld de, RING2_BASE+1
-    ld bc, RING2_LEN-1
-    ld (hl), $A5
-    ldir
-    ret
-
-; Scan RING2_BASE..+RING2_LEN-1 for the first byte != $A5. Prints "OK"
-; on row RING2_ROW if the whole range is intact, else the mismatching
-; address (4 hex digits) then a space then its byte (2 hex digits) on
-; that same row. Corrupts everything (dbg_* helpers' own contract).
-ring2_chk:
-    ld b, RING2_ROW
-    call dbg_at0
-    ld hl, RING2_BASE
-    ld bc, RING2_LEN
-.loop:
-    ld a, (hl)
-    cp $A5
-    jr nz, .bad
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .loop
-    ld hl, .msgok
-    jp dbg_puts
-.bad:
-    push af                     ; mismatching byte value (dbg_hex16
-                                 ; below would corrupt it otherwise)
-    call dbg_hex16              ; HL is still the mismatch address
-    call dbg_space
-    pop af
-    jp dbg_hex8
-.msgok: db "OK", 0
 
 msgFrames:  db "FRAMES ", 0
 

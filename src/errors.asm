@@ -17,35 +17,7 @@
 err_raise:
     ld (errCode), a
  IFDEF DEBUG
-    ld b, 30
-    call dbg_at0                ; SP14c batch B ERR2: shared with
-                                 ; debug.asm's dbg_at0 (row-only stub)
-    ld hl, msgErr
-    call dbg_puts
-    ld a, (errCode)
-    call dbg_hex8
-    ld hl, msgErrP
-    call dbg_puts
-    ld a, (procSP)
-    or a
-    jr z, .nop
-    dec a
-    call eng_rec_ptr_a
-    ld a, (hl)
-.nop:
-    call dbg_hex8
-    ld hl, msgErrV
-    call dbg_puts
-    ld a, (flags+FLAG_VERB)
-    call dbg_hex8
-    ld hl, msgErrN
-    call dbg_puts
-    ld a, (flags+FLAG_NOUN1)
-    call dbg_hex8
-    ld hl, msgErrC
-    call dbg_puts
-    ld a, (curCondact)
-    call dbg_hex8
+    call err_raise_dbg          ; maps overlay0 for good: err_raise never returns
  ENDIF
     ld a, TM_ATTR_ERROR         ; reserved pair 1: magenta paper, white ink
     ld (tmAttr), a
@@ -116,13 +88,6 @@ ddbName: db "GAME.DDB", 0, 0
 ; errors.asm only) to add a reset, so this rides with the same
 ; accepted, documented residual as the pre-existing mouse statics.
 curPart: db 1
- IFDEF DEBUG
-msgErr:  db "E", 0
-msgErrP: db " P", 0
-msgErrV: db " V", 0
-msgErrN: db " N", 0
-msgErrC: db " C", 0
- ENDIF
 
 ; msgRuntimeErr and msgRdStack relocated to overlay0.asm's free space
 ; (post-flags resident here had no room to grow) - see fatal_puts's
