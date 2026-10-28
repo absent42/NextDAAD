@@ -2,7 +2,7 @@
 ; and hardware registers. All later modules include this file.
 
 ; --- Version ---
-; Boot-time version stamp, printed by the DEBUG build only (debug.asm msgTitle).
+; Boot-time version stamp, printed by the DEBUG build only (overlay0.asm msgTitle).
     DEFINE VERSION_STR "NEXTDAAD V0.12.0"
 
 ; --- Next registers ---
@@ -69,7 +69,7 @@ NR_INT_C0_VAL   equ %00000001 ; hardware IM2 mode: vector base (bits 7:5) 0, bit
 ; room to spare, so a range that looks generous is load-bearing. The
 ; allocator pool is whatever is left: banks 14-15, 20-23, 37-47 (37-46
 ; in DEBUG) and, when the RAM is there, 48-111. bank_table_init is the one
-; place that decides what is free, and debug.asm's bank_selftest asserts
+; place that decides what is free, and bank_selftest (overlay0.asm bank_selftest_o) asserts
 ; both the count and the allocation ORDER - update those expectations
 ; whenever anything here moves, never loosen them.
 BANK_SYS_LAST   equ 8       ; 0-8 reserved: system, ULA bank 5, code bank 2

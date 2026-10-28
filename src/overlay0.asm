@@ -3703,5 +3703,310 @@ msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
 ; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop).
 msgRdStack:    db "NextDAAD: RD STACK - E9", 0
 
+
+ IFDEF DEBUG
+; --- DEBUG one-shot boot printers and the Layer 2 ladder body ---
+; Moved out of the resident area; debug.asm keeps trampolines
+; (boot_banner, bank_selftest, ddb_diag, dbg_engage_tilemap,
+; l2_bareprobe_hook) that map this page first.
+
+; dbg_engage_tilemap replay onto the tilemap.
+dbg_replay_o:
+    call boot_banner_o
+    call ram_diag
+    call bank_selftest_show_o
+    jp ddb_diag_o
+
+boot_banner_o:
+    ld b, 0
+    call dbg_at0
+    ld hl, msgTitle
+    call dbg_puts
+    ld b, 1
+    call dbg_at0
+    ld hl, msgCore
+    call dbg_puts
+    ld e, NR_CORE_MAJOR
+    call nr_read
+    call dbg_hex8
+    ld a, '.'
+    call dbg_putc
+    ld e, NR_CORE_SUB
+    call nr_read
+    call dbg_hex8
+    ld hl, msgMachine
+    call dbg_puts
+    ld e, NR_MACHINE_ID
+    call nr_read
+    call dbg_hex8
+    ld hl, msgSpeed
+    call dbg_puts
+    ld e, NR_CPU_SPEED
+    call nr_read
+    jp dbg_hex8
+
+; Expected free-bank counts. Must match what bank_table_init actually
+; frees - they are the allocator's tripwire, and a stale value here
+; disables it. Bank 35 is withdrawn for VID_PAGE2/SFX_PAGE in both
+; build variants (see nextdaad.inc's bank map) and excluded here.
+SELFTEST_FREE_2MB equ 80    ; 14,15 + 20-23 + 37-46 + 48-111 (28,29 withdrawn
+                            ; for the overlays, 30-34 for the Layer 2 back
+                            ; surface, 35 for VID_PAGE2/SFX_PAGE, 36 for the
+                            ; sprite pages, 47 for the DEBUG bench bank)
+SELFTEST_FREE_1MB equ 16    ; 14,15 + 20-23 + 37-46 (same withdrawals)
+
+; Exercises the allocator. Prints BANKS OK on row 10, or
+; BANKS FAIL nn where nn is the failing check number.
+; Relies on helpers not touching D (expected free count).
+bank_selftest_o:
+    ld a, (ramExpanded)
+    or a
+    jr z, .exp1mb
+    ld d, SELFTEST_FREE_2MB
+    jr .check1
+.exp1mb:
+    ld d, SELFTEST_FREE_1MB
+.check1:
+    call bank_count_free    ; check 1: initial free count
+    cp d
+    ld a, 1
+    jr nz, .fail
+    call bank_alloc         ; check 2: first alloc is bank 14
+    cp BANK_POOL_A
+    ld a, 2
+    jr nz, .fail
+    call bank_alloc         ; check 3: then bank 15
+    cp BANK_POOL_A_END
+    ld a, 3
+    jr nz, .fail
+    call bank_alloc         ; check 4: then bank 20, the first of the
+                            ; pool released from the DDB reservation
+    cp BANK_POOL_C
+    ld a, 4
+    jr nz, .fail
+    ld a, BANK_POOL_A_END   ; check 5: freed bank is reused first
+    call bank_free
+    call bank_alloc
+    cp BANK_POOL_A_END
+    ld a, 5
+    jr nz, .fail
+    call data_save           ; checks 6,7: write/read through the window
+    ld a, BANK_POOL_A*2
+    call data_map_page
+    ld hl, DATA_WINDOW
+    ld (hl), $AA
+    inc hl
+    ld (hl), $55
+    dec hl
+    ld a, (hl)
+    cp $AA
+    ld a, 6
+    jr nz, .failrestore
+    inc hl
+    ld a, (hl)
+    cp $55
+    ld a, 7
+    jr nz, .failrestore
+    call data_restore
+    ld a, BANK_POOL_A       ; check 8: count restored after frees
+    call bank_free
+    ld a, BANK_POOL_A_END
+    call bank_free
+    ld a, BANK_POOL_C
+    call bank_free
+    call bank_count_free
+    cp d
+    ld a, 8
+    jr nz, .fail
+    xor a                   ; 0 = every check passed
+    jr .verdict
+.failrestore:
+    push af
+    call data_restore
+    pop af
+.fail:
+.verdict:
+    ld (bankSelfRes), a
+    ; falls into the printer
+
+; Print the LATCHED verdict at row 10: "BANKS OK", or "BANKS FAIL nn"
+; with the failing check number. Separate from the checks themselves so
+; dbg_engage_tilemap can replay it onto the tilemap without re-running
+; them - re-running is not safe once boot is past. The checks allocate,
+; free and assert an exact free count, and by the time the tilemap comes
+; up the audio banks are claimed and the picture cache may hold pool
+; banks, so a second run would fail on state that is perfectly correct.
+; Corrupts AF, BC, DE, HL.
+bank_selftest_show_o:
+    ld b, 10
+    call dbg_at0
+    ld a, (bankSelfRes)
+    or a
+    jr nz, .bad
+    ld hl, msgBanksOk
+    jp dbg_puts
+.bad:
+    push af
+    ld hl, msgBanksFail
+    call dbg_puts
+    pop af
+    jp dbg_hex8
+
+ddb_diag_o:
+    ld b, 5
+    call dbg_at0
+    ld hl, msgDdb
+    call dbg_puts
+    ld a, (ddbSizeHi)       ; six hex digits: full 24-bit size
+    call dbg_hex8
+    ld hl, (ddbSize)
+    call dbg_hex16
+    ld hl, msgDirData       ; boot F_CHDIR result, main.asm ddb_load_boot
+    ld a, (dataDirOk)
+    or a
+    jr nz, .dir
+    ld hl, msgDirKept
+.dir:
+    call dbg_puts
+    ld b, 6
+    call dbg_at0
+    ld hl, msgVer
+    call dbg_puts
+    ld a, (ddbHeader+0)
+    call dbg_hex8
+    ld hl, msgTgt
+    call dbg_puts
+    ld a, (ddbHeader+1)
+    call dbg_hex8
+    ld b, 7
+    call dbg_at0
+    ld hl, ddbHeader+8      ; 13 pointer words, wrap fills rows 7-9
+    ld b, 13
+.ptr:
+    push bc
+    push hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_hex16
+    call dbg_space
+    pop hl
+    inc hl
+    inc hl
+    pop bc
+    djnz .ptr
+    ret
+
+msgTitle:   db VERSION_STR, 0
+msgCore:    db "CORE ", 0
+msgMachine: db " MACHINE ", 0
+msgSpeed:   db " SPD ", 0
+msgBanksOk:   db "BANKS OK", 0
+msgBanksFail: db "BANKS FAIL ", 0
+msgDdb:      db "GAME.DDB SIZE ", 0
+msgDirKept:  db " DIR KEPT", 0
+msgVer:      db "VER ", 0
+msgTgt:      db " TGT ", 0
+
+; Like l2dbg_status, but appends a live hex dump of NR $69 (Layer 2
+; enable)/$70 (resolution)/$12 (bank)/$15 (S/L/U priority), read back
+; via nr_read rather than assumed - so the owner can report the actual
+; register state alongside what is on screen (a correct-looking enable
+; write can still leave Layer 2 invisible). Corrupts everything.
+l2dbg_status_regs:
+    call l2dbg_status
+    ld hl, msgRegDump
+    call dbg_puts
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_CTRL
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_BANK
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_LAYERS
+    call nr_read
+    jp dbg_hex8
+
+msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
+msgRegDump:      db " 69/70/12/15=", 0
+
+; Raw busy-wait press/release detection (row $DF, bit 0): stage 0 has
+; no ISR to pace a frame-counted poll against, and one key path serves
+; the whole ladder. Corrupts AF, BC.
+l2dbg_p_wait_release:
+    ld bc, $DFFE
+    in a, (c)
+    bit 0, a
+    jr z, l2dbg_p_wait_release
+    ret
+l2dbg_p_wait_press:
+    ld bc, $DFFE
+    in a, (c)
+    bit 0, a
+    jr nz, l2dbg_p_wait_press
+    ret
+
+msgBareStage2: db "STAGE 2 - TILEMAP + TRANSPARENT CLEAR", 0
+
+; Entered from l2_bareprobe_hook (debug.asm) with this page in slot 7;
+; overlay2 routines are reached through l2dbg_ovl2_call. Never returns.
+l2_bareprobe_ladder:
+.stage0:
+    call hw_init
+    xor a
+    ld hl, l2_bareprobe_draw
+    call l2dbg_ovl2_call
+    xor a
+    ld hl, l2_bareprobe_marker
+    call l2dbg_ovl2_call          ; 1 block
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+.stage1:
+    call im2_init                 ; also EI's - ISR now live
+    xor a
+    ld hl, l2_bareprobe_draw
+    call l2dbg_ovl2_call
+    ld a, 1
+    ld hl, l2_bareprobe_marker
+    call l2dbg_ovl2_call          ; 2 blocks
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+.stage2:
+    call txt_init
+    xor a
+    ld hl, l2_bareprobe_draw
+    call l2dbg_ovl2_call
+    ld bc, 0
+    ld d, TM_ROWS-1
+    ld a, (tmCols)
+    ld e, a
+    call tm_clear_blank
+    ld a, 2
+    ld hl, l2_bareprobe_marker
+    call l2dbg_ovl2_call          ; 3 blocks
+    ld hl, msgBareStage2
+    call l2dbg_status
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+.stage3:
+    xor a
+    ld hl, l2_testcard
+    call l2dbg_ovl2_call           ; the full existing testcard flow
+    ld hl, msgTestcard256
+    call l2dbg_status_regs
+    ld hl, l2dbg_status2
+    call l2dbg_ovl2_call
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+    jr .stage0                     ; wrap around for another pass
+ ENDIF
+
     DISPLAY "overlay0 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT

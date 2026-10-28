@@ -5119,7 +5119,7 @@ l2scr_write:
     ret
 
 ; Program the inset window (constants above) and mirror it into the
-; clip shadow, so debug.asm's l2dbg_status2 reports the window that is
+; clip shadow, so l2dbg_status2 reports the window that is
 ; actually up - NR $18 cannot be read back (see l2_clip_set).
 ; Corrupts AF.
 l2scr_clip_inset:
@@ -5229,6 +5229,59 @@ msgL2s8: db "LSTC X M1 STEP8 MIDRASTER 9BIT WRITE", 0
 msgL2s9: db "LS256 STATIC XOFS 256 M1", 0
 msgL2sX9: db " NR71=", 0
 msgL2sDone: db "L2SCROLL DONE - OFFSETS 0, CLIP FULL", 0
+
+; Second status row (TM_ROWS-2, also reserved by overlay2's
+; l2_testcard): NR $14 (global transparency colour, expect $E3), the
+; Layer 2 clip window SHADOW (clipW= - overlay2's l2ClipX1/X2/Y1/Y2,
+; NOT a hardware readback: NR $18 cannot be read back, see l2_clip_set),
+; the scroll offset (NR $16/$17, expect $00 $00), and one live pixel
+; read back from the drawn surface (l2_peek_marker - the top-left
+; corner-marker byte). Called by the bare-metal isolation ladder's
+; stage 3 straight after l2_testcard, which has already set the clip
+; window (l2_mode_set -> l2_clip_set) as part of its own flow.
+; Corrupts everything.
+l2dbg_status2:
+    ld b, TM_ROWS-2
+    ld d, 1
+    call dbg_bar_white
+    ld b, TM_ROWS-2
+    call dbg_at0
+    ld hl, msgReg14
+    call dbg_puts
+    ld e, NR_L2_TRANSP
+    call nr_read
+    call dbg_hex8
+    ld hl, msgClipW
+    call dbg_puts
+    ld a, (l2ClipX1)
+    call dbg_hex8
+    call dbg_space
+    ld a, (l2ClipX2)
+    call dbg_hex8
+    call dbg_space
+    ld a, (l2ClipY1)
+    call dbg_hex8
+    call dbg_space
+    ld a, (l2ClipY2)
+    call dbg_hex8
+    ld hl, msgScroll
+    call dbg_puts
+    ld e, NR_L2_XOFS
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_YOFS
+    call nr_read
+    call dbg_hex8
+    ld hl, msgPx
+    call dbg_puts
+    call l2_peek_marker
+    jp dbg_hex8
+
+msgReg14:        db "14=", 0
+msgClipW:        db " clipW=", 0
+msgScroll:       db " scroll=", 0
+msgPx:           db " px=", 0
 
  ENDIF
 
