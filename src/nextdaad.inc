@@ -212,7 +212,7 @@ TEXT2_LENGTHS   equ 7       ; 128 or 256 bytes, 4-bit length per symbol, low nib
 TEXT2_NTOK_MAX0 equ 128
 TEXT2_NTOK_MAX1 equ 383
 HF_MAXLEN       equ 15      ; longest code
-HF_SYM_MAX      equ 256     ; used-symbol list capacity; more is DDB_E_TEXT2
+HF_SYM_MAX      equ 511     ; used-symbol list: the whole 511 alphabet (T2E_SYM refuses symbol 511)
 ; text2Err: which format 2 check refused the DDB (0 = none)
 T2E_MAGIC       equ 1
 T2E_FLAGS       equ 2
@@ -221,7 +221,6 @@ T2E_FP          equ 4
 T2E_EOM         equ 5       ; symbol 10 has no code
 T2E_SYM         equ 6       ; a token symbol at or past 128+ntok has a code
 T2E_KRAFT       equ 7       ; lengths over-subscribe a code length
-T2E_BUDGET      equ 8       ; more than HF_SYM_MAX used symbols
 
 ; --- XBN extern binary (authoring-kit/xbn.inc is the authoring side) ---
 XBN_MAX_SIZE    equ $4000    ; one 16K bank, header included

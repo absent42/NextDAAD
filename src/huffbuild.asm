@@ -88,10 +88,6 @@ t2_build:
     call t2_tables
     ld c, T2E_KRAFT
     jr c, .fail
-    ld de, HF_SYM_MAX+1
-    sbc hl, de                  ; CF clear from t2_tables
-    ld c, T2E_BUDGET
-    jr nc, .fail
     ld hl, 0
     ld (t2Pos), hl
     ld a, 1
@@ -253,11 +249,13 @@ t2_place:
     ld hl, hfHi
     add hl, a
     ld a, (hl)
-    inc a
-    ret nz                      ; already set: index < 256 keeps the high byte 0
-    ld (hl), c
     inc hl
+    and (hl)
+    inc a
+    ret nz                      ; already set: indexes stop at 510, never $FFFF
     ld (hl), b
+    dec hl
+    ld (hl), c
     ret
 
 t2Lens:   dw 0                  ; absolute address of the lengths field
