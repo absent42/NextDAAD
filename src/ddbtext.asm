@@ -68,12 +68,12 @@ rdPtr equ $+1                   ; the reader pointer IS this operand:
 
 ; Four-level reader save stack (worst case: message token -> objname ->
 ; name token -> More... fires -> tokenized SM32). Depth overflow is a
-; coding error: fatal, border 2. Preserves DE.
+; coding error: fatal, border 2. Preserves BC, DE.
 rd_push:
     ld a, (rdSaveSP)
     cp 4
     jr nc, rd_stack_fatal
-    call rd_slot                ; HL -> slot for level A
+    call t2_push                ; HL -> slot for level A (huffdec.asm)
     ld a, (rdPage)
     ld (hl), a
     inc hl
@@ -86,14 +86,14 @@ rd_push:
     inc (hl)
     ret
 
-; Preserves DE. Corrupts HL, A.
+; Preserves BC, DE. Corrupts HL, A.
 rd_pop:
     ld a, (rdSaveSP)
     or a
     jr z, rd_stack_fatal
     dec a
     ld (rdSaveSP), a
-    call rd_slot
+    call t2_pop                 ; HL -> slot (huffdec.asm)
     ld a, (hl)
     ld (rdPage), a
     call data_map_page
@@ -160,6 +160,8 @@ msg_seek:
     ld l, a
     call rd_next
     ld h, a
+    ld a, $80                   ; format 2: empty bit buffer (huffdec.asm)
+    ld (hfBuf), a
     jp rd_seek                  ; leaves the reader at the message text
 
 ; A = next decoded character from the current reader stream, expanding
@@ -169,14 +171,18 @@ msg_seek:
 ; first call on a freshly-seeked stream. Preserves BC only - the token
 ; paths corrupt HL (.tokref reseeks the token table; rd_pop corrupts HL
 ; by its own contract). A caller holding a pointer across this call
-; must bracket it in push/pop itself.
+; must bracket it in push/pop itself. Format 2 text: t2_next, same contract.
 txt_next_decoded:
+    ld a, (textFormat)
+    or a
+    jp nz, t2_next              ; format 2 (huffdec.asm)
     ld a, (tokActive)
     or a
     jr nz, .intok
 .msg:
     call rd_next
     cpl                         ; decode = 255 - byte
+.lit:
     cp $0A
     jr z, .end
     or a                        ; S = bit 7, CF clear (cp left CF set
@@ -403,7 +409,7 @@ objname_chk:
 ; texts, while their system messages are heavily tokenised), so no
 ; fixture here reaches this - but the DDB format allows it, other
 ; toolchains use it, and correctness must not rest on one compiler's
-; choice of what to compress.
+; choice of what to compress. Format 2 nested entries take no level.
 objname_untok:
     ld a, (tokActive)
     or a

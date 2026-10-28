@@ -221,6 +221,7 @@ T2E_FP          equ 4
 T2E_EOM         equ 5       ; symbol 10 has no code
 T2E_SYM         equ 6       ; a token symbol at or past 128+ntok has a code
 T2E_KRAFT       equ 7       ; lengths over-subscribe a code length
+T2E_XMB         equ 8       ; 0.XMB header not "X2" + this DDB's fingerprint
 
 ; --- XBN extern binary (authoring-kit/xbn.inc is the authoring side) ---
 XBN_MAX_SIZE    equ $4000    ; one 16K bank, header included

@@ -1788,40 +1788,28 @@ h_pause:                        ; 35: B frames, 0 = 256
     djnz .wait
     jp prn_reset_lines
 
-; E = SM number -> D = first decoded character (token-aware).
-; rd_push, data_save and rd_pop preserve DE; data_restore corrupts A only.
+; E = SM number -> D = first decoded character (token-aware, either text
+; format, via txt_next_decoded). rd_push, data_save, objname_untok and
+; rd_pop preserve DE; data_restore corrupts A only.
 sm_first_char:
     call rd_push
     call data_save
     xor a                       ; kind 0
     call msg_seek
-    jr c, .none
-    call rd_next
-    cpl
-    bit 7, a
-    jr z, .plain
-    and $7F
+    ld d, 'Y'                   ; missing SM: default to Y
+    jr c, .out
+    ld a, (tokActive)
     push af
-    ld hl, (ddbHeader+HDR_TOKENS)
-    call rd_seek
-    pop af
-    inc a
-    ld b, a
-.skip:
-    call rd_next
-    bit 7, a
-    jr z, .skip
-    djnz .skip
-    call rd_next
-    and $7F
-.plain:
+    xor a
+    ld (tokActive), a
+    call txt_next_decoded
     ld d, a
+    call objname_untok          ; the first character can sit in a token
+    pop af
+    ld (tokActive), a
+.out:
     call data_restore
-    call rd_pop
-    ret
-.none:
-    ld a, 'Y'                   ; missing SM: default to Y
-    jr .plain
+    jp rd_pop
 
 ; Read one LINE of confirmation input: echo each printable character,
 ; ENTER ends it, and the FIRST printable character is the answer.
@@ -2160,6 +2148,36 @@ ext_xmes:
     jp c, .fail
 .partopened:
     ld (xmsHandle), a
+    ld b, a
+    ld a, (textFormat)
+    or a
+    jr z, .seek                 ; format 1: no header
+    ld a, b                     ; format 2: "X2" + text2Fp, else E5
+    ld ix, xmsHdr
+    ld bc, 4
+    call esx_fread
+    jr c, .badxmb
+    ld a, c
+    cp 4
+    jr nz, .badxmb
+    ld hl, (xmsHdr)
+    ld de, 'X' + '2'*256
+    or a
+    sbc hl, de
+    jr nz, .badxmb
+    ld hl, (xmsHdr+2)
+    ld de, (text2Fp)
+    sbc hl, de                  ; CF clear: the compare above was equal
+    jr z, .seek
+.badxmb:                        ; stale, foreign-part or format 1 0.XMB
+    ld a, (xmsHandle)
+    call esx_fclose
+    ld a, T2E_XMB
+    ld (text2Err), a
+    ld a, ERR_BORDER_TEXT2
+    ld hl, msgText2
+    jp fatal
+.seek:
     ; seek to xmsOff (16-bit -> BCDE with high word 0, mode 0 start).
     ; NextZXOS F_SEEK: A=handle, BCDE=offset, IXL=mode (esxDOS API odt,
     ; F_SEEK entry: "IXL [L from dot command] = seek mode" - IXL is the
@@ -2198,6 +2216,9 @@ ext_xmes:
     ; $1FFF (the window's last byte) instead - an exactly-8K read is
     ; already past any conforming message, so the overwritten byte is
     ; academic.
+    ld a, (textFormat)
+    or a
+    jr nz, .nosent              ; format 2 ends at its EOM code (.f2loop)
     ld hl, DATA_WINDOW
     add hl, bc
     ld a, b
@@ -2206,6 +2227,7 @@ ext_xmes:
     dec hl                        ; clamp to DATA_WINDOW+$1FFF
 .sentok:
     ld (hl), $F5
+.nosent:
     call data_restore           ; CLOSE the window bracket before any
     ld a, (xmsHandle)           ; printing: data_save is NON-NESTABLE
     call esx_fclose              ; and the print pipeline (More paging,
@@ -2221,12 +2243,17 @@ ext_xmes:
     add a, a
     ld hl, 0
     call rd_seek_page
+    ld a, $80
+    ld (hfBuf), a               ; format 2: empty bit buffer
     xor a
     ld (tokActive), a           ; fresh stream, mirrors print_msg
-    jp print_msg.loop           ; tail into the shared loop (same idiom
+    ld a, (textFormat)
+    or a
+    jp z, print_msg.loop        ; tail into the shared loop (same idiom
                                  ; as h_mes/h_sysmess's jp print_msg) -
                                  ; its .done closes THIS data_save and
                                  ; returns straight to ext_xmes's caller
+    jr .f2loop
 .failpost:
     call data_restore
 .failclose:
@@ -2243,10 +2270,32 @@ ext_xmes:
  ENDIF
     ret
 
+.f2loop:                        ; format 2: print_msg.loop plus a stop once
+    call txt_next_decoded       ; a byte past the loaded 8K page was read
+    jr c, .f2done
+    ld c, a
+    ld a, (xmsBank)
+    add a, a
+    inc a
+    ld hl, rdPage
+    cp (hl)
+    jr nz, .f2char              ; still in the loaded page (or a token)
+    ld hl, (rdPtr)
+    dec hl
+    bit 6, h                    ; rdPtr above $C000: upper page bytes used
+    jr nz, .f2done
+.f2char:
+    ld a, c
+    call prn_decoded
+    jr .f2loop
+.f2done:
+    jp print_msg.done
+
 xmsName:    db "0.XMB", 0
 xmsHandle:  db 0
 xmsOff:     dw 0
 xmsBank:    db $FF              ; claimed pool bank, $FF = none yet
+xmsHdr:     ds 4                ; format 2 header: "X2", fingerprint
 ; SP11 T5: PARTn\ prefixed scratch for ext_xmes, overlay0-local (xmsName
 ; itself is already overlay0-only, but not grown in place - same small-
 ; local-buffer shape used at the other four sites). Sized 6 ("PARTn\")

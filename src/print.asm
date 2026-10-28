@@ -253,10 +253,8 @@ prn_more_check:
     ld (moreSaveRdSv+1), hl
     ld a, (rdSaveSP)
     ld (moreSaveRdSv+3), a
-    ld a, (tokActive)
-    ld (moreSaveRdSv+4), a
-    xor a
-    ld (tokActive), a           ; SM32 starts its own fresh stream
+    call more_save              ; tokActive + format 2 state; SM32 starts
+                                ; its own fresh stream (huffdec.asm)
     ; preserve the outer MMU-save shadow (the nested print_msg overwrites it)
     ld a, (savedMMU6)
     ld (moreSaveMMU), a
@@ -303,8 +301,7 @@ prn_more_check:
     ld (rdPtr), hl
     ld a, (moreSaveRdSv+3)
     ld (rdSaveSP), a
-    ld a, (moreSaveRdSv+4)
-    ld (tokActive), a
+    call more_load
     ; restore the physical MMU slot exactly as it was pre-fire
     ld a, (morePhysMMU6)
     nextreg NR_MMU6, a
