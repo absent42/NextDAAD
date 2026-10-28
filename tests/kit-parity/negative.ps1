@@ -74,10 +74,11 @@ function Apply-Setup([string]$setup) {
                 $script:spawned = Start-Process -FilePath $fake -ArgumentList '600' -PassThru
             }
         }
-        elseif ($s -eq 'bigdsf') {
-            # Fill /MTX to ndrc's 255-entry ceiling with GUID text, which
-            # -auto-tokens cannot compress: 20 GUIDs per entry clear 65535 bytes.
-            $dsf = Join-Path $kit 'PARITY.DSF'
+        elseif ($s -match '^bigtext (\S+) (\d+)$') {
+            # Fill /MTX to ndrc's 255-entry ceiling with seeded random hex, which
+            # -auto-tokens cannot compress: <groups> 32-digit groups per entry.
+            $dsf = Join-Path $kit $Matches[1]; $groups = [int]$Matches[2]
+            $rng = New-Object Random 2026
             $lines = [IO.File]::ReadAllLines($dsf, [Text.Encoding]::GetEncoding(28591))
             $mtx = -1; $otx = -1
             for ($i = 0; $i -lt $lines.Length; $i++) {
@@ -87,10 +88,20 @@ function Apply-Setup([string]$setup) {
             $have = @($lines[$mtx..$otx] | Where-Object { $_ -match '^/\d+' }).Count
             $pad = @()
             for ($i = $have; $i -lt 255; $i++) {
-                $text = (1..20 | ForEach-Object { [guid]::NewGuid().ToString('N') }) -join ' '
+                $text = (1..$groups | ForEach-Object { -join (1..32 | ForEach-Object { '{0:x}' -f $rng.Next(16) }) }) -join ' '
                 $pad += "/$i `"$text`""
             }
             $out = $lines[0..($otx - 1)] + $pad + $lines[$otx..($lines.Length - 1)]
+            [IO.File]::WriteAllLines($dsf, $out, [Text.Encoding]::GetEncoding(28591))
+        }
+        elseif ($s -match '^bigproc (\S+) (\d+)$') {
+            # <n> distinct 8-byte entries in process 4 grow the game logic, not the text.
+            $dsf = Join-Path $kit $Matches[1]; $n = [int]$Matches[2]
+            $lines = [IO.File]::ReadAllLines($dsf, [Text.Encoding]::GetEncoding(28591))
+            $at = -1
+            for ($i = 0; $i -lt $lines.Length; $i++) { if ($lines[$i] -match '^/PRO 4\b') { $at = $i; break } }
+            $pad = @(0..($n - 1) | ForEach-Object { "> _ _ LET $(100 + $_ % 100) $([Math]::Floor($_ / 100) % 256)" })
+            $out = $lines[0..$at] + $pad + $lines[($at + 1)..($lines.Length - 1)]
             [IO.File]::WriteAllLines($dsf, $out, [Text.Encoding]::GetEncoding(28591))
         }
         else { throw "negative: unknown setup step '$s'" }

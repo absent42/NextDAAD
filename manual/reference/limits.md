@@ -1,15 +1,41 @@
 # Limits
 
-## DDB size: the 64K ceiling
+## DDB size: two 64K budgets
 
-Your whole compiled database - vocabulary, messages, objects, locations,
-connections, processes, everything DRC writes into `GAME.DDB` - must fit
-in 65535 bytes. NextDAAD refuses a larger one at boot with
-`NextDAAD: DDB oversize - E2`.
+The kit compiles every game with NextDAAD text format 2 (NDRC's
+`-nxtext`). A format 2 `GAME.DDB` is two parts, each with its own
+65535-byte budget:
 
-The number is a property of the format rather than a budget someone
+| Budget | Limit | Holds |
+|---|---|---|
+| Game logic | 65535 bytes | header, objects, vocabulary, connections, processes, and the text lookup tables |
+| Text region | 65535 bytes | the token dictionary and every compressed text: objects, system messages, messages and locations |
+| Whole file | 131070 bytes | both |
+| Texts per table | 255 (256 objects) | messages, system messages and locations each - format 2 does not change these |
+
+The compiler reports both sizes after each build
+(`Part A is <n> bytes, text region is <n> bytes.`) and stops with its
+own message when either budget is exceeded: `DDB file goes <n> bytes
+over the 65535 memory address boundary` for the game logic, `Text
+region goes <n> bytes over the 65535 limit` for the text. The build then
+checks the file itself against 131070 bytes.
+
+A game with no repeated text at all is compiled as text format 1
+instead, one image that must fit in 65535 bytes. NextDAAD refuses a
+format 1 file larger than that at boot with
+`NextDAAD: DDB oversize - E2`, and a format 2 file whose text region is
+damaged with `NextDAAD: DDB text format - E5`.
+
+The 64K figure is a property of the format rather than a budget someone
 chose: a DDB pointer is 16 bits, so 65536 is every distinct position one
-can name. Nothing beyond that could be reached even if it loaded.
+can name. Format 2 points at its texts from inside the game logic with
+offsets into the text region, which is how the text gets a 64K of its
+own.
+
+A file over 64K takes up to four extra 16K memory banks while it runs.
+A multi-part game whose later part needs more of them than part 1 is
+warned about at build time - see
+[Multi-part games](../multi-part-games.md).
 
 **This used to be 31744 bytes.** Databases for the classic ZX targets
 carry pointers counted from $8400, the address a Spectrum loads them at,
@@ -20,8 +46,9 @@ See [Getting started](../getting-started.md) for what that means for
 which tools you install.
 
 The relief valve is XMESSAGE, below: moving text out of the DDB and into
-`0.XMB` frees the same bytes inside the 64K budget, at the cost of the
-separate external-text budget instead. A game approaching the ceiling
+`0.XMB` frees the same bytes inside the text region (inside the one 64K
+image, for a format 1 game), at the cost of the separate external-text
+budget instead. A game approaching the text limit
 should move its largest or least-frequently-seen text (long room
 descriptions, help text, endgame text) to XMESSAGE first.
 

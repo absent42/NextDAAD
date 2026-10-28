@@ -74,8 +74,8 @@ The compile line the build runs, for when you want to check a DSF without
 converting assets. Run it from inside the game folder, as the build does,
 so `#include` lines resolve there:
 
-    ..\lib\ndrc.exe nextdaad EN MYGAME.DSF ..\RELEASE\MYGAME\DATA\GAME.DDB -v3 -auto-tokens
-    ../lib/ndrc nextdaad EN MYGAME.DSF ../RELEASE/MYGAME/DATA/GAME.DDB -v3 -auto-tokens
+    ..\lib\ndrc.exe nextdaad EN MYGAME.DSF ..\RELEASE\MYGAME\DATA\GAME.DDB -v3 -auto-tokens -nxtext
+    ../lib/ndrc nextdaad EN MYGAME.DSF ../RELEASE/MYGAME/DATA/GAME.DDB -v3 -auto-tokens -nxtext
 
 Add `-cols=40` for a 40-column game. Compiler errors name the DSF line.
 The build refuses `#classic`.
@@ -122,7 +122,8 @@ the path in `tools\README.txt`.
 | `<GAME>\ has no <GAME>.DSF` / `<GAME>.DSF not found` | `GAME` names a folder or DSF that is not there |
 | `WARNING: RELEASE\ holds ... from an older kit build` | loose pre-v0.12.0 output in `RELEASE\`; delete it by hand |
 | `ndrc failed compiling` | the compiler output above it names the line |
-| `GAME.DDB is N bytes, over the 65535 limit` | move text to `XMESSAGE`, cut messages |
+| `GAME.DDB is N bytes, over the 65535 limit` / `over the 131070 limit` | the compiler line above names the budget: `Text region goes N bytes over` = text (move to `XMESSAGE`, cut messages), `DDB file goes N bytes over the 65535 memory address boundary` = game logic (cut vocabulary, objects, entries) |
+| `WARNING: GAMEn.DDB (N bytes) needs N 16K bank(s) above 64K, GAME.DDB needs N` | a later part is bigger past 64K than part 1; its switch is refused if the extra banks are in use - shrink it or make part 1 the largest |
 | `uses #classic, which NextDAAD does not support` | delete the `#classic` line |
 | `expected a 320 or 256 wide PNG` | resize the picture |
 | `must be a paletted 8-bit PNG` | re-export as indexed colour |
@@ -143,7 +144,8 @@ Warnings are advisory; the build continues.
 Boot failures show a magenta bar on the top row. `E1` means `GAME.DDB` is
 missing (the game's `DATA\` folder is not beside `<GAME>.NEX`, or the
 `RELEASE\` folder itself was copied instead of its contents);
-`E2` the DDB is over 64K; `E4` it was compiled for another machine.
+`E2` a format 1 DDB is over 64K; `E4` it was compiled for another machine;
+`E5` a format 2 DDB's text region is damaged (a truncated copy).
 `RUNTIME ERROR - E<n>`: 1 invalid location (often `DESC 255`), 4 nested
 `DOALL`, 5 a V3 opcode in a V2 database.
 

@@ -1,10 +1,10 @@
 # One line per pinned tool. Read by lib\kittools.ps1, the Docker rig and the workflows.
-NDRCVER=0.3.0
+NDRCVER=0.4.0
 GFX2NEXT_VER=1.1.24
 SJASMPLUS_VER=1.23.1
 ARKOS_VER=3.6
 PWSH_MIN=7.4
-NDRC_LINUX_SHA256=ab36b347585a151f2a2759cf607ae04a0d45fef63bb8dbeca6c698ab7dad997b
+NDRC_LINUX_SHA256=ea588c1c03ae408ea1062fcfe60f0e25058b5485745e4de3a6c45030cd516486
 GFX2NEXT_LINUX_SHA256=0f02f3633a81fad75bbfb42f1797db21c9fd140f4de0df12640bd0a6089dccf2
 ARKOS_LINUX_URL=https://www.julien-nevo.com/arkostracker/release/3.6/linux64/ArkosTracker-linux64-3.6.zip
 ARKOS_LINUX_SHA256=7772b6a8ed99274c4d6ea816fb618abd6931a4cba6f73e55fdba2e578ad8ee6c

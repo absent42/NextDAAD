@@ -122,4 +122,13 @@ Assert-Eq $c['KEEP'] 'base' 'base layer kept'
 $c = Read-KitConfig $k
 Assert-Eq $c['COLS'] '80' 'no game cfg: base only'
 
+# DDB limits: format 2 (version bit 7) is 64K part A plus a 64K text region.
+Assert-Eq (Get-KitDdbLimit 0x03) 65535 'format 1 V3 limit'
+Assert-Eq (Get-KitDdbLimit 0x02) 65535 'format 1 V2 limit'
+Assert-Eq (Get-KitDdbLimit 0x83) 131070 'format 2 V3 limit'
+Assert-Eq (Get-KitDdbLimit 0x82) 131070 'format 2 V2 limit'
+foreach ($p in @(@(2533, 0), @(65535, 0), @(65536, 0), @(65537, 1), @(81920, 1), @(81921, 2), @(114688, 3), @(114689, 4), @(131070, 4))) {
+    Assert-Eq (Get-KitDdbBanksOver64K $p[0]) $p[1] "banks above 64K for $($p[0]) bytes"
+}
+
 Write-Output "kitgame-selftest: $checks checks passed"

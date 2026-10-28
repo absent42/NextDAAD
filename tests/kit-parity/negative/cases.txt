@@ -4,7 +4,9 @@ two-dsf|copy PARITY.DSF SECOND.DSF; set GAME=|ERROR: set GAME in CONFIG.local.BA
 named-dsf-missing|set GAME=NOSUCH|ERROR: NOSUCH.DSF not found in NOSUCH{sep} or this folder
 nexfile-missing|remove nextdaad.nex|ERROR: required tool missing: nextdaad.nex
 ndrc-banner|stub-ndrc|ERROR: wrong DAAD compiler version.
-ddb-too-big|bigdsf|over the 65535 memory address boundary
+ddb-too-big|bigtext PARITY.DSF 20|Text region goes
+ddb-logic-too-big|bigproc PARITY.DSF 9000|over the 65535 memory address boundary
+part-banks|bigproc PART2/PART2.DSF 2000; bigtext PART2/PART2.DSF 12|OK:needs 1 16K bank(s) above 64K, GAME.DDB needs 0 - if the extra bank(s) are in use when the game switches to part 2, the switch is refused
 font-duplicate|copy FONT.psf FONT.bdf|could be converted to FONT.CHR.
 intro-tool-missing|set ARKOSDIR=nosuch|ERROR: SongToAky not found at
 part-two-dsf|copy PART2/PART2.DSF PART2/OTHER.DSF|ERROR: PART2/ has 2 .DSF files - keep exactly one game source per part folder

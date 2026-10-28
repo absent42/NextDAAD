@@ -250,7 +250,8 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]
     Remove-Quiet $xmb
     Remove-Quiet (Join-Path $XmbDir '0.XMB')
     # $ndrcArgs, not $args: $args is PowerShell's automatic variable.
-    $ndrcArgs = @($drTarget, 'EN', $DsfPath, $DdbOut, '-v3', '-auto-tokens')
+    # -nxtext: text format 2 with the text region; implies -auto-tokens.
+    $ndrcArgs = @($drTarget, 'EN', $DsfPath, $DdbOut, '-v3', '-auto-tokens', '-nxtext')
     if ($cols) { $ndrcArgs += "-cols=$cols" }
     # The map's file paths are relative to its folder, the source root; the DDB is unchanged.
     if ($SrcMap) { $ndrcArgs += "-srcmap=$(Join-Path $src $MapName)" }
@@ -267,11 +268,16 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]
         Write-Host "ERROR: ndrc reported success but wrote no $DdbOut"; return 1
     }
     $size = (Get-Item -LiteralPath $DdbOut).Length
-    if ($size -gt 65535) {
+    $fs = [IO.File]::OpenRead($DdbOut)
+    try { $ver = $fs.ReadByte() } finally { $fs.Dispose() }
+    $limit = Get-KitDdbLimit $ver
+    if ($size -gt $limit) {
         Remove-Quiet $DdbOut
         Remove-Quiet $xmb
-        Write-Host "ERROR: $DdbOut is $size bytes, over the 65535 limit"; return 1
+        $what = if ($limit -gt 65535) { 'text format 2: 65535 of logic plus a 65535 text region' } else { 'text format 1' }
+        Write-Host "ERROR: $DdbOut is $size bytes, over the $limit limit ($what)"; return 1
     }
+    $script:ddbSize = $size
     Write-Host "  DDB $size bytes -> $DdbOut"
     if (Test-Path -LiteralPath $xmb) {
         try { Move-Item -LiteralPath $xmb -Destination (Join-Path $XmbDir '0.XMB') -Force }
@@ -281,6 +287,7 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]
     return 0
 }
 if ((Invoke-Ddb $dsfFile.Name (Join-Path $rel 'GAME.DDB') $rel 'GAME.DSM') -ne 0) { exit 1 }
+$part1Banks = Get-KitDdbBanksOver64K $script:ddbSize
 
 # ---- pictures, audio, video ----
 if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress; Src = $src; Data = $rel }) -ne 0) { exit 1 }
@@ -384,6 +391,12 @@ foreach ($n in 2..9) {
     }
     Write-DebugDirectiveWarnings $pdsfs[0].FullName (Join-Path $part $pdsfs[0].Name)
     if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path $rel "GAME$n.DDB") (Join-Path $rel $part) "GAME$n.DSM") -ne 0) { exit 1 }
+    # Part 1 claims its banks above 64K at boot; extra ones a later part needs
+    # may be in use by then, and the interpreter refuses that switch.
+    $pb = Get-KitDdbBanksOver64K $script:ddbSize
+    if ($pb -gt $part1Banks) {
+        Write-Host "WARNING: GAME$n.DDB ($($script:ddbSize) bytes) needs $pb 16K bank(s) above 64K, GAME.DDB needs $part1Banks - if the extra bank(s) are in use when the game switches to part $n, the switch is refused and the game stays in its current part"
+    }
     $count = 0
     foreach ($f in Get-KitFiles $partDir '*') {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }

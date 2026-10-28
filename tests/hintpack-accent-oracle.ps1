@@ -82,10 +82,11 @@ if ($LASTEXITCODE -ne 0) { throw "hintpack.ps1 failed packing the oracle hints" 
 function Get-DdbMessageBytes([byte[]]$b, [int]$number) {
     function W($o) { $b[$o] + 256 * $b[$o + 1] }
     $tableOff = 0x10   # user messages (MTX)
+    # -auto-tokens emits only the tokens it selected: stop at the end of the file.
     $entries = @(); $p = (W 8)
-    while ($entries.Count -lt 129) {
+    while ($entries.Count -lt 129 -and $p -lt $b.Length) {
         $s = New-Object Collections.Generic.List[byte]
-        while ($true) {
+        while ($p -lt $b.Length) {
             $ch = $b[$p]; $p++
             $s.Add([byte]($ch -band 0x7F))
             if ($ch -band 0x80) { break }

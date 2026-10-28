@@ -259,10 +259,11 @@ and is shared by every save.
 ## XMESSAGE and XMES
 
 `XMESSAGE "text"` (adds a newline) and `XMES "text"` (no newline) store the
-string in `0.XMB` beside the DDB instead of inside it. The DDB is limited
-to 65535 bytes; `0.XMB` holds another 64K. Move long descriptions there
-when the build reports the DDB over the limit. `0.XMB` must ship beside
-`GAME.DDB` or those messages print nothing.
+string in `0.XMB` beside the DDB instead of inside it. The kit's DDB
+(text format 2) has 64K for game logic and 64K for text; `0.XMB` holds
+another 64K. Move long descriptions there when the build reports the
+text region over the limit. `0.XMB` must ship beside `GAME.DDB` or those
+messages print nothing.
 
 ## Multi-part games
 

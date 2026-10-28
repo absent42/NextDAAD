@@ -3,6 +3,25 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.13.0 - unreleased
+
+- **Games up to 128K.** The kit now compiles with NextDAAD text format
+  2. Every text is Huffman-coded over a dictionary of up to 383 tokens
+  chosen from your own game, and the texts move out of the game logic
+  into a text region of their own. Game logic and text each get 64K,
+  so `GAME.DDB` can reach 131070 bytes; the 255 texts per table stay.
+  The compiler prints both sizes after each build and names the budget
+  that overflowed. A game with no repeated text compiles as before, in
+  one 64K image. A format 2 `GAME.DDB` runs only on NextDAAD 0.13.0
+  or later; other DAAD interpreters refuse it. See [Limits](reference/limits.md).
+- **NDRC 0.4.0.** Duplicate texts within a table are stored once, and
+  object texts are compressed too, so the same game compiles smaller.
+- **Multi-part games over 64K.** A part over 64K takes extra 16K memory
+  banks. The build warns when a later part needs more of them than
+  part 1, because switching to it is refused if they are in use at the
+  time. See [Multi-part games](multi-part-games.md).
+- **Debugger.** The debugger window reads text format 2 games.
+
 ## 0.12.1 - 25 October 2026
 
 - **Debugger.** `DEBUG.BAT` (Linux: `./debug.sh`) builds the selected

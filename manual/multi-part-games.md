@@ -3,7 +3,7 @@
 A game can ship as several separate DDBs - "parts" - that switch between
 each other at runtime with `EXTERN n 4` (MALUVA's `XPART n`). The two
 usual reasons are a game too large for one DDB's
-[31744-byte ceiling](reference/limits.md), and a natural chapter or
+[64K budgets](reference/limits.md), and a natural chapter or
 episode structure.
 
 This is entirely optional. A single-part game, which is what the kit
@@ -45,6 +45,14 @@ file beside it - a `GAMEn.DSF` source left next to the compiled DDB, say
   keeps running in the current part, unaffected. A game that ships an
   `EXTERN n 4` trigger must also ship that part's DDB, or the trigger
   quietly does nothing.
+- **A part over 64K needs memory banks free.** A DDB larger than 64K
+  takes one extra 16K bank for each 16K, or part of 16K, above 64K, up
+  to four. Part 1 claims its own at start-up. A later part that needs
+  more than part 1 gets the extra banks only if they are free when the
+  game switches; if one is in use the switch is refused, the same
+  silent no-op as a missing file. The build warns about such a part:
+  keep each later part within part 1's bank count, or make part 1 the
+  largest.
 - A successful switch is a **fresh entry** into the new part, not a
   resume. It starts at the new part's own `PRO 0`, never at wherever the
   `EXTERN` was called from.

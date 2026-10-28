@@ -47,7 +47,7 @@ process 3 (extra text after a room description) and the tail of process 6
    (Windows) or `./build.sh` (Linux), or the compiler alone from inside
    the game folder when only the DSF changed:
 
-       ..\lib\ndrc.exe nextdaad EN MYGAME.DSF ..\RELEASE\MYGAME\DATA\GAME.DDB -v3 -auto-tokens
+       ..\lib\ndrc.exe nextdaad EN MYGAME.DSF ..\RELEASE\MYGAME\DATA\GAME.DDB -v3 -auto-tokens -nxtext
 
    The first error names the line. `references/dsf-source-format.md` ends
    with the messages you will meet and what each means.

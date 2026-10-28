@@ -33,7 +33,7 @@ try {
     Assert-Eq $t.GFXDIR (Join-Path 'tools' 'gfx2next') 'GFXDIR default under TOOLSDIR'
     Assert-Eq $t.GFX (Join-Path (Join-Path 'tools' 'gfx2next') "gfx2next$x") 'GFX'
     Assert-PathEq $t.NDRC (Join-Path $lib "ndrc$x") 'NDRC is lib\ndrc beside kittools.ps1'
-    Assert-Eq $t.NDRCVER '0.2.2' 'NDRCVER from toolversions.txt'
+    Assert-Eq $t.NDRCVER '0.4.0' 'NDRCVER from toolversions.txt'
     Assert-Eq $t.ARKOSBIN (Join-Path (Join-Path 'tools' 'ArkosTracker3') 'tools') 'Arkos tools\ subfolder probed'
     Assert-Eq $t.S2A (Join-Path $t.ARKOSBIN "SongToAky$x") 'S2A'
     Assert-Eq $t.FFMPEGBIN (Join-Path (Join-Path 'tools' 'ffmpeg') 'bin') 'ffmpeg bin\ probed'

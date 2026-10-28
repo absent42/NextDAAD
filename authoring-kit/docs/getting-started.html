@@ -627,8 +627,12 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <td>An <code>#include</code> or <code>#incbin</code> line names a file whose name on disk is spelled with different capitals, or separates folders with <code>\</code>. Windows builds it anyway; on Linux the same line is an <code>ERROR:</code> and the build stops. Match the case and use <code>/</code>.</td>
 </tr>
 <tr>
-<td><code>GAME.DDB is N bytes, over the 65535 limit</code></td>
-<td>The database is too large. 64K is the format's own ceiling - see <a href="reference/limits.html">Limits</a>, which suggests where to cut.</td>
+<td><code>GAME.DDB is N bytes, over the 65535 limit</code> / <code>over the 131070 limit</code></td>
+<td>The database is too large. The kit compiles with text format 2, which gives the game logic and the text 64K each (131070 bytes in all); a game with no repeated text compiles as format 1, one 64K image. The compiler's own message above names the budget that overflowed: <code>DDB file goes N bytes over the 65535 memory address boundary</code> is the game logic, <code>Text region goes N bytes over the 65535 limit</code> is the text. See <a href="reference/limits.html">Limits</a>, which suggests where to cut.</td>
+</tr>
+<tr>
+<td><code>WARNING: GAMEn.DDB (N bytes) needs N 16K bank(s) above 64K, GAME.DDB needs N</code></td>
+<td>A later part of a <a href="multi-part-games.html">multi-part game</a> is larger than part 1 by enough to need more memory banks than part 1 claims at start-up. If those banks are in use when the game switches to that part, the switch is refused and the game stays where it is. Keep each later part's DDB within the same 16K step above 64K as part 1's, or make part 1 the largest.</td>
 </tr>
 <tr>
 <td><code>uses #classic, which NextDAAD does not support</code></td>
@@ -707,6 +711,10 @@ power-cycle to try again.</p>
 <tr>
 <td><code>NextDAAD: DDB oversize - E2</code></td>
 <td><code>GAME.DDB</code> is larger than the interpreter will load. See <a href="reference/limits.html">Limits</a>.</td>
+</tr>
+<tr>
+<td><code>NextDAAD: DDB text format - E5</code></td>
+<td><code>GAME.DDB</code> is a text format 2 database whose text part is damaged or cut short - most often a truncated copy. Rebuild and copy it again.</td>
 </tr>
 <tr>
 <td><code>NextDAAD: DDB bad header - E3</code></td>

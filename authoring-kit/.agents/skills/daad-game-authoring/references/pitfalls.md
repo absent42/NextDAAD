@@ -107,11 +107,15 @@ past the last location does the same.
 
 ## Text that does not fit
 
-**Symptoms.** `GAME.DDB is N bytes, over the 65535 limit`, or
-`Too many messages ... is 765`.
+**Symptoms.** `Text region goes N bytes over the 65535 limit`,
+`DDB file goes N bytes over the 65535 memory address boundary`,
+`GAME.DDB is N bytes, over the ... limit`, or `Too many messages ... is 765`.
 
-**Rule.** Move long descriptive text to `XMESSAGE "..."` (it lives in
-`0.XMB`, another 64K). The per-table limit is 255 entries; inline
+**Rule.** The kit builds text format 2: game logic and text have 64K
+each (131070 bytes of file). Text over its 64K: move long descriptive
+text to `XMESSAGE "..."` (it lives in `0.XMB`, another 64K). Logic
+over 64K: cut vocabulary, objects or process entries; moving text
+does not help it. The per-table limit is 255 entries; inline
 `MESSAGE "..."` strings count toward the 765 total.
 
 ## The timer never fires

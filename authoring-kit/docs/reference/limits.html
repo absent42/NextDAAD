@@ -9,14 +9,61 @@
 <body>
 <main>
 <h1 id="limits">Limits</h1>
-<h2 id="ddb-size-the-64k-ceiling">DDB size: the 64K ceiling</h2>
-<p>Your whole compiled database - vocabulary, messages, objects, locations,
-connections, processes, everything DRC writes into <code>GAME.DDB</code> - must fit
-in 65535 bytes. NextDAAD refuses a larger one at boot with
-<code>NextDAAD: DDB oversize - E2</code>.</p>
-<p>The number is a property of the format rather than a budget someone
+<h2 id="ddb-size-two-64k-budgets">DDB size: two 64K budgets</h2>
+<p>The kit compiles every game with NextDAAD text format 2 (NDRC's
+<code>-nxtext</code>). A format 2 <code>GAME.DDB</code> is two parts, each with its own
+65535-byte budget:</p>
+<table>
+<thead>
+<tr>
+<th>Budget</th>
+<th>Limit</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Game logic</td>
+<td>65535 bytes</td>
+<td>header, objects, vocabulary, connections, processes, and the text lookup tables</td>
+</tr>
+<tr>
+<td>Text region</td>
+<td>65535 bytes</td>
+<td>the token dictionary and every compressed text: objects, system messages, messages and locations</td>
+</tr>
+<tr>
+<td>Whole file</td>
+<td>131070 bytes</td>
+<td>both</td>
+</tr>
+<tr>
+<td>Texts per table</td>
+<td>255 (256 objects)</td>
+<td>messages, system messages and locations each - format 2 does not change these</td>
+</tr>
+</tbody>
+</table>
+<p>The compiler reports both sizes after each build
+(<code>Part A is &lt;n&gt; bytes, text region is &lt;n&gt; bytes.</code>) and stops with its
+own message when either budget is exceeded: <code>DDB file goes &lt;n&gt; bytes
+over the 65535 memory address boundary</code> for the game logic, <code>Text
+region goes &lt;n&gt; bytes over the 65535 limit</code> for the text. The build then
+checks the file itself against 131070 bytes.</p>
+<p>A game with no repeated text at all is compiled as text format 1
+instead, one image that must fit in 65535 bytes. NextDAAD refuses a
+format 1 file larger than that at boot with
+<code>NextDAAD: DDB oversize - E2</code>, and a format 2 file whose text region is
+damaged with <code>NextDAAD: DDB text format - E5</code>.</p>
+<p>The 64K figure is a property of the format rather than a budget someone
 chose: a DDB pointer is 16 bits, so 65536 is every distinct position one
-can name. Nothing beyond that could be reached even if it loaded.</p>
+can name. Format 2 points at its texts from inside the game logic with
+offsets into the text region, which is how the text gets a 64K of its
+own.</p>
+<p>A file over 64K takes up to four extra 16K memory banks while it runs.
+A multi-part game whose later part needs more of them than part 1 is
+warned about at build time - see
+<a href="../multi-part-games.html">Multi-part games</a>.</p>
 <p><strong>This used to be 31744 bytes.</strong> Databases for the classic ZX targets
 carry pointers counted from $8400, the address a Spectrum loads them at,
 which leaves only the 31744 bytes between there and the top of a 64K
@@ -25,8 +72,9 @@ pointers are plain offsets into the file, so the whole 64K is usable.
 See <a href="../getting-started.html">Getting started</a> for what that means for
 which tools you install.</p>
 <p>The relief valve is XMESSAGE, below: moving text out of the DDB and into
-<code>0.XMB</code> frees the same bytes inside the 64K budget, at the cost of the
-separate external-text budget instead. A game approaching the ceiling
+<code>0.XMB</code> frees the same bytes inside the text region (inside the one 64K
+image, for a format 1 game), at the cost of the separate external-text
+budget instead. A game approaching the text limit
 should move its largest or least-frequently-seen text (long room
 descriptions, help text, endgame text) to XMESSAGE first.</p>
 <h2 id="xmessage-xmes">XMESSAGE / XMES</h2>

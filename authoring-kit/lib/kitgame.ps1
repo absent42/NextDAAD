@@ -72,3 +72,14 @@ function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
         IsStarter = ($mode -eq 'folder' -and $name -ieq 'STARTER')
     }
 }
+
+# DDB file size limit from version byte 0. Bit 7 = NextDAAD text format 2:
+# 65535 of part A plus a 65535 text region; format 1 is one 64K image.
+function Get-KitDdbLimit([int]$Version) { if ($Version -band 0x80) { return 131070 } else { return 65535 } }
+
+# Banks the interpreter claims above 64K for a DDB of $Size bytes, one per
+# 16K or part of one (pool_c_need, src/huffbuild.asm).
+function Get-KitDdbBanksOver64K([long]$Size) {
+    if ($Size -le 65536) { return 0 }
+    return [int][Math]::Ceiling(($Size - 65536) / 16384)
+}
