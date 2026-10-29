@@ -87,6 +87,9 @@ ddbName: db "GAME.DDB", 0, 0
 ; ddb_load call can be reached from this task's files (overlay0.asm/
 ; errors.asm only) to add a reset, so this rides with the same
 ; accepted, documented residual as the pre-existing mouse statics.
+; After a part switch, a CSpect nextreg 2,1 warm re-entry boots with a stale
+; curPart: part_banks_scan then skips part 1 and leaves ddbName GAME.DDB.
+; Hardware soft reset returns to NextZXOS instead.
 curPart: db 1
 
 ; msgRuntimeErr and msgRdStack relocated to overlay0.asm's free space

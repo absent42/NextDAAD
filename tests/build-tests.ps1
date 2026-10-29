@@ -1205,8 +1205,22 @@ function Assert-BankAllocCensus {
             throw "$($key -replace '\|', ' : ') has $n allocator call(s)$at, expected $($want[$key][0]) - reclassify in Assert-BankAllocCensus"
         }
     }
+    # Direct bankTable writers: BT_* used other than in a compare or its definition
+    # must sit in a known writer, or it can take a pool C bank behind the allocator.
+    $writers = @('bank_table_init', 'bank_alloc', 'bank_free', 't2_claim', 'aud_banks_claim', 'aud_sfx_init')
+    foreach ($f in Get-InterpreterSources) {
+        $rel = $f.FullName.Substring($root.Length + 1)
+        $cur = ''; $ln = 0
+        foreach ($raw in (Get-Content -LiteralPath $f.FullName)) {
+            $ln++
+            $line = $raw -replace ';.*$', ''
+            if ($line -match '^([A-Za-z_][A-Za-z0-9_]*):') { $cur = $Matches[1] }
+            if ($line -notmatch '\bBT_(USED|FREE|RESERVED)\b' -or $line -match '^\s*cp\s' -or $line -match '\bequ\b') { continue }
+            if ($cur -notin $writers) { throw "${rel}:$ln : $(if ($cur) { $cur } else { '(no label)' }) writes a BT_* value outside the known bankTable writers ($($writers -join ', ')) - route it through bank_alloc or list it in Assert-BankAllocCensus: $($raw.Trim())" }
+        }
+    }
     $total = ($want.Values | ForEach-Object { $_[0] } | Measure-Object -Sum).Sum
-    "allocator census: $total sites in $($want.Count) routines classified; the long-lived AYS stream takes bank_alloc_long"
+    "allocator census: $total sites in $($want.Count) routines classified; the long-lived AYS stream takes bank_alloc_long; BT_* writes only in $($writers.Count) known routines"
 }
 
 Assert-TranspConstantsInSync
