@@ -3249,6 +3249,64 @@ aud_song_wrw:
     ld (hl), a
     ret
 
+; Boot, before aud_boot_probe: partBanksMax <- max pool_c_need of part 1
+; and GAME2-9.DDB, opened as switch_to_part opens them (missing = 0).
+; Leaves ddbName = "GAME.DDB",0,0. Corrupts all.
+part_banks_scan:
+    ld hl, (ddbSize)
+    ld a, (ddbSizeHi)
+    call pool_c_need
+    ld a, b
+    ld (partBanksMax), a        ; every boot, warm re-entry included
+    ld a, 2
+.part:
+    push af                     ; part number
+    ld hl, pbsName
+    ld de, ddbName
+    ld bc, 10
+    ldir
+    add a, '0'
+    ld (ddbName+4), a
+    call esx_getsetdrv
+    jr c, .next
+    ld ix, ddbName              ; A = drive, as switch_to_part
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr c, .next                 ; missing part counts 0
+    push af                     ; handle
+    ld ix, aysHdr               ; free at boot: aud_load_ays reads before use
+    call esx_fstat
+    jr c, .close
+    ld hl, (aysHdr+9)
+    ld a, h
+    or a
+    ld a, 2                     ; 16M or more: as 128K
+    jr nz, .big
+    ld a, l
+.big:
+    ld hl, (aysHdr+7)
+    call pool_c_need            ; B = banks
+    ld hl, partBanksMax
+    ld a, b
+    cp (hl)
+    jr c, .close
+    ld (hl), a
+.close:
+    pop af                      ; handle
+    call esx_fclose
+.next:
+    pop af
+    inc a
+    cp 10
+    jr c, .part
+    ld hl, pbsName+5            ; ".DDB",0,0 -> ddbName+4: "GAME.DDB",0,0
+    ld de, ddbName+4
+    ld bc, 6
+    ldir
+    ret
+pbsName: db "GAME?.DDB", 0, 0   ; xpart_build_name's template + a spare NUL
+    ASSERT aysPsgTmp - aysHdr >= 11  ; esx_fstat writes 11 bytes
+
 ; --- boot autoplay probe --------------------------------------------
 
 ; Called once from main.asm at game takeover (overlay1 mapped by the

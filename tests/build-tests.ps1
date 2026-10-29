@@ -1089,6 +1089,49 @@ function Assert-WidthSwitchKeepsStyle {
     "width switch: win_regeom leaves style alone (single WIN_FLAGS copy, one LINES store), h_gfx's GFX 18 takes tm_width_core+win_regeom, txt_init keeps the default clean slate"
 }
 
+# partBanksMax boot scan (overlay1): one call after the boot OVL1_PAGE map and
+# before aud_boot_probe; parts open as switch_to_part opens them (no chdir of
+# its own, so DATA\ and the DEBUG fallback folder resolve alike), names from
+# xpart_build_name's template; a missing part is skipped; ddbName left GAME.DDB.
+function Assert-PartBanksScan {
+    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
+    $main = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw)
+    $calls = [regex]::Matches($main, 'call\s+part_banks_scan\b')
+    if ($calls.Count -ne 1) { throw "src\main.asm : $($calls.Count) call(s) to part_banks_scan, expected 1 in the boot sequence" }
+    if ($main -notmatch '(?ms)call\s+xbn_api_init\s+ld\s+a,\s*OVL1_PAGE\s+call\s+ovl_map_page\s+call\s+part_banks_scan\s+call\s+aud_boot_probe\b') {
+        throw "src\main.asm : part_banks_scan must be called right after the boot OVL1_PAGE map and before aud_boot_probe (which can claim AYS banks)"
+    }
+    if ($main -notmatch '(?ms)^pool_c_need:') { throw "src\main.asm : pool_c_need must be resident - t2_claim, switch_to_part's .probe (overlay0) and part_banks_scan (overlay1) all call it" }
+    $ovl0 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay0.asm') -Raw)
+    $ovl1 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay1.asm') -Raw)
+    $body = [regex]::Match($ovl1, '(?ms)^part_banks_scan:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $body) { throw "src\overlay1.asm : part_banks_scan not found (or nothing follows it)" }
+    $sw = [regex]::Match($ovl0, '(?ms)^switch_to_part:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $sw) { throw "src\overlay0.asm : switch_to_part not found" }
+    $open = 'call\s+esx_getsetdrv\s+jr\s+c,\s*\.\w+\s+ld\s+ix,\s*ddbName\s+ld\s+b,\s*ESX_MODE_READ\s+call\s+esx_fopen\s+jr\s+c,\s*\.\w+'
+    if ($sw -notmatch ('(?ms)call\s+xpart_build_name\s+' + $open)) { throw "src\overlay0.asm : switch_to_part's open sequence changed - re-check part_banks_scan against it, then update Assert-PartBanksScan" }
+    if ($body -notmatch ('(?ms)ld\s+hl,\s*pbsName\s+ld\s+de,\s*ddbName\s+ld\s+bc,\s*10\s+ldir\s+add\s+a,\s*''0''\s+ld\s+\(ddbName\+4\),\s*a\s+' + $open)) {
+        throw "src\overlay1.asm : part_banks_scan must build GAMEn.DDB in ddbName and open it exactly as switch_to_part does (esx_getsetdrv, ddbName, ESX_MODE_READ, esx_fopen; CF = skip)"
+    }
+    if ($ovl0 -notmatch '\.tpl:\s+db\s+"GAME\?\.DDB",\s*0\s' -or $ovl0 -notmatch '\.gameddb:\s+db\s+"GAME\.DDB",\s*0,\s*0\s') { throw "src\overlay0.asm : xpart_build_name's templates changed - pbsName must match them" }
+    if ($ovl1 -notmatch 'pbsName:\s+db\s+"GAME\?\.DDB",\s*0,\s*0\s') { throw "src\overlay1.asm : pbsName must be xpart_build_name's template plus a spare NUL" }
+    foreach ($need in @('call\s+esx_fstat', 'call\s+esx_fclose', 'call\s+pool_c_need', 'ld\s+\(partBanksMax\),\s*a', 'cp\s+10\b')) {
+        if ($body -notmatch $need) { throw "src\overlay1.asm : part_banks_scan lacks $need" }
+    }
+    if ($body -notmatch '(?ms)ld\s+hl,\s*pbsName\+5\s+ld\s+de,\s*ddbName\+4\s+ld\s+bc,\s*6\s+ldir\s+ret\s*\z') { throw "src\overlay1.asm : part_banks_scan must end by writing .DDB,0,0 to ddbName+4 so ddbName reads GAME.DDB" }
+    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
+        $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
+        $cur = ''
+        foreach ($line in ($t -split "`n")) {
+            if ($line -match '^([A-Za-z_][A-Za-z0-9_]*):') { $cur = $Matches[1] }
+            elseif ($line -match 'call\s+esx_fchdir\b' -and $cur -notin @('ddb_load_boot', 'ddb_load_debug_fallback')) {
+                throw "src\$($f.Name) : $cur calls esx_fchdir - only the boot DDB load may change the folder parts are opened from"
+            }
+        }
+    }
+    "part banks scan: one boot call after the OVL1 map before aud_boot_probe, pool_c_need resident, same open as switch_to_part, missing part skipped, ddbName left GAME.DDB, chdir only at boot load"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
 Assert-LayerOrderReset
@@ -1097,6 +1140,7 @@ Assert-CycleStopSites
 Assert-CursorStateWriters
 Assert-PaletteWriterCensus
 Assert-WidthSwitchKeepsStyle
+Assert-PartBanksScan
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the

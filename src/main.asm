@@ -96,6 +96,7 @@ main:
     ; silent when absent - same esxDOS discipline as every loader.
     ld a, OVL1_PAGE
     call ovl_map_page
+    call part_banks_scan        ; first: aud_boot_probe may claim banks
     call aud_boot_probe
     ld c, 0
     call eng_init_game
@@ -271,6 +272,30 @@ bank_alloc:
     ld (hl), BT_USED
     ld a, c
     or a                        ; clear CF
+    ret
+
+partBanksMax: db 0              ; 0-4: most pool C banks any part needs (part_banks_scan)
+
+; A:HL = file size (A = bits 16-23). Out: B = 16K banks past 64K (0-4),
+; HL = bankTable + BANK_POOL_C, CF clear. Corrupts AF, C.
+pool_c_need:
+    ld b, 0
+    or a
+    jr z, .tab
+    ld b, 4
+    dec a
+    jr nz, .tab                 ; 128K or more
+    ld bc, $3FFF                ; round up to whole banks
+    add hl, bc
+    ld a, h
+    rra                         ; bit 16 into bit 7
+    rlca
+    rlca
+    rlca
+    and 7
+    ld b, a
+.tab:
+    ld hl, bankTable+BANK_POOL_C
     ret
 
 ; ---- Sprite animation (SP20): the resident part. State lives on SPR_PAGE;
