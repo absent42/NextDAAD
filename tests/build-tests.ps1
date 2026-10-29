@@ -1089,6 +1089,21 @@ function Assert-WidthSwitchKeepsStyle {
     "width switch: win_regeom leaves style alone (single WIN_FLAGS copy, one LINES store), h_gfx's GFX 18 takes tm_width_core+win_regeom, txt_init keeps the default clean slate"
 }
 
+# Every source assembled into the interpreter: src\ recursed (main.asm
+# INCLUDEs src\audio\), .asm and .inc, without src\intro (the launcher).
+function Get-InterpreterSources {
+    Get-ChildItem (Join-Path $root 'src') -Recurse -File -Include *.asm, *.inc |
+        Where-Object { $_.FullName -notlike (Join-Path $root 'src\intro\*') }
+}
+
+# WARNING when build\nextdaad.nex is older than an interpreter source: an
+# emitted-byte check would be testing stale bytes.
+function Write-NexStaleWarning([string]$what) {
+    $nexT = (Get-Item -LiteralPath "$root\build\nextdaad.nex").LastWriteTimeUtc
+    $newer = @(Get-InterpreterSources | Where-Object { $_.LastWriteTimeUtc -gt $nexT })
+    if ($newer.Count) { "WARNING: build\nextdaad.nex is older than $($newer[0].FullName.Substring($root.Length + 1)) ($($newer.Count) source(s)) - $what checks stale bytes (run .\build.ps1)" }
+}
+
 # partBanksMax boot scan (overlay1): call site, open sequence and name template
 # as switch_to_part, skip/close/loop wiring, ddbName restore on the only exit,
 # and esx_fchdir reachable only from the boot DDB load.
@@ -1126,16 +1141,17 @@ function Assert-PartBanksScan {
     $rs = [regex]::Match($body, '(?ms)ld\s+hl,\s*pbsName\+5\s+ld\s+de,\s*ddbName\+4\s+ld\s+bc,\s*6\s+ldir\s+ret\s*\z')
     if (-not $rs.Success) { throw "src\overlay1.asm : part_banks_scan must end by writing .DDB,0,0 to ddbName+4 so ddbName reads GAME.DDB" }
     if ($body.Substring(0, $rs.Index) -match '\b(ret|reti|retn|jp)\b') { throw "src\overlay1.asm : part_banks_scan has an exit before the ddbName restore" }
-    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
+    foreach ($f in Get-InterpreterSources) {
+        $rel = $f.FullName.Substring($root.Length + 1)
         $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
         $cur = ''
         foreach ($line in ($t -split "`n")) {
             if ($line -match '^([A-Za-z_][A-Za-z0-9_]*):') { $cur = $Matches[1] }
             if ($line -match '\b(call|jp|jr)\s+(\w+,\s*)?esx_fchdir\b' -and $cur -notin @('ddb_load_boot', 'ddb_load_debug_fallback')) {
-                throw "src\$($f.Name) : $cur reaches esx_fchdir - only the boot DDB load may change the folder parts are opened from"
+                throw "$rel : $cur reaches esx_fchdir - only the boot DDB load may change the folder parts are opened from"
             }
             if ($line -match '\bESX_F_CHDIR\b' -and $line -notmatch '\bequ\b' -and $cur -ne 'esx_fchdir') {
-                throw "src\$($f.Name) : $cur issues ESX_F_CHDIR directly - only esx_fchdir may"
+                throw "$rel : $cur issues ESX_F_CHDIR directly - only esx_fchdir may"
             }
         }
     }
@@ -1160,8 +1176,8 @@ function Assert-BankAllocCensus {
         'src\overlay1.asm|aud_banks_claim' = @(1, 'long-lived')       # AYS stream, kept until the next song
     }
     $seen = @{}
-    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
-        $rel = 'src\' + $f.Name
+    foreach ($f in Get-InterpreterSources) {
+        $rel = $f.FullName.Substring($root.Length + 1)
         $cur = ''; $ln = 0
         foreach ($raw in (Get-Content -LiteralPath $f.FullName)) {
             $ln++
@@ -1173,7 +1189,7 @@ function Assert-BankAllocCensus {
             $m = [regex]::Match($line, '^\s+(call|jp|jr)\s+(\w+,\s*)?(bank_alloc(?:_long)?)\s*$')
             if (-not $m.Success) { throw "${rel}:$ln : bank_alloc referenced other than by a call, jp or jr - the census cannot classify it: $($raw.Trim())" }
             $key = "$rel|$cur"
-            if (-not $want.ContainsKey($key)) { throw "${rel}:$ln : unlisted allocator site in $cur - classify it in Assert-BankAllocCensus (freed-by-switch, transient, boot-only, long-lived)" }
+            if (-not $want.ContainsKey($key)) { throw "${rel}:$ln : unlisted allocator site in $(if ($cur) { $cur } else { '(no label)' }) - classify it in Assert-BankAllocCensus (freed-by-switch, transient, boot-only, long-lived)" }
             $entry = $m.Groups[3].Value
             $long = $want[$key][1] -eq 'long-lived'
             if ($long -and $entry -ne 'bank_alloc_long') { throw "${rel}:$ln : $cur is long-lived and must call bank_alloc_long - it survives a part switch" }
@@ -1275,6 +1291,7 @@ if (Test-Path (Join-Path $root 'manual')) {
 # out of the slot 6 window and over overlay2's own code at $E000. There
 # is no emulator leg here to catch that; this is the substitute.
 if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) {
+    Write-NexStaleWarning 'the dma_copy contract check'
     & python "$PSScriptRoot\dma_contract.py"
     if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - overlay2's dma_copy is mis-emitting its DMA descriptors, do not run this build on hardware" }
 }
@@ -1285,8 +1302,9 @@ else {
 # bank_alloc / bank_alloc_long executed from the emitted resident bytes over
 # random bank tables: with partBanksMax 0 both hand out the same bank and
 # leave the same table; with 1-4 the long entry skips banks 20..19+n only.
-# DE untouched and the stack balanced on every return. Tiny Z80 model: an
-# unknown opcode fails, so a rewrite of the allocator must extend it.
+# Stack balanced on every return; an opcode that writes D or E is a named
+# failure. Tiny Z80 model: an unknown opcode fails, so a rewrite of the
+# allocator must extend it.
 function Assert-BankAllocLongExec {
     $sym = @{}
     foreach ($l in (Get-Content -LiteralPath "$root\build\nextdaad.sld")) {
@@ -1296,7 +1314,9 @@ function Assert-BankAllocLongExec {
     foreach ($s in @('bank_alloc', 'bank_alloc_long', 'bankTable', 'partBanksMax')) {
         if (-not $sym.ContainsKey($s) -or $sym[$s][0] -notin @(4, 5)) { throw "build\nextdaad.sld : $s is not in resident pages 4-5" }
     }
+    Write-NexStaleWarning 'the bank_alloc_long exec check'
     $nex = [IO.File]::ReadAllBytes("$root\build\nextdaad.nex")
+    if ($nex[10] -ne 0) { throw "build\nextdaad.nex : header byte 10 (loading screens) is $($nex[10]), the reader assumes 0 - a palette or screen block would shift the bank offsets; extend Assert-BankAllocLongExec" }
     $order = @(5, 2, 0, 1, 3, 4) + (6..111)
     $present = @($order | Where-Object { $nex[18 + $_] })
     $off = 512 + 16384 * [array]::IndexOf($present, 2)
@@ -1304,12 +1324,17 @@ function Assert-BankAllocLongExec {
     [array]::Copy($nex, $off, $img, 0x8000, 16384)
     $free = $sym['BT_FREE'][1]; $used = $sym['BT_USED'][1]
     $tab = $sym['bankTable'][1]; $pbm = $sym['partBanksMax'][1]
+    # D/E writers: ld/inc/dec/pop de, ld d|e,r, ex de,hl, exx; ED: Z80N DE
+    # shifts, mul, add de, in d|e, ld de,(nn), ldws, ldi/ldd/ldix families
+    $deOps = @(0x11, 0x13, 0x14, 0x15, 0x16, 0x1B, 0x1C, 0x1D, 0x1E, 0xD1, 0xD9, 0xEB) + (0x50..0x5F)
+    $deOpsEd = @(0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x30, 0x32, 0x35, 0x50, 0x58, 0x5B, 0xA0, 0xA4, 0xA5, 0xA8, 0xAC, 0xB0, 0xB4, 0xB7, 0xB8, 0xBC)
     function Run-Alloc([byte[]]$m, [int]$entry) {
-        $a = 0; $b = 0; $c = 0; $hl = 0; $zf = 0; $cf = 0; $sp = 0xBD00; $de = 0x1234
+        $a = 0; $b = 0; $c = 0; $hl = 0; $zf = 0; $cf = 0; $sp = 0xBD00
         $sp -= 2; $m[$sp] = 1; $m[$sp + 1] = 0; $pc = $entry; $n = 0
         while ($pc -ne 1) {
             if (++$n -gt 5000) { throw "bank_alloc model: no return" }
             $op = $m[$pc]; $pc++
+            if ($deOps -contains $op -or ($op -eq 0xED -and $deOpsEd -contains $m[$pc])) { throw ("bank_alloc model: opcode {0:X2} at {1:X4} writes DE - the contract never touches DE" -f $op, ($pc - 1)) }
             switch ($op) {
                 0x3A { $a = $m[$m[$pc] + 256 * $m[$pc + 1]]; $pc += 2 }
                 0x18 { $d = $m[$pc]; $pc++; $pc += $(if ($d -gt 127) { $d - 256 } else { $d }) }
@@ -1343,7 +1368,7 @@ function Assert-BankAllocLongExec {
                 default { throw ("bank_alloc model: unknown opcode {0:X2} at {1:X4} - extend the model and re-verify" -f $op, ($pc - 1)) }
             }
         }
-        if ($sp -ne 0xBD00 -or $de -ne 0x1234) { throw "bank_alloc model: stack unbalanced or DE touched" }
+        if ($sp -ne 0xBD00) { throw "bank_alloc model: stack unbalanced" }
         return @($a, $cf)
     }
     $rng = New-Object Random 20261029
@@ -1384,7 +1409,7 @@ function Assert-BankAllocLongExec {
             if ($skip -eq 0 -and $ref['bank_alloc'] -ne $ref['bank_alloc_long']) { throw "partBanksMax 0, case ${i}: bank_alloc_long differs from bank_alloc" }
         }
     }
-    "bank_alloc_long exec: $cases emitted-byte runs; partBanksMax 0 matches bank_alloc exactly, 1-4 skip banks 20..19+n only, DE and stack intact"
+    "bank_alloc_long exec: $cases emitted-byte runs; partBanksMax 0 matches bank_alloc exactly, 1-4 skip banks 20..19+n only, no DE writer, stack balanced"
 }
 if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) { Assert-BankAllocLongExec }
 else { "WARNING: no build\nextdaad.nex + .sld - bank_alloc_long exec check SKIPPED (run .\build.ps1 first)" }
