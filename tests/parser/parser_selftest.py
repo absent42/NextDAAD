@@ -715,6 +715,19 @@ def t7_ddb_header_fields():
         p = fh.name
     h = prepare.ddb_header(p)
     assert h["version"] == 2 and h["objects"] == 4 and h["processes"] == 19, h
+    assert h["text_format"] == 1, h
+
+
+@case
+def t7_ddb_header_masks_text_format_2_bit():
+    import prepare
+    import tempfile
+    blob = bytes([0x83, 0x10, 95, 4, 2, 197, 61, 19] + [0] * 40)
+    with tempfile.NamedTemporaryFile(suffix=".ddb", delete=False) as fh:
+        fh.write(blob)
+        p = fh.name
+    h = prepare.ddb_header(p)
+    assert h["version"] == 3 and h["text_format"] == 2, h
 
 
 @case
@@ -781,6 +794,8 @@ def t7_build_condacts_fixture_end_to_end():
     assert res["ddb"].exists(), res["ddb"]
     assert res["header"]["html"]["version"] == 3
     assert res["header"]["next"]["version"] == 3
+    assert res["header"]["html"]["text_format"] == 1
+    assert res["header"]["next"]["text_format"] == 2
 
 
 # ---- Task 8: jleg ----------------------------------------------------------

@@ -223,7 +223,11 @@ measured (15 transcript lines, pinned):
   pending prompt message and input row are dropped from BOTH sides of a
   ZX comparison. That is the only normalisation applied.
 - **The ZX leg builds the 48K subtarget**, the Next leg builds `nextdaad`,
-  compiled `-v3 -auto-tokens` like the kit. A game that branches on
+  compiled `-v3 -auto-tokens -nxtext` like the kit (text format 2:
+  version byte bit 7 set, file up to 131070 bytes - 64K of logic plus a
+  64K text region; `prepare.ddb_header` masks the bit and reports
+  `text_format`). The jDAAD html leg stays `-v3 -auto-tokens`, format 1,
+  since jDAAD cannot read the text region. A game that branches on
   `COLS` or the target symbol genuinely runs different code on the two
   legs.
 - Only the 48K tape variant is implemented. 128K/PLUS3/ESXDOS/UNO/NEXT

@@ -1,11 +1,13 @@
 """Compile one DSF to both interpreter targets so the two legs run
 identical game logic.
 
-Both targets are built the way the authoring kit ships a game: ndrc.exe
-with -v3 -auto-tokens. jDAAD runs V3 databases (confirmed against Uto's
-compliance test) and every DAAD interpreter reads the per-game token
-table embedded in the DDB, so the differential runs on shipping-shaped
-text. PHP remains only for unDRC.
+Both targets are built with ndrc.exe -v3 -auto-tokens. jDAAD runs V3
+databases (confirmed against Uto's compliance test) and every DAAD
+interpreter reads the per-game token table embedded in the DDB, so the
+differential runs on shipping-shaped text. The Next leg also gets
+-nxtext, as the authoring kit ships it (text format 2, version byte bit
+7 set); jDAAD cannot read format 2, so the html leg stays format 1.
+PHP remains only for unDRC.
 
 Nothing is ever written into tools/. Every tool is invoked by absolute
 path with cwd set to the work directory - ndrc drops 0.XMB into cwd.
@@ -35,8 +37,10 @@ def ddb_header(path):
     if b[2] != 95:
         raise ValueError("%s: byte 2 is %d, expected the DDB signature 95"
                          % (path, b[2]))
+    # Bit 7 of byte 0 is NextDAAD text format 2; the DAAD version is bits 0-6.
     return {
-        "version": b[0],
+        "version": b[0] & 0x7F,
+        "text_format": 2 if b[0] & 0x80 else 1,
         "target": b[1],
         "objects": b[3],
         "locations": b[4],
@@ -95,7 +99,7 @@ def prepare_from_dsf(dsf_path, workdir, lang="EN"):
         raise RuntimeError("ndrc did not produce %s" % html_ddb)
 
     # nextdaad leg
-    _run([NDRC, "nextdaad", lang, src.name, "next.ddb", "-v3", "-auto-tokens"], workdir)
+    _run([NDRC, "nextdaad", lang, src.name, "next.ddb", "-v3", "-auto-tokens", "-nxtext"], workdir)
     next_ddb = workdir / "next.ddb"
     if not next_ddb.exists():
         raise RuntimeError("ndrc did not produce %s" % next_ddb)

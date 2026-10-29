@@ -9,8 +9,8 @@ cannot give it. It is a SCRIPT-side driver: nothing under
 tests/parser/*.py or jleg.js is modified, they are imported and called.
 
   1. Both targets are compiled via prepare.prepare_from_dsf, which
-     builds both legs with ndrc.exe -v3 -auto-tokens, the same way the
-     authoring kit ships a game. Nothing is ever written into tools/.
+     builds both legs with ndrc.exe -v3 -auto-tokens (the Next leg also
+     -nxtext, as the authoring kit ships a game). Nothing is ever written into tools/.
 
   2. SETAT is authored directly since 2026-09-02. ndrc has a real SETAT
      keyword, so the stand-in patch this script used to carry is gone.

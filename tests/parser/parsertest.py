@@ -55,7 +55,7 @@ def _rebuild_next_only(mutated_dsf, workdir, lang="EN"):
         dest.write_bytes(mutated_dsf.read_bytes())
 
     prepare._run([prepare.NDRC, "nextdaad", lang, dest.name, "next.ddb",
-                 "-v3", "-auto-tokens"], workdir)
+                 "-v3", "-auto-tokens", "-nxtext"], workdir)
     next_ddb = workdir / "next.ddb"
     if not next_ddb.exists():
         raise RuntimeError("ndrc did not produce %s" % next_ddb)
