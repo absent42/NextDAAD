@@ -47,12 +47,17 @@ file beside it - a `GAMEn.DSF` source left next to the compiled DDB, say
   quietly does nothing.
 - **A part over 64K needs memory banks free.** A DDB larger than 64K
   takes one extra 16K bank for each 16K, or part of 16K, above 64K, up
-  to four. Part 1 claims its own at start-up. A later part that needs
-  more than part 1 gets the extra banks only if they are free when the
-  game switches; if one is in use the switch is refused, the same
-  silent no-op as a missing file. The build warns about such a part:
-  keep each later part within part 1's bank count, or make part 1 the
-  largest.
+  to four. Only the part that is loaded holds them: a switch to a part
+  that needs fewer hands the rest back, and the interpreter can give
+  them to graphics and other uses from then on. A switch to a part that needs more banks
+  than the current one gets them only if they are free at that moment;
+  if one is in use the switch is refused, the same silent no-op as a
+  missing file. This applies to a switch back to part 1 too, so making
+  part 1 the largest is not enough. The build warns about every part
+  that needs more banks than another and names the parts a switch to
+  it could be refused from. The only safe layout is every part within
+  the same bank count: keep each DDB in the same 16K step above 64K, or
+  all of them at 64K or under.
 - A successful switch is a **fresh entry** into the new part, not a
   resume. It starts at the new part's own `PRO 0`, never at wherever the
   `EXTERN` was called from.

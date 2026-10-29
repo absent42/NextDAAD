@@ -83,3 +83,19 @@ function Get-KitDdbBanksOver64K([long]$Size) {
     if ($Size -le 65536) { return 0 }
     return [int][Math]::Ceiling(($Size - 65536) / 16384)
 }
+
+# Multi-part bank warnings. $Parts: objects with N, File, Size. Loading a part
+# frees the banks it does not need (t2_claim, src/huffbuild.asm), so any switch
+# to a part needing more banks than the current one can be refused.
+function Get-KitPartBankWarnings([object[]]$Parts) {
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($p in $Parts) {
+        $need = Get-KitDdbBanksOver64K $p.Size
+        $less = @($Parts | Where-Object { (Get-KitDdbBanksOver64K $_.Size) -lt $need })
+        if ($less.Count -eq 0) { continue }
+        $have = ($less | ForEach-Object { "part $($_.N) needs $(Get-KitDdbBanksOver64K $_.Size)" }) -join ', '
+        $from = ($less | ForEach-Object { "part $($_.N)" }) -join ' or '
+        $out.Add("WARNING: $($p.File) ($($p.Size) bytes) needs $need 16K bank(s) above 64K, $have - a switch to part $($p.N) from $from is refused if the extra bank(s) are in use; the game stays in its current part")
+    }
+    return $out.ToArray()
+}

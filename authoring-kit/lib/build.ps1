@@ -287,7 +287,7 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]
     return 0
 }
 if ((Invoke-Ddb $dsfFile.Name (Join-Path $rel 'GAME.DDB') $rel 'GAME.DSM') -ne 0) { exit 1 }
-$part1Banks = Get-KitDdbBanksOver64K $script:ddbSize
+$partSizes = @([pscustomobject]@{ N = 1; File = 'GAME.DDB'; Size = $script:ddbSize })
 
 # ---- pictures, audio, video ----
 if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress; Src = $src; Data = $rel }) -ne 0) { exit 1 }
@@ -391,12 +391,7 @@ foreach ($n in 2..9) {
     }
     Write-DebugDirectiveWarnings $pdsfs[0].FullName (Join-Path $part $pdsfs[0].Name)
     if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path $rel "GAME$n.DDB") (Join-Path $rel $part) "GAME$n.DSM") -ne 0) { exit 1 }
-    # Part 1 claims its banks above 64K at boot; extra ones a later part needs
-    # may be in use by then, and the interpreter refuses that switch.
-    $pb = Get-KitDdbBanksOver64K $script:ddbSize
-    if ($pb -gt $part1Banks) {
-        Write-Host "WARNING: GAME$n.DDB ($($script:ddbSize) bytes) needs $pb 16K bank(s) above 64K, GAME.DDB needs $part1Banks - if the extra bank(s) are in use when the game switches to part $n, the switch is refused and the game stays in its current part"
-    }
+    $partSizes += [pscustomobject]@{ N = $n; File = "GAME$n.DDB"; Size = $script:ddbSize }
     $count = 0
     foreach ($f in Get-KitFiles $partDir '*') {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
@@ -408,6 +403,7 @@ foreach ($n in 2..9) {
     }
     Write-Host "  $count asset(s) staged -> $dataLbl${sep}PART$n$sep"
 }
+foreach ($w in @(Get-KitPartBankWarnings $partSizes)) { Write-Host $w }
 
 Write-Host "BUILD OK: RELEASE$sep$game$sep is ready - copy the contents of RELEASE$sep to the root of an SD card"
 if ((cfg 'RUN') -eq '1' -and -not $NoRun) {

@@ -39,8 +39,8 @@
 </tr>
 <tr>
 <td>Texts per table</td>
-<td>255 (256 objects)</td>
-<td>messages, system messages and locations each - format 2 does not change these</td>
+<td>255</td>
+<td>objects, messages, system messages and locations each - format 2 does not change these</td>
 </tr>
 </tbody>
 </table>
@@ -61,8 +61,9 @@ can name. Format 2 points at its texts from inside the game logic with
 offsets into the text region, which is how the text gets a 64K of its
 own.</p>
 <p>A file over 64K takes up to four extra 16K memory banks while it runs.
-A multi-part game whose later part needs more of them than part 1 is
-warned about at build time - see
+A multi-part game whose parts need different numbers of them is warned
+about at build time, since a switch to a part that needs more banks
+than the current one can be refused - see
 <a href="../multi-part-games.html">Multi-part games</a>.</p>
 <p><strong>This used to be 31744 bytes.</strong> Databases for the classic ZX targets
 carry pointers counted from $8400, the address a Spectrum loads them at,

@@ -631,8 +631,8 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <td>The database is too large. The kit compiles with text format 2, which gives the game logic and the text 64K each (131070 bytes in all); a game with no repeated text compiles as format 1, one 64K image. The compiler's own message above names the budget that overflowed: <code>DDB file goes N bytes over the 65535 memory address boundary</code> is the game logic, <code>Text region goes N bytes over the 65535 limit</code> is the text. See <a href="reference/limits.html">Limits</a>, which suggests where to cut.</td>
 </tr>
 <tr>
-<td><code>WARNING: GAMEn.DDB (N bytes) needs N 16K bank(s) above 64K, GAME.DDB needs N</code></td>
-<td>A later part of a <a href="multi-part-games.html">multi-part game</a> is larger than part 1 by enough to need more memory banks than part 1 claims at start-up. If those banks are in use when the game switches to that part, the switch is refused and the game stays where it is. Keep each later part's DDB within the same 16K step above 64K as part 1's, or make part 1 the largest.</td>
+<td><code>WARNING: GAMEn.DDB (N bytes) needs N 16K bank(s) above 64K, part N needs N</code> (or <code>GAME.DDB</code> for part 1)</td>
+<td>The parts of a <a href="multi-part-games.html">multi-part game</a> need different numbers of memory banks above 64K. Only the loaded part holds its banks, so a switch to a part that needs more than the current one - part 1 included - is refused if those banks are in use at that moment, and the game stays where it is. Keep every part's DDB within the same 16K step above 64K, or all of them at 64K or under.</td>
 </tr>
 <tr>
 <td><code>uses #classic, which NextDAAD does not support</code></td>
@@ -713,16 +713,16 @@ power-cycle to try again.</p>
 <td><code>GAME.DDB</code> is larger than the interpreter will load. See <a href="reference/limits.html">Limits</a>.</td>
 </tr>
 <tr>
-<td><code>NextDAAD: DDB text format - E5</code></td>
-<td><code>GAME.DDB</code> is a text format 2 database whose text part is damaged or cut short - most often a truncated copy. Rebuild and copy it again.</td>
-</tr>
-<tr>
 <td><code>NextDAAD: DDB bad header - E3</code></td>
 <td>The file is there but is not a database this build can load - a truncated or corrupted copy, most often. Rebuild and copy it again.</td>
 </tr>
 <tr>
 <td><code>NextDAAD: DDB wrong machine - E4</code></td>
 <td><code>GAME.DDB</code> is a perfectly good database, but it was compiled for a different computer - CPC, C64, MSX, PC or another. Recompile it for the Spectrum: the kit's own build already does, so this normally means a <code>.DDB</code> arrived from somewhere else. Spanish and English databases are both fine; it is the machine that is wrong, not the language.</td>
+</tr>
+<tr>
+<td><code>NextDAAD: DDB text format - E5</code></td>
+<td><code>GAME.DDB</code> is a text format 2 database whose text part is damaged or cut short - most often a truncated copy. Rebuild and copy it again.</td>
 </tr>
 <tr>
 <td><code>NextDAAD: RUNTIME ERROR - E&lt;n&gt;</code></td>

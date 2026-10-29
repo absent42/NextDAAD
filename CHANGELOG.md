@@ -4,15 +4,16 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.13.0 - unreleased
 
-- **Text format 2 in the kit**: `libuild.ps1` compiles with NDRC
+- **Text format 2 in the kit**: `lib\build.ps1` compiles with NDRC
   `-nxtext`. A format 2 `GAME.DDB` is up to 64K of game logic followed
   by a text region of up to 64K (Huffman-coded texts, token dictionary
   of up to 383 entries), 131070 bytes in all; texts per table are
   unchanged. The build's file check is 131070 for a format 2 DDB
   (version byte bit 7) and 65535 for format 1, part DDBs the same.
-- **Multi-part bank warning**: the build warns when a later part's DDB
-  needs more 16K banks above 64K than part 1's; the interpreter refuses
-  a part switch that cannot get them.
+- **Multi-part bank warning**: the build warns for each part whose DDB
+  needs more 16K banks above 64K than another part's, naming the parts
+  a switch to it could be refused from; the interpreter refuses a part
+  switch that cannot get them, a switch back to part 1 included.
 - **Debugger plugin** reads the format 2 text region.
 - **NDRC v0.4.0**: `-nxtext` text format 2 with the text region;
   duplicate texts shared within a table; object texts compressed under

@@ -11,7 +11,7 @@ The kit compiles every game with NextDAAD text format 2 (NDRC's
 | Game logic | 65535 bytes | header, objects, vocabulary, connections, processes, and the text lookup tables |
 | Text region | 65535 bytes | the token dictionary and every compressed text: objects, system messages, messages and locations |
 | Whole file | 131070 bytes | both |
-| Texts per table | 255 (256 objects) | messages, system messages and locations each - format 2 does not change these |
+| Texts per table | 255 | objects, messages, system messages and locations each - format 2 does not change these |
 
 The compiler reports both sizes after each build
 (`Part A is <n> bytes, text region is <n> bytes.`) and stops with its
@@ -33,8 +33,9 @@ offsets into the text region, which is how the text gets a 64K of its
 own.
 
 A file over 64K takes up to four extra 16K memory banks while it runs.
-A multi-part game whose later part needs more of them than part 1 is
-warned about at build time - see
+A multi-part game whose parts need different numbers of them is warned
+about at build time, since a switch to a part that needs more banks
+than the current one can be refused - see
 [Multi-part games](../multi-part-games.md).
 
 **This used to be 31744 bytes.** Databases for the classic ZX targets
