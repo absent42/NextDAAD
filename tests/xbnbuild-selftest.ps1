@@ -223,11 +223,14 @@ if ($OnWindows) {
     $kc = "$work\kit copy"
     New-Item -ItemType Directory -Force "$kc\lib" | Out-Null
     Copy-Item "$kit\EXTERNS.BAT", "$kit\CONFIG.BAT", "$kit\xbn.inc", "$kit\xbnmod.inc" $kc
-    Copy-Item "$kit\lib\kitplatform.ps1", "$kit\lib\kitconfig.ps1", "$kit\lib\kittools.ps1", "$kit\lib\toolversions.txt", "$kit\lib\externs.ps1", "$kit\lib\xbnbuild.ps1", "$kit\lib\resolve-sjasmplus.ps1" "$kc\lib"
+    Copy-Item "$kit\lib\kitplatform.ps1", "$kit\lib\kitconfig.ps1", "$kit\lib\kittools.ps1", "$kit\lib\kitgame.ps1", "$kit\lib\toolversions.txt", "$kit\lib\externs.ps1", "$kit\lib\xbnbuild.ps1", "$kit\lib\resolve-sjasmplus.ps1" "$kc\lib"
     Copy-Item "$kit\externs" "$kc\externs" -Recurse
+    # EXTERNS.BAT resolves the game folder and writes GAME.XBN into it.
+    New-Item -ItemType Directory -Force "$kc\STARTER" | Out-Null
+    Copy-Item "$kit\STARTER\STARTER.DSF", "$kit\STARTER\STARTER.CFG" "$kc\STARTER"
     function Invoke-Driver([string]$name, [string]$callLine) {
         [IO.File]::WriteAllText("$work\$name.cmd", "@cd /d `"%~dp0`"`r`n@call $callLine`r`n@exit /b %ERRORLEVEL%`r`n", [Text.Encoding]::ASCII)
-        Remove-Item "$kc\GAME.XBN" -ErrorAction SilentlyContinue
+        Remove-Item "$kc\STARTER\GAME.XBN" -ErrorAction SilentlyContinue
         $oldPath = $env:PATH
         $env:PATH = "$(Split-Path $sj);$env:PATH"
         try { $text = Invoke-Native { & cmd /c "$work\$name.cmd" }; $code = $LASTEXITCODE }
@@ -236,10 +239,10 @@ if ($OnWindows) {
     }
     Build-Ok 'batch reference' @('fade', "$work\with space\ua", 'toolkit', '-Out', "$o\batref.xbn") | Out-Null
     Invoke-Driver 'argquote' "`"%~dp0kit copy\EXTERNS.BAT`" fade `"with space\ua\`" toolkit"
-    Assert-Eq (Same-Bytes "$kc\GAME.XBN" "$o\batref.xbn") $true 'EXTERNS.BAT passes a trailing-backslash argument and the rest intact'
+    Assert-Eq (Same-Bytes "$kc\STARTER\GAME.XBN" "$o\batref.xbn") $true 'EXTERNS.BAT passes a trailing-backslash argument and the rest intact'
     # Launched by a quoted relative path, as from a mods folder beside the kit.
     Invoke-Driver 'relbat' "`"kit copy\EXTERNS.BAT`" fade `"with space\ua`" toolkit"
-    Assert-Eq (Same-Bytes "$kc\GAME.XBN" "$o\batref.xbn") $true 'EXTERNS.BAT launched by a quoted relative path'
+    Assert-Eq (Same-Bytes "$kc\STARTER\GAME.XBN" "$o\batref.xbn") $true 'EXTERNS.BAT launched by a quoted relative path'
 } else { Skip-Leg 'EXTERNS.BAT leg skipped - cmd.exe batch launcher not present on this host' }
 
 Write-Output "xbnbuild-selftest: $checks checks passed"
