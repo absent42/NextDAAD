@@ -1,14 +1,14 @@
 """ZEsarUX check for the pool C part switch cards. Controller only.
 
 python tests/poolc/poolc_check.py <card> <map> <port> <case>
-  control  sd\\LEGPCC + main's map: song pages include bank 20, JUMP prints
-           P1 SWITCH F
+  control  sd\\LEGPCC + main's map: song pages include bank 20; bank 20
+           BT_USED by the song right before JUMP, which prints P1 SWITCH F
   switch   sd\\LEGPC + branch map: partBanksMax 1, no song page in
            20..20+max-1, JUMP reaches P2 BOOT with the stream still live
   restore  sd\\LEGPC: the switch case, SAVE PCSAVE in part 2, relaunch,
            song again, LOAD PCSAVE from part 1 lands in part 2 (P2 ROOM)
-  focus5   sd\\LEGPC: partBanksMax poked to 4, the song claim fails with
-           nothing held
+  focus5   sd\\LEGPC: partBanksMax poked to 4; aysHdr and smpClaim* show
+           the file opened and the claim ran, which fails with nothing held
 Every case marks each BT_FREE bank outside pool C BT_USED at the P1 BOOT
 pause. Runs on a scratch copy, tests/out/poolc/run-<case>/sd.
 """
@@ -49,6 +49,7 @@ class Run:
                                           'BANK_POOL_C_END', 'BANK_TABLE_SIZE')}
 
     def launch(self, sd):
+        self.nex = os.path.join(sd, 'NEXTDAAD.NEX')
         try:
             socket.create_connection(('127.0.0.1', self.port), timeout=0.5).close()
             raise SystemExit('port %d already answers: a stale emulator holds it' % self.port)
@@ -132,6 +133,13 @@ class Run:
         # resident bankTable sits in bank 2, so both views must agree
         if self.rdz('BANKTABLE', self.k['BANK_TABLE_SIZE']) != self.bank_table():
             raise SystemExit('zone 0 view of bankTable disagrees: ZONE0_RAM offset wrong')
+        # page 48 code must match the NEX image's bank 24
+        phys = self.s['AUD_AYS_RDB'][1]
+        want = nex_bank(self.nex, phys // 16384)[phys % 16384:phys % 16384 + 16]
+        got = self.rdz('AUD_AYS_RDB', 16)
+        if got != want:
+            raise SystemExit('zone 0 page 48 read %s, NEX holds %s' % (got.hex(), want.hex()))
+        print('zone 0 sanity: bankTable (bank 2) and aud_ays_rdb (page 48) match')
 
     def fill_pools(self):
         bt = bytearray(self.bank_table())
@@ -162,7 +170,7 @@ class Run:
         b = self.pos()
         return bool(self.rdz('AYSFLAGS')[0] & 1) and a != b, a, b
 
-    def boot_to_song(self, pbm_poke=None):
+    def boot_to_song(self, pbm_poke=None, before_tap=None):
         hit, rows = self.wait_for(['P1 BOOT'], 40.0)
         if not hit:
             dump(rows)
@@ -174,6 +182,8 @@ class Run:
             print('partBanksMax poked to %d' % pbm_poke)
         n, poked = self.fill_pools()
         print('marked %d free banks outside pool C BT_USED' % n)
+        if before_tap:
+            before_tap()
         self.z.tap_dismiss_key()
         hit, rows = self.wait_for(['P1 SONG ON'], 30.0)
         if not hit:
@@ -186,6 +196,20 @@ class Run:
         print('song: %d pages, banks %s, aysFlags $%02X, pool C states %s'
               % (sg['cnt'], sg['banks'], sg['flags'], list(bt[c0:c1 + 1])))
         return sg, poked, bt
+
+
+def nex_bank(nex, bank):
+    # NEX v1.x: 512-byte header, banks stored 5,2,0,1,3,4,6.. when present
+    with open(nex, 'rb') as f:
+        d = f.read()
+    if d[:4] != b'Next' or d[10] != 0:
+        raise SystemExit('%s: not a screenless NEX' % nex)
+    order = [5, 2, 0, 1, 3, 4] + list(range(6, 112))
+    present = [b for b in order if d[18 + b]]
+    if bank not in present:
+        raise SystemExit('%s: bank %d absent' % (nex, bank))
+    off = 512 + 16384 * present.index(bank)
+    return d[off:off + 16384]
 
 
 def dump(rows):
@@ -206,8 +230,12 @@ def case_control(r):
     sg, _, _ = r.boot_to_song()
     expect('partBanksMax absent', r.pbm() is None, 'symbol %s' % ('absent' if r.pbm() is None else 'present'))
     expect('song pages include bank 20', 20 in sg['banks'], 'banks %s' % sg['banks'])
+    sg = r.song()                       # the cause, read right before JUMP
+    b20 = r.bank_table()[20]
     hit = jump(r)
-    expect('switch refused', hit == 'P1 SWITCH F', 'screen marker %s' % hit)
+    expect('switch refused by the song holding bank 20',
+           b20 == r.k['BT_USED'] and 20 in sg['banks'] and hit == 'P1 SWITCH F',
+           'before JUMP bank 20 state %d, song banks %s; screen marker %s' % (b20, sg['banks'], hit))
 
 
 def check_switch(r, sg):
@@ -241,13 +269,12 @@ def case_restore(r, sd):
         expect('part 2 save written', False, 'no filename prompt')
         return
     r.typed(SAVE_NAME)
-    path = os.path.join(sd, SAVE_NAME + '.SAV')
     end = time.monotonic() + 10.0
     while time.monotonic() < end and not any(f.upper() == SAVE_NAME + '.SAV' for f in os.listdir(sd)):
         time.sleep(0.5)
     saved = [f for f in os.listdir(sd) if f.upper() == SAVE_NAME + '.SAV']
     expect('part 2 save written', bool(saved),
-           '%s %d B' % (saved[0], os.path.getsize(os.path.join(sd, saved[0]))) if saved else 'missing ' + path)
+           '%s %d B' % (saved[0], os.path.getsize(os.path.join(sd, saved[0]))) if saved else 'missing ' + SAVE_NAME + '.SAV')
     if not saved:
         return
     time.sleep(1.0)
@@ -274,9 +301,24 @@ def case_restore(r, sd):
     print('info: stream live after LOAD %s (position %s -> %s)' % (live, a, b))
 
 
+def claim_trace(r):
+    return (r.rdz('AYSHDR', 16), int.from_bytes(r.rdz('SMPCLAIMTAB', 2), 'little'),
+            r.rdz('SMPCLAIMBANKS')[0])
+
+
 def case_focus5(r):
-    sg, poked, bt = r.boot_to_song(pbm_poke=4)
+    pre = []
+    sg, poked, bt = r.boot_to_song(pbm_poke=4, before_tap=lambda: pre.append(claim_trace(r)))
     c0, c1 = r.k['BANK_POOL_C'], r.k['BANK_POOL_C_END']
+    with open(r.nex.replace('NEXTDAAD.NEX', '001.AYS'), 'rb') as f:
+        hdr = f.read(16)
+    tab = r.s['AYSPAGETAB'][0]
+    post = claim_trace(r)
+    fresh = pre[0][0] != hdr and pre[0][1] != tab
+    expect('song opened and the claim ran',
+           fresh and post[0] == hdr and post[1] == tab and post[2] == 2,
+           'before: header %s, claim table $%04X; after: header %s, claim table $%04X, banks still owed %d'
+           % (pre[0][0][:4], pre[0][1], post[0][:4], post[1], post[2]))
     expect('claim failed, no pages', sg['cnt'] == 0, 'aysPageCnt %d' % sg['cnt'])
     expect('stream not active', not sg['flags'] & 1, 'aysFlags $%02X' % sg['flags'])
     used = [c0 + i for i, b in enumerate(bt[c0:c1 + 1]) if b == r.k['BT_USED']]
