@@ -5,7 +5,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.13.0 - unreleased
 
-- **Games up to 128K.** The kit now compiles with NextDAAD text format
+- **DAAD databases up to 128K.** The kit now compiles with NextDAAD text format
   2. Every text is Huffman-coded over a dictionary of up to 383 tokens
   chosen from your own game, and the texts move out of the game logic
   into a text region of their own. Game logic and text each get 64K,
@@ -14,6 +14,15 @@ game behaves, how it builds, or what the kit gives you, it is here.
   that overflowed. A game with no repeated text compiles as before, in
   one 64K image. A format 2 `GAME.DDB` runs only on NextDAAD 0.13.0
   or later; other DAAD interpreters refuse it. See [Limits](reference/limits.md).
+- **Faster text.** In text format 2 each token is found through an
+  index instead of a search of the token table, so text prints faster:
+  a full location description in Rabenstein prints in 27 ms against
+  68 ms before (measured in CSpect). Small games get format 2 for the
+  speed alone.
+- **New error E5.** `NextDAAD: DDB text format - E5` means a text
+  format 2 `GAME.DDB` is damaged or cut short, or, when the game prints
+  an XMESSAGE, that the `0.XMB` beside it comes from a different build.
+  Rebuild and copy both files again.
 - **NDRC 0.4.0.** Duplicate texts within a table are stored once, and
   object texts are compressed too, so the same game compiles smaller.
 - **Debugger.** The debugger window reads text format 2 games.

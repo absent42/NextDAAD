@@ -10,6 +10,15 @@ All notable changes to NextDAAD are recorded here.
   of up to 383 entries), 131070 bytes in all; texts per table are
   unchanged. The build's file check is 131070 for a format 2 DDB
   (version byte bit 7) and 65535 for format 1, part DDBs the same.
+  A format 2 `GAME.DDB` runs only on NextDAAD 0.13.0 or later; other
+  DAAD interpreters refuse it.
+- **Interpreter reads text format 2**: Huffman decode with an indexed
+  token dictionary (nested entries), texts read from the text region in
+  banks 16-23. Text prints faster: a full Rabenstein location
+  description takes 27 ms against 68 ms in format 1 (CSpect).
+- **New fatal E5** (`NextDAAD: DDB text format - E5`): a format 2 DDB
+  whose text block or region fails its checks, or an XMESSAGE whose
+  `0.XMB` lacks the "X2" header or carries another build's fingerprint.
 - **Debugger plugin** reads the format 2 text region.
 - **NDRC v0.4.0**: `-nxtext` text format 2 with the text region;
   duplicate texts shared within a table; object texts compressed under
