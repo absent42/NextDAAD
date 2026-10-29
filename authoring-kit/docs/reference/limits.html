@@ -60,10 +60,8 @@ chose: a DDB pointer is 16 bits, so 65536 is every distinct position one
 can name. Format 2 points at its texts from inside the game logic with
 offsets into the text region, which is how the text gets a 64K of its
 own.</p>
-<p>A file over 64K takes up to four extra 16K memory banks while it runs.
-A multi-part game whose parts need different numbers of them is warned
-about at build time, since a switch to a part that needs more banks
-than the current one can be refused - see
+<p>A file over 64K takes up to four extra 16K memory banks while it runs;
+a multi-part game switches between parts of any size - see
 <a href="../multi-part-games.html">Multi-part games</a>.</p>
 <p><strong>This used to be 31744 bytes.</strong> Databases for the classic ZX targets
 carry pointers counted from $8400, the address a Spectrum loads them at,

@@ -127,22 +127,5 @@ Assert-Eq (Get-KitDdbLimit 0x03) 65535 'format 1 V3 limit'
 Assert-Eq (Get-KitDdbLimit 0x02) 65535 'format 1 V2 limit'
 Assert-Eq (Get-KitDdbLimit 0x83) 131070 'format 2 V3 limit'
 Assert-Eq (Get-KitDdbLimit 0x82) 131070 'format 2 V2 limit'
-foreach ($p in @(@(2533, 0), @(65535, 0), @(65536, 0), @(65537, 1), @(81920, 1), @(81921, 2), @(114688, 3), @(114689, 4), @(131070, 4))) {
-    Assert-Eq (Get-KitDdbBanksOver64K $p[0]) $p[1] "banks above 64K for $($p[0]) bytes"
-}
-# Part bank warnings: one per part needing more than another, naming those parts.
-function Part([int]$N, [long]$Size) { $f = if ($N -eq 1) { 'GAME.DDB' } else { "GAME$N.DDB" }; [pscustomobject]@{ N = $N; File = $f; Size = $Size } }
-Assert-Eq @(Get-KitPartBankWarnings @((Part 1 2533))).Count 0 'one part: no bank warning'
-Assert-Eq @(Get-KitPartBankWarnings @((Part 1 81920), (Part 2 70000))).Count 0 'equal bank needs: no warning'
-$w = @(Get-KitPartBankWarnings @((Part 1 81921), (Part 2 40000)))
-Assert-Eq $w.Count 1 'part 1 larger: one warning'
-Assert-Eq $w[0] 'WARNING: GAME.DDB (81921 bytes) needs 2 16K bank(s) above 64K, part 2 needs 0 - a switch to part 1 from part 2 is refused if the extra bank(s) are in use; the game stays in its current part' 'part 1 larger: switch back to part 1 warned'
-$w = @(Get-KitPartBankWarnings @((Part 1 2533), (Part 2 66259)))
-Assert-Eq $w.Count 1 'part 2 larger: one warning'
-Assert-Eq ($w[0].StartsWith('WARNING: GAME2.DDB (66259 bytes) needs 1 16K bank(s) above 64K, part 1 needs 0 - a switch to part 2 from part 1 ')) $true 'part 2 larger: names part 1'
-$w = @(Get-KitPartBankWarnings @((Part 1 100000), (Part 2 2533), (Part 3 70000)))
-Assert-Eq $w.Count 2 'three parts: parts 1 and 3 warned'
-Assert-Eq ($w[0].Contains('needs 3 16K bank(s) above 64K, part 2 needs 0, part 3 needs 1 - a switch to part 1 from part 2 or part 3 ')) $true 'three parts: part 1 names parts 2 and 3'
-Assert-Eq ($w[1].StartsWith('WARNING: GAME3.DDB (70000 bytes) needs 1 16K bank(s) above 64K, part 2 needs 0 - a switch to part 3 from part 2 ')) $true 'three parts: part 3 names part 2 only'
 
 Write-Output "kitgame-selftest: $checks checks passed"

@@ -10,10 +10,6 @@ All notable changes to NextDAAD are recorded here.
   of up to 383 entries), 131070 bytes in all; texts per table are
   unchanged. The build's file check is 131070 for a format 2 DDB
   (version byte bit 7) and 65535 for format 1, part DDBs the same.
-- **Multi-part bank warning**: the build warns for each part whose DDB
-  needs more 16K banks above 64K than another part's, naming the parts
-  a switch to it could be refused from; the interpreter refuses a part
-  switch that cannot get them, a switch back to part 1 included.
 - **Debugger plugin** reads the format 2 text region.
 - **NDRC v0.4.0**: `-nxtext` text format 2 with the text region;
   duplicate texts shared within a table; object texts compressed under

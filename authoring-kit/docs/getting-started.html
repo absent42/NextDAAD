@@ -631,10 +631,6 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <td>The database is too large. The kit compiles with text format 2, which gives the game logic and the text 64K each (131070 bytes in all); a game with no repeated text compiles as format 1, one 64K image. The compiler's own message above names the budget that overflowed: <code>DDB file goes N bytes over the 65535 memory address boundary</code> is the game logic, <code>Text region goes N bytes over the 65535 limit</code> is the text. See <a href="reference/limits.html">Limits</a>, which suggests where to cut.</td>
 </tr>
 <tr>
-<td><code>WARNING: GAMEn.DDB (N bytes) needs N 16K bank(s) above 64K, part N needs N</code> (or <code>GAME.DDB</code> for part 1)</td>
-<td>The parts of a <a href="multi-part-games.html">multi-part game</a> need different numbers of memory banks above 64K. Only the loaded part holds its banks, so a switch to a part that needs more than the current one - part 1 included - is refused if those banks are in use at that moment, and the game stays where it is. Keep every part's DDB within the same 16K step above 64K, or all of them at 64K or under.</td>
-</tr>
-<tr>
 <td><code>uses #classic, which NextDAAD does not support</code></td>
 <td>Remove the <code>#classic</code> line from your source. It tells the compiler to imitate the original pre-DRC DAAD compiler, for the benefit of interpreters that cannot read a NextDAAD database in any case; here it only makes the database bigger.</td>
 </tr>

@@ -123,7 +123,6 @@ the path in `tools\README.txt`.
 | `WARNING: RELEASE\ holds ... from an older kit build` | loose pre-v0.12.0 output in `RELEASE\`; delete it by hand |
 | `ndrc failed compiling` | the compiler output above it names the line |
 | `GAME.DDB is N bytes, over the 65535 limit` / `over the 131070 limit` | the compiler line above names the budget: `Text region goes N bytes over` = text (move to `XMESSAGE`, cut messages), `DDB file goes N bytes over the 65535 memory address boundary` = game logic (cut vocabulary, objects, entries) |
-| `WARNING: GAMEn.DDB (N bytes) needs N 16K bank(s) above 64K, part N needs N` (`GAME.DDB` for part 1) | parts need different bank counts above 64K; only the loaded part holds its banks, so a switch to a bigger part (back to part 1 too) is refused if the extra banks are in use - keep every part in the same 16K step above 64K, or all at 64K or under; making part 1 the largest is not enough |
 | `uses #classic, which NextDAAD does not support` | delete the `#classic` line |
 | `expected a 320 or 256 wide PNG` | resize the picture |
 | `must be a paletted 8-bit PNG` | re-export as indexed colour |

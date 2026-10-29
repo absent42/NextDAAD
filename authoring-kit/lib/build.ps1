@@ -287,7 +287,6 @@ function Invoke-Ddb([string]$DsfPath, [string]$DdbOut, [string]$XmbDir, [string]
     return 0
 }
 if ((Invoke-Ddb $dsfFile.Name (Join-Path $rel 'GAME.DDB') $rel 'GAME.DSM') -ne 0) { exit 1 }
-$partSizes = @([pscustomobject]@{ N = 1; File = 'GAME.DDB'; Size = $script:ddbSize })
 
 # ---- pictures, audio, video ----
 if ((Invoke-Stage 'assets.ps1' @{ Stage = 'Pictures'; Gfx = $t.GFX; Compress = $compress; Src = $src; Data = $rel }) -ne 0) { exit 1 }
@@ -391,7 +390,6 @@ foreach ($n in 2..9) {
     }
     Write-DebugDirectiveWarnings $pdsfs[0].FullName (Join-Path $part $pdsfs[0].Name)
     if ((Invoke-Ddb (Join-Path $part $pdsfs[0].Name) (Join-Path $rel "GAME$n.DDB") (Join-Path $rel $part) "GAME$n.DSM") -ne 0) { exit 1 }
-    $partSizes += [pscustomobject]@{ N = $n; File = "GAME$n.DDB"; Size = $script:ddbSize }
     $count = 0
     foreach ($f in Get-KitFiles $partDir '*') {
         if ($f.Extension -match '(?i)^\.DSF$') { continue }
@@ -403,7 +401,6 @@ foreach ($n in 2..9) {
     }
     Write-Host "  $count asset(s) staged -> $dataLbl${sep}PART$n$sep"
 }
-foreach ($w in @(Get-KitPartBankWarnings $partSizes)) { Write-Host $w }
 
 Write-Host "BUILD OK: RELEASE$sep$game$sep is ready - copy the contents of RELEASE$sep to the root of an SD card"
 if ((cfg 'RUN') -eq '1' -and -not $NoRun) {

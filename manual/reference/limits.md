@@ -32,10 +32,8 @@ can name. Format 2 points at its texts from inside the game logic with
 offsets into the text region, which is how the text gets a 64K of its
 own.
 
-A file over 64K takes up to four extra 16K memory banks while it runs.
-A multi-part game whose parts need different numbers of them is warned
-about at build time, since a switch to a part that needs more banks
-than the current one can be refused - see
+A file over 64K takes up to four extra 16K memory banks while it runs;
+a multi-part game switches between parts of any size - see
 [Multi-part games](../multi-part-games.md).
 
 **This used to be 31744 bytes.** Databases for the classic ZX targets

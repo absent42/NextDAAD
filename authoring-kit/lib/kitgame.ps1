@@ -76,26 +76,3 @@ function Resolve-KitGame([hashtable]$Config, [string]$KitRoot) {
 # DDB file size limit from version byte 0. Bit 7 = NextDAAD text format 2:
 # 65535 of part A plus a 65535 text region; format 1 is one 64K image.
 function Get-KitDdbLimit([int]$Version) { if ($Version -band 0x80) { return 131070 } else { return 65535 } }
-
-# Banks the interpreter claims above 64K for a DDB of $Size bytes, one per
-# 16K or part of one (pool_c_need, src/huffbuild.asm).
-function Get-KitDdbBanksOver64K([long]$Size) {
-    if ($Size -le 65536) { return 0 }
-    return [int][Math]::Ceiling(($Size - 65536) / 16384)
-}
-
-# Multi-part bank warnings. $Parts: objects with N, File, Size. Loading a part
-# frees the banks it does not need (t2_claim, src/huffbuild.asm), so any switch
-# to a part needing more banks than the current one can be refused.
-function Get-KitPartBankWarnings([object[]]$Parts) {
-    $out = New-Object System.Collections.Generic.List[string]
-    foreach ($p in $Parts) {
-        $need = Get-KitDdbBanksOver64K $p.Size
-        $less = @($Parts | Where-Object { (Get-KitDdbBanksOver64K $_.Size) -lt $need })
-        if ($less.Count -eq 0) { continue }
-        $have = ($less | ForEach-Object { "part $($_.N) needs $(Get-KitDdbBanksOver64K $_.Size)" }) -join ', '
-        $from = ($less | ForEach-Object { "part $($_.N)" }) -join ' or '
-        $out.Add("WARNING: $($p.File) ($($p.Size) bytes) needs $need 16K bank(s) above 64K, $have - a switch to part $($p.N) from $from is refused if the extra bank(s) are in use; the game stays in its current part")
-    }
-    return $out.ToArray()
-}

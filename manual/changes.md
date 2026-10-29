@@ -16,12 +16,6 @@ game behaves, how it builds, or what the kit gives you, it is here.
   or later; other DAAD interpreters refuse it. See [Limits](reference/limits.md).
 - **NDRC 0.4.0.** Duplicate texts within a table are stored once, and
   object texts are compressed too, so the same game compiles smaller.
-- **Multi-part games over 64K.** A part over 64K takes extra 16K memory
-  banks, and only the loaded part holds them. The build warns about
-  each part that needs more of them than another, because a switch to
-  it from a part that needs fewer - back to part 1 included - is
-  refused if they are in use at the time. See
-  [Multi-part games](multi-part-games.md).
 - **Debugger.** The debugger window reads text format 2 games.
 
 ## 0.12.1 - 25 October 2026
