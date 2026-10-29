@@ -181,7 +181,9 @@ gfxBankList: ds GFX_BANKLIST_MAX
 ; cache entries pointing at banks the allocator just recycled. The part
 ; switch frees them first via gfx_cache_free_banks (overlay0.asm).
 ; gfx_cache_reset also clears the draw target, stops sprites and the
-; colour cycle and resets the L2 roles; gfx_cache_empty is the cache only.
+; colour cycle and resets the L2 roles (boot only: Layer 2 is off, and
+; l2_mode_set loads NR $12 from l2FrontBank before it shows);
+; gfx_cache_empty is the cache only.
 ; Corrupts AF, BC, E, HL (E via gfx_drawtarget_clear's fall-through into
 ; the composer).
 gfx_cache_reset:

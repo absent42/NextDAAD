@@ -2737,8 +2737,9 @@ switch_to_part:
                                   ; read error/bad header mid-load is an
                                   ; accepted documented residual (brief
                                   ; Step 3b), not handled specially
-    call gfx_cache_reset          ; committed: draw target, colour cycle
-                                  ; and L2 roles reset only here
+    ; No gfx_cache_reset: .probe emptied the cache and eng_init_game
+    ; clears the draw target, sprites and colour cycle. The L2 roles are
+    ; kept - NR $12 still shows the current front.
     ld a, (xpartTarget)
     ld (curPart), a
     call eng_init_game            ; resident; full re-init from the
