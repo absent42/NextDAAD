@@ -133,17 +133,17 @@ def prepare_from_dsf(dsf_path, workdir, lang="EN"):
 
 
 def compile_for_decompile(dsf_path, workdir, lang="EN"):
-    """ZX-target, V2, builtin table: the only shape unDRC parses.
-    unDRC has no NEXTDAAD target (its base-address table stops at the
-    classic machines), so the decompile round-trip is fed a classic DDB -
-    the shape unDRC parses; NDRC's own guarantee is that flagless output
-    matches DRC byte for byte."""
+    """ZX-target, V3, builtin table. unDRC has no NEXTDAAD target (its
+    base-address table stops at the classic machines), so the decompile
+    round-trip is fed a classic DDB. V3, because unDRC reads XMESSAGE as
+    the V3 XMES opcode; a V2 DDB carries it as EXTERN lsb 3 msb, which
+    unDRC decodes one byte short."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     src = workdir / Path(dsf_path).name
     if Path(dsf_path).resolve() != src.resolve():
         shutil.copyfile(dsf_path, src)
-    _run([NDRC, "zx", "next", lang, src.name, "classic.ddb"], workdir)
+    _run([NDRC, "zx", "next", lang, src.name, "classic.ddb", "-v3"], workdir)
     out = workdir / "classic.ddb"
     if not out.exists():
         raise RuntimeError("ndrc did not produce %s" % out)
