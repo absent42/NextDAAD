@@ -1142,6 +1142,57 @@ function Assert-PartBanksScan {
     "part banks scan: boot call after the OVL1 map before aud_boot_probe, pool_c_need resident, switch_to_part's open and template, getsetdrv/fopen fail -> next part, fstat fail -> close, no exit before the ddbName restore, chdir only from the boot DDB load"
 }
 
+# Allocator census: every bank_alloc / bank_alloc_long call site, keyed by
+# file and enclosing label, with its lifetime class. A claim that survives a
+# part switch (long-lived) must take bank_alloc_long, or it can hold a pool C
+# bank the next part needs and the switch is refused. A new site fails until
+# classified here.
+function Assert-BankAllocCensus {
+    $want = @{
+        'src\overlay0.asm|ext_xmes'        = @(1, 'freed-by-switch')  # XMES bank, xms_part_reset
+        'src\overlay2.asm|gfx_bank_get'    = @(1, 'freed-by-switch')  # picture cache
+        'src\sprites.asm|spr_bank_get'     = @(1, 'freed-by-switch')  # sprite sets
+        'src\overlay2.asm|font_load'       = @(1, 'transient')        # font scratch
+        'src\video.asm|nxv2_open_body'     = @(4, 'transient')        # video ring
+        'src\video.asm|nxb_ops_setup'      = @(2, 'transient')        # NXB ops banks
+        'src\overlay0.asm|bank_selftest_o' = @(4, 'transient')        # DEBUG allocator self-test
+        'src\overlay0.asm|xbn_boot_load'   = @(1, 'boot-only')        # GAME.XBN, first claim at boot
+        'src\overlay1.asm|aud_banks_claim' = @(1, 'long-lived')       # AYS stream, kept until the next song
+    }
+    $seen = @{}
+    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
+        $rel = 'src\' + $f.Name
+        $cur = ''; $ln = 0
+        foreach ($raw in (Get-Content -LiteralPath $f.FullName)) {
+            $ln++
+            $line = $raw -replace ';.*$', ''
+            if ($line -match '^([A-Za-z_][A-Za-z0-9_]*):') { $cur = $Matches[1] }
+            if ($line -notmatch '\bbank_alloc') { continue }
+            if ($line -match '^(bank_alloc|bank_alloc_long):') { continue }
+            if ($rel -eq 'src\main.asm' -and $cur -eq 'bank_alloc_long' -and $line -match '^\s+jr\s+bank_alloc\.ent\s*$') { continue }
+            $m = [regex]::Match($line, '^\s+(call|jp|jr)\s+(\w+,\s*)?(bank_alloc(?:_long)?)\s*$')
+            if (-not $m.Success) { throw "${rel}:$ln : bank_alloc referenced other than by a call, jp or jr - the census cannot classify it: $($raw.Trim())" }
+            $key = "$rel|$cur"
+            if (-not $want.ContainsKey($key)) { throw "${rel}:$ln : unlisted allocator site in $cur - classify it in Assert-BankAllocCensus (freed-by-switch, transient, boot-only, long-lived)" }
+            $entry = $m.Groups[3].Value
+            $long = $want[$key][1] -eq 'long-lived'
+            if ($long -and $entry -ne 'bank_alloc_long') { throw "${rel}:$ln : $cur is long-lived and must call bank_alloc_long - it survives a part switch" }
+            if (-not $long -and $entry -ne 'bank_alloc') { throw "${rel}:$ln : $cur is $($want[$key][1]) and must call bank_alloc - bank_alloc_long is for claims that survive a part switch" }
+            if (-not $seen.ContainsKey($key)) { $seen[$key] = @() }
+            $seen[$key] += "${rel}:$ln"
+        }
+    }
+    foreach ($key in $want.Keys) {
+        $n = if ($seen.ContainsKey($key)) { $seen[$key].Count } else { 0 }
+        if ($n -ne $want[$key][0]) {
+            $at = if ($n) { ' at ' + ($seen[$key] -join ', ') } else { '' }
+            throw "$($key -replace '\|', ' : ') has $n allocator call(s)$at, expected $($want[$key][0]) - reclassify in Assert-BankAllocCensus"
+        }
+    }
+    $total = ($want.Values | ForEach-Object { $_[0] } | Measure-Object -Sum).Sum
+    "allocator census: $total sites in $($want.Count) routines classified; the long-lived AYS stream takes bank_alloc_long"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
 Assert-LayerOrderReset
@@ -1151,6 +1202,7 @@ Assert-CursorStateWriters
 Assert-PaletteWriterCensus
 Assert-WidthSwitchKeepsStyle
 Assert-PartBanksScan
+Assert-BankAllocCensus
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
@@ -1229,6 +1281,113 @@ if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad
 else {
     "WARNING: no build\nextdaad.nex + .sld - dma_copy contract check SKIPPED (run .\build.ps1 first)"
 }
+
+# bank_alloc / bank_alloc_long executed from the emitted resident bytes over
+# random bank tables: with partBanksMax 0 both hand out the same bank and
+# leave the same table; with 1-4 the long entry skips banks 20..19+n only.
+# DE untouched and the stack balanced on every return. Tiny Z80 model: an
+# unknown opcode fails, so a rewrite of the allocator must extend it.
+function Assert-BankAllocLongExec {
+    $sym = @{}
+    foreach ($l in (Get-Content -LiteralPath "$root\build\nextdaad.sld")) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -in @('D', 'F')) { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
+    }
+    foreach ($s in @('bank_alloc', 'bank_alloc_long', 'bankTable', 'partBanksMax')) {
+        if (-not $sym.ContainsKey($s) -or $sym[$s][0] -notin @(4, 5)) { throw "build\nextdaad.sld : $s is not in resident pages 4-5" }
+    }
+    $nex = [IO.File]::ReadAllBytes("$root\build\nextdaad.nex")
+    $order = @(5, 2, 0, 1, 3, 4) + (6..111)
+    $present = @($order | Where-Object { $nex[18 + $_] })
+    $off = 512 + 16384 * [array]::IndexOf($present, 2)
+    $img = New-Object byte[] 65536
+    [array]::Copy($nex, $off, $img, 0x8000, 16384)
+    $free = $sym['BT_FREE'][1]; $used = $sym['BT_USED'][1]
+    $tab = $sym['bankTable'][1]; $pbm = $sym['partBanksMax'][1]
+    function Run-Alloc([byte[]]$m, [int]$entry) {
+        $a = 0; $b = 0; $c = 0; $hl = 0; $zf = 0; $cf = 0; $sp = 0xBD00; $de = 0x1234
+        $sp -= 2; $m[$sp] = 1; $m[$sp + 1] = 0; $pc = $entry; $n = 0
+        while ($pc -ne 1) {
+            if (++$n -gt 5000) { throw "bank_alloc model: no return" }
+            $op = $m[$pc]; $pc++
+            switch ($op) {
+                0x3A { $a = $m[$m[$pc] + 256 * $m[$pc + 1]]; $pc += 2 }
+                0x18 { $d = $m[$pc]; $pc++; $pc += $(if ($d -gt 127) { $d - 256 } else { $d }) }
+                0xAF { $a = 0; $zf = 1; $cf = 0 }
+                0xB7 { $zf = [int]($a -eq 0); $cf = 0 }
+                0xF5 { $sp -= 2; $m[$sp + 1] = $a; $m[$sp] = 0x40 * $zf + $cf }
+                0xF1 { $a = $m[$sp + 1]; $zf = [int](($m[$sp] -band 0x40) -ne 0); $cf = $m[$sp] -band 1; $sp += 2 }
+                0xC1 { $c = $m[$sp]; $b = $m[$sp + 1]; $sp += 2 }
+                0xC9 { $pc = $m[$sp] + 256 * $m[$sp + 1]; $sp += 2 }
+                0xCD { $t = $m[$pc] + 256 * $m[$pc + 1]; $pc += 2; $sp -= 2; $m[$sp] = $pc -band 255; $m[$sp + 1] = $pc -shr 8; $pc = $t }
+                0x21 { $hl = $m[$pc] + 256 * $m[$pc + 1]; $pc += 2 }
+                0x01 { $c = $m[$pc]; $b = $m[$pc + 1]; $pc += 2 }
+                { $_ -in 0x28, 0x30 } { $d = $m[$pc]; $pc++; $go = if ($op -eq 0x28) { $zf } else { 1 - $cf }; if ($go) { $pc += $(if ($d -gt 127) { $d - 256 } else { $d }) } }
+                0x10 { $d = $m[$pc]; $pc++; $b = ($b - 1) -band 255; if ($b) { $pc += $(if ($d -gt 127) { $d - 256 } else { $d }) } }
+                0x4F { $c = $a }
+                0x47 { $b = $a }
+                0x79 { $a = $c }
+                0x7E { if ($hl -lt $tab -or $hl -ge $tab + 112) { throw ("bank_alloc model: scan read {0:X4}, outside bankTable" -f $hl) }; $a = $m[$hl] }
+                0xC6 { $r = $a + $m[$pc]; $pc++; $cf = [int]($r -gt 255); $a = $r -band 255; $zf = [int]($a -eq 0) }
+                0xFE { $v = $m[$pc]; $pc++; $cf = [int]($a -lt $v); $zf = [int]($a -eq $v) }
+                0x23 { $hl = ($hl + 1) -band 0xFFFF }
+                0x0C { $c = ($c + 1) -band 255; $zf = [int]($c -eq 0) }
+                0x37 { $cf = 1 }
+                0x36 { if ($hl -lt $tab -or $hl -ge $tab + 112) { throw ("bank_alloc model: write to {0:X4}, outside bankTable" -f $hl) }; $m[$hl] = $m[$pc]; $pc++ }
+                0xED {
+                    $op2 = $m[$pc]; $pc++
+                    if ($op2 -eq 0x44) { $cf = [int]($a -ne 0); $a = (256 - $a) -band 255; $zf = [int]($a -eq 0) }
+                    elseif ($op2 -eq 0x31) { $hl = ($hl + $a) -band 0xFFFF; $cf = 0 }
+                    else { throw ("bank_alloc model: unknown opcode ED {0:X2} at {1:X4} - extend the model and re-verify" -f $op2, ($pc - 2)) }
+                }
+                default { throw ("bank_alloc model: unknown opcode {0:X2} at {1:X4} - extend the model and re-verify" -f $op, ($pc - 1)) }
+            }
+        }
+        if ($sp -ne 0xBD00 -or $de -ne 0x1234) { throw "bank_alloc model: stack unbalanced or DE touched" }
+        return @($a, $cf)
+    }
+    $rng = New-Object Random 20261029
+    $cases = 0
+    $resv = $sym['BT_RESERVED'][1]
+    for ($i = 0; $i -lt 100; $i++) {
+        $pf = @(0.0, 0.9, 1.0, 1.0)[$i % 4]          # share of banks outside pool C not free
+        $t0 = New-Object byte[] 112
+        for ($k = 0; $k -lt 112; $k++) {
+            $inC = $k -ge 20 -and $k -le 23
+            $t0[$k] = if ($inC) { @($free, $used, $resv)[$rng.Next(3)] } elseif ($rng.NextDouble() -lt $pf) { @($used, $resv)[$rng.Next(2)] } else { $free }
+        }
+        foreach ($skip in 0..4) {
+            $ref = @{}
+            foreach ($e in @('bank_alloc', 'bank_alloc_long')) {
+                $m = [byte[]]$img.Clone()
+                [array]::Copy($t0, 0, $m, $tab, 112)
+                $m[$pbm] = $skip
+                $r = Run-Alloc $m $sym[$e][1]
+                $sk = if ($e -eq 'bank_alloc_long') { $skip } else { 0 }
+                $scan = @(0..19) + @(24..111)
+                if ($sk -lt 4) { $scan += @((20 + $sk)..23) }
+                $want = -1
+                foreach ($k in $scan) { if ($t0[$k] -eq $free) { $want = $k; break } }
+                $after = New-Object byte[] 112
+                [array]::Copy($m, $tab, $after, 0, 112)
+                if ($want -lt 0) {
+                    if ($r[1] -ne 1) { throw "$e (partBanksMax $skip, case $i): returned bank $($r[0]) with nothing it may take free" }
+                    for ($k = 0; $k -lt 112; $k++) { if ($after[$k] -ne $t0[$k]) { throw "$e (partBanksMax $skip, case $i): failed claim changed bank $k" } }
+                }
+                else {
+                    if ($r[1] -ne 0 -or $r[0] -ne $want) { throw "$e (partBanksMax $skip, case $i): got bank $($r[0]) CF $($r[1]), expected $want" }
+                    for ($k = 0; $k -lt 112; $k++) { $x = if ($k -eq $want) { $used } else { $t0[$k] }; if ($after[$k] -ne $x) { throw "$e (partBanksMax $skip, case $i): bank $k left $($after[$k]), expected $x" } }
+                }
+                $ref[$e] = "$($r[0])/$($r[1])/" + [BitConverter]::ToString($after)
+                $cases++
+            }
+            if ($skip -eq 0 -and $ref['bank_alloc'] -ne $ref['bank_alloc_long']) { throw "partBanksMax 0, case ${i}: bank_alloc_long differs from bank_alloc" }
+        }
+    }
+    "bank_alloc_long exec: $cases emitted-byte runs; partBanksMax 0 matches bank_alloc exactly, 1-4 skip banks 20..19+n only, DE and stack intact"
+}
+if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) { Assert-BankAllocLongExec }
+else { "WARNING: no build\nextdaad.nex + .sld - bank_alloc_long exec check SKIPPED (run .\build.ps1 first)" }
 
 $condactsWork = Join-Path $root 'tests\out\condacts-work'
 Remove-Item $condactsWork -Recurse -Force -ErrorAction SilentlyContinue

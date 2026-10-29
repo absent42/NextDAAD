@@ -3968,7 +3968,7 @@ aud_load_ays:
 ; helpers do NOT bracket their own slot-6 mapping (so a caller can batch
 ; table access - aud_load_ays maps page 48 once per phase, aud_boot_probe
 ; likewise). Both write bankTable directly (resident, visible regardless
-; of slot 6) and call bank_alloc/bank_free (also resident). Working
+; of slot 6) and call bank_alloc_long/bank_free (also resident). Working
 ; storage is mainline-only scratch, so these are not ISR-safe; callers
 ; run them only with the sample engine idle.
 ;
@@ -3984,7 +3984,7 @@ aud_load_ays:
 ; table base (aysPageTab). Fills the table with 2 pages per claimed 16K
 ; bank - floor banks 25-27 first (BT_RESERVED -> BT_USED by
 ; direct table write, so bank_alloc can never hand them out twice), then
-; the pool via bank_alloc. On success: CF clear, B = page count, and the
+; the pool via bank_alloc_long. On success: CF clear, B = page count, and the
 ; count byte at (base + AUD_STRTAB_MAX) = B. On failure (pool exhausted,
 ; or more than AUD_STRTAB_MAX/2 banks): everything claimed so far is
 ; released (floor -> BT_RESERVED, pool -> bank_free), the count byte is
@@ -4037,12 +4037,12 @@ aud_banks_claim:
 .floornext:
     inc c
     jr .floorlp
-    ; --- pass 2: pool via bank_alloc ---
+    ; --- pass 2: pool via bank_alloc_long (keeps the banks a part needs) ---
 .poollp:
     ld a, (smpClaimBanks)
     or a
     jr z, .filled
-    call bank_alloc
+    call bank_alloc_long
     jr c, .unwind               ; pool exhausted: release the partial claim
     add a, a                    ; low page = bank * 2
     call .append

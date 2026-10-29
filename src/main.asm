@@ -245,20 +245,38 @@ bank_table_init:
 .boot:
     jp spr_boot_init            ; both exits reach the sprite state init
 
+; As bank_alloc, for claims that outlive a part switch: pool C pass skips
+; banks 20 .. 20+partBanksMax-1 (none when 0, whole pass when 4).
+bank_alloc_long:
+    ld a, (partBanksMax)
+    jr bank_alloc.ent
+
 ; Allocate the lowest free bank, pool C (20-23) only when nothing else is
 ; free: it is the DDB text region's growth room. Out: A = bank, CF clear;
 ; CF set when nothing is free (A undefined). Corrupts BC, HL. Never touches DE.
 bank_alloc:
+    xor a                       ; pool C banks to skip
+.ent:
+    push af
     ld hl, bankTable
     ld bc, BANK_POOL_C<<8                         ; banks 0-19
     call .run
-    ret nc
+    jr nc, .pop
     ld hl, bankTable+BANK_POOL_C_END+1
     ld bc, (BANK_TABLE_SIZE-BANK_POOL_C_END-1)<<8 | (BANK_POOL_C_END+1)
     call .run
-    ret nc
+    jr nc, .pop
+    pop af                      ; A = skip, 0-4 (pool_c_need caps it)
+    ld c, a
+    neg
+    add a, BANK_POOL_C_END-BANK_POOL_C+1
+    jr z, .none                 ; all of pool C skipped
+    ld b, a
+    ld a, c
     ld hl, bankTable+BANK_POOL_C
-    ld bc, (BANK_POOL_C_END-BANK_POOL_C+1)<<8 | BANK_POOL_C
+    add hl, a
+    add a, BANK_POOL_C
+    ld c, a
 .run:                           ; B banks from index C at HL
     ld a, (hl)
     cp BT_FREE
@@ -266,7 +284,11 @@ bank_alloc:
     inc hl
     inc c
     djnz .run
+.none:
     scf
+    ret
+.pop:
+    pop bc                      ; drop the skip; A, CF kept
     ret
 .got:
     ld (hl), BT_USED
