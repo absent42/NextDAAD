@@ -277,12 +277,16 @@ function Test-Nx3ReadyMade([string]$Path, [int]$Mode, [bool]$Compressed) {
     $fs = [System.IO.File]::OpenRead($Path)
     try { $n = $fs.Read($b, 0, 16); $len = $fs.Length } finally { $fs.Dispose() }
     $name = Split-Path $Path -Leaf
-    if ($n -lt 16 -or $b[0] -ne 0x4E -or $b[1] -ne 0x58 -or $b[2] -ne 0x33) { Fail "IMAGES\$name - not an NX3 file (no NX3 magic)" }
-    if ($b[3] -ne 1) { Fail "IMAGES\$name - NX3 version $($b[3]) is not 1" }
-    if ($b[4] -gt 1) { Fail "IMAGES\$name - NX3 mode byte $($b[4]) is not 0 or 1" }
-    if ($Mode -ge 0 -and $b[4] -ne $Mode) { Fail "IMAGES\$name - NX3 mode $(if ($b[4]) {320} else {256}) but the game is $(if ($Mode) {320} else {256})-mode" }
     $w = [int]$b[9] -bor ([int]$b[10] -shl 8); $ht = [int]$b[11]; if ($ht -eq 0) { $ht = 256 }
-    if (-not $Compressed -and $len -ne (16 + 512 + $w * $ht)) { Fail "IMAGES\$name - $len bytes, header says $(16 + 512 + $w * $ht)" }
+    $why = $null
+    if ($n -lt 16 -or $b[0] -ne 0x4E -or $b[1] -ne 0x58 -or $b[2] -ne 0x33) { $why = 'not an NX3 file (no NX3 magic)' }
+    elseif ($b[3] -ne 1) { $why = "NX3 version $($b[3]) is not 1" }
+    elseif ($b[4] -gt 1) { $why = "NX3 mode byte $($b[4]) is not 0 or 1" }
+    elseif ($Mode -ge 0 -and $b[4] -ne $Mode) { $why = "NX3 mode $(if ($b[4]) {320} else {256}) but the game is $(if ($Mode) {320} else {256})-mode" }
+    elseif (-not $Compressed -and $len -ne (16 + 512 + $w * $ht)) { $why = "$len bytes, header says $(16 + 512 + $w * $ht)" }
+    if ($why) {
+        Fail "IMAGES\$name - $why"
+    }
     return [int]$b[4]
 }
 

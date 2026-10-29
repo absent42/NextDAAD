@@ -95,9 +95,9 @@ $b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/006.NX3")
 Assert-Eq $b[6] 8 '006 X'; Assert-Eq $b[8] 160 '006 Y'; Assert-Eq $b[9] 32 '006 W'
 # compressed: header stays raw, payload is ZX0
 Assert-Eq (Stage '1') 0 'stage zx0 exit code'
-Assert-Eq (Test-Path "$work/kit/RELEASE/002.NX3.ZX0") $true '002 zx0 name'
+Assert-Eq ((Get-ChildItem -LiteralPath "$work/kit/RELEASE" -File).Name -ccontains '002.NX3.zx0') $true '002 zx0 name (case-exact)'
 Assert-Eq (Test-Path "$work/kit/RELEASE/002.NX3") $false '002 raw removed as orphan'
-$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/002.NX3.ZX0")
+$b = [IO.File]::ReadAllBytes("$work/kit/RELEASE/002.NX3.zx0")
 Assert-Eq ([Text.Encoding]::ASCII.GetString($b, 0, 3)) 'NX3' '002.zx0 header raw'
 Assert-Eq ($b.Length -lt (16 + 512 + 256 * 96)) $true '002.zx0 smaller than raw'
 # ready-made NX3 staged as-is; bad header refused
@@ -139,7 +139,7 @@ Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NX3")[4]) 0 'kit2 003
 w,h=320,8
 def ch(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
 raw=b''.join(b'\0'+bytes(w) for _ in range(h))
-open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
+open(sys.argv[1],'wb').write(bytes([137,80,78,71,13,10,26,10])+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
 Assert-Eq (Stage2 '0') 0 'kit2 stage after 320 plain added'
 Assert-Eq ([IO.File]::ReadAllBytes("$work/kit2/RELEASE/003.NX3")[4]) 1 'kit2 003 rebuilt with mode 1'
 Remove-Item "$work/kit2/IMAGES/010.png"
@@ -169,7 +169,7 @@ Copy-Item "$work/kit/RELEASE/006.NX3" "$work/kit2/IMAGES/007.NX3"
 w,h=320,8
 def ch(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
 raw=b''.join(b'\0'+bytes(w) for _ in range(h))
-open(sys.argv[1],'wb').write(b'\x89PNG\r\n\x1a\n'+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
+open(sys.argv[1],'wb').write(bytes([137,80,78,71,13,10,26,10])+ch(b'IHDR',struct.pack('>IIBBBBB',w,h,8,3,0,0,0))+ch(b'PLTE',bytes(768))+ch(b'IDAT',zlib.compress(raw))+ch(b'IEND',b''))" "$work/kit2/IMAGES/010.png"
 $errTxt = (& { Push-Location "$work/kit2"; try { & "$root/authoring-kit/lib/assets.ps1" -Stage Pictures -Gfx $gfx -Compress 0 6>&1 | Out-String } finally { Pop-Location } })
 Assert-Eq ($errTxt -match '007\.NX3' -and $errTxt -match '010\.png') $true 'mode conflict error names both files'
 Assert-Eq (Stage2 '0') 1 'mode-0 NX3 plus 320 plain art refused'
