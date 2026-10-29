@@ -36,7 +36,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"
     $variant = if ($Release -or $Kit) { 'Release' } else { 'DEBUG' }
-    $hash = (& git -C $root rev-parse --short HEAD 2>$null)
+    # Stamp the last commit that touched src\ (everything the NEX assembles),
+    # so rebuilding an unchanged interpreter leaves the SYM unchanged.
+    $hash = (& git -C $root log -1 --format=%h -- src 2>$null)
+    if ($hash -and (& git -C $root status --porcelain -- src 2>$null)) { $hash = "$hash-dirty" }
     & "$root\scripts\make-sym.ps1" -Sld "$root\build\nextdaad.sld" -Nex "$root\build\nextdaad.nex" -Root $root -Out "$root\build\NEXTDAAD.SYM" -Variant $variant -Build "$hash"
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\intro.sld" @defs "src/intro/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "intro assembly failed" }
