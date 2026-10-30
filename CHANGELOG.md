@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.13.0 - unreleased
+## v0.13.0 - 30/10/2026
 
 - **Text format 2 in the kit**: `lib\build.ps1` compiles with NDRC
   `-nxtext`. A format 2 `GAME.DDB` is up to 64K of game logic followed

@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.13.0 - unreleased
+## 0.13.0 - 30 October 2026
 
 - **DAAD databases up to 128K.** The kit now compiles with NextDAAD text format
   2. Every text is Huffman-coded over a dictionary of up to 383 tokens
