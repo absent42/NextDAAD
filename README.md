@@ -82,7 +82,7 @@ NextDAAD CSpect debugger
 - **Mouse input** - Kempston mouse with a hardware sprite pointer
 - **128KB databases** - DAAD game databases up to 128KB in size, split
   between 64KB for text and 64KB for game logic, with an additional
-  64KB of XMB external message text
+  64KB of XMESSAGE external message text
 - **Huffman text compression** - Game text is stored using Huffman compression
   allowing for much more prose within a DAAD database
 - **Multi-part games** - switch between databases at runtime with flags
