@@ -8,8 +8,8 @@ In addition to the standard DAAD features it adds Layer 2 location pictures
 up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
 sampled sound effects across the Turbo Sound Next's three chips and DACs,
 40 and 80-column runtime switchable tilemap based text display with switchable fonts 
-and paper/ink colours from the full ZX Next palette, mouse input, and games that can 
-span several databases with runtime switching.
+and paper/ink colours from the full ZX Next palette, mouse input, games that can 
+span several databases with runtime switching, and DAAD databases up to 128KB in size.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
 for NextDAAD means just editing your DSF source and double-clicking one batch 
@@ -80,7 +80,11 @@ NextDAAD CSpect debugger
 - **Custom parser cursor** - modify the parser cursor colours, glyph 
   and blink speed
 - **Mouse input** - Kempston mouse with a hardware sprite pointer
-- **64KB databases** - DAAD game databases up to 64KB in size
+- **128KB databases** - DAAD game databases up to 128KB in size, split
+  between 64KB for text and 64KB for game logic, with an additional
+  64KB of XMB external message text
+- **Huffman text compression** - Game text is stored using Huffman compression
+  allowing for much more prose within a DAAD database
 - **Multi-part games** - switch between databases at runtime with flags
   and objects intact, with per-part assets and saves that load from any
   part
@@ -95,10 +99,11 @@ NextDAAD CSpect debugger
 - **EXTERN support and API** - load and run external machine code binaries up 
   to 16KB in size, either once or on an interrupt, passing flags, object 
   table, message text etc
-- **CSpect debugger plugin** - Stop your game in the middle of a turn and look inside it. You can step one condact at a time,
-stop automatically when a flag changes or an object moves, and change
-flags and objects while the game is stopped. It shows the lines of your
-own `.DSF` as you step through them.
+- **CSpect debugger plugin** - Stop your game in the middle of a turn and 
+  look inside it. You can step one condact at a time, stop automatically 
+  when a flag changes or an object moves, and change flags and objects 
+  while the game is stopped. It shows the lines of your own `.DSF` as 
+  you step through them.
 - Skills for AI assistants to aid in writing Z80 externs, and DAAD games
 
 ## For authors
@@ -116,7 +121,8 @@ you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 The kit ships a **collection of ready-made externs** in
 `authoring-kit\externs\` - a text ticker, Layer 2 palette fades, an
 SD-card hint book, an in-game clock, countdown timers, a real-time
-clock reader, player name input/recall, transcripts for producing walkthoughs, and a toolkit of printing, arithmetic and object
+clock reader, player name input/recall, transcripts for producing walkthoughs, 
+and a toolkit of printing, arithmetic and object
 queries - each as source plus a prebuilt binary, shipped prebuilt as
 one combined `GAME.XBN`, no assembler needed. See
 [`authoring-kit\externs\README.md`](authoring-kit/externs/README.md)
