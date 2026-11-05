@@ -431,8 +431,8 @@ smpWritePtr: dw AUD_STAGE0
 ; channel 1 through its carved IM2 vector (byte IM2_CTC2_VEC = 8). SAME
 ; CONTRACT as ctc_isr above, verbatim: saves ONLY AF and HL, touches NO
 ; MMU slot, NO register-select pair, NO banked memory - just this
-; channel's resident ring pointers, the ring at AUD_STAGE2 (a candidate
-; address, OP1/V1-gated - see nextdaad.inc), and one raw OUT to
+; channel's resident ring pointers, the ring at AUD_STAGE2 (ring 2,
+; see nextdaad.inc), and one raw OUT to
 ; DAC2_PORT. That is what makes it nestable anywhere the frame ISR EIs,
 ; and it is the sole condition of admission to NR $CD (DMA pre-emption
 ; permission, im2_init) - identical reasoning to ctc_isr's own header,

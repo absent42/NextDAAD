@@ -666,7 +666,7 @@ AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
 ; prescaler crossover is per-video-mode (clk16>>8), computed in aud_ctc_params -
 ; a fixed constant would clamp sharply on the faster clocks
 AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
-AUD_RATE_MAX    equ 20000   ; the 1K ring holds > 1 frame of this rate
+AUD_RATE_MAX    equ 20000   ; the 2K ring holds 2 frames of this rate (PAIR)
 ; Effects stream through a fixed 24K window: no design element caps
 ; effect length against RAM (AUD_SMP_MAX, the old 1MB payload ceiling,
 ; went with it - SP18 item 7 Task 5). aud_load_wav keeps only the
@@ -1154,7 +1154,7 @@ NR_MMU3          equ $53    ; slot 3 ($6000-$7FFF): the session's
                             ; MMU2. Safe by the same freeze arguments:
                             ; the tilemap (bank 5's TM_DEFS/map) is
                             ; hidden+isolated, the sample machinery
-                            ; (AUD_STAGE0 $7C00 ring) is aborted and
+                            ; (AUD_STAGE0 $4000 ring) is aborted and
                             ; its CTC vector replaced, and nothing
                             ; else reads slot 3 while a video plays;
                             ; bank 5's CONTENT is untouched - only

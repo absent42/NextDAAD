@@ -3847,8 +3847,8 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
 ; dbg_engage_tilemap has run - boot has reached the parser). Before
 ; that point dbg_puts/dbg_putc route through the ULA-pixel fallback
 ; in debug.asm, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
-; on H=$40-$47, overlapping this exact candidate ($44-$47). An early
-; call would have its OWN status print corrupt the region under test.
+; on H=$40-$47, overlapping ring 1 (AUD_STAGE0, $4000-$47FF), not ring 2. An early
+; call would have its OWN status print corrupt ring 1 (this probe tests ring 2).
 ; Neither routine calls dbg_cls for the same reason: it unconditionally
 ; clears the WHOLE ULA screen via ula_cls (hardware.asm).
 RING2_BASE equ AUD_STAGE2

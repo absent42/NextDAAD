@@ -462,7 +462,7 @@ aud_smp_start:
     ; start, OR mid-restart (a same-tick COMPLETE re-trigger files a start
     ; with no stop, so this can also run against a live CTC) where a torn
     ; cursor write stays inside the ring for both ring bases (high byte
-    ; $7C-$7F / $44-$47, low 00) - at most a one-byte skip / one-tick-
+    ; $40-$47 / $48-$4F, low 00) - at most a one-byte skip / one-tick-
     ; early audio, bounded - so the resident cursor write below needs no
     ; DI bracket either way. Ring base and the cursor address are both
     ; channel-block members (SMPB_RINGH/PLAYPTR).
