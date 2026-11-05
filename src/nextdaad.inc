@@ -1285,6 +1285,10 @@ GFX_SUB_VID_ONCE equ 13
 GFX_SUB_VID_LOOP equ 14
 SFX_SUB_VID_ONCE equ 9
 SFX_SUB_VID_LOOP equ 10
+SFX_SUB_VOL1     equ 17          ; n = level/pan 0-255, channel 1/2
+SFX_SUB_VOL2     equ 18
+SFX_SUB_PAN1     equ 19
+SFX_SUB_PAN2     equ 20
 
 GFX_SUB_FONT     equ 16          ; NextDAAD: install font n (0 = base).
                                  ; 0-15 are all allocated by DAAD across

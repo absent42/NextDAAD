@@ -2307,6 +2307,48 @@ function Assert-SfxDualChannel {
     "SFX2: NR `$C5/`$CD both enable CTC channels 0+1 (ED 91 C5/CD 03), no stale single-channel writes"
 }
 
+function Assert-SfxLevelSubs {
+    # Stereo SFX Task 6: SFX subs 17-20 (volume/pan, channels 1/2). The
+    # labels exist in the sld, sfx_level_reset has one reference (h_sfx's
+    # .stopfx), and the four condacts assemble as 18,n,sub in order.
+    param([byte[]]$nex)
+    $names = @{}
+    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $names[$p[7]] = $true }
+    }
+    foreach ($n in @('h_sfx.level', 'sfx_level_set', 'sfx_level_reset')) {
+        if (-not $names.ContainsKey($n)) { throw "SFXLEVEL: $n not in build\nextdaad.sld" }
+    }
+    $refs = 0
+    foreach ($f in Get-ChildItem "$root\src" -Recurse -Include *.asm) {
+        foreach ($ln in [IO.File]::ReadAllLines($f.FullName)) {
+            $code = ($ln -split ';')[0]
+            if ($code -match '\bsfx_level_reset\b' -and $code -notmatch '^\s*sfx_level_reset\s*:') { $refs++ }
+        }
+    }
+    if ($refs -ne 1) { throw "SFXLEVEL: sfx_level_reset referenced $refs times outside its definition, expected 1 (.stopfx)" }
+    $ov = [IO.File]::ReadAllText("$root\src\overlay1.asm")
+    if ($ov -notmatch '(?s)\.stopfx:.{0,400}?sfx_level_reset') { throw "SFXLEVEL: the sfx_level_reset reference is not in h_sfx's .stopfx" }
+    $work = Join-Path $root 'tests\out\sfxlevel-work'
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $work | Out-Null
+    $src = [IO.File]::ReadAllText("$PSScriptRoot\sfx2.dsf")
+    $new = $src -replace '(?m)^([ \t]+)SFX 1 1[ \t]*\r?$', "`$1SFX 0 17`r`n`$1SFX 255 18`r`n`$1SFX 0 19`r`n`$1SFX 128 20"
+    if ($new -eq $src) { throw "SFXLEVEL: sfx2.dsf anchor line 'SFX 1 1' not found" }
+    [IO.File]::WriteAllText("$work\NDLVL.DSF", $new)
+    Push-Location $work
+    try {
+        & $ndrc @drcTarget EN NDLVL.DSF NDLVL.DDB -v3 -auto-tokens | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "SFXLEVEL: ndrc failed" }
+    }
+    finally { Pop-Location }
+    $ddb = [IO.File]::ReadAllBytes("$work\NDLVL.DDB")
+    $want = [byte[]]@(18, 0, 17, 18, 255, 18, 18, 0, 19, 18, 128, 20)
+    if (-not (Find-Bytes $ddb $want)) { throw "SFXLEVEL: DDB lacks the condact run 18,0,17 18,255,18 18,0,19 18,128,20" }
+    "SFXLEVEL: h_sfx.level, sfx_level_set, sfx_level_reset present; reset referenced once (.stopfx); SFX 17-20 condact bytes ok"
+}
+
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
 # ANYKEY is the V2 wait-for-key condact and this fixture must stay V2 -
 # under V3 the interpreter reads PAUSE 0 as GETKEY and SYNONYM changes
@@ -3294,6 +3336,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     Assert-SfxTabCells $nex
     Assert-SfxStereoLoader $nex
     Assert-SfxModeSites $nex
+    Assert-SfxLevelSubs $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

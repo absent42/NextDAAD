@@ -467,6 +467,7 @@ aud_smp_start:
     ; early audio, bounded - so the resident cursor write below needs no
     ; DI bracket either way. Ring base and the cursor address are both
     ; channel-block members (SMPB_RINGH/PLAYPTR).
+    ; A mode flip never takes this path: it always files a stop.
     ld e, (ix+SMPB_PLAYPTR)
     ld d, (ix+SMPB_PLAYPTR+1)   ; DE = &smpPlayPtr (this channel's resident cursor)
     xor a

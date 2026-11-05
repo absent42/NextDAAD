@@ -971,13 +971,10 @@ aud_clk16_tab:
                                  ; this entry is unreachable
 
 ; ---------------------------------------------------------------------
-; sfx_mode_decide: IX = channel block (page 48 mapped), A = channel index,
-; DE = rate (unused). SMPB_FLAGS bit 7 PAIR = STEREO or pan off centre.
-; A flip on an ACTIVE channel files its stop before the bit changes, so
-; aud_tick stops it before the caller's start (an idle one is stopped
-; already; a late stop would clear a fresh open's STREAMING). Bit 7 is
-; set/res in place: the ISR writes FLAGS too. Tables rebuilt when the
-; mode differs from sfxTabMode ($FF at boot). Corrupts all but IX, IY.
+; sfx_mode_decide: IX = channel block, A = channel index, DE = rate (unused).
+; SMPB_FLAGS bit 7 PAIR = STEREO or pan off centre. A flip on an ACTIVE
+; channel files its stop first; bit 7 set/res in place (the ISR writes FLAGS).
+; Tables rebuilt when the mode differs from sfxTabMode. Corrupts all but IX, IY.
 sfx_mode_decide:
     ld e, a
     ld d, 0                      ; DE = channel index
@@ -1022,6 +1019,52 @@ sfx_mode_decide:
     cp (hl)
     ret z                        ; built for this mode already
     ld (hl), a                   ; store first: sfx_tab_build reads it
+    ld a, e
+    jp sfx_tab_build
+
+; ---------------------------------------------------------------------
+; sfx_level_set: A = 0-3 (vol1 vol2 pan1 pan2), B = value. Stores it, then
+; rebuilds that channel's tables unless no decide has run yet (mode $FF).
+; Corrupts all but IX, IY.
+sfx_level_set:
+    ld e, a
+    ld d, 0
+    ld hl, sfxVol
+    cp 2
+    jr c, .st
+    ld hl, sfxPan - 2
+.st:
+    add hl, de
+    ld (hl), b
+    ld a, e
+    and 1
+    jr sfx_level_chan
+
+; sfx_level_reset: vol 255, pan 128 on both channels, tables rebuilt.
+; Corrupts all but IX, IY.
+sfx_level_reset:
+    ld hl, sfxVol
+    ld a, 255
+    ld (hl), a
+    inc hl
+    ld (hl), a
+    ld hl, sfxPan
+    ld a, 128
+    ld (hl), a
+    inc hl
+    ld (hl), a
+    ld a, 1
+    call sfx_level_chan
+    xor a
+; A = channel 0/1: build its tables if a decide has run (mode != $FF).
+sfx_level_chan:
+    ld e, a
+    ld d, 0
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, (hl)
+    inc a
+    ret z                        ; never decided: the first decide builds
     ld a, e
     jp sfx_tab_build
 
@@ -1565,7 +1608,8 @@ sfx_xp_setup:
 ;                 own latches. Neither bit set = the ordinary full open.
 ; Preserves B. Corrupts AF, C, DE, HL, IX.
 ; Preconditions: slot 6 = AUD_PAGE_LO, slot 7 = SFX_PAGE, mainline
-; context (it takes no interrupt-sensitive action and does not halt).
+; context (does not halt; on a mode flip of an active channel .hit files
+; a stop bit, which aud_tick consumes before the start in the same tick).
 ;
 ; Decision order: explicit (11-14) always takes the named channel and
 ; sets its pin. Auto (1/2) prefers, in order: (a) an unpinned channel
@@ -1574,8 +1618,8 @@ sfx_xp_setup:
 ; channel - one-shot before loop, oldest SMPB_STAMP on a tie - or
 ; (d) drop with a DEBUG marker. Channel 1 wins ties in (a)/(b).
 ; Stealing files nothing here: the caller stops the victim through
-; aud_load_wav and waits before staging, so stop and new start always
-; land in different frames.
+; aud_load_wav and waits before staging, so stop and new start land in
+; different frames.
 sfx_alloc:
     ld c, b                          ; C = effect number; B is the
                                      ; caller's and must survive (its AY

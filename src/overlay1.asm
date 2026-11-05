@@ -2565,6 +2565,9 @@ h_sfx:                          ; 18: B = n, C = sub-command
     sub 4                       ; 15/16 -> 0/1: stop channel 1/2
     cp 2
     jp c, .pinstop
+    sub 2                       ; 17-20 -> 0-3: volume/pan, channel 1/2.
+    cp 4                        ; n = 0 is a legal level, so this must
+    jp c, .level                ; not reach .smpgo's n guard
 .unk:
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker. Inline - overlay1 must NOT
@@ -2695,7 +2698,11 @@ h_sfx:                          ; 18: B = n, C = sub-command
     inc a                       ; release pin. 1 = channel 1, 2 = channel 2
     jr .stopgo
 .stopfx:                        ; 5: the documented SUPERSET - both
-    ld hl, audRequest           ; sampled channels AND the AY effect,
+    push bc                     ; sampled channels AND the AY effect,
+    ld hl, sfx_level_reset      ; both pins released, levels reset
+    call sfx_page_call
+    pop bc
+    ld hl, audRequest
     set 2, (hl)                 ; and both pins released
     ld a, 3
 .stopgo:                        ; A = channel mask, bit 0 ch1, bit 1 ch2
@@ -2742,6 +2749,9 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld a, 1
     ld (audEnable), a
     ret
+.level:                        ; A = 0-3 (vol1 vol2 pan1 pan2), B = value.
+    ld hl, sfx_level_set        ; sfx_page_call keeps A and B and returns
+    jp sfx_page_call            ; to h_sfx's caller; no mailbox, no wait
 .vid:
     ; PLAYFLI/PLAYFLIL alias (design doc): B (video number) untouched, A
     ; arrives as 0/1 and becomes vid_play's C loop contract - identical
