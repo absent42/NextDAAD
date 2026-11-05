@@ -1154,9 +1154,10 @@ NR_MMU3          equ $53    ; slot 3 ($6000-$7FFF): the session's
                             ; MMU2. Safe by the same freeze arguments:
                             ; the tilemap (bank 5's TM_DEFS/map) is
                             ; hidden+isolated, the sample machinery
-                            ; (AUD_STAGE0 $4000 ring) is aborted and
-                            ; its CTC vector replaced, and nothing
-                            ; else reads slot 3 while a video plays;
+                            ; is aborted on entry (ring in slot 2,
+                            ; tables at $7C00-$7FFF in slot 3 both
+                            ; idle) and nothing else reads slot 3
+                            ; while a video plays;
                             ; bank 5's CONTENT is untouched - only
                             ; the CPU mapping is borrowed)
 VID_DST_WIN      equ $4000  ; MMU2 dest window base
