@@ -4,9 +4,10 @@
 ; caught even without the leg switch, same rule the other fixtures
 ; follow); staged as the active GAME.DDB in sd\SFXST\ by
 ; tests\build-tests.ps1 -SfxSt, which also generates and stages the
-; seven stimulus WAVs described below as 001.WAV to 007.WAV. sd\SFXST\ is
-; emptied and refilled on every -SfxSt run and holds GAME.DDB, a
-; NEXTDAAD.NEX copy of build\nextdaad.nex, the seven WAVs and, when a
+; seven stimulus WAVs described below as 001.WAV to 007.WAV and the two
+; location pictures as 001.NXI and 002.NXI. sd\SFXST\ is emptied and
+; refilled on every -SfxSt run and holds GAME.DDB, a NEXTDAAD.NEX copy
+; of build\nextdaad.nex, the seven WAVs, the two pictures and, when a
 ; prior -Vid run left one in the cache, 001.VID for the VID verb - copy
 ; the folder to the card and launch from inside it.
 ;
@@ -24,6 +25,25 @@
 ;
 ; Volume and pan persist across effects and stops (not SFX 0 5). A pan
 ; on a MONO file in BYTE mode applies at that channel's next start.
+;
+; ------------------------------------------------------------------
+; WHY TWO LOCATIONS AND THE LOOPED MONO VERBS
+; ------------------------------------------------------------------
+; N / S walk between location 0 (PICTURE 1 = 001.NXI, tests\art\
+; mkl2card.py, 256x128, colour bands, caption "L2 DMA TEST") and
+; location 1 (PICTURE 2 = 002.NXI, tests\art\mkl2pos.py's 001.NXI,
+; 256x96, slate checker, caption "LOC1"). Each move redraws through
+; PICTURE + DISPLAY 0, so a looping stream (LOOP4, LOOP7) is heard
+; through esxDOS picture reads and Layer 2 DMA blits while both rings
+; ($4000, $4800) sit in the ULA/Layer 2 address window.
+;
+; LOOP6 and LOOP1 loop MONO files on channel 1 so the mid-play pan
+; checks need no typing speed: BYTE mode ignores a pan until the next
+; start, PAIR mode applies it like volume.
+;
+; Screen: header window 0 rows 0-3; pictures on tilemap rows 4-19 (Layer
+; 2 inset 32 px); text window 1 rows 20-29; rows 30-31 stay free for the
+; DEBUG build's SFX= row and markers.
 ;
 ; ------------------------------------------------------------------
 ; THE SEVEN EFFECTS (all 8-bit unsigned, sine, centred on 128)
@@ -56,6 +76,8 @@
 ;   LOOP7 SFX 7 12   007 stereo both sides, looped, ch 1, streams
 ;   PLAY5 SFX 5 11   005 odd stereo - refused
 ;   PLAY6 SFX 6 11   006 mono 15625 Hz once, ch 1 (for pan)
+;   LOOP6 SFX 6 12   006 mono 15625 Hz looped, ch 1 (mid-play pan, BYTE)
+;   LOOP1 SFX 1 12   001 mono 20000 Hz looped, ch 1 (mid-play pan, PAIR)
 ;   V1FULL/V1HALF/V1QTR/V1OFF   SFX 255/128/64/0 17   channel 1 level
 ;   V2FULL/V2HALF/V2QTR/V2OFF   SFX 255/128/64/0 18   channel 2 level
 ;   PANL/PANC/PANR   SFX 0/128/255 19                 channel 1 pan
@@ -65,6 +87,7 @@
 ;   PL3A   SFX 3 11  003 stereo right only, once, ch 1
 ;   STOP  SFX 0 5    stop all, reset levels and pans
 ;   VID   SFX 1 9    play video 1 once (needs 001.VID staged)
+;   N / S            walk location 0 <-> 1 (no SFX; redraws the picture)
 ;
 ; The compiled SFX bytes (opcode 18) are asserted by tests\build-tests.ps1
 ; every run - DRC can rewrite condacts.
@@ -76,12 +99,16 @@
 ; System flags used by name (DAAD BLANK template spellings)
 #define fPlayer             38
 #define fDarkF              28
+; One-shot boot help: RESTART re-runs process 0 on every move
+#define fBooted             100
 
 /CTL
 _
 /VOC
 NORTH  2  noun
+N      2  noun
 SOUTH  3  noun
+S      3  noun
 LOOK   4  verb
 PLAY1  60 verb
 PLAY2  61 verb
@@ -107,6 +134,8 @@ PAN2R  83 verb
 PL1B   84 verb
 PL2A   85 verb
 PL3A   86 verb
+LOOP6  87 verb
+LOOP1  88 verb
 STOP   79 verb
 VID    80 verb
 /STX
@@ -176,8 +205,8 @@ VID    80 verb
 /OTX
 /0 "a brass lamp"
 /LTX
-/0 ""
-/1 "The listening room."
+/0 "Location 0 - picture 1 (001.NXI, L2 DMA TEST). N goes to location 1.#n"
+/1 "Location 1 - picture 2 (002.NXI, LOC1). S goes to location 0.#n"
 /CON
 /0
 NORTH 1
@@ -186,12 +215,14 @@ SOUTH 0
 /OBJ
 /0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
-> _ _   AT 0
+> _ _   ZERO fBooted
+        SET fBooted
         PROCESS 6
+; No WINAT/WINSIZE here: both home the cursor (win_home) and would
+; overprint the boot help. PRO 6 sets the geometry once.
 > _ _   WINDOW 1
-        WINAT 9 0
-        WINSIZE 15 127
         CLEAR fDarkF
+> _ _   PROCESS 9
 > _ _   WINDOW 1
         DESC @fPlayer
 > _ _   PROCESS 1
@@ -228,6 +259,12 @@ SOUTH 0
            DONE
 > PLAY6  _ MES "006 mono 15625 Hz once, ch 1 - SFX 6 11#n"
            SFX 6 11
+           DONE
+> LOOP6  _ MES "006 mono 15625 Hz looped, ch 1 - SFX 6 12#n"
+           SFX 6 12
+           DONE
+> LOOP1  _ MES "001 mono 20000 Hz looped, ch 1 - SFX 1 12#n"
+           SFX 1 12
            DONE
 ; ---- channel 1 volume ----
 > V1FULL _ MES "channel 1 volume 255 - SFX 255 17#n"
@@ -291,21 +328,54 @@ SOUTH 0
            SFX 1 9
            DONE
 /PRO 6
-> _ _   WINDOW 1
-        WINAT 9 0
-        WINSIZE 15 127
+; Boot only. Window 0 (rows 0-3) keeps the walk map; window 1 (rows
+; 20-29, below the pictures, above the DEBUG rows 30-31) holds the verb
+; list until the first move clears it. Newline counts stay under each
+; window's More... threshold (h-1): MES 0, not MESSAGE 0 (adds one).
+; Window 2 blanks the picture band (rows 4-19) once, so DEBUG boot
+; readouts left there do not show beside or below a picture.
+> _ _   WINDOW 2
+        WINAT 4 0
+        WINSIZE 16 80
         PAPER 0
         INK 7
         CLS
-        MESSAGE 0
-> _ _   MES "001 mono 440 | 002 L 440 | 003 R 660 (2 s)#n"
-        MES "004 440 both, 007 660 both: looped streams#n"
-        MES "005 odd stereo: refused | 006 mono 15625#n"
-        MES "PLAY1-3 PLAY5 PLAY6 LOOP4 LOOP7 STOP VID#n"
-        MES "V1FULL V1HALF V1QTR V1OFF   ch 1 level#n"
-        MES "V2FULL V2HALF V2QTR V2OFF   ch 2 level#n"
-        MES "PANL PANC PANR              ch 1 pan#n"
-        MES "PAN2L PAN2C PAN2R           ch 2 pan#n"
-        MES "PL1B ch 2 | PL2A PL3A ch 1 (one side)#n"
-        GOTO 1
+> _ _   WINDOW 0
+        WINAT 0 0
+        WINSIZE 4 80
+        PAPER 0
+        INK 7
+        CLS
+        MES 0
+        MES "loc 0 shows PICTURE 1 (001.NXI: colour bands, L2 DMA TEST) - N to loc 1#n"
+        MES "loc 1 shows PICTURE 2 (002.NXI: slate checker, LOC1) - S to loc 0"
+> _ _   WINDOW 1
+        WINAT 20 0
+        WINSIZE 10 127
+        PAPER 0
+        INK 7
+        CLS
+        MES "ch 1: PLAY1 PLAY5 PLAY6 PL2A PL3A once | LOOP7 LOOP6 LOOP1 looped#n"
+        MES "ch 2: PLAY2 PLAY3 PL1B once | LOOP4 looped | STOP all | VID video 1#n"
+        MES "level: V1FULL V1HALF V1QTR V1OFF ch 1 | V2FULL V2HALF V2QTR V2OFF ch 2#n"
+        MES "pan: PANL PANC PANR ch 1 | PAN2L PAN2C PAN2R ch 2 | N S walk#n"
+        MES "001 mono 440 20k | 002 L 440 | 003 R 660 | 004 440 both | 005 refused#n"
+        MES "006 mono 440 15625 | 007 660 both | 004 007 are 6 s streamed loops#n"
+/PRO 9
+; Location picture: location 0 = picture 1, location 1 = picture 2.
+; PICTURE is a CONDITION, so a failed load falls to the loud lines.
+> _ _   AT 0
+        PICTURE 1
+        DISPLAY 0
+        DONE
+> _ _   AT 1
+        PICTURE 2
+        DISPLAY 0
+        DONE
+> _ _   AT 0
+        MES "*** PICTURE 1 FAILED - no 001.NXI staged. STOP.#n"
+        DONE
+> _ _   AT 1
+        MES "*** PICTURE 2 FAILED - no 002.NXI staged. STOP.#n"
+        DONE
 /END

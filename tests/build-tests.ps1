@@ -222,11 +222,14 @@
 #            tests\sfxst.dsf active AND stage seven generated 8-bit WAVs
 #            as 001-007.WAV (mono/stereo, 15625 and 20000 Hz, including
 #            an odd-length stereo file that must be refused and two
-#            240000-byte stereo loops that stream), plus 001.VID from the
-#            -Vid cache when present. Verbs cover pinned play (SFX n
+#            240000-byte stereo loops that stream), two location
+#            pictures (001.NXI = tests\art\mkl2card.py's card, 002.NXI =
+#            tests\art\mkl2pos.py's 256-wide 001.NXI), plus 001.VID from
+#            the -Vid cache when present. Verbs cover pinned play (SFX n
 #            11-14), channel volume (SFX v 17/18), channel pan (SFX p
-#            19), stop-all and video. Compiled SFX bytes asserted every
-#            run. Silicon-only verdicts for the soundrive-2 ports.
+#            19/20), stop-all, video and N/S moves between the two
+#            pictures. Compiled SFX bytes asserted every run.
+#            Silicon-only verdicts for the soundrive-2 ports.
 #   -AysReg  AYS stream register-loss fixture, sd\AYSREG\: make
 #            tests\aysreg.dsf active AND stage the two generated streams
 #            (tests\audio\mkays.py) as 001.AYS (steady) and 002.AYS
@@ -3262,7 +3265,8 @@ $sfxStAsserts = @(
     @{ n = 'PLAY1';  b = @(1, 11) },   @{ n = 'PLAY2';  b = @(2, 13) },
     @{ n = 'PLAY3';  b = @(3, 13) },   @{ n = 'LOOP4';  b = @(4, 14) },
     @{ n = 'LOOP7';  b = @(7, 12) },   @{ n = 'PLAY5';  b = @(5, 11) },
-    @{ n = 'PLAY6';  b = @(6, 11) },
+    @{ n = 'PLAY6';  b = @(6, 11) },   @{ n = 'LOOP6';  b = @(6, 12) },
+    @{ n = 'LOOP1';  b = @(1, 12) },
     @{ n = 'V1FULL'; b = @(255, 17) }, @{ n = 'V1HALF'; b = @(128, 17) },
     @{ n = 'V1QTR';  b = @(64, 17) },  @{ n = 'V1OFF';  b = @(0, 17) },
     @{ n = 'V2FULL'; b = @(255, 18) }, @{ n = 'V2HALF'; b = @(128, 18) },
@@ -3280,7 +3284,7 @@ foreach ($s in $sfxStAsserts) {
         throw "sfxst: $($s.n) (SFX $($s.b[0]) $($s.b[1])) found $hits times in tests\out\sfxst.ddb, expected exactly 1 - DRC did not emit the authored condact"
     }
 }
-"sfxst.ddb: v$($sfxStBytes[0]), all $($sfxStAsserts.Count) verb condacts (subs 5/9/11-14/17-20) present exactly once as authored"
+"sfxst.ddb: v$($sfxStBytes[0]), all $($sfxStAsserts.Count) verb condacts (subs 5/9/11/12/13/14/17/18/19/20, incl. LOOP6/LOOP1 on 12) present exactly once as authored"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
@@ -5673,6 +5677,35 @@ if ($SfxSt) {
         "staged sd\$legName\$($spec.dest)  $($wb.Length) bytes, $wrate Hz, $wch ch, 8-bit, L $($spec.l) Hz R $($spec.r) Hz, data $wdata"
     }
 
+    # Location pictures, both 256-wide .NXI (gfx_row_copy256 path) so they
+    # sit on tilemap rows 4-19 above the text window (rows 20-29).
+    # 001.NXI: mkl2card.py (256x128). 002.NXI: mkl2pos.py's plain 001.NXI
+    # (mode 0, 256x96), a visibly different card. mkpalcard.py is not used:
+    # it is a 320-wide .NX2 (scatter path) on rows 0-15.
+    & python "$PSScriptRoot\art\mkl2card.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2card.py failed" }
+    $stArt = "$root\tests\out\sfxst-art"
+    & python "$PSScriptRoot\art\mkl2pos.py" $stArt
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2pos.py failed" }
+    $stPics = @(
+        @{ src = "$root\tests\out\l2card.nxi"; dest = '001.NXI'; rows = 128 },
+        @{ src = "$stArt\001.NXI";            dest = '002.NXI'; rows = 96 }
+    )
+    foreach ($p in $stPics) {
+        if (-not (Test-Path -LiteralPath $p.src)) { throw "sfxst: $($p.src) was not produced" }
+        $pb = [System.IO.File]::ReadAllBytes($p.src)
+        # gfx_derive_height: (bytes - 512) / 256 rows, 1..192 in 256-wide mode
+        if ((($pb.Length - 512) % 256) -ne 0) { throw "sfxst: $($p.dest) is $($pb.Length) bytes - not 512 + whole 256-byte rows" }
+        $rows = ($pb.Length - 512) / 256
+        if ($rows -ne $p.rows) { throw "sfxst: $($p.dest) derives $rows rows, expected $($p.rows)" }
+        # index 255 is the reserved transparent entry: a hole would show the tilemap
+        $n255 = 0
+        for ($i = 512; $i -lt $pb.Length; $i++) { if ($pb[$i] -eq 255) { $n255++ } }
+        if ($n255 -ne 0) { throw "sfxst: $($p.dest) uses palette index 255 in $n255 pixel(s)" }
+        Copy-Item -LiteralPath $p.src "$leg\$($p.dest)" -Force
+        "staged $($p.src.Substring($root.Length + 1)) -> sd\$legName\$($p.dest)  $($pb.Length) bytes, 256x$rows, no pixel uses index 255"
+    }
+
     # 001.VID for the VID verb: the smallest cached -Vid leg encode, same
     # rule as -SfxLong.
     $vidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
@@ -5683,6 +5716,13 @@ if ($SfxSt) {
     else {
         "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged. Run 'tests\build-tests.ps1 -Vid' once to populate the cache, then re-run -SfxSt. The VID verb (SFX 1 9) reports a clean miss without it."
     }
+    # The folder holds exactly these (NEXTDAAD.NEX is copied after this block).
+    $stWant = @('GAME.DDB', '001.WAV', '002.WAV', '003.WAV', '004.WAV', '005.WAV', '006.WAV', '007.WAV', '001.NXI', '002.NXI')
+    if ($vidSrc) { $stWant += '001.VID' }
+    $stHave = @(Get-ChildItem -LiteralPath $leg -File | ForEach-Object { $_.Name.ToUpper() })
+    $stDiff = Compare-Object ($stWant | Sort-Object) ($stHave | Sort-Object)
+    if ($stDiff) { throw "sfxst: sd\$legName holds [$($stHave -join ' ')], expected [$($stWant -join ' ')]" }
+    "sfxst: sd\$legName holds the $($stWant.Count) expected files"
     $sfxStActive = $true
 }
 
