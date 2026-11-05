@@ -611,6 +611,42 @@ function New-SfxLongWav([int]$Rate, [double]$ToneHz, [int]$PayloadBytes) {
     return , $wav.ToArray()
 }
 
+# Stereo twin of New-SfxLongWav: nChannels 2, interleaved L,R, 8-bit
+# unsigned. A side with Hz 0 is held at $80. FmtPad extra fmt bytes shift
+# the data offset (odd pad = odd offset).
+function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$PayloadBytes, [int]$FmtPad = 0) {
+    $frames = [int][math]::Floor($PayloadBytes / 2)
+    $pcm = New-Object byte[] $PayloadBytes
+    for ($n = 0; $n -lt $PayloadBytes; $n++) {
+        $hz = if (($n -band 1) -eq 0) { $LeftHz } else { $RightHz }
+        $v = 128
+        if ($hz -ne 0) {
+            $f = [math]::Floor($n / 2)
+            $v = [math]::Floor(128 + 127 * [math]::Sin(2.0 * [math]::PI * $hz * $f / $Rate) + 0.5)
+            if ($v -lt 0) { $v = 0 } elseif ($v -gt 255) { $v = 255 }
+        }
+        $pcm[$n] = [byte]$v
+    }
+    $fmtLen = 16 + $FmtPad
+    $wav = New-Object System.Collections.Generic.List[byte]
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("RIFF"))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32](20 + $fmtLen + $PayloadBytes)))
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("WAVE"))
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("fmt "))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$fmtLen))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]1))       # PCM
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]2))       # stereo
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$Rate))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32](2 * $Rate)))  # byte rate
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]2))       # block align
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]8))       # bits per sample
+    if ($FmtPad -gt 0) { $wav.AddRange((New-Object byte[] $FmtPad)) }
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$PayloadBytes))
+    $wav.AddRange($pcm)
+    return , $wav.ToArray()
+}
+
 New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
 New-Item -ItemType Directory -Force $sd | Out-Null
 
@@ -2183,6 +2219,25 @@ function Assert-SfxTabCells {
     "SFXTAB ($variant): level cells + transfer bodies on SFX_PAGE $sfxPg, sfxTabOn resident, one LDIR in aud_smp_copy $('{0:X4}' -f $lo)-$('{0:X4}' -f $hi)"
 }
 
+function Assert-SfxStereoLoader {
+    # Task 4: loader accepts nChannels 2 and refuses odd offset/length with
+    # a DEBUG marker; the generator self-check pins the stereo header.
+    param([byte[]]$nex)
+    $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
+    $mk = [System.Text.Encoding]::ASCII.GetBytes("SFX ST?")
+    $has = Find-Bytes $nex $mk
+    if ($variant -eq 'DEBUG') {
+        if (-not $has) { throw "SFXST: DEBUG NEX lacks the 'SFX ST?' refusal marker" }
+    } elseif ($has) { throw "SFXST: Release NEX carries the DEBUG 'SFX ST?' marker" }
+    $w = New-SfxStereoWav 11025 440 0 100
+    if ($w[22] -ne 2 -or $w[32] -ne 2 -or $w[34] -ne 8) { throw "SFXST: generator nChannels/blockAlign/bits = $($w[22])/$($w[32])/$($w[34]), expected 2/2/8" }
+    if ($w[45] -ne 0x80) { throw "SFXST: RightHz 0 payload byte 1 is $($w[45]), expected 128" }
+    if ($w.Length -ne 144) { throw "SFXST: generator length $($w.Length), expected 144" }
+    $w1 = New-SfxStereoWav 11025 440 0 100 1
+    if ([System.Text.Encoding]::ASCII.GetString($w1, 37, 4) -ne 'data') { throw "SFXST: FmtPad 1 does not put the data tag at odd offset 37" }
+    "SFXST ($variant): stereo loader marker policy ok, New-SfxStereoWav header self-check ok"
+}
+
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
@@ -3193,6 +3248,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     Assert-SfxRingLayout $nex
     Assert-SfxPairFeeders $nex
     Assert-SfxTabCells $nex
+    Assert-SfxStereoLoader $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

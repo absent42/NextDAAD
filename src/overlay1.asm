@@ -2754,6 +2754,7 @@ h_sfx:                          ; 18: B = n, C = sub-command
 
  IFDEF DEBUG
 msgSfxUnk: db "SFX? ", 0
+msgSfxSt:  db "SFX ST?", 0
  ENDIF
 
 ; Stop the sample playing on the channel sfxSel bit 0 names, and wait
@@ -3536,11 +3537,15 @@ aud_load_wav:
     ld a, h
     or l
     jp nz, .failclose
-    ld hl, (wavFmt+2)           ; nChannels
-    dec hl                      ; == 1 (mono)?
+    ld hl, (wavFmt+2)           ; nChannels: 1 mono, 2 stereo
     ld a, h
-    or l
+    or a
     jp nz, .failclose
+    ld a, l
+    dec a                       ; 0 -> $FF
+    cp 2
+    jp nc, .failclose
+    ld (wavStereo), a           ; 0 mono, 1 stereo
     ld hl, (wavFmt+6)           ; nSamplesPerSec high word
     ld a, h
     or l
@@ -3596,7 +3601,31 @@ aud_load_wav:
     ld (wavLen), hl            ; 24-bit payload length: low word
     ld a, d
     ld (wavLenHi), a           ; high byte
+    ld a, (wavStereo)
+    or a
+    jp z, .stream
+    ld a, (wavDataOff)          ; stereo: PAIR copies need an even data
+    rrca                        ; offset and even length
+    ld c, 'O'
+    jr c, .stfail
+    ld a, (wavLen)
+    rrca
+    ld c, 'L'
+    jr c, .stfail
     jp .stream
+.stfail:
+ IFDEF DEBUG
+    push bc                     ; C = cause letter
+    ld b, 30
+    call dbg_markcol
+    call dbg_at
+    ld hl, msgSfxSt
+    call dbg_puts
+    pop bc
+    ld a, c
+    call dbg_putc
+ ENDIF
+    jp .failclose
 .skip:
     ; unknown chunk: discard size (+ odd pad); reject a pathological
     ; >64K non-data chunk rather than loop for minutes
@@ -3656,6 +3685,15 @@ aud_load_wav:
     jr nc, .blkok               ; sfxChan1 is resident
     ld ix, sfxChan1
 .blkok:
+    ld a, (ix+SMPB_FLAGS)       ; STEREO bit 6 from the header, before the
+    and %10111111               ; open (its masks preserve bits 6/7)
+    ld c, a
+    ld a, (wavStereo)
+    rrca                        ; bit 0 -> bit 7
+    rrca                        ; -> bit 6
+    and %01000000
+    or c
+    ld (ix+SMPB_FLAGS), a
     ld de, (wavDataOff)         ; first payload byte (consumer anchor)
     ld bc, (wavLen)             ; declared payload length, 24-bit: the
     ld a, (wavLenHi)            ; open checks it against the file's real
@@ -4128,6 +4166,7 @@ aud_banks_release:
 wavExt:    db ".WAV", 0
 wavReqNum: db 0
 wavGotFmt: db 0
+wavStereo: db 0                 ; 0 mono, 1 stereo (nChannels - 1)
 wavLen:    dw 0                 ; payload length low word (24-bit)
 wavLenHi:  db 0                 ; payload length high byte
 wavDataOff: dw 0                ; running file position while the header
