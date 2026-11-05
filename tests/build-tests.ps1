@@ -2404,6 +2404,30 @@ function Assert-SfxLevelSubs {
     "SFXLEVEL: h_sfx.level, sfx_level_set, sfx_level_reset present; reset referenced once (.stopfx); SFX 17-20 condact bytes ok"
 }
 
+function Assert-SfxLoopAfterWait {
+    # h_sfx commits audReqSmpLoop once, after .pend drains a pending start
+    # and before the allocator: an earlier store would retarget that start.
+    $lines = [IO.File]::ReadAllLines("$root\src\overlay1.asm")
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^h_sfx\s*:') { $start = $i; break } }
+    if ($start -lt 0) { throw "SFXLOOP: h_sfx not found in overlay1.asm" }
+    $end = $lines.Count
+    for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^[A-Za-z_]\w*\s*:') { $end = $i; break } }
+    $pend = -1; $alloc = -1; $stores = @()
+    for ($i = $start; $i -lt $end; $i++) {
+        $code = ($lines[$i] -split ';')[0]
+        if ($pend -lt 0 -and $code -match '^\.pend\s*:') { $pend = $i }
+        if ($alloc -lt 0 -and $code -match '^\s+call\s+sfx_alloc_call\b') { $alloc = $i }
+        if ($code -match '^\s+ld\s+\(\s*audReqSmpLoop\s*\)\s*,\s*a\b') { $stores += $i }
+    }
+    if ($pend -lt 0) { throw "SFXLOOP: h_sfx has no .pend label" }
+    if ($alloc -lt 0) { throw "SFXLOOP: h_sfx has no 'call sfx_alloc_call'" }
+    if ($stores.Count -ne 1) { throw "SFXLOOP: h_sfx has $($stores.Count) 'ld (audReqSmpLoop), a' stores (lines $(($stores | ForEach-Object { $_ + 1 }) -join ',')), expected exactly 1" }
+    $s = $stores[0]
+    if ($s -le $pend -or $s -ge $alloc) { throw "SFXLOOP: h_sfx's audReqSmpLoop store at line $($s + 1) is not between .pend (line $($pend + 1)) and 'call sfx_alloc_call' (line $($alloc + 1))" }
+    "SFXLOOP: h_sfx commits audReqSmpLoop once (line $($s + 1)), after .pend (line $($pend + 1)) and before sfx_alloc_call (line $($alloc + 1))"
+}
+
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
 # ANYKEY is the V2 wait-for-key condact and this fixture must stay V2 -
 # under V3 the interpreter reads PAUSE 0 as GETKEY and SYNONYM changes
@@ -3425,6 +3449,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     Assert-SfxStereoLoader $nex
     Assert-SfxModeSites $nex
     Assert-SfxLevelSubs $nex
+    Assert-SfxLoopAfterWait
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"
