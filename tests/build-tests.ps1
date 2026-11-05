@@ -25,6 +25,7 @@
 #   -SfxDi               sd\SFXDI\     tests\sfxdi.dsf
 #   -SfxLong             sd\SFXLONG\   tests\sfxlong.dsf
 #   -Sfx2                sd\SFX2\      tests\sfx2.dsf
+#   -SfxSt               sd\SFXST\     tests\sfxst.dsf
 #   -AysReg              sd\AYSREG\    tests\aysreg.dsf
 #   -L2Holes             sd\L2HOLES\   tests\l2holes.dsf
 #   -L2Pos               sd\L2POS\     tests\l2pos.dsf    (-L2PosWide: the 320x256 set)
@@ -217,6 +218,15 @@
 #            emulation after SFX_FAIL_LIMIT ticks (expected, does not
 #            affect the steal verb's proof). Alternative to
 #            -Aud/-AudLad/-SfxDi/-SfxLong.
+#   -SfxSt   stereo sample, volume and pan fixture, sd\SFXST\: make
+#            tests\sfxst.dsf active AND stage seven generated 8-bit WAVs
+#            as 001-007.WAV (mono/stereo, 15625 and 20000 Hz, including
+#            an odd-length stereo file that must be refused and two
+#            240000-byte stereo loops that stream), plus 001.VID from the
+#            -Vid cache when present. Verbs cover pinned play (SFX n
+#            11-14), channel volume (SFX v 17/18), channel pan (SFX p
+#            19), stop-all and video. Compiled SFX bytes asserted every
+#            run. Silicon-only verdicts for the soundrive-2 ports.
 #   -AysReg  AYS stream register-loss fixture, sd\AYSREG\: make
 #            tests\aysreg.dsf active AND stage the two generated streams
 #            (tests\audio\mkays.py) as 001.AYS (steady) and 002.AYS
@@ -423,7 +433,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -457,7 +467,7 @@ $sd = Join-Path $root 'sd'
 if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
     $otherLegSwitches = @(
         'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
-        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
+        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'SfxSt', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad',
         'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb', 'Text2XmbPart', 'Text2XmbFp',
@@ -488,6 +498,7 @@ if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
 if ($SfxLong)          { $legName = 'SFXLONG' }
 if ($Sfx2)             { $legName = 'SFX2' }
+if ($SfxSt)           { $legName = 'SFXST' }
 if ($AysReg)           { $legName = 'AYSREG' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
 if ($L2Pos -or $L2PosWide) { $legName = 'L2POS' }
@@ -539,7 +550,7 @@ function Reset-LegDir {
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
-               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'SFXST', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD',
                'TEXT2WC', 'TEXT2N', 'TEXT2NC', 'TEXT2X', 'TEXT2X2', 'TEXT2X3',
@@ -1734,6 +1745,22 @@ try {
     & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfx2)" }
     Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
+# Stereo sample / volume / pan fixture; only -SfxSt makes it active
+# (sd\SFXST\). Built out of tree like sfx2 above.
+$sfxStWork = Join-Path $root 'tests\out\sfxst-work'
+Remove-Item $sfxStWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $sfxStWork | Out-Null
+Copy-Item "$PSScriptRoot\sfxst.dsf" "$sfxStWork\NDSFXST.DSF" -Force
+Push-Location $sfxStWork
+try {
+    & $ndrc @drcTarget EN NDSFXST.DSF NDSFXST.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxst)" }
+    Copy-Item NDSFXST.DDB "$root\tests\out\sfxst.ddb" -Force
 }
 finally {
     Pop-Location
@@ -3209,6 +3236,35 @@ if ($duoHits -ne 2) {
     throw "sfx2: expected exactly two 'SFX 1 2 + SFX 2 2' pairs (the DUO verb and the boot autoplay); found $duoHits"
 }
 "sfx2.ddb: v$($sfx2Bytes[0]), subs 1/2/5 and all six of 11-16 present as authored, STEAL and pin-reject sequences contiguous, DUO pair occurs $duoHits times (verb + boot autoplay)"
+
+# --- sfxst: every verb's SFX condact as compiled (opcode 18 = $12, three
+# bytes each). Subs 17-20 are new; a DRC that clamped or remapped an
+# unknown sub-command, or a level of 0 / 255, would ship a fixture that
+# tests nothing. Each triple must occur exactly once.
+$sfxStBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxst.ddb")
+if ($sfxStBytes[0] -ne 3) {
+    throw "sfxst: DDB header version byte is $($sfxStBytes[0]), expected 3 - the fixture is compiled WITH -v3"
+}
+$sfxStAsserts = @(
+    @{ n = 'PLAY1';  b = @(1, 11) },   @{ n = 'PLAY2';  b = @(2, 13) },
+    @{ n = 'PLAY3';  b = @(3, 13) },   @{ n = 'LOOP4';  b = @(4, 14) },
+    @{ n = 'LOOP7';  b = @(7, 12) },   @{ n = 'PLAY5';  b = @(5, 11) },
+    @{ n = 'PLAY6';  b = @(6, 11) },
+    @{ n = 'V1FULL'; b = @(255, 17) }, @{ n = 'V1HALF'; b = @(128, 17) },
+    @{ n = 'V1QTR';  b = @(64, 17) },  @{ n = 'V1OFF';  b = @(0, 17) },
+    @{ n = 'V2FULL'; b = @(255, 18) }, @{ n = 'V2HALF'; b = @(128, 18) },
+    @{ n = 'V2QTR';  b = @(64, 18) },  @{ n = 'V2OFF';  b = @(0, 18) },
+    @{ n = 'PANL';   b = @(0, 19) },   @{ n = 'PANC';   b = @(128, 19) },
+    @{ n = 'PANR';   b = @(255, 19) },
+    @{ n = 'STOP';   b = @(0, 5) },    @{ n = 'VID';    b = @(1, 9) }
+)
+foreach ($s in $sfxStAsserts) {
+    $hits = (Find-ByteRuns $sfxStBytes ([byte[]]@(18, $s.b[0], $s.b[1]))).Count
+    if ($hits -ne 1) {
+        throw "sfxst: $($s.n) (SFX $($s.b[0]) $($s.b[1])) found $hits times in tests\out\sfxst.ddb, expected exactly 1 - DRC did not emit the authored condact"
+    }
+}
+"sfxst.ddb: v$($sfxStBytes[0]), all $($sfxStAsserts.Count) verb condacts (subs 5/9/11-14/17-19) present exactly once as authored"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
@@ -5543,6 +5599,77 @@ if ($Sfx2) {
     $sfx2Active = $true
 }
 
+$sfxStActive = $false
+if ($SfxSt) {
+    # Stereo sample, volume and pan fixture. Makes tests\sfxst.dsf the
+    # active DDB and generates + stages seven stimulus WAVs.
+    #
+    # CSpect-lock: see header.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\sfxst.ddb" "$leg\GAME.DDB" -Force
+
+    # kind m = mono (New-SfxLongWav, whole cycles enforced), s = stereo
+    # (New-SfxStereoWav, left/right Hz, 0 = held at $80). Stereo tones
+    # are checked for whole cycles over the frame count here: a stereo
+    # loop with a fractional cycle would click at the seam.
+    $sfxStSpecs = @(
+        @{ dest = '001.WAV'; kind = 'm'; rate = 20000; l = 440.0; r = 440.0; len = 24000 },
+        @{ dest = '002.WAV'; kind = 's'; rate = 20000; l = 440.0; r = 0.0;   len = 80000 },
+        @{ dest = '003.WAV'; kind = 's'; rate = 20000; l = 0.0;   r = 660.0; len = 80000 },
+        @{ dest = '004.WAV'; kind = 's'; rate = 20000; l = 440.0; r = 440.0; len = 240000 },
+        @{ dest = '005.WAV'; kind = 's'; rate = 15625; l = 440.0; r = 440.0; len = 15625 },
+        @{ dest = '006.WAV'; kind = 'm'; rate = 15625; l = 440.0; r = 440.0; len = 15625 },
+        @{ dest = '007.WAV'; kind = 's'; rate = 20000; l = 660.0; r = 660.0; len = 240000 }
+    )
+    foreach ($spec in $sfxStSpecs) {
+        if ($spec.kind -eq 'm') {
+            $w = New-SfxLongWav -Rate $spec.rate -ToneHz $spec.l -PayloadBytes $spec.len
+        }
+        else {
+            # 005 is the odd-length refusal case: it is not a loop, so
+            # the whole-cycle rule applies to the even-length files only.
+            if (($spec.len -band 1) -eq 0) {
+                $frames = $spec.len / 2
+                foreach ($hz in @($spec.l, $spec.r)) {
+                    $cyc = $hz * $frames / $spec.rate
+                    if ([math]::Abs($cyc - [math]::Round($cyc)) -gt 1e-9) {
+                        throw "sfxst: $($spec.dest) $hz Hz over $frames frames at $($spec.rate) Hz is $cyc cycles - not whole, the loop would click"
+                    }
+                }
+            }
+            $w = New-SfxStereoWav $spec.rate $spec.l $spec.r $spec.len
+        }
+        $path = "$root\tests\out\sfxst_$($spec.dest)"
+        [System.IO.File]::WriteAllBytes($path, $w)
+        # Re-read the header rather than trusting the generator arguments.
+        $wb = [System.IO.File]::ReadAllBytes($path)
+        $wch = [System.BitConverter]::ToUInt16($wb, 22)
+        $wrate = [System.BitConverter]::ToUInt32($wb, 24)
+        $wbits = [System.BitConverter]::ToUInt16($wb, 34)
+        $wdata = [System.BitConverter]::ToUInt32($wb, 40)
+        $wantCh = if ($spec.kind -eq 'm') { 1 } else { 2 }
+        if ($wch -ne $wantCh -or $wbits -ne 8 -or $wrate -ne $spec.rate -or $wdata -ne $spec.len) {
+            throw "sfxst: $($spec.dest) header is ch=$wch rate=$wrate bits=$wbits data=$wdata, expected ch=$wantCh rate=$($spec.rate) bits=8 data=$($spec.len)"
+        }
+        Copy-Item $path "$leg\$($spec.dest)" -Force
+        "staged sd\$legName\$($spec.dest)  $($wb.Length) bytes, $wrate Hz, $wch ch, 8-bit, L $($spec.l) Hz R $($spec.r) Hz, data $wdata"
+    }
+
+    # 001.VID for the VID verb: the smallest cached -Vid leg encode, same
+    # rule as -SfxLong.
+    $vidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
+    if ($vidSrc) {
+        Copy-Item $vidSrc.FullName "$leg\001.VID" -Force
+        "staged tests\out\$($vidSrc.Name) -> sd\$legName\001.VID  $($vidSrc.Length) bytes (smallest cached -Vid leg encode; VID verb)"
+    }
+    else {
+        "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged. Run 'tests\build-tests.ps1 -Vid' once to populate the cache, then re-run -SfxSt. The VID verb (SFX 1 9) reports a clean miss without it."
+    }
+    $sfxStActive = $true
+}
+
 $aysRegActive = $false
 if ($AysReg) {
     # AYS stream register-loss leg. Stages the fixture DDB, the two
@@ -6480,6 +6607,7 @@ elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-s
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture)" }
 elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixture - SP18 item 7 Task 7)" }
 elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
+elseif ($sfxStActive) { "active: sfxst (stereo sample, volume and pan fixture)" }
 elseif ($aysRegActive) { "active: aysreg (AYS stream register-loss fixture)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture)" }
 elseif ($l2posActive) { "active: l2pos (positioned pictures fixture, mode $l2posMode set$(if ($GfxZx0) { ', ZX0' }))" }
