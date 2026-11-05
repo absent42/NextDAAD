@@ -1260,7 +1260,19 @@ function Assert-BankAllocCensus {
     "allocator census: $total sites in $($want.Count) routines classified; the long-lived AYS stream takes bank_alloc_long; BT_* writes only in $($writers.Count) known routines"
 }
 
+function Assert-KitAudioDocs {
+    # Stereo SFX Task 7: the kit audio page documents stereo, subs 17-20
+    # and the 15625 Hz recommendation, and carries no 16000 Hz rate.
+    $t = [IO.File]::ReadAllText("$root\authoring-kit\docs\audio.html")
+    foreach ($need in 'SFX n 17', 'SFX n 18', 'SFX n 19', 'SFX n 20', 'stereo', '15625') {
+        if (-not $t.Contains($need)) { throw "KITAUDIO: audio.html lacks '$need'" }
+    }
+    if ($t.Contains('16000 Hz')) { throw "KITAUDIO: audio.html still mentions 16000 Hz" }
+    "KITAUDIO: audio.html documents SFX n 17-20, stereo and 15625 Hz, no 16000 Hz"
+}
+
 Assert-TranspConstantsInSync
+Assert-KitAudioDocs
 Assert-PalColourDodge
 Assert-LayerOrderReset
 Assert-RestartLeavesSprites

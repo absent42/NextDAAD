@@ -2391,9 +2391,10 @@ sfx_run_seek:
 ; distort a bounded wait. The underrun counters live on this page
 ; (sfx_cp_und writes them from the copy hop).
 ;
-; Task 11 made the row DUAL: "SFX=rrrr/uuuu/ff rrrr/uuuu/ff", channel 1
-; then channel 2, 29 columns starting at column 43 (it was 16 columns at
-; 56 with one channel). Row 31 is otherwise unused by the game.
+; The row is DUAL: "SFX=rrrr/uuuu/ff Bvvpp rrrr/uuuu/ff Pvvpp", channel 1
+; then channel 2, 41 columns starting at column 39 so it ends at column
+; 79 of an 80-column screen. Bvvpp = mode letter (B BYTE, P PAIR), volume
+; and pan in hex. Row 31 is otherwise unused by the game.
 ;
 ; CURSOR DISCIPLINE. This is the first ISR-context user of the dbg_*
 ; console, and dbgX/dbgY are a SHARED cursor pair: a mainline dbg_puts
@@ -2430,18 +2431,22 @@ sfx_dbg_row:
     ld hl, (dbgX)                ; dbgY follows dbgX: one word is the
     push hl                      ; whole mainline cursor
     ld b, 31
-    ld c, 43
+    ld c, 39
     call dbg_at
     ld hl, msgSfxRow
     call dbg_puts
     ld iy, sfxStrm0
     ld hl, sfxUnderrun0
     call .one
+    xor a
+    call .lvl
     ld a, ' '
     call dbg_putc
     ld iy, sfxStrm1
     ld hl, sfxUnderrun1
     call .one
+    ld a, 1
+    call .lvl
     pop hl
     ld (dbgX), hl                ; mainline resumes exactly where it was
     ret
@@ -2463,6 +2468,39 @@ sfx_dbg_row:
     ld a, '/'
     call dbg_putc
     ld a, (iy+SFXS_FAILS)
+    jp dbg_hex8
+; " Bvvpp" for channel A (0/1): mode letter, volume, pan.
+.lvl:
+    push af
+    ld a, ' '
+    call dbg_putc
+    pop af
+    push af
+    ld e, a
+    ld d, 0
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, (hl)
+    cp 1
+    ld a, 'B'
+    jr nz, .lvm
+    ld a, 'P'
+.lvm:
+    call dbg_putc
+    pop af
+    push af
+    ld e, a
+    ld d, 0
+    ld hl, sfxVol
+    add hl, de
+    ld a, (hl)
+    call dbg_hex8
+    pop af
+    ld e, a
+    ld d, 0
+    ld hl, sfxPan
+    add hl, de
+    ld a, (hl)
     jp dbg_hex8
 msgSfxRow: db "SFX=", 0
  ENDIF

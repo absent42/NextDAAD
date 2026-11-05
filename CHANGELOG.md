@@ -2,6 +2,17 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## Unreleased
+
+- **Stereo samples, volume and pan**: a WAV sample may be stereo (8-bit
+  unsigned PCM, 3500-20000 Hz, even data length) and plays on the left
+  and right outputs. New SFX subs 17/18 set channel 1/2 volume and 19/20
+  set channel 1/2 pan (0-255; defaults 255 and 128), working on mono and
+  stereo files, persisting across effects and reset at boot and by
+  SFX n 5. A pan change on a channel playing a centred mono file applies
+  at its next start. 15625 Hz is recommended for every sample; stereo
+  costs more CPU than mono. Subs 17-20 are NextDAAD extensions.
+
 ## v0.13.0 - 30/10/2026
 
 - **Text format 2 in the kit**: `lib\build.ps1` compiles with NDRC

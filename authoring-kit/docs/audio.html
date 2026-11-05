@@ -175,27 +175,32 @@ effects bank uses.</p>
 <p><strong>You supply the file in the right format; nothing converts it for
 you.</strong> It must be:</p>
 <ul>
-<li>PCM, <strong>mono</strong>, <strong>8-bit unsigned</strong>,</li>
-<li>sampled between <strong>3500 and 20000 Hz</strong>.</li>
+<li>PCM, <strong>mono</strong> or <strong>stereo</strong>, <strong>8-bit unsigned</strong>,</li>
+<li>sampled between <strong>3500 and 20000 Hz</strong>,</li>
+<li>and, if stereo, with an even data length (any RIFF-compliant stereo
+  file already has one).</li>
 </ul>
 <p>It plays back at whatever rate its own header declares - there is no
 resampling - so pick the rate when you export. <strong>15625 Hz is the
-recommended rate</strong>: it divides the hardware's own timing clock exactly
-on six of the eight video modes, so on those modes the sample plays at
-exactly the authored pitch, with no rounding at all. 16000 Hz - the
-rate most existing NextDAAD samples already use - stays fully
-supported: the hardware's own clock varies by video mode and 16000
-rarely divides it exactly, so it plays a little sharp on most modes, up
-to about 0.7% in the worst case - inaudible in a game sound effect.
-Nothing about an existing WAV needs to change; 15625 Hz is only worth
-picking for new samples where you want the theoretical best case.</p>
+recommended rate for every sample, mono or stereo</strong>: it divides the
+hardware's own timing clock exactly on six of the eight video modes, so
+on those modes the sample plays at exactly the authored pitch, with no
+rounding at all, and it keeps the CPU cost of playback down. Other rates
+in the range play fine - the hardware's own clock varies by video mode
+and most rates do not divide it exactly, so they play slightly off
+pitch, inaudible in a game sound effect - but 15625 Hz is the one to
+pick for new samples.</p>
+<p>A stereo file keeps its two sides: the left side plays through the left
+output and the right side through the right. A mono file plays centred
+unless you pan it (see <a href="#volume-and-pan">Volume and pan</a>). Stereo
+files cost more CPU than mono: roughly twice the per-frame copy work.</p>
 <p><strong>Samples and AY effects share one set of numbers.</strong> <code>SFX n 1</code> looks for
 <code>NNN.WAV</code> first and falls back to the effects bank if there is no such
 file, so a sample and an AY effect cannot both use number 7. Numbers 1
 to 254 work either way; 255 always plays from the AY bank.</p>
 <h2 id="two-sample-channels">Two sample channels</h2>
 <p>Samples play on either of two independent hardware channels, mixed
-together in the output and both centred, so two effects can sound at
+together in the output and both centred by default, so two effects can sound at
 once. <code>SFX n 1</code> and <code>SFX n 2</code> choose a channel for you automatically:</p>
 <ul>
 <li>if a channel that is not reserved (see below) is already holding
@@ -272,6 +277,56 @@ cutscene takes the hardware, so there is nothing there to notice and
 bring back: the video discards it, and the channel is silent when the
 clip ends. Put the <code>SFX</code> in an earlier entry than the video and it
 resumes as described.</p>
+<h2 id="volume-and-pan">Volume and pan</h2>
+<p>Each sample channel has its own volume and its own pan. Four more
+NextDAAD sub-commands set them; write the raw number, the compiler
+predefines no names for them. The value <code>n</code> is 0 to 255 in every case.</p>
+<table>
+<thead>
+<tr>
+<th>Sub-command</th>
+<th>Sets</th>
+<th>Range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SFX n 17</code></td>
+<td>Channel 1 volume</td>
+<td>0 = silent, 255 = full (default)</td>
+</tr>
+<tr>
+<td><code>SFX n 18</code></td>
+<td>Channel 2 volume</td>
+<td>0 = silent, 255 = full (default)</td>
+</tr>
+<tr>
+<td><code>SFX n 19</code></td>
+<td>Channel 1 pan</td>
+<td>0 = left, 128 = centre (default), 255 = right</td>
+</tr>
+<tr>
+<td><code>SFX n 20</code></td>
+<td>Channel 2 pan</td>
+<td>0 = left, 128 = centre (default), 255 = right</td>
+</tr>
+</tbody>
+</table>
+<p>Volume and pan belong to the channel, not to the effect: they persist
+across effects and across stops, and go back to full volume and centre
+pan at boot and on <code>SFX n 5</code> (stop everything). Stopping one channel with
+<code>SFX 0 15</code> or <code>SFX 0 16</code> does not reset them. Setting a fade-out and then
+<code>SFX n 5</code> therefore leaves both channels ready for the next scene.</p>
+<p>Pan works on mono files and on stereo files. A volume change takes effect
+within about a tenth of a second, once the sound already buffered has
+played out. A pan change does the same, with one exception: a channel
+that is playing a mono file centred cannot change how it plays in the
+middle of the effect, so a pan change there takes effect at that
+channel's NEXT start. On a stereo file, or on a mono file that is already
+panned off centre, a pan change applies like volume.</p>
+<p>Cost: while a channel's volume is below full or its pan is off centre,
+the interpreter does extra per-sample work each frame. At full volume and
+centre pan the cost is the same as before these sub-commands existed.</p>
 <h2 id="length-and-streaming">Length and streaming</h2>
 <p>An effect's length is no longer capped by memory - a WAV of any size
 plays. Files up to 24K per channel stage entirely into a fixed area
