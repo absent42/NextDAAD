@@ -2091,6 +2091,52 @@ function Assert-SfxRingLayout {
     "SFXRING: rings `$4000/`$4800 x 2048, tables `$7C00-`$7FFF, NR `$84 bit 2 RMW present"
 }
 
+function Assert-SfxPairFeeders {
+    # Stereo SFX Task 2: ctc_isr_pair/ctc2_isr_pair resident, each driving its
+    # soundrive-2 pair. Scan limited to the resident bank: video.asm's
+    # VID_PAGE also emits out ($F3)/out ($F9).
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $eq = @{}
+    foreach ($k in @('CODE_ORG', 'RESIDENT_LIMIT', 'AUD_PLAYER_ORG', 'AUD_SFB_ORG')) {
+        $m = [regex]::Match($inc, ('(?m)^' + $k + '\s+equ\s+\$([0-9A-Fa-f]+)'))
+        if (-not $m.Success) { throw "SFXPAIR: $k equate missing in nextdaad.inc" }
+        $eq[$k] = [Convert]::ToInt32($m.Groups[1].Value, 16)
+    }
+    $sym = @{}
+    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
+    }
+    if ($nex[10] -ne 0) { throw "SFXPAIR: NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
+    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
+    $resOff = 512 + 16384 * [array]::IndexOf($present, 2)
+    $lo = $eq['CODE_ORG']; $hi = $eq['RESIDENT_LIMIT']
+    $res = New-Object byte[] ($hi - $lo)
+    [array]::Copy($nex, $resOff, $res, 0, $hi - $lo)
+    foreach ($f in @(@{ n = 'ctc_isr_pair'; l = 0xF1; r = 0xFB }, @{ n = 'ctc2_isr_pair'; l = 0xF3; r = 0xF9 })) {
+        if (-not $sym.ContainsKey($f.n)) { throw "SFXPAIR: $($f.n) not in build\nextdaad.sld" }
+        $pg = $sym[$f.n][0]; $a = $sym[$f.n][1]
+        if ($pg -notin @(4, 5) -or $a -lt $lo -or $a -ge $hi) { throw ("SFXPAIR: {0} at {1:X4} page {2} is outside the resident range {3:X4}-{4:X4}" -f $f.n, $a, $pg, $lo, $hi) }
+        $ok = $false
+        foreach ($h in (Find-ByteRuns $res ([byte[]]@(0xD3, $f.l)))) {
+            if ($h + $lo -lt $a -or $h + $lo -ge $a + 16) { continue }
+            for ($j = $h + 2; $j -le [Math]::Min($h + 8, $res.Length - 2); $j++) {
+                if ($res[$j] -eq 0xD3 -and $res[$j + 1] -eq $f.r) { $ok = $true }
+            }
+        }
+        if (-not $ok) { throw ("SFXPAIR: {0} has no 'out (`${1:X2})' followed within 8 bytes by 'out (`${2:X2})'" -f $f.n, $f.l, $f.r) }
+    }
+    # page 48 (bank 24 low half) code: start/stop FLAGS masks keep bits 6/7
+    $p48Len = $eq['AUD_SFB_ORG'] - $eq['AUD_PLAYER_ORG']
+    $p48 = New-Object byte[] $p48Len
+    [array]::Copy($nex, 512 + 16384 * [array]::IndexOf($present, 24), $p48, 0, $p48Len)
+    foreach ($mk in @(@{ n = 'aud_smp_start and %11111100'; b = 0xFC }, @{ n = 'aud_smp_stop and %11101000'; b = 0xE8 })) {
+        if (-not (Find-Bytes $p48 ([byte[]]@(0xE6, $mk.b)))) { throw "SFXPAIR: '$($mk.n)' (E6 $('{0:X2}' -f $mk.b)) not in page 48" }
+    }
+    "SFXPAIR: ctc_isr_pair (`$F1/`$FB) and ctc2_isr_pair (`$F3/`$F9) resident; page 48 masks E6 FC / E6 E8 present"
+}
+
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
@@ -3099,6 +3145,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     # now runs unconditionally on every harness invocation.
     Assert-SfxDualChannel $nex
     Assert-SfxRingLayout $nex
+    Assert-SfxPairFeeders $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

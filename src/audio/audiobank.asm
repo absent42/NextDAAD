@@ -450,9 +450,10 @@ aud_smp_start:
     or 1                        ; bit 0 (active)
     ld c, a
     ld a, (ix+SMPB_FLAGS)
-    and %00111100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
-    or c                        ; belong to the loader and the refiller
-                                ; and bit 5 (PINNED) to the allocator -
+    and %11111100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
+    or c                        ; belong to the loader and the refiller,
+                                ; bit 5 (PINNED) to the allocator, 6/7
+                                ; (STEREO/PAIR) to the mode decision -
                                 ; only bits 0/1 are the pump's
     ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
     ld hl, (frameCounter)       ; stamp the start: the allocator steals the
@@ -506,6 +507,27 @@ aud_smp_start:
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                  ; double soft-reset (unknown -> clean)
+    ; install this mode's feeder while the CTC is stopped (BC stays live):
+    ; channel 1's feeder, plus the channel-2 offset when VEC is channel 2's
+    ld de, ctc_isr
+    ld a, ctc2_isr - ctc_isr
+    bit 7, (ix+SMPB_FLAGS)      ; PAIR mode
+    jr z, .vmode
+    ld de, ctc_isr_pair
+    ld a, ctc2_isr_pair - ctc_isr_pair
+.vmode:
+    ld l, (ix+SMPB_VEC)
+    ld h, (ix+SMPB_VEC+1)
+    bit 0, h                    ; $BD = IM2 table page = channel 2
+    jr z, .vput
+    add de, a
+.vput:
+    ld (hl), e
+    inc hl
+    ld (hl), d
+    ASSERT ctc2_isr > ctc_isr && ctc2_isr - ctc_isr < 256
+    ASSERT ctc2_isr_pair > ctc_isr_pair && ctc2_isr_pair - ctc_isr_pair < 256
+    ASSERT (((IM2_CTC_STUB+1) >> 8) & 1) == 0 && (((IM2_TABLE+IM2_CTC2_VEC) >> 8) & 1) == 1
     ld a, (audReqSmpCtrl)
     ld (ix+SMPB_CTCCTRL), a     ; latch this effect's control word in the block
     out (c), a                  ; int en, timer, /16 or /256, TC follows
@@ -538,11 +560,14 @@ aud_smp_start:
 ; Bit 5 PINNED survives too: a stop is not a release. Only SFX subs 15/16
 ; and sub 5 clear a pin, so the video abort and the refiller's error
 ; eviction (both of which come through here) leave the author's channel
-; reservation standing.
+; reservation standing. Bits 6/7 STEREO/PAIR survive; PAIR also parks
+; both DACs of the channel's pair.
 aud_smp_stop:
     ld a, (ix+SMPB_FLAGS)
-    and %00101000               ; keep COMPLETE and PINNED, drop active/
-    ld (ix+SMPB_FLAGS), a       ; loop/STREAMING/REWIND
+    and %11101000               ; keep COMPLETE, PINNED, STEREO and PAIR,
+    ld (ix+SMPB_FLAGS), a       ; drop active/loop/STREAMING/REWIND
+    rla                         ; CF = PAIR, kept by the flag-neutral ld/out
+                                ; run below until the ret nc
     ld a, AUD_CTC_RESET         ; double soft-reset: timer stops, no more CTC ints
     ld c, (ix+SMPB_CTCPORT)
     ld b, (ix+SMPB_CTCPORT+1)
@@ -555,6 +580,11 @@ aud_smp_stop:
                                  ; B=0 matches the project's own out(c) idiom for
                                  ; this exact port (hardware.asm audio_init:
                                  ; "ld bc, DAC_PORT" zero-extends the 8-bit equ)
+    out (c), a
+    ret nc                      ; PAIR mode: park both DACs of the pair too
+    ld c, (ix+SMPB_DACL)
+    out (c), a
+    ld c, (ix+SMPB_DACR)
     out (c), a
     ret
 

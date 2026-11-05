@@ -622,6 +622,11 @@ DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
 DAC2_PORT       equ $B3     ; DAC B+C combined - centered mono, the second
                             ; pair beside $DF (A+D); em00k's CTCAudio port
                             ; table lists it as valid. Channel 2's DAC port.
+; Soundrive-2 single-DAC ports (NR $84 bit 2), PAIR-mode left/right per channel.
+DAC1_L_PORT     equ $F1     ; DAC A
+DAC1_R_PORT     equ $FB     ; DAC D
+DAC2_L_PORT     equ $F3     ; DAC B
+DAC2_R_PORT     equ $F9     ; DAC C
 ; DAC signedness: UNSIGNED everywhere on the CPU-OUT path. The DAC silence/park
 ; value is the unsigned midpoint $80, unconditionally - there is no build toggle.
 ; Confirmed by FPGA source (soundrive.vhd resets the DACs to $80, sums unsigned),
@@ -761,9 +766,11 @@ SMPB_RATE     equ 34   ; dw: this effect's WAV sample rate, latched by
                        ;     replaying stale SMPB_CTCCTRL/CTCTC: a mode
                        ;     change between triggers must not replay the
                        ;     old pitch.
-SMPB_SIZE     equ 36   ; (was 34 before the 2026-08-10 fresh-TC ruling
-                       ;     added SMPB_RATE; 14 before SP18 item 7
-                       ;     Task 2's parameterisation)
+SMPB_VEC      equ 36   ; dw: this channel's feeder vector cell
+                       ;     (IM2_CTC_STUB+1 / IM2_TABLE+IM2_CTC2_VEC)
+SMPB_DACL     equ 38   ; db: PAIR-mode left DAC port ($F1 / $F3)
+SMPB_DACR     equ 39   ; db: PAIR-mode right DAC port ($FB / $F9)
+SMPB_SIZE     equ 40   ; (36 before stereo SFX added VEC/DACL/DACR)
 ; SMPB_FLAGS bit semantics (settled by the SP18 item 7 Task 5 review
 ; ruling: bits 0/1 are PLAYBACK state, bits 2-4 describe the WINDOW and
 ; the channel's CACHE, and a deliberate stop must not throw the cache
@@ -795,10 +802,15 @@ SMPB_SIZE     equ 36   ; (was 34 before the 2026-08-10 fresh-TC ruling
 ;                    so neither a stop from the video abort nor an error
 ;                    eviction releases it. Owned by the allocator alone -
 ;                    aud_smp_start and aud_smp_stop both preserve it.
+;   bit 6 STEREO   - the staged file is stereo (interleaved L,R).
+;                    Survives a stop.
+;   bit 7 PAIR     - the ring holds L,R pairs: aud_smp_start installs the
+;                    pair feeder, aud_smp_stop parks both DACs. Decided at
+;                    trigger time; survives a stop.
 ; Bits 2-4 are the LOADER's and the REFILLER's, bit 5 the ALLOCATOR's;
-; aud_smp_start preserves 2-5 when it writes bits 0/1; aud_smp_stop keeps
-; bits 3 and 5 and clears the rest; only sfx_stream_open's refusal funnel
-; and an eviction by a DIFFERENT effect number invalidate the cache
+; aud_smp_start preserves 2-7 when it writes bits 0/1; aud_smp_stop keeps
+; bits 3, 5, 6 and 7 and clears the rest; only sfx_stream_open's refusal
+; funnel and an eviction by a DIFFERENT effect number invalidate the cache
 ; (bits 2-4 all cleared, bit 5 untouched).
 ; Distinguishing a stopped-but-cached channel from an idle/empty one is
 ; therefore: bit 3 set = a COMPLETE window is cached; the channel's own

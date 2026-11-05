@@ -1857,9 +1857,9 @@ msgSfxRow: db "SFX=", 0
 
 ; Seed the channels' CONSTANT block members (SP18 item 7 Task 2, moved
 ; here from page 48 by Task 11): ring base/mask, the resident cursor
-; addresses, the CTC port, the DAC port, the window descriptor and the
-; stream cell group. These never change across a start/stop cycle
-; (unlike FLAGS/TABIDX/OFF/P/W/LEN/REMAIN, which aud_smp_start
+; addresses, the CTC port, the DAC ports, the feeder vector cell, the
+; window descriptor and the stream cell group. These never change across
+; a start/stop cycle (unlike FLAGS/TABIDX/OFF/P/W/LEN/REMAIN, which aud_smp_start
 ; reinitialises every call) and CTCCTRL/CTCTC (which aud_smp_start
 ; latches from the mailbox every call), so a one-shot seed at boot is
 ; enough.
@@ -1890,6 +1890,11 @@ aud_sfx_init:
     ld (ix+SMPB_CTCPORT), l
     ld (ix+SMPB_CTCPORT+1), h
     ld (ix+SMPB_DACPORT), DAC_PORT
+    ld (ix+SMPB_DACL), DAC1_L_PORT
+    ld (ix+SMPB_DACR), DAC1_R_PORT
+    ld hl, IM2_CTC_STUB+1            ; feeder vector cell: the stub's JP target
+    ld (ix+SMPB_VEC), l
+    ld (ix+SMPB_VEC+1), h
     ld hl, sfxWin0                   ; this channel's window descriptor
     ld (ix+SMPB_WINTAB), l
     ld (ix+SMPB_WINTAB+1), h
@@ -1924,6 +1929,11 @@ aud_sfx_init:
     ld (ix+SMPB_CTCPORT), l
     ld (ix+SMPB_CTCPORT+1), h
     ld (ix+SMPB_DACPORT), DAC2_PORT
+    ld (ix+SMPB_DACL), DAC2_L_PORT
+    ld (ix+SMPB_DACR), DAC2_R_PORT
+    ld hl, IM2_TABLE + IM2_CTC2_VEC  ; feeder vector cell: the table entry
+    ld (ix+SMPB_VEC), l
+    ld (ix+SMPB_VEC+1), h
     ld hl, sfxWin1
     ld (ix+SMPB_WINTAB), l
     ld (ix+SMPB_WINTAB+1), h
