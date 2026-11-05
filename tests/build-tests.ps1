@@ -1273,12 +1273,12 @@ function Assert-BankAllocCensus {
 
 function Assert-KitAudioDocs {
     # Stereo SFX Task 7: the kit audio page documents stereo, subs 17-20
-    # and the 15625 Hz recommendation, and carries no 16000 Hz rate.
+    # and the 15625 Hz recommendation, and carries no 16000 rate.
     $t = [IO.File]::ReadAllText("$root\authoring-kit\docs\audio.html")
     foreach ($need in 'SFX n 17', 'SFX n 18', 'SFX n 19', 'SFX n 20', 'stereo', '15625') {
         if (-not $t.Contains($need)) { throw "KITAUDIO: audio.html lacks '$need'" }
     }
-    if ($t.Contains('16000 Hz')) { throw "KITAUDIO: audio.html still mentions 16000 Hz" }
+    if ($t.Contains('16000')) { throw "KITAUDIO: audio.html still mentions 16000" }
     "KITAUDIO: audio.html documents SFX n 17-20, stereo and 15625 Hz, no 16000 Hz"
 }
 
@@ -2167,6 +2167,29 @@ function Assert-SfxRingLayout {
     "SFXRING: rings `$4000/`$4800 x 2048, tables `$7C00-`$7FFF, NR `$84 bit 2 RMW present"
 }
 
+function Read-SldSymbols {
+    # name -> @(page, address) from build\nextdaad.sld; fails if the sld is
+    # missing or older than build\nextdaad.nex.
+    $sld = "$root\build\nextdaad.sld"; $nexp = "$root\build\nextdaad.nex"
+    if (-not (Test-Path $sld)) { throw "build\nextdaad.sld missing (run .\build.ps1 first)" }
+    if ((Test-Path $nexp) -and (Get-Item $sld).LastWriteTime -lt (Get-Item $nexp).LastWriteTime.AddSeconds(-5)) { throw "build\nextdaad.sld is older than build\nextdaad.nex (stale symbols)" }
+    $sym = @{}
+    foreach ($l in [IO.File]::ReadAllLines($sld)) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
+    }
+    $sym
+}
+
+function Get-NexBankOffset {
+    # File offset of 16K bank $bank in the NEX, or -1 if absent.
+    param([byte[]]$nex, [int]$bank)
+    if ($nex[10] -ne 0) { throw "NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
+    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
+    $i = [array]::IndexOf($present, $bank)
+    if ($i -lt 0) { -1 } else { 512 + 16384 * $i }
+}
+
 function Assert-SfxPairFeeders {
     # Stereo SFX Task 2: ctc_isr_pair/ctc2_isr_pair resident, each driving its
     # soundrive-2 pair. Scan limited to the resident bank: video.asm's
@@ -2179,14 +2202,9 @@ function Assert-SfxPairFeeders {
         if (-not $m.Success) { throw "SFXPAIR: $k equate missing in nextdaad.inc" }
         $eq[$k] = [Convert]::ToInt32($m.Groups[1].Value, 16)
     }
-    $sym = @{}
-    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
-        $p = $l -split '\|'
-        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
-    }
-    if ($nex[10] -ne 0) { throw "SFXPAIR: NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
-    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
-    $resOff = 512 + 16384 * [array]::IndexOf($present, 2)
+    $sym = Read-SldSymbols
+    $resOff = Get-NexBankOffset $nex 2
+    if ($resOff -lt 0) { throw "SFXPAIR: bank 2 not present in the NEX" }
     $lo = $eq['CODE_ORG']; $hi = $eq['RESIDENT_LIMIT']
     $res = New-Object byte[] ($hi - $lo)
     [array]::Copy($nex, $resOff, $res, 0, $hi - $lo)
@@ -2206,7 +2224,9 @@ function Assert-SfxPairFeeders {
     # page 48 (bank 24 low half) code: start/stop FLAGS masks keep bits 6/7
     $p48Len = $eq['AUD_SFB_ORG'] - $eq['AUD_PLAYER_ORG']
     $p48 = New-Object byte[] $p48Len
-    [array]::Copy($nex, 512 + 16384 * [array]::IndexOf($present, 24), $p48, 0, $p48Len)
+    $b24 = Get-NexBankOffset $nex 24
+    if ($b24 -lt 0) { throw "SFXPAIR: bank 24 not present in the NEX" }
+    [array]::Copy($nex, $b24, $p48, 0, $p48Len)
     foreach ($mk in @(@{ n = 'aud_smp_start and %11111100'; b = 0xFC }, @{ n = 'aud_smp_stop and %11101000'; b = 0xE8 })) {
         if (-not (Find-Bytes $p48 ([byte[]]@(0xE6, $mk.b)))) { throw "SFXPAIR: '$($mk.n)' (E6 $('{0:X2}' -f $mk.b)) not in page 48" }
     }
@@ -2225,11 +2245,7 @@ function Assert-SfxTabCells {
         if (-not $m.Success) { throw "SFXTAB: $k equate missing in nextdaad.inc" }
         $eq[$k] = [Convert]::ToInt32($m.Groups[1].Value, 16)
     }
-    $sym = @{}
-    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
-        $p = $l -split '\|'
-        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
-    }
+    $sym = Read-SldSymbols
     if (-not $sym.ContainsKey('sfx_page_base')) { throw "SFXTAB: sfx_page_base not in build\nextdaad.sld" }
     $sfxPg = $sym['sfx_page_base'][0]
     foreach ($n in @('sfxVol', 'sfxPan', 'sfxTabMode', 'sfx_tab_build', 'sfx_xfer_byte', 'sfx_xfer_pair', 'sfx_xfer_expand')) {
@@ -2249,12 +2265,19 @@ function Assert-SfxTabCells {
         $v = $sym[$k][1]
         if ($v -gt $lo -and $v -lt $hi) { $hi = $v }
     }
-    if ($nex[10] -ne 0) { throw "SFXTAB: NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
-    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
+    $b24 = Get-NexBankOffset $nex 24
+    if ($b24 -lt 0) { throw "SFXTAB: bank 24 not present in the NEX" }
     $p48 = New-Object byte[] ($hi - $lo)
-    [array]::Copy($nex, 512 + 16384 * [array]::IndexOf($present, 24) + ($lo - $eq['AUD_PLAYER_ORG']), $p48, 0, $hi - $lo)
+    [array]::Copy($nex, $b24 + ($lo - $eq['AUD_PLAYER_ORG']), $p48, 0, $hi - $lo)
     $ldir = (Find-ByteRuns $p48 ([byte[]]@(0xED, 0xB0))).Count
     if ($ldir -ne 1) { throw ("SFXTAB: aud_smp_copy ({0:X4}-{1:X4}) holds {2} LDIR (ED B0), expected exactly 1" -f $lo, $hi, $ldir) }
+    $vo = Get-NexBankOffset $nex ([int][Math]::Floor($sfxPg / 2))
+    if ($vo -lt 0) { throw "SFXTAB: SFX_PAGE bank not present in the NEX" }
+    $vb = $vo + 8192 * ($sfxPg % 2) - $eq['OVL_ORG']
+    foreach ($c in @(@{ n = 'sfxVol'; v = 0xFF }, @{ n = 'sfxPan'; v = 0x80 }, @{ n = 'sfxTabMode'; v = 0xFF })) {
+        $o = $vb + $sym[$c.n][1]
+        if ($nex[$o] -ne $c.v -or $nex[$o + 1] -ne $c.v) { throw ("SFXTAB: {0} assembles as {1:X2},{2:X2}, expected {3:X2},{3:X2}" -f $c.n, $nex[$o], $nex[$o + 1], $c.v) }
+    }
     $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
     "SFXTAB ($variant): level cells + transfer bodies on SFX_PAGE $sfxPg, sfxTabOn resident, one LDIR in aud_smp_copy $('{0:X4}' -f $lo)-$('{0:X4}' -f $hi)"
 }
@@ -2287,11 +2310,7 @@ function Assert-SfxModeSites {
     $m = [regex]::Match($inc, '(?m)^OVL_ORG\s+equ\s+\$([0-9A-Fa-f]+)')
     if (-not $m.Success) { throw "SFXMODE: OVL_ORG equate missing in nextdaad.inc" }
     $ovl = [Convert]::ToInt32($m.Groups[1].Value, 16)
-    $sym = @{}
-    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
-        $p = $l -split '\|'
-        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
-    }
+    $sym = Read-SldSymbols
     foreach ($n in @('sfx_page_base', 'sfx_mode_decide', 'sfxTabMode')) {
         if (-not $sym.ContainsKey($n)) { throw "SFXMODE: $n not in build\nextdaad.sld" }
     }
@@ -2311,11 +2330,9 @@ function Assert-SfxModeSites {
         }
     }
     if ($total -ne 2) { throw "SFXMODE: $total references to sfx_mode_decide across src, expected exactly 2" }
-    if ($nex[10] -ne 0) { throw "SFXMODE: NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
-    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
-    $bi = [array]::IndexOf($present, [int][Math]::Floor($sfxPg / 2))
-    if ($bi -lt 0) { throw "SFXMODE: bank $([Math]::Floor($sfxPg / 2)) not present in the NEX" }
-    $off = 512 + 16384 * $bi + 8192 * ($sfxPg % 2) + ($sym['sfxTabMode'][1] - $ovl)
+    $bo = Get-NexBankOffset $nex ([int][Math]::Floor($sfxPg / 2))
+    if ($bo -lt 0) { throw "SFXMODE: bank $([Math]::Floor($sfxPg / 2)) not present in the NEX" }
+    $off = $bo + 8192 * ($sfxPg % 2) + ($sym['sfxTabMode'][1] - $ovl)
     if ($nex[$off] -ne 0xFF -or $nex[$off + 1] -ne 0xFF) { throw ("SFXMODE: sfxTabMode assembles as {0:X2},{1:X2}, expected FF,FF (never built)" -f $nex[$off], $nex[$off + 1]) }
     $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
     "SFXMODE ($variant): sfx_mode_decide on SFX_PAGE $sfxPg, two start-commit sites, sfxTabMode FF,FF"
@@ -2351,11 +2368,7 @@ function Assert-SfxLevelSubs {
     # labels exist in the sld, sfx_level_reset has one reference (h_sfx's
     # .stopfx), and the four condacts assemble as 18,n,sub in order.
     param([byte[]]$nex)
-    $names = @{}
-    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
-        $p = $l -split '\|'
-        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $names[$p[7]] = $true }
-    }
+    $names = Read-SldSymbols
     foreach ($n in @('h_sfx.level', 'sfx_level_set', 'sfx_level_reset')) {
         if (-not $names.ContainsKey($n)) { throw "SFXLEVEL: $n not in build\nextdaad.sld" }
     }

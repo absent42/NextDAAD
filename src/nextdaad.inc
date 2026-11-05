@@ -671,7 +671,7 @@ AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
 ; prescaler crossover is per-video-mode (clk16>>8), computed in aud_ctc_params -
 ; a fixed constant would clamp sharply on the faster clocks
 AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
-AUD_RATE_MAX    equ 20000   ; the 2K ring holds 2 frames of this rate (PAIR)
+AUD_RATE_MAX    equ 20000   ; 2K ring: 2.56 frames of this rate in PAIR mode, 5.12 in BYTE mode
 ; Effects stream through a fixed 24K window: no design element caps
 ; effect length against RAM (AUD_SMP_MAX, the old 1MB payload ceiling,
 ; went with it - SP18 item 7 Task 5). aud_load_wav keeps only the
@@ -706,7 +706,7 @@ AUD_STAGE2_RING equ 2048    ; same power-of-two ring shape as AUD_STAGE_RING
     ASSERT AUD_STAGE2_RING >= 256 && (AUD_STAGE2_RING & (AUD_STAGE2_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
     ASSERT (AUD_STAGE2 & (AUD_STAGE2_RING-1)) == 0
     ASSERT AUD_STAGE2_RING >= 2*(2*AUD_RATE_MAX/50)
-    ASSERT AUD_STAGE2 + AUD_STAGE2_RING <= $5000
+    ; ring end vs SPR_DBG_SNAP asserted after its definition
 
 ; Level tables (bank 5 upper region, always mapped): 4 x 256 bytes at
 ; $7C00-$7FFF, filled by the volume code.
@@ -1391,7 +1391,8 @@ PAL_SPR_EDIT    equ %00100000 ; NR $43 bits 6-4 = 010: sprite palette 0 for edit
 SPR_NR15_ON     equ %01000011 ; NR $15: bit 6 sprite 0 on top, bit 1 over border, bit 0 enable
 SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped
                             ; outside video playback, clear of the
-                            ; AUD_STAGE2 ring ($4400-$47FF)
+                            ; AUD_STAGE2 ring ($4800-$4FFF)
+    ASSERT AUD_STAGE2 + AUD_STAGE2_RING <= SPR_DBG_SNAP
 SPR_DBG_LEN     equ 495     ; snapshot bytes: sig 4, seq 1, block 488, hook 1, seq 1
 SPR_STAGE       equ $5200   ; 1K frame-table staging while slot 6 holds the image;
                             ; dead ULA pixel window like SPR_DBG_SNAP and AUD_STAGE2

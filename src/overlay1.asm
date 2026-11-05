@@ -2699,11 +2699,11 @@ h_sfx:                          ; 18: B = n, C = sub-command
     jr .stopgo
 .stopfx:                        ; 5: the documented SUPERSET - both
     push bc                     ; sampled channels AND the AY effect,
-    ld hl, sfx_level_reset      ; both pins released, levels reset
+    ld hl, sfx_level_reset      ; levels reset,
     call sfx_page_call
     pop bc
     ld hl, audRequest
-    set 2, (hl)                 ; and both pins released
+    set 2, (hl)                 ; both pins released
     ld a, 3
 .stopgo:                        ; A = channel mask, bit 0 ch1, bit 1 ch2
     ld e, a

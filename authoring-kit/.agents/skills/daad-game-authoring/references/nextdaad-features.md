@@ -121,8 +121,8 @@ becomes `001.AKY`).
 - Arkos Tracker 3 songs must be composed for 3 PSGs (9 channels). Others
   convert but play silently. A song over 10208 bytes must be renamed
   `STREAM_NNN.aks`. The effects bank is at most 2048 bytes.
-- WAV: mono, 8-bit unsigned PCM, 3500-20000 Hz; 15625 Hz recommended. The
-  build does not resample.
+- WAV: mono or stereo, 8-bit unsigned PCM (stereo needs an even data length),
+  3500-20000 Hz; 15625 Hz recommended. The build does not resample.
 - Samples and AY effects share numbers: `SFX n 1` plays `NNN.WAV` if it
   exists, else AY effect n from `GAME.SFB`. 255 always plays from the bank.
 - `RESTART`, `QUIT` and play-again leave sound running; stop music with
@@ -137,7 +137,7 @@ becomes `001.AKY`).
 | 1 | PLAYSFX | Play WAV n, else AY effect n, once |
 | 2 | PLAYSFXL | Same, looped |
 | 3 / 4 | PLAYSFXF / PLAYSFXFL | Same as 1 / 2 |
-| 5 | STOPSFX | Stop all effects, release channel reservations |
+| 5 | STOPSFX | Stop all effects, release channel reservations, reset channel volume/pan to defaults |
 | 6 | PLAYDRO | Play song n once (255 = the game theme) |
 | 7 | PLAYDROL | Play song n looped |
 | 8 | STOPDRO | Stop music |
@@ -146,6 +146,8 @@ becomes `001.AKY`).
 | 11 / 12 | | WAV n once / looped, reserved to sample channel 1 |
 | 13 / 14 | | WAV n once / looped, reserved to sample channel 2 |
 | 15 / 16 | | Stop and release channel 1 / 2 |
+| 17 / 18 | | Channel 1 / 2 volume n, 0-255 (default 255) |
+| 19 / 20 | | Channel 1 / 2 pan n: 0 left, 128 centre, 255 right (default 128) |
 
 The DAAD Ready manual spells one symbol `FPLAYFLIL`; that does not compile.
 Use the numbers.

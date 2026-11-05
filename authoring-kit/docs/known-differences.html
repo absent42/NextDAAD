@@ -130,7 +130,7 @@ audio work belongs in the <code>#int</code> hook driving hardware directly (see
 <h3 id="sfx-subcommands-17-20-are-nextdaad-extensions">SFX sub-commands 17-20 are NextDAAD extensions</h3>
 <p><code>SFX n 17</code> to <code>SFX n 20</code> set the volume and pan of the two sample
 channels (see <a href="audio.html#volume-and-pan">Audio</a>). They exist only in
-NextDAAD; other DAAD interpreters treat them as no-ops or errors, so a
+NextDAAD; other DAAD interpreters do not implement them, so a
 game that sets volume or pan will not sound the same there.</p>
 <h3 id="call-only-reaches-addresses-inside-your-own-loaded-xbn">CALL only reaches addresses inside your own loaded XBN</h3>
 <p><code>CALL lsb msb</code> only runs code that falls inside the extent of the

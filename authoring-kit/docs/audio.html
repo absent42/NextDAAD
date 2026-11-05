@@ -57,7 +57,7 @@ not compile. The compiler defines <code>PLAYFLI</code> (9) and <code>PLAYFLIL</c
 <tr>
 <td>5</td>
 <td><code>STOPSFX</code></td>
-<td>Stop whichever effect kind is currently active (sample and AY).</td>
+<td>Stop whichever effect kind is currently active (sample and AY). Also resets both channels' volume and pan to full volume and centre.</td>
 </tr>
 <tr>
 <td>6</td>
@@ -94,7 +94,8 @@ Appendix D and the compiler predefines no symbolic names for them, so
 write the raw number. They let a game reserve one of the two sample
 channels for an effect rather than letting sub 1/2 pick automatically.
 See <a href="#two-sample-channels">Two sample channels</a> below for the full
-explanation, including what a reservation does and does not survive.</p>
+explanation, including what a reservation does and does not survive.
+Sub-commands 17-20 set volume and pan; see <a href="#volume-and-pan">Volume and pan</a>.</p>
 <table>
 <thead>
 <tr>
@@ -318,7 +319,7 @@ pan at boot and on <code>SFX n 5</code> (stop everything). Stopping one channel 
 <code>SFX 0 15</code> or <code>SFX 0 16</code> does not reset them. Setting a fade-out and then
 <code>SFX n 5</code> therefore leaves both channels ready for the next scene.</p>
 <p>Pan works on mono files and on stereo files. A volume change takes effect
-within about a tenth of a second, once the sound already buffered has
+within a fraction of a second (about a tenth at 20000 Hz, longer at lower rates), once the sound already buffered has
 played out. A pan change does the same, with one exception: a channel
 that is playing a mono file centred cannot change how it plays in the
 middle of the effect, so a pan change there takes effect at that
@@ -326,7 +327,7 @@ channel's NEXT start. On a stereo file, or on a mono file that is already
 panned off centre, a pan change applies like volume.</p>
 <p>Cost: while a channel's volume is below full or its pan is off centre,
 the interpreter does extra per-sample work each frame. At full volume and
-centre pan the cost is the same as before these sub-commands existed.</p>
+centre pan the cost is the same as before for the same file type.</p>
 <h2 id="length-and-streaming">Length and streaming</h2>
 <p>An effect's length is no longer capped by memory - a WAV of any size
 plays. Files up to 24K per channel stage entirely into a fixed area

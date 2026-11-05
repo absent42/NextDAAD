@@ -1175,15 +1175,9 @@ sfx_tab_fill:
     ret
 
 ; ---------------------------------------------------------------------
-; sfx_cp_fill: aud_smp_copy's hop, after its phase A snapshot (page 48 in
-; slot 6, this page in slot 7). BYTE mode with identity tables returns at
-; once and page 48 runs its LDIR loop. Every other channel is filled here
-; through smpCp* and returns with smpCpTo = 0, so aud_smp_copy drops to
-; .filldone, which restores slot 7 and writes smpCp* back to the block.
-; Mono-expand halves the toFill seed, the backpressure clamp and each
-; segment's dstRoom (source bytes, two ring bytes each); stereo rounds the
-; backpressure clamp down to a pair. In: IX = channel block, B = DEBUG
-; underrun marker. Corrupts all but IX, IY.
+; sfx_cp_fill: aud_smp_copy's hop (page 48 in slot 6, this page in slot 7).
+; BYTE + identity tables returns at once; else fills via smpCp* with smpCpTo = 0.
+; In: IX = channel block, B = DEBUG underrun marker. Corrupts all but IX, IY.
 sfx_cp_fill:
  IFDEF DEBUG
     ld a, b
