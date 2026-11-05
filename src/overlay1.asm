@@ -2582,18 +2582,17 @@ h_sfx:                          ; 18: B = n, C = sub-command
  ENDIF
     ret
 .smp1:                          ; sample probe first, play once
-    xor a
+    ld c, 0                     ; C = loop flag, committed at .alloc
     jr .smpset
 .smp2:                          ; sample probe first, looped
-    ld a, 1
+    ld c, 1
 .smpset:
-    ld (audReqSmpLoop), a
     xor a                       ; request 0 = auto-allocate a channel
     jr .smpgo
 .pinplay:                       ; 11-14 arrive as 0-3: bit 0 = looped,
     ld e, a                     ; bit 1 = channel 2
     and 1
-    ld (audReqSmpLoop), a
+    ld c, a                     ; C = loop flag, committed at .alloc
     srl e
     inc e                       ; E = 1 (channel 1) or 2 (channel 2), the
     ld a, e                     ; allocator's pin request codes
@@ -2629,6 +2628,9 @@ h_sfx:                          ; 18: B = n, C = sub-command
     halt
     jr .pend
 .alloc:
+    ld a, c                     ; commit the loop flag only now: a store
+    ld (audReqSmpLoop), a       ; before .pend would retarget the start
+                                ; still pending from an earlier condact
     ld a, (sfxReq)              ; resolve the channel (SFX_PAGE, through
     call sfx_alloc_call         ; the resident trampoline). CF = both
     ret c                       ; channels pinned: trigger dropped, with
