@@ -2061,6 +2061,36 @@ function Find-Bytes {
     return (Find-ByteRuns $hay $needle).Count -gt 0
 }
 
+function Assert-SfxRingLayout {
+    # Stereo SFX Task 1: 2K DAC rings at $4000/$4800, level tables reserved
+    # at $7C00-$7FFF, NR $84 bit 2 set (read-modify-write).
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $want = [ordered]@{
+        AUD_STAGE0 = 0x4000; AUD_STAGE2 = 0x4800
+        AUD_STAGE_RING = 2048; AUD_STAGE2_RING = 2048
+        SFX_TAB1_L = 0x7C00; SFX_TAB1_R = 0x7D00; SFX_TAB2_L = 0x7E00; SFX_TAB2_R = 0x7F00
+    }
+    foreach ($k in $want.Keys) {
+        $m = [regex]::Match($inc, ('(?m)^' + $k + '\s+equ\s+(\$[0-9A-Fa-f]+|\d+)'))
+        if (-not $m.Success) { throw "SFXRING: $k equate missing in nextdaad.inc" }
+        $t = $m.Groups[1].Value
+        $v = if ($t.StartsWith('$')) { [Convert]::ToInt32($t.Substring(1), 16) } else { [int]$t }
+        if ($v -ne $want[$k]) { throw "SFXRING: $k is $v, expected $($want[$k])" }
+    }
+    # ld e,$84 / call nr_read / or 4 / nextreg $84,a
+    $hits = Find-ByteRuns $nex ([byte[]]@(0x1E, 0x84))
+    $ok = $false
+    foreach ($h in $hits) {
+        $end = [Math]::Min($h + 2 + 8, $nex.Length - 5)
+        for ($i = $h + 2; $i -le $end; $i++) {
+            if ($nex[$i] -eq 0xF6 -and $nex[$i+1] -eq 0x04 -and $nex[$i+2] -eq 0xED -and $nex[$i+3] -eq 0x92 -and $nex[$i+4] -eq 0x84) { $ok = $true }
+        }
+    }
+    if (-not $ok) { throw "SFXRING: NR `$84 read-modify-write (or 4) not found in NEX" }
+    "SFXRING: rings `$4000/`$4800 x 2048, tables `$7C00-`$7FFF, NR `$84 bit 2 RMW present"
+}
+
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
@@ -3068,6 +3098,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     # SP18 item 7 / Task 10 landed channel 2's CTC plumbing, so this
     # now runs unconditionally on every harness invocation.
     Assert-SfxDualChannel $nex
+    Assert-SfxRingLayout $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

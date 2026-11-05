@@ -1902,7 +1902,7 @@ aud_sfx_init:
                                      ; must not offer a free rewind into a
                                      ; window this boot never staged
     ; Channel 2 (SP18 item 7 Task 11), the same members with its own
-    ; hardware and its own window/cells: the AUD_STAGE2 ring (same 1K
+    ; hardware and its own window/cells: the AUD_STAGE2 ring (same 2K
     ; power-of-two shape, so the same wrap mask), the smp2* resident
     ; cursors ctc2_isr plays, CTC channel 1 and DAC2_PORT ($B3, DACs
     ; B+C), window descriptor sfxWin1 (pages 53/54/55) and cell group

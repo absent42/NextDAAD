@@ -635,6 +635,7 @@ NR_PERIPH2      equ $06     ; peripheral 2: bit 3 = Multiface enable - the raw
                             ; lock up)
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
+NR_PERIPH_PORTS2 equ $84    ; internal port enables 2: bit 2 = stereo sample mode
 NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6); a write
                             ; of 7 stores 0, so this reads back 0-6 only -
                             ; selects the FPGA system clock the CTC divides
@@ -681,31 +682,34 @@ SMP_FLOOR_LAST  equ 27      ; Task 5 these hold the two channels' effect
                             ; pass (still used by the AYS stream client)
                             ; always skips them and takes pool banks
 SMP_PAGE_FIRST  equ (BANK_AUDIO_FIRST+1)*2  ; next bank's lower 8K; floor banks' first page
-AUD_STAGE0      equ $7C00   ; ring base, bank 5 upper region - ALWAYS mapped
-                            ; (MMU3), above divMMC's $0000-$3FFF, free after
-                            ; TM_DEFS ($7400-$7BFF); ends exactly at $8000
-AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
+AUD_STAGE0      equ $4000   ; ring base, bank 5 lower region (classic ULA
+                            ; pixel area, dead once tilemap/Layer 2 are up);
+                            ; ALWAYS mapped (MMU2), above divMMC's $0000-$3FFF
+AUD_STAGE_RING  equ 2048    ; power-of-two ring $4000-$47FF: the CTC ISR plays
                             ; smpPlayPtr, the 50Hz tick refills SMPB_W from the
-                            ; page-table source. 1K = 51ms at 20kHz - ample vs
-                            ; the 20ms refill period. Base $7C00 is 1K-aligned so
-                            ; the ISR wraps with a branchless AND/OR mask on H.
+                            ; page-table source. Base is 2K-aligned so the ISR
+                            ; wraps with a branchless AND/OR mask on H.
     ASSERT AUD_STAGE_RING >= 256 && (AUD_STAGE_RING & (AUD_STAGE_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
-    ASSERT AUD_STAGE0 + AUD_STAGE_RING == $8000   ; ISR wrap tests H == $80
-    ASSERT AUD_STAGE_RING >= 2*(AUD_RATE_MAX/50)  ; ring > 1 frame of consumption
+    ASSERT (AUD_STAGE0 & (AUD_STAGE_RING-1)) == 0   ; ring base aligned to its size
+    ASSERT AUD_STAGE_RING >= 2*(2*AUD_RATE_MAX/50)  ; PAIR mode at the ceiling keeps two frames
                             ; so a tick always refills before the ISR underruns
 
-; SP18 item 7 Task 10: channel 2's own 1K DAC ring. AUD_STAGE2 is a
-; CANDIDATE address, not yet pinned - Task 9's static sweep clears
-; $4400-$47FF (inside the classic ULA pixel screen, believed dead once
-; the tilemap/Layer 2 are up) as buildable, but OP1 stays open pending
-; the owner's V1 silicon placement check on real hardware.
-; Shippability gate, not a build gate: ctc2_isr reads/writes this
-; range regardless, and nothing DRIVES channel 2 until Task 11.
-AUD_STAGE2      equ $4400   ; candidate - OP1/V1 gate before shipping
-AUD_STAGE2_RING equ 1024    ; same power-of-two ring shape as AUD_STAGE_RING
+; Channel 2's own 2K DAC ring, directly above channel 1's. Margin: 800 bytes
+; per frame at 20000 Hz PAIR, so 2048 holds 2.56 frames.
+AUD_STAGE2      equ $4800
+AUD_STAGE2_RING equ 2048    ; same power-of-two ring shape as AUD_STAGE_RING
     ASSERT AUD_STAGE2_RING >= 256 && (AUD_STAGE2_RING & (AUD_STAGE2_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
     ASSERT (AUD_STAGE2 & (AUD_STAGE2_RING-1)) == 0
-    ASSERT AUD_STAGE2_RING >= 2*(AUD_RATE_MAX/50)
+    ASSERT AUD_STAGE2_RING >= 2*(2*AUD_RATE_MAX/50)
+    ASSERT AUD_STAGE2 + AUD_STAGE2_RING <= $5000
+
+; Level tables (bank 5 upper region, always mapped): 4 x 256 bytes at
+; $7C00-$7FFF, filled by the volume code.
+SFX_TAB1_L      equ $7C00
+SFX_TAB1_R      equ $7D00
+SFX_TAB2_L      equ $7E00
+SFX_TAB2_R      equ $7F00
+    ASSERT SFX_TAB2_R + 256 == $8000
 
 ; --- SP18 item 7: per-channel sampled-effect pump state ----------------
 ; One block per channel, in AUD_PAGE_LO (48) data space - pinned in slot 6

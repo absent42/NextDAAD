@@ -414,7 +414,7 @@ aud_psg_silence:
 ; Start the sample staged in the channel's page window by aud_load_wav /
 ; sfx_stream_open. Runs in ISR context.
 ; SP10 CTC pivot (supersedes the SP8/f-prime DMA ring - three DMA designs died
-; on 50Hz block-quantisation gaps): a 1K power-of-two ring at $7C00 is played
+; on 50Hz block-quantisation gaps): a 2K power-of-two ring at $4000 is played
 ; one byte per CTC interrupt by ctc_isr (raw out to $DF) and refilled from the
 ; banked page-table source by aud_smp_tick at 50Hz. No DMA, no byte-counter
 ; reads, no per-frame reprogram gap - the CTC self-paces the DAC. SMPB_W is
@@ -758,7 +758,7 @@ aud_min16:
 ; SLOT DISCIPLINE: phase A snapshots the source position + copy plan into
 ; slot-6 (page 48) scratch, reading the channel block (also page 48, slot 6 -
 ; IX-relative, no slot dependency); phase B windows source pages at $E000 via
-; slot 7 and copies to the bank-5 ring ($7C00.., MMU3 always mapped) reading
+; slot 7 and copies to the bank-5 ring ($4000.., MMU2 always mapped) reading
 ; the plan from scratch; phase C restores slot 7 = AUD_PAGE_HI (required by
 ; the rest of aud_tick, which reads audFlags/audBeep*/audSongNum/audPlayerUp
 ; at $FFE0 - not by this routine's own state any more) and writes the
@@ -1613,7 +1613,7 @@ aud_psg3_write:
 ; Both are captured so a divergence between them is itself evidence.
 ; ALL THREE PSGs, always - the PSG-park precedent (d79841c).
 ;
-; WHY THE RING. AUD_STAGE0 is bank 5, MMU3, always mapped, so the block
+; WHY THE RING. AUD_STAGE0 is bank 5, MMU2, always mapped, so the block
 ; is readable from mainline context without mapping bank 24; and it is
 ; dead memory whenever no sample is playing. The SMPB_FLAGS guard below
 ; makes that conditional explicit - with a sample active the ring is the

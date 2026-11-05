@@ -3,7 +3,7 @@
 # Headless, scripted, no ears involved: this reproduces
 #     boot autoplay -> STOPM -> MUSIC restart
 # under ZEsarUX and dumps the DEBUG build's per-frame AY mirror
-# (src\audio\audiobank.asm aud_dbg_snap, at AUD_STAGE0 $7C00) at each
+# (src\audio\audiobank.asm aud_dbg_snap, at AUD_STAGE0 $4000) at each
 # point, then does the same on a fresh boot with NO stop/restart as the
 # control. The two are compared at MATCHED SONG PHASE, so a difference
 # in the tables is a difference in state, not in where the tune had got
@@ -61,7 +61,7 @@ NEX = os.path.join(ROOT, "build", "nextdaad.nex")
 SD = os.path.join(ROOT, "sd")
 
 COLLECT_S = 25.0                # collection window per scenario
-SNAP = 0x7C00
+SNAP = 0x4000
 OFF_SEQ = 0x04
 OFF_AY = 0x10
 OFF_ARR = 0x3A

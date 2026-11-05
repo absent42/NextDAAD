@@ -3834,9 +3834,9 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
 ; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1): moved from
 ; debug.asm for resident room; reached through extVec vectors 13/14 with
 ; overlay0 mapped. A debugger CALL needs overlay0 in slot 7.
-; V1 silicon instruments for the AUD_STAGE2 candidate: $4400-$47FF (1K)
+; Silicon instruments for the AUD_STAGE2 ring: $4800-$4FFF (2K)
 ; inside the classic ULA pixel screen ($4000-$57FF), believed dead once
-; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
+; the tilemap/Layer 2 are up. RING2FILL primes the ring with a
 ; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
 ; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
 ; via a debugger CALL to the symbol or tests/sfxlong.dsf's R2FILL/
@@ -3851,8 +3851,8 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
 ; call would have its OWN status print corrupt the region under test.
 ; Neither routine calls dbg_cls for the same reason: it unconditionally
 ; clears the WHOLE ULA screen via ula_cls (hardware.asm).
-RING2_BASE equ $4400
-RING2_LEN  equ $0400              ; 1K
+RING2_BASE equ AUD_STAGE2
+RING2_LEN  equ AUD_STAGE2_RING    ; 2K
 RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
                                   ; not scroll
 
