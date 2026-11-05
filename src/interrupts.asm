@@ -222,7 +222,7 @@ im2_isr:
     ;      and its $253B read, or mid-aud_smp_copy with a source page in slot 7 -
     ;      yet does no harm: ctc_isr saves only AF/HL and touches no MMU slot, no
     ;      register-select port, no bank-24 memory (only the resident ring
-    ;      pointers, the always-mapped $7C00 ring, and a raw OUT to the DAC). So
+    ;      pointers, the always-mapped $4000 ring, and a raw OUT to the DAC). So
     ;      the selected register, the slot 6/7 mapping, and AF' all survive intact.
     ;  (3) Only one CTC nest is ever live (period >> its ~196T body), +4 bytes of
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
@@ -372,7 +372,7 @@ im2_isr:
 ; sample rate through its carved IM2 vector. The depacker-safe memory-pointer
 ; variant: saves ONLY AF and HL, touches NO MMU slot, NO register-select pair,
 ; NO banked memory - just the resident ring pointers, the ALWAYS-mapped ring
-; ($7C00, MMU3), and one raw OUT to the DAC. That is what makes it nestable
+; ($4000, MMU2), and one raw OUT to the DAC. That is what makes it nestable
 ; anywhere the frame ISR EIs (mid-tick with bank 24 mapped, mid-copy with a
 ; source page in slot 7, mid-ZX0 depack whose AF' parking is untouched here,
 ; and mid-PLY_AKY_PLAY, whose ret chain runs on akyRetShadow so this ISR's
@@ -408,9 +408,9 @@ ctc_isr:
     jr z, .done
 .adv:
     inc hl
-    ld a, h                              ; branchless 1K-ring wrap ($7C00-$7FFF):
+    ld a, h                              ; branchless 2K-ring wrap ($4000-$47FF):
     and ((AUD_STAGE_RING-1) >> 8)        ; keep the offset's high bits...
-    or (AUD_STAGE0 >> 8)                 ; ...and force the ring base ($8000 -> $7C00)
+    or (AUD_STAGE0 >> 8)                 ; ...and force the ring base ($4800 -> $4000)
     ld h, a
     ld (smpPlayPtr), hl
 .done:
@@ -431,8 +431,8 @@ smpWritePtr: dw AUD_STAGE0
 ; channel 1 through its carved IM2 vector (byte IM2_CTC2_VEC = 8). SAME
 ; CONTRACT as ctc_isr above, verbatim: saves ONLY AF and HL, touches NO
 ; MMU slot, NO register-select pair, NO banked memory - just this
-; channel's resident ring pointers, the ring at AUD_STAGE2 (a candidate
-; address, OP1/V1-gated - see nextdaad.inc), and one raw OUT to
+; channel's resident ring pointers, the ring at AUD_STAGE2 (ring 2,
+; see nextdaad.inc), and one raw OUT to
 ; DAC2_PORT. That is what makes it nestable anywhere the frame ISR EIs,
 ; and it is the sole condition of admission to NR $CD (DMA pre-emption
 ; permission, im2_init) - identical reasoning to ctc_isr's own header,

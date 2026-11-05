@@ -20,6 +20,10 @@ hw_init:
     call nr_read
     or %00001010                ; bit 3 DACs, bit 1 Turbo Sound
     nextreg NR_PERIPH3, a
+    ld e, NR_PERIPH_PORTS2
+    call nr_read
+    or %00000100                ; bit 2 stereo sample mode, RMW keeps the rest
+    nextreg NR_PERIPH_PORTS2, a
     ; NR $06 (Peripheral 2) bits 1:0 - the AUDIO CHIP MODE - is
     ; DELIBERATELY NOT ASSERTED, and this is the record of why, so it
     ; is not re-derived. The primary documentation contradicts itself

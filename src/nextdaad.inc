@@ -622,6 +622,11 @@ DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
 DAC2_PORT       equ $B3     ; DAC B+C combined - centered mono, the second
                             ; pair beside $DF (A+D); em00k's CTCAudio port
                             ; table lists it as valid. Channel 2's DAC port.
+; Soundrive-2 single-DAC ports (NR $84 bit 2), PAIR-mode left/right per channel.
+DAC1_L_PORT     equ $F1     ; DAC A
+DAC1_R_PORT     equ $FB     ; DAC D
+DAC2_L_PORT     equ $F3     ; DAC B
+DAC2_R_PORT     equ $F9     ; DAC C
 ; DAC signedness: UNSIGNED everywhere on the CPU-OUT path. The DAC silence/park
 ; value is the unsigned midpoint $80, unconditionally - there is no build toggle.
 ; Confirmed by FPGA source (soundrive.vhd resets the DACs to $80, sums unsigned),
@@ -635,6 +640,7 @@ NR_PERIPH2      equ $06     ; peripheral 2: bit 3 = Multiface enable - the raw
                             ; lock up)
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
+NR_PERIPH_PORTS2 equ $84    ; internal port enables 2: bit 2 = stereo sample mode
 NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6); a write
                             ; of 7 stores 0, so this reads back 0-6 only -
                             ; selects the FPGA system clock the CTC divides
@@ -665,7 +671,7 @@ AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
 ; prescaler crossover is per-video-mode (clk16>>8), computed in aud_ctc_params -
 ; a fixed constant would clamp sharply on the faster clocks
 AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
-AUD_RATE_MAX    equ 20000   ; the 1K ring holds > 1 frame of this rate
+AUD_RATE_MAX    equ 20000   ; 2K ring: 2.56 frames of this rate in PAIR mode, 5.12 in BYTE mode
 ; Effects stream through a fixed 24K window: no design element caps
 ; effect length against RAM (AUD_SMP_MAX, the old 1MB payload ceiling,
 ; went with it - SP18 item 7 Task 5). aud_load_wav keeps only the
@@ -681,31 +687,34 @@ SMP_FLOOR_LAST  equ 27      ; Task 5 these hold the two channels' effect
                             ; pass (still used by the AYS stream client)
                             ; always skips them and takes pool banks
 SMP_PAGE_FIRST  equ (BANK_AUDIO_FIRST+1)*2  ; next bank's lower 8K; floor banks' first page
-AUD_STAGE0      equ $7C00   ; ring base, bank 5 upper region - ALWAYS mapped
-                            ; (MMU3), above divMMC's $0000-$3FFF, free after
-                            ; TM_DEFS ($7400-$7BFF); ends exactly at $8000
-AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
+AUD_STAGE0      equ $4000   ; ring base, bank 5 lower region (classic ULA
+                            ; pixel area, dead once tilemap/Layer 2 are up);
+                            ; ALWAYS mapped (MMU2), above divMMC's $0000-$3FFF
+AUD_STAGE_RING  equ 2048    ; power-of-two ring $4000-$47FF: the CTC ISR plays
                             ; smpPlayPtr, the 50Hz tick refills SMPB_W from the
-                            ; page-table source. 1K = 51ms at 20kHz - ample vs
-                            ; the 20ms refill period. Base $7C00 is 1K-aligned so
-                            ; the ISR wraps with a branchless AND/OR mask on H.
+                            ; page-table source. Base is 2K-aligned so the ISR
+                            ; wraps with a branchless AND/OR mask on H.
     ASSERT AUD_STAGE_RING >= 256 && (AUD_STAGE_RING & (AUD_STAGE_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
-    ASSERT AUD_STAGE0 + AUD_STAGE_RING == $8000   ; ISR wrap tests H == $80
-    ASSERT AUD_STAGE_RING >= 2*(AUD_RATE_MAX/50)  ; ring > 1 frame of consumption
+    ASSERT (AUD_STAGE0 & (AUD_STAGE_RING-1)) == 0   ; ring base aligned to its size
+    ASSERT AUD_STAGE_RING >= 2*(2*AUD_RATE_MAX/50)  ; PAIR mode at the ceiling keeps two frames
                             ; so a tick always refills before the ISR underruns
 
-; SP18 item 7 Task 10: channel 2's own 1K DAC ring. AUD_STAGE2 is a
-; CANDIDATE address, not yet pinned - Task 9's static sweep clears
-; $4400-$47FF (inside the classic ULA pixel screen, believed dead once
-; the tilemap/Layer 2 are up) as buildable, but OP1 stays open pending
-; the owner's V1 silicon placement check on real hardware.
-; Shippability gate, not a build gate: ctc2_isr reads/writes this
-; range regardless, and nothing DRIVES channel 2 until Task 11.
-AUD_STAGE2      equ $4400   ; candidate - OP1/V1 gate before shipping
-AUD_STAGE2_RING equ 1024    ; same power-of-two ring shape as AUD_STAGE_RING
+; Channel 2's own 2K DAC ring, directly above channel 1's. Margin: 800 bytes
+; per frame at 20000 Hz PAIR, so 2048 holds 2.56 frames.
+AUD_STAGE2      equ $4800
+AUD_STAGE2_RING equ 2048    ; same power-of-two ring shape as AUD_STAGE_RING
     ASSERT AUD_STAGE2_RING >= 256 && (AUD_STAGE2_RING & (AUD_STAGE2_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
     ASSERT (AUD_STAGE2 & (AUD_STAGE2_RING-1)) == 0
-    ASSERT AUD_STAGE2_RING >= 2*(AUD_RATE_MAX/50)
+    ASSERT AUD_STAGE2_RING >= 2*(2*AUD_RATE_MAX/50)
+    ; ring end vs SPR_DBG_SNAP asserted after its definition
+
+; Level tables (bank 5 upper region, always mapped): 4 x 256 bytes at
+; $7C00-$7FFF, filled by the volume code.
+SFX_TAB1_L      equ $7C00
+SFX_TAB1_R      equ $7D00
+SFX_TAB2_L      equ $7E00
+SFX_TAB2_R      equ $7F00
+    ASSERT SFX_TAB2_R + 256 == $8000
 
 ; --- SP18 item 7: per-channel sampled-effect pump state ----------------
 ; One block per channel, in AUD_PAGE_LO (48) data space - pinned in slot 6
@@ -718,8 +727,8 @@ SMPB_REMAIN   equ 4    ; dw+db: 24-bit payload bytes remaining
 SMPB_LEN      equ 7    ; dw+db: 24-bit payload length (loop rewind)
 SMPB_P        equ 10   ; dw: DAC-ring PLAY offset snapshot
 SMPB_W        equ 12   ; dw: DAC-ring WRITE offset
-SMPB_RINGH    equ 14   ; DAC ring base high byte ($7C ch1 / $44 ch2 cand.)
-SMPB_RINGM    equ 15   ; wrap mask high byte ((ring-1)>>8 = $03 for 1K)
+SMPB_RINGH    equ 14   ; DAC ring base high byte ($40 ch1 / $48 ch2)
+SMPB_RINGM    equ 15   ; wrap mask high byte ((ring-1)>>8 = $07 for 2K)
 SMPB_PLAYPTR  equ 16   ; dw: address of the channel's smpPlayPtr (resident)
 SMPB_WRITEPTR equ 18   ; dw: address of the channel's smpWritePtr
 SMPB_CTCPORT  equ 20   ; dw: CTC channel port ($183B / $193B)
@@ -757,9 +766,11 @@ SMPB_RATE     equ 34   ; dw: this effect's WAV sample rate, latched by
                        ;     replaying stale SMPB_CTCCTRL/CTCTC: a mode
                        ;     change between triggers must not replay the
                        ;     old pitch.
-SMPB_SIZE     equ 36   ; (was 34 before the 2026-08-10 fresh-TC ruling
-                       ;     added SMPB_RATE; 14 before SP18 item 7
-                       ;     Task 2's parameterisation)
+SMPB_VEC      equ 36   ; dw: this channel's feeder vector cell
+                       ;     (IM2_CTC_STUB+1 / IM2_TABLE+IM2_CTC2_VEC)
+SMPB_DACL     equ 38   ; db: PAIR-mode left DAC port ($F1 / $F3)
+SMPB_DACR     equ 39   ; db: PAIR-mode right DAC port ($FB / $F9)
+SMPB_SIZE     equ 40   ; (36 before stereo SFX added VEC/DACL/DACR)
 ; SMPB_FLAGS bit semantics (settled by the SP18 item 7 Task 5 review
 ; ruling: bits 0/1 are PLAYBACK state, bits 2-4 describe the WINDOW and
 ; the channel's CACHE, and a deliberate stop must not throw the cache
@@ -791,10 +802,15 @@ SMPB_SIZE     equ 36   ; (was 34 before the 2026-08-10 fresh-TC ruling
 ;                    so neither a stop from the video abort nor an error
 ;                    eviction releases it. Owned by the allocator alone -
 ;                    aud_smp_start and aud_smp_stop both preserve it.
+;   bit 6 STEREO   - the staged file is stereo (interleaved L,R).
+;                    Survives a stop.
+;   bit 7 PAIR     - the ring holds L,R pairs: aud_smp_start installs the
+;                    pair feeder, aud_smp_stop parks both DACs. Decided at
+;                    trigger time; survives a stop.
 ; Bits 2-4 are the LOADER's and the REFILLER's, bit 5 the ALLOCATOR's;
-; aud_smp_start preserves 2-5 when it writes bits 0/1; aud_smp_stop keeps
-; bits 3 and 5 and clears the rest; only sfx_stream_open's refusal funnel
-; and an eviction by a DIFFERENT effect number invalidate the cache
+; aud_smp_start preserves 2-7 when it writes bits 0/1; aud_smp_stop keeps
+; bits 3, 5, 6 and 7 and clears the rest; only sfx_stream_open's refusal
+; funnel and an eviction by a DIFFERENT effect number invalidate the cache
 ; (bits 2-4 all cleared, bit 5 untouched).
 ; Distinguishing a stopped-but-cached channel from an idle/empty one is
 ; therefore: bit 3 set = a COMPLETE window is cached; the channel's own
@@ -1150,9 +1166,10 @@ NR_MMU3          equ $53    ; slot 3 ($6000-$7FFF): the session's
                             ; MMU2. Safe by the same freeze arguments:
                             ; the tilemap (bank 5's TM_DEFS/map) is
                             ; hidden+isolated, the sample machinery
-                            ; (AUD_STAGE0 $7C00 ring) is aborted and
-                            ; its CTC vector replaced, and nothing
-                            ; else reads slot 3 while a video plays;
+                            ; is aborted on entry (ring in slot 2,
+                            ; tables at $7C00-$7FFF in slot 3 both
+                            ; idle) and nothing else reads slot 3
+                            ; while a video plays;
                             ; bank 5's CONTENT is untouched - only
                             ; the CPU mapping is borrowed)
 VID_DST_WIN      equ $4000  ; MMU2 dest window base
@@ -1268,6 +1285,10 @@ GFX_SUB_VID_ONCE equ 13
 GFX_SUB_VID_LOOP equ 14
 SFX_SUB_VID_ONCE equ 9
 SFX_SUB_VID_LOOP equ 10
+SFX_SUB_VOL1     equ 17          ; n = level/pan 0-255, channel 1/2
+SFX_SUB_VOL2     equ 18
+SFX_SUB_PAN1     equ 19
+SFX_SUB_PAN2     equ 20
 
 GFX_SUB_FONT     equ 16          ; NextDAAD: install font n (0 = base).
                                  ; 0-15 are all allocated by DAAD across
@@ -1370,7 +1391,8 @@ PAL_SPR_EDIT    equ %00100000 ; NR $43 bits 6-4 = 010: sprite palette 0 for edit
 SPR_NR15_ON     equ %01000011 ; NR $15: bit 6 sprite 0 on top, bit 1 over border, bit 0 enable
 SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped
                             ; outside video playback, clear of the
-                            ; AUD_STAGE2 ring ($4400-$47FF)
+                            ; AUD_STAGE2 ring ($4800-$4FFF)
+    ASSERT AUD_STAGE2 + AUD_STAGE2_RING <= SPR_DBG_SNAP
 SPR_DBG_LEN     equ 495     ; snapshot bytes: sig 4, seq 1, block 488, hook 1, seq 1
 SPR_STAGE       equ $5200   ; 1K frame-table staging while slot 6 holds the image;
                             ; dead ULA pixel window like SPR_DBG_SNAP and AUD_STAGE2

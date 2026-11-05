@@ -414,7 +414,7 @@ aud_psg_silence:
 ; Start the sample staged in the channel's page window by aud_load_wav /
 ; sfx_stream_open. Runs in ISR context.
 ; SP10 CTC pivot (supersedes the SP8/f-prime DMA ring - three DMA designs died
-; on 50Hz block-quantisation gaps): a 1K power-of-two ring at $7C00 is played
+; on 50Hz block-quantisation gaps): a 2K power-of-two ring at $4000 is played
 ; one byte per CTC interrupt by ctc_isr (raw out to $DF) and refilled from the
 ; banked page-table source by aud_smp_tick at 50Hz. No DMA, no byte-counter
 ; reads, no per-frame reprogram gap - the CTC self-paces the DAC. SMPB_W is
@@ -450,9 +450,10 @@ aud_smp_start:
     or 1                        ; bit 0 (active)
     ld c, a
     ld a, (ix+SMPB_FLAGS)
-    and %00111100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
-    or c                        ; belong to the loader and the refiller
-                                ; and bit 5 (PINNED) to the allocator -
+    and %11111100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
+    or c                        ; belong to the loader and the refiller,
+                                ; bit 5 (PINNED) to the allocator, 6/7
+                                ; (STEREO/PAIR) to the mode decision -
                                 ; only bits 0/1 are the pump's
     ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
     ld hl, (frameCounter)       ; stamp the start: the allocator steals the
@@ -462,10 +463,11 @@ aud_smp_start:
     ; start, OR mid-restart (a same-tick COMPLETE re-trigger files a start
     ; with no stop, so this can also run against a live CTC) where a torn
     ; cursor write stays inside the ring for both ring bases (high byte
-    ; $7C-$7F / $44-$47, low 00) - at most a one-byte skip / one-tick-
+    ; $40-$47 / $48-$4F, low 00) - at most a one-byte skip / one-tick-
     ; early audio, bounded - so the resident cursor write below needs no
     ; DI bracket either way. Ring base and the cursor address are both
-    ; channel-block members (SMPB_RINGH/PLAYPTR).
+    ; channel-block members (SMPB_RINGH/PLAYPTR). A mode flip of an ACTIVE
+    ; channel files a stop instead, so it never takes this path.
     ld e, (ix+SMPB_PLAYPTR)
     ld d, (ix+SMPB_PLAYPTR+1)   ; DE = &smpPlayPtr (this channel's resident cursor)
     xor a
@@ -506,6 +508,27 @@ aud_smp_start:
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                  ; double soft-reset (unknown -> clean)
+    ; install this mode's feeder while the CTC is stopped (BC stays live):
+    ; channel 1's feeder, plus the channel-2 offset when VEC is channel 2's
+    ld de, ctc_isr
+    ld a, ctc2_isr - ctc_isr
+    bit 7, (ix+SMPB_FLAGS)      ; PAIR mode
+    jr z, .vmode
+    ld de, ctc_isr_pair
+    ld a, ctc2_isr_pair - ctc_isr_pair
+.vmode:
+    ld l, (ix+SMPB_VEC)
+    ld h, (ix+SMPB_VEC+1)
+    bit 0, h                    ; $BD = IM2 table page = channel 2
+    jr z, .vput
+    add de, a
+.vput:
+    ld (hl), e
+    inc hl
+    ld (hl), d
+    ASSERT ctc2_isr > ctc_isr && ctc2_isr - ctc_isr < 256
+    ASSERT ctc2_isr_pair > ctc_isr_pair && ctc2_isr_pair - ctc_isr_pair < 256
+    ASSERT (((IM2_CTC_STUB+1) >> 8) & 1) == 0 && (((IM2_TABLE+IM2_CTC2_VEC) >> 8) & 1) == 1
     ld a, (audReqSmpCtrl)
     ld (ix+SMPB_CTCCTRL), a     ; latch this effect's control word in the block
     out (c), a                  ; int en, timer, /16 or /256, TC follows
@@ -538,11 +561,14 @@ aud_smp_start:
 ; Bit 5 PINNED survives too: a stop is not a release. Only SFX subs 15/16
 ; and sub 5 clear a pin, so the video abort and the refiller's error
 ; eviction (both of which come through here) leave the author's channel
-; reservation standing.
+; reservation standing. Bits 6/7 STEREO/PAIR survive; PAIR also parks
+; both DACs of the channel's pair.
 aud_smp_stop:
     ld a, (ix+SMPB_FLAGS)
-    and %00101000               ; keep COMPLETE and PINNED, drop active/
-    ld (ix+SMPB_FLAGS), a       ; loop/STREAMING/REWIND
+    and %11101000               ; keep COMPLETE, PINNED, STEREO and PAIR,
+    ld (ix+SMPB_FLAGS), a       ; drop active/loop/STREAMING/REWIND
+    rla                         ; CF = PAIR, kept by the flag-neutral ld/out
+                                ; run below until the ret nc
     ld a, AUD_CTC_RESET         ; double soft-reset: timer stops, no more CTC ints
     ld c, (ix+SMPB_CTCPORT)
     ld b, (ix+SMPB_CTCPORT+1)
@@ -555,6 +581,11 @@ aud_smp_stop:
                                  ; B=0 matches the project's own out(c) idiom for
                                  ; this exact port (hardware.asm audio_init:
                                  ; "ld bc, DAC_PORT" zero-extends the 8-bit equ)
+    out (c), a
+    ret nc                      ; PAIR mode: park both DACs of the pair too
+    ld c, (ix+SMPB_DACL)
+    out (c), a
+    ld c, (ix+SMPB_DACR)
     out (c), a
     ret
 
@@ -592,7 +623,8 @@ aud_smp_tick:
     call aud_smp_copy           ; fill [W, P) from source; advance SMPB_W
     ; drain handling BEFORE publish: on play-once exhaustion pad a DAC_SILENCE
     ; guard at the write slot so a nested ctc_isr that catches write reads
-    ; silence, never a stale ring byte.
+    ; silence, never a stale ring byte. PAIR mode: sfx_cp_fill has already
+    ; padded the pair at W and W+1 inside the copy.
     ld a, (ix+SMPB_FLAGS)
     bit 1, a
     jr nz, .publish             ; loop mode: the copy rewinds, never drains
@@ -758,15 +790,21 @@ aud_min16:
 ; SLOT DISCIPLINE: phase A snapshots the source position + copy plan into
 ; slot-6 (page 48) scratch, reading the channel block (also page 48, slot 6 -
 ; IX-relative, no slot dependency); phase B windows source pages at $E000 via
-; slot 7 and copies to the bank-5 ring ($7C00.., MMU3 always mapped) reading
+; slot 7 and copies to the bank-5 ring ($4000.., MMU2 always mapped) reading
 ; the plan from scratch; phase C restores slot 7 = AUD_PAGE_HI (required by
 ; the rest of aud_tick, which reads audFlags/audBeep*/audSongNum/audPlayerUp
 ; at $FFE0 - not by this routine's own state any more) and writes the
 ; advanced position back to the channel block. Page 48 (the window page
 ; list, the channel block and this scratch) stays in slot 6 throughout.
+; PAIR mode and non-identity levels: after phase A, sfx_cp_fill (SFX_PAGE,
+; slot 7) applies the PAIR clamps and runs the fill itself, returning with
+; toFill 0 so phase C writes its advanced smpCp* position back.
 ; Precondition: IX = channel block (sfxChan0 or sfxChan1). Corrupts everything
-; except IX.
+; except IX and IY, including the alternate set.
 aud_smp_copy:
+ IFDEF DEBUG
+    ld b, 0                     ; underrun marker for sfx_cp_fill: nothing
+ ENDIF                          ; in phase A touches BC
     ; --- phase A: toFill = the whole ring; the play-once and backpressure clamps
     ; below cut it to min(source remain, free-1). The CTC self-paces the DAC, so
     ; there is no per-frame chunk/fractional sizing any more - the tick just
@@ -854,24 +892,8 @@ aud_smp_copy:
     add hl, de                  ; restore HL = available
     ld (smpCpTo), hl
  IFDEF DEBUG
-    ; Per-channel underrun counter. Which block IX points at is the only
-    ; thing that distinguishes the two channels in here, so compare it
-    ; rather than infer anything from where the blocks happen to sit
-    ; (sfxChan0 is page-48 data, sfxChan1 is resident).
-    push ix
-    pop hl
-    ld de, sfxChan0
-    or a
-    sbc hl, de
-    ld hl, sfxUnderrun0
-    jr z, .uctr
-    ld hl, sfxUnderrun1
-.uctr:
-    inc (hl)                    ; 16-bit increment through (HL)
-    jr nz, .snap
-    inc hl
-    inc (hl)
- ENDIF
+    inc b                       ; frontier bound: sfx_cp_fill counts it
+ ENDIF                          ; in sfxUnderrun0/1 (SFX_PAGE)
 .snap:
     ld a, (ix+SMPB_TABIDX)
     ld (smpCpIdx), a
@@ -894,6 +916,10 @@ aud_smp_copy:
     ld a, (ix+SMPB_FLAGS)
     and %00000010               ; loop bit
     ld (smpCpLoop), a
+    ; hop: BYTE identity returns here at once; any other channel is filled
+    ; on SFX_PAGE and returns toFill 0. .filldone restores slot 7.
+    nextreg NR_MMU7, SFX_PAGE
+    call sfx_cp_fill
     ; --- phase B: fill loop (copies run through slot 7 = source page) ---
 .fill:
     ld hl, (smpCpTo)
@@ -962,6 +988,7 @@ aud_smp_copy:
     ld bc, (smpCpSeg)
     ldir                        ; copy seg bytes (src slot 7 -> ring bank 5)
     ; advance off (page roll at $2000), dstOff (ring wrap), toFill, remain
+    ; TWIN: sfx_cp_fill (streamfx.asm) repeats this advance - fix both.
     ;
     ; DEPTH INVARIANT (SP18 item 7 Task 5). SMPB_DEPTH counts 512-byte
     ; window blocks that the PRODUCER has staged and the CONSUMER has not
@@ -1081,18 +1108,6 @@ smpCpLoop:  db 0    ; loop-mode snapshot for this copy
 smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
 smpCpBlk:   db 0    ; 512-block index inside the page before a segment,
                     ; held across the advance for the DEPTH debit
-
- IFDEF DEBUG
-; SFX= report row, second field of each channel's triple (SP18 item 7
-; Task 6, per channel since Task 11). Counts the copies on which the
-; streaming frontier clamp above was the binding limit - a real underrun,
-; i.e. the refiller could not keep that channel's window ahead of its
-; DAC. Page-48 data because the PUMP writes them and cannot reach
-; SFX_PAGE; the row printer that reads them lives beside the other
-; counters on SFX_PAGE and runs with page 48 still in slot 6.
-sfxUnderrun0: dw 0
-sfxUnderrun1: dw 0
- ENDIF
 
 ; Per-channel sampled-effect pump state (SP18 item 7), SMPB_* offsets
 ; in nextdaad.inc. Page-48 data space, pinned in slot 6 for the whole of
@@ -1613,7 +1628,7 @@ aud_psg3_write:
 ; Both are captured so a divergence between them is itself evidence.
 ; ALL THREE PSGs, always - the PSG-park precedent (d79841c).
 ;
-; WHY THE RING. AUD_STAGE0 is bank 5, MMU3, always mapped, so the block
+; WHY THE RING. AUD_STAGE0 is bank 5, MMU2, always mapped, so the block
 ; is readable from mainline context without mapping bank 24; and it is
 ; dead memory whenever no sample is playing. The SMPB_FLAGS guard below
 ; makes that conditional explicit - with a sample active the ring is the

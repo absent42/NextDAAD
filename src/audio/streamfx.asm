@@ -971,6 +971,608 @@ aud_clk16_tab:
                                  ; this entry is unreachable
 
 ; ---------------------------------------------------------------------
+; sfx_mode_decide: IX = channel block, A = channel index, DE = rate (unused).
+; SMPB_FLAGS bit 7 PAIR = STEREO or pan off centre. A flip on an ACTIVE
+; channel files its stop first; bit 7 set/res in place (the ISR writes FLAGS).
+; Tables rebuilt when the mode differs from sfxTabMode. Corrupts all but IX, IY.
+sfx_mode_decide:
+    ld e, a
+    ld d, 0                      ; DE = channel index
+    ld c, d                      ; C = 0 BYTE
+    ld hl, sfxPan
+    add hl, de
+    ld a, (hl)
+    cp 128
+    jr nz, .pair                 ; pan off centre
+    bit 6, (ix+SMPB_FLAGS)
+    jr z, .cmp                   ; mono file, centred
+.pair:
+    inc c                        ; C = 1 PAIR
+.cmp:
+    ld a, (ix+SMPB_FLAGS)
+    rlca
+    and 1                        ; A = current bit 7
+    cp c
+    jr z, .tab
+    bit 0, (ix+SMPB_FLAGS)
+    jr z, .flip                  ; idle: CTC off, already stopped
+    ld hl, audRequest
+    ld a, e
+    or a
+    jr z, .stop                  ; channel 1
+    ld hl, audRequest2
+    set 2, (hl)                  ; channel 2's stop
+    jr .flip
+.stop:
+    set 7, (hl)                  ; channel 1's stop
+.flip:
+    bit 0, c
+    jr z, .byte
+    set 7, (ix+SMPB_FLAGS)
+    jr .tab
+.byte:
+    res 7, (ix+SMPB_FLAGS)
+.tab:
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, c
+    cp (hl)
+    ret z                        ; built for this mode already
+    ld (hl), a                   ; store first: sfx_tab_build reads it
+    ld a, e
+    jp sfx_tab_build
+
+; ---------------------------------------------------------------------
+; sfx_level_set: A = 0-3 (vol1 vol2 pan1 pan2), B = value. Stores it, then
+; rebuilds that channel's tables unless no decide has run yet (mode $FF).
+; Corrupts all but IX, IY.
+sfx_level_set:
+    ld e, a
+    ld d, 0
+    ld hl, sfxVol
+    cp 2
+    jr c, .st
+    ld hl, sfxPan - 2
+.st:
+    add hl, de
+    ld (hl), b
+    ld a, e
+    and 1
+    jr sfx_level_chan
+
+; sfx_level_reset: vol 255, pan 128 on both channels, tables rebuilt.
+; Corrupts all but IX, IY.
+sfx_level_reset:
+    ld hl, sfxVol
+    ld a, 255
+    ld (hl), a
+    inc hl
+    ld (hl), a
+    ld hl, sfxPan
+    ld a, 128
+    ld (hl), a
+    inc hl
+    ld (hl), a
+    ld a, 1
+    call sfx_level_chan
+    xor a
+; A = channel 0/1: build its tables if a decide has run (mode != $FF).
+sfx_level_chan:
+    ld e, a
+    ld d, 0
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, (hl)
+    inc a
+    ret z                        ; never decided: the first decide builds
+    ld a, e
+    jp sfx_tab_build
+
+; ---------------------------------------------------------------------
+; Level tables. sfx_tab_build: rebuild channel A's tables (A = 0/1) from
+; sfxVol/sfxPan/sfxTabMode (this page only) and set resident sfxTabOn[A].
+; t[s] = (s*v)>>8 + 128 - ((128*v)>>8): t[128] = 128 at every level.
+; A pan factor of 255 gives v = vol, and v = 255 is the exact identity.
+; Tables first, flag last. Corrupts all but IX, IY.
+sfx_tab_build:
+    ld e, a
+    ld d, 0                      ; DE = channel index
+    ld hl, sfxVol
+    add hl, de
+    ld b, (hl)                   ; B = vol
+    ld hl, sfxPan
+    add hl, de
+    ld c, (hl)                   ; C = pan
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, (hl)                   ; A = 1 PAIR (TL+TR), 0 BYTE (TM)
+    push de
+    push af
+    ld a, e
+    add a, a
+    add a, SFX_TAB1_L >> 8
+    ld h, a                      ; H = TL/TM page, TR = H+1
+    pop af
+    push af
+    or a
+    jr nz, .pair
+    ld a, b                      ; BYTE: v = vol, pan ignored
+    call sfx_tab_fill
+    jr .flag
+.pair:
+    ld a, c
+    cp 129
+    ld a, b                      ; pan <= 128: panL = 255, vL = vol exactly
+    jr c, .pl
+    ld a, c
+    cpl
+    add a, a                     ; else panL = 2*(255-pan)
+    ld d, b
+    ld e, a
+    mul d, e
+    ld a, d                      ; vL = (vol*panL)>>8
+.pl:
+    call sfx_tab_fill
+    inc h
+    ld a, c
+    cp 128
+    ld a, b                      ; pan >= 128: panR = 255, vR = vol exactly
+    jr nc, .pr
+    ld a, c
+    add a, a                     ; else panR = 2*pan
+    ld d, b
+    ld e, a
+    mul d, e
+    ld a, d                      ; vR = (vol*panR)>>8
+.pr:
+    call sfx_tab_fill
+.flag:
+    pop af                       ; A = mode
+    pop de                       ; DE = channel index
+    inc b
+    jr nz, .on                   ; vol < 255
+    or a
+    jr z, .set                   ; BYTE at full volume: identity, A = 0
+    ld a, c
+    sub 128
+    jr z, .set                   ; PAIR centred at full volume: A = 0
+.on:
+    ld a, 1
+.set:
+    ld hl, sfxTabOn
+    add hl, de
+    ld (hl), a
+    ret
+
+; One 256-byte table at H:00 for level A. (128*v)>>8 is v>>1. v = 255
+; writes the identity (the formula would give t[0] = 1).
+; Corrupts AF, DE, L; preserves BC, H.
+sfx_tab_fill:
+    ld l, 0
+    cp 255
+    jr z, .id
+    push bc
+    ld c, a                      ; C = v
+    srl a
+    neg
+    add a, 128
+    ld b, a                      ; B = 128 - ((128*v)>>8)
+.lp:
+    ld d, l
+    ld e, c
+    mul d, e                     ; D = (s*v)>>8
+    ld a, d
+    add a, b
+    ld (hl), a
+    inc l
+    jr nz, .lp
+    pop bc
+    ret
+.id:
+    ld (hl), l                   ; t[s] = s
+    inc l
+    jr nz, .id
+    ret
+
+; ---------------------------------------------------------------------
+; sfx_cp_fill: aud_smp_copy's hop (page 48 in slot 6, this page in slot 7).
+; BYTE + identity tables returns at once; else fills via smpCp* with smpCpTo = 0.
+; In: IX = channel block, B = DEBUG underrun marker. Corrupts all but IX, IY.
+sfx_cp_fill:
+ IFDEF DEBUG
+    ld a, b
+    ld (sfxCpUnd), a
+    ld hl, (smpCpTo)
+    ld (sfxCpTo0), hl            ; toFill before this page's clamps
+ ENDIF
+    push ix
+    pop hl
+    ld de, sfxChan1
+    or a
+    sbc hl, de
+    ld a, 1
+    jr z, .chan                  ; IX = sfxChan1: channel index 1
+    xor a
+.chan:
+    ld (sfxCpChan), a
+    ld hl, sfxTabOn
+    add hl, a
+    ld c, (hl)                   ; C = 1 tables on, 0 identity
+    xor a
+    ld (sfxCpX2), a
+    ld a, (ix+SMPB_FLAGS)
+    add a, a                     ; CF = PAIR, S = STEREO
+    jr c, .pair
+    ld hl, sfx_xfer_byte
+    dec c
+    jr z, .go                    ; BYTE, levels on: no clamp changes
+ IFDEF DEBUG
+    call sfx_cp_und
+ ENDIF
+    ret                          ; BYTE identity: page 48's LDIR loop
+.pair:
+    jp m, .stereo
+    ld a, 1
+    ld (sfxCpX2), a              ; mono-expand
+    ld a, (ix+SMPB_RINGM)
+    inc a
+    ld h, a
+    ld l, 0
+    srl h
+    rr l                         ; HALVED 1: seed = ring / 2
+    ld de, (smpCpTo)
+    call aud_min16
+    ld (smpCpTo), hl
+    call sfx_cp_free
+    srl h
+    rr l                         ; HALVED 2: (free-1) >> 1 source bytes
+    ld de, sfx_xfer_expand
+    jr .bp
+.stereo:
+    call sfx_cp_free
+    res 0, l                     ; free-1 rounded down to a pair
+    ld de, sfx_xfer_copy
+    dec c
+    jr nz, .bp                   ; identity: pairs copied verbatim
+    ld de, sfx_xfer_pair
+.bp:
+    push de
+    ld de, (smpCpTo)
+    call aud_min16
+    ld (smpCpTo), hl
+    pop hl
+.go:
+    ld (.xcall+1), hl            ; this copy's transfer body
+ IFDEF DEBUG
+    call sfx_cp_und
+ ENDIF
+.fill:
+    ld hl, (smpCpTo)
+    ld a, h
+    or l
+    jp z, .done
+    ld hl, (smpCpRemLo)
+    ld a, (smpCpRemHi)
+    or h
+    or l
+    jr nz, .seg
+    ld a, (smpCpLoop)
+    or a
+    jp z, .done                  ; play-once drained
+    call aud_smp_anchor          ; loop: rewind to the payload start
+    ld (smpCpIdx), a
+    ld (smpCpOff), hl
+    call aud_smp_rewind_depth
+    ld hl, (smpCpLen)
+    ld (smpCpRemLo), hl
+    ld a, (smpCpLenHi)
+    ld (smpCpRemHi), a
+    jr .fill
+.seg:
+    ; seg = min(toFill, srcRoom, dstRoom, remain), in source bytes
+    ld hl, $2000
+    ld de, (smpCpOff)
+    or a
+    sbc hl, de                   ; srcRoom
+    ld de, (smpCpTo)
+    call aud_min16
+    push hl
+    ld a, (ix+SMPB_RINGM)
+    inc a
+    ld h, a
+    ld l, 0
+    ld de, (smpCpDst)
+    or a
+    sbc hl, de                   ; dstRoom in ring bytes
+    ld a, (sfxCpX2)
+    or a
+    jr z, .room
+    srl h
+    rr l                         ; HALVED 3: dstRoom >> 1 source bytes
+.room:
+    pop de
+    call aud_min16
+    ld a, (smpCpRemHi)
+    or a
+    jr nz, .segok
+    ld de, (smpCpRemLo)
+    call aud_min16
+.segok:
+    bit 6, (ix+SMPB_FLAGS)
+    jr z, .segpair
+    res 0, l                     ; stereo: whole pairs only (odd-offset guard)
+    ld a, h
+    or l
+    jp z, .done                  ; no whole pair: end this copy, never BC = 0
+.segpair:
+    ld (smpCpSeg), hl
+    ld b, h
+    ld c, l                      ; BC = seg (>= 1)
+    ld h, (ix+SMPB_RINGH)
+    ld l, 0
+    ld de, (smpCpDst)
+    add hl, de
+    ex de, hl                    ; DE = ring dest
+    ld l, (ix+SMPB_WINTAB)
+    ld h, (ix+SMPB_WINTAB+1)
+    ld a, (smpCpIdx)
+    add hl, a
+    ld a, (sfxCpChan)
+    ex af, af'                   ; A' = channel index
+    ld a, (hl)                   ; A = source window page
+    ld hl, (smpCpOff)            ; HL = source offset
+.xcall:
+    call sfx_xfer_byte           ; target patched at .go
+    ; slot 6 is page 48 again: advance off (DEPTH debit, page roll),
+    ; dstOff, toFill and remain exactly as aud_smp_copy does
+    ld hl, (smpCpOff)
+    ld a, h
+    srl a
+    ld (smpCpBlk), a
+    ld de, (smpCpSeg)
+    add hl, de
+    ld (smpCpOff), hl
+    ld a, h
+    srl a
+    ld hl, smpCpBlk
+    sub (hl)                     ; 512-byte boundaries crossed
+    call nz, aud_smp_debit
+    ld hl, (smpCpOff)
+    ld a, h
+    cp $20
+    jr c, .noroll
+    sub $20
+    ld h, a
+    ld (smpCpOff), hl
+    ld a, (smpCpIdx)
+    inc a
+    cp SFX_WIN_PAGES
+    jr c, .idxok
+    xor a
+.idxok:
+    ld (smpCpIdx), a
+.noroll:
+    ld bc, (smpCpSeg)
+    ld hl, (smpCpDst)
+    add hl, bc
+    ld a, (sfxCpX2)
+    or a
+    jr z, .adv
+    add hl, bc                   ; mono-expand: ring advances 2 x seg
+.adv:
+    ld a, h
+    and (ix+SMPB_RINGM)          ; ring end -> 0; clears CF
+    ld h, a
+    ld (smpCpDst), hl
+    ld hl, (smpCpTo)
+    sbc hl, bc
+    ld (smpCpTo), hl
+    ld hl, (smpCpRemLo)
+    or a
+    sbc hl, bc
+    ld (smpCpRemLo), hl
+    ld a, (smpCpRemHi)
+    sbc a, 0
+    ld (smpCpRemHi), a
+    jp .fill
+.done:
+    ; play-once drained in PAIR mode: silence pair at W (the tick pads W)
+    ld a, (smpCpLoop)
+    or a
+    jr nz, .zero
+    ld hl, (smpCpRemLo)
+    ld a, (smpCpRemHi)
+    or h
+    or l
+    jr nz, .zero
+    bit 7, (ix+SMPB_FLAGS)
+    jr z, .zero
+    ld h, (ix+SMPB_RINGH)
+    ld l, 0
+    ld de, (smpCpDst)
+    add hl, de
+    ld (hl), DAC_SILENCE
+    inc l                        ; W even: the pair shares one 256 page
+    ld (hl), DAC_SILENCE
+.zero:
+    ld hl, 0
+    ld (smpCpTo), hl             ; page 48 skips its loop to .filldone
+    ret
+
+; HL = free-1 for IX's ring: (ring-1) - ((W-P) mod ring). Corrupts AF, DE.
+sfx_cp_free:
+    ld l, (ix+SMPB_W)
+    ld h, (ix+SMPB_W+1)
+    ld e, (ix+SMPB_P)
+    ld d, (ix+SMPB_P+1)
+    or a
+    sbc hl, de
+    ld a, h
+    and (ix+SMPB_RINGM)
+    ld h, a
+    ex de, hl                    ; DE = occupied
+    ld h, (ix+SMPB_RINGM)
+    ld l, $FF                    ; HL = ring-1
+    or a
+    sbc hl, de
+    ret
+
+ IFDEF DEBUG
+; Count an underrun when page 48's frontier clamp bound (marker) and
+; no clamp here cut toFill further. Corrupts AF, DE, HL.
+sfx_cp_und:
+    ld a, (sfxCpUnd)
+    or a
+    ret z
+    ld hl, (sfxCpTo0)
+    ld de, (smpCpTo)
+    sbc hl, de                   ; CF clear from the or
+    ret nz
+    ld a, (sfxCpChan)
+    add a, a
+    ld hl, sfxUnderrun0
+    add hl, a
+    inc (hl)
+    ret nz
+    inc hl
+    inc (hl)
+    ret
+ ENDIF
+
+; ---------------------------------------------------------------------
+; Transfer bodies. In: A = source window page, HL = offset in it
+; (0-$1FFF), DE = ring dest, BC = source bytes (>= 1), A' = channel index.
+; The source is read through slot 6, so nothing on page 48 is reachable
+; until sfx_xp_done maps it back. Corrupts all but IX, IY.
+
+; BYTE mode: ring[w] = TM[src]. Unrolled x2, odd count enters mid-pair.
+sfx_xfer_byte:
+    nextreg NR_MMU6, a
+    inc bc
+    srl b
+    rr c                         ; BC = ceil(n/2), CF clear when n is odd
+    push af
+    call sfx_xp_setup
+    pop af
+    jr c, .lp
+    exx
+    jr .odd
+.lp:
+    exx
+    ld a, (de)
+    ld l, a
+    ld a, (hl)
+    ld (bc), a
+    inc de
+    inc bc
+.odd:
+    ld a, (de)
+    ld l, a
+    ld a, (hl)
+    ld (bc), a
+    inc de
+    inc bc
+    exx
+    djnz .lp
+    dec c
+    jr nz, .lp
+    jr sfx_xp_done
+
+; PAIR stereo: ring[w], ring[w+1] = TL[src0], TR[src1]. BC even.
+sfx_xfer_pair:
+    nextreg NR_MMU6, a
+    srl b
+    rr c                         ; BC = pairs
+    call sfx_xp_setup
+.lp:
+    exx
+    ld a, (de)
+    ld l, a
+    ld a, (hl)
+    ld (bc), a                   ; L
+    inc e                        ; offset even: src0/src1 share a 256 page
+    inc c                        ; ring dest even
+    inc h
+    ld a, (de)
+    ld l, a
+    ld a, (hl)
+    dec h
+    ld (bc), a                   ; R
+    inc de
+    inc bc
+    exx
+    djnz .lp
+    dec c
+    jr nz, .lp
+    jr sfx_xp_done
+
+; PAIR mono: ring[w], ring[w+1] = TL[src], TR[src]; 2 ring bytes per source.
+sfx_xfer_expand:
+    nextreg NR_MMU6, a
+    call sfx_xp_setup
+.lp:
+    exx
+    ld a, (de)
+    ld l, a
+    ld a, (hl)
+    ld (bc), a                   ; L
+    inc c                        ; ring dest even
+    inc h
+    ld a, (hl)
+    dec h
+    ld (bc), a                   ; R
+    inc bc
+    inc de
+    exx
+    djnz .lp
+    dec c
+    jr nz, .lp
+    ; fall through
+
+; Shared exit: back to the main set as entered, page 48 back in slot 6.
+sfx_xp_done:
+    exx
+    nextreg NR_MMU6, AUD_PAGE_LO
+    ret
+
+; PAIR stereo, identity tables: pairs copied verbatim.
+sfx_xfer_copy:
+    nextreg NR_MMU6, a
+    ld a, h
+    or DATA_WINDOW >> 8
+    ld h, a
+    ldir
+    nextreg NR_MMU6, AUD_PAGE_LO
+    ret
+
+; Body setup. In: HL = offset, DE = ring dest, BC = loop passes (>= 1),
+; A' = channel index. Out, with the counter set active (B = first pass,
+; 0 = 256; C = passes left): main set DE = $C000+offset, BC = ring dest,
+; H = TL/TM page.
+sfx_xp_setup:
+    push bc
+    exx
+    pop bc
+    ld d, c
+    dec bc
+    inc b
+    ld c, b                      ; C' = outer passes
+    ld b, d                      ; B' = first pass
+    exx
+    ld b, d
+    ld c, e                      ; BC = ring dest
+    ld a, h
+    or DATA_WINDOW >> 8
+    ld d, a
+    ld e, l                      ; DE = source
+    ex af, af'
+    add a, a
+    add a, SFX_TAB1_L >> 8
+    ld h, a                      ; H = TL page, TR = H+1
+    exx                          ; counter set active for the loop's exx
+    ret
+
+; ---------------------------------------------------------------------
 ; Channel allocator: serves every channel decision the SFX condact
 ; makes (auto-allocate for subs 1/2, pin/unpin for 11-16/5). Lives here
 ; rather than overlay1 for space; reached via sfx_page_call (main.asm)
@@ -1000,7 +1602,8 @@ aud_clk16_tab:
 ;                 own latches. Neither bit set = the ordinary full open.
 ; Preserves B. Corrupts AF, C, DE, HL, IX.
 ; Preconditions: slot 6 = AUD_PAGE_LO, slot 7 = SFX_PAGE, mainline
-; context (it takes no interrupt-sensitive action and does not halt).
+; context (does not halt; on a mode flip of an active channel .hit files
+; a stop bit, which aud_tick consumes before the start in the same tick).
 ;
 ; Decision order: explicit (11-14) always takes the named channel and
 ; sets its pin. Auto (1/2) prefers, in order: (a) an unpinned channel
@@ -1009,8 +1612,8 @@ aud_clk16_tab:
 ; channel - one-shot before loop, oldest SMPB_STAMP on a tie - or
 ; (d) drop with a DEBUG marker. Channel 1 wins ties in (a)/(b).
 ; Stealing files nothing here: the caller stops the victim through
-; aud_load_wav and waits before staging, so stop and new start always
-; land in different frames.
+; aud_load_wav and waits before staging, so stop and new start land in
+; different frames.
 sfx_alloc:
     ld c, b                          ; C = effect number; B is the
                                      ; caller's and must survive (its AY
@@ -1149,6 +1752,10 @@ sfx_alloc:
                                        ; re-commit is about to cause - DE
                                        ; still holds this channel's own rate
                                        ; (aud_ctc_params preserves DE)
+    pop hl
+    push hl
+    ld a, l                          ; A = channel index (banked E)
+    call sfx_mode_decide             ; DE = rate; corrupts all but IX, IY
     pop de
     pop bc
     ld a, (ix+SMPB_LEN)
@@ -1775,13 +2382,13 @@ sfx_run_seek:
 ; refiller's entry, and only once one of the six counters is nonzero, so
 ; a build that never streams keeps its screen. Every counter is
 ; accumulated strictly OUTSIDE the wire polls, so the instrument cannot
-; distort a bounded wait. The underrun counters are page-48 data (the
-; pump writes them and cannot see this page); slot 6 still holds page 48
-; here.
+; distort a bounded wait. The underrun counters live on this page
+; (sfx_cp_und writes them from the copy hop).
 ;
-; Task 11 made the row DUAL: "SFX=rrrr/uuuu/ff rrrr/uuuu/ff", channel 1
-; then channel 2, 29 columns starting at column 43 (it was 16 columns at
-; 56 with one channel). Row 31 is otherwise unused by the game.
+; The row is DUAL: "SFX=rrrr/uuuu/ff Bvvpp rrrr/uuuu/ff Pvvpp", channel 1
+; then channel 2, 41 columns starting at column 39 so it ends at column
+; 79 of an 80-column screen. Bvvpp = mode letter (B BYTE, P PAIR), volume
+; and pan in hex. Row 31 is otherwise unused by the game.
 ;
 ; CURSOR DISCIPLINE. This is the first ISR-context user of the dbg_*
 ; console, and dbgX/dbgY are a SHARED cursor pair: a mainline dbg_puts
@@ -1818,23 +2425,27 @@ sfx_dbg_row:
     ld hl, (dbgX)                ; dbgY follows dbgX: one word is the
     push hl                      ; whole mainline cursor
     ld b, 31
-    ld c, 43
+    ld c, 39
     call dbg_at
     ld hl, msgSfxRow
     call dbg_puts
     ld iy, sfxStrm0
     ld hl, sfxUnderrun0
     call .one
+    xor a
+    call .lvl
     ld a, ' '
     call dbg_putc
     ld iy, sfxStrm1
     ld hl, sfxUnderrun1
     call .one
+    ld a, 1
+    call .lvl
     pop hl
     ld (dbgX), hl                ; mainline resumes exactly where it was
     ret
 ; One channel's rrrr/uuuu/ff. IY = its stream cell group, HL = its
-; page-48 underrun counter. The dbg_* helpers touch neither.
+; underrun counter. The dbg_* helpers touch neither.
 .one:
     push hl
     ld l, (iy+SFXS_BLKS)
@@ -1852,14 +2463,47 @@ sfx_dbg_row:
     call dbg_putc
     ld a, (iy+SFXS_FAILS)
     jp dbg_hex8
+; " Bvvpp" for channel A (0/1): mode letter, volume, pan.
+.lvl:
+    push af
+    ld a, ' '
+    call dbg_putc
+    pop af
+    push af
+    ld e, a
+    ld d, 0
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, (hl)
+    cp 1
+    ld a, 'B'
+    jr nz, .lvm
+    ld a, 'P'
+.lvm:
+    call dbg_putc
+    pop af
+    push af
+    ld e, a
+    ld d, 0
+    ld hl, sfxVol
+    add hl, de
+    ld a, (hl)
+    call dbg_hex8
+    pop af
+    ld e, a
+    ld d, 0
+    ld hl, sfxPan
+    add hl, de
+    ld a, (hl)
+    jp dbg_hex8
 msgSfxRow: db "SFX=", 0
  ENDIF
 
 ; Seed the channels' CONSTANT block members (SP18 item 7 Task 2, moved
 ; here from page 48 by Task 11): ring base/mask, the resident cursor
-; addresses, the CTC port, the DAC port, the window descriptor and the
-; stream cell group. These never change across a start/stop cycle
-; (unlike FLAGS/TABIDX/OFF/P/W/LEN/REMAIN, which aud_smp_start
+; addresses, the CTC port, the DAC ports, the feeder vector cell, the
+; window descriptor and the stream cell group. These never change across
+; a start/stop cycle (unlike FLAGS/TABIDX/OFF/P/W/LEN/REMAIN, which aud_smp_start
 ; reinitialises every call) and CTCCTRL/CTCTC (which aud_smp_start
 ; latches from the mailbox every call), so a one-shot seed at boot is
 ; enough.
@@ -1890,6 +2534,11 @@ aud_sfx_init:
     ld (ix+SMPB_CTCPORT), l
     ld (ix+SMPB_CTCPORT+1), h
     ld (ix+SMPB_DACPORT), DAC_PORT
+    ld (ix+SMPB_DACL), DAC1_L_PORT
+    ld (ix+SMPB_DACR), DAC1_R_PORT
+    ld hl, IM2_CTC_STUB+1            ; feeder vector cell: the stub's JP target
+    ld (ix+SMPB_VEC), l
+    ld (ix+SMPB_VEC+1), h
     ld hl, sfxWin0                   ; this channel's window descriptor
     ld (ix+SMPB_WINTAB), l
     ld (ix+SMPB_WINTAB+1), h
@@ -1902,7 +2551,7 @@ aud_sfx_init:
                                      ; must not offer a free rewind into a
                                      ; window this boot never staged
     ; Channel 2 (SP18 item 7 Task 11), the same members with its own
-    ; hardware and its own window/cells: the AUD_STAGE2 ring (same 1K
+    ; hardware and its own window/cells: the AUD_STAGE2 ring (same 2K
     ; power-of-two shape, so the same wrap mask), the smp2* resident
     ; cursors ctc2_isr plays, CTC channel 1 and DAC2_PORT ($B3, DACs
     ; B+C), window descriptor sfxWin1 (pages 53/54/55) and cell group
@@ -1924,6 +2573,11 @@ aud_sfx_init:
     ld (ix+SMPB_CTCPORT), l
     ld (ix+SMPB_CTCPORT+1), h
     ld (ix+SMPB_DACPORT), DAC2_PORT
+    ld (ix+SMPB_DACL), DAC2_L_PORT
+    ld (ix+SMPB_DACR), DAC2_R_PORT
+    ld hl, IM2_TABLE + IM2_CTC2_VEC  ; feeder vector cell: the table entry
+    ld (ix+SMPB_VEC), l
+    ld (ix+SMPB_VEC+1), h
     ld hl, sfxWin1
     ld (ix+SMPB_WINTAB), l
     ld (ix+SMPB_WINTAB+1), h
@@ -1986,6 +2640,24 @@ sfxResMask:     db 0             ; sfx_vid_resume: the channels to restart
 sfxResPin:      db 0             ; and the pin state of the one in hand -
                                  ; both in cells because sfx_alloc and
                                  ; sfx_stream_rewind corrupt DE
+
+; Level-table inputs, index 0 = channel 1 (sfx_tab_build). Laid out
+; vol, pan, mode so one channel index reaches all three.
+sfxVol:         db 255, 255      ; 0-255, 255 = full
+sfxPan:         db 128, 128      ; 0 left, 128 centre, 255 right
+sfxTabMode:     db $FF, $FF      ; 0 BYTE (TM only), 1 PAIR (TL and TR),
+                                 ; $FF never built: the first decide builds
+sfxCpChan:      db 0             ; sfx_cp_fill: this copy's channel index
+sfxCpX2:        db 0             ; sfx_cp_fill: 1 = mono-expand
+ IFDEF DEBUG
+sfxCpUnd:       db 0             ; page 48's frontier-bound marker
+sfxCpTo0:       dw 0             ; toFill as page 48 left it
+; SFX= row underrun counters: copies where the streaming frontier clamp
+; was the binding limit. Written by sfx_cp_und.
+sfxUnderrun0:   dw 0
+sfxUnderrun1:   dw 0
+    ASSERT sfxUnderrun1 == sfxUnderrun0 + 2
+ ENDIF
 
 ; --- streaming cells (SP18 item 7 Task 3) -----------------------------
 ; sfxHotMap through sfxCardFlags are the SHARED RUN-CONTEXT WORKING SET:

@@ -1,0 +1,381 @@
+; NextDAAD stereo sample playback, per-channel volume and pan fixture.
+;
+; Compiled by tests\build-tests.ps1 on every run (a break in the DSF is
+; caught even without the leg switch, same rule the other fixtures
+; follow); staged as the active GAME.DDB in sd\SFXST\ by
+; tests\build-tests.ps1 -SfxSt, which also generates and stages the
+; seven stimulus WAVs described below as 001.WAV to 007.WAV and the two
+; location pictures as 001.NXI and 002.NXI. sd\SFXST\ is emptied and
+; refilled on every -SfxSt run and holds GAME.DDB, a NEXTDAAD.NEX copy
+; of build\nextdaad.nex, the seven WAVs, the two pictures and, when a
+; prior -Vid run left one in the cache, 001.VID for the VID verb - copy
+; the folder to the card and launch from inside it.
+;
+; ------------------------------------------------------------------
+; WHAT THIS FIXTURE EXERCISES
+; ------------------------------------------------------------------
+;   SFX n 11 / 12 / 13 / 14   play effect n once / looped on channel 1 /
+;                             channel 2 (pinned, as in sfx2.dsf)
+;   SFX n 17 / SFX n 18       channel 1 / channel 2 volume, 255 = full
+;   SFX n 19 / SFX n 20       channel 1 / channel 2 pan, 0 = left,
+;                             128 = centre, 255 = right
+;   SFX 0 5                   stop everything and reset volume/pan to
+;                             255 / 128 on both channels
+;   SFX 1 9                   play a video clip (stops sampled effects)
+;
+; Volume and pan persist across effects and stops (not SFX 0 5). A pan
+; on a MONO file in BYTE mode applies at that channel's next start.
+;
+; ------------------------------------------------------------------
+; WHY TWO LOCATIONS AND THE LOOPED MONO VERBS
+; ------------------------------------------------------------------
+; N / S walk between location 0 (PICTURE 1 = 001.NXI, tests\art\
+; mkl2card.py, 256x128, colour bands, caption "L2 DMA TEST") and
+; location 1 (PICTURE 2 = 002.NXI, tests\art\mkl2pos.py's 001.NXI,
+; 256x96, slate checker, caption "LOC1"). Each move redraws through
+; PICTURE + DISPLAY 0, so a looping stream (LOOP4, LOOP7) is heard
+; through esxDOS picture reads and Layer 2 DMA blits while both rings
+; ($4000, $4800) sit in the ULA/Layer 2 address window.
+;
+; LOOP6 and LOOP1 loop MONO files on channel 1 so the mid-play pan
+; checks need no typing speed: BYTE mode ignores a pan until the next
+; start, PAIR mode applies it like volume.
+;
+; Screen: header window 0 rows 0-3; pictures on tilemap rows 4-19 (Layer
+; 2 inset 32 px); text window 1 rows 20-29; rows 30-31 stay free for the
+; DEBUG build's SFX= row and markers.
+;
+; ------------------------------------------------------------------
+; THE SEVEN EFFECTS (all 8-bit unsigned, sine, centred on 128)
+; ------------------------------------------------------------------
+;   001.WAV  mono   20000 Hz  440 Hz           24000 B  (BYTE mode)
+;   002.WAV  stereo 20000 Hz  L 440 Hz, R off  80000 B  (2 s)
+;   003.WAV  stereo 20000 Hz  L off, R 660 Hz  80000 B  (2 s)
+;   004.WAV  stereo 20000 Hz  L 440 R 440      240000 B (6 s, streams)
+;   005.WAV  stereo 15625 Hz  L 440 R 440      15625 B  (ODD length)
+;   006.WAV  mono   15625 Hz  440 Hz           15625 B
+;   007.WAV  stereo 20000 Hz  L 660 R 660      240000 B (6 s, streams)
+;
+; Every tone completes whole cycles over its payload so a loop seam does
+; not click. 005.WAV has an odd data length (and the RIFF pad byte): it
+; is not a whole number of stereo frames, so it must be REFUSED, the
+; channel falls back to the AY effect or silence, and a DEBUG build
+; prints "SFX ST?".
+;
+; LOOP4 (pinned channel 2) and LOOP7 (pinned channel 1) use DIFFERENT
+; effect numbers so the both-channels case never asks the allocator to
+; pin a number the other channel's cache already holds.
+;
+; ------------------------------------------------------------------
+; THE VERBS (one SFX condact each, after a one-line response)
+; ------------------------------------------------------------------
+;   PLAY1 SFX 1 11   001 mono 440 Hz once, ch 1
+;   PLAY2 SFX 2 13   002 stereo, left only, once, ch 2
+;   PLAY3 SFX 3 13   003 stereo, right only, once, ch 2
+;   LOOP4 SFX 4 14   004 stereo both sides, looped, ch 2, streams
+;   LOOP7 SFX 7 12   007 stereo both sides, looped, ch 1, streams
+;   PLAY5 SFX 5 11   005 odd stereo - refused
+;   PLAY6 SFX 6 11   006 mono 15625 Hz once, ch 1 (for pan)
+;   LOOP6 SFX 6 12   006 mono 15625 Hz looped, ch 1 (mid-play pan, BYTE)
+;   LOOP1 SFX 1 12   001 mono 20000 Hz looped, ch 1 (mid-play pan, PAIR)
+;   V1FULL/V1HALF/V1QTR/V1OFF   SFX 255/128/64/0 17   channel 1 level
+;   V2FULL/V2HALF/V2QTR/V2OFF   SFX 255/128/64/0 18   channel 2 level
+;   PANL/PANC/PANR   SFX 0/128/255 19                 channel 1 pan
+;   PAN2L/PAN2C/PAN2R  SFX 0/128/255 20                 channel 2 pan
+;   PL1B   SFX 1 13  001 mono 20000 Hz once, ch 2
+;   PL2A   SFX 2 11  002 stereo left only, once, ch 1
+;   PL3A   SFX 3 11  003 stereo right only, once, ch 1
+;   STOP  SFX 0 5    stop all, reset levels and pans
+;   VID   SFX 1 9    play video 1 once (needs 001.VID staged)
+;   N / S            walk location 0 <-> 1 (no SFX; redraws the picture)
+;
+; The compiled SFX bytes (opcode 18) are asserted by tests\build-tests.ps1
+; every run - DRC can rewrite condacts.
+;
+; Audio fidelity verdicts belong on silicon. CSpect and jNext have not
+; been verified to decode the soundrive-2 ports $F1/$F3/$F9/$FB, so a
+; silent first listen in an emulator proves nothing.
+
+; System flags used by name (DAAD BLANK template spellings)
+#define fPlayer             38
+#define fDarkF              28
+; One-shot boot help: RESTART re-runs process 0 on every move
+#define fBooted             100
+
+/CTL
+_
+/VOC
+NORTH  2  noun
+N      2  noun
+SOUTH  3  noun
+S      3  noun
+LOOK   4  verb
+PLAY1  60 verb
+PLAY2  61 verb
+PLAY3  62 verb
+PLAY5  64 verb
+PLAY6  65 verb
+LOOP4  66 verb
+LOOP7  67 verb
+V1FULL 68 verb
+V1HALF 69 verb
+V1QTR  70 verb
+V1OFF  71 verb
+V2FULL 72 verb
+V2HALF 73 verb
+V2QTR  74 verb
+V2OFF  75 verb
+PANL   76 verb
+PANC   77 verb
+PANR   78 verb
+PAN2L  81 verb
+PAN2C  82 verb
+PAN2R  83 verb
+PL1B   84 verb
+PL2A   85 verb
+PL3A   86 verb
+LOOP6  87 verb
+LOOP1  88 verb
+STOP   79 verb
+VID    80 verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD STEREO SFX AND LEVEL FIXTURE#n"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 "Location 0 - picture 1 (001.NXI, L2 DMA TEST). N goes to location 1.#n"
+/1 "Location 1 - picture 2 (002.NXI, LOC1). S goes to location 0.#n"
+/CON
+/0
+NORTH 1
+/1
+SOUTH 0
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+> _ _   ZERO fBooted
+        SET fBooted
+        PROCESS 6
+; No WINAT/WINSIZE here: both home the cursor (win_home) and would
+; overprint the boot help. PRO 6 sets the geometry once.
+> _ _   WINDOW 1
+        CLEAR fDarkF
+> _ _   PROCESS 9
+> _ _   WINDOW 1
+        DESC @fPlayer
+> _ _   PROCESS 1
+/PRO 1
+> _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
+        REDO
+> _ _   MOVE fPlayer
+        CLS
+        RESTART
+> _ _   SYSMESS 8
+        REDO
+/PRO 5
+; ---- effects, pinned to a named channel ----
+> PLAY1  _ MES "001 mono 440 Hz once, ch 1 - SFX 1 11#n"
+           SFX 1 11
+           DONE
+> PLAY2  _ MES "002 stereo, left 440 Hz only, once, ch 2 - SFX 2 13#n"
+           SFX 2 13
+           DONE
+> PLAY3  _ MES "003 stereo, right 660 Hz only, once, ch 2 - SFX 3 13#n"
+           SFX 3 13
+           DONE
+> LOOP4  _ MES "004 stereo 440 Hz both sides, looped, ch 2 - SFX 4 14#n"
+           SFX 4 14
+           DONE
+> LOOP7  _ MES "007 stereo 660 Hz both sides, looped, ch 1 - SFX 7 12#n"
+           SFX 7 12
+           DONE
+> PLAY5  _ MES "005 odd-length stereo, must be refused - SFX 5 11#n"
+           SFX 5 11
+           DONE
+> PLAY6  _ MES "006 mono 15625 Hz once, ch 1 - SFX 6 11#n"
+           SFX 6 11
+           DONE
+> LOOP6  _ MES "006 mono 15625 Hz looped, ch 1 - SFX 6 12#n"
+           SFX 6 12
+           DONE
+> LOOP1  _ MES "001 mono 20000 Hz looped, ch 1 - SFX 1 12#n"
+           SFX 1 12
+           DONE
+; ---- channel 1 volume ----
+> V1FULL _ MES "channel 1 volume 255 - SFX 255 17#n"
+           SFX 255 17
+           DONE
+> V1HALF _ MES "channel 1 volume 128 - SFX 128 17#n"
+           SFX 128 17
+           DONE
+> V1QTR  _ MES "channel 1 volume 64 - SFX 64 17#n"
+           SFX 64 17
+           DONE
+> V1OFF  _ MES "channel 1 volume 0 - SFX 0 17#n"
+           SFX 0 17
+           DONE
+; ---- channel 2 volume ----
+> V2FULL _ MES "channel 2 volume 255 - SFX 255 18#n"
+           SFX 255 18
+           DONE
+> V2HALF _ MES "channel 2 volume 128 - SFX 128 18#n"
+           SFX 128 18
+           DONE
+> V2QTR  _ MES "channel 2 volume 64 - SFX 64 18#n"
+           SFX 64 18
+           DONE
+> V2OFF  _ MES "channel 2 volume 0 - SFX 0 18#n"
+           SFX 0 18
+           DONE
+; ---- channel 1 pan ----
+> PANL   _ MES "channel 1 pan left, 0 - SFX 0 19#n"
+           SFX 0 19
+           DONE
+> PANC   _ MES "channel 1 pan centre, 128 - SFX 128 19#n"
+           SFX 128 19
+           DONE
+> PANR   _ MES "channel 1 pan right, 255 - SFX 255 19#n"
+           SFX 255 19
+           DONE
+> PAN2L  _ MES "channel 2 pan left, 0 - SFX 0 20#n"
+           SFX 0 20
+           DONE
+> PAN2C  _ MES "channel 2 pan centre, 128 - SFX 128 20#n"
+           SFX 128 20
+           DONE
+> PAN2R  _ MES "channel 2 pan right, 255 - SFX 255 20#n"
+           SFX 255 20
+           DONE
+> PL1B   _ MES "001 mono 20000 Hz once, ch 2 - SFX 1 13#n"
+           SFX 1 13
+           DONE
+> PL2A   _ MES "002 stereo left only, once, ch 1 - SFX 2 11#n"
+           SFX 2 11
+           DONE
+> PL3A   _ MES "003 stereo right only, once, ch 1 - SFX 3 11#n"
+           SFX 3 11
+           DONE
+; ---- stop all (resets levels and pans), video ----
+> STOP   _ MES "all stopped, levels 255, pans 128 - SFX 0 5#n"
+           SFX 0 5
+           DONE
+> VID    _ MES "video 1 once, stops sampled effects - SFX 1 9#n"
+           SFX 1 9
+           DONE
+/PRO 6
+; Boot only. Window 0 (rows 0-3) keeps the walk map; window 1 (rows
+; 20-29, below the pictures, above the DEBUG rows 30-31) holds the verb
+; list until the first move clears it. Newline counts stay under each
+; window's More... threshold (h-1): MES 0, not MESSAGE 0 (adds one).
+; Window 2 blanks the picture band (rows 4-19) once, so DEBUG boot
+; readouts left there do not show beside or below a picture.
+> _ _   WINDOW 2
+        WINAT 4 0
+        WINSIZE 16 80
+        PAPER 0
+        INK 7
+        CLS
+> _ _   WINDOW 0
+        WINAT 0 0
+        WINSIZE 4 80
+        PAPER 0
+        INK 7
+        CLS
+        MES 0
+        MES "loc 0 shows PICTURE 1 (001.NXI: colour bands, L2 DMA TEST) - N to loc 1#n"
+        MES "loc 1 shows PICTURE 2 (002.NXI: slate checker, LOC1) - S to loc 0"
+> _ _   WINDOW 1
+        WINAT 20 0
+        WINSIZE 10 127
+        PAPER 0
+        INK 7
+        CLS
+        MES "ch 1: PLAY1 PLAY5 PLAY6 PL2A PL3A once | LOOP7 LOOP6 LOOP1 looped#n"
+        MES "ch 2: PLAY2 PLAY3 PL1B once | LOOP4 looped | STOP all | VID video 1#n"
+        MES "level: V1FULL V1HALF V1QTR V1OFF ch 1 | V2FULL V2HALF V2QTR V2OFF ch 2#n"
+        MES "pan: PANL PANC PANR ch 1 | PAN2L PAN2C PAN2R ch 2 | N S walk#n"
+        MES "001 mono 440 20k | 002 L 440 | 003 R 660 | 004 440 both | 005 refused#n"
+        MES "006 mono 440 15625 | 007 660 both | 004 007 are 6 s streamed loops#n"
+/PRO 9
+; Location picture: location 0 = picture 1, location 1 = picture 2.
+; PICTURE is a CONDITION, so a failed load falls to the loud lines.
+> _ _   AT 0
+        PICTURE 1
+        DISPLAY 0
+        DONE
+> _ _   AT 1
+        PICTURE 2
+        DISPLAY 0
+        DONE
+> _ _   AT 0
+        MES "*** PICTURE 1 FAILED - no 001.NXI staged. STOP.#n"
+        DONE
+> _ _   AT 1
+        MES "*** PICTURE 2 FAILED - no 002.NXI staged. STOP.#n"
+        DONE
+/END

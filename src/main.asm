@@ -1400,6 +1400,77 @@ sfx_page_call:
 ; reader of channel 2's state, mainline or ISR.
 sfxChan1: ds SMPB_SIZE
 
+; Per-channel level-table state (index 0 = channel 1): 0 = the last
+; sfx_tab_build was the identity map, 1 = the copy must translate.
+; Resident: the page-48 copy hop and the SFX_PAGE builder both reach it.
+sfxTabOn: db 0, 0
+
+; Channel 1 PAIR-mode feeder: one L,R pair to DACs A/D per CTC tick.
+; Contract as ctc_isr: saves AF/HL only, no MMU slot, no $243B/$253B,
+; no banked memory, no port $6B, EI then RETI. Play/write stay even.
+ctc_isr_pair:
+    push af
+    push hl
+    ld hl, (smpPlayPtr)
+    ld a, (hl)
+    out (DAC1_L_PORT), a
+    inc l                        ; pairs never straddle 256 (even offsets)
+    ld a, (hl)
+    out (DAC1_R_PORT), a
+    dec l
+    ld a, (smpWritePtr)          ; hold when play has caught the producer
+    cp l
+    jr nz, .adv
+    ld a, (smpWritePtr+1)
+    cp h
+    jr z, .done
+.adv:
+    inc hl
+    inc hl
+    ld a, h
+    and (AUD_STAGE_RING-1) >> 8
+    or AUD_STAGE0 >> 8
+    ld h, a
+    ld (smpPlayPtr), hl
+.done:
+    pop hl
+    pop af
+    ei
+    reti
+
+; Channel 2 PAIR-mode feeder: one L,R pair to DACs B/C per CTC tick.
+; Contract as ctc2_isr: saves AF/HL only, no MMU slot, no $243B/$253B,
+; no banked memory, no port $6B, EI then RETI. Play/write stay even.
+ctc2_isr_pair:
+    push af
+    push hl
+    ld hl, (smp2PlayPtr)
+    ld a, (hl)
+    out (DAC2_L_PORT), a
+    inc l
+    ld a, (hl)
+    out (DAC2_R_PORT), a
+    dec l
+    ld a, (smp2WritePtr)
+    cp l
+    jr nz, .adv
+    ld a, (smp2WritePtr+1)
+    cp h
+    jr z, .done
+.adv:
+    inc hl
+    inc hl
+    ld a, h
+    and (AUD_STAGE2_RING-1) >> 8
+    or AUD_STAGE2 >> 8
+    ld h, a
+    ld (smp2PlayPtr), hl
+.done:
+    pop hl
+    pop af
+    ei
+    reti
+
 ; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
 ; (gfxcache.asm), eng_init_game (engine.asm) and overlay1.asm's two
 ; same-part LOAD/RAMLOAD paths all need to zero the THREE contiguous
@@ -1725,7 +1796,8 @@ dataDirName: db "DATA", 0
 ; interrupt accepted mid-chain pushes onto entries already consumed or onto
 ; the guard below the first entry - never onto code or song data. Resident
 ; because page 48 has no room; AKY_RET_GUARD is the nested-ISR push budget
-; (ctc_isr, ctc2_isr and video_ctc_isr_stereo each push 6 incl. PC).
+; (ctc_isr, ctc2_isr, their _pair twins and video_ctc_isr_stereo each push
+; 6 incl. PC).
 AKY_RET_GUARD   equ 8
 akyRetGuard:    ds AKY_RET_GUARD
 akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE

@@ -25,6 +25,7 @@
 #   -SfxDi               sd\SFXDI\     tests\sfxdi.dsf
 #   -SfxLong             sd\SFXLONG\   tests\sfxlong.dsf
 #   -Sfx2                sd\SFX2\      tests\sfx2.dsf
+#   -SfxSt               sd\SFXST\     tests\sfxst.dsf
 #   -AysReg              sd\AYSREG\    tests\aysreg.dsf
 #   -L2Holes             sd\L2HOLES\   tests\l2holes.dsf
 #   -L2Pos               sd\L2POS\     tests\l2pos.dsf    (-L2PosWide: the 320x256 set)
@@ -217,6 +218,18 @@
 #            emulation after SFX_FAIL_LIMIT ticks (expected, does not
 #            affect the steal verb's proof). Alternative to
 #            -Aud/-AudLad/-SfxDi/-SfxLong.
+#   -SfxSt   stereo sample, volume and pan fixture, sd\SFXST\: make
+#            tests\sfxst.dsf active AND stage seven generated 8-bit WAVs
+#            as 001-007.WAV (mono/stereo, 15625 and 20000 Hz, including
+#            an odd-length stereo file that must be refused and two
+#            240000-byte stereo loops that stream), two location
+#            pictures (001.NXI = tests\art\mkl2card.py's card, 002.NXI =
+#            tests\art\mkl2pos.py's 256-wide 001.NXI), plus 001.VID from
+#            the -Vid cache when present. Verbs cover pinned play (SFX n
+#            11-14), channel volume (SFX v 17/18), channel pan (SFX p
+#            19/20), stop-all, video and N/S moves between the two
+#            pictures. Compiled SFX bytes asserted every run.
+#            Silicon-only verdicts for the soundrive-2 ports.
 #   -AysReg  AYS stream register-loss fixture, sd\AYSREG\: make
 #            tests\aysreg.dsf active AND stage the two generated streams
 #            (tests\audio\mkays.py) as 001.AYS (steady) and 002.AYS
@@ -423,7 +436,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -457,7 +470,7 @@ $sd = Join-Path $root 'sd'
 if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
     $otherLegSwitches = @(
         'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
-        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
+        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'SfxSt', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad',
         'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb', 'Text2XmbPart', 'Text2XmbFp',
@@ -488,6 +501,7 @@ if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
 if ($SfxLong)          { $legName = 'SFXLONG' }
 if ($Sfx2)             { $legName = 'SFX2' }
+if ($SfxSt)           { $legName = 'SFXST' }
 if ($AysReg)           { $legName = 'AYSREG' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
 if ($L2Pos -or $L2PosWide) { $legName = 'L2POS' }
@@ -539,7 +553,7 @@ function Reset-LegDir {
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
-               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'AYSREG',
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'SFXST', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD',
                'TEXT2WC', 'TEXT2N', 'TEXT2NC', 'TEXT2X', 'TEXT2X2', 'TEXT2X3',
@@ -608,6 +622,43 @@ function New-SfxLongWav([int]$Rate, [double]$ToneHz, [int]$PayloadBytes) {
     $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
     $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$PayloadBytes))
     $wav.AddRange($pcm)
+    return , $wav.ToArray()
+}
+
+# Stereo twin of New-SfxLongWav: nChannels 2, interleaved L,R, 8-bit
+# unsigned. A side with Hz 0 is held at $80. An odd PayloadBytes writes the
+# odd data size and appends the RIFF pad byte.
+function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$PayloadBytes) {
+    $frames = [int][math]::Floor($PayloadBytes / 2)
+    $pcm = New-Object byte[] $PayloadBytes
+    for ($n = 0; $n -lt $PayloadBytes; $n++) {
+        $hz = if (($n -band 1) -eq 0) { $LeftHz } else { $RightHz }
+        $v = 128
+        if ($hz -ne 0) {
+            $f = [math]::Floor($n / 2)
+            $v = [math]::Floor(128 + 127 * [math]::Sin(2.0 * [math]::PI * $hz * $f / $Rate) + 0.5)
+            if ($v -lt 0) { $v = 0 } elseif ($v -gt 255) { $v = 255 }
+        }
+        $pcm[$n] = [byte]$v
+    }
+    $fmtLen = 16
+    $pad = $PayloadBytes -band 1
+    $wav = New-Object System.Collections.Generic.List[byte]
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("RIFF"))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32](20 + $fmtLen + $PayloadBytes + $pad)))
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("WAVE"))
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("fmt "))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$fmtLen))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]1))       # PCM
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]2))       # stereo
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$Rate))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32](2 * $Rate)))  # byte rate
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]2))       # block align
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt16]8))       # bits per sample
+    $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$PayloadBytes))
+    $wav.AddRange($pcm)
+    if ($pad) { $wav.Add([byte]0) }
     return , $wav.ToArray()
 }
 
@@ -1223,7 +1274,19 @@ function Assert-BankAllocCensus {
     "allocator census: $total sites in $($want.Count) routines classified; the long-lived AYS stream takes bank_alloc_long; BT_* writes only in $($writers.Count) known routines"
 }
 
+function Assert-KitAudioDocs {
+    # Stereo SFX Task 7: the kit audio page documents stereo, subs 17-20
+    # and the 15625 Hz recommendation, and carries no 16000 rate.
+    $t = [IO.File]::ReadAllText("$root\authoring-kit\docs\audio.html")
+    foreach ($need in 'SFX n 17', 'SFX n 18', 'SFX n 19', 'SFX n 20', 'stereo', '15625') {
+        if (-not $t.Contains($need)) { throw "KITAUDIO: audio.html lacks '$need'" }
+    }
+    if ($t.Contains('16000')) { throw "KITAUDIO: audio.html still mentions 16000" }
+    "KITAUDIO: audio.html documents SFX n 17-20, stereo and 15625 Hz, no 16000 Hz"
+}
+
 Assert-TranspConstantsInSync
+Assert-KitAudioDocs
 Assert-PalColourDodge
 Assert-LayerOrderReset
 Assert-RestartLeavesSprites
@@ -1690,6 +1753,22 @@ finally {
     Pop-Location
 }
 
+# Stereo sample / volume / pan fixture; only -SfxSt makes it active
+# (sd\SFXST\). Built out of tree like sfx2 above.
+$sfxStWork = Join-Path $root 'tests\out\sfxst-work'
+Remove-Item $sfxStWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $sfxStWork | Out-Null
+Copy-Item "$PSScriptRoot\sfxst.dsf" "$sfxStWork\NDSFXST.DSF" -Force
+Push-Location $sfxStWork
+try {
+    & $ndrc @drcTarget EN NDSFXST.DSF NDSFXST.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxst)" }
+    Copy-Item NDSFXST.DDB "$root\tests\out\sfxst.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # AYS stream register-loss fixture; only -AysReg makes it active
 # (sd\AYSREG\).
 $aysRegWork = Join-Path $root 'tests\out\aysreg-work'
@@ -2061,6 +2140,207 @@ function Find-Bytes {
     return (Find-ByteRuns $hay $needle).Count -gt 0
 }
 
+function Assert-SfxRingLayout {
+    # Stereo SFX Task 1: 2K DAC rings at $4000/$4800, level tables reserved
+    # at $7C00-$7FFF, NR $84 bit 2 set (read-modify-write).
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $want = [ordered]@{
+        AUD_STAGE0 = 0x4000; AUD_STAGE2 = 0x4800
+        AUD_STAGE_RING = 2048; AUD_STAGE2_RING = 2048
+        SFX_TAB1_L = 0x7C00; SFX_TAB1_R = 0x7D00; SFX_TAB2_L = 0x7E00; SFX_TAB2_R = 0x7F00
+    }
+    foreach ($k in $want.Keys) {
+        $m = [regex]::Match($inc, ('(?m)^' + $k + '\s+equ\s+(\$[0-9A-Fa-f]+|\d+)'))
+        if (-not $m.Success) { throw "SFXRING: $k equate missing in nextdaad.inc" }
+        $t = $m.Groups[1].Value
+        $v = if ($t.StartsWith('$')) { [Convert]::ToInt32($t.Substring(1), 16) } else { [int]$t }
+        if ($v -ne $want[$k]) { throw "SFXRING: $k is $v, expected $($want[$k])" }
+    }
+    # ld e,$84 / call nr_read / or 4 / nextreg $84,a
+    $hits = Find-ByteRuns $nex ([byte[]]@(0x1E, 0x84))
+    $ok = $false
+    foreach ($h in $hits) {
+        $end = [Math]::Min($h + 2 + 8, $nex.Length - 5)
+        for ($i = $h + 2; $i -le $end; $i++) {
+            if ($nex[$i] -eq 0xF6 -and $nex[$i+1] -eq 0x04 -and $nex[$i+2] -eq 0xED -and $nex[$i+3] -eq 0x92 -and $nex[$i+4] -eq 0x84) { $ok = $true }
+        }
+    }
+    if (-not $ok) { throw "SFXRING: NR `$84 read-modify-write (or 4) not found in NEX" }
+    "SFXRING: rings `$4000/`$4800 x 2048, tables `$7C00-`$7FFF, NR `$84 bit 2 RMW present"
+}
+
+function Read-SldSymbols {
+    # name -> @(page, address) from build\nextdaad.sld; fails if the sld is
+    # missing or older than build\nextdaad.nex.
+    $sld = "$root\build\nextdaad.sld"; $nexp = "$root\build\nextdaad.nex"
+    if (-not (Test-Path $sld)) { throw "build\nextdaad.sld missing (run .\build.ps1 first)" }
+    if ((Test-Path $nexp) -and (Get-Item $sld).LastWriteTime -lt (Get-Item $nexp).LastWriteTime.AddSeconds(-5)) { throw "build\nextdaad.sld is older than build\nextdaad.nex (stale symbols)" }
+    $sym = @{}
+    foreach ($l in [IO.File]::ReadAllLines($sld)) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
+    }
+    $sym
+}
+
+function Get-NexBankOffset {
+    # File offset of 16K bank $bank in the NEX, or -1 if absent.
+    param([byte[]]$nex, [int]$bank)
+    if ($nex[10] -ne 0) { throw "NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
+    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
+    $i = [array]::IndexOf($present, $bank)
+    if ($i -lt 0) { -1 } else { 512 + 16384 * $i }
+}
+
+function Assert-SfxPairFeeders {
+    # Stereo SFX Task 2: ctc_isr_pair/ctc2_isr_pair resident, each driving its
+    # soundrive-2 pair. Scan limited to the resident bank: video.asm's
+    # VID_PAGE also emits out ($F3)/out ($F9).
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $eq = @{}
+    foreach ($k in @('CODE_ORG', 'RESIDENT_LIMIT', 'AUD_PLAYER_ORG', 'AUD_SFB_ORG')) {
+        $m = [regex]::Match($inc, ('(?m)^' + $k + '\s+equ\s+\$([0-9A-Fa-f]+)'))
+        if (-not $m.Success) { throw "SFXPAIR: $k equate missing in nextdaad.inc" }
+        $eq[$k] = [Convert]::ToInt32($m.Groups[1].Value, 16)
+    }
+    $sym = Read-SldSymbols
+    $resOff = Get-NexBankOffset $nex 2
+    if ($resOff -lt 0) { throw "SFXPAIR: bank 2 not present in the NEX" }
+    $lo = $eq['CODE_ORG']; $hi = $eq['RESIDENT_LIMIT']
+    $res = New-Object byte[] ($hi - $lo)
+    [array]::Copy($nex, $resOff, $res, 0, $hi - $lo)
+    foreach ($f in @(@{ n = 'ctc_isr_pair'; l = 0xF1; r = 0xFB }, @{ n = 'ctc2_isr_pair'; l = 0xF3; r = 0xF9 })) {
+        if (-not $sym.ContainsKey($f.n)) { throw "SFXPAIR: $($f.n) not in build\nextdaad.sld" }
+        $pg = $sym[$f.n][0]; $a = $sym[$f.n][1]
+        if ($pg -notin @(4, 5) -or $a -lt $lo -or $a -ge $hi) { throw ("SFXPAIR: {0} at {1:X4} page {2} is outside the resident range {3:X4}-{4:X4}" -f $f.n, $a, $pg, $lo, $hi) }
+        $ok = $false
+        foreach ($h in (Find-ByteRuns $res ([byte[]]@(0xD3, $f.l)))) {
+            if ($h + $lo -lt $a -or $h + $lo -ge $a + 16) { continue }
+            for ($j = $h + 2; $j -le [Math]::Min($h + 8, $res.Length - 2); $j++) {
+                if ($res[$j] -eq 0xD3 -and $res[$j + 1] -eq $f.r) { $ok = $true }
+            }
+        }
+        if (-not $ok) { throw ("SFXPAIR: {0} has no 'out (`${1:X2})' followed within 8 bytes by 'out (`${2:X2})'" -f $f.n, $f.l, $f.r) }
+    }
+    # page 48 (bank 24 low half) code: start/stop FLAGS masks keep bits 6/7
+    $p48Len = $eq['AUD_SFB_ORG'] - $eq['AUD_PLAYER_ORG']
+    $p48 = New-Object byte[] $p48Len
+    $b24 = Get-NexBankOffset $nex 24
+    if ($b24 -lt 0) { throw "SFXPAIR: bank 24 not present in the NEX" }
+    [array]::Copy($nex, $b24, $p48, 0, $p48Len)
+    foreach ($mk in @(@{ n = 'aud_smp_start and %11111100'; b = 0xFC }, @{ n = 'aud_smp_stop and %11101000'; b = 0xE8 })) {
+        if (-not (Find-Bytes $p48 ([byte[]]@(0xE6, $mk.b)))) { throw "SFXPAIR: '$($mk.n)' (E6 $('{0:X2}' -f $mk.b)) not in page 48" }
+    }
+    "SFXPAIR: ctc_isr_pair (`$F1/`$FB) and ctc2_isr_pair (`$F3/`$F9) resident; page 48 masks E6 FC / E6 E8 present"
+}
+
+function Assert-SfxTabCells {
+    # Stereo SFX Task 3: level-table cells and transfer bodies on SFX_PAGE,
+    # sfxTabOn resident, and aud_smp_copy on page 48 keeps exactly one LDIR
+    # (the identity path). Holds for either build variant.
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $eq = @{}
+    foreach ($k in @('CODE_ORG', 'RESIDENT_LIMIT', 'AUD_PLAYER_ORG', 'AUD_SFB_ORG', 'OVL_ORG')) {
+        $m = [regex]::Match($inc, ('(?m)^' + $k + '\s+equ\s+\$([0-9A-Fa-f]+)'))
+        if (-not $m.Success) { throw "SFXTAB: $k equate missing in nextdaad.inc" }
+        $eq[$k] = [Convert]::ToInt32($m.Groups[1].Value, 16)
+    }
+    $sym = Read-SldSymbols
+    if (-not $sym.ContainsKey('sfx_page_base')) { throw "SFXTAB: sfx_page_base not in build\nextdaad.sld" }
+    $sfxPg = $sym['sfx_page_base'][0]
+    foreach ($n in @('sfxVol', 'sfxPan', 'sfxTabMode', 'sfx_tab_build', 'sfx_xfer_byte', 'sfx_xfer_pair', 'sfx_xfer_expand')) {
+        if (-not $sym.ContainsKey($n)) { throw "SFXTAB: $n not in build\nextdaad.sld" }
+        $pg = $sym[$n][0]; $a = $sym[$n][1]
+        if ($pg -ne $sfxPg -or $a -lt $eq['OVL_ORG'] -or $a -ge $eq['OVL_ORG'] + 0x1800) { throw ("SFXTAB: {0} at {1:X4} page {2} is not on SFX_PAGE {3}" -f $n, $a, $pg, $sfxPg) }
+    }
+    if (-not $sym.ContainsKey('sfxTabOn')) { throw "SFXTAB: sfxTabOn not in build\nextdaad.sld" }
+    $pg = $sym['sfxTabOn'][0]; $a = $sym['sfxTabOn'][1]
+    if ($pg -notin @(4, 5) -or $a -lt $eq['CODE_ORG'] -or $a -ge $eq['RESIDENT_LIMIT']) { throw ("SFXTAB: sfxTabOn at {0:X4} page {1} is not resident" -f $a, $pg) }
+    # aud_smp_copy's range: its label up to the next non-local page-48 label
+    if (-not $sym.ContainsKey('aud_smp_copy')) { throw "SFXTAB: aud_smp_copy not in build\nextdaad.sld" }
+    $lo = $sym['aud_smp_copy'][1]
+    $hi = $eq['AUD_SFB_ORG']
+    foreach ($k in $sym.Keys) {
+        if ($sym[$k][0] -ne 48 -or $k.StartsWith('aud_smp_copy.')) { continue }
+        $v = $sym[$k][1]
+        if ($v -gt $lo -and $v -lt $hi) { $hi = $v }
+    }
+    $b24 = Get-NexBankOffset $nex 24
+    if ($b24 -lt 0) { throw "SFXTAB: bank 24 not present in the NEX" }
+    $p48 = New-Object byte[] ($hi - $lo)
+    [array]::Copy($nex, $b24 + ($lo - $eq['AUD_PLAYER_ORG']), $p48, 0, $hi - $lo)
+    $ldir = (Find-ByteRuns $p48 ([byte[]]@(0xED, 0xB0))).Count
+    if ($ldir -ne 1) { throw ("SFXTAB: aud_smp_copy ({0:X4}-{1:X4}) holds {2} LDIR (ED B0), expected exactly 1" -f $lo, $hi, $ldir) }
+    $vo = Get-NexBankOffset $nex ([int][Math]::Floor($sfxPg / 2))
+    if ($vo -lt 0) { throw "SFXTAB: SFX_PAGE bank not present in the NEX" }
+    $vb = $vo + 8192 * ($sfxPg % 2) - $eq['OVL_ORG']
+    foreach ($c in @(@{ n = 'sfxVol'; v = 0xFF }, @{ n = 'sfxPan'; v = 0x80 }, @{ n = 'sfxTabMode'; v = 0xFF })) {
+        $o = $vb + $sym[$c.n][1]
+        if ($nex[$o] -ne $c.v -or $nex[$o + 1] -ne $c.v) { throw ("SFXTAB: {0} assembles as {1:X2},{2:X2}, expected {3:X2},{3:X2}" -f $c.n, $nex[$o], $nex[$o + 1], $c.v) }
+    }
+    $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
+    "SFXTAB ($variant): level cells + transfer bodies on SFX_PAGE $sfxPg, sfxTabOn resident, one LDIR in aud_smp_copy $('{0:X4}' -f $lo)-$('{0:X4}' -f $hi)"
+}
+
+function Assert-SfxStereoLoader {
+    # Task 4: loader accepts nChannels 2 and refuses odd data length
+    # with a DEBUG marker; the generator self-check pins the stereo header.
+    param([byte[]]$nex)
+    $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
+    $mk = [System.Text.Encoding]::ASCII.GetBytes("SFX ST?")
+    $has = Find-Bytes $nex $mk
+    if ($variant -eq 'DEBUG') {
+        if (-not $has) { throw "SFXST: DEBUG NEX lacks the 'SFX ST?' refusal marker" }
+    } elseif ($has) { throw "SFXST: Release NEX carries the DEBUG 'SFX ST?' marker" }
+    $w = New-SfxStereoWav 11025 440 0 100
+    if ($w[22] -ne 2 -or $w[32] -ne 2 -or $w[34] -ne 8) { throw "SFXST: generator nChannels/blockAlign/bits = $($w[22])/$($w[32])/$($w[34]), expected 2/2/8" }
+    if ($w[45] -ne 0x80) { throw "SFXST: RightHz 0 payload byte 1 is $($w[45]), expected 128" }
+    if ($w.Length -ne 144) { throw "SFXST: generator length $($w.Length), expected 144" }
+    $w1 = New-SfxStereoWav 11025 440 0 101
+    $ds = [System.BitConverter]::ToUInt32($w1, 40)
+    if ($ds -ne 101 -or $w1.Length -ne 44 + 102) { throw "SFXST: PayloadBytes 101 gives data size $ds, length $($w1.Length), expected 101 and 146 (RIFF pad byte)" }
+    "SFXST ($variant): stereo loader marker policy ok, New-SfxStereoWav header self-check ok"
+}
+
+function Assert-SfxModeSites {
+    # Stereo SFX Task 5: sfx_mode_decide on SFX_PAGE, reached from exactly
+    # the two start-commit sites; sfxTabMode assembles as $FF,$FF.
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $m = [regex]::Match($inc, '(?m)^OVL_ORG\s+equ\s+\$([0-9A-Fa-f]+)')
+    if (-not $m.Success) { throw "SFXMODE: OVL_ORG equate missing in nextdaad.inc" }
+    $ovl = [Convert]::ToInt32($m.Groups[1].Value, 16)
+    $sym = Read-SldSymbols
+    foreach ($n in @('sfx_page_base', 'sfx_mode_decide', 'sfxTabMode')) {
+        if (-not $sym.ContainsKey($n)) { throw "SFXMODE: $n not in build\nextdaad.sld" }
+    }
+    $sfxPg = $sym['sfx_page_base'][0]
+    foreach ($n in @('sfx_mode_decide', 'sfxTabMode')) {
+        $pg = $sym[$n][0]; $a = $sym[$n][1]
+        if ($pg -ne $sfxPg -or $a -lt $ovl -or $a -ge $ovl + 0x1800) { throw ("SFXMODE: {0} at {1:X4} page {2} is not on SFX_PAGE {3}" -f $n, $a, $pg, $sfxPg) }
+    }
+    $sites = @{ 'streamfx.asm' = '(?m)^[ \t]+call\s+sfx_mode_decide\b'; 'overlay1.asm' = '(?m)^[ \t]+ld\s+hl,\s*sfx_mode_decide\b' }
+    $total = 0
+    foreach ($f in (Get-ChildItem "$root\src" -Recurse -Filter *.asm)) {
+        $t = [System.IO.File]::ReadAllText($f.FullName)
+        $total += [regex]::Matches($t, '(?m)^[ \t]+(call|jp|jr|ld\s+hl,)\s*(\w+,\s*)?sfx_mode_decide\b').Count
+        if ($sites.ContainsKey($f.Name) -and $f.DirectoryName -match '\\src(\\audio)?$') {
+            $c = [regex]::Matches($t, $sites[$f.Name]).Count
+            if ($c -ne 1) { throw "SFXMODE: $($f.Name) has $c sites matching '$($sites[$f.Name])', expected 1" }
+        }
+    }
+    if ($total -ne 2) { throw "SFXMODE: $total references to sfx_mode_decide across src, expected exactly 2" }
+    $bo = Get-NexBankOffset $nex ([int][Math]::Floor($sfxPg / 2))
+    if ($bo -lt 0) { throw "SFXMODE: bank $([Math]::Floor($sfxPg / 2)) not present in the NEX" }
+    $off = $bo + 8192 * ($sfxPg % 2) + ($sym['sfxTabMode'][1] - $ovl)
+    if ($nex[$off] -ne 0xFF -or $nex[$off + 1] -ne 0xFF) { throw ("SFXMODE: sfxTabMode assembles as {0:X2},{1:X2}, expected FF,FF (never built)" -f $nex[$off], $nex[$off + 1]) }
+    $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
+    "SFXMODE ($variant): sfx_mode_decide on SFX_PAGE $sfxPg, two start-commit sites, sfxTabMode FF,FF"
+}
+
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
@@ -2084,6 +2364,44 @@ function Assert-SfxDualChannel {
         throw "SFX2: stale NR `$CD,1 write present"
     }
     "SFX2: NR `$C5/`$CD both enable CTC channels 0+1 (ED 91 C5/CD 03), no stale single-channel writes"
+}
+
+function Assert-SfxLevelSubs {
+    # Stereo SFX Task 6: SFX subs 17-20 (volume/pan, channels 1/2). The
+    # labels exist in the sld, sfx_level_reset has one reference (h_sfx's
+    # .stopfx), and the four condacts assemble as 18,n,sub in order.
+    param([byte[]]$nex)
+    $names = Read-SldSymbols
+    foreach ($n in @('h_sfx.level', 'sfx_level_set', 'sfx_level_reset')) {
+        if (-not $names.ContainsKey($n)) { throw "SFXLEVEL: $n not in build\nextdaad.sld" }
+    }
+    $refs = 0
+    foreach ($f in Get-ChildItem "$root\src" -Recurse -Include *.asm) {
+        foreach ($ln in [IO.File]::ReadAllLines($f.FullName)) {
+            $code = ($ln -split ';')[0]
+            if ($code -match '\bsfx_level_reset\b' -and $code -notmatch '^\s*sfx_level_reset\s*:') { $refs++ }
+        }
+    }
+    if ($refs -ne 1) { throw "SFXLEVEL: sfx_level_reset referenced $refs times outside its definition, expected 1 (.stopfx)" }
+    $ov = [IO.File]::ReadAllText("$root\src\overlay1.asm")
+    if ($ov -notmatch '(?s)\.stopfx:.{0,400}?sfx_level_reset') { throw "SFXLEVEL: the sfx_level_reset reference is not in h_sfx's .stopfx" }
+    $work = Join-Path $root 'tests\out\sfxlevel-work'
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $work | Out-Null
+    $src = [IO.File]::ReadAllText("$PSScriptRoot\sfx2.dsf")
+    $new = $src -replace '(?m)^([ \t]+)SFX 1 1[ \t]*\r?$', "`$1SFX 0 17`r`n`$1SFX 255 18`r`n`$1SFX 0 19`r`n`$1SFX 128 20"
+    if ($new -eq $src) { throw "SFXLEVEL: sfx2.dsf anchor line 'SFX 1 1' not found" }
+    [IO.File]::WriteAllText("$work\NDLVL.DSF", $new)
+    Push-Location $work
+    try {
+        & $ndrc @drcTarget EN NDLVL.DSF NDLVL.DDB -v3 -auto-tokens | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "SFXLEVEL: ndrc failed" }
+    }
+    finally { Pop-Location }
+    $ddb = [IO.File]::ReadAllBytes("$work\NDLVL.DDB")
+    $want = [byte[]]@(18, 0, 17, 18, 255, 18, 18, 0, 19, 18, 128, 20)
+    if (-not (Find-Bytes $ddb $want)) { throw "SFXLEVEL: DDB lacks the condact run 18,0,17 18,255,18 18,0,19 18,128,20" }
+    "SFXLEVEL: h_sfx.level, sfx_level_set, sfx_level_reset present; reset referenced once (.stopfx); SFX 17-20 condact bytes ok"
 }
 
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
@@ -2935,6 +3253,39 @@ if ($duoHits -ne 2) {
 }
 "sfx2.ddb: v$($sfx2Bytes[0]), subs 1/2/5 and all six of 11-16 present as authored, STEAL and pin-reject sequences contiguous, DUO pair occurs $duoHits times (verb + boot autoplay)"
 
+# --- sfxst: every verb's SFX condact as compiled (opcode 18 = $12, three
+# bytes each). Subs 17-20 are new; a DRC that clamped or remapped an
+# unknown sub-command, or a level of 0 / 255, would ship a fixture that
+# tests nothing. Each triple must occur exactly once.
+$sfxStBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxst.ddb")
+if ($sfxStBytes[0] -ne 3) {
+    throw "sfxst: DDB header version byte is $($sfxStBytes[0]), expected 3 - the fixture is compiled WITH -v3"
+}
+$sfxStAsserts = @(
+    @{ n = 'PLAY1';  b = @(1, 11) },   @{ n = 'PLAY2';  b = @(2, 13) },
+    @{ n = 'PLAY3';  b = @(3, 13) },   @{ n = 'LOOP4';  b = @(4, 14) },
+    @{ n = 'LOOP7';  b = @(7, 12) },   @{ n = 'PLAY5';  b = @(5, 11) },
+    @{ n = 'PLAY6';  b = @(6, 11) },   @{ n = 'LOOP6';  b = @(6, 12) },
+    @{ n = 'LOOP1';  b = @(1, 12) },
+    @{ n = 'V1FULL'; b = @(255, 17) }, @{ n = 'V1HALF'; b = @(128, 17) },
+    @{ n = 'V1QTR';  b = @(64, 17) },  @{ n = 'V1OFF';  b = @(0, 17) },
+    @{ n = 'V2FULL'; b = @(255, 18) }, @{ n = 'V2HALF'; b = @(128, 18) },
+    @{ n = 'V2QTR';  b = @(64, 18) },  @{ n = 'V2OFF';  b = @(0, 18) },
+    @{ n = 'PANL';   b = @(0, 19) },   @{ n = 'PANC';   b = @(128, 19) },
+    @{ n = 'PANR';   b = @(255, 19) },
+    @{ n = 'PAN2L';  b = @(0, 20) },   @{ n = 'PAN2C';  b = @(128, 20) },
+    @{ n = 'PAN2R';  b = @(255, 20) }, @{ n = 'PL1B'; b = @(1, 13) },
+    @{ n = 'PL2A'; b = @(2, 11) },   @{ n = 'PL3A'; b = @(3, 11) },
+    @{ n = 'STOP';   b = @(0, 5) },    @{ n = 'VID';    b = @(1, 9) }
+)
+foreach ($s in $sfxStAsserts) {
+    $hits = (Find-ByteRuns $sfxStBytes ([byte[]]@(18, $s.b[0], $s.b[1]))).Count
+    if ($hits -ne 1) {
+        throw "sfxst: $($s.n) (SFX $($s.b[0]) $($s.b[1])) found $hits times in tests\out\sfxst.ddb, expected exactly 1 - DRC did not emit the authored condact"
+    }
+}
+"sfxst.ddb: v$($sfxStBytes[0]), all $($sfxStAsserts.Count) verb condacts (subs 5/9/11/12/13/14/17/18/19/20, incl. LOOP6/LOOP1 on 12) present exactly once as authored"
+
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
 # with -d they must arrive as three bare $DC opcode bytes at the
@@ -3068,6 +3419,12 @@ if (Test-Path "$root\build\nextdaad.nex") {
     # SP18 item 7 / Task 10 landed channel 2's CTC plumbing, so this
     # now runs unconditionally on every harness invocation.
     Assert-SfxDualChannel $nex
+    Assert-SfxRingLayout $nex
+    Assert-SfxPairFeeders $nex
+    Assert-SfxTabCells $nex
+    Assert-SfxStereoLoader $nex
+    Assert-SfxModeSites $nex
+    Assert-SfxLevelSubs $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"
@@ -5262,6 +5619,113 @@ if ($Sfx2) {
     $sfx2Active = $true
 }
 
+$sfxStActive = $false
+if ($SfxSt) {
+    # Stereo sample, volume and pan fixture. Makes tests\sfxst.dsf the
+    # active DDB and generates + stages seven stimulus WAVs.
+    #
+    # CSpect-lock: see header.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\sfxst.ddb" "$leg\GAME.DDB" -Force
+
+    # kind m = mono (New-SfxLongWav, whole cycles enforced), s = stereo
+    # (New-SfxStereoWav, left/right Hz, 0 = held at $80). Stereo tones
+    # are checked for whole cycles over the frame count here: a stereo
+    # loop with a fractional cycle would click at the seam.
+    $sfxStSpecs = @(
+        @{ dest = '001.WAV'; kind = 'm'; rate = 20000; l = 440.0; r = 440.0; len = 24000 },
+        @{ dest = '002.WAV'; kind = 's'; rate = 20000; l = 440.0; r = 0.0;   len = 80000 },
+        @{ dest = '003.WAV'; kind = 's'; rate = 20000; l = 0.0;   r = 660.0; len = 80000 },
+        @{ dest = '004.WAV'; kind = 's'; rate = 20000; l = 440.0; r = 440.0; len = 240000 },
+        @{ dest = '005.WAV'; kind = 's'; rate = 15625; l = 440.0; r = 440.0; len = 15625 },
+        @{ dest = '006.WAV'; kind = 'm'; rate = 15625; l = 440.0; r = 440.0; len = 15625 },
+        @{ dest = '007.WAV'; kind = 's'; rate = 20000; l = 660.0; r = 660.0; len = 240000 }
+    )
+    foreach ($spec in $sfxStSpecs) {
+        if ($spec.kind -eq 'm') {
+            $w = New-SfxLongWav -Rate $spec.rate -ToneHz $spec.l -PayloadBytes $spec.len
+        }
+        else {
+            # 005 is the odd-length refusal case: it is not a loop, so
+            # the whole-cycle rule applies to the even-length files only.
+            if (($spec.len -band 1) -eq 0) {
+                $frames = $spec.len / 2
+                foreach ($hz in @($spec.l, $spec.r)) {
+                    $cyc = $hz * $frames / $spec.rate
+                    if ([math]::Abs($cyc - [math]::Round($cyc)) -gt 1e-9) {
+                        throw "sfxst: $($spec.dest) $hz Hz over $frames frames at $($spec.rate) Hz is $cyc cycles - not whole, the loop would click"
+                    }
+                }
+            }
+            $w = New-SfxStereoWav $spec.rate $spec.l $spec.r $spec.len
+        }
+        $path = "$root\tests\out\sfxst_$($spec.dest)"
+        [System.IO.File]::WriteAllBytes($path, $w)
+        # Re-read the header rather than trusting the generator arguments.
+        $wb = [System.IO.File]::ReadAllBytes($path)
+        $wch = [System.BitConverter]::ToUInt16($wb, 22)
+        $wrate = [System.BitConverter]::ToUInt32($wb, 24)
+        $wbits = [System.BitConverter]::ToUInt16($wb, 34)
+        $wdata = [System.BitConverter]::ToUInt32($wb, 40)
+        $wantCh = if ($spec.kind -eq 'm') { 1 } else { 2 }
+        if ($wch -ne $wantCh -or $wbits -ne 8 -or $wrate -ne $spec.rate -or $wdata -ne $spec.len) {
+            throw "sfxst: $($spec.dest) header is ch=$wch rate=$wrate bits=$wbits data=$wdata, expected ch=$wantCh rate=$($spec.rate) bits=8 data=$($spec.len)"
+        }
+        Copy-Item $path "$leg\$($spec.dest)" -Force
+        "staged sd\$legName\$($spec.dest)  $($wb.Length) bytes, $wrate Hz, $wch ch, 8-bit, L $($spec.l) Hz R $($spec.r) Hz, data $wdata"
+    }
+
+    # Location pictures, both 256-wide .NXI (gfx_row_copy256 path) so they
+    # sit on tilemap rows 4-19 above the text window (rows 20-29).
+    # 001.NXI: mkl2card.py (256x128). 002.NXI: mkl2pos.py's plain 001.NXI
+    # (mode 0, 256x96), a visibly different card. mkpalcard.py is not used:
+    # it is a 320-wide .NX2 (scatter path) on rows 0-15.
+    & python "$PSScriptRoot\art\mkl2card.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2card.py failed" }
+    $stArt = "$root\tests\out\sfxst-art"
+    & python "$PSScriptRoot\art\mkl2pos.py" $stArt
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2pos.py failed" }
+    $stPics = @(
+        @{ src = "$root\tests\out\l2card.nxi"; dest = '001.NXI'; rows = 128 },
+        @{ src = "$stArt\001.NXI";            dest = '002.NXI'; rows = 96 }
+    )
+    foreach ($p in $stPics) {
+        if (-not (Test-Path -LiteralPath $p.src)) { throw "sfxst: $($p.src) was not produced" }
+        $pb = [System.IO.File]::ReadAllBytes($p.src)
+        # gfx_derive_height: (bytes - 512) / 256 rows, 1..192 in 256-wide mode
+        if ((($pb.Length - 512) % 256) -ne 0) { throw "sfxst: $($p.dest) is $($pb.Length) bytes - not 512 + whole 256-byte rows" }
+        $rows = ($pb.Length - 512) / 256
+        if ($rows -ne $p.rows) { throw "sfxst: $($p.dest) derives $rows rows, expected $($p.rows)" }
+        # index 255 is the reserved transparent entry: a hole would show the tilemap
+        $n255 = 0
+        for ($i = 512; $i -lt $pb.Length; $i++) { if ($pb[$i] -eq 255) { $n255++ } }
+        if ($n255 -ne 0) { throw "sfxst: $($p.dest) uses palette index 255 in $n255 pixel(s)" }
+        Copy-Item -LiteralPath $p.src "$leg\$($p.dest)" -Force
+        "staged $($p.src.Substring($root.Length + 1)) -> sd\$legName\$($p.dest)  $($pb.Length) bytes, 256x$rows, no pixel uses index 255"
+    }
+
+    # 001.VID for the VID verb: the smallest cached -Vid leg encode, same
+    # rule as -SfxLong.
+    $vidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
+    if ($vidSrc) {
+        Copy-Item $vidSrc.FullName "$leg\001.VID" -Force
+        "staged tests\out\$($vidSrc.Name) -> sd\$legName\001.VID  $($vidSrc.Length) bytes (smallest cached -Vid leg encode; VID verb)"
+    }
+    else {
+        "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged. Run 'tests\build-tests.ps1 -Vid' once to populate the cache, then re-run -SfxSt. The VID verb (SFX 1 9) reports a clean miss without it."
+    }
+    # The folder holds exactly these (NEXTDAAD.NEX is copied after this block).
+    $stWant = @('GAME.DDB', '001.WAV', '002.WAV', '003.WAV', '004.WAV', '005.WAV', '006.WAV', '007.WAV', '001.NXI', '002.NXI')
+    if ($vidSrc) { $stWant += '001.VID' }
+    $stHave = @(Get-ChildItem -LiteralPath $leg -File | ForEach-Object { $_.Name.ToUpper() })
+    $stDiff = Compare-Object ($stWant | Sort-Object) ($stHave | Sort-Object)
+    if ($stDiff) { throw "sfxst: sd\$legName holds [$($stHave -join ' ')], expected [$($stWant -join ' ')]" }
+    "sfxst: sd\$legName holds the $($stWant.Count) expected files"
+    $sfxStActive = $true
+}
+
 $aysRegActive = $false
 if ($AysReg) {
     # AYS stream register-loss leg. Stages the fixture DDB, the two
@@ -6199,6 +6663,7 @@ elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-s
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture)" }
 elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixture - SP18 item 7 Task 7)" }
 elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
+elseif ($sfxStActive) { "active: sfxst (stereo sample, volume and pan fixture)" }
 elseif ($aysRegActive) { "active: aysreg (AYS stream register-loss fixture)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture)" }
 elseif ($l2posActive) { "active: l2pos (positioned pictures fixture, mode $l2posMode set$(if ($GfxZx0) { ', ZX0' }))" }

@@ -2565,6 +2565,9 @@ h_sfx:                          ; 18: B = n, C = sub-command
     sub 4                       ; 15/16 -> 0/1: stop channel 1/2
     cp 2
     jp c, .pinstop
+    sub 2                       ; 17-20 -> 0-3: volume/pan, channel 1/2.
+    cp 4                        ; n = 0 is a legal level, so this must
+    jp c, .level                ; not reach .smpgo's n guard
 .unk:
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker. Inline - overlay1 must NOT
@@ -2695,8 +2698,12 @@ h_sfx:                          ; 18: B = n, C = sub-command
     inc a                       ; release pin. 1 = channel 1, 2 = channel 2
     jr .stopgo
 .stopfx:                        ; 5: the documented SUPERSET - both
-    ld hl, audRequest           ; sampled channels AND the AY effect,
-    set 2, (hl)                 ; and both pins released
+    push bc                     ; sampled channels AND the AY effect,
+    ld hl, sfx_level_reset      ; levels reset,
+    call sfx_page_call
+    pop bc
+    ld hl, audRequest
+    set 2, (hl)                 ; both pins released
     ld a, 3
 .stopgo:                        ; A = channel mask, bit 0 ch1, bit 1 ch2
     ld e, a
@@ -2742,6 +2749,9 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld a, 1
     ld (audEnable), a
     ret
+.level:                        ; A = 0-3 (vol1 vol2 pan1 pan2), B = value.
+    ld hl, sfx_level_set        ; sfx_page_call keeps A and B and returns
+    jp sfx_page_call            ; to h_sfx's caller; no mailbox, no wait
 .vid:
     ; PLAYFLI/PLAYFLIL alias (design doc): B (video number) untouched, A
     ; arrives as 0/1 and becomes vid_play's C loop contract - identical
@@ -2754,6 +2764,7 @@ h_sfx:                          ; 18: B = n, C = sub-command
 
  IFDEF DEBUG
 msgSfxUnk: db "SFX? ", 0
+msgSfxSt:  db "SFX ST?", 0
  ENDIF
 
 ; Stop the sample playing on the channel sfxSel bit 0 names, and wait
@@ -3536,11 +3547,15 @@ aud_load_wav:
     ld a, h
     or l
     jp nz, .failclose
-    ld hl, (wavFmt+2)           ; nChannels
-    dec hl                      ; == 1 (mono)?
+    ld hl, (wavFmt+2)           ; nChannels: 1 mono, 2 stereo
     ld a, h
-    or l
+    or a
     jp nz, .failclose
+    ld a, l
+    dec a                       ; 0 -> $FF
+    cp 2
+    jp nc, .failclose
+    ld (wavStereo), a           ; 0 mono, 1 stereo
     ld hl, (wavFmt+6)           ; nSamplesPerSec high word
     ld a, h
     or l
@@ -3596,7 +3611,20 @@ aud_load_wav:
     ld (wavLen), hl            ; 24-bit payload length: low word
     ld a, d
     ld (wavLenHi), a           ; high byte
-    jp .stream
+    ld a, (wavStereo)
+    or a
+    jp z, .stream
+    ld a, (wavLen)              ; stereo: PAIR copies need an even length
+    rrca                        ; (RIFF pads odd chunks, so the data
+    jp nc, .stream              ; offset is always even)
+ IFDEF DEBUG
+    ld b, 30
+    call dbg_markcol
+    call dbg_at
+    ld hl, msgSfxSt
+    call dbg_puts
+ ENDIF
+    jp .failclose
 .skip:
     ; unknown chunk: discard size (+ odd pad); reject a pathological
     ; >64K non-data chunk rather than loop for minutes
@@ -3656,6 +3684,15 @@ aud_load_wav:
     jr nc, .blkok               ; sfxChan1 is resident
     ld ix, sfxChan1
 .blkok:
+    ld a, (ix+SMPB_FLAGS)       ; STEREO bit 6 from the header, before the
+    and %10111111               ; open (its masks preserve bits 6/7)
+    ld c, a
+    ld a, (wavStereo)
+    rrca                        ; bit 0 -> bit 7
+    rrca                        ; -> bit 6
+    and %01000000
+    or c
+    ld (ix+SMPB_FLAGS), a
     ld de, (wavDataOff)         ; first payload byte (consumer anchor)
     ld bc, (wavLen)             ; declared payload length, 24-bit: the
     ld a, (wavLenHi)            ; open checks it against the file's real
@@ -3663,7 +3700,20 @@ aud_load_wav:
     ld a, (audHandle)           ; caught by the deleted loop's short read)
     ld l, a
     ld a, (wavReqNum)
+    push ix                     ; the open reloads its own IX
     call sfx_open_tramp         ; resident: slot 7 <- SFX_PAGE, call, back
+    pop ix                      ; (pop leaves CF)
+    jr nc, .openok
+    res 6, (ix+SMPB_FLAGS)      ; refused: no stale STEREO bit
+    jr .opened                  ; CF still set
+.openok:
+    ld a, (sfxSel)
+    and 1                       ; A = channel index
+    ld de, (wavFmt+4)           ; rate
+    ld hl, sfx_mode_decide      ; page 48 still in slot 6
+    call sfx_page_call
+    or a                        ; CF clear: the open succeeded
+.opened:
     push af                     ; data_restore corrupts A, not F - but
     call data_restore           ; carry the whole result across anyway
     pop af
@@ -4128,6 +4178,7 @@ aud_banks_release:
 wavExt:    db ".WAV", 0
 wavReqNum: db 0
 wavGotFmt: db 0
+wavStereo: db 0                 ; 0 mono, 1 stereo (nChannels - 1)
 wavLen:    dw 0                 ; payload length low word (24-bit)
 wavLenHi:  db 0                 ; payload length high byte
 wavDataOff: dw 0                ; running file position while the header
