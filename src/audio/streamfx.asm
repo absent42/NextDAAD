@@ -974,6 +974,7 @@ aud_clk16_tab:
 ; Level tables. sfx_tab_build: rebuild channel A's tables (A = 0/1) from
 ; sfxVol/sfxPan/sfxTabMode (this page only) and set resident sfxTabOn[A].
 ; t[s] = (s*v)>>8 + 128 - ((128*v)>>8): t[128] = 128 at every level.
+; A pan factor of 255 gives v = vol, and v = 255 is the exact identity.
 ; Tables first, flag last. Corrupts all but IX, IY.
 sfx_tab_build:
     ld e, a
@@ -1003,29 +1004,29 @@ sfx_tab_build:
 .pair:
     ld a, c
     cp 129
-    ld a, 255                    ; panL = 255 when pan <= 128
+    ld a, b                      ; pan <= 128: panL = 255, vL = vol exactly
     jr c, .pl
     ld a, c
     cpl
-    add a, a                     ; else 2*(255-pan)
-.pl:
+    add a, a                     ; else panL = 2*(255-pan)
     ld d, b
     ld e, a
     mul d, e
     ld a, d                      ; vL = (vol*panL)>>8
+.pl:
     call sfx_tab_fill
     inc h
     ld a, c
     cp 128
-    ld a, 255                    ; panR = 255 when pan >= 128
+    ld a, b                      ; pan >= 128: panR = 255, vR = vol exactly
     jr nc, .pr
     ld a, c
-    add a, a                     ; else 2*pan
-.pr:
+    add a, a                     ; else panR = 2*pan
     ld d, b
     ld e, a
     mul d, e
     ld a, d                      ; vR = (vol*panR)>>8
+.pr:
     call sfx_tab_fill
 .flag:
     pop af                       ; A = mode
@@ -1045,16 +1046,19 @@ sfx_tab_build:
     ld (hl), a
     ret
 
-; One 256-byte table at H:00 for level A. (128*v)>>8 is v>>1.
+; One 256-byte table at H:00 for level A. (128*v)>>8 is v>>1. v = 255
+; writes the identity (the formula would give t[0] = 1).
 ; Corrupts AF, DE, L; preserves BC, H.
 sfx_tab_fill:
+    ld l, 0
+    cp 255
+    jr z, .id
     push bc
     ld c, a                      ; C = v
     srl a
     neg
     add a, 128
     ld b, a                      ; B = 128 - ((128*v)>>8)
-    ld l, 0
 .lp:
     ld d, l
     ld e, c
@@ -1065,6 +1069,11 @@ sfx_tab_fill:
     inc l
     jr nz, .lp
     pop bc
+    ret
+.id:
+    ld (hl), l                   ; t[s] = s
+    inc l
+    jr nz, .id
     ret
 
 ; ---------------------------------------------------------------------
@@ -1197,6 +1206,13 @@ sfx_cp_fill:
     ld de, (smpCpRemLo)
     call aud_min16
 .segok:
+    bit 6, (ix+SMPB_FLAGS)
+    jr z, .segpair
+    res 0, l                     ; stereo: whole pairs only (odd-offset guard)
+    ld a, h
+    or l
+    jp z, .done                  ; no whole pair: end this copy, never BC = 0
+.segpair:
     ld (smpCpSeg), hl
     ld b, h
     ld c, l                      ; BC = seg (>= 1)

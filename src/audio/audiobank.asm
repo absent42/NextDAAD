@@ -987,6 +987,7 @@ aud_smp_copy:
     ld bc, (smpCpSeg)
     ldir                        ; copy seg bytes (src slot 7 -> ring bank 5)
     ; advance off (page roll at $2000), dstOff (ring wrap), toFill, remain
+    ; TWIN: sfx_cp_fill (streamfx.asm) repeats this advance - fix both.
     ;
     ; DEPTH INVARIANT (SP18 item 7 Task 5). SMPB_DEPTH counts 512-byte
     ; window blocks that the PRODUCER has staged and the CONSUMER has not
