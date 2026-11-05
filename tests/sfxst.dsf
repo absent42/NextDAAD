@@ -15,8 +15,8 @@
 ; ------------------------------------------------------------------
 ;   SFX n 11 / 12 / 13 / 14   play effect n once / looped on channel 1 /
 ;                             channel 2 (pinned, as in sfx2.dsf)
-;   SFX v 17 / SFX v 18       channel 1 / channel 2 volume, 255 = full
-;   SFX p 19 / SFX p 20       channel 1 / channel 2 pan, 0 = left,
+;   SFX n 17 / SFX n 18       channel 1 / channel 2 volume, 255 = full
+;   SFX n 19 / SFX n 20       channel 1 / channel 2 pan, 0 = left,
 ;                             128 = centre, 255 = right
 ;   SFX 0 5                   stop everything and reset volume/pan to
 ;                             255 / 128 on both channels
@@ -59,6 +59,10 @@
 ;   V1FULL/V1HALF/V1QTR/V1OFF   SFX 255/128/64/0 17   channel 1 level
 ;   V2FULL/V2HALF/V2QTR/V2OFF   SFX 255/128/64/0 18   channel 2 level
 ;   PANL/PANC/PANR   SFX 0/128/255 19                 channel 1 pan
+;   PAN2L/PAN2C/PAN2R  SFX 0/128/255 20                 channel 2 pan
+;   PL1B   SFX 1 13  001 mono 20000 Hz once, ch 2
+;   PL2A   SFX 2 11  002 stereo left only, once, ch 1
+;   PL3A   SFX 3 11  003 stereo right only, once, ch 1
 ;   STOP  SFX 0 5    stop all, reset levels and pans
 ;   VID   SFX 1 9    play video 1 once (needs 001.VID staged)
 ;
@@ -97,6 +101,12 @@ V2OFF  75 verb
 PANL   76 verb
 PANC   77 verb
 PANR   78 verb
+PAN2L  81 verb
+PAN2C  82 verb
+PAN2R  83 verb
+PL1B   84 verb
+PL2A   85 verb
+PL3A   86 verb
 STOP   79 verb
 VID    80 verb
 /STX
@@ -255,6 +265,24 @@ SOUTH 0
 > PANR   _ MES "channel 1 pan right, 255 - SFX 255 19#n"
            SFX 255 19
            DONE
+> PAN2L  _ MES "channel 2 pan left, 0 - SFX 0 20#n"
+           SFX 0 20
+           DONE
+> PAN2C  _ MES "channel 2 pan centre, 128 - SFX 128 20#n"
+           SFX 128 20
+           DONE
+> PAN2R  _ MES "channel 2 pan right, 255 - SFX 255 20#n"
+           SFX 255 20
+           DONE
+> PL1B   _ MES "001 mono 20000 Hz once, ch 2 - SFX 1 13#n"
+           SFX 1 13
+           DONE
+> PL2A   _ MES "002 stereo left only, once, ch 1 - SFX 2 11#n"
+           SFX 2 11
+           DONE
+> PL3A   _ MES "003 stereo right only, once, ch 1 - SFX 3 11#n"
+           SFX 3 11
+           DONE
 ; ---- stop all (resets levels and pans), video ----
 > STOP   _ MES "all stopped, levels 255, pans 128 - SFX 0 5#n"
            SFX 0 5
@@ -277,5 +305,7 @@ SOUTH 0
         MES "V1FULL V1HALF V1QTR V1OFF   ch 1 level#n"
         MES "V2FULL V2HALF V2QTR V2OFF   ch 2 level#n"
         MES "PANL PANC PANR              ch 1 pan#n"
+        MES "PAN2L PAN2C PAN2R           ch 2 pan#n"
+        MES "PL1B ch 2 | PL2A PL3A ch 1 (one side)#n"
         GOTO 1
 /END

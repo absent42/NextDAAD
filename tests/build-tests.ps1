@@ -3256,6 +3256,9 @@ $sfxStAsserts = @(
     @{ n = 'V2QTR';  b = @(64, 18) },  @{ n = 'V2OFF';  b = @(0, 18) },
     @{ n = 'PANL';   b = @(0, 19) },   @{ n = 'PANC';   b = @(128, 19) },
     @{ n = 'PANR';   b = @(255, 19) },
+    @{ n = 'PAN2L';  b = @(0, 20) },   @{ n = 'PAN2C';  b = @(128, 20) },
+    @{ n = 'PAN2R';  b = @(255, 20) }, @{ n = 'PL1B'; b = @(1, 13) },
+    @{ n = 'PL2A'; b = @(2, 11) },   @{ n = 'PL3A'; b = @(3, 11) },
     @{ n = 'STOP';   b = @(0, 5) },    @{ n = 'VID';    b = @(1, 9) }
 )
 foreach ($s in $sfxStAsserts) {
@@ -3264,7 +3267,7 @@ foreach ($s in $sfxStAsserts) {
         throw "sfxst: $($s.n) (SFX $($s.b[0]) $($s.b[1])) found $hits times in tests\out\sfxst.ddb, expected exactly 1 - DRC did not emit the authored condact"
     }
 }
-"sfxst.ddb: v$($sfxStBytes[0]), all $($sfxStAsserts.Count) verb condacts (subs 5/9/11-14/17-19) present exactly once as authored"
+"sfxst.ddb: v$($sfxStBytes[0]), all $($sfxStAsserts.Count) verb condacts (subs 5/9/11-14/17-20) present exactly once as authored"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
