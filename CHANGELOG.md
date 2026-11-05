@@ -12,6 +12,12 @@ All notable changes to NextDAAD are recorded here.
   SFX n 5. A pan change on a channel playing a centred mono file applies
   at its next start. 15625 Hz is recommended for every sample; stereo
   costs more CPU than mono. Subs 17-20 are NextDAAD extensions.
+- **Fix: a looped sample lost its loop when another sample condact
+  followed it in the same process entry.** The loop flag of a start
+  still waiting for the next frame was overwritten by the next SFX
+  condact's own value, so `SFX n 12` or `SFX n 14` immediately followed
+  by a play-once `SFX n 1` played the loop once. The flag is now
+  committed only after any earlier start has been taken.
 
 ## v0.13.0 - 30/10/2026
 
