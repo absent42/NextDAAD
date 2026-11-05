@@ -3604,26 +3604,15 @@ aud_load_wav:
     ld a, (wavStereo)
     or a
     jp z, .stream
-    ld a, (wavDataOff)          ; stereo: PAIR copies need an even data
-    rrca                        ; offset and even length
-    ld c, 'O'
-    jr c, .stfail
-    ld a, (wavLen)
-    rrca
-    ld c, 'L'
-    jr c, .stfail
-    jp .stream
-.stfail:
+    ld a, (wavLen)              ; stereo: PAIR copies need an even length
+    rrca                        ; (RIFF pads odd chunks, so the data
+    jp nc, .stream              ; offset is always even)
  IFDEF DEBUG
-    push bc                     ; C = cause letter
     ld b, 30
     call dbg_markcol
     call dbg_at
     ld hl, msgSfxSt
     call dbg_puts
-    pop bc
-    ld a, c
-    call dbg_putc
  ENDIF
     jp .failclose
 .skip:
@@ -3701,7 +3690,12 @@ aud_load_wav:
     ld a, (audHandle)           ; caught by the deleted loop's short read)
     ld l, a
     ld a, (wavReqNum)
+    push ix                     ; the open reloads its own IX
     call sfx_open_tramp         ; resident: slot 7 <- SFX_PAGE, call, back
+    pop ix                      ; (pop leaves CF)
+    jr nc, .openok
+    res 6, (ix+SMPB_FLAGS)      ; refused: no stale STEREO bit
+.openok:
     push af                     ; data_restore corrupts A, not F - but
     call data_restore           ; carry the whole result across anyway
     pop af

@@ -612,9 +612,9 @@ function New-SfxLongWav([int]$Rate, [double]$ToneHz, [int]$PayloadBytes) {
 }
 
 # Stereo twin of New-SfxLongWav: nChannels 2, interleaved L,R, 8-bit
-# unsigned. A side with Hz 0 is held at $80. FmtPad extra fmt bytes shift
-# the data offset (odd pad = odd offset).
-function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$PayloadBytes, [int]$FmtPad = 0) {
+# unsigned. A side with Hz 0 is held at $80. An odd PayloadBytes writes the
+# odd data size and appends the RIFF pad byte.
+function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$PayloadBytes) {
     $frames = [int][math]::Floor($PayloadBytes / 2)
     $pcm = New-Object byte[] $PayloadBytes
     for ($n = 0; $n -lt $PayloadBytes; $n++) {
@@ -627,10 +627,11 @@ function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$P
         }
         $pcm[$n] = [byte]$v
     }
-    $fmtLen = 16 + $FmtPad
+    $fmtLen = 16
+    $pad = $PayloadBytes -band 1
     $wav = New-Object System.Collections.Generic.List[byte]
     $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("RIFF"))
-    $wav.AddRange([System.BitConverter]::GetBytes([UInt32](20 + $fmtLen + $PayloadBytes)))
+    $wav.AddRange([System.BitConverter]::GetBytes([UInt32](20 + $fmtLen + $PayloadBytes + $pad)))
     $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("WAVE"))
     $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("fmt "))
     $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$fmtLen))
@@ -640,10 +641,10 @@ function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$P
     $wav.AddRange([System.BitConverter]::GetBytes([UInt32](2 * $Rate)))  # byte rate
     $wav.AddRange([System.BitConverter]::GetBytes([UInt16]2))       # block align
     $wav.AddRange([System.BitConverter]::GetBytes([UInt16]8))       # bits per sample
-    if ($FmtPad -gt 0) { $wav.AddRange((New-Object byte[] $FmtPad)) }
     $wav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
     $wav.AddRange([System.BitConverter]::GetBytes([UInt32]$PayloadBytes))
     $wav.AddRange($pcm)
+    if ($pad) { $wav.Add([byte]0) }
     return , $wav.ToArray()
 }
 
@@ -2220,8 +2221,8 @@ function Assert-SfxTabCells {
 }
 
 function Assert-SfxStereoLoader {
-    # Task 4: loader accepts nChannels 2 and refuses odd offset/length with
-    # a DEBUG marker; the generator self-check pins the stereo header.
+    # Task 4: loader accepts nChannels 2 and refuses odd data length
+    # with a DEBUG marker; the generator self-check pins the stereo header.
     param([byte[]]$nex)
     $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
     $mk = [System.Text.Encoding]::ASCII.GetBytes("SFX ST?")
@@ -2233,8 +2234,9 @@ function Assert-SfxStereoLoader {
     if ($w[22] -ne 2 -or $w[32] -ne 2 -or $w[34] -ne 8) { throw "SFXST: generator nChannels/blockAlign/bits = $($w[22])/$($w[32])/$($w[34]), expected 2/2/8" }
     if ($w[45] -ne 0x80) { throw "SFXST: RightHz 0 payload byte 1 is $($w[45]), expected 128" }
     if ($w.Length -ne 144) { throw "SFXST: generator length $($w.Length), expected 144" }
-    $w1 = New-SfxStereoWav 11025 440 0 100 1
-    if ([System.Text.Encoding]::ASCII.GetString($w1, 37, 4) -ne 'data') { throw "SFXST: FmtPad 1 does not put the data tag at odd offset 37" }
+    $w1 = New-SfxStereoWav 11025 440 0 101
+    $ds = [System.BitConverter]::ToUInt32($w1, 40)
+    if ($ds -ne 101 -or $w1.Length -ne 44 + 102) { throw "SFXST: PayloadBytes 101 gives data size $ds, length $($w1.Length), expected 101 and 146 (RIFF pad byte)" }
     "SFXST ($variant): stereo loader marker policy ok, New-SfxStereoWav header self-check ok"
 }
 
