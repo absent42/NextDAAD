@@ -151,6 +151,13 @@ author code take over sound entirely. There is no workaround; author
 audio work belongs in the `#int` hook driving hardware directly (see
 [Externs](externs.md#the-int-hook)) rather than through `SFX`.
 
+### SFX sub-commands 17-20 are NextDAAD extensions
+
+`SFX n 17` to `SFX n 20` set the volume and pan of the two sample
+channels (see [Audio](audio.md#volume-and-pan)). They exist only in
+NextDAAD; other DAAD interpreters do not implement them, so a
+game that sets volume or pan will not sound the same there.
+
 ### CALL only reaches addresses inside your own loaded XBN
 
 `CALL lsb msb` only runs code that falls inside the extent of the

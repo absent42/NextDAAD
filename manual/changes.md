@@ -3,6 +3,22 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## Unreleased
+
+- **Stereo samples, volume and pan.** A `NNN.WAV` sample can now be stereo
+  (8-bit unsigned PCM, 3500 to 20000 Hz, even data length) and plays through
+  both outputs. Four new sub-commands set each sample channel's volume
+  (`SFX n 17`, `SFX n 18`) and pan (`SFX n 19`, `SFX n 20`); both work on
+  mono and stereo files, persist across effects and reset at boot and on
+  `SFX n 5`. 15625 Hz is the recommended rate for every sample. See
+  [Audio](audio.md#volume-and-pan).
+- **Fix: a looped sample lost its loop when another sample condact
+  followed it in the same process entry.** `SFX n 12` or
+  `SFX n 14` immediately followed by a play-once `SFX n 1`
+  played the loop once, because the second condact overwrote the first
+  one's loop flag before the start had been taken. The flag is now kept
+  until the earlier start has gone.
+
 ## 0.13.0 - 30 October 2026
 
 - **DAAD databases up to 128K.** The kit now compiles with NextDAAD text format
