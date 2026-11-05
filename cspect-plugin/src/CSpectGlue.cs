@@ -101,6 +101,10 @@ namespace NextDAADDebug
         const int IdKeys = 3;
 #endif
 
+        // iPlugin from CSpect 4.5; harmless extras on older Plugin.dll builds.
+        public string GetName() => "NextDAAD debugger";
+        public string GetDescription() => "DAAD-level debugger for NextDAAD games: condact stepping, breakpoints, flags, objects and source view";
+
         public List<sIO> Init(iCSpect _CSpect)
         {
             cs = _CSpect;
