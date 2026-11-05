@@ -2137,6 +2137,52 @@ function Assert-SfxPairFeeders {
     "SFXPAIR: ctc_isr_pair (`$F1/`$FB) and ctc2_isr_pair (`$F3/`$F9) resident; page 48 masks E6 FC / E6 E8 present"
 }
 
+function Assert-SfxTabCells {
+    # Stereo SFX Task 3: level-table cells and transfer bodies on SFX_PAGE,
+    # sfxTabOn resident, and aud_smp_copy on page 48 keeps exactly one LDIR
+    # (the identity path). Holds for either build variant.
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $eq = @{}
+    foreach ($k in @('CODE_ORG', 'RESIDENT_LIMIT', 'AUD_PLAYER_ORG', 'AUD_SFB_ORG', 'OVL_ORG')) {
+        $m = [regex]::Match($inc, ('(?m)^' + $k + '\s+equ\s+\$([0-9A-Fa-f]+)'))
+        if (-not $m.Success) { throw "SFXTAB: $k equate missing in nextdaad.inc" }
+        $eq[$k] = [Convert]::ToInt32($m.Groups[1].Value, 16)
+    }
+    $sym = @{}
+    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
+    }
+    if (-not $sym.ContainsKey('sfx_page_base')) { throw "SFXTAB: sfx_page_base not in build\nextdaad.sld" }
+    $sfxPg = $sym['sfx_page_base'][0]
+    foreach ($n in @('sfxVol', 'sfxPan', 'sfxTabMode', 'sfx_tab_build', 'sfx_xfer_byte', 'sfx_xfer_pair', 'sfx_xfer_expand')) {
+        if (-not $sym.ContainsKey($n)) { throw "SFXTAB: $n not in build\nextdaad.sld" }
+        $pg = $sym[$n][0]; $a = $sym[$n][1]
+        if ($pg -ne $sfxPg -or $a -lt $eq['OVL_ORG'] -or $a -ge $eq['OVL_ORG'] + 0x1800) { throw ("SFXTAB: {0} at {1:X4} page {2} is not on SFX_PAGE {3}" -f $n, $a, $pg, $sfxPg) }
+    }
+    if (-not $sym.ContainsKey('sfxTabOn')) { throw "SFXTAB: sfxTabOn not in build\nextdaad.sld" }
+    $pg = $sym['sfxTabOn'][0]; $a = $sym['sfxTabOn'][1]
+    if ($pg -notin @(4, 5) -or $a -lt $eq['CODE_ORG'] -or $a -ge $eq['RESIDENT_LIMIT']) { throw ("SFXTAB: sfxTabOn at {0:X4} page {1} is not resident" -f $a, $pg) }
+    # aud_smp_copy's range: its label up to the next non-local page-48 label
+    if (-not $sym.ContainsKey('aud_smp_copy')) { throw "SFXTAB: aud_smp_copy not in build\nextdaad.sld" }
+    $lo = $sym['aud_smp_copy'][1]
+    $hi = $eq['AUD_SFB_ORG']
+    foreach ($k in $sym.Keys) {
+        if ($sym[$k][0] -ne 48 -or $k.StartsWith('aud_smp_copy.')) { continue }
+        $v = $sym[$k][1]
+        if ($v -gt $lo -and $v -lt $hi) { $hi = $v }
+    }
+    if ($nex[10] -ne 0) { throw "SFXTAB: NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
+    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
+    $p48 = New-Object byte[] ($hi - $lo)
+    [array]::Copy($nex, 512 + 16384 * [array]::IndexOf($present, 24) + ($lo - $eq['AUD_PLAYER_ORG']), $p48, 0, $hi - $lo)
+    $ldir = (Find-ByteRuns $p48 ([byte[]]@(0xED, 0xB0))).Count
+    if ($ldir -ne 1) { throw ("SFXTAB: aud_smp_copy ({0:X4}-{1:X4}) holds {2} LDIR (ED B0), expected exactly 1" -f $lo, $hi, $ldir) }
+    $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
+    "SFXTAB ($variant): level cells + transfer bodies on SFX_PAGE $sfxPg, sfxTabOn resident, one LDIR in aud_smp_copy $('{0:X4}' -f $lo)-$('{0:X4}' -f $hi)"
+}
+
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
@@ -3146,6 +3192,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     Assert-SfxDualChannel $nex
     Assert-SfxRingLayout $nex
     Assert-SfxPairFeeders $nex
+    Assert-SfxTabCells $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

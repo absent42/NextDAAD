@@ -622,7 +622,8 @@ aud_smp_tick:
     call aud_smp_copy           ; fill [W, P) from source; advance SMPB_W
     ; drain handling BEFORE publish: on play-once exhaustion pad a DAC_SILENCE
     ; guard at the write slot so a nested ctc_isr that catches write reads
-    ; silence, never a stale ring byte.
+    ; silence, never a stale ring byte. PAIR mode: sfx_cp_fill has already
+    ; padded the pair at W and W+1 inside the copy.
     ld a, (ix+SMPB_FLAGS)
     bit 1, a
     jr nz, .publish             ; loop mode: the copy rewinds, never drains
@@ -794,9 +795,15 @@ aud_min16:
 ; at $FFE0 - not by this routine's own state any more) and writes the
 ; advanced position back to the channel block. Page 48 (the window page
 ; list, the channel block and this scratch) stays in slot 6 throughout.
+; PAIR mode and non-identity levels: after phase A, sfx_cp_fill (SFX_PAGE,
+; slot 7) applies the PAIR clamps and runs the fill itself, returning with
+; toFill 0 so phase C writes its advanced smpCp* position back.
 ; Precondition: IX = channel block (sfxChan0 or sfxChan1). Corrupts everything
-; except IX.
+; except IX and IY, including the alternate set.
 aud_smp_copy:
+ IFDEF DEBUG
+    ld b, 0                     ; underrun marker for sfx_cp_fill: nothing
+ ENDIF                          ; in phase A touches BC
     ; --- phase A: toFill = the whole ring; the play-once and backpressure clamps
     ; below cut it to min(source remain, free-1). The CTC self-paces the DAC, so
     ; there is no per-frame chunk/fractional sizing any more - the tick just
@@ -884,24 +891,8 @@ aud_smp_copy:
     add hl, de                  ; restore HL = available
     ld (smpCpTo), hl
  IFDEF DEBUG
-    ; Per-channel underrun counter. Which block IX points at is the only
-    ; thing that distinguishes the two channels in here, so compare it
-    ; rather than infer anything from where the blocks happen to sit
-    ; (sfxChan0 is page-48 data, sfxChan1 is resident).
-    push ix
-    pop hl
-    ld de, sfxChan0
-    or a
-    sbc hl, de
-    ld hl, sfxUnderrun0
-    jr z, .uctr
-    ld hl, sfxUnderrun1
-.uctr:
-    inc (hl)                    ; 16-bit increment through (HL)
-    jr nz, .snap
-    inc hl
-    inc (hl)
- ENDIF
+    inc b                       ; frontier bound: sfx_cp_fill counts it
+ ENDIF                          ; in sfxUnderrun0/1 (SFX_PAGE)
 .snap:
     ld a, (ix+SMPB_TABIDX)
     ld (smpCpIdx), a
@@ -924,6 +915,10 @@ aud_smp_copy:
     ld a, (ix+SMPB_FLAGS)
     and %00000010               ; loop bit
     ld (smpCpLoop), a
+    ; hop: BYTE identity returns here at once; any other channel is filled
+    ; on SFX_PAGE and returns toFill 0. .filldone restores slot 7.
+    nextreg NR_MMU7, SFX_PAGE
+    call sfx_cp_fill
     ; --- phase B: fill loop (copies run through slot 7 = source page) ---
 .fill:
     ld hl, (smpCpTo)
@@ -1111,18 +1106,6 @@ smpCpLoop:  db 0    ; loop-mode snapshot for this copy
 smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
 smpCpBlk:   db 0    ; 512-block index inside the page before a segment,
                     ; held across the advance for the DEPTH debit
-
- IFDEF DEBUG
-; SFX= report row, second field of each channel's triple (SP18 item 7
-; Task 6, per channel since Task 11). Counts the copies on which the
-; streaming frontier clamp above was the binding limit - a real underrun,
-; i.e. the refiller could not keep that channel's window ahead of its
-; DAC. Page-48 data because the PUMP writes them and cannot reach
-; SFX_PAGE; the row printer that reads them lives beside the other
-; counters on SFX_PAGE and runs with page 48 still in slot 6.
-sfxUnderrun0: dw 0
-sfxUnderrun1: dw 0
- ENDIF
 
 ; Per-channel sampled-effect pump state (SP18 item 7), SMPB_* offsets
 ; in nextdaad.inc. Page-48 data space, pinned in slot 6 for the whole of

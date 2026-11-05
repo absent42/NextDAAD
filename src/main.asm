@@ -1400,6 +1400,11 @@ sfx_page_call:
 ; reader of channel 2's state, mainline or ISR.
 sfxChan1: ds SMPB_SIZE
 
+; Per-channel level-table state (index 0 = channel 1): 0 = the last
+; sfx_tab_build was the identity map, 1 = the copy must translate.
+; Resident: the page-48 copy hop and the SFX_PAGE builder both reach it.
+sfxTabOn: db 0, 0
+
 ; Channel 1 PAIR-mode feeder: one L,R pair to DACs A/D per CTC tick.
 ; Contract as ctc_isr: saves AF/HL only, no MMU slot, no $243B/$253B,
 ; no banked memory, no port $6B, EI then RETI. Play/write stay even.

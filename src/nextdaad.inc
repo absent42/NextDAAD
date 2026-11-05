@@ -727,8 +727,8 @@ SMPB_REMAIN   equ 4    ; dw+db: 24-bit payload bytes remaining
 SMPB_LEN      equ 7    ; dw+db: 24-bit payload length (loop rewind)
 SMPB_P        equ 10   ; dw: DAC-ring PLAY offset snapshot
 SMPB_W        equ 12   ; dw: DAC-ring WRITE offset
-SMPB_RINGH    equ 14   ; DAC ring base high byte ($7C ch1 / $44 ch2 cand.)
-SMPB_RINGM    equ 15   ; wrap mask high byte ((ring-1)>>8 = $03 for 1K)
+SMPB_RINGH    equ 14   ; DAC ring base high byte ($40 ch1 / $48 ch2)
+SMPB_RINGM    equ 15   ; wrap mask high byte ((ring-1)>>8 = $07 for 2K)
 SMPB_PLAYPTR  equ 16   ; dw: address of the channel's smpPlayPtr (resident)
 SMPB_WRITEPTR equ 18   ; dw: address of the channel's smpWritePtr
 SMPB_CTCPORT  equ 20   ; dw: CTC channel port ($183B / $193B)
