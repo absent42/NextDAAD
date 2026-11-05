@@ -2240,6 +2240,48 @@ function Assert-SfxStereoLoader {
     "SFXST ($variant): stereo loader marker policy ok, New-SfxStereoWav header self-check ok"
 }
 
+function Assert-SfxModeSites {
+    # Stereo SFX Task 5: sfx_mode_decide on SFX_PAGE, reached from exactly
+    # the two start-commit sites; sfxTabMode assembles as $FF,$FF.
+    param([byte[]]$nex)
+    $inc = [System.IO.File]::ReadAllText("$root\src\nextdaad.inc")
+    $m = [regex]::Match($inc, '(?m)^OVL_ORG\s+equ\s+\$([0-9A-Fa-f]+)')
+    if (-not $m.Success) { throw "SFXMODE: OVL_ORG equate missing in nextdaad.inc" }
+    $ovl = [Convert]::ToInt32($m.Groups[1].Value, 16)
+    $sym = @{}
+    foreach ($l in [IO.File]::ReadAllLines("$root\build\nextdaad.sld")) {
+        $p = $l -split '\|'
+        if ($p.Count -ge 8 -and $p[6] -eq 'F') { $sym[$p[7]] = @([int]$p[4], [int]$p[5]) }
+    }
+    foreach ($n in @('sfx_page_base', 'sfx_mode_decide', 'sfxTabMode')) {
+        if (-not $sym.ContainsKey($n)) { throw "SFXMODE: $n not in build\nextdaad.sld" }
+    }
+    $sfxPg = $sym['sfx_page_base'][0]
+    foreach ($n in @('sfx_mode_decide', 'sfxTabMode')) {
+        $pg = $sym[$n][0]; $a = $sym[$n][1]
+        if ($pg -ne $sfxPg -or $a -lt $ovl -or $a -ge $ovl + 0x1800) { throw ("SFXMODE: {0} at {1:X4} page {2} is not on SFX_PAGE {3}" -f $n, $a, $pg, $sfxPg) }
+    }
+    $sites = @{ 'streamfx.asm' = '(?m)^[ \t]+call\s+sfx_mode_decide\b'; 'overlay1.asm' = '(?m)^[ \t]+ld\s+hl,\s*sfx_mode_decide\b' }
+    $total = 0
+    foreach ($f in (Get-ChildItem "$root\src" -Recurse -Filter *.asm)) {
+        $t = [System.IO.File]::ReadAllText($f.FullName)
+        $total += [regex]::Matches($t, '(?m)^[ \t]+(call|jp|jr|ld\s+hl,)\s*(\w+,\s*)?sfx_mode_decide\b').Count
+        if ($sites.ContainsKey($f.Name) -and $f.DirectoryName -match '\\src(\\audio)?$') {
+            $c = [regex]::Matches($t, $sites[$f.Name]).Count
+            if ($c -ne 1) { throw "SFXMODE: $($f.Name) has $c sites matching '$($sites[$f.Name])', expected 1" }
+        }
+    }
+    if ($total -ne 2) { throw "SFXMODE: $total references to sfx_mode_decide across src, expected exactly 2" }
+    if ($nex[10] -ne 0) { throw "SFXMODE: NEX header byte 10 is $($nex[10]), the bank reader assumes 0" }
+    $present = @((@(5, 2, 0, 1, 3, 4) + (6..111)) | Where-Object { $nex[18 + $_] })
+    $bi = [array]::IndexOf($present, [int][Math]::Floor($sfxPg / 2))
+    if ($bi -lt 0) { throw "SFXMODE: bank $([Math]::Floor($sfxPg / 2)) not present in the NEX" }
+    $off = 512 + 16384 * $bi + 8192 * ($sfxPg % 2) + ($sym['sfxTabMode'][1] - $ovl)
+    if ($nex[$off] -ne 0xFF -or $nex[$off + 1] -ne 0xFF) { throw ("SFXMODE: sfxTabMode assembles as {0:X2},{1:X2}, expected FF,FF (never built)" -f $nex[$off], $nex[$off + 1]) }
+    $variant = ((Get-Content "$root\build\NEXTDAAD.SYM" -TotalCount 2)[1] -split "`t")[2]
+    "SFXMODE ($variant): sfx_mode_decide on SFX_PAGE $sfxPg, two start-commit sites, sfxTabMode FF,FF"
+}
+
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
@@ -3251,6 +3293,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     Assert-SfxPairFeeders $nex
     Assert-SfxTabCells $nex
     Assert-SfxStereoLoader $nex
+    Assert-SfxModeSites $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

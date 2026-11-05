@@ -971,6 +971,61 @@ aud_clk16_tab:
                                  ; this entry is unreachable
 
 ; ---------------------------------------------------------------------
+; sfx_mode_decide: IX = channel block (page 48 mapped), A = channel index,
+; DE = rate (unused). SMPB_FLAGS bit 7 PAIR = STEREO or pan off centre.
+; A flip on an ACTIVE channel files its stop before the bit changes, so
+; aud_tick stops it before the caller's start (an idle one is stopped
+; already; a late stop would clear a fresh open's STREAMING). Bit 7 is
+; set/res in place: the ISR writes FLAGS too. Tables rebuilt when the
+; mode differs from sfxTabMode ($FF at boot). Corrupts all but IX, IY.
+sfx_mode_decide:
+    ld e, a
+    ld d, 0                      ; DE = channel index
+    ld c, d                      ; C = 0 BYTE
+    ld hl, sfxPan
+    add hl, de
+    ld a, (hl)
+    cp 128
+    jr nz, .pair                 ; pan off centre
+    bit 6, (ix+SMPB_FLAGS)
+    jr z, .cmp                   ; mono file, centred
+.pair:
+    inc c                        ; C = 1 PAIR
+.cmp:
+    ld a, (ix+SMPB_FLAGS)
+    rlca
+    and 1                        ; A = current bit 7
+    cp c
+    jr z, .tab
+    bit 0, (ix+SMPB_FLAGS)
+    jr z, .flip                  ; idle: CTC off, already stopped
+    ld hl, audRequest
+    ld a, e
+    or a
+    jr z, .stop                  ; channel 1
+    ld hl, audRequest2
+    set 2, (hl)                  ; channel 2's stop
+    jr .flip
+.stop:
+    set 7, (hl)                  ; channel 1's stop
+.flip:
+    bit 0, c
+    jr z, .byte
+    set 7, (ix+SMPB_FLAGS)
+    jr .tab
+.byte:
+    res 7, (ix+SMPB_FLAGS)
+.tab:
+    ld hl, sfxTabMode
+    add hl, de
+    ld a, c
+    cp (hl)
+    ret z                        ; built for this mode already
+    ld (hl), a                   ; store first: sfx_tab_build reads it
+    ld a, e
+    jp sfx_tab_build
+
+; ---------------------------------------------------------------------
 ; Level tables. sfx_tab_build: rebuild channel A's tables (A = 0/1) from
 ; sfxVol/sfxPan/sfxTabMode (this page only) and set resident sfxTabOn[A].
 ; t[s] = (s*v)>>8 + 128 - ((128*v)>>8): t[128] = 128 at every level.
@@ -1659,6 +1714,10 @@ sfx_alloc:
                                        ; re-commit is about to cause - DE
                                        ; still holds this channel's own rate
                                        ; (aud_ctc_params preserves DE)
+    pop hl
+    push hl
+    ld a, l                          ; A = channel index (banked E)
+    call sfx_mode_decide             ; DE = rate; corrupts all but IX, IY
     pop de
     pop bc
     ld a, (ix+SMPB_LEN)
@@ -2510,7 +2569,8 @@ sfxResPin:      db 0             ; and the pin state of the one in hand -
 ; vol, pan, mode so one channel index reaches all three.
 sfxVol:         db 255, 255      ; 0-255, 255 = full
 sfxPan:         db 128, 128      ; 0 left, 128 centre, 255 right
-sfxTabMode:     db 0, 0          ; 0 BYTE (TM only), 1 PAIR (TL and TR)
+sfxTabMode:     db $FF, $FF      ; 0 BYTE (TM only), 1 PAIR (TL and TR),
+                                 ; $FF never built: the first decide builds
 sfxCpChan:      db 0             ; sfx_cp_fill: this copy's channel index
 sfxCpX2:        db 0             ; sfx_cp_fill: 1 = mono-expand
  IFDEF DEBUG

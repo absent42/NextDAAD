@@ -3695,7 +3695,15 @@ aud_load_wav:
     pop ix                      ; (pop leaves CF)
     jr nc, .openok
     res 6, (ix+SMPB_FLAGS)      ; refused: no stale STEREO bit
+    jr .opened                  ; CF still set
 .openok:
+    ld a, (sfxSel)
+    and 1                       ; A = channel index
+    ld de, (wavFmt+4)           ; rate
+    ld hl, sfx_mode_decide      ; page 48 still in slot 6
+    call sfx_page_call
+    or a                        ; CF clear: the open succeeded
+.opened:
     push af                     ; data_restore corrupts A, not F - but
     call data_restore           ; carry the whole result across anyway
     pop af
