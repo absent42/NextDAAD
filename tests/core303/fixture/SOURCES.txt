@@ -1,0 +1,5 @@
+# Staged asset <- tracked source path (from the repo root). Staging copies from these.
+# 001.NX3 has no other tracked copy: tests/art/mkl2pos.py generates it (its 002.NX3).
+001.NX3 <- tests/core303/fixture/001.NX3
+001.AKY <- tests/audio/L9.AKY
+001.WAV <- authoring-kit/STARTER/AUDIO/001.wav

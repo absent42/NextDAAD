@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """tests/check_quiet_decode.py - prove the NXB_QUIET DEBUG image (or, with
 --debug, standard DEBUG) executes Release's instructions on every timed video
-path. Rules and exit codes: --help."""
+path; with --bench, that the BENCH image matches Release outside IFDEF BENCH.
+Rules and exit codes: --help."""
 import argparse
 import difflib
 import hashlib
@@ -33,6 +34,15 @@ values may differ. Nothing else is compared.
   that IFDEF and its statement list exactly. No other difference is allowed.
 - ALIGN compares by presence after an unconditional jp/jr/ret, else by padding.
 - Macro and DUP rows also compare their text with numbers masked.
+--bench assembles Release and BENCH (Release + BENCH) and compares the whole
+image: every byte-emitting line outside IFDEF BENCH blocks (nesting-aware,
+files INCLUDEd from inside one count as inside) must match by (file, line) and
+byte count; operand values may differ. A Release line in the other branch of
+an IFDEF BENCH must be listed in BENCH_PINNED with the BENCH line replacing
+it, and the two must emit the same byte count. On the source of every file
+either build opens, any statement in an other branch must be pinned, emitting
+or not, and any BENCH-only statement outside BENCH_FILES must be pinned or in
+BENCH_ALLOWED (each entry matching exactly one line).
 Exit 0 = OK. Exit 1 = a difference, a classification failure or a build
 failure. build/nextdaad.nex is saved first and restored on exit."""
 
@@ -41,7 +51,32 @@ FLAVOURS = {
     "release": [],
     "quiet": ["-DDEBUG=1", "-DNXB_QUIET=1"],
     "debug": ["-DDEBUG=1"],
+    "bench": ["-DBENCH=1"],
 }
+
+# --bench: each Release line in the other branch of an IFDEF BENCH, paired with
+# the BENCH line that replaces it: ((file, Release statement), (file, BENCH statement)).
+BENCH_PINNED = [
+    (("src/overlay0.asm", "dw ext_forward, ext_forward"),
+     ("src/overlay0.asm", "dw bench_trampoline, ext_forward")),
+]
+
+# --bench: the only files whose BENCH-only lines need no listing below.
+BENCH_FILES = {"src/bench.asm", "src/benchres.asm"}
+# --bench: every other BENCH-only statement, each matching exactly one line: the bank
+# definitions, the bank_table_init reservation and the two INCLUDEs (pinned BENCH
+# statements are allowed too). Keeps instruments out of shared routines.
+BENCH_ALLOWED = [
+    ("src/nextdaad.inc",
+     "ASSERT 0, \"BENCH is a Release variant: BANK_BCH shares DEBUG's bank 47\""),
+    ("src/nextdaad.inc", "BANK_BCH equ 47"),
+    ("src/nextdaad.inc", "BCH_PAGE equ BANK_BCH*2"),
+    ("src/nextdaad.inc", "ASSERT BANK_BCH == BANK_BASE_LAST"),
+    ("src/main.asm", "ld a, BT_RESERVED"),
+    ("src/main.asm", "ld (bankTable+BANK_BCH), a"),
+    ("src/main.asm", "INCLUDE \"benchres.asm\""),
+    ("src/main.asm", "INCLUDE \"bench.asm\""),
+]
 
 # Routines on a sitting-5 timed path. Fault routines are EXCLUDED.
 TIMED = {
@@ -510,12 +545,15 @@ def build(flavour):
     return lst, d / "build" / "nextdaad.nex"
 
 
-def parse_listing(lst):
-    """Rows (file, line, count, src, key text, is ALIGN)."""
-    raw, files = [], []
+def parse_listing(lst, chains=False):
+    """Rows (file, line, count, src, key text, is ALIGN); with chains, a 7th
+    field: the INCLUDE lines above the row, ((file, line), ...) outermost first."""
+    raw, files = [], []                  # files: [file, chain, last line]
     for text in lst.read_text(encoding="utf-8", errors="replace").splitlines():
         if text.startswith("# file opened: "):
-            files.append(rel(text[15:]))
+            chain = (files[-1][1] + ((files[-1][0], files[-1][2]),)
+                     if files else ())
+            files.append([rel(text[15:]), chain, 0])
             continue
         if text.startswith("# file closed: "):
             files.pop()
@@ -526,10 +564,11 @@ def parse_listing(lst):
                 raise Fail(f"{lst.name}: unrecognised listing row: {text[:60]}")
             continue
         rest = m.group(3) or ""
-        raw.append((files[-1], int(m.group(1)), int(m.group(2), 16),
-                    rest[:12], rest[12:13], rest[13:]))
+        files[-1][2] = int(m.group(1))
+        raw.append((files[-1][0], int(m.group(1)), int(m.group(2), 16),
+                    rest[:12], rest[12:13], rest[13:], files[-1][1]))
     rows = []
-    for i, (f, n, addr, field, flag, src) in enumerate(raw):
+    for i, (f, n, addr, field, flag, src, chain) in enumerate(raw):
         if field.startswith("~"):
             continue
         if "..." in field:
@@ -549,7 +588,7 @@ def parse_listing(lst):
             continue
         # expanded macro/DUP rows share line numbers: key on masked text too
         key = NUMBER.sub("#", st) if flag == ">" else ""
-        rows.append((f, n, count, src, key, align))
+        rows.append((f, n, count, src, key, align) + ((chain,) if chains else ()))
     return rows
 
 
@@ -599,6 +638,190 @@ def compare(a_name, a, b_name, b):
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest().upper()
+
+
+# ------------------------------------------------------------------- --bench
+
+def scan_bench(relpath):
+    """Per line (1-based): the BENCH states it needs - empty, {"bench"} (only
+    assembled with BENCH), {"other"} (only without) or both (never)."""
+    path = SRC_ROOT / relpath
+    if not path.is_file():
+        return None
+    lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+    need = [frozenset()] * (len(lines) + 2)
+    stack = []                           # [kind or None, in ELSE]
+
+    def cur():
+        out = set()
+        for kind, other in stack:
+            if kind:
+                out.add(kind if not other else
+                        ("other" if kind == "bench" else "bench"))
+        return frozenset(out)
+    for n, line in enumerate(lines, 1):
+        st = statement(line)
+        parts = st.split(" ") if st else [""]
+        if st and line[:1] not in (" ", "\t"):
+            parts = parts[1:] or [""]    # column 0 holds a label
+        word = parts[0].upper()
+        need[n] = cur()                  # IF/ELSE/ENDIF rows: the outer state
+        if word in COND_OPEN:
+            kind = None
+            if word in ("IFDEF", "IFNDEF") and parts[1:] == ["BENCH"]:
+                kind = "bench" if word == "IFDEF" else "other"
+            stack.append([kind, False])
+        elif word in ("ELSE", "ELSEIF"):
+            if not stack:
+                raise Fail(f"{relpath}:{n}: ELSE outside a conditional")
+            if word == "ELSEIF" and stack[-1][0]:
+                raise Fail(f"{relpath}:{n}: ELSEIF on a BENCH conditional")
+            stack[-1][1] = True
+        elif word == "ENDIF":
+            if not stack:
+                raise Fail(f"{relpath}:{n}: unbalanced ENDIF")
+            stack.pop()
+    return need
+
+
+def listing_files(lst):
+    """Every source file the listing opened, relative to SRC_ROOT."""
+    return {rel(t[15:]) for t in lst.read_text(encoding="utf-8", errors="replace")
+            .splitlines() if t.startswith("# file opened: ")}
+
+
+SYM_DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\b|^\s+DEFINE\+?\s+([A-Za-z_][A-Za-z0-9_]*)"
+                     r"|^\s+([A-Za-z_][A-Za-z0-9_]*):", re.I)
+SYM_REF = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def bench_source_rules(files, scans):
+    """Statement-level rules on the source, emitting or not: an other-branch
+    statement must be pinned; a BENCH-only one outside BENCH_FILES must be pinned
+    or match a BENCH_ALLOWED entry, and each entry exactly one line; a conditional
+    outside BENCH_FILES must not test a symbol defined only on BENCH lines. Control
+    lines are otherwise skipped (scan_bench gives ELSE/ENDIF the inner state)."""
+    problems = []
+    pin_rel = {a for a, _ in BENCH_PINNED}
+    pin_bench = {b for _, b in BENCH_PINNED}
+    hits = {k: [] for k in BENCH_ALLOWED}
+    src = {}                                     # file -> (need, lines)
+    bench_defs, other_defs = set(), set()
+    for f in sorted(files):
+        if f not in scans:
+            scans[f] = scan_bench(f)
+        if scans[f] is None:
+            continue
+        src[f] = (scans[f], (SRC_ROOT / f).read_text(encoding="utf-8",
+                                                    errors="replace").split("\n"))
+        for n, line in enumerate(src[f][1], 1):
+            m = SYM_DEF.match(line)
+            if m:
+                name = m.group(1) or m.group(2) or m.group(3)
+                bench = f in BENCH_FILES or "bench" in scans[f][n]
+                (bench_defs if bench else other_defs).add(name)
+    bench_syms = bench_defs - other_defs
+    for f, (need, lines) in src.items():
+        for n, line in enumerate(lines, 1):
+            st = statement(line)
+            parts = st.split(" ")
+            if st and line[:1] not in (" ", "\t"):
+                parts = parts[1:] or [""]        # column 0 holds a label
+            word = parts[0].upper() if st else ""
+            if word in COND_OPEN | {"ELSEIF"} and f not in BENCH_FILES:
+                for name in sorted(set(SYM_REF.findall(" ".join(parts[1:]))) & bench_syms):
+                    problems.append(f"{f}:{n}: conditional on BENCH-only symbol "
+                                    f"{name} | {st}")
+            if not st or word in COND_OPEN | {"ELSE", "ELSEIF", "ENDIF"}:
+                continue                         # control lines: their body is checked
+            if "other" in need[n] and (f, st) not in pin_rel:
+                problems.append(f"{f}:{n}: statement in an IFDEF BENCH other branch "
+                                f"is not in BENCH_PINNED | {st}")
+            if "bench" in need[n] and f not in BENCH_FILES and (f, st) not in pin_bench:
+                if (f, st) in hits:
+                    hits[(f, st)].append(n)
+                else:
+                    problems.append(f"{f}:{n}: BENCH-only statement is not in "
+                                    f"BENCH_ALLOWED | {st}")
+    for (f, st), ns in hits.items():
+        if len(ns) != 1:
+            problems.append(f"BENCH_ALLOWED {f} '{st}' matches {len(ns)} lines")
+    return problems
+
+
+def run_bench(args, built):
+    scans, problems, files = {}, [], set()
+
+    def need_of(row):
+        out = set()
+        for f, n in ((row[0], row[1]),) + row[6]:
+            if f not in scans:
+                scans[f] = scan_bench(f)
+            s = scans[f]
+            if s is not None and n < len(s):
+                out |= s[n]
+        return out
+    want = {"release": "other", "bench": "bench"}
+    pin_keys = {"release": {a for a, _ in BENCH_PINNED},
+                "bench": {b for _, b in BENCH_PINNED}}
+    sel, pins, nskip = {}, {}, {}
+    for flavour in ("release", "bench"):
+        lst, nex = build(flavour)
+        built.add(sha(nex))
+        files |= listing_files(lst)
+        keep, pin, skipped = [], {}, 0
+        for row in parse_listing(lst, chains=True):
+            f, n, count, src, key, align = row[:6]
+            need = need_of(row)
+            if not need:
+                keep.append((f, n, count, src, key))
+                continue
+            if need != {want[flavour]}:
+                problems.append(f"{f}:{n}: assembled in {flavour}, needs "
+                                f"{'/'.join(sorted(need))} | {src.strip()}")
+                continue
+            k = (f, statement(src))
+            if k in pin_keys[flavour]:
+                pin.setdefault(k, []).append((f, n, count, src))
+            elif flavour == "release":
+                problems.append(f"{f}:{n}: Release line in an IFDEF BENCH "
+                                f"other branch is not in BENCH_PINNED | "
+                                f"{src.strip()}")
+            else:
+                skipped += 1
+        sel[flavour], pins[flavour], nskip[flavour] = keep, pin, skipped
+        print(f"{flavour:8} {os.path.relpath(nex, ROOT)} sha256 {sha(nex)}")
+    for a, b in BENCH_PINNED:
+        ra, rb = pins["release"].get(a, []), pins["bench"].get(b, [])
+        if len(ra) != 1 or len(rb) != 1:
+            problems.append(f"BENCH_PINNED {a[0]} '{a[1]}' -> {b[0]} '{b[1]}' "
+                            f"matches {len(ra)} release / {len(rb)} bench lines")
+        elif ra[0][2] != rb[0][2]:
+            problems.append(f"BENCH_PINNED {ra[0][0]}:{ra[0][1]} {ra[0][2]} B "
+                            f"-> {rb[0][0]}:{rb[0][1]} {rb[0][2]} B")
+    problems += bench_source_rules(files, scans)
+    for problem in problems:
+        print(f"FAIL {problem}")
+    a, b = sel["release"], sel["bench"]
+    if [(r[0], r[1], r[4]) for r in a] == [(r[0], r[1], r[4]) for r in b]:
+        ndiff = 0
+        for ra, rb in zip(a, b):
+            if ra[2] != rb[2]:
+                print(f"DIFF {ra[0]}:{ra[1]}: release {ra[2]} B, bench "
+                      f"{rb[2]} B | {ra[3].strip()}")
+                ndiff += 1
+    else:
+        ndiff = compare("release", a, "bench", b)
+    nbytes = sum(r[2] or 0 for r in a)
+    print(f"whole image: {len(a)} assembled lines, {nbytes} B outside IFDEF "
+          f"BENCH; {nskip['bench']} BENCH-only lines; {len(BENCH_PINNED)} "
+          f"pinned pair(s)")
+    if ndiff or problems:
+        print(f"FAIL: {ndiff} line(s) differ, {len(problems)} problem(s)")
+        return 1
+    print("OK: bench image is instruction-identical to release outside "
+          "IFDEF BENCH")
+    return 0
 
 
 def run(args, built):
@@ -657,8 +880,12 @@ def main():
                     help="print the timed line runs and the COLD blocks")
     ap.add_argument("--debug", action="store_true",
                     help="compare Release with standard DEBUG instead of quiet")
+    ap.add_argument("--bench", action="store_true",
+                    help="compare the whole Release image with BENCH")
     ap.add_argument("--src-root", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.bench and (args.debug or args.list):
+        ap.error("--bench takes neither --debug nor --list")
     if args.src_root:
         SRC_ROOT = Path(args.src_root).resolve()
         OUT = SRC_ROOT / "out"
@@ -668,7 +895,7 @@ def main():
         (OUT / "saved-nextdaad.nex").write_bytes(saved)
     built = set()
     try:
-        return run(args, built)
+        return run_bench(args, built) if args.bench else run(args, built)
     except Fail as e:
         print(f"FAIL: {e}")
         return 1

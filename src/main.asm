@@ -232,6 +232,10 @@ bank_table_init:
     ld a, BT_RESERVED            ; the bench bank (NXB_PAGE)
     ld (bankTable+BANK_NXB), a
  ENDIF
+ IFDEF BENCH
+    ld a, BT_RESERVED            ; the bench bank (BCH_PAGE)
+    ld (bankTable+BANK_BCH), a
+ ENDIF
     ld a, (ramExpanded)
     or a
     jr z, .boot                 ; base model: no expansion pool to free
@@ -1802,6 +1806,10 @@ AKY_RET_GUARD   equ 8
 akyRetGuard:    ds AKY_RET_GUARD
 akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
 
+ IFDEF BENCH
+    INCLUDE "benchres.asm"
+ ENDIF
+
     ASSERT $ <= RESIDENT_LIMIT
     DISPLAY "resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $
 
@@ -1812,6 +1820,9 @@ akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
     INCLUDE "audio/audiobank.asm"
     INCLUDE "audio/streamfx.asm"
     INCLUDE "sprites.asm"
+ IFDEF BENCH
+    INCLUDE "bench.asm"
+ ENDIF
 
     CSPECTMAP "build/nextdaad.map"
     ; The loader intro's embedded NEX loader (src\intro\chain.asm) refuses this

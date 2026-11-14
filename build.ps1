@@ -8,8 +8,10 @@
 #                 falling back to sd\ itself if nothing is staged
 #
 # -BenchQuiet builds DEBUG plus NXB_QUIET: timed video paths carry no instruments.
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [string]$Leg)
+# -Bench builds Release plus BENCH (EXTERN 0 13 driver, BENCH303.LOG); refuses a dirty src\.
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [switch]$Bench, [string]$Leg)
 $ErrorActionPreference = 'Stop'
+if ($Bench -and ($BenchQuiet -or $Kit)) { throw "-Bench is a Release image: not with -BenchQuiet or -Kit" }
 if ($BenchQuiet -and ($Release -or $Kit)) { throw "-BenchQuiet is a DEBUG image: not with -Release or -Kit" }
 $root = $PSScriptRoot
 Push-Location $root
@@ -22,9 +24,18 @@ try {
     New-Item -ItemType Directory -Force "$root\build" | Out-Null
     $defs = @()
     # -Kit implies a release build (the kit ships the non-debug interpreter).
-    if (-not ($Release -or $Kit)) { $defs += '-DDEBUG=1' }
+    if (-not ($Release -or $Kit -or $Bench)) { $defs += '-DDEBUG=1' }
     if ($Force1MB)                { $defs += '-DFORCE_1MB=1' }
     if ($BenchQuiet)              { $defs += '-DNXB_QUIET=1' }
+    if ($Bench) {
+        # The #CORE303 BENCH header carries the stamp, so it is fixed before assembly.
+        $benchHash = (& git -C $root log -1 --format=%h -- src 2>$null)
+        if (-not $benchHash) { throw "-Bench: no commit touches src\" }
+        if (& git -C $root status --porcelain -- src 2>$null) { throw "-Bench: src\ has uncommitted changes (stamp $benchHash-dirty): commit them first" }
+        # Apostrophe string define: survives Windows argument quoting unchanged.
+        $defs += '-DBENCH=1'
+        $defs += "-DBCH_STAMP='$benchHash'"
+    }
     # DMA-accelerated picture copies (SP11 Task 2) are unconditional - the
     # owner's -NoDmaGfx A/B lever closed 2026-07-21 (kit Release build,
     # real hardware: location-art DMA blit during sample playback, clean
@@ -35,7 +46,7 @@ try {
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"
-    $variant = if ($Release -or $Kit) { 'Release' } else { 'DEBUG' }
+    $variant = if ($Bench) { 'Bench' } elseif ($Release -or $Kit) { 'Release' } else { 'DEBUG' }
     # Stamp the last commit that touched src\ (everything the NEX assembles),
     # so rebuilding an unchanged interpreter leaves the SYM unchanged.
     $hash = (& git -C $root log -1 --format=%h -- src 2>$null)

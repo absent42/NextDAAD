@@ -1,0 +1,3 @@
+baseline-log: NXBENCH-Q.TXT
+revision: afc0dfd
+evidence: NXBENCH-Q.TXT (2026-09-17 12:40) is the full sitting-5 run on the quiet image, built after afc0dfd (2026-09-17 10:38, the last src commit before the 12:23 smoke log) and before 21802fe (13:23); the COPY select there is NXV2_COPY_DMA_MIN = 81 (C080 takes LDI, F=0014), and 1f7179e (14:26) moved it to 53. NXBENCH-D and NXBENCH-SMOKE show the same C080/C081 values; NXBENCH-Q6 (23:14, C080 F=0010) is the later threshold-53 confirmation sitting and is not the baseline.

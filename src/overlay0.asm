@@ -3005,7 +3005,11 @@ extVec:
     dw ring2_fill                 ; vector 13
     dw ring2_chk                  ; vector 14
  ELSE
+ IFDEF BENCH
+    dw bench_trampoline, ext_forward ; vector 13: the BENCH driver (benchres.asm)
+ ELSE
     dw ext_forward, ext_forward   ; vectors 13-14, release: forward to the XBN
+ ENDIF
  ENDIF
     dw ext_forward                 ; vector 15: spare
 

@@ -125,6 +125,16 @@ BANK_NXB        equ 47      ; DEBUG only: the bench bank, reserved by
                             ; bank_table_init after its pool B loop
 NXB_PAGE        equ BANK_NXB*2      ; lower 8K, slot 6: bench tables
     ASSERT BANK_NXB == BANK_BASE_LAST
+ IFDEF BENCH
+ IFDEF DEBUG
+    ASSERT 0, "BENCH is a Release variant: BANK_BCH shares DEBUG's bank 47"
+ ENDIF
+; -DBENCH=1 is substituted into _-separated sub-words, so no name holds a BENCH part.
+BANK_BCH        equ 47      ; BENCH only: the bench bank, reserved by
+                            ; bank_table_init after its pool B loop
+BCH_PAGE        equ BANK_BCH*2      ; lower 8K, slot 7: the bench driver
+    ASSERT BANK_BCH == BANK_BASE_LAST
+ ENDIF
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
 BANK_TABLE_SIZE equ 112

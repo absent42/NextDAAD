@@ -1,0 +1,5 @@
+date: 2026-09-17
+board: KS1
+core: pre-3.03 (old core, wait states)
+source: copied from the local NXB sittings of the copy-threshold work
+timing: +3 50Hz LPF=311 TPL=1824
