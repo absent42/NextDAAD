@@ -140,6 +140,28 @@ def test_starve_rows_relayed(tmp_path):
                    and t.fields["req_hz"] == 4_000_000 for t in tail)
 
 
+def test_python_path_rows_relayed(tmp_path):
+    """Loss only on Python-path writes above 2 MHz: P3WP/P3CP relay C3TX rows with py=1,
+    at most 16 a pass (as acc_tx)."""
+    w, lk, nx, tool = sp.make()
+    lk.loss = lambda tx, i: (i == 10 and w.phase is None and not w.in_actor
+                             and lk._hz > link.HDR_HZ and not lk._rd)
+    rc = sp.run_main(tmp_path, w, lk, tool)
+    log = parse.parse_pilog(tmp_path / "SPI.LOG")
+    wp = relayed(log, "P3WP")
+    assert wp[0][0]["req_hz"] == link.HDR_HZ and not wp[0][1]
+    bad = [(s, t) for s, t in wp if s["mis"]]
+    assert bad and all(len(t) == s["bad_tx"] for s, t in bad)
+    for s, tail in bad:
+        assert all(x.tag == "C3TX" and x.fields["py"] == 1 and x.fields["req_hz"] == s["req_hz"]
+                   and x.fields["first"] == 10 and x.fields["shift"] == 1 for x in tail)
+    cp = relayed(log, "P3CP")
+    c64 = next((s, t) for s, t in cp if s["chunk"] == 64)
+    assert c64[0]["mis"] > 0 and len(c64[1]) == 16          # 64 bad transactions, 16 rows
+    assert [x.fields["tx"] for x in c64[1]] == list(range(16))
+    assert {x.fields["req_hz"] for x in c64[1]} == {c64[0]["hz"]}
+
+
 def test_ceiling_below_first_failure(tmp_path):
     """7.5 MHz (7.35 actual) fails, 8.0 and 8.5 pass: the ceiling is 7.0, used everywhere."""
     rc, log, (w, lk, nx, tool) = go(tmp_path, loss_band=(7_000_000, 7_400_000))
@@ -328,6 +350,26 @@ def test_clean_run_end_ack_with_state4(full):
     rc, log, (w, lk, nx, tool), _ = full
     assert end_ack_head(lk, nx)[mbx.OFF_STATE] == mbx.STATE_EXITING
     assert rc == 0 and ("PIST", "STATE") not in log.skips
+
+
+def test_wait_done_confirms_final_state(tmp_path):
+    """One stale 2 read while PI303 is still in state 4: the fetch waits for the real 2."""
+    w, lk, nx, tool = sp.make()
+    hit = []
+
+    def hook(r):
+        if not hit and r.cmd == link.CMD_SRAM_R and r.addr == MB + 13 and r.n == 1 \
+                and lk.sram[MB + 13] == mbx.STATE_EXITING:
+            lk.stale_reads, lk.stale_val = {lk.state_reads}, mbx.STATE_DONE
+            hit.append(r.t)
+    w.hooks.append(hook)
+    rc = sp.run_main(tmp_path, w, lk, tool)
+    log = parse.parse_pilog(tmp_path / "SPI.LOG")
+    assert hit and lk.stale_hits == [(1, False)]
+    assert rc == 0 and log.skips == [] and rows(log, "P3RF")[0]["saved"] == 1
+    t_done = next(e[1] for e in nx.events if e[0] == "state" and e[2] == mbx.STATE_DONE)
+    fetch = [r for r in lk.trace if r.cmd == link.CMD_SRAM_R and r.addr == sp.RESULT]
+    assert fetch and fetch[0].t >= t_done
 
 
 def test_fetch_result_buffer(tmp_path):

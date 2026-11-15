@@ -31,6 +31,7 @@ SEED_BASE = 0x30300001
 B7_LEN = 0x2000
 QUIET_MAX_US = 10_000_000   # PI303 asserts arg32 below this
 STATE_CONFIRM = 3           # non-1 state reads in a row before state != 1 counts
+MAX_TX_ROWS = 16            # C3TX rows a pass, as core303pi.h
 RESULT_LEN_MAX = 0xBF00
 
 HB_NEXT_WAIT_S = 2.0
@@ -389,10 +390,13 @@ class PiRun:
         return False
 
     def wait_done(self):
+        """State 2 or 3 is final only after STATE_CONFIRM agreeing reads in a row: a stale
+        byte must not start the result fetch while PI303 is still in state 4."""
         end = self.clock.time() + DONE_TIMEOUT_S
         while self.clock.time() < end:
             st = self.mb.state()
-            if st in (mbx.STATE_DONE, mbx.STATE_FAILED):
+            if st in (mbx.STATE_DONE, mbx.STATE_FAILED) and all(
+                    self.mb.state() == st for _ in range(STATE_CONFIRM - 1)):
                 return st
             self.clock.sleep(STATE_POLL_S)
         return None
@@ -679,7 +683,7 @@ class Run(PiRun):
 
     def py_write(self, hz, chunk, nbytes, passes):
         """Script-level path: link.py's two-transfer ioctl per transaction, timed writes only."""
-        ps = []
+        ps, rows = [], []
         base = self.scratch
         for p in range(passes):
             self.gate()
@@ -702,8 +706,13 @@ class Run(PiRun):
                         a.update(first_tx=tx, first=f, shift=s)
                     a["mis"] += m
                     a["bad_tx"] += 1
+                    if a["bad_tx"] <= MAX_TX_ROWS:     # as acc_tx; py=1 marks the path
+                        rows.append(("C3TX", {"py": 1, "pass": p, "tx": tx, "mis": m,
+                                              "first": f, "shift": s}))
             ps.append(a)
-        return self._sum(ps)
+        a = self._sum(ps)
+        a["rows"] = rows
+        return a
 
     def python_path(self):
         self.step = "P3WP"
@@ -713,6 +722,7 @@ class Run(PiRun):
             self.log.row("P3WP", req_hz=req, eff_hz=eff, bytes=a["bytes"], ns=a["ns"],
                          mis=a["mis"], bad_tx=a["bad_tx"], first_tx=a["first_tx"],
                          first=a["first"], shift=a["shift"])
+            self.relay(a["rows"], req_hz=req)
             return not a["mis"]
         self.sweep(measure, cap=self.ceil)
         self.step = "P3CP"
@@ -720,6 +730,7 @@ class Run(PiRun):
             a = self.py_write(self.ceil, c, self.chunk_bytes, 1)
             self.log.row("P3CP", chunk=c, bytes=a["bytes"], ns=a["ns"], hz=self.ceil,
                          mis=a["mis"])
+            self.relay(a["rows"], req_hz=self.ceil)
 
     # -- handover -------------------------------------------------------------------------
 
