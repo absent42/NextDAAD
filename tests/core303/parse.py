@@ -224,11 +224,12 @@ class PiLog:
     skips: list
 
 
-def _kv_line(line, what):
+def _kv_line(line, what, empty_ok=False):
     out = {}
     for t in line.split(" ")[1:]:
         k, eq, v = t.partition("=")
-        if not eq or not re.fullmatch(r"[a-z][a-z0-9_]*", k) or not v or k in out:
+        if not eq or not re.fullmatch(r"[a-z][a-z0-9_]*", k) or k in out \
+                or (not v and not empty_ok):
             raise LogError("bad %s: %r" % (what, line))
         out[k] = v
     return out
@@ -249,12 +250,12 @@ def parse_pilog(path):
                 raise LogError("bad header: %r" % line)
             tool, bundle = m.groups()
         elif line.startswith("#PIENV "):
-            env.update(_kv_line(line, "#PIENV"))
+            env.update(_kv_line(line, "#PIENV", empty_ok=True))
         elif line.startswith("#SPI "):
             spi.update(_kv_line(line, "#SPI"))
         elif line.startswith("#SKIP "):
             m = re.fullmatch(r"#SKIP ([A-Z0-9]{4}) (.+)", line)
-            if not m:
+            if not m or m.group(1) not in tagtab.PI_TAGS:
                 raise LogError("bad #SKIP: %r" % line)
             skips.append(m.groups())
         elif line.startswith("#END "):
@@ -262,9 +263,13 @@ def parse_pilog(path):
         elif line.startswith("#"):
             raise LogError("unknown line: %r" % line)
         else:
+            if tool is None:
+                raise LogError("row before #PI303 header: %r" % line)
             tok = line.split(" ")
-            if not re.fullmatch(r"[A-Z0-9]{4}", tok[0]):
-                raise LogError("malformed tag: %r" % line)
+            if not re.fullmatch(r"[A-Z0-9]{4}", tok[0]) or tok[0] not in tagtab.PI_TAGS:
+                raise LogError("unknown tag: %r" % line)
+            if len(tok) < 2:
+                raise LogError("row without fields: %r" % line)
             kv = {}
             for t in tok[1:]:
                 k, eq, v = t.partition("=")

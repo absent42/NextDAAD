@@ -71,6 +71,41 @@ def test_pilog_bad_key_raises(tmp_path):
         parse.parse_pilog(write(tmp_path, pilog_text(rows=("P3WS b2-3=4",))))
 
 
+def test_pilog_unknown_tag_raises(tmp_path):
+    with pytest.raises(LogError):
+        parse.parse_pilog(write(tmp_path, pilog_text(rows=("ZZZZ rate=1",))))
+    with pytest.raises(LogError):
+        parse.parse_pilog(write(tmp_path, pilog_text().replace("P3FR", "ZZZZ")))
+
+
+def test_core_log_rejects_pi_tag(tmp_path):
+    p = tmp_path / "C.LOG"
+    p.write_bytes(("#CORE303 STANDALONE abc1234\n" + NR + "\n#SRAM 2048\n"
+                   "P0IM C=W S=3 R=0040 F=0040 D=0000 N=0001\n#END 0001\n").encode())
+    with pytest.raises(LogError):
+        parse.parse_log(p)
+
+
+def test_pienv_empty_value_ok(tmp_path):
+    t = pilog_text().replace("spi_open=12,34", "spi_open=")
+    assert parse.parse_pilog(write(tmp_path, t)).env["spi_open"] == ""
+    with pytest.raises(LogError):
+        parse.parse_pilog(write(tmp_path, pilog_text().replace("version=01", "version=")))
+
+
+def test_pilog_bare_row_raises(tmp_path):
+    with pytest.raises(LogError):
+        parse.parse_pilog(write(tmp_path, pilog_text(rows=("P3WS",))))
+
+
+def test_pilog_row_before_header_raises(tmp_path):
+    t = pilog_text()
+    lines = t.split("\n")
+    lines.insert(0, "P3WS rate=1")
+    with pytest.raises(LogError):
+        parse.parse_pilog(write(tmp_path, "\n".join(lines)))
+
+
 def test_pilog_count_mismatch_and_unknown_line(tmp_path):
     with pytest.raises(LogError):
         parse.parse_pilog(write(tmp_path, pilog_text(end=5)))

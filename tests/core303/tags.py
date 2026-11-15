@@ -184,9 +184,7 @@ def _op_tags():
 
 TAGS.update(_op_tags())
 
-# Pi log row tags (#PI303 logs, parse.parse_pilog); the second character is the phase.
+# Pi log tags (#PI303 logs, parse.parse_pilog); kept out of TAGS so CORE303 logs reject them.
 PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3B7 P3BF P3CH P3CP "
            "P3FR P3LR P3NP P3P4 P3R5 P3RD P3RS P3SC P3SV P3TE P3WB P3WP P3WS P4NX P4SK "
-           "P4TF P4TS P4VF P4VS").split()
-for _t in PI_TAGS:
-    TAGS[_t] = Tag("P" + _t[1], "Pi " + _t, CPU, None, "row", "Pi log row")
+           "P4TF P4TS P4VF P4VS BUSY").split()   # BUSY: lock-timeout #SKIP tag
