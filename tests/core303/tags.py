@@ -210,10 +210,19 @@ TAGS["P3B7"] = Tag("P3", "bank 7 restore", CPU, None, "byte",
 TAGS["P3B5"] = Tag("P3", "bank 5 restore", CPU, None, "byte",
                    "exit restore of the S3R5 region, 1024 B a rep; CK = ck16, OK = the startup checksum")
 
+# P4 rows (tests/core303/pi/next/pi303v.asm, PI303V.LOG) in the CORE303 grammar. P4NX and
+# P4HB: R=1, F = frame interrupts since state 1, D=0, N = the count.
+TAGS["P4NX"] = Tag("P4", "Pi flips seen", CPU, None, "flip",
+                   "N = NR $12 changes seen at frame interrupts; CK = unknown commands acked, "
+                   "OK = none")
+TAGS["P4HB"] = Tag("P4", "load steps", CPU, None, "step", "N = hb_next at exit (LOAD 0 and 6 steps)")
+TAGS["P4B5"] = Tag("P4", "bank 5 restore", CPU, None, "byte",
+                   "exit restore of the LOAD 6 bank 5 region, 256 B; CK = ck16, OK = the startup checksum")
+
 # Pi log tags (#PI303 logs, parse.parse_pilog); disjoint from TAGS: neither grammar accepts
 # the other's tags.
 PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "
-           "P3FR P3P4 P3RD P3SC P3SV P3TE P3WB P3WP P3WS P4NX P4SK "
+           "P3FR P3P4 P3RD P3SC P3SV P3TE P3WB P3WP P3WS P4SK "
            "P4TF P4TS P4VF P4VS BUSY").split()   # BUSY: lock-timeout #SKIP tag
 # pi303_spi: effective rate, ceilings, handover QUIET/STREAM rows and skips, starvation
 # search per rate, no mailbox, result fetch; PIST state != 1 mid-run, PI3S final state 3.
