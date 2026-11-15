@@ -545,7 +545,15 @@ class Run(PiRun):
         ps = [kv for t, kv in rows if t == "C3WP"]
         if len(ps) != passes:
             raise ToolError(rows)
-        return self._sum(ps)
+        a = self._sum(ps)
+        a["rows"] = rows
+        return a
+
+    def relay(self, rows, **extra):
+        """After a summary row: its C3TX rows and C3BP rows with mis > 0, extra keys first."""
+        for t, kv in rows:
+            if t == "C3TX" or (t == "C3BP" and kv.get("mis")):
+                self.log.row(t, **extra, **kv)
 
     @staticmethod
     def _sum(ps):
@@ -569,6 +577,7 @@ class Run(PiRun):
             else:
                 self.log.row(tag, **extra, req_hz=req, eff_hz=eff, mis=a["mis"],
                              bad_tx=a["bad_tx"], shift=a["shift"], rep=rep)
+            self.relay(a["rows"], req_hz=req, **extra)
             if a["mis"]:
                 return False
         return True
@@ -609,6 +618,7 @@ class Run(PiRun):
             bad = [p["pass"] for p in ps if p["mis"]]
             self.log.row("P3WB", req_hz=req, eff_hz=eff, passes=len(ps), badpasses=len(bad),
                          first_pass=bad[0] if bad else -1)
+            self.relay(rows, req_hz=req)
             return not bad
         return self.sweep(measure)
 
@@ -631,6 +641,7 @@ class Run(PiRun):
             a = self._sum(ps)
             self.log.row("P3RD", req_hz=req, eff_hz=eff, bytes=a["bytes"], mis=a["mis"],
                          ns=a["ns"], bad_tx=a["bad_tx"], shift=a["shift"])
+            self.relay(rows, req_hz=req)
             return not a["mis"]
         return self.sweep(measure)
 
@@ -640,6 +651,7 @@ class Run(PiRun):
             a = self.run_write(self.ceil, chunk=c, nbytes=self.chunk_bytes, passes=1)
             self.log.row("P3CH", chunk=c, bytes=a["bytes"], ns=a["ns"], hz=self.ceil,
                          mis=a["mis"])
+            self.relay(a["rows"], req_hz=self.ceil)
 
     def py_write(self, hz, chunk, nbytes, passes):
         """Script-level path: link.py's two-transfer ioctl per transaction, timed writes only."""
@@ -864,6 +876,7 @@ class Run(PiRun):
                     continue
                 self.log.row("P3SV", prof=p, hz=hz, bytes=a["bytes"], ns=a["ns"], mis=a["mis"],
                              bad_tx=a["bad_tx"], first_tx=a["first_tx"], shift=a["shift"])
+                self.relay(a["rows"], req_hz=hz, prof=p)
             self.step = "P3SC"
             n0 = self.mb.read_hb_next()
             best = self.sweep(lambda req, eff: self.runs(req, eff, "P3SR", prof=p))

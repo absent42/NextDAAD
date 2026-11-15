@@ -91,6 +91,54 @@ def test_ceiling_with_injected_loss(lossy):
         assert hz == [7_000_000, 4_000_000, 2_000_000]
 
 
+def relayed(log, tag, **match):
+    """[(summary fields, [following C3TX/C3BP rows])] for tag rows matching match."""
+    out = []
+    for i, r in enumerate(log.rows):
+        if r.tag == tag and all(r.fields.get(k) == v for k, v in match.items()):
+            j, tail = i + 1, []
+            while j < len(log.rows) and log.rows[j].tag in ("C3TX", "C3BP"):
+                tail.append(log.rows[j])
+                j += 1
+            out.append((r.fields, tail))
+    return out
+
+
+def test_per_transaction_rows_relayed(lossy):
+    rc, log, _, _ = lossy
+    hz = 7_500_000
+    (ws, tail), = relayed(log, "P3WS", req_hz=hz)
+    assert len(tail) == ws["bad_tx"] == 8 and all(t.tag == "C3TX" for t in tail)
+    assert all(t.fields["req_hz"] == hz and t.fields["first"] == 100
+               and t.fields["shift"] == 1 and "prof" not in t.fields for t in tail)
+    assert sum(t.fields["mis"] for t in tail) == ws["mis"]
+    (wb, tail), = relayed(log, "P3WB", req_hz=hz)
+    bp = [t.fields for t in tail if t.tag == "C3BP"]
+    assert len(bp) == wb["badpasses"] and all(b["mis"] > 0 and b["req_hz"] == hz for b in bp)
+    assert [t for t in tail if t.tag == "C3TX"]
+    (rd, tail), = relayed(log, "P3RD", req_hz=hz)
+    assert len(tail) == rd["bad_tx"] and all(t.fields["req_hz"] == hz for t in tail)
+    for p in sp.PLAN.profiles:
+        (sr, tail), = relayed(log, "P3SR", req_hz=hz, prof=p)
+        assert len(tail) == sr["bad_tx"] and all(t.fields["prof"] == p for t in tail)
+    assert all(len(tail) == s["bad_tx"] for s, tail in relayed(log, "P3WS"))
+    assert all(not tail for s, tail in relayed(log, "P3CH") if not s["mis"])
+    assert not [r for r in log.rows if r.tag == "C3TX" and r.fields["req_hz"] <= 7_000_000]
+    rep = parse.report_pi([log], [])
+    assert "| C3TX | req_hz=7500000 pass=" in rep and "| C3BP | req_hz=7500000 pass=" in rep
+    assert {"C3TX", "C3BP"} <= set(tags.PI_TAGS)
+
+
+def test_starve_rows_relayed(tmp_path):
+    """Loss only at 4.0 MHz (3.91 actual): P3SV's 4 MHz run relays C3TX with prof."""
+    rc, log, _ = go(tmp_path, loss_band=(3_800_000, 4_000_000))
+    for p in sp.PLAN.profiles:
+        (sv, tail), = relayed(log, "P3SV", prof=p, hz=4_000_000)
+        assert sv["bad_tx"] and len(tail) == sv["bad_tx"]
+        assert all(t.tag == "C3TX" and t.fields["prof"] == p
+                   and t.fields["req_hz"] == 4_000_000 for t in tail)
+
+
 def test_ceiling_below_first_failure(tmp_path):
     """7.5 MHz (7.35 actual) fails, 8.0 and 8.5 pass: the ceiling is 7.0, used everywhere."""
     rc, log, (w, lk, nx, tool) = go(tmp_path, loss_band=(7_000_000, 7_400_000))

@@ -458,7 +458,7 @@ class FakeTool:
                 ns += self.w.t - t0
                 ntx += 1
                 c.tick()
-            acc = self._verify(wcmd - 1, base, want, chunk, HDR_HZ, c)
+            acc = self._verify(wcmd - 1, base, want, chunk, HDR_HZ, c, p=p, rows=rows)
             rows.append((tag, dict({"pass": p, "seed": seed0 + p, "hz": hz, "base": base,
                                     "bytes": nbytes, "chunk": chunk, "ntx": ntx,
                                     "ns": int(ns * 1e9)}, **acc)))
@@ -467,7 +467,8 @@ class FakeTool:
         self.w.phase = None
         return rows + self._end(c, p, stop, hb)
 
-    def _verify(self, rcmd, base, want, chunk, hz, c, timed=None):
+    def _verify(self, rcmd, base, want, chunk, hz, c, timed=None, p=0, rows=None):
+        """Per-pass compare; C3TX rows (MAX_TX_ROWS a pass, as acc_tx) go into rows."""
         acc = {"mis": 0, "bad_tx": 0, "first_tx": -1, "first": -1, "shift": 0}
         for tx, off in enumerate(range(0, len(want), chunk)):
             k = min(chunk, len(want) - off)
@@ -482,6 +483,9 @@ class FakeTool:
                     acc.update(first_tx=tx, first=f, shift=s)
                 acc["mis"] += m
                 acc["bad_tx"] += 1
+                if rows is not None and acc["bad_tx"] <= 16:
+                    rows.append(("C3TX", {"pass": p, "tx": tx, "mis": m, "first": f,
+                                          "shift": s}))
         return acc
 
     @staticmethod
@@ -502,7 +506,8 @@ class FakeTool:
                 stop = 1
                 break
             ns = [0.0]
-            acc = self._verify(link.CMD_SRAM_R, phys, want, chunk, hz, c, timed=ns)
+            acc = self._verify(link.CMD_SRAM_R, phys, want, chunk, hz, c, timed=ns, p=p,
+                               rows=rows)
             rows.append(("C3RP", dict({"pass": p, "hz": hz, "base": phys, "bytes": nbytes,
                                        "chunk": chunk, "ntx": -(-nbytes // chunk),
                                        "ns": int(ns[0] * 1e9), "ref": 1}, **acc)))
