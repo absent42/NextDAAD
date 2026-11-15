@@ -602,6 +602,19 @@ def test_docstrings_at_most_three_lines():
                     assert len(doc.strip("\n").splitlines()) <= 3, (name, getattr(node, "name", ""))
 
 
+def test_c_comment_blocks_at_most_three_lines():
+    import re
+    from pathlib import Path
+    here = Path(__file__).parent
+    names = [n for n in (here / "BUNDLE.txt").read_text().split() if n.endswith((".c", ".h"))]
+    assert names
+    for name in names:
+        src = (here / name).read_text()
+        assert src.startswith("/*"), name
+        for block in re.findall(r"/\*.*?\*/", src, re.S):
+            assert len(block.splitlines()) <= 3, (name, block[:60])
+
+
 def fake_spidev(monkeypatch, order, max_hz=500000, mode=0, fail_set=False):
     """Installs a fake spidev module; every settings write is logged into order."""
     import sys

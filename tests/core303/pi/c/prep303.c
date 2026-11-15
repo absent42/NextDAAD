@@ -1,7 +1,6 @@
 /* P2 frame preparation timing on the Pi: libjpeg decode, RGB to RRRGGGBB, span extraction.
    prep303 <frames_dir> <rgb_dir> <n> prints P2JD/P2CV/P2SP rows; prep303 --cv in.rgb out.raw.
-   libjpeg is used when jpeglib.h is present; otherwise #SKIP P2JD NOHDR, or NOLINK when
-   the header is there but the build fell back to -DNO_JPEG (-ljpeg failed). */
+   No jpeglib.h: #SKIP P2JD NOHDR; header but -DNO_JPEG (-ljpeg failed): NOLINK. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stdio.h>

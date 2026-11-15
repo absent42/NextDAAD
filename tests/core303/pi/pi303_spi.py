@@ -325,6 +325,8 @@ class PiMailbox(mbx.Mailbox):
             if head[mbx.OFF_ACK] == seq:
                 break                   # acked: END's ack and state 4 land ~10 us apart
             if self.not_ready(head[mbx.OFF_STATE]):
+                if self.head()[mbx.OFF_ACK] == seq:
+                    break               # the ack landed during the confirmation reads
                 raise StateChanged()
             if self.clock.time() >= end:
                 raise mbx.MailboxTimeout("no ack for command %d seq %d" % (cmd, seq))

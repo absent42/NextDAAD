@@ -372,6 +372,33 @@ def test_wait_done_confirms_final_state(tmp_path):
     assert fetch and fetch[0].t >= t_done
 
 
+def test_end_ack_during_confirmation_reads(tmp_path):
+    """State 4 lands before END's ack and the ack lands during the confirmation reads:
+    the head re-read sees the ack, so END succeeds instead of PIST."""
+    w, lk, nx, tool = sp.make()
+    st = {"seq": None, "reads": 0}
+
+    def hook(r):
+        if r.cmd == link.CMD_SRAM_W and r.addr == MB + mbx.OFF_SEQ \
+                and lk.sram[MB + mbx.OFF_CMD] == mbx.CMD_END and st["seq"] is None:
+            st["seq"] = r.data[0]
+            lk.sram[MB + mbx.OFF_STATE] = mbx.STATE_EXITING
+            nx.mode, nx.due = "done", None
+        elif st["seq"] is not None and r.cmd == link.CMD_SRAM_R and r.n == 1 \
+                and r.addr == MB + mbx.OFF_STATE:
+            st["reads"] += 1
+            if st["reads"] == pi303_spi.STATE_CONFIRM - 1:
+                lk.sram[MB + mbx.OFF_ACK] = st["seq"]
+                nx.mode, nx._gen = "exit", nx._exit()
+                next(nx._gen)
+                nx.due = w.t
+    w.hooks.append(hook)
+    rc = sp.run_main(tmp_path, w, lk, tool)
+    log = parse.parse_pilog(tmp_path / "SPI.LOG")
+    assert st["reads"] >= pi303_spi.STATE_CONFIRM - 1
+    assert rc == 0 and log.skips == [] and rows(log, "P3RF")[0]["saved"] == 1
+
+
 def test_fetch_result_buffer(tmp_path):
     text = b"#CORE303 PI 56172de\n#NR 01=33\n#SRAM 2048\nCAL0 x\n#END 0001\n"
     rc, log, _ = go(tmp_path, result=text)
