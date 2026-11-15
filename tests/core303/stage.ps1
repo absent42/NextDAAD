@@ -33,6 +33,13 @@ function Test-Stamp([string]$leg, [string]$stamp) {
 # A mistyped switch would otherwise fall through to a full phase 1 staging.
 if ($args) { throw "unknown arguments: $($args -join ' ')" }
 
+# Test overrides must never pass silently in a real staging.
+foreach ($ov in @(@('CORE303_TREE_ROOT', 'clean-tree git check'), @('CORE303_PLINK', 'plink executable'),
+        @('CORE303_PSCP', 'pscp executable'))) {
+    $val = [Environment]::GetEnvironmentVariable($ov[0])
+    if ($val) { "WARNING: $($ov[0]) set - $($ov[1]) -> $val" }
+}
+
 $phase2Args = $Ks3Rerun -or $Phase2 -or $P2Only -or $PushPi -or $Board -or $Date -or $ResultsRoot -or
     $StagedRecord -or $PSBoundParameters.ContainsKey('PiHost')
 if ($phase2Args) {

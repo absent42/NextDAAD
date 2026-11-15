@@ -504,6 +504,21 @@ def test_phase2_refuses_stale_partial(tmp_path):
     assert list(sd.iterdir()) == []
 
 
+@pytest.mark.parametrize("args", [["-Ks3Rerun"], ["-Phase2", *P2ARGS], ["-P2Only", *ONLYARGS],
+                                  []])
+def test_overrides_warn_first(tmp_path, args):
+    sd, res = _roots(tmp_path)
+    env = {"CORE303_TREE_ROOT": "X:\\tree", "CORE303_PLINK": "X:\\plink.cmd",
+           "CORE303_PSCP": "X:\\pscp.cmd"}
+    roots = ["-SdRoot", sd] + (["-ResultsRoot", res] if args[:1] in (["-Phase2"], ["-P2Only"]) else [])
+    lines = _ok(_ps(args + ["-WhatIf"] + roots, env))
+    assert lines[:3] == ["WARNING: CORE303_TREE_ROOT set - clean-tree git check -> X:\\tree",
+                         "WARNING: CORE303_PLINK set - plink executable -> X:\\plink.cmd",
+                         "WARNING: CORE303_PSCP set - pscp executable -> X:\\pscp.cmd"], lines[:4]
+    plain = _ok(_ps(args + ["-WhatIf"] + roots))
+    assert not any(l.startswith("WARNING:") for l in plain)
+
+
 def test_python_calls_skip_bytecode():
     src = STAGE.read_text(encoding="ascii")
     calls = re.findall(r"& python\b[^\n]*", src)
