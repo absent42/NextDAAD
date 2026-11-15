@@ -174,7 +174,7 @@ def _parse_run(lines):
         if end is not None:
             raise LogError("data after #END: %r" % line)
         if line.startswith("#CORE303 "):
-            m = re.fullmatch(r"#CORE303 (STANDALONE|BENCH) (\S+)", line)
+            m = re.fullmatch(r"#CORE303 (STANDALONE|BENCH|PI) (\S+)", line)
             if not m:
                 raise LogError("bad header: %r" % line)
             bench, stamp = m.groups()
@@ -206,6 +206,108 @@ def _parse_run(lines):
     if bench is None or sram is None or not nr:
         raise LogError("missing header, #NR or #SRAM")
     return Log(bench, stamp, nr, sram, rows, skips)
+
+
+@dataclass
+class PiRow:
+    tag: str
+    fields: dict
+
+
+@dataclass
+class PiLog:
+    tool: str
+    bundle: str
+    env: dict
+    spi: dict
+    rows: list
+    skips: list
+
+
+def _kv_line(line, what):
+    out = {}
+    for t in line.split(" ")[1:]:
+        k, eq, v = t.partition("=")
+        if not eq or not re.fullmatch(r"[a-z][a-z0-9_]*", k) or not v or k in out:
+            raise LogError("bad %s: %r" % (what, line))
+        out[k] = v
+    return out
+
+
+def parse_pilog(path):
+    """Parse a #PI303 log (LF or CRLF). Rows are <TAG> key=<int>...; #END counts rows."""
+    tool = bundle = None
+    env, spi, rows, skips = {}, {}, [], []
+    end = None
+    for line in _read(path).split("\n")[:-1]:
+        line = line.rstrip("\r")
+        if end is not None:
+            raise LogError("data after #END: %r" % line)
+        if line.startswith("#PI303 "):
+            m = re.fullmatch(r"#PI303 (\S+) ([0-9a-f]{12})", line)
+            if not m or tool is not None:
+                raise LogError("bad header: %r" % line)
+            tool, bundle = m.groups()
+        elif line.startswith("#PIENV "):
+            env.update(_kv_line(line, "#PIENV"))
+        elif line.startswith("#SPI "):
+            spi.update(_kv_line(line, "#SPI"))
+        elif line.startswith("#SKIP "):
+            m = re.fullmatch(r"#SKIP ([A-Z0-9]{4}) (.+)", line)
+            if not m:
+                raise LogError("bad #SKIP: %r" % line)
+            skips.append(m.groups())
+        elif line.startswith("#END "):
+            end = _hex(line[5:], 4, "#END")
+        elif line.startswith("#"):
+            raise LogError("unknown line: %r" % line)
+        else:
+            tok = line.split(" ")
+            if not re.fullmatch(r"[A-Z0-9]{4}", tok[0]):
+                raise LogError("malformed tag: %r" % line)
+            kv = {}
+            for t in tok[1:]:
+                k, eq, v = t.partition("=")
+                if not re.fullmatch(r"[a-z][a-z0-9_]*", k):
+                    raise LogError("malformed key %r in %r" % (k, line))
+                if not re.fullmatch(r"-?[0-9]+", v):
+                    raise LogError("non-integer value %r in %r" % (v, line))
+                if k in kv:
+                    raise LogError("duplicate field %s: %r" % (k, line))
+                kv[k] = int(v)
+            rows.append(PiRow(tok[0], kv))
+    if end is None:
+        raise LogError("truncated: no #END")
+    if tool is None:
+        raise LogError("missing #PI303 header")
+    if end != len(rows):
+        raise LogError("row count %d != #END %d" % (len(rows), end))
+    return PiLog(tool, bundle, env, spi, rows, skips)
+
+
+def report_pi(pilogs, nextlogs):
+    """Markdown for Pi logs, with the Next logs of the same leg listed for context."""
+    out = ["# CORE303 Pi report", ""]
+    for log in nextlogs:
+        out.append("Next log: %s %s" % (log.bench, log.stamp))
+    if nextlogs:
+        out.append("")
+    for pl in pilogs:
+        out.append("## %s %s" % (pl.tool, pl.bundle))
+        out.append("")
+        out.append("ENV: " + " ".join("%s=%s" % kv for kv in pl.env.items()))
+        out.append("SPI: " + " ".join("%s=%s" % kv for kv in pl.spi.items()))
+        out.append("")
+        out.append("| tag | fields |")
+        out.append("|---|---|")
+        for r in pl.rows:
+            out.append("| %s | %s |" % (r.tag, " ".join("%s=%d" % kv
+                                                       for kv in r.fields.items())))
+        out.append("")
+        for tg, why in pl.skips:
+            out.append("SKIP %s %s" % (tg, why))
+        out.append("")
+    return "\n".join(out) + "\n"
 
 
 _NXB_ROW = re.compile(
