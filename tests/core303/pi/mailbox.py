@@ -1,8 +1,4 @@
-"""Pi side of the Next mailbox page (little-endian, offsets within the page).
-
-Every write is a single owned field at 2 MHz, read back and compared with up to 3
-retries. A write never spans another side's field.
-"""
+"""Pi side of the mailbox page. Writes: one owned field, 2 MHz, read back, 3 retries."""
 import struct
 from collections import namedtuple
 
@@ -36,7 +32,6 @@ class Mailbox:
         self.phys = phys
         self.clock = clock or RealClock()
         self._hb = 0
-        self._acked = None
 
     def _read(self, off, n):
         return self.link.read_mem(self.phys + off, n, HDR_HZ)
@@ -64,11 +59,14 @@ class Mailbox:
 
     def send(self, cmd, arg0=0, arg1=0, arg32=0, timeout_s=1.0):
         """Leader only: write the command, bump cmd_seq last, wait for ack_seq."""
-        if self.leader() != 0:
+        head = self._read(0, HEAD_LEN)
+        if head[0:4] != MAGIC:
+            raise MailboxError("no M303 magic")
+        if head[OFF_LEADER] != 0:
             raise MailboxError("Pi is not the leader")
-        if self.state() != STATE_READY:
+        if head[OFF_STATE] != STATE_READY:
             raise MailboxError("Next not ready")
-        seq = (self._read(OFF_SEQ, 1)[0] + 1) & 0xFF
+        seq =(self._read(OFF_SEQ, 1)[0] + 1) & 0xFF
         self._write(OFF_ARG0, [arg0 & 0xFF])
         self._write(OFF_ARG1, [arg1 & 0xFF])
         self._write(OFF_ARG32, struct.pack("<I", arg32 & 0xFFFFFFFF))
@@ -87,14 +85,15 @@ class Mailbox:
         if head[0:4] != MAGIC or head[OFF_STATE] != STATE_READY or head[OFF_LEADER] != 1:
             return None
         seq = head[OFF_SEQ]
-        if seq == head[OFF_ACK] or seq == self._acked:
+        if seq == head[OFF_ACK]:
             return None
         return Cmd(seq, head[OFF_CMD], head[OFF_ARG0], head[OFF_ARG1],
                    struct.unpack_from("<I", head, OFF_ARG32)[0])
 
     def ack(self, cmd):
+        if self._read(OFF_LEADER, 1)[0] != 1:
+            raise MailboxError("Pi is no longer the follower")
         self._write(OFF_ACK, [cmd.seq])
-        self._acked = cmd.seq
 
 
 class Heartbeat:

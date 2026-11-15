@@ -56,10 +56,11 @@ def test_sim_roundtrip():
 
 def test_sim_bram_wraps():
     s = sim.SimLink()
-    s.bram_write(7, 0x1FFE, b"\x01\x02\x03\x04", 2_000_000)
-    assert s.bram_read(7, 0x1FFE, 4) == b"\x01\x02\x03\x04"
+    # Link rejects out-of-range; drive the slave model raw to check its modulo addressing
+    s._transact(link.CMD_BRAM_W, 0x9FFE, 4, b"\x01\x02\x03\x04", 2_000_000)
+    assert s._transact(link.CMD_BRAM_R, 0x9FFE, 4, b"", 2_000_000) == b"\x01\x02\x03\x04"
     assert s.bram7[0x1FFE:0x2000] == b"\x01\x02" and s.bram7[0:2] == b"\x03\x04"
-    s.bram_write(5, 0x3FFF, b"\xAA\xBB", 2_000_000)
+    s._transact(link.CMD_BRAM_W, 0x3FFF, 2, b"\xAA\xBB", 2_000_000)
     assert s.bram5[0x3FFF] == 0xAA and s.bram5[0] == 0xBB
 
 
@@ -176,9 +177,126 @@ def test_mailbox_ignores_stale():
     m.ack(c)
     assert s.sram[MB + 12] == 4
     assert m.poll() is None
-    # a command acked earlier by this Mailbox is ignored even if ack_seq was reset
-    s.sram[MB + 12] = 0
-    assert m.poll() is None
+
+
+def test_seq_wrap_not_skipped():
+    s = sim.SimLink()
+    m = mailbox.Mailbox(s, MB, clock=FakeClock())
+    prep_mailbox(s, state=1, leader=1, cmd_seq=3, ack_seq=2)
+    m.ack(m.poll())
+    # 256 commands later the 8-bit seq is 3 again with ack_seq at 2
+    prep_mailbox(s, state=1, leader=1, cmd_seq=3, ack_seq=2)
+    assert m.poll().seq == 3
+
+
+def test_mailbox_magic_and_role_checks():
+    s = sim.SimLink()
+    m = mailbox.Mailbox(s, MB, clock=FakeClock())
+    with pytest.raises(mailbox.MailboxError):
+        m.send(mailbox.CMD_STOP, timeout_s=0.1)
+    prep_mailbox(s, state=1, leader=1, cmd_seq=4, ack_seq=3)
+    c = m.poll()
+    s.sram[MB + 18] = 0
+    with pytest.raises(mailbox.MailboxError):
+        m.ack(c)
+    assert s.sram[MB + 12] == 3
+
+
+def test_sram_bound_rejected():
+    s = sim.SimLink()
+    for fn in (lambda: s.write_mem(-1, b"x", 2_000_000),
+               lambda: s.write_mem(0x1FFFFF, b"xy", 2_000_000),
+               lambda: s.read_mem(0x1FFFFF, 2),
+               lambda: s.read_mem(0x200000, 1)):
+        with pytest.raises(link.LinkError):
+            fn()
+    s.write_mem(0x1FFFFF, b"x", 2_000_000)
+    assert s.read_mem(0x1FFFFF, 1) == b"x"
+    assert s.log[-2:] and all(t.addr < 0x200000 for t in s.log)
+
+
+def test_bram_bank_rejected():
+    s = sim.SimLink()
+    for bank in (0, 6, 8, None):
+        with pytest.raises(link.LinkError):
+            s.bram_write(bank, 0, b"x", 2_000_000)
+        with pytest.raises(link.LinkError):
+            s.bram_read(bank, 0, 1)
+    assert s.log == []
+
+
+def test_bram_range_rejected():
+    s = sim.SimLink()
+    for fn in (lambda: s.bram_write(5, 0x3FFF, b"xy", 2_000_000),
+               lambda: s.bram_read(7, 0x1FFF, 2),
+               lambda: s.bram_read(7, -1, 1),
+               lambda: s.bram_write(7, 0, bytes(0x2001), 2_000_000)):
+        with pytest.raises(link.LinkError):
+            fn()
+    assert s.log == []
+    s.bram_write(7, 0, bytes(range(256)) * 32, 2_000_000)
+    assert all(t.addr & 0x8000 for t in s.log)      # chunks never carry out of bit 15
+
+
+def test_plan_split_header_slow_payload_fast():
+    hdr = link.build_header(link.CMD_SRAM_W, 0x1000, 4000)
+    (l0, s0, c0), (l1, s1, c1) = link.plan_split(hdr, bytes(4000), FAST)
+    assert (l0, s0, c0) == (len(hdr), 2_000_000, 0)
+    assert (l1, s1) == (4000, FAST) and c1 == 0
+
+
+def test_serve_reply_length_and_pipe_errors():
+    backend = sim.SimLink()
+    proc = FakeServe(backend)
+    h = link.ServeHelper(proc)
+    orig = proc.write
+
+    def short(buf):
+        orig(buf)
+        proc.reply[:] = struct.pack("<BH", 0, 1) + b"x"
+    proc.write = short
+    with pytest.raises(link.LinkError):
+        h.read(link.CMD_SRAM_R, 0, 4, FAST)
+
+    class Dead:
+        def write(self, b):
+            raise BrokenPipeError()
+
+        def flush(self):
+            pass
+    d = FakeServe(backend)
+    d.stdin = Dead()
+    with pytest.raises(link.LinkError):
+        link.ServeHelper(d).read(link.CMD_SRAM_R, 0, 4, FAST)
+
+    class Eof:
+        def read(self, n):
+            return b""
+    e = FakeServe(backend)
+    e.stdout = Eof()
+    with pytest.raises(link.LinkError):
+        link.ServeHelper(e).read(link.CMD_SRAM_R, 0, 4, FAST)
+
+
+def test_spidev_close_waits_helper_before_unlock():
+    order = []
+
+    class Proc:
+        class stdin:
+            @staticmethod
+            def close():
+                order.append("stdin")
+
+        def wait(self, timeout):
+            order.append("wait")
+
+    class Lock(NeverLock):
+        def release(self):
+            order.append("release")
+    lk = link.SpidevLink(lock=Lock(), helper=link.ServeHelper(Proc()))
+    lk._locked = True
+    lk.close()
+    assert order == ["stdin", "wait", "release"]
 
 
 def test_mailbox_write_readback_retry():

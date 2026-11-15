@@ -1,14 +1,13 @@
-"""SPI link to the Next Pi debug slave (pi_debug_control readme framing).
-
-Every command is a header transfer at 2 MHz followed by a payload transfer at the
-rate under test, CE held between them. The slave has no flow control, so only the
-payload may run above 2 MHz.
+"""SPI link to the Next Pi debug slave: header at 2 MHz, payload at the test rate, CE held.
+The serve child must never flock the bus lock itself; the parent holds it for the run.
 """
 import struct
 import time
 
 HDR_HZ = 2_000_000
 MAX_CHUNK = 4000
+SRAM_SIZE = 0x200000
+BRAM_SIZE = {5: 0x4000, 7: 0x2000}
 RASTER_RETRIES = 8
 LOCK_PATH = "/run/nextspi.lock"
 LOCK_TIMEOUT_S = 30
@@ -57,16 +56,8 @@ def pattern(seed, n):
 
 
 def build_header(cmd, addr, n, val=0):
-    """Header bytes per the readme, including any junk byte before the data.
-
-    SRAM_R: cmd a2 a1 a0 l1 l0 junk (readme L68)   payload: n read bytes
-    SRAM_W: cmd a2 a1 a0 l1 l0      (readme L71)   payload: n write bytes
-    BRAM_R: cmd a1 a0 l1 l0 junk    (readme L60)   payload: n read bytes
-    BRAM_W: cmd a1 a0 l1 l0         (readme L64)   payload: n write bytes
-    NR_R:   cmd reg junk            (readme L74)   payload: 1 read byte
-    NR_W:   cmd reg val junk        (readme L77)   no payload
-    VERSION: cmd junk               (readme L42)   payload: 2 read bytes
-    """
+    """Readme header incl. junk byte: SRAM_R L68, SRAM_W L71, BRAM_R L60, BRAM_W L64,
+    NR_R L74, NR_W L77 (all in header), VERSION L42."""
     l1, l0 = (n >> 8) & 0xFF, n & 0xFF
     if cmd == CMD_SRAM_R:
         return bytes([cmd, (addr >> 16) & 0x1F, (addr >> 8) & 0xFF, addr & 0xFF, l1, l0, 0])
@@ -90,6 +81,11 @@ def pack_spi_transfer(tx_buf, rx_buf, length, speed_hz, delay_usecs=0,
     """struct spi_ioc_transfer: 32 bytes, len at 16, speed_hz at 20."""
     return struct.pack("<QQIIHBBBBBB", tx_buf, rx_buf, length, speed_hz, delay_usecs,
                        bits_per_word, cs_change, 0, 0, 0, 0)
+
+
+def plan_split(header, body, hz):
+    """Two descriptors (len, speed_hz, cs_change): header always 2 MHz, payload at hz, CE held."""
+    return (len(header), HDR_HZ, 0), (len(body), hz, 0)
 
 
 def spi_ioc_message(n):
@@ -166,33 +162,44 @@ class Link:
         v = self._transact(CMD_VERSION, 0, 2, b"", HDR_HZ)
         return v[0], v[1]
 
-    def _write(self, cmd, addr, data, hz):
+    @staticmethod
+    def _check(base, n, limit, what):
+        if base < 0 or n < 0 or base + n > limit:
+            raise LinkError("%s range %#x+%d outside %#x" % (what, base, n, limit))
+
+    def _write(self, cmd, base, data, hz, limit, flag=0):
         data = bytes(data)
+        self._check(base, len(data), limit, "write")
         for off in range(0, len(data), MAX_CHUNK):
             chunk = data[off:off + MAX_CHUNK]
-            self._transact(cmd, addr + off, len(chunk), chunk, hz)
+            self._transact(cmd, flag | (base + off), len(chunk), chunk, hz)
 
-    def _read(self, cmd, addr, n, hz):
+    def _read(self, cmd, base, n, hz, limit, flag=0):
+        self._check(base, n, limit, "read")
         out = bytearray()
         for off in range(0, n, MAX_CHUNK):
-            out += self._transact(cmd, addr + off, min(MAX_CHUNK, n - off), b"", hz)
+            out += self._transact(cmd, flag | (base + off), min(MAX_CHUNK, n - off), b"", hz)
         return bytes(out)
 
     def write_mem(self, phys, data, hz):
-        self._write(CMD_SRAM_W, phys, data, hz)
+        self._write(CMD_SRAM_W, phys, data, hz, SRAM_SIZE)
 
     def read_mem(self, phys, n, hz=HDR_HZ):
-        return self._read(CMD_SRAM_R, phys, n, hz)
+        return self._read(CMD_SRAM_R, phys, n, hz, SRAM_SIZE)
 
     @staticmethod
-    def _bram_addr(bank, off):
-        return (off & 0x7FFF) | (0x8000 if bank == 7 else 0)
+    def _bram(bank):
+        if bank not in BRAM_SIZE:
+            raise LinkError("bank %r is not 5 or 7" % (bank,))
+        return BRAM_SIZE[bank], (0x8000 if bank == 7 else 0)
 
     def bram_write(self, bank, off, data, hz):
-        self._write(CMD_BRAM_W, self._bram_addr(bank, off), data, hz)
+        size, flag = self._bram(bank)
+        self._write(CMD_BRAM_W, off, data, hz, size, flag)
 
     def bram_read(self, bank, off, n, hz=HDR_HZ):
-        return self._read(CMD_BRAM_R, self._bram_addr(bank, off), n, hz)
+        size, flag = self._bram(bank)
+        return self._read(CMD_BRAM_R, off, n, hz, size, flag)
 
     def nr_read(self, reg):
         return self._transact(CMD_NR_R, reg, 1, b"", HDR_HZ)[0]
@@ -229,19 +236,27 @@ class ServeHelper:
 
     def _call(self, op, cmd, addr, n, hz, payload):
         req = bytes([op, cmd]) + addr.to_bytes(3, "little") + struct.pack("<HI", n, hz) + payload
-        self.proc.stdin.write(req)
-        self.proc.stdin.flush()
-        head = self._take(3)
-        status, ln = struct.unpack("<BH", head)
+        try:
+            self.proc.stdin.write(req)
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as e:
+            raise LinkError("serve pipe write failed: %s" % e)
+        status, ln = struct.unpack("<BH", self._take(3))
         data = self._take(ln)
         if status != 0:
             raise LinkError("serve status %d" % status)
+        want = n if op == OP_READ else 0
+        if ln != want:
+            raise LinkError("serve reply %d bytes, expected %d" % (ln, want))
         return data
 
     def _take(self, n):
         buf = b""
         while len(buf) < n:
-            part = self.proc.stdout.read(n - len(buf))
+            try:
+                part = self.proc.stdout.read(n - len(buf))
+            except (BrokenPipeError, OSError, ValueError) as e:
+                raise LinkError("serve pipe read failed: %s" % e)
             if not part:
                 raise LinkError("serve pipe closed")
             buf += part
@@ -258,6 +273,9 @@ class ServeHelper:
             self.proc.stdin.close()
         except Exception:
             pass
+        wait = getattr(self.proc, "wait", None)
+        if wait is not None:
+            wait(timeout=5)
 
 
 class SpidevLink(Link):
@@ -289,14 +307,16 @@ class SpidevLink(Link):
         return self
 
     def close(self):
-        if self._spi is not None:
-            self._spi.close()
-            self._spi = None
-        if self.helper is not None:
-            self.helper.close()
-        if self._locked:
-            self.lock.release()
-            self._locked = False
+        try:
+            if self.helper is not None:
+                self.helper.close()     # reap the serve child before dropping the lock
+            if self._spi is not None:
+                self._spi.close()
+                self._spi = None
+        finally:
+            if self._locked:
+                self.lock.release()
+                self._locked = False
 
     def __enter__(self):
         return self.open()
@@ -329,9 +349,10 @@ class SpidevLink(Link):
         rx1 = ctypes.create_string_buffer(len(header))
         tx2 = ctypes.create_string_buffer(body, len(body))
         rx2 = ctypes.create_string_buffer(len(body))
-        msg = (pack_spi_transfer(ctypes.addressof(tx1), ctypes.addressof(rx1), len(header),
-                                 header_hz, cs_change=0)
-               + pack_spi_transfer(ctypes.addressof(tx2), ctypes.addressof(rx2), len(body),
-                                   hz, cs_change=0))
+        (l0, s0, c0), (l1, s1, c1) = plan_split(header, body, hz)
+        msg = (pack_spi_transfer(ctypes.addressof(tx1), ctypes.addressof(rx1), l0, s0,
+                                 cs_change=c0)
+               + pack_spi_transfer(ctypes.addressof(tx2), ctypes.addressof(rx2), l1, s1,
+                                   cs_change=c1))
         fcntl.ioctl(self._spi.fileno(), spi_ioc_message(2), msg)
         return bytes(rx2.raw[:n_rx]) if n_rx else b""

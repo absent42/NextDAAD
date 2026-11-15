@@ -1,9 +1,4 @@
-"""In-memory model of the Pi debug slave, including its lost-byte fault.
-
-The slave has no flow control: at an over-rate payload a byte can be dropped, and
-the rest of that transaction lands one address early. The next transaction
-reloads its address and is unaffected.
-"""
+"""Pi debug slave model. Lost byte: the rest of that transaction lands one address early."""
 from collections import namedtuple
 
 import link
