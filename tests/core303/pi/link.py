@@ -393,6 +393,7 @@ class SpidevLink(Link):
         self._spi = None
         self._locked = False
         self.spi_max_saved = self.spi_mode_saved = self.spi_max_restored = None
+        self.spi_max_stale = None
         self._restored = True
 
     def open(self, clock=None):
@@ -406,6 +407,10 @@ class SpidevLink(Link):
             self._spi.open(self.bus, self.dev)
             # spidev settings are per device and outlive us: save, then restore in close()
             self.spi_max_saved = self._spi.max_speed_hz
+            # 12 MHz at open is left over from a killed run of ours (AlpineNext uses 2 MHz)
+            self.spi_max_stale = 1 if self.spi_max_saved == MAX_HZ else 0
+            if self.spi_max_stale:
+                self.spi_max_saved = HDR_HZ
             self.spi_mode_saved = self._spi.mode
             self._restored = False
             _ACTIVE.add(self)

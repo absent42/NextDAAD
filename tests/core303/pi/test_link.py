@@ -671,14 +671,17 @@ def test_spidev_restore_compares_first(monkeypatch):
     del order[:]
     lk.close()
     assert order == ["close", "release"] and lk.spi_max_restored == 777
-    # saved 12 MHz (a link opened under another holder) is never written back
+    assert lk.spi_max_stale == 0
+    # 12 MHz at open is stale from a killed run: restored to 2 MHz
     order = []
     fake_spidev(monkeypatch, order, max_hz=link.MAX_HZ, mode=0)
     lk = link.SpidevLink(lock=OrderLock(order))
     lk.open(clock=FakeClock())
+    assert (lk.spi_max_stale, lk.spi_max_saved) == (1, link.HDR_HZ)
     del order[:]
     lk.close()
-    assert order == ["close", "release"]
+    assert order == [("max", link.HDR_HZ), "close", "release"]
+    assert lk.spi_max_restored == link.HDR_HZ
     # mode put back only if we set it and it is still ours
     order = []
     fake_spidev(monkeypatch, order, max_hz=500000, mode=2)
