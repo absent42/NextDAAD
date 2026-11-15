@@ -1,6 +1,6 @@
 # Assemble the CORE303 standalone bench into build\core303\CORE303.NEX.
 # Stamp = last commit touching tests/core303/bench; a dirty folder throws unless -AllowDirty.
-param([switch]$AllowDirty)
+param([switch]$AllowDirty, [Alias('Stamp')][string]$ForceStamp = '')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..\..\..").Path
 $out = Join-Path $root 'build\core303'
@@ -18,6 +18,9 @@ if ($dirty) {
     if (-not $AllowDirty) { throw "tests/core303/bench has uncommitted changes: commit them first" }
     $stamp = "$hash-dirty"
 }
+
+# -Stamp forces the baked stamp: tests only.
+if ($ForceStamp) { $stamp = $ForceStamp }
 
 New-Item -ItemType Directory -Force $out | Out-Null
 $src = ($PSScriptRoot -replace '\\', '/') + '/core303.asm'

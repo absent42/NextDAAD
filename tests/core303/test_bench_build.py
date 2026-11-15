@@ -82,6 +82,9 @@ def _strings():
         p = BENCH / name
         if p.is_file():
             out.update(DB_STR.findall(p.read_text(encoding="ascii")))
+    # log.asm composes these from BENCH_NAME_STR and LOG_NAME_STR defaults
+    out["logTxtHdr"] = "#CORE303 STANDALONE "
+    out["logName"] = "CORE303.LOG"
     return out
 
 
