@@ -11,7 +11,8 @@ $flags = @("-O2", "-std=c99", "-Wall", "-Wextra", "-Werror", "-static")
 $core = Join-Path $src "core303pi.c"
 $jobs = @(
     @{ exe = "test_core303pi.exe"; srcs = @($core, (Join-Path $src "test_core303pi.c")) },
-    @{ exe = "spi303.exe"; srcs = @($core, (Join-Path $src "spi303.c")) }
+    @{ exe = "spi303.exe"; srcs = @($core, (Join-Path $src "spi303.c")) },
+    @{ exe = "prep303.exe"; srcs = @($core, (Join-Path $src "prep303.c")) }
 )
 foreach ($j in $jobs) {
     & $Gcc @flags "-I$src" -o (Join-Path $out $j.exe) @($j.srcs) 2>&1 | Write-Host

@@ -7,3 +7,5 @@ c/core303pi.c
 c/spi303.c
 pi303_probe.py
 pi303_smoke.py
+pi303_prep.py
+c/prep303.c
