@@ -39,7 +39,7 @@ typedef char chk_speed[offsetof(struct spi_ioc_transfer, speed_hz) == 20 ? 1 : -
     "  serve\n" \
     "  write <phys> <bytes> <hz> <chunk> <seed0> [--passes N] [--hb MBOX]\n" \
     "  read <phys> <bytes> <hz> <chunk> [--seed S] [--passes N] [--hb MBOX]\n" \
-    "  bram <5|7> <hz> <passes> <seed0> [--hb MBOX]\n" \
+    "  bram <7> <hz> <passes> <seed0> [--hb MBOX]\n" \
     "  stream <phys|bram5:OFF|bram7[:OFF]> <len> <hz> <src_file> --hb MBOX\n" \
     "  selftest <phys>\n" \
     "  smoke\n"
@@ -414,12 +414,13 @@ static int body(int argc, char **argv)
         rc = run_read(&l, stdout, CMD_SRAM_R, v[0], v[1], v[2], v[3], a.has_seed, a.seed,
                       a.passes);
     } else if (strcmp(sub, "bram") == 0 && want_pos(&a, 4) && !a.has_passes) {
-        if (v[0] != 5 && v[0] != 7)
+        /* bank 5 holds the screen and sysvars: only stream bram5:OFF (the R5 region) writes it */
+        if (v[0] != 7)
             return fail(E_RANGE, 0, (long)v[0]);
         if (v[2] == 0)
             return fail(E_ARG, 0, 3);
-        rc = run_write(&l, stdout, "C3BP", CMD_BRAM_W, v[0] == 7 ? BRAM7_FLAG : 0,
-                       v[0] == 7 ? BRAM7_SIZE : BRAM5_SIZE, v[1], MAX_CHUNK, v[3], v[2]);
+        rc = run_write(&l, stdout, "C3BP", CMD_BRAM_W, BRAM7_FLAG, BRAM7_SIZE, v[1], MAX_CHUNK,
+                       v[3], v[2]);
     } else if (strcmp(sub, "selftest") == 0 && want_pos(&a, 1)) {
         rc = run_selftest(&l, stdout, v[0]);
     } else if (strcmp(sub, "stream") == 0 && want_pos(&a, 4) && a.has_hb) {

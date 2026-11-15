@@ -125,6 +125,27 @@ def test_prep_failed_c_tool_logs_cfail(tmp_path):
     assert ("P2CV", "CFAIL") in [tuple(s) for s in log.skips]
 
 
+def test_build_c_link_fallback_marks_nolink(tmp_path, monkeypatch):
+    """jpeglib.h present but -ljpeg fails: the NO_JPEG retry carries JPEG_NOLINK."""
+    hdr = tmp_path / "jpeglib.h"
+    hdr.write_text("")
+    cmds = []
+
+    class R:
+        def __init__(self, rc):
+            self.returncode = rc
+    monkeypatch.setattr(pi303_prep, "JPEGLIB", str(hdr))
+    monkeypatch.setattr(pi303_prep.shutil, "which", lambda n: "gcc")
+    monkeypatch.setattr(pi303_prep.subprocess, "run",
+                        lambda cmd, **kw: (cmds.append(cmd), R(1 if "-ljpeg" in cmd else 0))[1])
+    assert pi303_prep.build_c(str(tmp_path))
+    assert "-ljpeg" in cmds[0] and {"-DNO_JPEG", "-DJPEG_NOLINK"} <= set(cmds[1])
+    cmds.clear()
+    hdr.unlink()
+    assert pi303_prep.build_c(str(tmp_path))
+    assert len(cmds) == 1 and "-DNO_JPEG" in cmds[0] and "-DJPEG_NOLINK" not in cmds[0]
+
+
 def test_prep_without_c_tool(tmp_path):
     fdir, out = tmp_path / "frames", tmp_path / "out"
     out.mkdir()

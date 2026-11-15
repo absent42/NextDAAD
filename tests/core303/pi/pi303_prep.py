@@ -58,8 +58,9 @@ def build_c(work):
     exe = os.path.join(work, "prep303")
     src = [os.path.join(HERE, "c", "prep303.c"), os.path.join(HERE, "c", "core303pi.c")]
     base = [gcc, "-O2", "-I" + os.path.join(HERE, "c"), "-o", exe] + src
-    tries = [base + ["-ljpeg"]] if os.path.isfile(JPEGLIB) else []
-    tries.append(base + ["-DNO_JPEG"])
+    hdr = os.path.isfile(JPEGLIB)
+    tries = [base + ["-ljpeg"]] if hdr else []
+    tries.append(base + ["-DNO_JPEG"] + (["-DJPEG_NOLINK"] if hdr else []))  # #SKIP P2JD NOLINK
     for cmd in tries:
         if subprocess.run(cmd, capture_output=True).returncode == 0:
             return exe

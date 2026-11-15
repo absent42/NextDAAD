@@ -1,4 +1,5 @@
 """Host build and tests of the Pi C core (mingw gcc), plus Python/C contract checks."""
+import os
 import re
 import shutil
 import struct
@@ -115,6 +116,7 @@ def test_spi303_bounds_rejected(host, tmp_path):
     for args in (("write", "0x1FFFFF", "2", FAST, "4000", "1"),
                  ("read", "0x200000", "1", FAST, "4000"),
                  ("bram", "6", FAST, "1", "1"),
+                 ("bram", "5", FAST, "1", "1"),         # bank 5 holds the screen and sysvars
                  ("bram", "5", FAST, "1", "1", "--hb", "0x1FFFF0"),
                  ("write", "0x1000", "100", FAST, "4001", "1"),
                  ("write", "0x1000", "100", "0", "100", "1"),
@@ -126,6 +128,37 @@ def test_spi303_bounds_rejected(host, tmp_path):
         rows = pilog_rows(tmp_path, r.stdout.decode("ascii"))
         assert rows[0].tag == "C3ER", args
         assert [x.tag for x in rows[1:]] in ([], ["C3MX"]), args   # C3MX once opened
+
+
+def test_spi303_bram5_only_bounded_stream(host, tmp_path):
+    """The CLI writes bank 5 only through stream bram5:OFF (the R5 region), never whole."""
+    src = (CDIR / "spi303.c").read_text()
+    assert "bram <7>" in src
+    r = run(host / "spi303.exe", "--sim", "bram", "5", FAST, "1", "1")
+    assert r.returncode == 2 and b"C3BP" not in r.stdout
+    assert pilog_rows(tmp_path, r.stdout.decode("ascii"))[0].fields["arg"] == 5
+
+
+def test_prep303_nolink_vs_nohdr(host, tmp_path):
+    """-DNO_JPEG with jpeglib.h visible means -ljpeg failed: NOLINK; no header: NOHDR."""
+    inc = tmp_path / "inc"
+    inc.mkdir()
+    (inc / "jpeglib.h").write_text("/* stand-in */\n")
+    fdir, rdir = tmp_path / "f", tmp_path / "r"
+    fdir.mkdir()
+    rdir.mkdir()
+    (rdir / "F000.rgb").write_bytes(bytes(256 * 192 * 3))
+    for name, extra, want in (("nolink", ["-I" + str(inc)], b"#SKIP P2JD NOLINK"),
+                              ("nohdr", [], b"#SKIP P2JD NOHDR")):
+        exe = tmp_path / (name + ".exe")
+        cc = subprocess.run([str(GCC), "-O2", "-std=c99", "-Wall", "-Wextra", "-Werror",
+                             "-I" + str(CDIR)] + extra + ["-DNO_JPEG", "-o", str(exe),
+                            str(CDIR / "prep303.c"), str(CDIR / "core303pi.c")],
+                            capture_output=True, text=True,
+                            env={**os.environ, "PATH": str(GCC.parent) + ";" + os.environ["PATH"]})
+        assert cc.returncode == 0, cc.stderr
+        r = subprocess.run([str(exe), str(fdir), str(rdir), "1"], capture_output=True)
+        assert r.returncode == 0 and want in r.stdout, (name, r.stdout)
 
 
 def test_spi303_restores_device_settings_on_every_exit(host, tmp_path):
