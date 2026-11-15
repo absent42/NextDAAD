@@ -139,6 +139,18 @@ def _gates(p):
     return keys
 
 
+def _tree(tmp, dirty=None):
+    """A throwaway git repo standing in for the repo's clean-tree check; dirty adds an
+    untracked file at that relative path."""
+    t = tmp / "tree"
+    t.mkdir()
+    subprocess.run(["git", "init", "-q", str(t)], check=True)
+    if dirty:
+        (t / dirty).parent.mkdir(parents=True, exist_ok=True)
+        (t / dirty).write_bytes(b"x\n")
+    return t
+
+
 def _fake_pi(tmp, mode, bad=False):
     """plink/pscp stand-ins: each call appends its argv to a JSON-lines log; the remote
     hash check answers from the local push tree, as if the push had landed."""
@@ -151,7 +163,8 @@ def _fake_pi(tmp, mode, bad=False):
                                          encoding="ascii")
     env = {"CORE303_PLINK": str(d / "plink.cmd"), "CORE303_PSCP": str(d / "pscp.cmd"),
            "CORE303_FAKE_LOG": str(d / "calls.jsonl"),
-           "CORE303_FAKE_PI_ROOT": str(PUSH_TREE[mode])}
+           "CORE303_FAKE_PI_ROOT": str(PUSH_TREE[mode]),
+           "CORE303_TREE_ROOT": str(_tree(tmp))}
     if bad:
         env["CORE303_FAKE_BAD"] = "1"
     return env, d / "calls.jsonl"
@@ -232,10 +245,13 @@ def test_phase2_whatif_paths(tmp_path):
     lines = _ok(_ps(["-Phase2", *P2ARGS, "-WhatIf", "-SdRoot", sd, "-ResultsRoot", res]))
     writes = [l for l in lines if l.startswith("WRITE ")]
     assert writes == ["WRITE build\\core303\\PI303.NEX PI303.MAP PI303V.NEX PI303V.MAP",
-                      "WRITE build\\core303\\frames\\"] + \
-        ["WRITE sd\\%s\\" % l for l in PI_LEGS] + \
-        ["WRITE sd\\LEG303P.TXT", "WRITE %s\\2026-11-20-ks3-staged\\" % res], writes
+                      "WRITE build\\core303\\frames\\",
+                      "WRITE %s\\2026-11-20-ks3-staged\\ (as .2026-11-20-ks3-staged.partial,"
+                      " renamed when verified)" % res] + \
+        ["WRITE sd\\%s\\" % l for l in PI_LEGS] + ["WRITE sd\\LEG303P.TXT"], writes
     assert any("no -AllowDirty" in l for l in lines)
+    assert "STEP 0: refuse if git status --porcelain -- tests/core303/pi tests/core303/stage.ps1" \
+        " prints anything" in lines
     assert any(_b12() in l for l in lines)
     assert not _cmds(lines)
     assert list(sd.iterdir()) == [] and list(res.iterdir()) == []
@@ -285,6 +301,8 @@ def test_guard_scoping(tmp_path, log_rel, args, refused):
     (["-P2Only", "-Board", "ks1pi"], "-Date"),
     (["-Ks3Rerun", "-Board", "ks3"], "-Board"),
     (["-Phase2", "-P2Only", *ONLYARGS], "exactly one"),
+    (["-Bogus"], "unknown arguments: -Bogus"),
+    (["-P2Only", *ONLYARGS, "-Phase-2"], "unknown arguments: -Phase-2"),
 ])
 def test_mode_args_checked(tmp_path, args, msg):
     sd, _ = _roots(tmp_path)
@@ -442,9 +460,13 @@ def test_pushpi_commands(phase2):
                   " --out {r}out/P3 --bundle {b}",
             "P4": "python3 {r}pi303_video.py --map {r}map/PI303V.MAP --spi-log {r}out/P3/SPI.LOG"
                   " --frames {r}frames --tool {r}spi303 --out {r}out/P4 --bundle {b}"}
+    logs = {"P0": ["PROBE.LOG"], "P2": ["PREP.LOG"], "P3": ["SPI.LOG", "PI_PI303.LOG"],
+            "P4": ["VIDEO.LOG", "PI_PI303V.LOG"]}
     for leg, t in tool.items():
         t = t.format(r=rb, b=b12)
-        assert 'RUN %s: plink -batch %s "cd %s && %s"' % (leg, HOST, rb.rstrip("/"), t) in runs
+        rm = "rm -f " + " ".join("%sout/%s/%s" % (rb, leg, n) for n in logs[leg])
+        assert 'RUN %s: plink -batch %s "cd %s && %s && %s"' % (
+            leg, HOST, rb.rstrip("/"), rm, t) in runs
         assert "FETCH %s: pscp -batch %s:%sout/%s/* sd\\LEG303%s\\" % (leg, HOST, rb, leg, leg) \
             in runs
         src = (PI / t.split()[1][len(rb):]).read_text(encoding="ascii")
@@ -453,6 +475,39 @@ def test_pushpi_commands(phase2):
     for l in runs:
         for p in _remote_paths(l):
             assert _under(p, rb), l
+        if l.startswith("RUN "):
+            rm = l.split(" && ")[1]
+            assert rm.startswith("rm -f /") and "*" not in rm, l
+        assert "-r" not in l.split() and "-rf" not in l
+
+
+@pytest.mark.parametrize("mode", [["-P2Only", *ONLYARGS], ["-Phase2", *P2ARGS]])
+@pytest.mark.parametrize("dirty", ["tests/core303/pi/new.py", "tests/core303/stage.ps1"])
+def test_dirty_tree_refuses(tmp_path, mode, dirty):
+    sd, res = _roots(tmp_path)
+    env = {"CORE303_TREE_ROOT": str(_tree(tmp_path, dirty))}
+    r = _ps(mode + ["-SdRoot", sd, "-ResultsRoot", res], env)
+    assert r.returncode != 0
+    assert "uncommitted changes under" in r.stderr
+    assert list(sd.iterdir()) == [] and list(res.iterdir()) == []
+    assert "bundle:" not in r.stdout
+
+
+def test_phase2_refuses_stale_partial(tmp_path):
+    sd, res = _roots(tmp_path)
+    (res / ".2026-11-20-ks3-staged.partial").mkdir()
+    for extra in (["-WhatIf"], []):
+        r = _ps(["-Phase2", *P2ARGS, "-SdRoot", sd, "-ResultsRoot", res] + extra)
+        assert r.returncode != 0
+        assert "stale partial record" in r.stderr
+    assert [p.name for p in res.iterdir()] == [".2026-11-20-ks3-staged.partial"]
+    assert list(sd.iterdir()) == []
+
+
+def test_python_calls_skip_bytecode():
+    src = STAGE.read_text(encoding="ascii")
+    calls = re.findall(r"& python\b[^\n]*", src)
+    assert calls and all(c.startswith("& python -B ") for c in calls), calls
 
 
 def test_fake_pi_records_argv(phase2):

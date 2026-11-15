@@ -86,9 +86,15 @@ if ($phase2Args) {
         }
     }
 
+    function Test-Link([string]$p) {
+        (Test-Path -LiteralPath $p) -and
+        ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)
+    }
     function New-Scratch([string]$name) {
-        $w = Join-Path $root "tests\out\$name"
-        if ((Split-Path -Parent $w) -ne (Join-Path $root 'tests\out')) { throw "bad scratch path $w" }
+        $outDir = Join-Path $root 'tests\out'
+        $w = Join-Path $outDir $name
+        if ((Split-Path -Parent $w) -ne $outDir) { throw "bad scratch path $w" }
+        foreach ($p in $outDir, $w) { if (Test-Link $p) { throw "$p is a link - clear it by hand" } }
         if (Test-Path -LiteralPath $w) {
             if (Get-ChildItem -LiteralPath $w -Recurse -Force -Attributes ReparsePoint) { throw "link under $w - clear it by hand" }
             Get-ChildItem -LiteralPath $w -Force | Remove-Item -Recurse -Force
@@ -110,7 +116,7 @@ if ($phase2Args) {
     }
 
     function Get-Py([string]$what, [string[]]$pyArgs) {
-        $out = @(& python @pyArgs 2>&1 | ForEach-Object { "$_" })
+        $out = @(& python -B @pyArgs 2>&1 | ForEach-Object { "$_" })
         if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE): $($out | Select-Object -Last 5 | Out-String)" }
         $out
     }
@@ -120,7 +126,7 @@ if ($phase2Args) {
         $h
     }
     function Test-Staged([string]$dir) {
-        $v = @(& python "$root\tests\core303\ingest.py" --verify-staged $dir 2>&1 | ForEach-Object { "$_" })
+        $v = @(& python -B "$root\tests\core303\ingest.py" --verify-staged $dir 2>&1 | ForEach-Object { "$_" })
         if ($LASTEXITCODE -ne 0) {
             $v | ForEach-Object { "verify-staged: $_" }
             throw "$(Show-Path $dir) fails its MANIFEST, nothing written"
@@ -149,7 +155,7 @@ if ($phase2Args) {
         if ($WhatIf) {
             "MODE -Ks3Rerun from $(Show-Path $rec)\"
             "STEP 0: refuse (ingest first) if sd\LEG303A3, B3 or C3 holds a .LOG or NXBENCH*.TXT"
-            "STEP 1: python tests\core303\ingest.py --verify-staged $(Show-Path $rec)"
+            "STEP 1: python -B tests\core303\ingest.py --verify-staged $(Show-Path $rec)"
             "STEP 2: copy each MANIFEST file to its leg under tests\out\core303-ks3rerun\, re-check every sha256"
             "STEP 3: GATES.TXT = the original bytes plus rerun_of: $rerunOf"
             foreach ($l in $rlegs) {
@@ -193,9 +199,21 @@ if ($phase2Args) {
     $pt = Join-Path $pw 'pi'
     $recName = "$Date-$bl-staged"
     $recDest = Join-Path $resRoot $recName
+    $recPart = Join-Path $resRoot ".$recName.partial"
     Assert-NoLogs $outLegs
     if ($Phase2 -and (Test-Path -LiteralPath $recDest)) {
         throw "staged record exists, never overwritten: $(Show-Path $recDest)"
+    }
+    if ($Phase2 -and (Test-Path -LiteralPath $recPart)) {
+        throw "stale partial record from a failed run, remove it by hand: $(Show-Path $recPart)"
+    }
+    # GATES bundle:/frames: must name bytes git holds. CORE303_TREE_ROOT (tests) swaps the tree.
+    $treeRoot = if ($env:CORE303_TREE_ROOT) { $env:CORE303_TREE_ROOT } else { $root }
+    $treePaths = 'tests/core303/pi', 'tests/core303/stage.ps1'
+    if (-not $WhatIf) {
+        $dirty = git -C $treeRoot status --porcelain -- @treePaths
+        if ($LASTEXITCODE -ne 0) { throw "git status failed in $treeRoot" }
+        if ($dirty) { throw "uncommitted changes under $($treePaths -join ', '): commit them first" }
     }
     $b12 = Get-Hash12 'bundle hash' @('-c', 'import sys; sys.path.insert(0, sys.argv[1]); import bundle; print(bundle.bundle_hash(sys.argv[1]))', $piDir)
     # Writes '<path> <sha256>' lines (the input of bundle.py's hash) and checks they hash to it.
@@ -239,11 +257,16 @@ if ($phase2Args) {
         P4 = "python3 $rb/pi303_video.py --map $rb/map/PI303V.MAP --spi-log $rb/out/P3/SPI.LOG --frames $rb/frames " +
         "--tool $rb/spi303 --out $rb/out/P4 --bundle $b12"
     }
+    # Each run first removes only that leg's own earlier logs, by exact name.
+    $legLogs = @{ P0 = @('PROBE.LOG'); P2 = @('PREP.LOG'); P3 = @('SPI.LOG', 'PI_PI303.LOG')
+        P4 = @('VIDEO.LOG', 'PI_PI303V.LOG')
+    }
     # The run sheet copies these verbatim: one plink per leg, then the pscp fetch into its sd folder.
     function Show-RunFetch {
         foreach ($p in $piLegs) {
             $legDir = if ($P2Only) { "LEG303P2$bu" } else { "LEG303$p" }
-            "RUN ${p}: plink -batch $PiHost `"cd $rb && $($runTool[$p])`""
+            $rm = 'rm -f ' + (($legLogs[$p] | ForEach-Object { "$rb/out/$p/$_" }) -join ' ')
+            "RUN ${p}: plink -batch $PiHost `"cd $rb && $rm && $($runTool[$p])`""
             "FETCH ${p}: pscp -batch ${PiHost}:$rb/out/$p/* sd\$legDir\"
         }
     }
@@ -251,7 +274,8 @@ if ($phase2Args) {
     if ($WhatIf) {
         "MODE $(if ($Phase2) { '-Phase2' } else { '-P2Only' }) board=$bl date=$Date"
         "STEP 0: refuse (ingest first) if $(($outLegs | ForEach-Object { "sd\$_" }) -join ', ') holds a .LOG or NXBENCH*.TXT"
-        if ($Phase2) { "STEP 0: refuse if $(Show-Path $recDest)\ exists" }
+        if ($Phase2) { "STEP 0: refuse if $(Show-Path $recDest)\ or $(Show-Path $recPart)\ exists" }
+        "STEP 0: refuse if git status --porcelain -- $($treePaths -join ' ') prints anything"
         "STEP 1: bundle $b12 over tests\core303\pi\BUNDLE.txt"
         if ($Phase2) {
             "STEP 2: tests\core303\pi\next\build.ps1 (no -AllowDirty), stamp checked"
@@ -261,17 +285,15 @@ if ($phase2Args) {
         "WRITE build\core303\frames\"
         "STEP 4: assemble $(($outLegs) -join ', ') with GATES.TXT under $(Show-Path $pw)\"
         if ($Phase2) {
-            "STEP 5: assemble the staged record and MANIFEST.txt there, python tests\core303\ingest.py --verify-staged on it"
+            "STEP 5: assemble the staged record and MANIFEST.txt there, python -B tests\core303\ingest.py --verify-staged on it"
         }
         if ($PushPi) {
             "STEP 6: copy the bundle, frames$(if ($Phase2) { ' and MAPs' }) to $(Show-Path $pt)\, re-check both hashes, then:"
             foreach ($s in $steps) { "REMOTE $($s.Show)" }
         }
+        if ($Phase2) { "WRITE $(Show-Path $recDest)\ (as .$recName.partial, renamed when verified)" }
         foreach ($l in $outLegs) { "WRITE sd\$l\" }
-        if ($Phase2) {
-            "WRITE sd\LEG303P.TXT"
-            "WRITE $(Show-Path $recDest)\"
-        }
+        if ($Phase2) { "WRITE sd\LEG303P.TXT" }
         if ($PushPi) { Show-RunFetch }
         return
     }
@@ -341,7 +363,8 @@ if ($phase2Args) {
                 "# 'here' = preserved in this folder; otherwise the tracked repo path holding identical bytes.",
                 "# bundle $b12 = first 12 hex of sha256(BUNDLE.lst): tests/core303/pi files named by BUNDLE.txt.",
                 "# frames $fh = first 12 hex of sha256(FRAMES.lst); not copied: tests/core303/pi/frames.py",
-                "# make(n=120) regenerates them (Pillow $($ver[0]), numpy $($ver[1])).") +
+                "# make(n=120) regenerates them (Pillow $($ver[0]), numpy $($ver[1])). The bytes are as generated",
+                "# on the staging PC: frames.py writes SOURCE.txt with the platform line ending.") +
             @($rels | ForEach-Object { "$(Get-Sha (Join-Path $sr $_))  $_  here" }))
         Test-Staged $sr
     }
@@ -381,15 +404,20 @@ if ($phase2Args) {
         }
     }
 
-    # Every check passed: only now write sd\ and the results record.
+    # Every check passed: the record lands whole (partial, verify, rename), then sd\.
+    if ($Phase2) {
+        if ((Test-Path -LiteralPath $recDest) -or (Test-Path -LiteralPath $recPart)) {
+            throw "$(Show-Path $recDest) or its .partial appeared during staging"
+        }
+        Copy-Item -LiteralPath $sr -Destination $recPart -Recurse
+        Test-Staged $recPart
+        Move-Item -LiteralPath $recPart -Destination $recDest
+        "staged $(Show-Path $recDest)\"
+    }
     Write-Legs $pw $outLegs
     if ($Phase2) {
         Copy-Item -LiteralPath "$pw\LEG303P.TXT" -Destination (Join-Path $sd 'LEG303P.TXT') -Force
         "staged sd\LEG303P.TXT"
-        if (Test-Path -LiteralPath $recDest) { throw "$(Show-Path $recDest) appeared during staging" }
-        Copy-Item -LiteralPath $sr -Destination $recDest -Recurse
-        Test-Staged $recDest
-        "staged $(Show-Path $recDest)\"
     }
     if ($PushPi) { Show-RunFetch }
     return
@@ -419,7 +447,7 @@ if ($WhatIf) {
 }
 
 function Get-Gate([string]$what, [string[]]$checkArgs) {
-    $out = & python "$root\tests\check_quiet_decode.py" @checkArgs *>&1 | ForEach-Object { "$_" }
+    $out = & python -B "$root\tests\check_quiet_decode.py" @checkArgs *>&1 | ForEach-Object { "$_" }
     $code = $LASTEXITCODE
     $line = $out | Where-Object { $_ -match '^(OK|FAIL)\b' } | Select-Object -Last 1
     if ($code -ne 0 -or -not $line -or $line -notmatch '^OK') {
