@@ -290,6 +290,24 @@ def test_pienv_reads_and_tokens(tmp_path, monkeypatch):
     assert set(env) == PIENV_KEYS and all(v and " " not in v for v in env.values())
 
 
+def test_pienv_version_from_importable_package(tmp_path, monkeypatch):
+    import importlib
+    from importlib import metadata
+    pkg = tmp_path / "PIL"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("raise RuntimeError('imported')\n")
+    (pkg / "_version.py").write_text('__version__ = "11.3.0"\n')
+    monkeypatch.delitem(sys.modules, "PIL", raising=False)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    stale = lambda dist: "12.1.1" if dist == "Pillow" else "9.9.9"
+    monkeypatch.setattr(metadata, "version", stale)
+    assert pi303_probe.pienv()["pil"] == "11.3.0"
+    assert "PIL" not in sys.modules
+    (pkg / "_version.py").unlink()                    # unreadable: metadata fallback
+    assert pi303_probe.pienv()["pil"] == "12.1.1"
+
+
 def test_gcc_version_absent(monkeypatch):
     def boom(*a, **k):
         raise FileNotFoundError("gcc")

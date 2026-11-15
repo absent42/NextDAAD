@@ -74,11 +74,26 @@ def _int(s):
     return int(s) if s.isdigit() else "na"
 
 
-def _dist_version(dist, module):
-    """Installed version without importing the package (pi303_video must stay PIL-free)."""
+def _file_version(module, fname):
+    """Version parsed from <package>/fname of the package find_spec resolves, no import."""
+    import importlib.util
+    spec = importlib.util.find_spec(module)
+    pkg = os.path.dirname(spec.origin)
+    with open(os.path.join(pkg, fname), encoding="ascii", errors="replace") as f:
+        m = re.search(r"^(?:__version__|version)\s*=\s*['\"]([^'\"]+)['\"]", f.read(), re.M)
+    return m.group(1)
+
+
+def _dist_version(dist, module, fname):
+    """Version of the package that would import, without importing it (pi303_video must
+    stay PIL-free); stale dist-info can disagree, so metadata is the last resort."""
     mod = sys.modules.get(module)
     if getattr(mod, "__version__", None):
         return mod.__version__
+    try:
+        return _file_version(module, fname)
+    except Exception:
+        pass
     try:
         from importlib import metadata
         return metadata.version(dist)
@@ -103,8 +118,8 @@ def pienv():
             "arm_khz": _int(_text(os.path.join(CPUFREQ, "scaling_cur_freq"))),
             "kernel": _tok(platform.uname().release),
             "py": _tok(platform.python_version()),
-            "numpy": _tok(_dist_version("numpy", "numpy")),
-            "pil": _tok(_dist_version("Pillow", "PIL")),
+            "numpy": _tok(_dist_version("numpy", "numpy", "version.py")),
+            "pil": _tok(_dist_version("Pillow", "PIL", "_version.py")),
             "gcc": _gcc_version(),
             "bufsiz": _int(_text(BUFSIZ))}
 
