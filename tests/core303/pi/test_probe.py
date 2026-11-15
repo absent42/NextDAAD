@@ -117,14 +117,20 @@ def smoke_link():
     return lk
 
 
+def real_like(total, calls=None, ret=None):
+    """Like fcntl.ioctl: bytes in gives bytes back; a mutable buffer with mutate gives the int."""
+    def f(fd, req, msg, mutate=False):
+        if calls is not None:
+            calls.append((req, len(msg)))
+        if isinstance(msg, bytes) or not mutate:
+            return bytes(msg)
+        return total if ret is None else ret
+    return f
+
+
 def test_smoke_logs_row(tmp_path, monkeypatch):
     calls = []
-
-    def ok(fd, req, msg):
-        calls.append((req, len(msg)))
-        return 7 + 64
-
-    fake_fcntl(monkeypatch, ok)
+    fake_fcntl(monkeypatch, real_like(7 + 64, calls))
     rc = pi303_smoke.main(smoke_link(), str(tmp_path), BUNDLE, **fake_env())
     assert rc == 0
     assert calls == [(link.spi_ioc_message(2), 64)]
@@ -133,7 +139,7 @@ def test_smoke_logs_row(tmp_path, monkeypatch):
 
 
 def test_smoke_einval(tmp_path, monkeypatch):
-    def bad(fd, req, msg):
+    def bad(fd, req, msg, mutate=False):
         raise OSError(errno.EINVAL, "invalid")
 
     fake_fcntl(monkeypatch, bad)
@@ -144,11 +150,52 @@ def test_smoke_einval(tmp_path, monkeypatch):
 
 
 def test_smoke_short_return(tmp_path, monkeypatch):
-    fake_fcntl(monkeypatch, lambda fd, req, msg: 5)
+    fake_fcntl(monkeypatch, real_like(71, ret=5))
     rc = pi303_smoke.main(smoke_link(), str(tmp_path), BUNDLE, **fake_env())
     assert rc != 0
-    r = parse.parse_pilog(tmp_path / "SMOKE.LOG").rows
-    assert r[0].fields == {"ok": 0, "ret": 5}
+    log = parse.parse_pilog(tmp_path / "SMOKE.LOG")
+    assert log.rows[0].fields == {"ok": 0, "ret": 5} and log.skips == []
+
+
+def test_smoke_link_error_logged(tmp_path, monkeypatch):
+    lk = smoke_link()
+    lk.xfer = lambda *a, **k: (_ for _ in ()).throw(link.LinkError("no helper"))
+    fake_fcntl(monkeypatch, real_like(71))
+    rc = pi303_smoke.main(lk, str(tmp_path), BUNDLE, **fake_env())
+    assert rc != 0
+    log = parse.parse_pilog(tmp_path / "SMOKE.LOG")
+    assert log.rows[0].fields == {"ok": 0, "ret": -1}
+    assert log.skips == [("P2PY", "LINK")] and log.spi == {}
+
+
+def test_link_split_checks_count(monkeypatch):
+    fake_fcntl(monkeypatch, real_like(71, ret=70))
+    h = link.build_header(link.CMD_SRAM_R, 0, 64)
+    with pytest.raises(link.LinkError):
+        smoke_link().xfer(h, b"", 64, 4_000_000)
+    fake_fcntl(monkeypatch, real_like(len(h) + 64))
+    assert smoke_link().xfer(h, b"", 64, 4_000_000) == bytes(64)
+
+
+def test_probe_nr7f_restored_on_readback_error(tmp_path):
+    class Boom(sim.SimLink):
+        def _nr(self, header, header_hz, hz):
+            if header[0] == link.CMD_NR_R and header[1] == 0x7F and self.nrs.get(0x7F) == 0x5A:
+                raise link.LinkError("read-back failed")
+            return super()._nr(header, header_hz, hz)
+    s = Boom()
+    s.nrs[0x7F] = 0x33
+    rc, log, _ = run_probe(tmp_path, s)
+    assert rc != 0 and s.nrs[0x7F] == 0x33
+    assert ("P0RW", "LINK") in [tuple(x) for x in log.skips]
+
+
+def test_probe_version_failure_leaves_log(tmp_path):
+    class Dead(sim.SimLink):
+        def version(self):
+            raise link.LinkError("dead")
+    rc, log, _ = run_probe(tmp_path, Dead())
+    assert rc != 0 and log.rows == [] and ("P0VR", "LINK") in [tuple(x) for x in log.skips]
 
 
 def test_tools_in_bundle():

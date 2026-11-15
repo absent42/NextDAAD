@@ -92,34 +92,52 @@ def default_spi_open():
 
 
 def open_log(path, tool, bundle, link, version, caps, core_clk, spi_open):
-    """Header, #PIENV and #SPI context lines."""
+    """Header and #PIENV context line; #SPI only when version is not None."""
     log = PiLogWriter(path, tool, bundle)
     log.env(spi_max_saved=getattr(link, "spi_max_saved", None) or 0,
             spi_max_stale=getattr(link, "spi_max_stale", None) or 0,
             spi_open=",".join(str(p) for p in spi_open))
-    hz, src = core_clk
-    log.spi(version, caps, hz, src)
+    if version is not None:
+        hz, src = core_clk
+        log.spi(version, caps, hz, src)
     return log
+
+
+def _nr_test(link):
+    """Write $5A to NR $7F and read it back; the original is always written back."""
+    orig = link.nr_read(NR_TEST)
+    try:
+        link.nr_write(NR_TEST, NR_VALUE)
+        got = link.nr_read(NR_TEST)
+    finally:
+        link.nr_write(NR_TEST, orig)
+    return int(got == NR_VALUE and link.nr_read(NR_TEST) == orig)
 
 
 def main(link, out_dir, bundle, probes=None, core_clk=None, spi_open=None):
     probes = probes or default_probes
     core_clk = core_clk or default_core_clk
     spi_open = spi_open or default_spi_open
-    ver, caps = link.version()
-    log = open_log(os.path.join(out_dir, "PROBE.LOG"), TOOL, bundle, link, ver, caps,
-                   core_clk(), spi_open())
+    log = open_log(os.path.join(out_dir, "PROBE.LOG"), TOOL, bundle, link, None, 0,
+                   None, spi_open())
     try:
+        try:
+            ver, caps = link.version()
+        except (lk.LinkError, OSError):
+            log.skip("P0VR", "LINK")
+            return 1
+        hz, src = core_clk()
+        log.spi(ver, caps, hz, src)
         log.row("P0VR", ver=ver, caps=caps)
         log.row("P0NR", nr01=link.nr_read(0x01), nr0e=link.nr_read(0x0E),
                 nr0f=link.nr_read(0x0F))
-        orig = link.nr_read(NR_TEST)
-        link.nr_write(NR_TEST, NR_VALUE)
-        got = link.nr_read(NR_TEST)
-        link.nr_write(NR_TEST, orig)
-        back = link.nr_read(NR_TEST)
-        ok = int(got == NR_VALUE and back == orig)
-        log.row("P0RW", ok=ok)
+        try:
+            ok = _nr_test(link)
+        except (lk.LinkError, OSError):
+            log.skip("P0RW", "LINK")
+            ok = 0
+        else:
+            log.row("P0RW", ok=ok)
         log.row("P0IM", **probes())
         rc = 0 if ok else 1
         if caps & CAPS_NEEDED != CAPS_NEEDED:

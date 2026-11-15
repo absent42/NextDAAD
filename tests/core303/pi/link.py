@@ -494,5 +494,8 @@ class SpidevLink(Link):
                                  cs_change=c0)
                + pack_spi_transfer(ctypes.addressof(tx2), ctypes.addressof(rx2), l1, s1,
                                    cs_change=c1))
-        fcntl.ioctl(self._spi.fileno(), spi_ioc_message(2), msg)
+        # bytes would make ioctl return the buffer; a mutable one returns the C result
+        got = fcntl.ioctl(self._spi.fileno(), spi_ioc_message(2), bytearray(msg), True)
+        if got != len(header) + len(body):
+            raise LinkError("ioctl moved %r bytes, expected %d" % (got, len(header) + len(body)))
         return bytes(rx2.raw[:n_rx]) if n_rx else b""

@@ -28,29 +28,32 @@ def _wrap_ioctl(fcntl, state):
 
 
 def main(link, out_dir, bundle, core_clk=None, spi_open=None, **_):
-    core_clk = core_clk or probe.default_core_clk
     spi_open = spi_open or probe.default_spi_open
     header = lk.build_header(lk.CMD_SRAM_R, 0, PAYLOAD)
     total = len(header) + PAYLOAD
     import fcntl
     state = {}
     orig = _wrap_ioctl(fcntl, state)
+    skip = False
     try:
         try:
             link.xfer(header, b"", PAYLOAD, SMOKE_HZ)
-        except OSError:
+        except (OSError, lk.LinkError):
             pass
     finally:
         fcntl.ioctl = orig
     if "err" in state:
         ret = -state["err"]
+    elif isinstance(state.get("ret"), int):
+        ret = 0 if state["ret"] == total else state["ret"]
     else:
-        got = state.get("ret", -1)
-        ret = 0 if got == total else got
-    ok = int("err" not in state and ret == 0)
-    log = probe.open_log(os.path.join(out_dir, "SMOKE.LOG"), TOOL, bundle, link, 0, 0,
-                         core_clk(), spi_open())
+        ret, skip = -1, True        # no ioctl result: the link failed before or around it
+    ok = int(not skip and "err" not in state and ret == 0)
+    log = probe.open_log(os.path.join(out_dir, "SMOKE.LOG"), TOOL, bundle, link, None, 0,
+                         None, spi_open())
     try:
+        if skip:
+            log.skip("P2PY", "LINK")
         log.row("P2PY", ok=ok, ret=ret)
     finally:
         log.close()
