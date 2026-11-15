@@ -430,7 +430,7 @@ def test_pi303_log_parses(tmp_path):
 # ---- PI303V (P4 Next side) ----
 
 V_MAP_KEYS = ("mbox_phys l2_front_phys l2_back_phys l2_front_bank l2_back_bank l2_len l2_fill "
-              "scratch_phys scratch_len mix_src_phys mix_dst_phys mix_len bank5_save_phys "
+              "mix_src_phys mix_dst_phys mix_len bank5_save_phys "
               "b5_off b5_len result_phys_region result_len_max prof_halt prof_mix").split()
 V_ROW_TAGS = {"P4NX", "P4HB", "P4B5"}
 L2_LEN = 256 * 192
@@ -479,12 +479,17 @@ def test_pi303v_map_keys(built):
     # NR $12 = b fetches from SRAM (b + 16) x 16K: the 30205 layer2.vhd:172 offset
     for side in ("front", "back"):
         assert kv["l2_%s_phys" % side] == PHYS_RAM + kv["l2_%s_bank" % side] * 0x4000
+    # The banks the Pi writes to NR $12/$13 are the symbols l2_setup writes, not derived.
+    assert (kv["l2_front_bank"], kv["l2_back_bank"]) == (syms["L2F_BANK"], syms["L2B_BANK"])
+    st = _block(_vlines(), "l2_setup")
+    assert "nextreg nr_l2_bank, l2f_bank" in st and "nextreg nr_l2_shadow, l2b_bank" in st
+    ins = {re.sub(r"\s+", " ", (lb or "") + " " + i) for lb, i in _vlines()}
+    assert "MAP_l2_front_bank equ l2f_bank" in ins and "MAP_l2_back_bank equ l2b_bank" in ins
     assert kv["l2_len"] == L2_LEN
     assert kv["l2_fill"] != 0xE3            # NR $14 reset value: transparent
     assert kv["prof_halt"] == 0 and kv["prof_mix"] == 6
     assert kv["mix_src_phys"] + kv["mix_len"] <= kv["mix_dst_phys"]
-    assert kv["scratch_phys"] <= kv["mix_src_phys"]
-    assert kv["mix_dst_phys"] + kv["mix_len"] <= kv["scratch_phys"] + kv["scratch_len"]
+    assert not {k for k in kv if k.startswith("scratch")}   # PI303's Pi target name only
     assert kv["b5_off"] + kv["b5_len"] <= 0x4000 and kv["b5_off"] >= 0x1B00   # off the screen
     assert syms["MIX_CHUNK"] * 256 == kv["mix_len"]     # 256 iterations a page
     for name, reg in L2_NRS.items():
@@ -499,7 +504,8 @@ def test_pi303v_banks_below_2mb(built):
     regions = {"mbox": (kv["mbox_phys"], 0x2000),
                "front": (kv["l2_front_phys"], kv["l2_len"]),
                "back": (kv["l2_back_phys"], kv["l2_len"]),
-               "scratch": (kv["scratch_phys"], kv["scratch_len"]),
+               "mix_src": (kv["mix_src_phys"], kv["mix_len"]),
+               "mix_dst": (kv["mix_dst_phys"], kv["mix_len"]),
                "save": (kv["bank5_save_phys"], kv["b5_len"]),
                "result": (kv["result_phys_region"], kv["result_len_max"])}
     for name, (base, n) in regions.items():

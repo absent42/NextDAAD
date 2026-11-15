@@ -211,11 +211,14 @@ TAGS["P3B5"] = Tag("P3", "bank 5 restore", CPU, None, "byte",
                    "exit restore of the S3R5 region, 1024 B a rep; CK = ck16, OK = the startup checksum")
 
 # P4 rows (tests/core303/pi/next/pi303v.asm, PI303V.LOG) in the CORE303 grammar. P4NX and
-# P4HB: R=1, F = frame interrupts since state 1, D=0, N = the count.
+# P4HB: R=1, F = frame interrupts from state 1 through exit, D=0, N = the count.
 TAGS["P4NX"] = Tag("P4", "Pi flips seen", CPU, None, "flip",
-                   "N = NR $12 changes seen at frame interrupts; CK = unknown commands acked, "
-                   "OK = none")
-TAGS["P4HB"] = Tag("P4", "load steps", CPU, None, "step", "N = hb_next at exit (LOAD 0 and 6 steps)")
+                   "N = frames_seen, NR $12 changes seen at frame interrupts, mod 65536; "
+                   "F = frame interrupts from state 1 through exit, the settle included, "
+                   "mod 65536; CK = unknown commands acked, OK = none")
+TAGS["P4HB"] = Tag("P4", "load steps", CPU, None, "step",
+                   "N = hb_next at exit (LOAD 0 and 6 steps), mod 65536; "
+                   "F = frame interrupts from state 1 through exit, mod 65536")
 TAGS["P4B5"] = Tag("P4", "bank 5 restore", CPU, None, "byte",
                    "exit restore of the LOAD 6 bank 5 region, 256 B; CK = ck16, OK = the startup checksum")
 

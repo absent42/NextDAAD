@@ -1,4 +1,4 @@
-; PI303V: P4 Next side. Banks: mailbox 16 ($80000), LOAD 6 scratch 17 ($84000), bank 5 save 18
+; PI303V: P4 Next side. Banks: mailbox 16 ($80000), LOAD 6 LDIR pages 17 ($84000), bank 5 save 18
 ; ($88000), Layer 2 front 19-21 ($8C000), back 22-24 ($98000), result 41-43 ($E4000); all below
 ; $200000. Build: build.ps1 (STAMP_STR), PI303V.NEX + PI303V.MAP.
     DEVICE ZXSPECTRUMNEXT
@@ -601,7 +601,8 @@ p4_head:
     call log_hex16
     ld hl, logTxtF
     call log_puts
-    ld hl, (piFrames)            ; counted from fi_on, just after state 1
+; F, N and frames_seen are mod 65536; F covers state 1 through exit, the settle included.
+    ld hl, (piFrames)
     call log_hex16
     ld hl, logTxtD
     call log_puts
@@ -791,8 +792,6 @@ MAP_l2_front_bank      equ L2F_BANK
 MAP_l2_back_bank       equ L2B_BANK
 MAP_l2_len             equ L2_LEN
 MAP_l2_fill            equ L2_FILL
-MAP_scratch_phys       equ PHYS_RAM + MIX_BANK * $4000
-MAP_scratch_len        equ $4000
 MAP_mix_src_phys       equ PHYS_RAM + MIX_SRC_PAGE * $2000
 MAP_mix_dst_phys       equ PHYS_RAM + MIX_DST_PAGE * $2000
 MAP_mix_len            equ $2000
