@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 
 from bundle import bundle_hash
+from pi303_probe import pienv
 from pilog import PiLogWriter
 from spans import GAP
 
@@ -96,6 +97,7 @@ def main(frames_dir, out_dir, bundle, c_prep=None, clock=time.perf_counter_ns):
     names = sorted(f[:-4] for f in os.listdir(frames_dir) if f.endswith(".jpg"))
     n = len(names)
     log = PiLogWriter(os.path.join(out_dir, "PREP.LOG"), TOOL, bundle)
+    log.env(**pienv())
     work = tempfile.mkdtemp(prefix="p303prep")
     try:
         t_jd = 0

@@ -155,3 +155,6 @@ def test_prep_without_c_tool(tmp_path):
     assert rc == 0
     assert ("P2CV", "NOCC") in [tuple(s) for s in log.skips]
     assert [f["impl"] for f in rows_of(log, "P2CV")] == [0]
+    assert {"model", "governor", "arm_khz", "kernel", "py", "numpy", "pil", "gcc",
+            "bufsiz"} <= set(log.env)
+    assert log.env["numpy"] == np.__version__

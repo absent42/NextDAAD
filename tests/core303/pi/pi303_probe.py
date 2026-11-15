@@ -3,7 +3,10 @@ Run on the Pi with the Next in the slave program; exits non-zero on any failure.
 """
 import argparse
 import os
+import platform
+import re
 import shutil
+import subprocess
 import sys
 
 import link as lk
@@ -11,12 +14,16 @@ from bundle import bundle_hash
 from pilog import PiLogWriter
 
 TOOL = "pi303_probe"
+HERE = os.path.dirname(os.path.abspath(__file__))
 CAPS_NEEDED = 0x2E      # bits 1 NR read, 2 NR write, 3 SRAM r/w, 5 BRAM r/w
 NR_TEST = 0x7F
 NR_VALUE = 0x5A
 CLK_SUMMARY = "/sys/kernel/debug/clk/clk_summary"
 BUFSIZ = "/sys/module/spidev/parameters/bufsiz"
 JPEGLIB = "/usr/include/jpeglib.h"
+MODEL = "/proc/device-tree/model"
+CPUFREQ = "/sys/devices/system/cpu/cpu0/cpufreq"
+GCC_TIMEOUT_S = 10
 
 
 def _readable(path):
@@ -46,6 +53,60 @@ def _bufsiz():
             return int(f.read().strip())
     except (OSError, ValueError):
         return 0
+
+
+def _text(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("ascii", "replace")
+    except OSError:
+        return None
+
+
+def _tok(s):
+    """A #PIENV value: NULs dropped, any other non-printable or space as _, else na."""
+    s = (s or "").replace("\0", "").strip()
+    return re.sub(r"[^\x21-\x7E]", "_", s) or "na"
+
+
+def _int(s):
+    s = (s or "").strip()
+    return int(s) if s.isdigit() else "na"
+
+
+def _dist_version(dist, module):
+    """Installed version without importing the package (pi303_video must stay PIL-free)."""
+    mod = sys.modules.get(module)
+    if getattr(mod, "__version__", None):
+        return mod.__version__
+    try:
+        from importlib import metadata
+        return metadata.version(dist)
+    except Exception:
+        return "none"
+
+
+def _gcc_version():
+    try:
+        r = subprocess.run(["gcc", "-dumpversion"], capture_output=True,
+                           timeout=GCC_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return "none"
+    return _tok(r.stdout.decode("ascii", "replace")) if r.returncode == 0 else "none"
+
+
+def pienv():
+    """#PIENV context: board model, cpu0 governor and clock, kernel, Python, numpy, PIL,
+    gcc and spidev bufsiz. Each read fails safe to na (missing) or none (not installed)."""
+    return {"model": _tok(_text(MODEL)),
+            "governor": _tok(_text(os.path.join(CPUFREQ, "scaling_governor"))),
+            "arm_khz": _int(_text(os.path.join(CPUFREQ, "scaling_cur_freq"))),
+            "kernel": _tok(platform.uname().release),
+            "py": _tok(platform.python_version()),
+            "numpy": _tok(_dist_version("numpy", "numpy")),
+            "pil": _tok(_dist_version("Pillow", "PIL")),
+            "gcc": _gcc_version(),
+            "bufsiz": _int(_text(BUFSIZ))}
 
 
 def default_probes():
@@ -94,7 +155,7 @@ def default_spi_open():
 def open_log(path, tool, bundle, link, version, caps, core_clk, spi_open):
     """Header and #PIENV context line; #SPI only when version is not None."""
     log = PiLogWriter(path, tool, bundle)
-    log.env(spi_max_saved=getattr(link, "spi_max_saved", None) or 0,
+    log.env(**pienv(), spi_max_saved=getattr(link, "spi_max_saved", None) or 0,
             spi_max_stale=getattr(link, "spi_max_stale", None) or 0,
             spi_open=",".join(str(p) for p in spi_open))
     if version is not None:

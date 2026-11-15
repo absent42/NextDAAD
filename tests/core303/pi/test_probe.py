@@ -198,6 +198,58 @@ def test_probe_version_failure_leaves_log(tmp_path):
     assert rc != 0 and log.rows == [] and ("P0VR", "LINK") in [tuple(x) for x in log.skips]
 
 
+PIENV_KEYS = {"model", "governor", "arm_khz", "kernel", "py", "numpy", "pil", "gcc", "bufsiz"}
+
+
+def test_pienv_reads_and_tokens(tmp_path, monkeypatch):
+    cpu = tmp_path / "cpufreq"
+    cpu.mkdir()
+    (tmp_path / "model").write_bytes(b"Raspberry Pi Zero Rev 1.3\0")
+    (cpu / "scaling_governor").write_text("ondemand\n")
+    (cpu / "scaling_cur_freq").write_text("700000\n")
+    (tmp_path / "bufsiz").write_text("4096\n")
+    monkeypatch.setattr(pi303_probe, "MODEL", str(tmp_path / "model"))
+    monkeypatch.setattr(pi303_probe, "CPUFREQ", str(cpu))
+    monkeypatch.setattr(pi303_probe, "BUFSIZ", str(tmp_path / "bufsiz"))
+    monkeypatch.setattr(pi303_probe, "_gcc_version", lambda: "12.2.1")
+    e = pi303_probe.pienv()
+    assert set(e) == PIENV_KEYS
+    assert e["model"] == "Raspberry_Pi_Zero_Rev_1.3" and e["governor"] == "ondemand"
+    assert e["arm_khz"] == 700000 and e["bufsiz"] == 4096 and e["gcc"] == "12.2.1"
+    assert e["py"] == pi303_probe.platform.python_version()
+    # every read fails safe: missing files give na
+    for k in ("MODEL", "CPUFREQ", "BUFSIZ"):
+        monkeypatch.setattr(pi303_probe, k, str(tmp_path / "missing"))
+    e = pi303_probe.pienv()
+    assert (e["model"], e["governor"], e["arm_khz"], e["bufsiz"]) == ("na",) * 4
+    p = tmp_path / "E.LOG"
+    w = pi303_probe.PiLogWriter(str(p), "t", BUNDLE)
+    w.env(**e)
+    w.close()
+    env = parse.parse_pilog(p).env
+    assert set(env) == PIENV_KEYS and all(v and " " not in v for v in env.values())
+
+
+def test_gcc_version_absent(monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError("gcc")
+    monkeypatch.setattr(pi303_probe.subprocess, "run", boom)
+    assert pi303_probe._gcc_version() == "none"
+
+
+def test_open_log_writes_pienv(tmp_path):
+    rc, log, _ = run_probe(tmp_path)
+    assert PIENV_KEYS | {"spi_max_saved", "spi_max_stale", "spi_open"} <= set(log.env)
+
+
+def test_pienv_imports_no_pil():
+    import subprocess
+    code = ("import sys; sys.path.insert(0, %r); import pi303_probe; pi303_probe.pienv(); "
+            "print(int('PIL' in sys.modules))" % str(pi303_probe.HERE))
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.stdout.strip() == "0", out.stderr
+
+
 def test_tools_in_bundle():
     from pathlib import Path
     names = (Path(pi303_probe.__file__).parent / "BUNDLE.txt").read_text().split()
