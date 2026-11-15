@@ -184,7 +184,32 @@ def _op_tags():
 
 TAGS.update(_op_tags())
 
+# P3 Z80-cost rows (tests/core303/pi/next/pi303.asm, PI303.LOG): P3xx under QUIET (zero
+# SPI), then <target>3xx while the Pi streams: U an unrelated scratch page, S the row's own
+# bytes rewritten unchanged, B bank 7. Pi traffic cost = loaded row minus P3 row.
+P3_ROWS = {
+    "NP": ("NOP", CPU, "NOP", "4096 NOPs in their own declared page"),
+    "RS": ("LD A,(HL) SRAM", CPU, "read", "ld a,(hl) / inc hl over a 2048-byte buffer"),
+    "R5": ("LD A,(HL) bank 5", CPU, "read", "ld a,(hl) / inc hl over 2048 bank 5 bytes"),
+    "LR": ("LDIR SRAM", CPU, "byte", "1024-byte SRAM to SRAM LDIR"),
+    "BF": ("blitter fill", BLT, "byte", "4096-byte fill, physical, cycle 2/2"),
+}
+P3_TARGETS = {
+    "P": "QUIET baseline",
+    "U": "Pi stream to scratch",
+    "S": "Pi stream rewriting the row's own bytes",
+    "B": "Pi stream to bank 7",
+}
+for _code, (_op, _m, _unit, _note) in P3_ROWS.items():
+    for _t, _tnote in P3_TARGETS.items():
+        _ck = "; CK = bytes changed vs the pre-stream copy" \
+            if _t == "S" and _code in ("NP", "RS", "LR") else ""
+        TAGS[_t + "3" + _code] = Tag("P3", _op, _m, None, _unit, "%s, %s%s" % (_note, _tnote, _ck))
+TAGS["P3B7"] = Tag("P3", "bank 7 restore", CPU, None, "byte",
+                   "exit restore, 1024 B a rep; CK = ck16, OK = the startup checksum")
+
 # Pi log tags (#PI303 logs, parse.parse_pilog); kept out of TAGS so CORE303 logs reject them.
+# P3NP P3RS P3R5 P3LR P3BF P3B7 are also CORE303 rows (PI303.LOG, TAGS above).
 PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3B7 P3BF P3CH P3CP "
            "P3FR P3LR P3NP P3P4 P3R5 P3RD P3RS P3SC P3SV P3TE P3WB P3WP P3WS P4NX P4SK "
            "P4TF P4TS P4VF P4VS BUSY").split()   # BUSY: lock-timeout #SKIP tag
