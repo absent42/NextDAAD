@@ -126,6 +126,7 @@ P1_FRAMES        equ 64          ; dma.asm's reps use probe.asm's names
 POLL_FAST        equ 337
 TPUS             equ 27          ; T per us at the slowest NR $11 clock: windows err long
 QUIET_PAD_US     equ 50000
+QUIET_MAX_US     equ 10000000    ; far under the 120 s no-progress timer
 
 ; Documented and worst-case T per body pass (+1 per fetch and read at 28 MHz).
 NP_DOC           equ NOP_N * 4
@@ -163,7 +164,9 @@ PRECOPY          equ 1           ; S target with a check: region copied before S
 LEAD_AT = $
     db zcmd, zrow, ztgt, zflg
     IF (zcmd) == CMD_QUIET
-    dd ((zreps) * ((zcost) + POLL_T) / TPUS) * 12 / 10 + QUIET_PAD_US
+LEAD_Q = ((zreps) * ((zcost) + POLL_T) / TPUS) * 12 / 10 + QUIET_PAD_US
+    ASSERT LEAD_Q < QUIET_MAX_US, "QUIET window over 10 s"
+    dd LEAD_Q
     ELSE
     dd 0
     ENDIF
@@ -962,7 +965,7 @@ end_note:
 
 ; Every exit lands here (END, timeout, key; log_flush's failure unwind returns inside).
 ; Order: exiting, the Pi settled, bank 7 then bank 5 restored and logged, SD flush, result,
-; state (3 if either restore fails its checksum).
+; state (3 if a restore fails its checksum or the SD flush fails).
 restore_all:
     di
     ld sp, STACK_TOP
@@ -990,7 +993,14 @@ restore_all:
     ld hl, b5Table
     call run_table               ; P3B5, the same for the S3R5 bank 5 region
     call blk_ck
+    xor a
+    ld (logErr), a
     call log_flush
+    ld a, (logErr)
+    or a
+    jr z, .flushed
+    ld (blkBad), a               ; no SD log: state 3, the Pi copy is the only record
+.flushed:
     call nr64_restore
     call mb_result
     ld a, (blkBad)

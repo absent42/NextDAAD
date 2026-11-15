@@ -320,6 +320,14 @@ def test_pi303_exiting_before_restore():
         assert body[k + 2] == "call blk_ck"
     last_state = max(i for i, s in enumerate(body) if s == "call mb_state")
     assert "ld a, (blkbad)" in body[flush:last_state]
+    # A failed SD flush (logErr != 0, cleared just before) also gives state 3.
+    assert body[flush - 2:flush] == ["xor a", "ld (logerr), a"]
+    assert body[flush + 1:flush + 3] == ["ld a, (logerr)", "or a"]
+    assert re.fullmatch(r"jr z, \.\w+", body[flush + 3])
+    assert body[flush + 4] == "ld (blkbad), a"
+    assert body.index("ld a, (blkbad)") > flush + 4
+    k = body.index("ld a, (blkbad)")
+    assert body[k + 1:k + 5] == ["or a", "ld a, st_done", "jr z, .st", "ld a, st_failed"]
     ps = _block(_lines(), "pi_settle")
     assert any("bound_fr" in s for s in ps) and any("settle_fr" in s for s in ps)
     assert "call mb_hb_pi" in ps
@@ -375,6 +383,9 @@ def test_pi303_own_asserts():
     ins = [i for _, i in _lines()]
     assert "assert $ <= code_limit" in ins
     assert any(i.startswith("assert") and "log_cap" in i and "row_total" in i for i in ins)
+    assert any(re.match(r"assert lead_q < quiet_max_us\b", i) for i in ins)
+    assert "quiet_max_us equ 10000000" in [re.sub(r"\s+", " ", (lb or "").lower() + " " + i)
+                                           for lb, i in _lines()]
     core = (HERE / "bench" / "core303.asm").read_text(encoding="ascii")
     assert "ASSERT LOG_PAGE > OPS_LAST_PAGE" in core
 
