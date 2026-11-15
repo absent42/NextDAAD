@@ -230,6 +230,8 @@ PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "
 # pi303_spi: effective rate, ceilings, handover QUIET/STREAM rows and skips, starvation
 # search per rate, no mailbox, result fetch; PIST state != 1 mid-run, PI3S final state 3.
 PI_TAGS += "P3EF P3CE P3HQ P3HS P3HO P3SR P3MB P3RF PIST PI3S".split()
+# pi303_video: per-frame row (pass 0 tf, 1 ts, 2 vf, 3 vs), result fetch, no mailbox.
+PI_TAGS += "P4FR P4RF P4MB".split()
 # spi303 stdout rows (tests/core303/pi/c): passes, per-tx losses, end, heartbeat, stream,
 # self-test, error, spidev settings saved/restored.
 PI_TAGS += "C3WP C3BP C3RP C3TX C3EN C3HB C3SM C3ST C3ER C3MX".split()

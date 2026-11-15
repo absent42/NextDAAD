@@ -10,3 +10,4 @@ pi303_smoke.py
 pi303_prep.py
 c/prep303.c
 pi303_spi.py
+pi303_video.py

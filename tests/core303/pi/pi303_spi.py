@@ -92,7 +92,7 @@ class Lost(Exception):
         self.tag, self.reason = tag, reason
 
 
-def read_map(path):
+def read_map(path, keys=MAP_KEYS):
     """PI303.MAP: key=hex lines from the build's MAP_ symbols."""
     out = {}
     with open(path, encoding="ascii") as f:
@@ -105,7 +105,7 @@ def read_map(path):
                     or not re.fullmatch(r"[0-9A-Fa-f]{1,8}", v):
                 raise ValueError("bad MAP line %r" % ln)
             out[k] = int(v, 16)
-    missing = [k for k in MAP_KEYS if k not in out]
+    missing = [k for k in keys if k not in out]
     if missing:
         raise ValueError("MAP lacks " + " ".join(missing))
     return out
@@ -300,6 +300,9 @@ def pending(head):
 
 
 class Run:
+    RF_TAG = "P3RF"             # result fetch row and skips; pi303_video overrides
+    RESULT_NAME = RESULT_NAME
+
     def __init__(self, link, mbox_phys, scratch_phys, out_dir, bundle, tool, addrs, clock,
                  plan, core_clk, spi_open):
         self.link, self.mbox, self.scratch = link, mbox_phys, scratch_phys
@@ -802,43 +805,43 @@ class Run:
         lo = self.addrs.get("result_phys_region")
         saved = 0
         if n == 0:
-            self.log.skip("P3RF", "NORESULT")
+            self.log.skip(self.RF_TAG, "NORESULT")
         elif n > cap or phys + n > lk.SRAM_SIZE or (
                 lo is not None and not (lo <= phys and phys + n <= lo + cap)):
-            self.log.skip("P3RF", "RANGE")
+            self.log.skip(self.RF_TAG, "RANGE")
         else:
             data = self.link.read_mem(phys, n, lk.HDR_HZ)
-            with open(os.path.join(self.out_dir, RESULT_NAME), "wb") as f:
+            with open(os.path.join(self.out_dir, self.RESULT_NAME), "wb") as f:
                 f.write(data)
             saved = 1
-        self.log.row("P3RF", state=state, phys=phys, len=n, saved=saved)
+        self.log.row(self.RF_TAG, state=state, phys=phys, len=n, saved=saved)
 
     def finish(self, aborted):
         """END when still the ready leader, then no writes: wait for 2/3 and fetch."""
-        self.step = "P3RF"
+        self.step = self.RF_TAG
         if not aborted:
             try:
                 head = self.mb.head()
                 if head[mbx.OFF_STATE] == mbx.STATE_READY and head[mbx.OFF_LEADER] == 0:
                     self.mb.send(mbx.CMD_END, idle=self.hb.tick)
                 else:
-                    self.log.skip("P3RF", "NOEND")
+                    self.log.skip(self.RF_TAG, "NOEND")
                     self.ok = False
             except StateChanged:
                 self.log.skip("PIST", "STATE")
                 aborted = True
             except (lk.LinkError, mbx.MailboxError):
-                self.log.skip("P3RF", "NOEND")
+                self.log.skip(self.RF_TAG, "NOEND")
                 self.ok = False
         self.hb.suspend()
         try:
             state = self.wait_done()
             if state is None:
-                self.log.skip("P3RF", "TIMEOUT")
+                self.log.skip(self.RF_TAG, "TIMEOUT")
                 return 1
             self.fetch(state)
         except (lk.LinkError, mbx.MailboxError, OSError):
-            self.log.skip("P3RF", "LINK")
+            self.log.skip(self.RF_TAG, "LINK")
             return 1
         if state == mbx.STATE_FAILED:
             self.log.skip("PI3S", "STATE3")
