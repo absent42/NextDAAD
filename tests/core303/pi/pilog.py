@@ -44,6 +44,13 @@ class PiLogWriter:
         self._line("#SPI version=%02X caps=%02X core_clk=%d core_clk_src=%s"
                    % (version, caps, core_clk, core_clk_src))
 
+    def spi_extra(self, **kv):
+        """A further #SPI line of integer fields (spi_max_restored at exit)."""
+        for v in kv.values():
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError("non-integer value %r" % (v,))
+        self._line("#SPI " + self._kv(kv, str))
+
     def row(self, tag, **kv):
         if not _TAG.match(tag):
             raise ValueError("bad tag %r" % tag)

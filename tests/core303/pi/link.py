@@ -230,27 +230,22 @@ class Link:
 
 
 class ServeHelper:
-    """Client for one persistent `spi303 serve` process.
-
-    Request: [op u8][cmd u8][addr u24][len u16][hz u32][payload], little-endian.
-    Reply: [status u8][len u16][data]. op 1 = write, 2 = read; status 0 = ok.
-    op 3 push: len = chunk, then [total u32][flags u8][hb u32][frame].
-    op 4 pushspans: addr = base, len = count, then [flags u8][hb u32],
-    count x [off u24][len u16], then the span bytes in order.
-    flags bit 0 = read back each transaction's last 16 bytes at 2 MHz; hb = mailbox
-    phys whose hb_pi is bumped every 100 ms, 0 = none. Reply: [ntx u32][bad u32][ns u64].
-    """
+    """Client for one persistent `spi303 serve` process (core303pi.c serve_loop).
+    Request [op u8][cmd u8][addr u24][len u16][hz u32][payload], little-endian; reply
+    [status u8][len u16][data], status 0 = ok. op 1 write, 2 read, 3 push, 4 pushspans."""
 
     def __init__(self, proc):
         self.proc = proc
+        self.err_text = ""              # the child's stderr (C3ER, C3MX rows), read at close
 
     @classmethod
     def spawn(cls, argv):
         """Parent opens spidev and takes the lock before spawning; own session keeps
         terminal Ctrl-C and hang-up on the parent, which shuts the child down in order."""
         import subprocess
+        # stderr carries only a few short rows (C3ER, C3MX): read once the child has exited
         return cls(subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    bufsize=0, start_new_session=True))
+                                    stderr=subprocess.PIPE, bufsize=0, start_new_session=True))
 
     def _call(self, op, cmd, addr, n, hz, payload, want=None):
         check_hz(hz)
@@ -290,6 +285,8 @@ class ServeHelper:
 
     def push(self, cmd, addr, data, hz, chunk=MAX_CHUNK, verify=False, hb=0):
         """Whole frame in one exchange; returns (ntx, bad, ns)."""
+        # len = chunk, then [total u32][flags u8][hb u32][frame]; flags bit 0 = read back
+        # each transaction's last 16 bytes at 2 MHz; hb = mailbox phys bumped, 0 = none
         if not 1 <= chunk <= MAX_CHUNK:
             raise LinkError("chunk %d outside 1..%d" % (chunk, MAX_CHUNK))
         ext = struct.pack("<IBI", len(data), PUSH_VERIFY if verify else 0, hb)
@@ -298,6 +295,8 @@ class ServeHelper:
 
     def pushspans(self, cmd, base, spans, hz, verify=False, hb=0):
         """spans: [(offset, bytes)]; each span is split into 4000-byte transactions."""
+        # addr = base, len = count, then [flags u8][hb u32], count x [off u24][len u16],
+        # the span bytes in order; reply [ntx u32][bad u32][ns u64] as push
         if len(spans) > 0xFFFF or any(not 1 <= len(d) <= 0xFFFF for _, d in spans):
             raise LinkError("span list outside the u16 count/length fields")
         table = b"".join(off.to_bytes(3, "little") + struct.pack("<H", len(d))
@@ -313,15 +312,29 @@ class ServeHelper:
         except Exception:
             pass
         wait = getattr(self.proc, "wait", None)
-        if wait is None:
-            return
-        import subprocess
         try:
-            wait(timeout=5)
-        except BaseException as e:      # timeout or a signal: the child is reaped either way
-            self._reap(wait)
-            if not isinstance(e, subprocess.TimeoutExpired):
-                raise
+            if wait is None:
+                return
+            import subprocess
+            try:
+                wait(timeout=5)
+            except BaseException as e:  # timeout or a signal: the child is reaped either way
+                self._reap(wait)
+                if not isinstance(e, subprocess.TimeoutExpired):
+                    raise
+        finally:
+            self._drain()
+
+    def _drain(self):
+        err = getattr(self.proc, "stderr", None)
+        if err is None:
+            return
+        try:
+            data = err.read() or b""
+            err.close()
+        except (OSError, ValueError):
+            return
+        self.err_text += data.decode("ascii", "replace") if isinstance(data, bytes) else data
 
     def _reap(self, wait):
         self.proc.terminate()           # its SIGTERM handler restores the spidev settings
@@ -438,6 +451,10 @@ class SpidevLink(Link):
                 spi.mode = self.spi_mode_saved
         self.spi_max_restored = spi.max_speed_hz
 
+    def restore(self):
+        """Spidev settings back now (once), so a tool can log the result before #END."""
+        self._restore()
+
     def close(self):
         """Restore spidev settings, reap the serve child, then drop the lock."""
         try:
@@ -473,7 +490,8 @@ class SpidevLink(Link):
         check_hz(hz)
         if header_hz != HDR_HZ:
             raise LinkError("header must go at %d Hz, not %r" % (HDR_HZ, header_hz))
-        if hz <= HDR_HZ or (not payload and not n_rx):
+        # py_ioctl writes split at every rate, 2 MHz included: one path for each ladder point
+        if not (self.py_ioctl and payload) and (hz <= HDR_HZ or (not payload and not n_rx)):
             tx = header + payload + bytes(n_rx)
             rx = self._spi.xfer2(list(tx), HDR_HZ)
             return bytes(rx[len(header) + len(payload):])

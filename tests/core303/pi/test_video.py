@@ -2,6 +2,7 @@
 import numpy as np
 import pytest
 
+import bundle
 import link
 import mailbox as mbx
 import parse
@@ -448,6 +449,20 @@ def test_stale_state_reads_do_not_abort(tmp_path):
     assert len(b.lk.stale_hits) > 20 and {n for n, _ in b.lk.stale_hits} == {1, mbx.HEAD_LEN}
 
 
+def test_serve_stderr_rows_logged(tmp_path):
+    """serve's C3MX (spidev restore) and C3ER rows go to stderr: relayed before #END."""
+    b = sv.Bench(tmp_path)
+    b.spawn.err = (b"C3ER code=3 errno=5 arg=0\nspi303 serve: request stream out of step\n"
+                   b"C3MX saved=12000000 restored=12000000 own=0 mode_saved=0 mode_restored=0\n")
+    assert b.run() == 0
+    log = parse.parse_pilog(b.out + "/VIDEO.LOG")
+    assert rows(log, "C3MX") == [{"saved": 12000000, "restored": 12000000, "own": 0,
+                                  "mode_saved": 0, "mode_restored": 0}]
+    assert rows(log, "C3ER") == [{"code": 3, "errno": 5, "arg": 0}]
+    tags_seen = [r.tag for r in log.rows]
+    assert tags_seen.index("C3MX") < tags_seen.index("P4RF")    # reaped before the END wait
+
+
 def test_noload_skip(tmp_path):
     rc, log, b = go(tmp_path, stall_load=True)
     assert rc != 0
@@ -628,7 +643,7 @@ def test_cli_lock_busy(tmp_path):
         def close(self):
             raise AssertionError("never opened")
     rc = pv.cli(["--map", str(p), "--spi-log", "x", "--frames", "y", "--out", str(tmp_path),
-                 "--bundle", sv.BUNDLE], link_factory=Busy)
+                 "--bundle", bundle.bundle_hash(pv.HERE)], link_factory=Busy)
     log = parse.parse_pilog(tmp_path / "VIDEO.LOG")
     assert rc == 2 and log.skips == [("BUSY", "LOCK")] and log.rows == []
 

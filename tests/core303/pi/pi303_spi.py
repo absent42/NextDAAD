@@ -1,9 +1,6 @@
-"""P3 SPI throughput and contention (Pi side). Writes SPI.LOG and fetches PI_PI303.LOG.
-
-Steps: framing self-test, SRAM and bank 7 write sweeps, read sweep, chunk sizes, Python
-path, HANDOVER (Next-led QUIET/STREAM/STOP until YIELD), Pi-led LOAD profiles, END.
-Bulk traffic goes through spi303; headers, reads and mailbox writes run at 2 MHz.
-"""
+"""P3 SPI throughput and contention (Pi side): writes SPI.LOG, fetches PI_PI303.LOG.
+Framing self-test, write/read sweeps, chunk sizes, Python path, HANDOVER, LOAD profiles,
+END. Bulk traffic goes through spi303; headers, reads and mailbox writes run at 2 MHz."""
 import argparse
 import math
 import os
@@ -18,8 +15,8 @@ from dataclasses import dataclass
 
 import link as lk
 import mailbox as mbx
-from bundle import bundle_hash
-from pi303_probe import _nr_test, default_core_clk, default_spi_open, open_log, write_busy
+from pi303_probe import (_nr_test, check_bundle, close_log, default_core_clk, default_spi_open,
+                         open_log, write_busy)
 
 TOOL = "pi303_spi"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -110,6 +107,31 @@ def read_map(path, keys=MAP_KEYS):
     if missing:
         raise ValueError("MAP lacks " + " ".join(missing))
     return out
+
+
+MBOX_LEN = 0x2000           # the mailbox's own page
+
+
+def check_map(a):
+    """Pi-written SRAM (scratch, U, S targets) clear of the mailbox, result region, save
+    pages and each other (U may lie in scratch), all below 2 MB; R5 inside bank 5."""
+    regs = [("mbox", a["mbox_phys"], MBOX_LEN), ("scratch", a["scratch_phys"], a["scratch_len"]),
+            ("u", a["u_phys"], Plan.u_len), ("sled", a["sled_phys"], a["sled_len"]),
+            ("rs", a["rs_phys"], a["rs_len"]), ("lr", a["lr_src_phys"], a["lr_len"]),
+            ("bf", a["bf_dst_phys"], a["bf_len"])]
+    for key, name, n in (("result_phys_region", "result", a.get("result_len_max", 0)),
+                         ("bank7_save_phys", "b7save", B7_LEN),
+                         ("bank5_save_phys", "b5save", a["r5_len"])):
+        if key in a:
+            regs.append((name, a[key], n))
+    for i, (na, pa, la) in enumerate(regs):
+        if la <= 0 or pa + la > lk.SRAM_SIZE:
+            raise ValueError("MAP %s %#x+%#x outside the Pi's 2 MB" % (na, pa, la))
+        for nb, pb, lb in regs[i + 1:]:
+            if pa < pb + lb and pb < pa + la and {na, nb} != {"scratch", "u"}:
+                raise ValueError("MAP %s %#x+%#x overlaps %s %#x+%#x" % (na, pa, la, nb, pb, lb))
+    if a["r5_len"] <= 0 or a["r5_off"] + a["r5_len"] > lk.BRAM_SIZE[5]:
+        raise ValueError("MAP R5 %#x+%#x outside bank 5" % (a["r5_off"], a["r5_len"]))
 
 
 def cmp_tx(want, got):
@@ -458,7 +480,8 @@ class Run(PiRun):
         return rows
 
     def pattern(self, seed, n):
-        """link.pattern bytes, generated in 4000-byte steps with the heartbeat between."""
+        """link.pattern bytes in 4000-byte steps, gate and heartbeat between (256 KB takes
+        seconds on the Pi: no hb_pi bump may follow state != 1)."""
         x = (seed or 1) & 0xFFFFFFFF
         out = bytearray()
         while len(out) < n:
@@ -467,6 +490,7 @@ class Run(PiRun):
                 x ^= x >> 17
                 x ^= (x << 5) & 0xFFFFFFFF
                 out.append(x & 0xFF)
+            self.gate()
             self.hb.tick()
         return bytes(out)
 
@@ -947,7 +971,7 @@ class Run(PiRun):
             return self.finish(aborted)
         finally:
             self.stop_streams()
-            self.log.close()
+            close_log(self.log, self.link)
             if self.work:
                 shutil.rmtree(self.work, ignore_errors=True)
 
@@ -967,8 +991,11 @@ def cli(argv=None, link_factory=None):
     ap.add_argument("--out", default=".")
     ap.add_argument("--bundle", default=None)
     a = ap.parse_args(argv)
-    bundle = a.bundle or bundle_hash(HERE)
+    bundle = check_bundle(a.bundle, a.out, LOG_NAME, TOOL, "P3FR")
+    if bundle is None:
+        return 1
     addrs = read_map(a.map)
+    check_map(addrs)
     link = (link_factory or (lambda: lk.SpidevLink(py_ioctl=True)))()
     try:
         link.open()

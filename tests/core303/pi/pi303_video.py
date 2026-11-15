@@ -1,9 +1,6 @@
-"""P4 end-to-end Pi video (Pi side). Writes VIDEO.LOG and fetches PI_PI303V.LOG.
-
-Per profile (LOAD 0, LOAD 6): raster frame period, 16 MB verified soak one ladder rate below
-P3's ceiling, then tf, ts, vf and vs passes, STOP; END last. Frames go through one spi303
-serve; raster polls and NR $12/$13 flips run at 2 MHz.
-"""
+"""P4 end-to-end Pi video (Pi side): writes VIDEO.LOG, fetches PI_PI303V.LOG.
+Per profile (LOAD 0, 6): frame period, 16 MB soak below P3's ceiling, tf/ts/vf/vs passes,
+STOP; END last. Frames go through one spi303 serve; raster and NR $12/$13 at 2 MHz."""
 import argparse
 import os
 import statistics
@@ -15,8 +12,9 @@ import numpy as np
 import link as lk
 import mailbox as mbx
 import pi303_spi as spi
-from bundle import bundle_hash, dir_hash
-from pi303_probe import default_core_clk, default_spi_open, open_log, write_busy
+from bundle import dir_hash
+from pi303_probe import (check_bundle, close_log, default_core_clk, default_spi_open, open_log,
+                         write_busy)
 from spans import span_list
 
 TOOL = "pi303_video"
@@ -353,9 +351,15 @@ class Run(spi.PiRun):
             self.profile(prof, p3prof)
 
     def close_helper(self):
+        """Reap the serve child, then log its stderr C3ER/C3MX rows (C3MX: spidev restore)."""
         if self.helper is not None:
             h, self.helper = self.helper, None
-            h.close()
+            try:
+                h.close()
+            finally:
+                for t, kv in spi.parse_rows(h.err_text):
+                    if t in ("C3ER", "C3MX"):
+                        self.log.row(t, **kv)
 
     def go(self):
         self.log = open_log(os.path.join(self.out_dir, LOG_NAME), TOOL, self.bundle, self.link,
@@ -395,7 +399,7 @@ class Run(spi.PiRun):
             return self.finish(aborted)
         finally:
             self.close_helper()
-            self.log.close()
+            close_log(self.log, self.link)
 
 
 def main(link, mbox_phys, frames_dir, spi_log, out_dir, bundle, tool=None, addrs=None,
@@ -417,7 +421,9 @@ def cli(argv=None, link_factory=None):
     ap.add_argument("--out", default=".")
     ap.add_argument("--bundle", default=None)
     a = ap.parse_args(argv)
-    bundle = a.bundle or bundle_hash(HERE)
+    bundle = check_bundle(a.bundle, a.out, LOG_NAME, TOOL, "P4MB")
+    if bundle is None:
+        return 1
     addrs = read_map(a.map)
     link = (link_factory or lk.SpidevLink)()
     try:

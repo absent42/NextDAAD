@@ -13,8 +13,7 @@ import time
 import numpy as np
 from PIL import Image
 
-from bundle import bundle_hash
-from pi303_probe import pienv
+from pi303_probe import check_bundle, pienv
 from pilog import PiLogWriter
 from spans import GAP
 
@@ -158,7 +157,8 @@ def cli(argv=None):
     ap.add_argument("--out", default=".")
     ap.add_argument("--bundle", default=None)
     a = ap.parse_args(argv)
-    return main(a.frames, a.out, a.bundle or bundle_hash(HERE))
+    bundle = check_bundle(a.bundle, a.out, "PREP.LOG", TOOL, "P2JD")
+    return 1 if bundle is None else main(a.frames, a.out, bundle)
 
 
 if __name__ == "__main__":

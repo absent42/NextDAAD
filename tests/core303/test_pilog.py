@@ -283,6 +283,22 @@ def test_gates_rerun_keys(tmp_path):
     assert "- quiet_check: OK a" in rep and "- bench_check: OK b" in rep
 
 
+def test_frames_hash_cross_check(tmp_path):
+    """#PIENV frames_hash against GATES frames: a finding either way, never a refusal."""
+    text = pilog_text().replace("spi_open=12,34", "spi_open=12,34 frames_hash=ffee00112233")
+    d = pi_gates_leg(tmp_path, "bundle: %s\nframes: ffee00112233\n" % BUNDLE, text)
+    rep = (run(d, results(tmp_path), "p4") / "report.md").read_text()
+    assert "FRAMES MATCH PI303.LOG" in rep and "FRAMES MISMATCH" not in rep
+    d = pi_gates_leg(tmp_path, "bundle: %s\nframes: 000000000000\n" % BUNDLE, text, name="sd2")
+    rep = (run(d, results(tmp_path), "p4b") / "report.md").read_text()
+    assert "FRAMES MISMATCH PI303.LOG frames_hash=ffee00112233 gates=000000000000" in rep
+    d = pi_gates_leg(tmp_path, "bundle: %s\n" % BUNDLE, text, name="sd3")
+    rep = (run(d, results(tmp_path), "p4c") / "report.md").read_text()
+    assert "FRAMES MISMATCH PI303.LOG frames_hash=ffee00112233 gates=none" in rep
+    d = pi_gates_leg(tmp_path, "bundle: %s\nframes: x\n" % BUNDLE, name="sd4")
+    assert "FRAMES" not in (run(d, results(tmp_path), "p4d") / "report.md").read_text()
+
+
 def test_out_dir_logs_copied(tmp_path):
     d = pi_gates_leg(tmp_path, "bundle: %s\nframes: x\n" % BUNDLE)
     (d / "PI303.LOG").unlink()

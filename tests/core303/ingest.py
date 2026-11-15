@@ -106,6 +106,21 @@ def _pi_read_lines(raws):
     return lines, paired
 
 
+def _frames_lines(pis, keys):
+    """FRAMES findings: each Pi log's #PIENV frames_hash against GATES.TXT frames:."""
+    want = keys.get("frames") or "none"
+    out = []
+    for p, pl in pis:
+        got = pl.env.get("frames_hash")
+        if got is None:
+            continue
+        if got == want:
+            out.append("FRAMES MATCH %s" % p.name)
+        else:
+            out.append("FRAMES MISMATCH %s frames_hash=%s gates=%s" % (p.name, got, want))
+    return out
+
+
 def _unit_by_tag(logs):
     """First T/unit (or T/frame) per tag across CORE303 logs; unusable rows skipped."""
     out = {}
@@ -193,7 +208,7 @@ def ingest(leg_dir, board, leg, date, results, nxb_baseline=None, allow=None):
                 if pl.bundle != keys.get("bundle"):
                     raise IngestError("%s bundle %s != GATES.TXT %s" % (
                         p.name, pl.bundle, keys.get("bundle")))
-                pis.append(pl)
+                pis.append((p, pl))
             elif p.name.startswith("PI_"):
                 continue
             else:
@@ -226,8 +241,8 @@ def ingest(leg_dir, board, leg, date, results, nxb_baseline=None, allow=None):
         else:
             text = ""
         if pis:
-            text += parse.report_pi(pis, [c[1] for c in cores])
-        extra = _ks_compare(results, board, leg, cores) + pi_read
+            text += parse.report_pi([pl for _, pl in pis], [c[1] for c in cores])
+        extra = _ks_compare(results, board, leg, cores) + pi_read + _frames_lines(pis, keys)
         if extra:
             text += "\n" + "\n".join(extra) + "\n"
         text += "\n" + _gates_section(leg_dir, keys)

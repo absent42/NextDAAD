@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import bundle
 import link
 import mailbox as mbx
 import parse
@@ -488,6 +489,41 @@ def test_stale_state_reads_do_not_abort(tmp_path):
     assert quiet_windows_clean(lk, nx)
 
 
+def test_pattern_gates_per_chunk():
+    """Pattern generation takes seconds on the Pi: no hb_pi bump once state != 1."""
+    w, lk, nx, tool = sp.make()
+    r = pi303_spi.Run(lk, MB, SCRATCH, ".", sp.BUNDLE, tool, sp.MAP, w, sp.PLAN, None, None)
+    lk.sram[MB + 13] = 4
+    with pytest.raises(pi303_spi.StateChanged):
+        r.pattern(7, 0x40000)
+    assert not [x for x in lk.trace if x.cmd == link.CMD_SRAM_W]
+
+
+def test_check_map_rejects_overlaps():
+    pi303_spi.check_map(dict(sp.MAP))
+    opt = dict(sp.MAP)                  # keys outside MAP_KEYS are checked only when present
+    del opt["result_phys_region"], opt["bank7_save_phys"]
+    pi303_spi.check_map(opt)
+    for k, v in (("scratch_phys", sp.MB), ("sled_phys", sp.SCRATCH + 0x100),
+                 ("rs_phys", sp.MAP["lr_src_phys"] - 0x10), ("bf_dst_phys", sp.MB + 0x1000),
+                 ("scratch_phys", 0x1E0000), ("result_phys_region", sp.SCRATCH),
+                 ("u_phys", sp.MAP["sled_phys"]), ("r5_off", 0x3FC0),
+                 ("bank5_save_phys", sp.MAP["bf_dst_phys"])):
+        with pytest.raises(ValueError):
+            pi303_spi.check_map(dict(sp.MAP, **{k: v}))
+
+
+def test_cli_checks_map(tmp_path):
+    p = tmp_path / "PI303.MAP"
+    bad = dict(sp.MAP, scratch_phys=sp.MB)
+    p.write_bytes("".join("%s=%06X\n" % kv for kv in bad.items()).encode("ascii"))
+    opened = []
+    with pytest.raises(ValueError):
+        pi303_spi.cli(["--map", str(p), "--out", str(tmp_path)],
+                      link_factory=lambda: opened.append(1))
+    assert not opened
+
+
 def test_pattern_matches_link():
     w, lk, nx, tool = sp.make()
     r = pi303_spi.Run(lk, MB, SCRATCH, ".", sp.BUNDLE, tool, sp.MAP, w, sp.PLAN, None, None)
@@ -579,7 +615,8 @@ def test_cli_lock_busy(tmp_path):
 
         def close(self):
             raise AssertionError("never opened")
-    rc = pi303_spi.cli(["--map", str(p), "--out", str(tmp_path), "--bundle", sp.BUNDLE],
+    rc = pi303_spi.cli(["--map", str(p), "--out", str(tmp_path),
+                        "--bundle", bundle.bundle_hash(HERE)],
                        link_factory=Busy)
     log = parse.parse_pilog(tmp_path / "SPI.LOG")
     assert rc == 2 and log.skips == [("BUSY", "LOCK")] and log.rows == []

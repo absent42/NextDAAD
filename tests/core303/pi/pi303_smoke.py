@@ -56,12 +56,12 @@ def main(link, out_dir, bundle, core_clk=None, spi_open=None, **_):
             log.skip("P2PY", "LINK")
         log.row("P2PY", ok=ok, ret=ret)
     finally:
-        log.close()
+        probe.close_log(log, link)
     return 0 if ok else 1
 
 
 def cli(link_factory, argv=None, clock=None, **kw):
-    return probe.run_cli(TOOL, "SMOKE.LOG", main, link_factory, argv, clock, **kw)
+    return probe.run_cli(TOOL, "SMOKE.LOG", "P2PY", main, link_factory, argv, clock, **kw)
 
 
 if __name__ == "__main__":

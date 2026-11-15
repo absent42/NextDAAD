@@ -4,6 +4,7 @@ VLink: sim_pi303's WorldLink with a raster clock (311 lines at the bench's 49.36
 forced-loss switch. NextV: a PI303V follower (LOAD 0/6, STOP, END, restore_all settle).
 WorldServe: spi303 serve's pipe framing, running the C push loops over the same link.
 """
+import io
 import os
 import struct
 
@@ -107,6 +108,7 @@ class WorldServe:
         self.chb = {}
         self.closed = False
         self.loss_req = set()               # request indices whose transactions all lose a byte
+        self.stderr = io.BytesIO(b"")       # what the child writes to stderr (C3MX at exit)
 
     def write(self, buf):
         op, cmd = buf[0], buf[1]
@@ -182,11 +184,13 @@ class Spawner:
         self.calls = []
         self.serves = []
         self.loss_req = set()
+        self.err = b""
 
     def __call__(self, argv):
         self.calls.append(list(argv))
         s = WorldServe(self.w, self.lk, argv)
         s.loss_req = self.loss_req
+        s.stderr = io.BytesIO(self.err)
         self.serves.append(s)
         return link.ServeHelper(s)
 

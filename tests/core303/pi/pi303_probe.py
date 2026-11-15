@@ -206,6 +206,23 @@ def main(link, out_dir, bundle, probes=None, core_clk=None, spi_open=None):
             rc = 1
         return rc
     finally:
+        close_log(log, link)
+
+
+def close_log(log, link):
+    """Restore the spidev settings while the log is still open, log the result on #SPI,
+    then #END; the link's own close() later finds them restored."""
+    try:
+        restore = getattr(link, "restore", None)
+        if restore is not None:
+            try:
+                restore()
+            except OSError:
+                pass
+        v = getattr(link, "spi_max_restored", None)
+        if v is not None:
+            log.spi_extra(spi_max_restored=v)
+    finally:
         log.close()
 
 
@@ -215,13 +232,27 @@ def write_busy(out_dir, logname, tool, bundle):
     log.close()
 
 
-def run_cli(tool, logname, body, link_factory, argv=None, clock=None, **kw):
+def check_bundle(given, out_dir, logname, tool, tag):
+    """The bundle hash of the files themselves. A --bundle that differs writes
+    #SKIP <tag> BUNDLE before any SPI traffic and returns None (the tool exits 1)."""
+    actual = bundle_hash(HERE)
+    if given is not None and given != actual:
+        log = PiLogWriter(os.path.join(out_dir, logname), tool, actual)
+        log.skip(tag, "BUNDLE")
+        log.close()
+        return None
+    return actual
+
+
+def run_cli(tool, logname, tag, body, link_factory, argv=None, clock=None, **kw):
     """Open the link (taking the bus lock); a lock timeout writes #SKIP BUSY LOCK."""
     ap = argparse.ArgumentParser(prog=tool)
     ap.add_argument("--out", default=".")
     ap.add_argument("--bundle", default=None)
     a = ap.parse_args(argv)
-    bundle = a.bundle or bundle_hash(os.path.dirname(os.path.abspath(__file__)))
+    bundle = check_bundle(a.bundle, a.out, logname, tool, tag)
+    if bundle is None:
+        return 1
     link = link_factory()
     try:
         link.open(clock)
@@ -235,7 +266,7 @@ def run_cli(tool, logname, body, link_factory, argv=None, clock=None, **kw):
 
 
 def cli(link_factory, argv=None, clock=None, **kw):
-    return run_cli(TOOL, "PROBE.LOG", main, link_factory, argv, clock, **kw)
+    return run_cli(TOOL, "PROBE.LOG", "P0VR", main, link_factory, argv, clock, **kw)
 
 
 if __name__ == "__main__":

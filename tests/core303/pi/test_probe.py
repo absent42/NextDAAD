@@ -4,6 +4,7 @@ import types
 
 import pytest
 
+import bundle
 import link
 import parse
 import pi303_probe
@@ -11,6 +12,7 @@ import pi303_smoke
 import sim
 
 BUNDLE = "0123456789ab"
+REAL = bundle.bundle_hash(pi303_probe.HERE)
 PROBES = {"gcc": 1, "numpy": 0, "pil": 1, "jpeghdr": 0, "lock": 1, "bufsiz": 4096, "clk": 0}
 
 
@@ -92,7 +94,7 @@ def test_probe_lock_busy(tmp_path):
             self.t += s
 
     lk = link.SpidevLink(lock=Never())
-    rc = pi303_probe.cli(lambda: lk, ["--out", str(tmp_path), "--bundle", BUNDLE],
+    rc = pi303_probe.cli(lambda: lk, ["--out", str(tmp_path), "--bundle", REAL],
                          clock=Clock())
     assert rc != 0
     log = parse.parse_pilog(tmp_path / "PROBE.LOG")
@@ -196,6 +198,64 @@ def test_probe_version_failure_leaves_log(tmp_path):
             raise link.LinkError("dead")
     rc, log, _ = run_probe(tmp_path, Dead())
     assert rc != 0 and log.rows == [] and ("P0VR", "LINK") in [tuple(x) for x in log.skips]
+
+
+def test_bundle_mismatch_skips_before_spi(tmp_path):
+    """A --bundle other than the files' own hash: #SKIP <tag> BUNDLE, rc 1, link never made."""
+    import pi303_prep
+    import pi303_spi
+    import pi303_video
+
+    def never():
+        raise AssertionError("no link before the bundle check")
+    cases = [(lambda o: pi303_probe.cli(never, ["--out", o, "--bundle", BUNDLE]),
+              "PROBE.LOG", "P0VR"),
+             (lambda o: pi303_smoke.cli(never, ["--out", o, "--bundle", BUNDLE]),
+              "SMOKE.LOG", "P2PY"),
+             (lambda o: pi303_spi.cli(["--map", "none", "--out", o, "--bundle", BUNDLE],
+                                      link_factory=never), "SPI.LOG", "P3FR"),
+             (lambda o: pi303_video.cli(["--map", "none", "--spi-log", "x", "--frames", "y",
+                                         "--out", o, "--bundle", BUNDLE], link_factory=never),
+              "VIDEO.LOG", "P4MB"),
+             (lambda o: pi303_prep.cli(["--frames", "none", "--out", o, "--bundle", BUNDLE]),
+              "PREP.LOG", "P2JD")]
+    for i, (fn, name, tag) in enumerate(cases):
+        out = tmp_path / str(i)
+        out.mkdir()
+        assert fn(str(out)) == 1, name
+        log = parse.parse_pilog(out / name)
+        assert log.bundle == REAL and log.skips == [(tag, "BUNDLE")] and log.rows == [], name
+
+
+def test_bundle_given_and_matching_runs(tmp_path):
+    seen = []
+
+    class L(sim.SimLink):
+        def open(self, clock=None):
+            seen.append("open")
+
+        def close(self):
+            pass
+    rc = pi303_probe.cli(L, ["--out", str(tmp_path), "--bundle", REAL], **fake_env())
+    assert seen == ["open"] and rc == 0
+    assert parse.parse_pilog(tmp_path / "PROBE.LOG").bundle == REAL
+
+
+def test_spidev_restore_logged_before_end(tmp_path):
+    order = []
+
+    class Restoring(sim.SimLink):
+        spi_max_restored = None
+
+        def restore(self):
+            order.append("restore")
+            self.spi_max_restored = 2_000_000
+    rc, log, _ = run_probe(tmp_path, Restoring())
+    assert rc == 0 and order == ["restore"] and log.spi["spi_max_restored"] == "2000000"
+    lines = (tmp_path / "PROBE.LOG").read_text().splitlines()
+    assert lines[-2:] == ["#SPI spi_max_restored=2000000", "#END %04X" % len(log.rows)]
+    rc, log, _ = run_probe(tmp_path, sim.SimLink())        # no spidev: no line
+    assert "spi_max_restored" not in log.spi
 
 
 PIENV_KEYS = {"model", "governor", "arm_khz", "kernel", "py", "numpy", "pil", "gcc", "bufsiz"}

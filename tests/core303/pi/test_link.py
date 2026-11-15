@@ -555,6 +555,53 @@ def test_rate_upper_bound():
     assert Spi.calls == [link.HDR_HZ]
 
 
+def test_py_ioctl_writes_split_at_every_rate(monkeypatch):
+    """P3WP's ladder starts at 2.0 MHz: that point uses the same two-transfer ioctl."""
+    import sys
+    import types
+    calls, xfers = [], []
+
+    def ioctl(fd, req, msg, mutate=False):
+        calls.append((req, struct.unpack_from("<I", msg, 20)[0],
+                      struct.unpack_from("<I", msg, 52)[0]))
+        return struct.unpack_from("<I", msg, 16)[0] + struct.unpack_from("<I", msg, 48)[0]
+    monkeypatch.setitem(sys.modules, "fcntl", types.SimpleNamespace(ioctl=ioctl))
+
+    class Spi:
+        def fileno(self):
+            return 3
+
+        def xfer2(self, tx, speed):
+            xfers.append(speed)
+            return [0] * len(tx)
+    lk = link.SpidevLink(lock=NeverLock(), py_ioctl=True)
+    lk._spi = Spi()
+    for hz in (link.HDR_HZ, 2_500_000):
+        lk.write_mem(0x1000, b"x" * 64, hz)
+    assert calls == [(link.spi_ioc_message(2), link.HDR_HZ, link.HDR_HZ),
+                     (link.spi_ioc_message(2), link.HDR_HZ, 2_500_000)] and xfers == []
+    lk.read_mem(0x1000, 4)              # 2 MHz reads stay single-speed spidev
+    assert xfers == [link.HDR_HZ] and len(calls) == 2
+    plain = link.SpidevLink(lock=NeverLock())
+    plain._spi = Spi()
+    plain.write_mem(0x1000, b"x", link.HDR_HZ)
+    assert xfers == [link.HDR_HZ] * 2 and len(calls) == 2
+
+
+def test_docstrings_at_most_three_lines():
+    import ast
+    from pathlib import Path
+    here = Path(__file__).parent
+    for name in (here / "BUNDLE.txt").read_text().split():
+        if not name.endswith(".py"):
+            continue
+        for node in ast.walk(ast.parse((here / name).read_text())):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef)):
+                doc = ast.get_docstring(node, clean=False)
+                if doc:
+                    assert len(doc.strip("\n").splitlines()) <= 3, (name, getattr(node, "name", ""))
+
+
 def fake_spidev(monkeypatch, order, max_hz=500000, mode=0, fail_set=False):
     """Installs a fake spidev module; every settings write is logged into order."""
     import sys
@@ -634,6 +681,35 @@ def test_spidev_close_restores_before_unlock(monkeypatch):
     assert lk.spi_max_restored == 500000
     lk.close()                       # idempotent: no second restore, no second release
     assert order.count(("max", 500000)) == 1 and order.count("release") == 1
+
+
+def test_spidev_restore_early_then_close(monkeypatch):
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=500000)
+    lk = link.SpidevLink(lock=OrderLock(order))
+    lk.open(clock=FakeClock())
+    del order[:]
+    lk.restore()
+    assert order == [("max", 500000)] and lk.spi_max_restored == 500000
+    lk.close()
+    assert order == [("max", 500000), "close", "release"]
+
+
+def test_serve_stderr_read_at_close(monkeypatch):
+    import io
+    import subprocess
+    seen = {}
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: seen.update(kw) or "proc")
+    link.ServeHelper.spawn(["spi303", "serve"])
+    assert seen["stderr"] == subprocess.PIPE
+    order = []
+    p = OrderProc(order)
+    p.stderr = io.BytesIO(b"C3MX saved=1 restored=2 own=1 mode_saved=0 mode_restored=0\n")
+    h = link.ServeHelper(p)
+    h.close()
+    assert order == ["stdin", "wait"] and h.err_text.startswith("C3MX saved=1 restored=2")
+    h.close()                           # a second close reads nothing more
+    assert h.err_text.count("C3MX") == 1
 
 
 def test_spidev_restores_on_open_error(monkeypatch):
