@@ -300,7 +300,7 @@ def test_spidev_close_waits_helper_before_unlock():
 
 
 def test_mailbox_write_readback_retry():
-    s = sim.SimLink(loss=lambda tx, i: tx == 0)
+    s = sim.SimLink(loss=lambda tx, i: tx == 1)     # tx 0 is the read-increment's read
     prep_mailbox(s)
     m = mailbox.Mailbox(s, MB, clock=FakeClock())
     m.bump_hb_pi()

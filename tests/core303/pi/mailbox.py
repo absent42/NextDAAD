@@ -31,7 +31,6 @@ class Mailbox:
         self.link = link
         self.phys = phys
         self.clock = clock or RealClock()
-        self._hb = 0
 
     def _read(self, off, n):
         return self.link.read_mem(self.phys + off, n, HDR_HZ)
@@ -54,8 +53,9 @@ class Mailbox:
         return struct.unpack("<H", self._read(OFF_HB_NEXT, 2))[0]
 
     def bump_hb_pi(self):
-        self._hb = (self._hb + 1) & 0xFFFF
-        self._write(OFF_HB_PI, struct.pack("<H", self._hb))
+        """Read-increment, as spi303's hb_tick: hb_pi keeps moving whichever side wrote last."""
+        cur = struct.unpack("<H", self._read(OFF_HB_PI, 2))[0]
+        self._write(OFF_HB_PI, struct.pack("<H", (cur + 1) & 0xFFFF))
 
     def send(self, cmd, arg0=0, arg1=0, arg32=0, timeout_s=1.0):
         """Leader only: write the command, bump cmd_seq last, wait for ack_seq."""
