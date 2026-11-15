@@ -5,3 +5,5 @@ pilog.py
 c/core303pi.h
 c/core303pi.c
 c/spi303.c
+pi303_probe.py
+pi303_smoke.py
