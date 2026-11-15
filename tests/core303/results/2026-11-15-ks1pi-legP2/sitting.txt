@@ -1,0 +1,6 @@
+date: 2026-11-15
+board: ks1pi
+leg: legP2
+bundle: d80f012d30be
+sd_folder: LEG303P2KS1PI
+logs: PREP.LOG,SMOKE.LOG

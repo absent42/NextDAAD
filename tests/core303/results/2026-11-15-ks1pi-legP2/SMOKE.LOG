@@ -1,0 +1,5 @@
+#PI303 pi303_smoke d80f012d30be
+#PIENV model=Raspberry_Pi_Zero_Rev_1.3 governor=ondemand arm_khz=700000 kernel=6.12.67-0-rpi py=3.12.12 numpy=2.3.5 pil=12.1.1 gcc=15.2.0 bufsiz=4096 spi_max_saved=2000000 spi_max_stale=0 spi_open=2457,14862
+P2PY ok=1 ret=0
+#SPI spi_max_restored=2000000
+#END 0001
