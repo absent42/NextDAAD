@@ -11,7 +11,9 @@ ROOT = HERE.parent.parent
 BENCH = HERE / "bench"
 OUT = ROOT / "tests" / "out"
 SJASM = ROOT / "tools" / "sjasmplus" / "sjasmplus.exe"
-NEX = ROOT / "build" / "core303" / "CORE303.NEX"
+STAGED_NEX = ROOT / "build" / "core303" / "CORE303.NEX"
+NEX = ROOT / "build" / "core303" / "test" / "CORE303.NEX"
+BASE_COMMIT = "b554786"  # last commit before the split: pre-split reference
 MODULES = ["rowdefs.asm", "runner.asm", "runner_data.asm", "isrstubs.asm"]
 
 
@@ -25,10 +27,9 @@ def _base_nex():
     if base.exists():
         shutil.rmtree(base)
     base.mkdir(parents=True)
-    mb = _git("merge-base", "HEAD", "main").decode().strip()
-    data = _git("archive", mb, "tests/core303/bench", "src/font.chr")
+    data = _git("archive", BASE_COMMIT, "tests/core303/bench", "src/font.chr")
     with tarfile.open(fileobj=io.BytesIO(data)) as tf:
-        tf.extractall(base)
+        tf.extractall(base, filter="data")
     res = subprocess.run(
         [str(SJASM), "--zxnext=cspect", "--msg=war", "-DSTAMP_STR='TEST'",
          "--lst=CORE303.lst", str(base / "tests/core303/bench/core303.asm")],
@@ -48,6 +49,17 @@ def test_core303_nex_unchanged():
     assert res.returncode == 0, res.stdout + res.stderr
     h = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
     assert h(base_nex) == h(NEX)
+
+
+def test_stamp_never_writes_staged_path():
+    before = STAGED_NEX.read_bytes() if STAGED_NEX.is_file() else None
+    res = subprocess.run(
+        ["pwsh", "-NoProfile", "-File", str(BENCH / "build.ps1"),
+         "-Stamp", "TEST", "-AllowDirty"],
+        capture_output=True, text=True, timeout=180)
+    assert res.returncode == 0, res.stdout + res.stderr
+    after = STAGED_NEX.read_bytes() if STAGED_NEX.is_file() else None
+    assert before == after
 
 
 def test_modules_assemble_standalone():

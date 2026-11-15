@@ -4,6 +4,8 @@ param([switch]$AllowDirty, [Alias('Stamp')][string]$ForceStamp = '')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..\..\..").Path
 $out = Join-Path $root 'build\core303'
+# -Stamp (tests only) builds under build\core303\test, never the staged path.
+if ($ForceStamp) { $out = Join-Path $out 'test' }
 $nex = Join-Path $out 'CORE303.NEX'
 # A refused or failed build leaves no NEX behind to be staged by mistake.
 if (Test-Path $nex) { Remove-Item $nex }
@@ -34,4 +36,4 @@ try {
 finally { Pop-Location }
 if (-not (Test-Path $nex)) { throw "CORE303.NEX not written" }
 Write-Host "stamp: $stamp"
-Write-Host "built build\core303\CORE303.NEX"
+Write-Host "built $($nex.Substring($root.Length + 1))"
