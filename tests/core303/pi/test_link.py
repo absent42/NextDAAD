@@ -409,11 +409,40 @@ class FakeServe:
                 assert len(payload) == n
                 self.backend._transact(cmd, addr, n, payload, hz)
                 data = b""
+            elif op == link.OP_PUSH:
+                total, flags, hb = struct.unpack_from("<IBI", payload)
+                frame = payload[9:]
+                assert len(frame) == total
+                data = self._frame(cmd, [(addr, frame)], n, hz, flags)
+            elif op == link.OP_PUSHSPANS:
+                flags, hb = struct.unpack_from("<BI", payload)
+                spans, pos = [], 5 + 5 * n
+                for i in range(n):
+                    off = int.from_bytes(payload[5 + 5 * i:8 + 5 * i], "little")
+                    ln = struct.unpack_from("<H", payload, 8 + 5 * i)[0]
+                    spans.append((addr + off, payload[pos:pos + ln]))
+                    pos += ln
+                assert pos == len(payload)
+                data = self._frame(cmd, spans, link.MAX_CHUNK, hz, flags)
             else:
                 data = self.backend._transact(cmd, addr, n, b"", hz)
             self.reply += struct.pack("<BH", 0, len(data)) + data
         except link.LinkError:
             self.reply += struct.pack("<BH", 1, 0)
+
+    def _frame(self, cmd, spans, chunk, hz, flags):
+        ntx = bad = 0
+        for base, blob in spans:
+            for off in range(0, len(blob), chunk):
+                part = blob[off:off + chunk]
+                self.backend._transact(cmd, base + off, len(part), part, hz)
+                ntx += 1
+                if flags & link.PUSH_VERIFY:
+                    t = min(16, len(part))
+                    tail = self.backend._transact(cmd - 1, base + off + len(part) - t, t, b"",
+                                                  link.HDR_HZ)
+                    bad += tail != part[-t:]
+        return struct.pack("<IIQ", ntx, bad, 0)
 
     def flush(self):
         pass
@@ -442,6 +471,39 @@ def test_serve_protocol_roundtrip():
     proc.backend._transact = lambda *a, **k: (_ for _ in ()).throw(link.LinkError("x"))
     with pytest.raises(link.LinkError):
         h.read(link.CMD_SRAM_R, 0, 4, FAST)
+
+
+def test_serve_push_and_spans():
+    backend = sim.SimLink()
+    proc = FakeServe(backend)
+    h = link.ServeHelper(proc)
+    frame = link.pattern(6, 9000)
+    assert h.push(link.CMD_SRAM_W, 0x10000, frame, FAST, verify=True, hb=MB) == (3, 0, 0)
+    op, cmd, addr, n, hz, payload = proc.requests[-1]
+    assert (op, cmd, addr, n, hz) == (link.OP_PUSH, 0xA8, 0x10000, 4000, FAST)
+    assert struct.unpack_from("<IBI", payload) == (9000, 1, MB)
+    assert bytes(backend.sram[0x10000:0x10000 + 9000]) == frame
+    writes = [t for t in backend.log if t.cmd == link.CMD_SRAM_W]
+    assert [(t.addr, t.n, t.payload_hz) for t in writes] == [
+        (0x10000, 4000, FAST), (0x10000 + 4000, 4000, FAST), (0x10000 + 8000, 1000, FAST)]
+    assert all(t.header_hz == link.HDR_HZ for t in backend.log)
+
+    spans = [(0x10, b"abc"), (0x3000, frame[:4500])]
+    assert h.pushspans(link.CMD_SRAM_W, 0x40000, spans, FAST)[:2] == (3, 0)
+    op, cmd, addr, n, hz, payload = proc.requests[-1]
+    assert (op, addr, n) == (link.OP_PUSHSPANS, 0x40000, 2)
+    assert payload[:5] == bytes([0]) + bytes(4)
+    assert payload[5:15] == bytes([0x10, 0, 0, 3, 0, 0x00, 0x30, 0, 0x94, 0x11])
+    assert bytes(backend.sram[0x40010:0x40013]) == b"abc"
+    assert bytes(backend.sram[0x43000:0x43000 + 4500]) == frame[:4500]
+
+    lossy = sim.SimLink(loss=lambda tx, i: tx == 2 and i == 50)
+    h2 = link.ServeHelper(FakeServe(lossy))
+    assert h2.push(link.CMD_SRAM_W, 0, frame, FAST, verify=True)[:2] == (3, 1)
+    with pytest.raises(link.LinkError):
+        h.push(link.CMD_SRAM_W, 0, frame, FAST, chunk=4001)
+    with pytest.raises(link.LinkError):
+        h.pushspans(link.CMD_SRAM_W, 0, [(0, b"")], FAST)
 
 
 def test_spidev_link_split_rate_via_helper():

@@ -188,3 +188,6 @@ TAGS.update(_op_tags())
 PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3B7 P3BF P3CH P3CP "
            "P3FR P3LR P3NP P3P4 P3R5 P3RD P3RS P3SC P3SV P3TE P3WB P3WP P3WS P4NX P4SK "
            "P4TF P4TS P4VF P4VS BUSY").split()   # BUSY: lock-timeout #SKIP tag
+# spi303 stdout rows (tests/core303/pi/c): passes, per-tx losses, end, heartbeat, stream,
+# self-test, error.
+PI_TAGS += "C3WP C3BP C3RP C3TX C3EN C3HB C3SM C3ST C3ER".split()

@@ -1,0 +1,392 @@
+/* spi303: spidev CLI for the core303 Pi tools. Rows go to stdout in the Pi log grammar.
+   Never takes /run/nextspi.lock: the Python orchestrator holds it for the whole run.
+   Every command is one SPI_IOC_MESSAGE(2): header at 2 MHz, payload at the test rate. */
+#ifdef __linux__
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include <errno.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "core303pi.h"
+
+#ifdef __linux__
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <time.h>
+#include <unistd.h>
+#include <linux/spi/spidev.h>
+
+/* link.py pack_spi_transfer: 32 bytes, len at 16, speed_hz at 20 */
+typedef char chk_size[sizeof(struct spi_ioc_transfer) == 32 ? 1 : -1];
+typedef char chk_len[offsetof(struct spi_ioc_transfer, len) == 16 ? 1 : -1];
+typedef char chk_speed[offsetof(struct spi_ioc_transfer, speed_hz) == 20 ? 1 : -1];
+#endif
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>
+#endif
+
+#define USAGE \
+    "usage: spi303 [--dev PATH] [--sim [--sim-loss TX:OFF]] <subcommand> ...\n" \
+    "  serve\n" \
+    "  write <phys> <bytes> <hz> <chunk> <seed0> [--passes N] [--hb MBOX]\n" \
+    "  read <phys> <bytes> <hz> <chunk> [--seed S] [--passes N] [--hb MBOX]\n" \
+    "  bram <5|7> <hz> <passes> <seed0> [--hb MBOX]\n" \
+    "  stream <phys|bram5:OFF|bram7[:OFF]> <len> <hz> <src_file> --hb MBOX\n" \
+    "  selftest <phys>\n" \
+    "  smoke\n"
+
+static uint64_t host_now(void *ctx)
+{
+    (void)ctx;
+#ifdef __linux__
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    }
+#elif defined(_WIN32)
+    {
+        LARGE_INTEGER c, f;
+        QueryPerformanceCounter(&c);
+        QueryPerformanceFrequency(&f);
+        return (uint64_t)((double)c.QuadPart * 1e9 / (double)f.QuadPart);
+    }
+#else
+    return 0;
+#endif
+}
+
+#ifdef __linux__
+static int spi_fd = -1;
+
+/* Returns the raw ioctl result: total bytes on success, -1 on failure. */
+static int spi_message(struct xfer_desc *d, int n)
+{
+    struct spi_ioc_transfer t[2];
+    int i;
+    memset(t, 0, sizeof t);
+    for (i = 0; i < n; i++) {
+        t[i].tx_buf = (uintptr_t)d[i].tx;
+        t[i].rx_buf = (uintptr_t)d[i].rx;
+        t[i].len = d[i].len;
+        t[i].speed_hz = d[i].speed_hz;
+        t[i].bits_per_word = d[i].bits_per_word;
+        t[i].cs_change = d[i].cs_change;
+    }
+    return ioctl(spi_fd, n == 1 ? SPI_IOC_MESSAGE(1) : SPI_IOC_MESSAGE(2), t);
+}
+
+static int spi_xfer(void *ctx, struct xfer_desc *d, int n)
+{
+    uint32_t total = 0;
+    int i;
+    (void)ctx;
+    for (i = 0; i < n; i++)
+        total += d[i].len;
+    return spi_message(d, n) == (int)total ? 0 : -1;
+}
+
+/* Mode 0, 8 bits; default speed 2 MHz as link.py SpidevLink. */
+static int spi_open(const char *dev)
+{
+    uint8_t mode = SPI_MODE_0, bits = 8;
+    uint32_t hz = HDR_HZ;
+    spi_fd = open(dev, O_RDWR);
+    if (spi_fd < 0)
+        return -1;
+    if (ioctl(spi_fd, SPI_IOC_WR_MODE, &mode) < 0 ||
+        ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
+        ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &hz) < 0)
+        return -1;
+    return 0;
+}
+
+/* stream stops when the parent closes our stdin; stray input is discarded. */
+static int stdin_closed(void *ctx)
+{
+    struct pollfd p;
+    char buf[256];
+    (void)ctx;
+    for (;;) {
+        p.fd = 0;
+        p.events = POLLIN;
+        p.revents = 0;
+        if (poll(&p, 1, 0) <= 0)
+            return 0;
+        if (p.revents & POLLIN) {
+            ssize_t k = read(0, buf, sizeof buf);
+            if (k == 0 || (k < 0 && errno != EINTR))
+                return 1;
+            continue;
+        }
+        return (p.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0;
+    }
+}
+
+/* No slave needed: a 2 MHz header plus a 64-byte SRAM read of address 0 at two rates. */
+static int do_smoke(void)
+{
+    uint8_t h[8], rx[64];
+    static const uint8_t z[64];
+    struct xfer_desc d[2];
+    size_t hl = build_cmd(CMD_SRAM_R, 0, sizeof rx, h);
+    int lo, hi, ok, err = 0;
+    plan_xfers(h, hl, z, sizeof z, HDR_HZ, d);
+    d[1].rx = rx;
+    lo = spi_message(d, 2);
+    if (lo < 0)
+        err = errno;
+    plan_xfers(h, hl, z, sizeof z, 4000000u, d);
+    d[1].rx = rx;
+    hi = spi_message(d, 2);
+    if (hi < 0 && !err)
+        err = errno;
+    ok = lo == (int)(hl + sizeof z) && hi == lo;
+    printf("P2SM ok=%d ret_lo=%d ret_hi=%d err=%d\n", ok, lo, hi, err);
+    return ok ? 0 : 1;
+}
+#endif
+
+static int std_read(void *ctx, uint8_t *b, size_t n)
+{
+    (void)ctx;
+    return (int)fread(b, 1, n, stdin);
+}
+
+static int std_write(void *ctx, const uint8_t *b, size_t n)
+{
+    (void)ctx;
+    return fwrite(b, 1, n, stdout) == n && fflush(stdout) == 0 ? 0 : -1;
+}
+
+static int parse_u32(const char *s, uint32_t *v)
+{
+    char *e;
+    unsigned long x;
+    if (!s || !*s || *s == '-')
+        return 0;
+    errno = 0;
+    x = strtoul(s, &e, 0);
+    if (*e || errno || x > 0xFFFFFFFFul)
+        return 0;
+    *v = (uint32_t)x;
+    return 1;
+}
+
+/* <phys> or bram5:OFF / bram7[:OFF] into a command and slave address. */
+static int parse_target(const char *s, uint8_t *wcmd, uint32_t *addr)
+{
+    uint32_t off = 0;
+    if (strncmp(s, "bram5", 5) == 0 || strncmp(s, "bram7", 5) == 0) {
+        if (s[5] == ':' ? !parse_u32(s + 6, &off) : s[5] != 0)
+            return 0;
+        if (off > 0x7FFF)
+            return 0;
+        *wcmd = CMD_BRAM_W;
+        *addr = off | (s[4] == '7' ? BRAM7_FLAG : 0);
+        return 1;
+    }
+    *wcmd = CMD_SRAM_W;
+    return parse_u32(s, addr);
+}
+
+typedef struct {
+    const char *pos[8];
+    int npos;
+    int sim;
+    long loss_tx, loss_at;
+    const char *dev;
+    uint32_t hb, passes, seed;
+    int has_hb, has_passes, has_seed;
+} args_t;
+
+static int parse_args(int argc, char **argv, args_t *a)
+{
+    int i;
+    memset(a, 0, sizeof *a);
+    a->dev = "/dev/spidev0.0";
+    a->loss_tx = a->loss_at = -1;
+    a->passes = 1;
+    for (i = 1; i < argc; i++) {
+        const char *s = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
+        if (strcmp(s, "--sim") == 0) {
+            a->sim = 1;
+        } else if (strcmp(s, "--dev") == 0 && v) {
+            a->dev = v;
+            i++;
+        } else if (strcmp(s, "--sim-loss") == 0 && v) {
+            uint32_t tx, at;
+            char buf[32], *c;
+            if (strlen(v) >= sizeof buf)
+                return 0;
+            strcpy(buf, v);
+            c = strchr(buf, ':');
+            if (!c)
+                return 0;
+            *c = 0;
+            if (!parse_u32(buf, &tx) || !parse_u32(c + 1, &at))
+                return 0;
+            a->loss_tx = (long)tx;
+            a->loss_at = (long)at;
+            i++;
+        } else if (strcmp(s, "--hb") == 0 && v) {
+            if (!parse_u32(v, &a->hb))
+                return 0;
+            a->has_hb = 1;
+            i++;
+        } else if (strcmp(s, "--passes") == 0 && v) {
+            if (!parse_u32(v, &a->passes) || a->passes == 0)
+                return 0;
+            a->has_passes = 1;
+            i++;
+        } else if (strcmp(s, "--seed") == 0 && v) {
+            if (!parse_u32(v, &a->seed))
+                return 0;
+            a->has_seed = 1;
+            i++;
+        } else if (s[0] == '-' && s[1] == '-') {
+            return 0;
+        } else if (a->npos < 8) {
+            a->pos[a->npos++] = s;
+        } else {
+            return 0;
+        }
+    }
+    return a->npos >= 1;
+}
+
+static int want_pos(const args_t *a, int n)
+{
+    return a->npos == n + 1;
+}
+
+static int fail(int code, int err, long arg)
+{
+    err_row(stdout, code, err, arg);
+    fflush(stdout);
+    return 2;
+}
+
+int main(int argc, char **argv)
+{
+    args_t a;
+    link303_t l;
+    sim303_t sim;
+    const char *sub;
+    uint32_t v[5] = {0, 0, 0, 0, 0};
+    int rc = 0, i;
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    if (!parse_args(argc, argv, &a)) {
+        fputs(USAGE, stderr);
+        return fail(E_ARG, 0, 0);
+    }
+    sub = a.pos[0];
+    memset(&l, 0, sizeof l);
+    l.now_ns = host_now;
+    l.last_state = -1;
+    memset(&sim, 0, sizeof sim);
+    if (a.has_hb) {
+        if (a.hb >= SRAM_SIZE || SRAM_SIZE - a.hb < MB_LEN || a.hb == 0)
+            return fail(E_RANGE, 0, (long)a.hb);
+        l.hb_mbox = a.hb;
+    }
+    if (strcmp(sub, "smoke") == 0) {
+        if (a.sim || !want_pos(&a, 0))
+            return fail(E_ARG, 0, 0);
+#ifdef __linux__
+        if (spi_open(a.dev) < 0)
+            return fail(E_IO, errno, 0);
+        return do_smoke();
+#else
+        return fail(E_IO, 0, 0);
+#endif
+    }
+    if (a.sim) {
+        if (sim_init(&sim))
+            return fail(E_MEM, 0, 0);
+        sim.loss_tx = a.loss_tx;
+        sim.loss_at = a.loss_at;
+        l.xfer = sim_xfer;
+        l.ctx = &sim;
+    } else {
+#ifdef __linux__
+        if (spi_open(a.dev) < 0)
+            return fail(E_IO, errno, 0);
+        l.xfer = spi_xfer;
+#else
+        return fail(E_IO, 0, 0);
+#endif
+    }
+    if (strcmp(sub, "serve") == 0) {
+        srv_io_t io;
+        if (!want_pos(&a, 0) || a.has_hb)
+            return fail(E_ARG, 0, 0);
+        io.read = std_read;
+        io.write = std_write;
+        io.ctx = NULL;
+        rc = serve_loop(&l, &io);
+        if (rc)
+            fputs("spi303 serve: request stream out of step\n", stderr);
+        sim_free(&sim);
+        return rc;
+    }
+    if ((a.has_seed && strcmp(sub, "read") != 0) ||
+        (a.has_passes && strcmp(sub, "write") != 0 && strcmp(sub, "read") != 0))
+        return fail(E_ARG, 0, 0);
+    setvbuf(stdout, NULL, _IOLBF, 4096);
+    for (i = 1; i < a.npos && i <= 5; i++)
+        if (!parse_u32(a.pos[i], &v[i - 1]) &&
+            !(strcmp(sub, "stream") == 0 && (i == 1 || i == 4)))
+            return fail(E_ARG, 0, i);
+    if (strcmp(sub, "write") == 0 && want_pos(&a, 5)) {
+        rc = run_write(&l, stdout, "C3WP", CMD_SRAM_W, v[0], v[1], v[2], v[3], v[4], a.passes);
+    } else if (strcmp(sub, "read") == 0 && want_pos(&a, 4)) {
+        rc = run_read(&l, stdout, CMD_SRAM_R, v[0], v[1], v[2], v[3], a.has_seed, a.seed,
+                      a.passes);
+    } else if (strcmp(sub, "bram") == 0 && want_pos(&a, 4) && !a.has_passes) {
+        if (v[0] != 5 && v[0] != 7)
+            return fail(E_RANGE, 0, (long)v[0]);
+        if (v[2] == 0)
+            return fail(E_ARG, 0, 3);
+        rc = run_write(&l, stdout, "C3BP", CMD_BRAM_W, v[0] == 7 ? BRAM7_FLAG : 0,
+                       v[0] == 7 ? BRAM7_SIZE : BRAM5_SIZE, v[1], MAX_CHUNK, v[3], v[2]);
+    } else if (strcmp(sub, "selftest") == 0 && want_pos(&a, 1)) {
+        rc = run_selftest(&l, stdout, v[0]);
+    } else if (strcmp(sub, "stream") == 0 && want_pos(&a, 4) && a.has_hb) {
+#ifdef __linux__
+        uint8_t wcmd, *buf;
+        uint32_t addr;
+        FILE *f;
+        if (!parse_target(a.pos[1], &wcmd, &addr))
+            return fail(E_ARG, 0, 1);
+        buf = malloc(v[1] ? v[1] : 1);
+        f = fopen(a.pos[4], "rb");
+        if (!buf || !f || fread(buf, 1, v[1], f) != v[1])
+            return fail(E_IO, errno, 4);
+        fclose(f);
+        rc = run_stream(&l, stdout, wcmd, addr, buf, v[1], v[2], stdin_closed, NULL);
+        free(buf);
+#else
+        (void)parse_target;
+        return fail(E_IO, 0, 0);
+#endif
+    } else {
+        fputs(USAGE, stderr);
+        return fail(E_ARG, 0, 0);
+    }
+    sim_free(&sim);
+    if (rc < 0)
+        return fail(rc, 0, 0);
+    fflush(stdout);
+    return rc;
+}

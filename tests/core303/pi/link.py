@@ -25,6 +25,10 @@ READ_CMDS = (CMD_VERSION, CMD_SRAM_R, CMD_BRAM_R, CMD_NR_R)
 
 OP_WRITE = 1
 OP_READ = 2
+OP_PUSH = 3
+OP_PUSHSPANS = 4
+PUSH_VERIFY = 1
+PUSH_REPLY = 16
 
 
 class LinkError(Exception):
@@ -223,6 +227,11 @@ class ServeHelper:
 
     Request: [op u8][cmd u8][addr u24][len u16][hz u32][payload], little-endian.
     Reply: [status u8][len u16][data]. op 1 = write, 2 = read; status 0 = ok.
+    op 3 push: len = chunk, then [total u32][flags u8][hb u32][frame].
+    op 4 pushspans: addr = base, len = count, then [flags u8][hb u32],
+    count x [off u24][len u16], then the span bytes in order.
+    flags bit 0 = read back each transaction's last 16 bytes at 2 MHz; hb = mailbox
+    phys whose hb_pi is bumped every 100 ms, 0 = none. Reply: [ntx u32][bad u32][ns u64].
     """
 
     def __init__(self, proc):
@@ -234,7 +243,7 @@ class ServeHelper:
         return cls(subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     bufsize=0))
 
-    def _call(self, op, cmd, addr, n, hz, payload):
+    def _call(self, op, cmd, addr, n, hz, payload, want=None):
         req = bytes([op, cmd]) + addr.to_bytes(3, "little") + struct.pack("<HI", n, hz) + payload
         try:
             self.proc.stdin.write(req)
@@ -245,7 +254,8 @@ class ServeHelper:
         data = self._take(ln)
         if status != 0:
             raise LinkError("serve status %d" % status)
-        want = n if op == OP_READ else 0
+        if want is None:
+            want = n if op == OP_READ else 0
         if ln != want:
             raise LinkError("serve reply %d bytes, expected %d" % (ln, want))
         return data
@@ -267,6 +277,25 @@ class ServeHelper:
 
     def read(self, cmd, addr, n, hz):
         return self._call(OP_READ, cmd, addr, n, hz, b"")
+
+    def push(self, cmd, addr, data, hz, chunk=MAX_CHUNK, verify=False, hb=0):
+        """Whole frame in one exchange; returns (ntx, bad, ns)."""
+        if not 1 <= chunk <= MAX_CHUNK:
+            raise LinkError("chunk %d outside 1..%d" % (chunk, MAX_CHUNK))
+        ext = struct.pack("<IBI", len(data), PUSH_VERIFY if verify else 0, hb)
+        rep = self._call(OP_PUSH, cmd, addr, chunk, hz, ext + bytes(data), want=PUSH_REPLY)
+        return struct.unpack("<IIQ", rep)
+
+    def pushspans(self, cmd, base, spans, hz, verify=False, hb=0):
+        """spans: [(offset, bytes)]; each span is split into 4000-byte transactions."""
+        if len(spans) > 0xFFFF or any(not 1 <= len(d) <= 0xFFFF for _, d in spans):
+            raise LinkError("span list outside the u16 count/length fields")
+        table = b"".join(off.to_bytes(3, "little") + struct.pack("<H", len(d))
+                         for off, d in spans)
+        ext = struct.pack("<BI", PUSH_VERIFY if verify else 0, hb)
+        body = ext + table + b"".join(bytes(d) for _, d in spans)
+        rep = self._call(OP_PUSHSPANS, cmd, base, len(spans), hz, body, want=PUSH_REPLY)
+        return struct.unpack("<IIQ", rep)
 
     def close(self):
         try:
