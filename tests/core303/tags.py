@@ -231,6 +231,8 @@ PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "
 # search per rate, no mailbox, result fetch; PIST state != 1 mid-run, PI3S final state 3.
 PI_TAGS += "P3EF P3CE P3HQ P3HS P3HO P3SR P3MB P3RF PIST PI3S".split()
 # pi303_video: per-frame row (pass 0 tf, 1 ts, 2 vf, 3 vs), result fetch, no mailbox.
+# P4SK mis = transactions with a tail mismatch (not bytes, unlike P3). P4TF/P4TS ns = wall
+# time, first push to last flip, Python gate/hb/poll time included; P4FR ns = C push time.
 PI_TAGS += "P4FR P4RF P4MB".split()
 # spi303 stdout rows (tests/core303/pi/c): passes, per-tx losses, end, heartbeat, stream,
 # self-test, error, spidev settings saved/restored.

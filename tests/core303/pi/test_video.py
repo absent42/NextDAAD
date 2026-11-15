@@ -87,8 +87,10 @@ def test_soak_steps_down_on_loss(tmp_path):
     sk = [(r["prof"], r["hz"], r["mis"] > 0) for r in rows(log, "P4SK")]
     assert sk == [(0, 7_000_000, True), (0, 6_500_000, False),
                   (6, 7_000_000, True), (6, 6_500_000, False)]
-    first = rows(log, "P4SK")[0]
-    assert first["mis"] == 3 * 13 and first["bytes"] == 3 * L2_LEN    # every transaction lost
+    first, clean = rows(log, "P4SK")[0:2]
+    assert first["mis"] == 13 and first["bytes"] == L2_LEN      # stops after the first lossy push
+    assert clean["mis"] == 0 and clean["bytes"] == sv.PLAN.soak_bytes
+    assert [r["hz"] for r in b.serve.requests[:4]] == [7_000_000] + [6_500_000] * 3
     timed = push_reqs(b, verify=0)
     assert timed and {r["hz"] for r in timed} == {6_500_000}
     assert all(r["mis"] == 0 for r in rows(log, "P4SK") if r["hz"] == 6_500_000)
@@ -234,39 +236,71 @@ def test_flip_in_vblank_counted(tmp_path):
             seen[0] += 1
             if seen[0] in (4, 6):               # profile 0 tf frames 3 and 5
                 b.w.t += 0.009                  # the post-flip read lands in active display
+            elif seen[0] == 5:                  # frame 4: the next frame's vblank, line >= 192
+                b.w.t += sv.PERIOD
     b.w.hooks.append(hook)
     rc = b.run()
     log = parse.parse_pilog(b.out + "/VIDEO.LOG")
     assert rc == 0
     n = len(b.frames)
     tf = rows(log, "P4TF")
-    assert tf[0]["flips_vbl"] == n - 2 and tf[1]["flips_vbl"] == n
+    assert tf[0]["flips_vbl"] == n - 3 and tf[1]["flips_vbl"] == n
     fr = [r for r in rows(log, "P4FR") if r["prof"] == 0 and r["pass"] == 0]
-    assert [r["idx"] for r in fr if r["drop"]] == [3, 5]
-    assert all(r["l1"] < 192 for r in fr if r["drop"]) and all(r["l0"] >= 192 for r in fr)
-    assert all(r["l1"] >= 192 for r in fr if not r["drop"])
+    assert [r["idx"] for r in fr if r["drop"]] == [3, 4, 5]
+    assert all(r["l0"] >= 192 for r in fr)
+    assert [r["idx"] for r in fr if r["l1"] < 192] == [3, 5]
 
 
-def test_flip_past_intended_vblank_dropped(tmp_path):
+class Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def time(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+class StepTicks:
+    """Heartbeat stand-in: each tick between polls moves the clock to the next poll time."""
+
+    def __init__(self, clock, steps):
+        self.clock, self.steps = clock, iter(steps)
+
+    def tick(self):
+        self.clock.t += next(self.steps, 0.0005)
+
+
+class RasterStub:
+    """312 lines at sv.PERIOD, line 200 at t = 0 (the previous flip)."""
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.writes = []
+
+    def raster_line(self):
+        p = sv.PERIOD
+        return int(((self.clock.t + 200 / 312 * p) % p) / p * 312)
+
+    def nr_write(self, reg, val):
+        self.writes.append((reg, val))
+
+
+@pytest.mark.parametrize("stall, late", [(False, False), (True, True)])
+def test_flip_past_intended_vblank_dropped(stall, late):
     """A poll stalled across a whole frame misses the vblank the frame was ready for."""
-    b = sv.Bench(tmp_path)
-    state = {"flips": 0, "done": False}
-
-    def hook(r):
-        if r.cmd == link.CMD_NR_W and r.addr == NR_12:
-            state["flips"] += 1
-        elif (r.cmd == link.CMD_NR_R and r.addr == 0x1F and state["flips"] == 2
-              and not state["done"] and sv.raster_line(b.w.t) < 192):
-            state["done"] = True
-            b.w.t += sv.PERIOD                  # profile 0 tf frame 2: one frame unseen
-    b.w.hooks.append(hook)
-    rc = b.run()
-    log = parse.parse_pilog(b.out + "/VIDEO.LOG")
-    assert rc == 0 and state["done"]
-    fr = [r for r in rows(log, "P4FR") if r["prof"] == 0 and r["pass"] == 0]
-    assert [r["idx"] for r in fr if r["drop"]] == [2]
-    assert all(r["l0"] >= 192 and r["l1"] >= 192 for r in fr)
-    assert rows(log, "P4TF")[0]["flips_vbl"] == len(b.frames)
+    clk = Clock()
+    stub = RasterStub(clk)
+    r = pv.Run(stub, MB, ".", ".", ".", sv.BUNDLE, "spi303", None, MAP, clk, sv.PLAN,
+               None, None)
+    r.hb = StepTicks(clk, [sv.PERIOD] if stall else [])
+    r.period, r.obs, r.since_flip = sv.PERIOD, (0.0, 200), 0
+    clk.t = 0.057                               # a 57 ms push: first poll at line ~140
+    l0, l1, in_vbl, gap, got_late, t = r.flip()
+    assert l0 >= 192 and l1 >= 192 and in_vbl
+    assert got_late is late and gap == (4 if stall else 3)
+    assert stub.writes == [(NR_12, BACK_BANK), (NR_13, FRONT_BANK)]
 
 
 def test_frames_via_serve_not_per_transaction(full):
@@ -320,6 +354,16 @@ def test_spans_diffed_against_n_minus_2(full):
     m = b.lk.sram
     assert bytes(m[sv.bank_phys(shown):sv.bank_phys(shown) + L2_LEN]) == f[-1]
     assert bytes(m[sv.bank_phys(hidden):sv.bank_phys(hidden) + L2_LEN]) == f[-2]
+
+
+def test_video_imports_no_pil():
+    import subprocess
+    import sys
+    code = ("import sys; sys.path.insert(0, %r); import pi303_video; "
+            "print(int('PIL' in sys.modules))" % pv.HERE)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.stdout.strip() == "0", out.stderr
+    assert pi303_prep.GAP is pv.span_list.__globals__["GAP"]
 
 
 def test_span_lens_match_prep():
@@ -404,10 +448,92 @@ def test_noload_skip(tmp_path):
                     (mbx.CMD_END, 0)]
 
 
+def test_shown_bank_unknown_skips(tmp_path):
+    b = sv.Bench(tmp_path)
+    b.lk.nrs[NR_12] = BACK_BANK
+    rc = b.run()
+    log = parse.parse_pilog(b.out + "/VIDEO.LOG")
+    assert rc != 0 and log.skips == [("P4SK", "SHOWN nr12=%d" % BACK_BANK)]
+    assert not b.spawn.calls and not b.lk.nr_log
+    assert not [r for r in b.lk.trace if r.cmd == link.CMD_SRAM_W
+                and not MB <= r.addr < MB + 32]
+    assert [e[2] for e in b.nx.events if e[0] == "cmd"] == [mbx.CMD_END]
+    assert rows(log, "P4RF")[0]["saved"] == 1
+
+
+def test_state_change_in_load_checks(tmp_path):
+    """hb_next and period polls gate on state: no hb_pi bump once state != 1 is seen."""
+    for when in ("load", "period"):
+        out = tmp_path / when
+        out.mkdir()
+        b = sv.Bench(out)
+        changed = []
+
+        def hook(r, b=b, when=when, changed=changed):
+            loaded = [e for e in b.nx.events if e[0] == "cmd" and e[2] == mbx.CMD_LOAD]
+            hit = r.cmd == link.CMD_NR_R if when == "period" else r.cmd == link.CMD_SRAM_R
+            if loaded and hit and b.lk.sram[MB + 13] == 1:
+                b.lk.sram[MB + 13] = 3
+                b.nx.mode, b.nx.due = "done", None
+                changed.append(r.t)
+        b.w.hooks.append(hook)
+        rc = b.run(plan=pv.Plan(soak_bytes=sv.PLAN.soak_bytes, period_wraps=25))
+        log = parse.parse_pilog(b.out + "/VIDEO.LOG")
+        assert rc != 0 and ("PIST", "STATE") in log.skips, when
+        k = first_state_change(b.lk.trace)
+        assert [r for r in b.lk.trace[k:] if r.cmd in (link.CMD_SRAM_W, link.CMD_NR_W)] == []
+        late = [r for r in b.lk.trace if r.t > changed[0] and r.cmd == link.CMD_SRAM_W]
+        assert len(late) <= 1, (when, len(late))    # at most the bump already under way
+        assert not b.serve.requests
+
+
+def test_period_median_ignores_a_stall(tmp_path):
+    b = sv.Bench(tmp_path)
+    n = [0]
+
+    def hook(r):
+        if r.cmd == link.CMD_NR_R and b.nx.active:
+            n[0] += 1
+            if n[0] == 600:
+                b.w.t += 2 * sv.PERIOD          # one wrap interval three frames long
+    b.w.hooks.append(hook)
+    assert b.run() == 0
+    r = rows(parse.parse_pilog(b.out + "/VIDEO.LOG"), "P4SK")[0]
+    assert abs(r["frame_ns"] - sv.PERIOD * 1e9) <= sv.PERIOD * 1e9 * 0.005, r
+
+
+def test_frame_rows_written_after_pass(tmp_path, monkeypatch):
+    import pilog
+    b = sv.Bench(tmp_path)
+    when = []
+    real = pilog.PiLogWriter.row
+
+    def row(self, tag, **kv):
+        when.append((b.w.t, tag))
+        return real(self, tag, **kv)
+    monkeypatch.setattr(pilog.PiLogWriter, "row", row)
+    assert b.run() == 0
+    fl = flips(b)
+    for g in groups(b, lambda r: r["verify"] == 0):
+        t0 = g[0]["t"]
+        t1 = min(t for t, _, _ in fl if t >= g[-1]["end"])
+        assert not [w for w in when if t0 <= w[0] <= t1]
+    assert sum(1 for _, tag in when if tag == "P4FR") == 4 * (2 * 6 - 2)
+
+
 def test_period_measured_from_raster(full):
     rc, log, b = full
     for r in rows(log, "P4SK"):
         assert abs(r["frame_ns"] - sv.PERIOD * 1e9) <= sv.PERIOD * 1e9 * 0.005, r
+
+
+def test_clean_run_end_ack_with_state4(full):
+    rc, log, b = full
+    seq, t = next((c[1], c[0]) for c in b.nx.cmd_writes if c[2] == mbx.CMD_END)
+    head = next(r.data for r in b.lk.trace if r.t > t and r.cmd == link.CMD_SRAM_R
+                and r.addr == MB and r.n == mbx.HEAD_LEN and r.data[mbx.OFF_ACK] == seq)
+    assert head[mbx.OFF_STATE] == mbx.STATE_EXITING
+    assert rc == 0 and ("PIST", "STATE") not in log.skips
 
 
 def test_fetch_result_and_state3(tmp_path):

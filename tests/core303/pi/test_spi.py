@@ -268,6 +268,19 @@ def test_handover_yield_sequence(full):
     assert states == [4, 2] and nx.pibusy is False      # hb_pi settled after the END ack
 
 
+def end_ack_head(lk, nx):
+    """The head read that saw END acked; the model writes state 4 in the same step."""
+    seq, t = next((c[1], c[0]) for c in nx.cmd_writes if c[2] == mbx.CMD_END)
+    return next(r.data for r in lk.trace if r.t > t and r.cmd == link.CMD_SRAM_R
+                and r.addr == MB and r.n == mbx.HEAD_LEN and r.data[mbx.OFF_ACK] == seq)
+
+
+def test_clean_run_end_ack_with_state4(full):
+    rc, log, (w, lk, nx, tool), _ = full
+    assert end_ack_head(lk, nx)[mbx.OFF_STATE] == mbx.STATE_EXITING
+    assert rc == 0 and ("PIST", "STATE") not in log.skips
+
+
 def test_fetch_result_buffer(tmp_path):
     text = b"#CORE303 PI 56172de\n#NR 01=33\n#SRAM 2048\nCAL0 x\n#END 0001\n"
     rc, log, _ = go(tmp_path, result=text)

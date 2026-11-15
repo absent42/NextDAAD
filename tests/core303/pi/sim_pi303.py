@@ -222,6 +222,7 @@ class NextModel:
         self.setb(12, seq)
         if cmd == mbx.CMD_END:
             self.mode, self._gen = "exit", self._exit()
+            next(self._gen)             # state 4 in the same step as the END ack (restore_all)
         elif cmd == mbx.CMD_HANDOVER and not self.handed:
             self.handed = True
             self.mode, self._gen = "lead", self._lead()

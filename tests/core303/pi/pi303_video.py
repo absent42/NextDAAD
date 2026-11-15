@@ -6,6 +6,7 @@ serve; raster polls and NR $12/$13 flips run at 2 MHz.
 """
 import argparse
 import os
+import statistics
 import sys
 from dataclasses import dataclass
 
@@ -15,8 +16,8 @@ import link as lk
 import mailbox as mbx
 import pi303_spi as spi
 from bundle import bundle_hash, dir_hash
-from pi303_prep import GAP
 from pi303_probe import default_core_clk, default_spi_open, open_log, write_busy
+from spans import span_list
 
 TOOL = "pi303_video"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -93,19 +94,6 @@ def rates_below(ceiling, merged):
     return [h for h in reversed(LADDER) if h < ceiling and h not in merged]
 
 
-def span_list(prev, cur):
-    """[(offset, bytes)] of cur's differing runs, as pi303_prep.span_lens (gaps under GAP merge)."""
-    a = np.frombuffer(prev, np.uint8)
-    b = np.frombuffer(cur, np.uint8)
-    idx = np.flatnonzero(a != b)
-    if idx.size == 0:
-        return []
-    cut = np.flatnonzero(np.diff(idx) > GAP)
-    starts = np.concatenate(([idx[0]], idx[cut + 1]))
-    ends = np.concatenate((idx[cut], [idx[-1]]))
-    return [(int(s), bytes(cur[s:e + 1])) for s, e in zip(starts.tolist(), ends.tolist())]
-
-
 def vblanks(t1, l1, t2, l2, period):
     """Vertical blank starts (line VBL) between raster reads (t1, l1) and (t2, l2)."""
     k = max(0, round((t2 - t1) / period - (l2 - l1) / LINES))
@@ -128,27 +116,18 @@ def load_frames(d, n):
     return frames
 
 
-class Run(spi.Run):
-    """Reuses pi303_spi.Run's gate, wait_ready, wait_done, fetch and finish."""
+class Run(spi.PiRun):
+    """pi303_spi.PiRun gives gate, wait_ready, wait_done, fetch and finish."""
     RF_TAG = "P4RF"
     RESULT_NAME = RESULT_NAME
 
     def __init__(self, link, mbox_phys, frames_dir, spi_log, out_dir, bundle, tool, spawn,
                  addrs, clock, plan, core_clk, spi_open):
-        self.link, self.mbox = link, mbox_phys
+        super().__init__(link, mbox_phys, out_dir, bundle, tool, addrs, clock, plan or Plan(),
+                         core_clk, spi_open, "P4SK")
         self.frames_dir, self.spi_log = frames_dir, spi_log
-        self.out_dir, self.bundle, self.tool = out_dir, bundle, tool
         self.spawn = spawn or lk.ServeHelper.spawn
-        self.addrs = dict(addrs)
-        self.clock = clock or lk.RealClock()
-        self.plan = plan or Plan()
-        self.core_clk, self.spi_open = core_clk, spi_open
-        self.mb = spi.PiMailbox(link, mbox_phys, self.clock)
-        self.hb = mbx.Heartbeat(self.mb, self.clock)
-        self.step = "P4SK"
-        self.ok = True
-        self.log = self.helper = None
-        self.streams = []
+        self.helper = None
         self.frames, self.full, self.spans = [], [], []
         self.ceil, self.merged = {}, set()
         self.shown = self.addrs["l2_front_bank"]    # PI303V starts with NR $12 = front
@@ -185,8 +164,9 @@ class Run(spi.Run):
         return line
 
     def flip(self):
-        """Poll to a vertical blank not yet flipped in, NR $12 = the bank just written,
-        NR $13 = the other, read the raster again. Returns (l0, l1, gap, late, t)."""
+        """Poll (hb ticks between polls) to a vertical blank not yet flipped in, NR $12 = the
+        bank just written, NR $13 = the other, read the raster again. Returns (l0, l1, in_vbl,
+        gap, late, t); in_vbl needs both reads in the same vertical blank."""
         bank, _ = self.hidden()
         other = self.shown
         end = self.clock.time() + FLIP_TIMEOUT_S
@@ -204,15 +184,17 @@ class Run(spi.Run):
         self.shown = bank
         self.since_flip = 0
         l1 = self.raster()
-        return l0, l1, gap, late, t
+        in_vbl = l0 >= VBL and l1 >= VBL and self.since_flip == 0
+        return l0, l1, in_vbl, gap, late, t
 
     def measure_period(self):
-        """Mean interval of period_wraps raster wraps (line falls); None if they never come."""
+        """Median interval of period_wraps raster wraps (line falls); None if they never come."""
         wraps, prev = [], None
         end = self.clock.time() + PERIOD_TIMEOUT_S
         while len(wraps) <= self.plan.period_wraps:
             if self.clock.time() >= end:
                 return None
+            self.gate()
             t0 = self.clock.time()
             line = self.link.raster_line()
             t = (t0 + self.clock.time()) / 2
@@ -220,7 +202,7 @@ class Run(spi.Run):
                 wraps.append(t)
             prev = line
             self.hb.tick()
-        return (wraps[-1] - wraps[0]) / (len(wraps) - 1)
+        return statistics.median([b - a for a, b in zip(wraps, wraps[1:])])
 
     # -- steps ----------------------------------------------------------------------------
 
@@ -239,6 +221,7 @@ class Run(spi.Run):
         n0 = self.mb.read_hb_next()
         end = self.clock.time() + LOAD_WAIT_S
         while self.clock.time() < end:
+            self.gate()
             self.hb.tick()
             self.clock.sleep(0.05)
             if self.mb.read_hb_next() != n0:
@@ -246,18 +229,20 @@ class Run(spi.Run):
         return False
 
     def soak(self, prof, hz, frame_ns):
-        """soak_bytes of fresh data, l2_len a push, verified, into the hidden buffer only."""
+        """Up to soak_bytes of fresh data, l2_len a push, verified, into the hidden buffer
+        only; stops after the push holding the first bad transaction (C runs whole pushes)."""
         n = self.addrs["l2_len"]
         count = -(-self.plan.soak_bytes // n)
-        mis = 0
-        for _ in range(count):
+        mis = done = 0
+        while done < count and not mis:
             self.gate()
             self.hb.tick()
             data = soak_frame(self.seed, n)
             self.seed += 1
             self.hb.tick()
             mis += self.push(data, hz, True)[0]
-        self.log.row("P4SK", prof=prof, hz=hz, mis=mis, bytes=count * n, frame_ns=frame_ns)
+            done += 1
+        self.log.row("P4SK", prof=prof, hz=hz, mis=mis, bytes=done * n, frame_ns=frame_ns)
         return mis
 
     def prime(self, prof, hz, tag):
@@ -269,7 +254,6 @@ class Run(spi.Run):
                 self.gate()
                 self.hb.tick()
                 bad += self.push(self.frames[i], hz, True)[0]
-                self.hb.tick()
                 self.flip()
             if not bad:
                 return True
@@ -286,24 +270,27 @@ class Run(spi.Run):
         frames = vbl = dropped = 0
         gaps = [0, 0, 0]
         t0 = t = None
-        for k, (idx, item, nbytes) in enumerate(items):
-            self.gate()
-            self.hb.tick()
-            if t0 is None:
-                t0 = self.clock.time()
-            bad, ns = self.push(item, hz, verify)
-            self.hb.tick()
-            l0, l1, gap, late, t = self.flip()
-            self.hb.tick()
-            in_vbl = l0 >= VBL and l1 >= VBL
-            drop = int(bad > 0) if verify else int(not in_vbl or late)
-            frames += 1
-            vbl += in_vbl
-            dropped += drop
-            if k:
-                gaps[min(max(gap, 1), 3) - 1] += 1
-            self.log.row("P4FR", **{"pass": PASSES[name], "prof": prof, "idx": idx, "ns": ns,
-                                    "bytes": nbytes, "l0": l0, "l1": l1, "drop": drop})
+        fr = []                     # P4FR rows, written after the pass: no log I/O inside it
+        try:
+            for k, (idx, item, nbytes) in enumerate(items):
+                self.gate()
+                self.hb.tick()
+                if t0 is None:
+                    t0 = self.clock.time()
+                bad, ns = self.push(item, hz, verify)
+                l0, l1, in_vbl, gap, late, t = self.flip()
+                self.hb.tick()
+                drop = int(bad > 0) if verify else int(not in_vbl or late)
+                frames += 1
+                vbl += in_vbl
+                dropped += drop
+                if k:
+                    gaps[min(max(gap, 1), 3) - 1] += 1
+                fr.append({"pass": PASSES[name], "prof": prof, "idx": idx, "ns": ns,
+                           "bytes": nbytes, "l0": l0, "l1": l1, "drop": drop})
+        finally:
+            for r in fr:
+                self.log.row("P4FR", **r)
         if verify:
             self.log.row(tag, prof=prof, frames=frames, bad=dropped)
         else:
@@ -352,6 +339,19 @@ class Run(spi.Run):
         if self.prime(prof, hz, "P4VS"):
             self.run_pass(prof, "vs", hz, self.spans)
 
+    def runs(self):
+        """Both profiles, only once NR $12 shows the front bank: no buffer of unknown
+        visibility is ever written."""
+        shown = self.link.nr_read(NR_L2_BANK) & 0x7F
+        if shown != self.addrs["l2_front_bank"]:
+            self.log.skip("P4SK", "SHOWN nr12=%d" % shown)
+            self.ok = False
+            return
+        self.helper = self.spawn([self.tool, "serve"])
+        a = self.addrs
+        for prof, p3prof in ((a["prof_halt"], 0), (a["prof_mix"], 1)):
+            self.profile(prof, p3prof)
+
     def close_helper(self):
         if self.helper is not None:
             h, self.helper = self.helper, None
@@ -381,10 +381,7 @@ class Run(spi.Run):
             self.hb.tick()
             aborted = False
             try:
-                self.helper = self.spawn([self.tool, "serve"])
-                a = self.addrs
-                for prof, p3prof in ((a["prof_halt"], 0), (a["prof_mix"], 1)):
-                    self.profile(prof, p3prof)
+                self.runs()
             except StateChanged:
                 self.log.skip("PIST", "STATE")
                 aborted = True

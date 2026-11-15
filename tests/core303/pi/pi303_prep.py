@@ -15,11 +15,11 @@ from PIL import Image
 
 from bundle import bundle_hash
 from pilog import PiLogWriter
+from spans import GAP
 
 TOOL = "pi303_prep"
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRAME_BYTES = 49152
-GAP = 4                     # equal bytes between differing ones that still merge: under 4
 BUCKETS = (1, 2, 4, 8, 16, 64, 256)
 JPEGLIB = "/usr/include/jpeglib.h"
 

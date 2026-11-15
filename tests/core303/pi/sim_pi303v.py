@@ -65,6 +65,7 @@ class NextV(sp.NextModel):
         self.active = False
         self.bad = 0
         super().__init__(world, lk, script=[], **kw)
+        lk.nrs[0x12], lk.nrs[0x13] = FRONT_BANK, BACK_BANK     # PI303V l2_setup
 
     def _init_regions(self):
         pass
@@ -92,6 +93,7 @@ class NextV(sp.NextModel):
         self.setb(12, seq)
         if cmd == mbx.CMD_END:
             self.mode, self._gen = "exit", self._exit()
+            next(self._gen)             # state 4 in the same step as the END ack (restore_all)
 
 
 class WorldServe:

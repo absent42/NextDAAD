@@ -279,10 +279,10 @@ class PiMailbox(mbx.Mailbox):
         end = self.clock.time() + timeout_s
         while True:
             head = self.head()          # state with the ack: no heartbeat once state != 1
+            if head[mbx.OFF_ACK] == seq:
+                break                   # acked: END's ack and state 4 land ~10 us apart
             if head[mbx.OFF_STATE] != mbx.STATE_READY:
                 raise StateChanged()
-            if head[mbx.OFF_ACK] == seq:
-                break
             if self.clock.time() >= end:
                 raise mbx.MailboxTimeout("no ack for command %d seq %d" % (cmd, seq))
             if idle:
@@ -299,31 +299,125 @@ def pending(head):
                    head[mbx.OFF_ARG1], struct.unpack_from("<I", head, mbx.OFF_ARG32)[0])
 
 
-class Run:
+class PiRun:
+    """Mailbox plumbing shared by the Pi-led tools: gate, ready wait, END, result fetch."""
     RF_TAG = "P3RF"             # result fetch row and skips; pi303_video overrides
     RESULT_NAME = RESULT_NAME
 
-    def __init__(self, link, mbox_phys, scratch_phys, out_dir, bundle, tool, addrs, clock,
-                 plan, core_clk, spi_open):
-        self.link, self.mbox, self.scratch = link, mbox_phys, scratch_phys
+    def __init__(self, link, mbox_phys, out_dir, bundle, tool, addrs, clock, plan, core_clk,
+                 spi_open, step):
+        self.link, self.mbox = link, mbox_phys
         self.out_dir, self.bundle, self.tool = out_dir, bundle, tool
         self.addrs = dict(addrs or {})
         self.clock = clock or lk.RealClock()
-        self.plan = plan or Plan()
+        self.plan = plan
         self.core_clk, self.spi_open = core_clk, spi_open
         self.mb = PiMailbox(link, mbox_phys, self.clock)
         self.hb = mbx.Heartbeat(self.mb, self.clock)
+        self.step = step
+        self.ok = True
+        self.streams = []
+        self.log = None
+
+    def gate(self):
+        if self.mb.state() != mbx.STATE_READY:
+            self.hb.suspend()           # no hb_pi write once a read has shown state != 1
+            raise StateChanged()
+
+    def idle(self, s):
+        end = self.clock.time() + s
+        while self.clock.time() < end:
+            self.hb.tick()
+            self.clock.sleep(POLL_S * 5)
+
+    def wait_ready(self):
+        """Reads only until M303, state 1, leader 0 and a moving hb_next (a live PI303)."""
+        end = self.clock.time() + self.plan.ready_timeout_s
+        while self.clock.time() < end:
+            head = self.mb.head()
+            if head[0:4] == mbx.MAGIC and head[mbx.OFF_STATE] == mbx.STATE_READY \
+                    and head[mbx.OFF_LEADER] == 0:
+                hb0 = struct.unpack_from("<H", head, mbx.OFF_HB_NEXT)[0]
+                t1 = self.clock.time() + HB_NEXT_WAIT_S
+                while self.clock.time() < t1:
+                    self.clock.sleep(0.05)
+                    if self.mb.read_hb_next() != hb0:
+                        return True
+            self.clock.sleep(0.1)
+        return False
+
+    def wait_done(self):
+        end = self.clock.time() + DONE_TIMEOUT_S
+        while self.clock.time() < end:
+            st = self.mb.state()
+            if st in (mbx.STATE_DONE, mbx.STATE_FAILED):
+                return st
+            self.clock.sleep(STATE_POLL_S)
+        return None
+
+    def fetch(self, state):
+        """Read only inside the MAP result region (result_phys_region + result_len_max)."""
+        phys, n = self.mb.result()
+        cap = self.addrs.get("result_len_max", RESULT_LEN_MAX)
+        lo = self.addrs.get("result_phys_region")
+        saved = 0
+        if n == 0:
+            self.log.skip(self.RF_TAG, "NORESULT")
+        elif n > cap or phys + n > lk.SRAM_SIZE or (
+                lo is not None and not (lo <= phys and phys + n <= lo + cap)):
+            self.log.skip(self.RF_TAG, "RANGE")
+        else:
+            data = self.link.read_mem(phys, n, lk.HDR_HZ)
+            with open(os.path.join(self.out_dir, self.RESULT_NAME), "wb") as f:
+                f.write(data)
+            saved = 1
+        self.log.row(self.RF_TAG, state=state, phys=phys, len=n, saved=saved)
+
+    def finish(self, aborted):
+        """END when still the ready leader, then no writes: wait for 2/3 and fetch."""
+        self.step = self.RF_TAG
+        if not aborted:
+            try:
+                head = self.mb.head()
+                if head[mbx.OFF_STATE] == mbx.STATE_READY and head[mbx.OFF_LEADER] == 0:
+                    self.mb.send(mbx.CMD_END, idle=self.hb.tick)
+                else:
+                    self.log.skip(self.RF_TAG, "NOEND")
+                    self.ok = False
+            except StateChanged:
+                self.log.skip("PIST", "STATE")
+                aborted = True
+            except (lk.LinkError, mbx.MailboxError):
+                self.log.skip(self.RF_TAG, "NOEND")
+                self.ok = False
+        self.hb.suspend()
+        try:
+            state = self.wait_done()
+            if state is None:
+                self.log.skip(self.RF_TAG, "TIMEOUT")
+                return 1
+            self.fetch(state)
+        except (lk.LinkError, mbx.MailboxError, OSError):
+            self.log.skip(self.RF_TAG, "LINK")
+            return 1
+        if state == mbx.STATE_FAILED:
+            self.log.skip("PI3S", "STATE3")
+        return 0 if state == mbx.STATE_DONE and self.ok and not aborted else 1
+
+
+class Run(PiRun):
+    def __init__(self, link, mbox_phys, scratch_phys, out_dir, bundle, tool, addrs, clock,
+                 plan, core_clk, spi_open):
+        super().__init__(link, mbox_phys, out_dir, bundle, tool, addrs, clock, plan or Plan(),
+                         core_clk, spi_open, "P3FR")
+        self.scratch = scratch_phys
         self.seed = SEED_BASE
         self.eff, self.merged = {}, {}
         self._last_eff = None
         self.pass_bytes = min(self.plan.pass_bytes, self.addrs.get("scratch_len", 1 << 30))
         self.chunk_bytes = min(self.plan.chunk_bytes, self.addrs.get("scratch_len", 1 << 30))
-        self.step = "P3FR"
         self.ceil = None
-        self.ok = True
         self.work = None
-        self.streams = []
-        self.log = None
 
     # -- plumbing -------------------------------------------------------------------------
 
@@ -332,11 +426,6 @@ class Run:
         s = self.seed
         self.seed = (self.seed + n) & 0xFFFFFFFF
         return s
-
-    def gate(self):
-        if self.mb.state() != mbx.STATE_READY:
-            self.hb.suspend()           # no hb_pi write once a read has shown state != 1
-            raise StateChanged()
 
     def c(self, fn, *args, **kw):
         """One spi303 call: gate and heartbeat around it, its own stop=1 means state != 1."""
@@ -347,12 +436,6 @@ class Run:
             raise StateChanged()
         self.hb.tick()
         return rows
-
-    def idle(self, s):
-        end = self.clock.time() + s
-        while self.clock.time() < end:
-            self.hb.tick()
-            self.clock.sleep(POLL_S * 5)
 
     def pattern(self, seed, n):
         """link.pattern bytes, generated in 4000-byte steps with the heartbeat between."""
@@ -471,22 +554,6 @@ class Run:
         return True
 
     # -- steps ----------------------------------------------------------------------------
-
-    def wait_ready(self):
-        """Reads only until M303, state 1, leader 0 and a moving hb_next (a live PI303)."""
-        end = self.clock.time() + self.plan.ready_timeout_s
-        while self.clock.time() < end:
-            head = self.mb.head()
-            if head[0:4] == mbx.MAGIC and head[mbx.OFF_STATE] == mbx.STATE_READY \
-                    and head[mbx.OFF_LEADER] == 0:
-                hb0 = struct.unpack_from("<H", head, mbx.OFF_HB_NEXT)[0]
-                t1 = self.clock.time() + HB_NEXT_WAIT_S
-                while self.clock.time() < t1:
-                    self.clock.sleep(0.05)
-                    if self.mb.read_hb_next() != hb0:
-                        return True
-            self.clock.sleep(0.1)
-        return False
 
     def framing(self):
         try:
@@ -787,65 +854,7 @@ class Run:
             self.gate()
             self.mb.send(mbx.CMD_STOP, idle=self.hb.tick)
 
-    # -- end ------------------------------------------------------------------------------
-
-    def wait_done(self):
-        end = self.clock.time() + DONE_TIMEOUT_S
-        while self.clock.time() < end:
-            st = self.mb.state()
-            if st in (mbx.STATE_DONE, mbx.STATE_FAILED):
-                return st
-            self.clock.sleep(STATE_POLL_S)
-        return None
-
-    def fetch(self, state):
-        """Read only inside the MAP result region (result_phys_region + result_len_max)."""
-        phys, n = self.mb.result()
-        cap = self.addrs.get("result_len_max", RESULT_LEN_MAX)
-        lo = self.addrs.get("result_phys_region")
-        saved = 0
-        if n == 0:
-            self.log.skip(self.RF_TAG, "NORESULT")
-        elif n > cap or phys + n > lk.SRAM_SIZE or (
-                lo is not None and not (lo <= phys and phys + n <= lo + cap)):
-            self.log.skip(self.RF_TAG, "RANGE")
-        else:
-            data = self.link.read_mem(phys, n, lk.HDR_HZ)
-            with open(os.path.join(self.out_dir, self.RESULT_NAME), "wb") as f:
-                f.write(data)
-            saved = 1
-        self.log.row(self.RF_TAG, state=state, phys=phys, len=n, saved=saved)
-
-    def finish(self, aborted):
-        """END when still the ready leader, then no writes: wait for 2/3 and fetch."""
-        self.step = self.RF_TAG
-        if not aborted:
-            try:
-                head = self.mb.head()
-                if head[mbx.OFF_STATE] == mbx.STATE_READY and head[mbx.OFF_LEADER] == 0:
-                    self.mb.send(mbx.CMD_END, idle=self.hb.tick)
-                else:
-                    self.log.skip(self.RF_TAG, "NOEND")
-                    self.ok = False
-            except StateChanged:
-                self.log.skip("PIST", "STATE")
-                aborted = True
-            except (lk.LinkError, mbx.MailboxError):
-                self.log.skip(self.RF_TAG, "NOEND")
-                self.ok = False
-        self.hb.suspend()
-        try:
-            state = self.wait_done()
-            if state is None:
-                self.log.skip(self.RF_TAG, "TIMEOUT")
-                return 1
-            self.fetch(state)
-        except (lk.LinkError, mbx.MailboxError, OSError):
-            self.log.skip(self.RF_TAG, "LINK")
-            return 1
-        if state == mbx.STATE_FAILED:
-            self.log.skip("PI3S", "STATE3")
-        return 0 if state == mbx.STATE_DONE and self.ok and not aborted else 1
+    # -- run ------------------------------------------------------------------------------
 
     def steps(self):
         self.measure_ladder()
