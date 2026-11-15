@@ -246,13 +246,15 @@ class ServeHelper:
 
     @classmethod
     def spawn(cls, argv):
+        """Parent opens spidev and takes the lock before spawning; own session keeps
+        terminal Ctrl-C and hang-up on the parent, which shuts the child down in order."""
         import subprocess
         return cls(subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    bufsize=0))
+                                    bufsize=0, start_new_session=True))
 
     def _call(self, op, cmd, addr, n, hz, payload, want=None):
         check_hz(hz)
-        req =bytes([op, cmd]) + addr.to_bytes(3, "little") + struct.pack("<HI", n, hz) + payload
+        req = bytes([op, cmd]) + addr.to_bytes(3, "little") + struct.pack("<HI", n, hz) + payload
         try:
             self.proc.stdin.write(req)
             self.proc.stdin.flush()
@@ -316,13 +318,25 @@ class ServeHelper:
         import subprocess
         try:
             wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.proc.terminate()       # its SIGTERM handler restores the spidev settings
+        except BaseException as e:      # timeout or a signal: the child is reaped either way
+            self._reap(wait)
+            if not isinstance(e, subprocess.TimeoutExpired):
+                raise
+
+    def _reap(self, wait):
+        self.proc.terminate()           # its SIGTERM handler restores the spidev settings
+        try:
+            wait(timeout=2)
+            return
+        except BaseException:
+            pass
+        self.proc.kill()
+        while True:
             try:
-                wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
                 wait()
+                return
+            except BaseException:       # killed: the wait is short, keep reaping
+                pass
 
 
 _ACTIVE = set()         # SpidevLinks whose spidev settings are not yet restored
@@ -409,12 +423,15 @@ class SpidevLink(Link):
             return
         self._restored = True
         _ACTIVE.discard(self)
+        spi = self._spi
+        # As spi303 devcfg_restore: only while still ours, never a saved value we set.
         try:
-            self._spi.max_speed_hz = self.spi_max_saved
+            if self.spi_max_saved != MAX_HZ and spi.max_speed_hz == MAX_HZ:
+                spi.max_speed_hz = self.spi_max_saved
         finally:
-            if self._spi.mode != self.spi_mode_saved:
-                self._spi.mode = self.spi_mode_saved
-        self.spi_max_restored = self._spi.max_speed_hz
+            if self.spi_mode_saved != 0 and spi.mode == 0:
+                spi.mode = self.spi_mode_saved
+        self.spi_max_restored = spi.max_speed_hz
 
     def close(self):
         """Restore spidev settings, reap the serve child, then drop the lock."""

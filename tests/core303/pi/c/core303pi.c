@@ -596,14 +596,15 @@ int devcfg_restore(devcfg_t *c)
     int rc = 0;
     if (!c->have || c->done)
         return 0;
-    /* write back only while still ours; an unreadable value is written back anyway */
-    if (c->rd(c->ctx, DEV_HZ, &cur) || cur == MAX_HZ) {
+    /* Write back only while still ours, and never a saved value equal to what we set:
+       a child that read 12M before its parent restored must not undo the parent. */
+    if (c->saved_hz != MAX_HZ && (c->rd(c->ctx, DEV_HZ, &cur) || cur == MAX_HZ)) {
         if (c->wr(c->ctx, DEV_HZ, c->saved_hz))
             rc = -1;
         else
             c->own = 1;
     }
-    if (c->mode_set && (c->rd(c->ctx, DEV_MODE, &cur) || cur == 0) &&
+    if (c->mode_set && c->saved_mode != 0 && (c->rd(c->ctx, DEV_MODE, &cur) || cur == 0) &&
         c->wr(c->ctx, DEV_MODE, c->saved_mode))
         rc = -1;
     c->restored_hz = c->rd(c->ctx, DEV_HZ, &cur) ? -1 : (long)cur;

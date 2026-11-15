@@ -857,6 +857,15 @@ static void test_devcfg_save_restore(void)
     devcfg_restore(&c);
     devcfg_restore(&p);
     CHECK(d.v[DEV_HZ] == 500000);
+
+    /* saved 12 MHz is never written back: a child that read 12M before the parent
+       restored must not undo the parent (shared SIGINT/SIGHUP race) */
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = MAX_HZ;
+    cfg_on(&c, &d);
+    CHECK(devcfg_open(&c) == 0 && c.saved_hz == MAX_HZ && d.nwr == 1);
+    CHECK(devcfg_restore(&c) == 0);
+    CHECK(d.nwr == 1 && c.own == 0 && c.restored_hz == MAX_HZ);
 }
 
 static void test_devcfg_signal(void)

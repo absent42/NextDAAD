@@ -574,6 +574,7 @@ def fake_spidev(monkeypatch, order, max_hz=500000, mode=0, fail_set=False):
         @max_speed_hz.setter
         def max_speed_hz(self, v):
             if fail_set and v == link.MAX_HZ:
+                self._max = v           # applied, then reported as failed
                 raise OSError("set failed")
             order.append(("max", v))
             self._max = v
@@ -642,7 +643,7 @@ def test_spidev_restores_on_open_error(monkeypatch):
     with pytest.raises(OSError):
         lk.open(clock=FakeClock())
     assert order.index(("max", 500000)) < order.index("release")
-    assert lk._locked is False
+    assert lk._locked is False and lk.spi_max_restored == 500000
 
 
 def test_spidev_signal_restores_then_exits(monkeypatch):
@@ -658,6 +659,79 @@ def test_spidev_signal_restores_then_exits(monkeypatch):
     assert order == [("max", 500000)] and lk not in link._ACTIVE
     lk.close()                       # the SystemExit unwinds through close: no second write
     assert order == [("max", 500000), "close", "release"]
+
+
+def test_spidev_restore_compares_first(monkeypatch):
+    # someone else changed the max while we ran: leave it
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=500000)
+    lk = link.SpidevLink(lock=OrderLock(order))
+    lk.open(clock=FakeClock())
+    lk._spi._max = 777
+    del order[:]
+    lk.close()
+    assert order == ["close", "release"] and lk.spi_max_restored == 777
+    # saved 12 MHz (a link opened under another holder) is never written back
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=link.MAX_HZ, mode=0)
+    lk = link.SpidevLink(lock=OrderLock(order))
+    lk.open(clock=FakeClock())
+    del order[:]
+    lk.close()
+    assert order == ["close", "release"]
+    # mode put back only if we set it and it is still ours
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=500000, mode=2)
+    lk = link.SpidevLink(lock=OrderLock(order))
+    lk.open(clock=FakeClock())
+    lk._spi._mode = 1
+    del order[:]
+    lk.close()
+    assert order == [("max", 500000), "close", "release"]
+
+
+def test_serve_close_reaps_when_interrupted():
+    order = []
+
+    class Proc(OrderProc):
+        def wait(self, timeout=None):
+            order.append(("wait", timeout))
+            if timeout == 5:
+                raise KeyboardInterrupt
+
+        def terminate(self):
+            order.append("term")
+
+        def kill(self):
+            order.append("kill")
+    lk = link.SpidevLink(lock=OrderLock(order), helper=link.ServeHelper(Proc(order)))
+    lk._locked = True
+    with pytest.raises(KeyboardInterrupt):
+        lk.close()
+    assert order == ["stdin", ("wait", 5), "term", ("wait", 2), "release"]
+
+    del order[:]
+
+    class Stubborn(Proc):
+        def wait(self, timeout=None):
+            order.append(("wait", timeout))
+            if timeout is not None:
+                raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        link.ServeHelper(Stubborn(order)).close()
+    assert order == ["stdin", ("wait", 5), "term", ("wait", 2), "kill", ("wait", None)]
+
+
+def test_serve_spawn_new_session(monkeypatch):
+    import subprocess
+    seen = {}
+
+    def popen(argv, **kw):
+        seen.update(kw)
+        return "proc"
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    assert link.ServeHelper.spawn(["spi303", "serve"]).proc == "proc"
+    assert seen["start_new_session"] is True and seen["bufsize"] == 0
 
 
 def test_install_handlers_keeps_ignored_signals(monkeypatch):
