@@ -100,6 +100,31 @@ def test_prep_no_jpeg_header_skips(host_exe, tmp_path):
     assert rc == 0
 
 
+def test_jpeg_file_read_outside_timer(tmp_path, monkeypatch):
+    fdir, out = tmp_path / "frames", tmp_path / "out"
+    out.mkdir()
+    frames.make(fdir, n=3)
+    events = []
+    real = pi303_prep._read
+    monkeypatch.setattr(pi303_prep, "_read", lambda p: (events.append("read"), real(p))[1])
+
+    def clock():
+        events.append("clk")
+        return len(events)
+    pi303_prep.main(str(fdir), str(out), BUNDLE, c_prep="", clock=clock)
+    assert events[:9] == ["read", "clk", "clk"] * 3
+
+
+def test_prep_failed_c_tool_logs_cfail(tmp_path):
+    fdir, out = tmp_path / "frames", tmp_path / "out"
+    out.mkdir()
+    frames.make(fdir, n=2)
+    pi303_prep.main(str(fdir), str(out), BUNDLE, c_prep=str(tmp_path / "missing.exe"))
+    log = parse.parse_pilog(out / "PREP.LOG")
+    assert ("P2JD", "CFAIL") in [tuple(s) for s in log.skips]
+    assert ("P2CV", "CFAIL") in [tuple(s) for s in log.skips]
+
+
 def test_prep_without_c_tool(tmp_path):
     fdir, out = tmp_path / "frames", tmp_path / "out"
     out.mkdir()

@@ -83,6 +83,7 @@ static int jdecode(const uint8_t *jpg, size_t len, uint8_t *rgb)
 {
     struct jpeg_decompress_struct ci;
     struct jerr je;
+    memset(&ci, 0, sizeof ci);
     ci.err = jpeg_std_error(&je.pub);
     je.pub.error_exit = jfail;
     if (setjmp(je.jb)) {

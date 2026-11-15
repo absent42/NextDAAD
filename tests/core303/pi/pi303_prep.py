@@ -2,6 +2,7 @@
 Needs no Next and no SPI. Writes PREP.LOG; the C rows (impl=1) come from c/prep303.c.
 """
 import argparse
+import io
 import os
 import shutil
 import subprocess
@@ -67,7 +68,10 @@ def build_c(work):
 
 def _c_rows(exe, fdir, rdir, n):
     """Run prep303; returns (rows, skips) parsed from its stdout, or None on failure."""
-    r = subprocess.run([exe, fdir, rdir, str(n)], capture_output=True, text=True)
+    try:
+        r = subprocess.run([exe, fdir, rdir, str(n)], capture_output=True, text=True)
+    except OSError:
+        return None
     if r.returncode != 0:
         return None
     rows, skips = [], []
@@ -81,7 +85,12 @@ def _c_rows(exe, fdir, rdir, n):
     return rows, skips
 
 
-def main(frames_dir, out_dir, bundle, c_prep=None):
+def _read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def main(frames_dir, out_dir, bundle, c_prep=None, clock=time.perf_counter_ns):
     """c_prep: path of a built prep303; None builds it with gcc; "" runs without it."""
     names = sorted(f[:-4] for f in os.listdir(frames_dir) if f.endswith(".jpg"))
     n = len(names)
@@ -91,26 +100,26 @@ def main(frames_dir, out_dir, bundle, c_prep=None):
         t_jd = 0
         decoded = []
         for nm in names:
-            t0 = time.perf_counter_ns()
-            with Image.open(os.path.join(frames_dir, nm + ".jpg")) as im:
+            data = _read(os.path.join(frames_dir, nm + ".jpg"))    # file I/O outside the timer
+            t0 = clock()
+            with Image.open(io.BytesIO(data)) as im:
                 im.load()
                 rgb = im.convert("RGB")
-            t_jd += time.perf_counter_ns() - t0
+            t_jd += clock() - t0
             decoded.append(np.asarray(rgb))
         log.row("P2JD", ns=t_jd, frames=n, impl=0)
-        t0 = time.perf_counter_ns()
+        t0 = clock()
         conv = [convert(a) for a in decoded]
-        log.row("P2CV", ns=time.perf_counter_ns() - t0, frames=n, impl=0)
-        t0 = time.perf_counter_ns()
+        log.row("P2CV", ns=clock() - t0, frames=n, impl=0)
+        t0 = clock()
         lens = [span_lens(conv[i - 1], conv[i]) for i in range(1, n)]
-        t_sp = time.perf_counter_ns() - t0
+        t_sp = clock() - t0
         spans = sum(int(x.size) for x in lens)
         log.row("P2SP", ns=t_sp, frames=max(n - 1, 0), impl=0, spans=spans)
-        t0 = time.perf_counter_ns()
+        t0 = clock()
         for nm in names:
-            with open(os.path.join(frames_dir, nm + ".raw"), "rb") as f:
-                f.read()
-        log.row("P2RD", ns=time.perf_counter_ns() - t0, frames=n)
+            _read(os.path.join(frames_dir, nm + ".raw"))
+        log.row("P2RD", ns=clock() - t0, frames=n)
         hist = dict(("b%d" % b, 0) for b in BUCKETS)
         for x in lens:
             for v in x.tolist():
@@ -125,9 +134,10 @@ def main(frames_dir, out_dir, bundle, c_prep=None):
                     f.write(a.tobytes())
             res = _c_rows(exe, frames_dir, work, n)
         if res is None:
-            log.skip("P2JD", "NOHDR" if not os.path.isfile(JPEGLIB) and not exe else "NOCC")
-            log.skip("P2CV", "NOCC")
-            log.skip("P2SP", "NOCC")
+            why = "CFAIL" if exe else "NOCC"       # a C tool that exists but failed
+            log.skip("P2JD", why if exe or os.path.isfile(JPEGLIB) else "NOHDR")
+            log.skip("P2CV", why)
+            log.skip("P2SP", why)
         else:
             for tag, kv in res[0]:
                 log.row(tag, **kv)
