@@ -568,6 +568,104 @@ int run_spans(link303_t *l, uint8_t wcmd, uint32_t base, uint32_t count, const u
     return 0;
 }
 
+devcfg_t *devcfg_active;
+void (*devcfg_emit)(const char *s, size_t n);
+void (*devcfg_exit)(int code);
+
+int devcfg_open(devcfg_t *c)
+{
+    uint32_t hz, mode;
+    c->have = c->mode_set = c->done = c->own = 0;
+    c->restored_hz = c->restored_mode = -1;
+    if (c->rd(c->ctx, DEV_HZ, &hz) || c->rd(c->ctx, DEV_MODE, &mode))
+        return -1;              /* nothing changed */
+    c->saved_hz = hz;
+    c->saved_mode = mode;
+    c->have = 1;
+    if (mode != 0) {
+        c->mode_set = 1;
+        if (c->wr(c->ctx, DEV_MODE, 0))
+            return -1;
+    }
+    return c->wr(c->ctx, DEV_HZ, MAX_HZ) ? -1 : 0;
+}
+
+int devcfg_restore(devcfg_t *c)
+{
+    uint32_t cur;
+    int rc = 0;
+    if (!c->have || c->done)
+        return 0;
+    /* write back only while still ours; an unreadable value is written back anyway */
+    if (c->rd(c->ctx, DEV_HZ, &cur) || cur == MAX_HZ) {
+        if (c->wr(c->ctx, DEV_HZ, c->saved_hz))
+            rc = -1;
+        else
+            c->own = 1;
+    }
+    if (c->mode_set && (c->rd(c->ctx, DEV_MODE, &cur) || cur == 0) &&
+        c->wr(c->ctx, DEV_MODE, c->saved_mode))
+        rc = -1;
+    c->restored_hz = c->rd(c->ctx, DEV_HZ, &cur) ? -1 : (long)cur;
+    c->restored_mode = c->rd(c->ctx, DEV_MODE, &cur) ? -1 : (long)cur;
+    c->done = 1;
+    return rc;
+}
+
+static size_t put_str(char *b, size_t at, size_t cap, const char *s)
+{
+    while (*s && at + 1 < cap)
+        b[at++] = *s++;
+    return at;
+}
+
+static size_t put_num(char *b, size_t at, size_t cap, long v)
+{
+    char t[24];
+    int n = 0;
+    unsigned long u = v < 0 ? 0ul - (unsigned long)v : (unsigned long)v;
+    if (v < 0)
+        at = put_str(b, at, cap, "-");
+    do {
+        t[n++] = (char)('0' + u % 10);
+        u /= 10;
+    } while (u);
+    while (n && at + 1 < cap)
+        b[at++] = t[--n];
+    return at;
+}
+
+size_t devcfg_row(const devcfg_t *c, char *b, size_t cap)
+{
+    size_t at = put_str(b, 0, cap, "C3MX saved=");
+    at = put_num(b, at, cap, (long)c->saved_hz);
+    at = put_str(b, at, cap, " restored=");
+    at = put_num(b, at, cap, c->restored_hz);
+    at = put_str(b, at, cap, " own=");
+    at = put_num(b, at, cap, c->own);
+    at = put_str(b, at, cap, " mode_saved=");
+    at = put_num(b, at, cap, (long)c->saved_mode);
+    at = put_str(b, at, cap, " mode_restored=");
+    at = put_num(b, at, cap, c->restored_mode);
+    at = put_str(b, at, cap, "\n");
+    if (cap)
+        b[at] = 0;
+    return at;
+}
+
+void devcfg_on_signal(int sig)
+{
+    char row[160];
+    devcfg_t *c = devcfg_active;
+    if (c && c->have && !c->done) {
+        devcfg_restore(c);
+        if (devcfg_emit)
+            devcfg_emit(row, devcfg_row(c, row, sizeof row));
+    }
+    if (devcfg_exit)
+        devcfg_exit(128 + sig);
+}
+
 void srv_parse_head(const uint8_t b[SRV_HEAD], srv_req_t *r)
 {
     r->op = b[0];
@@ -705,7 +803,20 @@ int sim_init(sim303_t *s)
     memset(s, 0, sizeof *s);
     s->sram = calloc(SRAM_SIZE, 1);
     s->loss_tx = s->loss_at = s->state_after = -1;
+    s->dev[DEV_HZ] = 500000;
     return s->sram ? 0 : E_MEM;
+}
+
+int sim_dev_rd(void *ctx, int what, uint32_t *v)
+{
+    *v = ((sim303_t *)ctx)->dev[what & 1];
+    return 0;
+}
+
+int sim_dev_wr(void *ctx, int what, uint32_t v)
+{
+    ((sim303_t *)ctx)->dev[what & 1] = v;
+    return 0;
 }
 
 void sim_free(sim303_t *s)

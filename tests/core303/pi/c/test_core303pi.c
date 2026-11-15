@@ -756,6 +756,134 @@ static void test_spans_bram_alias(void)
     sim_free(&s);
 }
 
+/* Fake spidev settings shared by every devcfg_t on it, like one /dev/spidev0.0. */
+typedef struct { uint32_t v[2]; int fail_wr_hz, nwr; uint32_t wr[16][2]; } fdev_t;
+
+static int fdev_rd(void *ctx, int what, uint32_t *v)
+{
+    *v = ((fdev_t *)ctx)->v[what];
+    return 0;
+}
+
+static int fdev_wr(void *ctx, int what, uint32_t v)
+{
+    fdev_t *d = ctx;
+    if (what == DEV_HZ && d->fail_wr_hz)
+        return -1;
+    if (d->nwr < 16) {
+        d->wr[d->nwr][0] = (uint32_t)what;
+        d->wr[d->nwr][1] = v;
+    }
+    d->nwr++;
+    d->v[what] = v;
+    return 0;
+}
+
+static void cfg_on(devcfg_t *c, fdev_t *d)
+{
+    memset(c, 0, sizeof *c);
+    c->rd = fdev_rd;
+    c->wr = fdev_wr;
+    c->ctx = d;
+}
+
+static char emitted[256];
+static int exit_code;
+
+static void cap_emit(const char *s, size_t n)
+{
+    memcpy(emitted, s, n < sizeof emitted - 1 ? n : sizeof emitted - 1);
+    emitted[n < sizeof emitted - 1 ? n : sizeof emitted - 1] = 0;
+}
+
+static void cap_exit(int code)
+{
+    exit_code = code;
+}
+
+static void test_devcfg_save_restore(void)
+{
+    fdev_t d;
+    devcfg_t c, p;
+    char row[160];
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = 500000;
+    cfg_on(&c, &d);
+    CHECK(devcfg_open(&c) == 0);
+    CHECK(c.have && c.saved_hz == 500000 && c.saved_mode == 0);
+    CHECK(d.v[DEV_HZ] == MAX_HZ && d.nwr == 1);     /* mode already 0: untouched */
+    CHECK(devcfg_restore(&c) == 0);                 /* normal exit */
+    CHECK(d.v[DEV_HZ] == 500000 && c.own == 1 && c.restored_hz == 500000);
+    devcfg_row(&c, row, sizeof row);
+    CHECK(strcmp(row, "C3MX saved=500000 restored=500000 own=1 mode_saved=0 "
+                      "mode_restored=0\n") == 0);
+    CHECK(devcfg_restore(&c) == 0 && d.nwr == 2);   /* once only */
+
+    /* mode 3 is set to 0 for the run and put back */
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = 125000000;
+    d.v[DEV_MODE] = 3;
+    cfg_on(&c, &d);
+    CHECK(devcfg_open(&c) == 0 && d.v[DEV_MODE] == 0 && d.v[DEV_HZ] == MAX_HZ);
+    devcfg_restore(&c);
+    CHECK(d.v[DEV_MODE] == 3 && d.v[DEV_HZ] == 125000000 && c.restored_mode == 3);
+
+    /* error exit: the speed write fails after the mode was changed */
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = 500000;
+    d.v[DEV_MODE] = 1;
+    d.fail_wr_hz = 1;
+    cfg_on(&c, &d);
+    CHECK(devcfg_open(&c) != 0 && c.have);
+    devcfg_restore(&c);
+    CHECK(d.v[DEV_MODE] == 1 && d.v[DEV_HZ] == 500000);
+
+    /* nested: parent then child on one device; parent restores first */
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = 500000;
+    cfg_on(&p, &d);
+    cfg_on(&c, &d);
+    CHECK(devcfg_open(&p) == 0 && devcfg_open(&c) == 0 && c.saved_hz == MAX_HZ);
+    devcfg_restore(&p);
+    devcfg_restore(&c);
+    CHECK(d.v[DEV_HZ] == 500000 && c.own == 0 && c.restored_hz == 500000);
+    /* child first (LIFO) also ends at the original value */
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = 500000;
+    cfg_on(&p, &d);
+    cfg_on(&c, &d);
+    devcfg_open(&p);
+    devcfg_open(&c);
+    devcfg_restore(&c);
+    devcfg_restore(&p);
+    CHECK(d.v[DEV_HZ] == 500000);
+}
+
+static void test_devcfg_signal(void)
+{
+    fdev_t d;
+    devcfg_t c;
+    memset(&d, 0, sizeof d);
+    d.v[DEV_HZ] = 500000;
+    cfg_on(&c, &d);
+    CHECK(devcfg_open(&c) == 0);
+    devcfg_active = &c;
+    devcfg_emit = cap_emit;
+    devcfg_exit = cap_exit;
+    emitted[0] = 0;
+    exit_code = 0;
+    devcfg_on_signal(15);
+    CHECK(d.v[DEV_HZ] == 500000 && exit_code == 128 + 15);
+    CHECK(strcmp(emitted, "C3MX saved=500000 restored=500000 own=1 mode_saved=0 "
+                          "mode_restored=0\n") == 0);
+    emitted[0] = 0;
+    devcfg_on_signal(13);                           /* already restored: no second row */
+    CHECK(emitted[0] == 0 && exit_code == 128 + 13);
+    devcfg_active = NULL;
+    devcfg_emit = NULL;
+    devcfg_exit = NULL;
+}
+
 static int hexval(const char *s, uint32_t *v)
 {
     char *e;
@@ -817,6 +945,8 @@ int main(int argc, char **argv)
     test_xfer_guard();
     test_smoke_eval();
     test_spans_bram_alias();
+    test_devcfg_save_restore();
+    test_devcfg_signal();
     if (fails) {
         printf("FAILED %d of %d\n", fails, checks);
         return 1;

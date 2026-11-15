@@ -122,6 +122,31 @@ int run_spans(link303_t *l, uint8_t wcmd, uint32_t base, uint32_t count, const u
               uint64_t *ns);
 void err_row(FILE *out, int code, int err, long arg);
 
+/* Shared spidev settings (max speed, mode): saved at open and written back at exit,
+   only if still at the value this process set, so a nested serve child cannot undo
+   its parent's restore. The parent holds the bus lock throughout. */
+#define DEV_HZ 0
+#define DEV_MODE 1
+
+typedef struct {
+    int (*rd)(void *ctx, int what, uint32_t *v);    /* 0 = ok */
+    int (*wr)(void *ctx, int what, uint32_t v);
+    void *ctx;
+    uint32_t saved_hz, saved_mode;
+    int have, mode_set, done, own;
+    long restored_hz, restored_mode;
+} devcfg_t;
+
+int devcfg_open(devcfg_t *c);
+int devcfg_restore(devcfg_t *c);
+/* C3MX row; formats without stdio so the signal path can use it. */
+size_t devcfg_row(const devcfg_t *c, char *buf, size_t cap);
+extern devcfg_t *devcfg_active;
+extern void (*devcfg_emit)(const char *s, size_t n);
+extern void (*devcfg_exit)(int code);
+/* Signal handler: restore, emit the row, then devcfg_exit(128 + sig). */
+void devcfg_on_signal(int sig);
+
 typedef struct {
     int (*read)(void *ctx, uint8_t *buf, size_t n);         /* bytes read, < n at EOF */
     int (*write)(void *ctx, const uint8_t *buf, size_t n);  /* 0 = ok */
@@ -145,11 +170,14 @@ typedef struct {
     uint64_t t_ns, step_ns;     /* fake clock: advances step_ns per message */
     long state_after;           /* set state 3 at state_mbox after this many messages */
     uint32_t state_mbox;
+    uint32_t dev[2];            /* fake spidev settings: DEV_HZ 500000, DEV_MODE 0 */
 } sim303_t;
 
 int sim_init(sim303_t *s);
 void sim_free(sim303_t *s);
 int sim_xfer(void *ctx, struct xfer_desc *d, int n);
 uint64_t sim_now(void *ctx);
+int sim_dev_rd(void *ctx, int what, uint32_t *v);
+int sim_dev_wr(void *ctx, int what, uint32_t v);
 
 #endif

@@ -311,8 +311,60 @@ class ServeHelper:
         except Exception:
             pass
         wait = getattr(self.proc, "wait", None)
-        if wait is not None:
+        if wait is None:
+            return
+        import subprocess
+        try:
             wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.proc.terminate()       # its SIGTERM handler restores the spidev settings
+            try:
+                wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                wait()
+
+
+_ACTIVE = set()         # SpidevLinks whose spidev settings are not yet restored
+_HANDLERS = False
+_PREV = {}
+
+
+def _restore_all():
+    for lk in list(_ACTIVE):
+        lk._restore()
+
+
+def _on_signal(signum, frame):
+    """Restore while the lock is still held, then hand on to the previous handler."""
+    _restore_all()
+    prev = _PREV.get(signum)
+    if callable(prev):
+        prev(signum, frame)
+    raise SystemExit(128 + signum)
+
+
+def _install_handlers(sigmod=None):
+    global _HANDLERS
+    if _HANDLERS:
+        return
+    _HANDLERS = True
+    import atexit
+    if sigmod is None:
+        import signal as sigmod
+    atexit.register(_restore_all)
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        sig = getattr(sigmod, name, None)
+        if sig is None:
+            continue
+        try:
+            prev = sigmod.getsignal(sig)
+            if prev == sigmod.SIG_IGN:      # ignored on purpose (nohup): leave it
+                continue
+            sigmod.signal(sig, _on_signal)
+            _PREV[sig] = prev
+        except (ValueError, OSError):
+            pass                            # not the main thread
 
 
 class SpidevLink(Link):
@@ -326,6 +378,8 @@ class SpidevLink(Link):
         self.py_ioctl = py_ioctl
         self._spi = None
         self._locked = False
+        self.spi_max_saved = self.spi_mode_saved = self.spi_max_restored = None
+        self._restored = True
 
     def open(self, clock=None):
         clock = clock or RealClock()
@@ -336,20 +390,43 @@ class SpidevLink(Link):
             import spidev
             self._spi = spidev.SpiDev()
             self._spi.open(self.bus, self.dev)
-            self._spi.mode = 0
+            # spidev settings are per device and outlive us: save, then restore in close()
+            self.spi_max_saved = self._spi.max_speed_hz
+            self.spi_mode_saved = self._spi.mode
+            self._restored = False
+            _ACTIVE.add(self)
+            _install_handlers()
+            if self.spi_mode_saved != 0:
+                self._spi.mode = 0
             self._spi.max_speed_hz = MAX_HZ     # every transfer below passes its own speed
         except BaseException:
             self.close()
             raise
         return self
 
-    def close(self):
+    def _restore(self):
+        if self._restored or self._spi is None:
+            return
+        self._restored = True
+        _ACTIVE.discard(self)
         try:
-            if self.helper is not None:
-                self.helper.close()     # reap the serve child before dropping the lock
-            if self._spi is not None:
-                self._spi.close()
-                self._spi = None
+            self._spi.max_speed_hz = self.spi_max_saved
+        finally:
+            if self._spi.mode != self.spi_mode_saved:
+                self._spi.mode = self.spi_mode_saved
+        self.spi_max_restored = self._spi.max_speed_hz
+
+    def close(self):
+        """Restore spidev settings, reap the serve child, then drop the lock."""
+        try:
+            try:
+                self._restore()
+            finally:
+                if self.helper is not None:
+                    self.helper.close()
+                if self._spi is not None:
+                    self._spi.close()
+                    self._spi = None
         finally:
             if self._locked:
                 self.lock.release()

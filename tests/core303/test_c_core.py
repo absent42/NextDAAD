@@ -89,7 +89,7 @@ def test_spi303_sim_rows_parse(host, tmp_path):
     assert [f["seed"] for f in wp] == [5, 6]
     assert (wp[0]["bad_tx"], wp[0]["first_tx"], wp[0]["first"], wp[0]["shift"]) == (1, 1, 100, 1)
     assert wp[1]["mis"] == 0 and wp[1]["first_tx"] == -1
-    assert rows[-1].tag == "C3EN" and rows[-1].fields["passes"] == 2
+    assert [x.tag for x in rows[-2:]] == ["C3EN", "C3MX"] and rows[-2].fields["passes"] == 2
 
     r = run(exe, "--sim", "bram", "7", FAST, "3", "11")
     assert r.returncode == 0
@@ -124,7 +124,30 @@ def test_spi303_bounds_rejected(host, tmp_path):
         r = run(exe, "--sim", *args)
         assert r.returncode not in (0, 1), args
         rows = pilog_rows(tmp_path, r.stdout.decode("ascii"))
-        assert [x.tag for x in rows] == ["C3ER"], args
+        assert rows[0].tag == "C3ER", args
+        assert [x.tag for x in rows[1:]] in ([], ["C3MX"]), args   # C3MX once opened
+
+
+def test_spi303_restores_device_settings_on_every_exit(host, tmp_path):
+    """--sim backs devcfg with a fake device at 500 kHz; every exit after open logs C3MX."""
+    exe = host / "spi303.exe"
+    cases = [(("write", "0x1000", "100", FAST, "100", "1"), 0),          # normal
+             (("write", "0x1FFFFF", "2", FAST, "100", "1"), 2),          # error after open
+             (("bram", "6", FAST, "1", "1"), 2),
+             (("selftest", "0x30000"), 0)]
+    for args, code in cases:
+        r = run(exe, "--sim", *args)
+        assert r.returncode == code, args
+        rows = pilog_rows(tmp_path, r.stdout.decode("ascii"))
+        assert rows[-1].tag == "C3MX", args
+        f = rows[-1].fields
+        assert (f["saved"], f["restored"], f["own"]) == (500000, 500000, 1), args
+    r = run(exe, "--sim", "serve", stdin=b"")                          # serve EOF
+    assert r.returncode == 0 and r.stdout == b""
+    assert pilog_rows(tmp_path, r.stderr.decode("ascii"))[-1].fields["restored"] == 500000
+    for args in (("--passes", "0", "write"), ("--hb", "0x1FFFFF", "write")):   # before open
+        r = run(exe, "--sim", *args)
+        assert r.returncode == 2 and b"C3MX" not in r.stdout + r.stderr
 
 
 def test_serve_sim_matches_servehelper(host):
@@ -174,7 +197,7 @@ def test_tags_registered():
     src = "".join((CDIR / f).read_text() for f in ("spi303.c", "core303pi.c"))
     emitted = set(re.findall(r'"((?:C3|P2)[A-Z0-9]{2})[ "]', src))
     assert {"C3WP", "C3BP", "C3RP", "C3TX", "C3EN", "C3HB", "C3SM", "C3ST", "C3ER",
-            "P2SM"} <= emitted
+            "C3MX", "P2SM"} <= emitted
     assert emitted <= set(tags.PI_TAGS)
 
 
@@ -190,7 +213,11 @@ def test_spidev_struct_offsets_pinned():
     for frag in ("sizeof(struct spi_ioc_transfer) == 32",
                  "offsetof(struct spi_ioc_transfer, len) == 16",
                  "offsetof(struct spi_ioc_transfer, speed_hz) == 20",
-                 "uint32_t hz = MAX_HZ;",          # device max = ladder top (core clamps)
+                 "SPI_IOC_RD_MAX_SPEED_HZ",        # saved before the 12 MHz set
+                 "return devcfg_open(c);",
+                 "{SIGINT, SIGTERM, SIGHUP, SIGPIPE}",
+                 "devcfg_exit = _exit;",
+                 "atexit(finish);",
                  "if (xfer_guard(d, n))",          # no speed 0, header at 2 MHz
                  "P2SM ok=%d ns_lo="):
         assert frag in src

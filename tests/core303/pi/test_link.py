@@ -555,6 +555,145 @@ def test_rate_upper_bound():
     assert Spi.calls == [link.HDR_HZ]
 
 
+def fake_spidev(monkeypatch, order, max_hz=500000, mode=0, fail_set=False):
+    """Installs a fake spidev module; every settings write is logged into order."""
+    import sys
+    import types
+
+    class SpiDev:
+        def __init__(self):
+            self._max, self._mode = max_hz, mode
+
+        def open(self, bus, dev):
+            order.append("open")
+
+        @property
+        def max_speed_hz(self):
+            return self._max
+
+        @max_speed_hz.setter
+        def max_speed_hz(self, v):
+            if fail_set and v == link.MAX_HZ:
+                raise OSError("set failed")
+            order.append(("max", v))
+            self._max = v
+
+        @property
+        def mode(self):
+            return self._mode
+
+        @mode.setter
+        def mode(self, v):
+            order.append(("mode", v))
+            self._mode = v
+
+        def close(self):
+            order.append("close")
+    monkeypatch.setitem(sys.modules, "spidev", types.SimpleNamespace(SpiDev=SpiDev))
+    monkeypatch.setattr(link, "_install_handlers", lambda: order.append("handlers"))
+
+
+class OrderLock(link.LockProvider):
+    def __init__(self, order):
+        self.order = order
+
+    def try_lock(self):
+        self.order.append("lock")
+        return True
+
+    def release(self):
+        self.order.append("release")
+
+
+class OrderProc:
+    def __init__(self, order):
+        self.order = order
+        outer = self
+
+        class Stdin:
+            @staticmethod
+            def close():
+                outer.order.append("stdin")
+        self.stdin = Stdin()
+
+    def wait(self, timeout=None):
+        self.order.append("wait")
+
+
+def test_spidev_close_restores_before_unlock(monkeypatch):
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=500000, mode=3)
+    lk = link.SpidevLink(lock=OrderLock(order), helper=link.ServeHelper(OrderProc(order)))
+    lk.open(clock=FakeClock())
+    assert (lk.spi_max_saved, lk.spi_mode_saved) == (500000, 3)
+    assert order == ["lock", "open", "handlers", ("mode", 0), ("max", link.MAX_HZ)]
+    del order[:]
+    lk.close()
+    assert order == [("max", 500000), ("mode", 3), "stdin", "wait", "close", "release"]
+    assert lk.spi_max_restored == 500000
+    lk.close()                       # idempotent: no second restore, no second release
+    assert order.count(("max", 500000)) == 1 and order.count("release") == 1
+
+
+def test_spidev_restores_on_open_error(monkeypatch):
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=500000, fail_set=True)
+    lk = link.SpidevLink(lock=OrderLock(order))
+    with pytest.raises(OSError):
+        lk.open(clock=FakeClock())
+    assert order.index(("max", 500000)) < order.index("release")
+    assert lk._locked is False
+
+
+def test_spidev_signal_restores_then_exits(monkeypatch):
+    order = []
+    fake_spidev(monkeypatch, order, max_hz=500000)
+    lk = link.SpidevLink(lock=OrderLock(order))
+    lk.open(clock=FakeClock())
+    assert lk in link._ACTIVE
+    del order[:]
+    with pytest.raises(SystemExit) as e:
+        link._on_signal(15, None)
+    assert e.value.code == 128 + 15
+    assert order == [("max", 500000)] and lk not in link._ACTIVE
+    lk.close()                       # the SystemExit unwinds through close: no second write
+    assert order == [("max", 500000), "close", "release"]
+
+
+def test_install_handlers_keeps_ignored_signals(monkeypatch):
+    import types
+    installed = []
+    fake = types.SimpleNamespace(SIGINT=2, SIGTERM=15, SIGHUP=1, SIG_IGN="ign",
+                                 getsignal=lambda s: "ign" if s == 1 else None,
+                                 signal=lambda s, h: installed.append(s))
+    regs = []
+    monkeypatch.setattr(link, "_HANDLERS", False)
+    monkeypatch.setattr("atexit.register", lambda f: regs.append(f))
+    link._install_handlers(sigmod=fake)
+    assert sorted(installed) == [2, 15] and regs == [link._restore_all]
+    link._install_handlers(sigmod=fake)
+    assert sorted(installed) == [2, 15]
+
+
+def test_serve_close_escalates_on_timeout():
+    import subprocess
+    order = []
+
+    class Hung(OrderProc):
+        def wait(self, timeout=None):
+            order.append(("wait", timeout))
+            if len([o for o in order if isinstance(o, tuple)]) < 3:
+                raise subprocess.TimeoutExpired("spi303", timeout)
+
+        def terminate(self):
+            order.append("term")
+
+        def kill(self):
+            order.append("kill")
+    link.ServeHelper(Hung(order)).close()
+    assert order == ["stdin", ("wait", 5), "term", ("wait", 2), "kill", ("wait", None)]
+
+
 def test_spidev_link_split_rate_via_helper():
     backend = sim.SimLink()
     h = link.ServeHelper(FakeServe(backend))

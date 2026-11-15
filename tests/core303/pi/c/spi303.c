@@ -16,6 +16,7 @@
 #ifdef __linux__
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
@@ -98,20 +99,62 @@ static int spi_xfer(void *ctx, struct xfer_desc *d, int n)
     return spi_message(d, n) == (int)total ? 0 : -1;
 }
 
-/* Mode 0, 8 bits, device max at the ladder top: the SPI core clamps each
-   transfer's speed_hz to it. Every transfer carries its own speed (xfer_guard). */
-static int spi_open(const char *dev)
+static int dev_rd(void *ctx, int what, uint32_t *v)
 {
-    uint8_t mode = SPI_MODE_0, bits = 8;
-    uint32_t hz = MAX_HZ;
+    uint8_t m;
+    (void)ctx;
+    if (what == DEV_HZ)
+        return ioctl(spi_fd, SPI_IOC_RD_MAX_SPEED_HZ, v) < 0 ? -1 : 0;
+    if (ioctl(spi_fd, SPI_IOC_RD_MODE, &m) < 0)
+        return -1;
+    *v = m;
+    return 0;
+}
+
+static int dev_wr(void *ctx, int what, uint32_t v)
+{
+    uint8_t m = (uint8_t)v;
+    (void)ctx;
+    if (what == DEV_HZ)
+        return ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &v) < 0 ? -1 : 0;
+    return ioctl(spi_fd, SPI_IOC_WR_MODE, &m) < 0 ? -1 : 0;
+}
+
+/* Device max to the ladder top (the SPI core clamps each transfer's speed_hz to it),
+   mode 0; both saved first and restored at exit (devcfg). Bits go per transfer. */
+static int spi_open(const char *dev, devcfg_t *c)
+{
     spi_fd = open(dev, O_RDWR);
     if (spi_fd < 0)
         return -1;
-    if (ioctl(spi_fd, SPI_IOC_WR_MODE, &mode) < 0 ||
-        ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
-        ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &hz) < 0)
-        return -1;
-    return 0;
+    c->rd = dev_rd;
+    c->wr = dev_wr;
+    c->ctx = NULL;
+    return devcfg_open(c);
+}
+
+static int err_fd = 1;
+
+static void sig_emit(const char *s, size_t n)
+{
+    ssize_t k = write(err_fd, s, n);
+    (void)k;
+}
+
+/* Restore-then-_exit on INT, TERM, HUP, PIPE; dispositions inherited as ignored stay. */
+static void install_signals(void)
+{
+    static const int sigs[4] = {SIGINT, SIGTERM, SIGHUP, SIGPIPE};
+    struct sigaction sa, old;
+    int i;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = devcfg_on_signal;
+    sigfillset(&sa.sa_mask);
+    devcfg_emit = sig_emit;
+    devcfg_exit = _exit;
+    for (i = 0; i < 4; i++)
+        if (sigaction(sigs[i], NULL, &old) == 0 && old.sa_handler != SIG_IGN)
+            sigaction(sigs[i], &sa, NULL);
 }
 
 /* stream stops when the parent closes our stdin; stray input is discarded. */
@@ -286,22 +329,16 @@ static int fail(int code, int err, long arg)
     return 2;
 }
 
-int main(int argc, char **argv)
+static devcfg_t cfg;                    /* spidev settings saved at open (static: atexit) */
+static sim303_t sim;
+
+static int body(int argc, char **argv)
 {
     args_t a;
     link303_t l;
-    sim303_t sim;
     const char *sub;
     uint32_t v[5] = {0, 0, 0, 0, 0};
     int rc = 0, i;
-#ifdef _WIN32
-    _setmode(_fileno(stdin), _O_BINARY);
-    _setmode(_fileno(stdout), _O_BINARY);
-#endif
-    err_out = stdout;
-    for (i = 1; i < argc; i++)
-        if (strcmp(argv[i], "serve") == 0)
-            err_out = stderr;
     if (!parse_args(argc, argv, &a)) {
         fputs(USAGE, stderr);
         return fail(E_ARG, 0, 0);
@@ -320,7 +357,8 @@ int main(int argc, char **argv)
         if (a.sim || !want_pos(&a, 0))
             return fail(E_ARG, 0, 0);
 #ifdef __linux__
-        if (spi_open(a.dev) < 0)
+        install_signals();
+        if (spi_open(a.dev, &cfg) < 0)
             return fail(E_IO, errno, 0);
         return do_smoke();
 #else
@@ -334,9 +372,15 @@ int main(int argc, char **argv)
         sim.loss_at = a.loss_at;
         l.xfer = sim_xfer;
         l.ctx = &sim;
+        cfg.rd = sim_dev_rd;            /* fake spidev settings exercise the exit paths */
+        cfg.wr = sim_dev_wr;
+        cfg.ctx = &sim;
+        if (devcfg_open(&cfg))
+            return fail(E_IO, 0, 0);
     } else {
 #ifdef __linux__
-        if (spi_open(a.dev) < 0)
+        install_signals();
+        if (spi_open(a.dev, &cfg) < 0)
             return fail(E_IO, errno, 0);
         l.xfer = spi_xfer;
 #else
@@ -404,5 +448,45 @@ int main(int argc, char **argv)
     if (rc < 0)
         return fail(rc, 0, 0);
     fflush(stdout);
+    return rc;
+}
+
+/* Single exit: restore the spidev settings once, log C3MX on the row channel. */
+static void finish(void)
+{
+    char row[160];
+    if (!cfg.have || cfg.done)
+        return;
+#ifdef __linux__
+    {
+        sigset_t s;
+        sigfillset(&s);
+        sigprocmask(SIG_BLOCK, &s, NULL);
+    }
+#endif
+    devcfg_restore(&cfg);
+    devcfg_row(&cfg, row, sizeof row);
+    fputs(row, err_out);
+    fflush(err_out);
+}
+
+int main(int argc, char **argv)
+{
+    int rc, i;
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    err_out = stdout;
+    for (i = 1; i < argc; i++)
+        if (strcmp(argv[i], "serve") == 0)
+            err_out = stderr;
+#ifdef __linux__
+    err_fd = err_out == stderr ? 2 : 1;
+#endif
+    devcfg_active = &cfg;
+    atexit(finish);
+    rc = body(argc, argv);
+    finish();
     return rc;
 }
