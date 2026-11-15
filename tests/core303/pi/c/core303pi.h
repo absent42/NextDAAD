@@ -9,6 +9,7 @@
 #include <stdio.h>
 
 #define HDR_HZ 2000000u
+#define MAX_HZ 12000000u        /* ladder top; the spidev device max, which the core clamps to */
 #define MAX_CHUNK 4000u         /* header + chunk stays under spidev bufsiz 4096 */
 #define SRAM_SIZE 0x200000u
 #define BRAM5_SIZE 0x4000u
@@ -76,6 +77,11 @@ size_t build_cmd(uint8_t cmd, uint32_t addr, uint16_t len, uint8_t *hdr);
 void plan_xfers(const uint8_t *hdr, size_t hlen, const uint8_t *payload, size_t plen,
                 uint32_t hz, struct xfer_desc out[2]);
 int range_ok(uint8_t cmd, uint32_t addr, uint32_t n);
+/* 0 when every speed is 1..MAX_HZ and the first transfer is at HDR_HZ. */
+int xfer_guard(const struct xfer_desc *d, int n);
+/* Medians of 5 timings at 2 and 12 MHz; 1 when ns_hi < 0.6 * ns_lo. */
+int smoke_eval(const uint64_t lo[5], const uint64_t hi[5], uint64_t *ns_lo, uint64_t *ns_hi,
+               uint32_t *ratio_x100);
 
 /* Little-endian field helpers. */
 uint32_t get_le(const uint8_t *p, int n);

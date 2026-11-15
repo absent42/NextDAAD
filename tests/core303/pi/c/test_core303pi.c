@@ -660,6 +660,102 @@ static void test_sim_rejects_fast_header(void)
     sim_free(&s);
 }
 
+static void test_rate_and_chunk_bounds(void)
+{
+    static uint8_t in[16384], buf[4096];
+    sim303_t s;
+    link303_t l;
+    mio_t *m = calloc(1, sizeof *m);
+    srv_io_t io;
+    FILE *f;
+    size_t p = 0;
+    CHECK(sim_init(&s) == 0);
+    link_sim(&l, &s);
+    CHECK(lk_cmd(&l, CMD_SRAM_W, 0x1000, buf, NULL, 4, MAX_HZ + 1) == E_ARG);
+    CHECK(lk_cmd(&l, CMD_SRAM_W, 0x1000, buf, NULL, MAX_CHUNK + 1, HDR_HZ) == E_ARG);
+    CHECK(lk_cmd(&l, CMD_SRAM_R, 0x1000, NULL, buf, MAX_CHUNK + 1, HDR_HZ) == E_ARG);
+    CHECK(s.msgs == 0);
+    CHECK(lk_cmd(&l, CMD_SRAM_W, 0x1000, buf, NULL, MAX_CHUNK, MAX_HZ) == 0);
+    f = rows_open();
+    CHECK(run_write(&l, f, "C3WP", CMD_SRAM_W, 0x1000, 100, MAX_HZ + 1, 100, 1, 1) == E_ARG);
+    CHECK(run_read(&l, f, CMD_SRAM_R, 0x1000, 100, MAX_HZ + 1, 100, 0, 0, 1) == E_ARG);
+    rows_take(f);
+
+    p += req(in + p, OP_WRITE, CMD_SRAM_W, 0x1000, MAX_CHUNK + 1, FAST);
+    p += MAX_CHUNK + 1;
+    p += req(in + p, OP_READ, CMD_SRAM_R, 0x1000, MAX_CHUNK + 1, FAST);
+    p += req(in + p, OP_WRITE, CMD_SRAM_W, 0x1000, 1, MAX_HZ + 1);
+    p += 1;
+    p += req(in + p, OP_READ, CMD_SRAM_R, 0x1000, 1, MAX_HZ);
+    m->in = in;
+    m->inlen = p;
+    io.read = mio_read;
+    io.write = mio_write;
+    io.ctx = m;
+    CHECK(serve_loop(&l, &io) == 0);
+    CHECK(m->outlen == 3 * 4 + 1);
+    CHECK(m->out[0] == ST_BADREQ && m->out[3] == ST_BADREQ && m->out[6] == ST_BADREQ);
+    CHECK(m->out[9] == ST_OK && get_le(m->out + 10, 2) == 1);
+    free(m);
+    sim_free(&s);
+}
+
+static void test_xfer_guard(void)
+{
+    uint8_t hdr[8], pay[4] = {0};
+    struct xfer_desc d[2];
+    size_t hl = build_cmd(CMD_SRAM_W, 0, 4, hdr);
+    plan_xfers(hdr, hl, pay, 4, MAX_HZ, d);
+    CHECK(xfer_guard(d, 2) == 0);
+    d[1].speed_hz = 0;                  /* would mean the 12 MHz device max */
+    CHECK(xfer_guard(d, 2) != 0);
+    plan_xfers(hdr, hl, pay, 4, FAST, d);
+    d[0].speed_hz = 0;
+    CHECK(xfer_guard(d, 2) != 0);
+    d[0].speed_hz = FAST;
+    CHECK(xfer_guard(d, 2) != 0);
+    d[0].speed_hz = HDR_HZ;
+    CHECK(xfer_guard(d, 1) == 0);
+    d[1].speed_hz = MAX_HZ + 1;
+    CHECK(xfer_guard(d, 2) != 0);
+}
+
+static void test_smoke_eval(void)
+{
+    static const uint64_t lo[5] = {16000000, 16100000, 15900000, 90000000, 16050000};
+    static const uint64_t hi_ok[5] = {2700000, 2750000, 2650000, 2700000, 40000000};
+    static const uint64_t hi_clamp[5] = {16000000, 16020000, 15980000, 16010000, 15990000};
+    static const uint64_t hi_edge[5] = {9630000, 9630000, 9630000, 9630000, 9630000};
+    static const uint64_t zero[5] = {0, 0, 0, 0, 0};
+    uint64_t nl, nh;
+    uint32_t r;
+    CHECK(smoke_eval(lo, hi_ok, &nl, &nh, &r) == 1);
+    CHECK(nl == 16050000 && nh == 2700000 && r == 16);
+    CHECK(smoke_eval(lo, hi_clamp, &nl, &nh, &r) == 0);
+    CHECK(nh == 16000000 && r == 99);
+    CHECK(smoke_eval(lo, hi_edge, &nl, &nh, &r) == 0);     /* exactly 0.6: not below */
+    CHECK(smoke_eval(zero, hi_ok, &nl, &nh, &r) == 0 && r == 0);
+    CHECK(smoke_eval(lo, zero, &nl, &nh, &r) == 0);         /* failed 12 MHz runs */
+}
+
+static void test_spans_bram_alias(void)
+{
+    static uint8_t data[64], table[5];
+    sim303_t s;
+    link303_t l;
+    uint32_t ntx, bad;
+    uint64_t ns;
+    CHECK(sim_init(&s) == 0);
+    link_sim(&l, &s);
+    put_le(table, 0x8000, 3);           /* bank 5 base + 0x8000 would land in bank 7 */
+    put_le(table + 3, 1, 2);
+    CHECK(run_spans(&l, CMD_BRAM_W, 0, 1, table, data, FAST, 0, &ntx, &bad, &ns) == E_RANGE);
+    put_le(table, 0x10, 3);
+    CHECK(run_spans(&l, CMD_BRAM_W, BRAM7_FLAG, 1, table, data, FAST, 0, &ntx, &bad, &ns) == 0);
+    CHECK(ntx == 1 && s.msgs == 1);
+    sim_free(&s);
+}
+
 static int hexval(const char *s, uint32_t *v)
 {
     char *e;
@@ -717,6 +813,10 @@ int main(int argc, char **argv)
     test_push_verify();
     test_selftest();
     test_sim_rejects_fast_header();
+    test_rate_and_chunk_bounds();
+    test_xfer_guard();
+    test_smoke_eval();
+    test_spans_bram_alias();
     if (fails) {
         printf("FAILED %d of %d\n", fails, checks);
         return 1;

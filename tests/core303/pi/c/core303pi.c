@@ -147,6 +147,40 @@ int range_ok(uint8_t cmd, uint32_t addr, uint32_t n)
     return 0;
 }
 
+int xfer_guard(const struct xfer_desc *d, int n)
+{
+    int i;
+    if (n < 1 || n > 2 || d[0].speed_hz != HDR_HZ)
+        return -1;
+    for (i = 0; i < n; i++)
+        if (d[i].speed_hz == 0 || d[i].speed_hz > MAX_HZ)
+            return -1;
+    return 0;
+}
+
+static uint64_t median5(const uint64_t v[5])
+{
+    uint64_t s[5], t;
+    int i, j;
+    memcpy(s, v, sizeof s);
+    for (i = 1; i < 5; i++)
+        for (j = i; j > 0 && s[j - 1] > s[j]; j--) {
+            t = s[j];
+            s[j] = s[j - 1];
+            s[j - 1] = t;
+        }
+    return s[2];
+}
+
+int smoke_eval(const uint64_t lo[5], const uint64_t hi[5], uint64_t *ns_lo, uint64_t *ns_hi,
+               uint32_t *ratio_x100)
+{
+    *ns_lo = median5(lo);
+    *ns_hi = median5(hi);
+    *ratio_x100 = *ns_lo ? (uint32_t)(*ns_hi * 100 / *ns_lo) : 0;
+    return *ns_lo > 0 && *ns_hi > 0 && *ns_hi * 10 < *ns_lo * 6;
+}
+
 uint32_t get_le(const uint8_t *p, int n)
 {
     uint32_t v = 0;
@@ -174,7 +208,8 @@ int lk_cmd(link303_t *l, uint8_t cmd, uint32_t addr, const uint8_t *tx, uint8_t 
     struct xfer_desc d[2];
     size_t hl = build_cmd(cmd, addr, n, hdr);
     int rd = is_read(cmd);
-    if (!hl || cmd == CMD_NR_W || n == 0 || hz == 0 || (rd ? !rx : !tx))
+    if (!hl || cmd == CMD_NR_W || n == 0 || n > MAX_CHUNK || hz == 0 || hz > MAX_HZ ||
+        (rd ? !rx : !tx))
         return E_ARG;
     if (!range_ok(cmd, addr, n))
         return E_RANGE;
@@ -272,7 +307,7 @@ static void acc_init(acc_t *a)
 
 static int pass_args(uint8_t cmd, uint32_t base, uint32_t bytes, uint32_t hz, uint32_t chunk)
 {
-    if (chunk < 1 || chunk > MAX_CHUNK || hz == 0)
+    if (chunk < 1 || chunk > MAX_CHUNK || hz == 0 || hz > MAX_HZ)
         return E_ARG;
     return range_ok(cmd, base, bytes) ? 0 : E_RANGE;
 }
@@ -505,7 +540,7 @@ int run_spans(link303_t *l, uint8_t wcmd, uint32_t base, uint32_t count, const u
     int rc;
     *ntx = *bad = 0;
     *ns = 0;
-    if ((wcmd != CMD_SRAM_W && wcmd != CMD_BRAM_W) || hz == 0)
+    if ((wcmd != CMD_SRAM_W && wcmd != CMD_BRAM_W) || hz == 0 || hz > MAX_HZ)
         return E_ARG;
     for (i = 0; i < count; i++) {       /* every span is checked before the first transfer */
         off = get_le(table + 5 * i, 3);
@@ -514,6 +549,8 @@ int run_spans(link303_t *l, uint8_t wcmd, uint32_t base, uint32_t count, const u
             return E_ARG;
         if (!range_ok(wcmd, base + off, len))
             return E_RANGE;
+        if (wcmd == CMD_BRAM_W && ((base ^ (base + off)) & BRAM7_FLAG))
+            return E_RANGE;             /* an offset must not carry a bank 5 span into bank 7 */
     }
     t0 = l->now_ns(l->ctx);
     for (i = 0; i < count; i++) {

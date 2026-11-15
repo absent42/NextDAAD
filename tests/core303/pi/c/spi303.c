@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include <errno.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +72,10 @@ static int spi_message(struct xfer_desc *d, int n)
 {
     struct spi_ioc_transfer t[2];
     int i;
+    if (xfer_guard(d, n)) {             /* speed 0 would mean the 12 MHz device max */
+        errno = EINVAL;
+        return -1;
+    }
     memset(t, 0, sizeof t);
     for (i = 0; i < n; i++) {
         t[i].tx_buf = (uintptr_t)d[i].tx;
@@ -93,11 +98,12 @@ static int spi_xfer(void *ctx, struct xfer_desc *d, int n)
     return spi_message(d, n) == (int)total ? 0 : -1;
 }
 
-/* Mode 0, 8 bits; default speed 2 MHz as link.py SpidevLink. */
+/* Mode 0, 8 bits, device max at the ladder top: the SPI core clamps each
+   transfer's speed_hz to it. Every transfer carries its own speed (xfer_guard). */
 static int spi_open(const char *dev)
 {
     uint8_t mode = SPI_MODE_0, bits = 8;
-    uint32_t hz = HDR_HZ;
+    uint32_t hz = MAX_HZ;
     spi_fd = open(dev, O_RDWR);
     if (spi_fd < 0)
         return -1;
@@ -130,26 +136,30 @@ static int stdin_closed(void *ctx)
     }
 }
 
-/* No slave needed: a 2 MHz header plus a 64-byte SRAM read of address 0 at two rates. */
+/* No slave needed (SCLK runs regardless): a 4000-byte SRAM_R payload of address 0
+   at 2 and 12 MHz, 5 runs each; a clamped speed shows as ns_hi close to ns_lo. */
 static int do_smoke(void)
 {
-    uint8_t h[8], rx[64];
-    static const uint8_t z[64];
+    static uint8_t rx[MAX_CHUNK];
+    static const uint8_t z[MAX_CHUNK];
+    uint64_t t[2][5], t0, nl, nh;
+    uint32_t ratio;
+    uint8_t h[8];
     struct xfer_desc d[2];
-    size_t hl = build_cmd(CMD_SRAM_R, 0, sizeof rx, h);
-    int lo, hi, ok, err = 0;
-    plan_xfers(h, hl, z, sizeof z, HDR_HZ, d);
-    d[1].rx = rx;
-    lo = spi_message(d, 2);
-    if (lo < 0)
-        err = errno;
-    plan_xfers(h, hl, z, sizeof z, 4000000u, d);
-    d[1].rx = rx;
-    hi = spi_message(d, 2);
-    if (hi < 0 && !err)
-        err = errno;
-    ok = lo == (int)(hl + sizeof z) && hi == lo;
-    printf("P2SM ok=%d ret_lo=%d ret_hi=%d err=%d\n", ok, lo, hi, err);
+    size_t hl = build_cmd(CMD_SRAM_R, 0, MAX_CHUNK, h);
+    int r, k, ok, failed = 0;
+    memset(t, 0, sizeof t);
+    for (r = 0; r < 2 && !failed; r++)
+        for (k = 0; k < 5 && !failed; k++) {
+            plan_xfers(h, hl, z, MAX_CHUNK, r ? MAX_HZ : HDR_HZ, d);
+            d[1].rx = rx;
+            t0 = host_now(NULL);
+            failed = spi_message(d, 2) != (int)(hl + MAX_CHUNK);
+            t[r][k] = host_now(NULL) - t0;
+        }
+    ok = smoke_eval(t[0], t[1], &nl, &nh, &ratio) && !failed;
+    printf("P2SM ok=%d ns_lo=%" PRIu64 " ns_hi=%" PRIu64 " ratio_x100=%" PRIu32 "\n",
+           ok, nl, nh, ratio);
     return ok ? 0 : 1;
 }
 #endif
@@ -267,10 +277,12 @@ static int want_pos(const args_t *a, int n)
     return a->npos == n + 1;
 }
 
+static FILE *err_out;                   /* stderr under serve: its stdout is the pipe */
+
 static int fail(int code, int err, long arg)
 {
-    err_row(stdout, code, err, arg);
-    fflush(stdout);
+    err_row(err_out, code, err, arg);
+    fflush(err_out);
     return 2;
 }
 
@@ -286,6 +298,10 @@ int main(int argc, char **argv)
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
+    err_out = stdout;
+    for (i = 1; i < argc; i++)
+        if (strcmp(argv[i], "serve") == 0)
+            err_out = stderr;
     if (!parse_args(argc, argv, &a)) {
         fputs(USAGE, stderr);
         return fail(E_ARG, 0, 0);

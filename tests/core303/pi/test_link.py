@@ -506,6 +506,55 @@ def test_serve_push_and_spans():
         h.pushspans(link.CMD_SRAM_W, 0, [(0, b"")], FAST)
 
 
+def test_spidev_calls_carry_speed():
+    """Device max is 12 MHz, so a spidev call without its own speed would run at 12 MHz."""
+    import ast
+    from pathlib import Path
+    src = (Path(__file__).parent / "link.py").read_text()
+    assert link.MAX_HZ == 12_000_000
+    assert "max_speed_hz = MAX_HZ" in src
+    seen = 0
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in ("readbytes", "writebytes", "writebytes2", "xfer3")
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("xfer", "xfer2")
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "_spi"):
+            assert len(node.args) >= 2 or any(k.arg == "speed_hz" for k in node.keywords)
+            seen += 1
+    assert seen >= 1
+
+
+def test_rate_upper_bound():
+    s = sim.SimLink()
+    for hz in (link.MAX_HZ + 1, 0, -1):
+        with pytest.raises(link.LinkError):
+            s.write_mem(0x1000, b"x", hz)
+        with pytest.raises(link.LinkError):
+            s.read_mem(0x1000, 1, hz)
+        with pytest.raises(link.LinkError):
+            link.ServeHelper(FakeServe(s)).write(link.CMD_SRAM_W, 0, b"x", hz)
+    assert s.log == []
+    s.write_mem(0x1000, b"x", link.MAX_HZ)
+    assert s.log[-1].payload_hz == link.MAX_HZ
+
+    class Spi:
+        calls = []
+
+        def xfer2(self, tx, speed):
+            self.calls.append(speed)
+            return [0] * len(tx)
+    lk = link.SpidevLink(lock=NeverLock())
+    lk._spi = Spi()
+    with pytest.raises(link.LinkError):
+        lk.xfer(b"\xA1\x00", b"", 2, link.HDR_HZ, header_hz=link.MAX_HZ)
+    with pytest.raises(link.LinkError):
+        lk.xfer(b"\xA1\x00", b"", 2, link.MAX_HZ + 1)
+    lk.xfer(b"\xA1\x00", b"", 2, link.HDR_HZ)
+    assert Spi.calls == [link.HDR_HZ]
+
+
 def test_spidev_link_split_rate_via_helper():
     backend = sim.SimLink()
     h = link.ServeHelper(FakeServe(backend))

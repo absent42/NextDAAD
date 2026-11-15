@@ -5,6 +5,7 @@ import struct
 import time
 
 HDR_HZ = 2_000_000
+MAX_HZ = 12_000_000     # ladder top; also the spidev device max (the core clamps to it)
 MAX_CHUNK = 4000
 SRAM_SIZE = 0x200000
 BRAM_SIZE = {5: 0x4000, 7: 0x2000}
@@ -57,6 +58,11 @@ def pattern(seed, n):
         x ^= (x << 5) & 0xFFFFFFFF
         out.append(x & 0xFF)
     return bytes(out)
+
+
+def check_hz(hz):
+    if not 0 < hz <= MAX_HZ:
+        raise LinkError("rate %r Hz outside 1..%d" % (hz, MAX_HZ))
 
 
 def build_header(cmd, addr, n, val=0):
@@ -156,6 +162,7 @@ class Link:
         raise NotImplementedError
 
     def _transact(self, cmd, addr, n, payload, hz):
+        check_hz(hz)
         hdr = build_header(cmd, addr, n)
         if cmd in READ_CMDS:
             return self.xfer(hdr, b"", n, hz)
@@ -244,7 +251,8 @@ class ServeHelper:
                                     bufsize=0))
 
     def _call(self, op, cmd, addr, n, hz, payload, want=None):
-        req = bytes([op, cmd]) + addr.to_bytes(3, "little") + struct.pack("<HI", n, hz) + payload
+        check_hz(hz)
+        req =bytes([op, cmd]) + addr.to_bytes(3, "little") + struct.pack("<HI", n, hz) + payload
         try:
             self.proc.stdin.write(req)
             self.proc.stdin.flush()
@@ -329,7 +337,7 @@ class SpidevLink(Link):
             self._spi = spidev.SpiDev()
             self._spi.open(self.bus, self.dev)
             self._spi.mode = 0
-            self._spi.max_speed_hz = HDR_HZ
+            self._spi.max_speed_hz = MAX_HZ     # every transfer below passes its own speed
         except BaseException:
             self.close()
             raise
@@ -354,6 +362,7 @@ class SpidevLink(Link):
         self.close()
 
     def _transact(self, cmd, addr, n, payload, hz):
+        check_hz(hz)
         if hz > HDR_HZ and self.helper is not None:
             if cmd in READ_CMDS:
                 return self.helper.read(cmd, addr, n, hz)
@@ -362,6 +371,9 @@ class SpidevLink(Link):
         return super()._transact(cmd, addr, n, payload, hz)
 
     def xfer(self, header, payload, n_rx, hz, header_hz=HDR_HZ):
+        check_hz(hz)
+        if header_hz != HDR_HZ:
+            raise LinkError("header must go at %d Hz, not %r" % (HDR_HZ, header_hz))
         if hz <= HDR_HZ or (not payload and not n_rx):
             tx = header + payload + bytes(n_rx)
             rx = self._spi.xfer2(list(tx), HDR_HZ)

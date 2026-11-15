@@ -151,6 +151,18 @@ def test_serve_sim_matches_servehelper(host):
     assert h.proc.returncode == 0
 
 
+def test_serve_errors_stay_off_the_pipe(host):
+    exe = host / "spi303.exe"
+    for args in (("--sim", "serve", "extra"), ("--sim", "serve", "--hb", "0x1000"),
+                 ("--sim", "--hb", "0x1FFFFF", "serve"), ("--sim", "serve", "--bogus")):
+        r = run(exe, *args, stdin=b"")
+        assert r.returncode == 2, args
+        assert r.stdout == b"", args
+        assert b"C3ER code=" in r.stderr, args
+    r = run(exe, "--sim", "serve", stdin=bytes([9, 0xA8]) + bytes(9))
+    assert r.returncode == 3 and r.stdout == b"\x01\x00\x00"     # only the reply
+
+
 def test_spi303_never_locks():
     src = (CDIR / "spi303.c").read_text() + (CDIR / "core303pi.c").read_text()
     for word in ("flock", "lockf", "F_SETLK"):
@@ -177,7 +189,10 @@ def test_spidev_struct_offsets_pinned():
     src = (CDIR / "spi303.c").read_text()
     for frag in ("sizeof(struct spi_ioc_transfer) == 32",
                  "offsetof(struct spi_ioc_transfer, len) == 16",
-                 "offsetof(struct spi_ioc_transfer, speed_hz) == 20"):
+                 "offsetof(struct spi_ioc_transfer, speed_hz) == 20",
+                 "uint32_t hz = MAX_HZ;",          # device max = ladder top (core clamps)
+                 "if (xfer_guard(d, n))",          # no speed 0, header at 2 MHz
+                 "P2SM ok=%d ns_lo="):
         assert frag in src
     assert len(link.pack_spi_transfer(0, 0, 0, 0)) == 32
     assert struct.unpack_from("<I", link.pack_spi_transfer(0, 0, 7, 9), 20)[0] == 9
