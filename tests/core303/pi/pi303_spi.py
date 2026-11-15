@@ -42,7 +42,7 @@ FOLLOW_IDLE_S = 30.0
 STREAM_START_S = 2.0
 DONE_TIMEOUT_S = 150.0      # covers PI303's own 120 s exit when the Pi lost the lead
 POLL_S = 0.002
-STREAM_POLL_S = 0.01
+STREAM_POLL_S = 0.05
 STATE_POLL_S = 0.05
 LOAD_SETTLE_S = 0.2
 
@@ -266,8 +266,9 @@ class PiMailbox(mbx.Mailbox):
     def send(self, cmd, arg0=0, arg1=0, arg32=0, timeout_s=ACK_TIMEOUT_S, idle=None):
         """Mailbox.send, with idle() (the heartbeat) run while waiting for the ack."""
         head = self.head()
-        if head[0:4] != mbx.MAGIC or head[mbx.OFF_LEADER] != 0 \
-                or head[mbx.OFF_STATE] != mbx.STATE_READY:
+        if head[mbx.OFF_STATE] != mbx.STATE_READY:
+            raise StateChanged()
+        if head[0:4] != mbx.MAGIC or head[mbx.OFF_LEADER] != 0:
             raise mbx.MailboxError("not the leader of a ready mailbox")
         seq = (head[mbx.OFF_SEQ] + 1) & 0xFF
         self._write(mbx.OFF_ARG0, [arg0 & 0xFF])
@@ -276,7 +277,12 @@ class PiMailbox(mbx.Mailbox):
         self._write(mbx.OFF_CMD, [cmd])
         self._write(mbx.OFF_SEQ, [seq])
         end = self.clock.time() + timeout_s
-        while self._read(mbx.OFF_ACK, 1)[0] != seq:
+        while True:
+            head = self.head()          # state with the ack: no heartbeat once state != 1
+            if head[mbx.OFF_STATE] != mbx.STATE_READY:
+                raise StateChanged()
+            if head[mbx.OFF_ACK] == seq:
+                break
             if self.clock.time() >= end:
                 raise mbx.MailboxTimeout("no ack for command %d seq %d" % (cmd, seq))
             if idle:
@@ -326,6 +332,7 @@ class Run:
 
     def gate(self):
         if self.mb.state() != mbx.STATE_READY:
+            self.hb.suspend()           # no hb_pi write once a read has shown state != 1
             raise StateChanged()
 
     def c(self, fn, *args, **kw):
@@ -393,19 +400,26 @@ class Run:
         self.log.row("P3EF", req_hz=req, eff_hz=e, t512=ts[0], t4000=ts[1], merged=merged)
         return e
 
+    def measure_ladder(self):
+        """All effective rates up front: a lazy measurement would rewrite scratch[0:4000]
+        under the read sweep's pattern."""
+        self.step = "P3EF"
+        for req in self.plan.ladder:
+            self.eff_of(req)
+
     def sweep(self, measure, cap=None):
         """Slow to fast over the unmerged ladder, stopping two rates past the first failure;
-        returns the fastest clean request (0 when none)."""
+        returns the fastest clean request below the first failure (0 when none)."""
         best, first_fail, past = 0, None, 0
         for req in self.plan.ladder:
             if cap is not None and req > cap:
                 break
             self.gate()
-            eff = self.eff_of(req)
+            eff = self.eff[req]         # measured for the whole ladder before any sweep
             if self.merged[req]:
                 continue
             clean = measure(req, eff)
-            if clean:
+            if clean and first_fail is None:    # a pass above a failure is a marginal link
                 best = req
             if first_fail is not None:
                 past += 1
@@ -477,9 +491,17 @@ class Run:
             self.hb.tick()
             nr = _nr_test(self.link)
             self.hb.tick()
-        except (ToolError, lk.LinkError, mbx.MailboxError, OSError):
+        except ToolError as e:
+            self.log_c3er(e.rows)
+            return False
+        except (lk.LinkError, mbx.MailboxError, OSError):
             return False
         return bool(st) and st[0].get("ok") == 1 and nr == 1
+
+    def log_c3er(self, rows):
+        for t, kv in rows:
+            if t == "C3ER":
+                self.log.row(t, **kv)
 
     def sram_sweep(self):
         self.step = "P3WS"
@@ -536,6 +558,7 @@ class Run:
         for p in range(passes):
             self.gate()
             want = self.pattern(self.seeds(1), nbytes)
+            self.gate()                 # pattern() can take seconds on the Pi
             ns = ntx = 0
             for off in range(0, nbytes, chunk):
                 t0 = self.clock.time()
@@ -674,6 +697,7 @@ class Run:
             started = self.wait_started(proc, hb0)
             if not started:
                 self.log.skip("P3HS", "NOSTART")
+                self.ok = False
         self.hb.suspend()               # spi303 owns hb_pi until STOP; none if it never started
         end_cmd, gone = None, None
         try:
@@ -685,7 +709,8 @@ class Run:
         if proc is not None:
             rows = proc.stop()
             self.streams.remove(proc)
-        sm = [kv for t, kv in rows if t == "C3SM"]
+            self.log_c3er(rows)
+        sm =[kv for t, kv in rows if t == "C3SM"]
         if started and sm:
             s = sm[0]
             self.log.row("P3HS", row=cmd.arg0, tgt=cmd.arg1, hz=hz, bytes=s["bytes"],
@@ -771,16 +796,21 @@ class Run:
         return None
 
     def fetch(self, state):
+        """Read only inside the MAP result region (result_phys_region + result_len_max)."""
         phys, n = self.mb.result()
         cap = self.addrs.get("result_len_max", RESULT_LEN_MAX)
+        lo = self.addrs.get("result_phys_region")
         saved = 0
-        if 0 < n <= cap and phys + n <= lk.SRAM_SIZE:
+        if n == 0:
+            self.log.skip("P3RF", "NORESULT")
+        elif n > cap or phys + n > lk.SRAM_SIZE or (
+                lo is not None and not (lo <= phys and phys + n <= lo + cap)):
+            self.log.skip("P3RF", "RANGE")
+        else:
             data = self.link.read_mem(phys, n, lk.HDR_HZ)
             with open(os.path.join(self.out_dir, RESULT_NAME), "wb") as f:
                 f.write(data)
             saved = 1
-        else:
-            self.log.skip("P3RF", "NORESULT")
         self.log.row("P3RF", state=state, phys=phys, len=n, saved=saved)
 
     def finish(self, aborted):
@@ -794,6 +824,9 @@ class Run:
                 else:
                     self.log.skip("P3RF", "NOEND")
                     self.ok = False
+            except StateChanged:
+                self.log.skip("PIST", "STATE")
+                aborted = True
             except (lk.LinkError, mbx.MailboxError):
                 self.log.skip("P3RF", "NOEND")
                 self.ok = False
@@ -812,6 +845,7 @@ class Run:
         return 0 if state == mbx.STATE_DONE and self.ok and not aborted else 1
 
     def steps(self):
+        self.measure_ladder()
         sram = self.sram_sweep()
         b7 = self.bank7_sweep()
         rd = self.read_sweep()

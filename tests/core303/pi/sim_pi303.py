@@ -84,19 +84,30 @@ class World:
 
 
 class WorldLink(sim.SimLink):
-    def __init__(self, world, loss_above=None, ignore_nr_writes=False):
+    def __init__(self, world, loss_above=None, ignore_nr_writes=False, read_loss_above=None,
+                 loss_band=None):
         super().__init__(loss=self._lose)
         self.world = world
-        self.loss_above = loss_above
+        self.loss_above = loss_above            # writes; reads too unless read_loss_above
+        self.read_loss_above = read_loss_above
+        self.loss_band = loss_band              # (lo, hi]: lose only inside this actual band
         self.ignore_nr_writes = ignore_nr_writes
         self.trace = []
         self._hz = HDR_HZ
+        self._rd = False
 
     def _lose(self, tx, i):
-        return self.loss_above is not None and actual_hz(self._hz) > self.loss_above and i == 100
+        if i != 100:
+            return False
+        a = actual_hz(self._hz)
+        if self.loss_band is not None:
+            return self.loss_band[0] < a <= self.loss_band[1]
+        lim = self.read_loss_above if self._rd and self.read_loss_above else self.loss_above
+        return lim is not None and a > lim
 
     def xfer(self, header, payload, n_rx, hz, header_hz=HDR_HZ):
         self._hz = hz
+        self._rd = header[0] in link.READ_CMDS
         if self.ignore_nr_writes and header[0] == link.CMD_NR_W:
             out = b""
             self.log.append(sim.Txn(header[0], header[1], 1, header_hz, hz))
@@ -128,10 +139,12 @@ class NextModel:
     """Scripted PI303 mailbox side, stepped once a frame."""
 
     def __init__(self, world, lk, script=SCRIPT, final_state=2, result=None,
-                 stall_hb_next_on_load=False):
+                 stall_hb_next_on_load=False, result_at=RESULT, state_on_cmd=None):
         self.w, self.lk = world, lk
         self.script = script
         self.final_state = final_state
+        self.result_at = result_at
+        self.state_on_cmd = state_on_cmd        # (cmd, state): set state instead of acking
         self.result = result if result is not None else (
             b"#CORE303 PI 56172de\n#NR 01=33\n#SRAM 2048\n#END 0000\n")
         self.stall = stall_hb_next_on_load
@@ -198,6 +211,10 @@ class NextModel:
             return
         cmd, a0 = self.b(5), self.b(6)
         self.events.append(("cmd", self.w.t, cmd, a0, self.b(18)))
+        if self.state_on_cmd and cmd == self.state_on_cmd[0]:
+            self.setb(13, self.state_on_cmd[1])
+            self.mode, self.due = "done", None
+            return
         if cmd == mbx.CMD_LOAD and a0 < 5:
             self.load = a0
         elif cmd in (mbx.CMD_STOP, mbx.CMD_END, mbx.CMD_HANDOVER):
@@ -278,9 +295,9 @@ class NextModel:
             cur = self.r16(16)
             still, last = (still + 1, last) if cur == last else (0, cur)
         self.pibusy = frames >= 500
-        n = len(self.result)
-        self.lk.sram[RESULT:RESULT + n] = self.result
-        self.lk.sram[MB + 20:MB + 23] = RESULT.to_bytes(3, "little")
+        n, at = len(self.result), self.result_at
+        self.lk.sram[at:at + n] = self.result
+        self.lk.sram[MB + 20:MB + 23] = at.to_bytes(3, "little")
         struct.pack_into("<H", self.lk.sram, MB + 23, n)
         self.setb(13, self.final_state)
         self.events.append(("state", self.w.t, self.final_state))
@@ -488,9 +505,11 @@ class FakeTool:
         return s
 
 
-def make(loss_above=None, script=SCRIPT, selftest_ok=True, ignore_nr_writes=False, **next_kw):
+def make(loss_above=None, script=SCRIPT, selftest_ok=True, ignore_nr_writes=False,
+         read_loss_above=None, loss_band=None, **next_kw):
     w = World()
-    lk = WorldLink(w, loss_above=loss_above, ignore_nr_writes=ignore_nr_writes)
+    lk = WorldLink(w, loss_above=loss_above, ignore_nr_writes=ignore_nr_writes,
+                   read_loss_above=read_loss_above, loss_band=loss_band)
     nx = NextModel(w, lk, script=script, **next_kw)
     tool = FakeTool(w, lk, selftest_ok=selftest_ok)
     return w, lk, nx, tool

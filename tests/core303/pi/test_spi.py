@@ -91,6 +91,108 @@ def test_ceiling_with_injected_loss(lossy):
         assert hz == [7_000_000, 4_000_000, 2_000_000]
 
 
+def test_ceiling_below_first_failure(tmp_path):
+    """7.5 MHz (7.35 actual) fails, 8.0 and 8.5 pass: the ceiling is 7.0, used everywhere."""
+    rc, log, (w, lk, nx, tool) = go(tmp_path, loss_band=(7_000_000, 7_400_000))
+    assert rc == 0
+    ws = rows(log, "P3WS")
+    assert [r["rep"] for r in ws if r["req_hz"] == 8_000_000] == [0, 1, 2]
+    assert all(r["mis"] == 0 for r in ws if r["req_hz"] in (8_000_000, 8_500_000))
+    assert max(r["req_hz"] for r in ws) == 8_500_000
+    assert rows(log, "P3CE") == [{"sram_hz": 7_000_000, "b7_hz": 7_000_000,
+                                  "read_hz": 7_000_000}]
+    assert max(r["req_hz"] for r in rows(log, "P3WP")) == 7_000_000
+    py = [r for r in lk.trace if r.phase is None and not r.actor
+          and r.cmd == link.CMD_SRAM_W and r.payload_hz > link.HDR_HZ]
+    assert py and all(r.payload_hz < 7_500_000 for r in py)
+    assert all(r["hz"] == 7_000_000 for r in rows(log, "P3CH") + rows(log, "P3CP"))
+    assert all(r["hz"] == 7_000_000 for r in rows(log, "P3HS"))
+    assert all(s.hz == 7_000_000 for s in tool.streams)
+    for p in sp.PLAN.profiles:
+        assert [r["hz"] for r in rows(log, "P3SV") if r["prof"] == p] == \
+            [7_000_000, 4_000_000, 2_000_000]
+    assert [r["ceiling_hz"] for r in rows(log, "P3SC")] == [7_000_000, 7_000_000]
+
+
+def test_read_ceiling_not_truncated_by_eff(tmp_path):
+    """Reads hold to 10 MHz, writes to 7: the read sweep outruns the write sweeps, and no
+    scratch write may land between the pattern write and the last read pass."""
+    rc, log, (w, lk, nx, tool) = go(tmp_path, loss_above=7_000_000,
+                                    read_loss_above=10_000_000)
+    ce = rows(log, "P3CE")[0]
+    assert ce["sram_hz"] == 7_000_000 and ce["read_hz"] == 10_000_000
+    assert all(r["mis"] == 0 for r in rows(log, "P3RD") if r["req_hz"] <= 10_000_000)
+    tags_seen = [r.tag for r in log.rows]
+    assert max(i for i, t in enumerate(tags_seen) if t == "P3EF") < tags_seen.index("P3WS")
+    reads = [i for i, c in enumerate(tool.calls) if c[1] == "read"]
+    s_write = max(i for i, c in enumerate(tool.calls[:reads[0]]) if c[1] == "write")
+    assert tool.calls[s_write][2][2] == link.HDR_HZ
+    assert all(c[1] == "read" for c in tool.calls[s_write + 1:reads[-1] + 1])
+    t0, t1 = tool.calls[s_write + 1][0], tool.calls[reads[-1] + 1][0]
+    assert not [r for r in lk.trace if t0 <= r.t < t1 and r.cmd == link.CMD_SRAM_W
+                and SCRATCH <= r.addr < SCRATCH + 0x40000]
+
+
+def test_send_state_change_is_pist(tmp_path):
+    plan = pi303_spi.Plan(**{**sp.PLAN.__dict__, "profiles": (0,)})
+    rc, log, (w, lk, nx, tool) = go(tmp_path, plan=plan, state_on_cmd=(mbx.CMD_LOAD, 3))
+    assert rc != 0
+    assert ("PIST", "STATE") in log.skips and ("PI3S", "STATE3") in log.skips
+    assert not [s for s in log.skips if s[1] in ("LINK", "NOEND")]
+    k = first_state_change(lk.trace)
+    assert [r for r in lk.trace[k:] if r.cmd in (link.CMD_SRAM_W, link.CMD_BRAM_W)] == []
+
+
+C3ER = ("C3ER", {"code": 3, "errno": 5, "arg": 0})
+
+
+def test_c3er_rows_logged(tmp_path):
+    class BadSelftest(sp.FakeTool):
+        def selftest(self, phys):
+            raise pi303_spi.ToolError([C3ER], 2)
+
+    class Dead:
+        def alive(self):
+            return False
+
+        def stop(self):
+            return [C3ER]
+
+    class DeadStream(sp.FakeTool):
+        def stream(self, *a):
+            self._call("stream", *a)
+            return Dead()
+
+    w, lk, nx, _ = sp.make()
+    rc = sp.run_main(tmp_path, w, lk, BadSelftest(w, lk))
+    log = parse.parse_pilog(tmp_path / "SPI.LOG")
+    assert rc != 0 and ("P3FR", "FRAMING") in log.skips
+    assert rows(log, "C3ER") == [C3ER[1]]
+    out = tmp_path / "dead"
+    out.mkdir()
+    w, lk, nx, _ = sp.make()
+    rc = sp.run_main(out, w, lk, DeadStream(w, lk))
+    log = parse.parse_pilog(out / "SPI.LOG")
+    assert rc != 0
+    assert rows(log, "C3ER") == [C3ER[1]] * 7
+    assert log.skips.count(("P3HS", "NOSTART")) == 7 and not rows(log, "P3HS")
+    assert all(s["nostream"] for s in nx.streams)
+
+
+def test_fetch_rejects_out_of_region(tmp_path):
+    text = b"#CORE303 PI x\n#END 0000\n"
+    rc, log, (w, lk, nx, tool) = go(tmp_path, result=text, result_at=sp.RESULT + 0xC000)
+    assert rc == 0 and ("P3RF", "RANGE") in log.skips
+    assert not (tmp_path / "PI_PI303.LOG").exists()
+    assert not [r for r in lk.trace if r.cmd == link.CMD_SRAM_R and r.addr >= sp.RESULT + 0xC000
+                and r.addr < sp.RESULT + 0xD000]
+    assert rows(log, "P3RF")[0]["saved"] == 0
+    out = tmp_path / "long"
+    out.mkdir()
+    rc, log, _ = go(out, result=bytes(0xBF01))
+    assert ("P3RF", "RANGE") in log.skips and not (out / "PI_PI303.LOG").exists()
+
+
 def test_quiet_has_zero_transfers(full):
     rc, log, (w, lk, nx, tool), _ = full
     quiets = [s for s in nx.sends if s[1] == mbx.CMD_QUIET]
@@ -275,6 +377,18 @@ def test_state_change_during_stream(tmp_path):
     first_poll = next(r.t for r in lk.trace[k:] if r.cmd == link.CMD_SRAM_R
                       and r.addr == MB + 13 and r.n == 1 and not r.actor)
     assert all(s.stop_t <= first_poll for s in tool.streams)   # stopped before the END wait
+
+
+def test_gate_silences_heartbeat():
+    w, lk, nx, tool = sp.make()
+    r = pi303_spi.Run(lk, MB, SCRATCH, ".", sp.BUNDLE, tool, sp.MAP, w, sp.PLAN, None, None)
+    lk.sram[MB + 13] = 4
+    with pytest.raises(pi303_spi.StateChanged):
+        r.gate()
+    n = len(lk.trace)
+    w.t += 1.0
+    assert r.hb.tick() is False and len(lk.trace) == n
+    assert pi303_spi.STREAM_POLL_S == 0.05
 
 
 def test_pattern_matches_link():

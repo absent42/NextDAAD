@@ -378,7 +378,8 @@ lead:
     ld a, (hl)
     cp CMD_STREAM
     jr z, .hb0
-    call pi_halt                 ; QUIET: a frame for the Pi's ack read-back to finish
+    call pi_halt                 ; QUIET: the first halt ends 0-20 ms after the ack,
+    call pi_halt                 ; the second a full frame later: the Pi's read-back is done
     jr .run
 .hb0:
     call mb_hb_pi
