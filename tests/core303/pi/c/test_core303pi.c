@@ -545,6 +545,54 @@ static void test_state_stops_passes(void)
     sim_free(&s);
 }
 
+static int stop_after(void *ctx);
+
+/* One stale state byte (a read missing the slave's ack window) must not end the run. */
+static void test_stale_state_continues(void)
+{
+    static uint8_t src[8192];
+    sim303_t s;
+    spy_t *sp = calloc(1, sizeof *sp);
+    link303_t l;
+    FILE *f;
+    char *rows;
+    int i, nst = 0, k;
+    CHECK(sim_init(&s) == 0);
+    prep_mailbox(&s, MB_READY);
+    s.state_mbox = MB;
+    s.stale_read = 1;
+    s.stale_val = 4;
+    sp->sim = &s;
+    link_spy(&l, sp);
+    l.hb_mbox = MB;
+    f = rows_open();
+    CHECK(run_write(&l, f, "C3WP", CMD_SRAM_W, 0x1000, 8000, FAST, 4000, 1, 4) == 0);
+    rows = rows_take(f);
+    CHECK(strstr(rows, "C3EN passes=4 stop=0 state=1\n") != NULL);
+    for (i = 0; i < sp->nlog; i++)
+        if (sp->log[i].cmd == CMD_SRAM_R && sp->log[i].addr == MB + MB_STATE)
+            nst++;
+    CHECK(nst == 5);                    /* one per pass plus one confirmation read */
+    free(sp);
+    sim_free(&s);
+
+    /* a stale first read does not cut the stream short */
+    CHECK(sim_init(&s) == 0);
+    prep_mailbox(&s, MB_READY);
+    s.state_mbox = MB;
+    s.stale_read = 0;
+    s.stale_val = 0;
+    link_sim(&l, &s);
+    l.hb_mbox = MB;
+    k = 5;
+    pat_fill(3, src, sizeof src);
+    f = rows_open();
+    CHECK(run_stream(&l, f, CMD_SRAM_W, 0x40000, src, 8000, FAST, stop_after, &k) == 0);
+    rows = rows_take(f);
+    CHECK(strstr(rows, " passes=2 ntx=5 ") != NULL && strstr(rows, " stop=0 state=1\n") != NULL);
+    sim_free(&s);
+}
+
 static int stop_after(void *ctx)
 {
     int *k = ctx;
@@ -946,6 +994,7 @@ int main(int argc, char **argv)
     test_read_pass();
     test_hb_every_100ms();
     test_state_stops_passes();
+    test_stale_state_continues();
     test_stream();
     test_push_verify();
     test_selftest();

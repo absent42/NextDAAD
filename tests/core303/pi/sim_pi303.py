@@ -95,6 +95,10 @@ class WorldLink(sim.SimLink):
         self.trace = []
         self._hz = HDR_HZ
         self._rd = False
+        self.stale_reads = set()    # indices of state-byte reads that return stale_val
+        self.stale_val = 0
+        self.state_reads = 0
+        self.stale_hits = []        # (n, actor) per injected stale read
 
     def _lose(self, tx, i):
         if i != 100:
@@ -115,6 +119,13 @@ class WorldLink(sim.SimLink):
             out = super().xfer(header, payload, n_rx, hz, header_hz)
         txn = self.log[-1]
         w = self.world
+        if txn.cmd == link.CMD_SRAM_R and txn.addr <= MB + 13 < txn.addr + txn.n:
+            if self.state_reads in self.stale_reads:
+                b = bytearray(out)
+                b[MB + 13 - txn.addr] = self.stale_val
+                out = bytes(b)
+                self.stale_hits.append((txn.n, w.in_actor))
+            self.state_reads += 1
         dur = (len(header) * 8 / header_hz + max(len(payload), n_rx) * 8 / actual_hz(hz)
                + TX_OVH_S)
         rec = Rec(w.t, w.t + dur, txn.cmd, txn.addr, txn.n, header_hz, hz,
@@ -332,10 +343,14 @@ class CHb:
         raise pi303_spi.ToolError([("C3ER", {"code": 4, "errno": 0, "arg": 0})], 2)
 
     def ready(self):
+        """As pass_gate: state != 1 counts after STATE_CONFIRM reads in a row."""
         if not self.mbox:
             return True
-        self.last_state = self.lk.rd(self.mbox + 13, 1)[0]
-        return self.last_state == 1
+        for _ in range(pi303_spi.STATE_CONFIRM):
+            self.last_state = self.lk.rd(self.mbox + 13, 1)[0]
+            if self.last_state == 1:
+                return True
+        return False
 
 
 class FakeStream:

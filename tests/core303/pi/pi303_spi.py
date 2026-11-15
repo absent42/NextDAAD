@@ -33,6 +33,7 @@ STOP_PAST = 2               # rates tested past the first failing one
 SEED_BASE = 0x30300001
 B7_LEN = 0x2000
 QUIET_MAX_US = 10_000_000   # PI303 asserts arg32 below this
+STATE_CONFIRM = 3           # non-1 state reads in a row before state != 1 counts
 RESULT_LEN_MAX = 0xBF00
 
 HB_NEXT_WAIT_S = 2.0
@@ -250,10 +251,29 @@ class PiMailbox(mbx.Mailbox):
     def hb_pi(self):
         return struct.unpack("<H", self._read(mbx.OFF_HB_PI, 2))[0]
 
+    def not_ready(self, st):
+        """True only when st and the next STATE_CONFIRM - 1 state reads all show state != 1:
+        a 2 MHz read starved of the SRAM port can return a stale byte."""
+        for _ in range(STATE_CONFIRM - 1):
+            if st == mbx.STATE_READY:
+                return False
+            st = self.state()
+        return st != mbx.STATE_READY
+
+    def ready_head(self):
+        """(head, ready); a head whose non-1 state was not confirmed is read again."""
+        for _ in range(STATE_CONFIRM):
+            head = self.head()
+            if head[mbx.OFF_STATE] == mbx.STATE_READY:
+                return head, True
+            if self.not_ready(head[mbx.OFF_STATE]):
+                return head, False
+        return head, True
+
     def ack(self, cmd):
         """Follower ack; reads state with leader so no ack lands once state != 1."""
-        head = self.head()
-        if head[mbx.OFF_STATE] != mbx.STATE_READY:
+        head, ready = self.ready_head()
+        if not ready:
             raise StateChanged()
         if head[mbx.OFF_LEADER] != 1:
             raise mbx.MailboxError("Pi is no longer the follower")
@@ -265,8 +285,8 @@ class PiMailbox(mbx.Mailbox):
 
     def send(self, cmd, arg0=0, arg1=0, arg32=0, timeout_s=ACK_TIMEOUT_S, idle=None):
         """Mailbox.send, with idle() (the heartbeat) run while waiting for the ack."""
-        head = self.head()
-        if head[mbx.OFF_STATE] != mbx.STATE_READY:
+        head, ready = self.ready_head()
+        if not ready:
             raise StateChanged()
         if head[0:4] != mbx.MAGIC or head[mbx.OFF_LEADER] != 0:
             raise mbx.MailboxError("not the leader of a ready mailbox")
@@ -281,7 +301,7 @@ class PiMailbox(mbx.Mailbox):
             head = self.head()          # state with the ack: no heartbeat once state != 1
             if head[mbx.OFF_ACK] == seq:
                 break                   # acked: END's ack and state 4 land ~10 us apart
-            if head[mbx.OFF_STATE] != mbx.STATE_READY:
+            if self.not_ready(head[mbx.OFF_STATE]):
                 raise StateChanged()
             if self.clock.time() >= end:
                 raise mbx.MailboxTimeout("no ack for command %d seq %d" % (cmd, seq))
@@ -320,7 +340,7 @@ class PiRun:
         self.log = None
 
     def gate(self):
-        if self.mb.state() != mbx.STATE_READY:
+        if self.mb.not_ready(self.mb.state()):
             self.hb.suspend()           # no hb_pi write once a read has shown state != 1
             raise StateChanged()
 
@@ -378,8 +398,8 @@ class PiRun:
         self.step = self.RF_TAG
         if not aborted:
             try:
-                head = self.mb.head()
-                if head[mbx.OFF_STATE] == mbx.STATE_READY and head[mbx.OFF_LEADER] == 0:
+                head, ready = self.mb.ready_head()
+                if ready and head[mbx.OFF_LEADER] == 0:
                     self.mb.send(mbx.CMD_END, idle=self.hb.tick)
                 else:
                     self.log.skip(self.RF_TAG, "NOEND")
@@ -670,8 +690,8 @@ class Run(PiRun):
     def wait_leader(self, want):
         end = self.clock.time() + LEADER_WAIT_S
         while self.clock.time() < end:
-            head = self.mb.head()
-            if head[mbx.OFF_STATE] != mbx.STATE_READY:
+            head, ready = self.mb.ready_head()
+            if not ready:
                 raise StateChanged()
             if head[mbx.OFF_LEADER] == want:
                 return True
@@ -692,8 +712,8 @@ class Run(PiRun):
         while True:
             cmd, nxt = nxt, None
             if cmd is None:
-                head = self.mb.head()
-                if head[mbx.OFF_STATE] != mbx.STATE_READY:
+                head, ready = self.mb.ready_head()
+                if not ready:
                     raise StateChanged()
                 if head[mbx.OFF_LEADER] != 1:
                     raise Lost("P3HO", "LEADER")
@@ -815,8 +835,8 @@ class Run(PiRun):
         last = self.clock.time()
         while True:
             self.clock.sleep(STREAM_POLL_S)
-            head = self.mb.head()
-            if head[mbx.OFF_STATE] != mbx.STATE_READY:
+            head, ready = self.mb.ready_head()
+            if not ready:
                 raise StateChanged()
             cmd = pending(head)
             if cmd is not None:

@@ -404,6 +404,42 @@ def test_gate_silences_heartbeat():
     assert pi303_spi.STREAM_POLL_S == 0.05
 
 
+def test_gate_confirms_state_change():
+    w, lk, nx, tool = sp.make()
+    r = pi303_spi.Run(lk, MB, SCRATCH, ".", sp.BUNDLE, tool, sp.MAP, w, sp.PLAN, None, None)
+    lk.stale_reads, lk.stale_val = {lk.state_reads}, 4
+    r.gate()                            # one stale byte: still ready, heartbeat live
+    assert lk.stale_hits == [(1, False)] and not r.hb._suspended
+    lk.sram[MB + 13] = 4
+    n = lk.state_reads
+    with pytest.raises(pi303_spi.StateChanged):
+        r.gate()
+    assert lk.state_reads - n == pi303_spi.STATE_CONFIRM
+
+
+def quiet_windows_clean(lk, nx):
+    for seq, _, row, _, us in [s for s in nx.sends if s[1] == mbx.CMD_QUIET]:
+        t, end, _ = next(a for a in nx.ack_writes if a[2] == seq)
+        if [r for r in lk.trace if end + 0.001 < r.t < t + us / 1e6]:
+            return False
+    return True
+
+
+def test_stale_state_reads_do_not_abort(tmp_path):
+    """Isolated stale state bytes in every kind of state read: the run completes."""
+    w, lk, nx, tool = sp.make()
+    lk.stale_reads, lk.stale_val = set(range(5, 200000, 23)), 0
+    rc = sp.run_main(tmp_path, w, lk, tool)
+    log = parse.parse_pilog(tmp_path / "SPI.LOG")
+    assert rc == 0 and log.skips == []
+    assert [r["prof"] for r in rows(log, "P3SC")] == list(sp.PLAN.profiles)
+    assert {"P3HS", "P3HQ", "P3SV", "P3SR", "P3RF"} <= {r.tag for r in log.rows}
+    kinds = set(lk.stale_hits)
+    assert (mbx.HEAD_LEN, False) in kinds and (1, False) in kinds and (1, True) in kinds
+    assert len(lk.stale_hits) > 50
+    assert quiet_windows_clean(lk, nx)
+
+
 def test_pattern_matches_link():
     w, lk, nx, tool = sp.make()
     r = pi303_spi.Run(lk, MB, SCRATCH, ".", sp.BUNDLE, tool, sp.MAP, w, sp.PLAN, None, None)

@@ -270,16 +270,21 @@ static void end_rows(link303_t *l, FILE *out, uint32_t passes, int stop)
         fprintf(out, "C3HB bumps=%" PRIu32 "\n", l->hb_bumps);
 }
 
-/* Between passes: 1 = keep going, 0 = state is not ready, < 0 = error. */
+/* Between passes: 1 = keep going, 0 = state is not ready, < 0 = error. A starved 2 MHz
+   read can return a stale byte, so state != 1 counts only after STATE_CONFIRM in a row. */
 static int pass_gate(link303_t *l)
 {
-    int st;
+    int st, i;
     if (!l->hb_mbox)
         return 1;
-    st = mb_state(l);
-    if (st < 0)
-        return st;
-    return st == MB_READY;
+    for (i = 0; i < STATE_CONFIRM; i++) {
+        st = mb_state(l);
+        if (st < 0)
+            return st;
+        if (st == MB_READY)
+            return 1;
+    }
+    return 0;
 }
 
 typedef struct { uint64_t mis; uint32_t bad; long first_tx, first; int shift, rows; } acc_t;
@@ -803,7 +808,7 @@ int sim_init(sim303_t *s)
 {
     memset(s, 0, sizeof *s);
     s->sram = calloc(SRAM_SIZE, 1);
-    s->loss_tx = s->loss_at = s->state_after = -1;
+    s->loss_tx = s->loss_at = s->state_after = s->stale_read = -1;
     s->dev[DEV_HZ] = 500000;
     return s->sram ? 0 : E_MEM;
 }
@@ -891,6 +896,11 @@ int sim_xfer(void *ctx, struct xfer_desc *d, int n)
                 d[1].rx[i] = *sim_byte(s, cmd, addr, i);
             else
                 d[1].rx[i] = cmd == CMD_VERSION && i == 0 ? 0x11 : (cmd == CMD_VERSION ? 0xFF : 0);
+        }
+        if (cmd == CMD_SRAM_R && s->stale_read >= 0) {
+            uint32_t a = (s->state_mbox + MB_STATE) & (SRAM_SIZE - 1);
+            if (a >= addr && a - addr < len && (long)s->state_reads++ == s->stale_read)
+                d[1].rx[a - addr] = s->stale_val;
         }
     }
 out:

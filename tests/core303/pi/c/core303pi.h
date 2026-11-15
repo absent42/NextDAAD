@@ -44,6 +44,7 @@
 #define MB_HB_PI 16
 #define MB_LEN 19
 #define MB_READY 1
+#define STATE_CONFIRM 3         /* non-1 state reads in a row before state != 1 counts */
 #define HB_PERIOD_NS 100000000ull
 #define HB_RETRIES 3
 #define MAX_TX_ROWS 16
@@ -170,6 +171,9 @@ typedef struct {
     uint64_t t_ns, step_ns;     /* fake clock: advances step_ns per message */
     long state_after;           /* set state 3 at state_mbox after this many messages */
     uint32_t state_mbox;
+    long stale_read;            /* this state read (0-based) returns stale_val once */
+    uint8_t stale_val;
+    uint32_t state_reads;
     uint32_t dev[2];            /* fake spidev settings: DEV_HZ 500000, DEV_MODE 0 */
 } sim303_t;
 

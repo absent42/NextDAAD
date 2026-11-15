@@ -438,6 +438,16 @@ def test_stops_writes_when_state_changes(tmp_path):
     assert len(b.serve.requests) == 6 and b.serve.closed
 
 
+def test_stale_state_reads_do_not_abort(tmp_path):
+    b = sv.Bench(tmp_path)
+    b.lk.stale_reads, b.lk.stale_val = set(range(3, 200000, 17)), 4
+    rc = b.run()
+    log = parse.parse_pilog(b.out + "/VIDEO.LOG")
+    assert rc == 0 and log.skips == []
+    assert {r["prof"] for r in rows(log, "P4VS")} == {0, 6}
+    assert len(b.lk.stale_hits) > 20 and {n for n, _ in b.lk.stale_hits} == {1, mbx.HEAD_LEN}
+
+
 def test_noload_skip(tmp_path):
     rc, log, b = go(tmp_path, stall_load=True)
     assert rc != 0
