@@ -17,7 +17,7 @@ NR = "#NR 01=00 0E=00 0F=00 03=30 05=00 07=03"
 BUNDLE = "0123456789ab"
 
 
-def pilog_text(rows=("P3WS rate=2000000 n=5", "P3RS rate=2500000 n=0"), end=None,
+def pilog_text(rows=("P3WS rate=2000000 n=5", "P3RD rate=2500000 n=0"), end=None,
                bundle=BUNDLE, nl="\n"):
     lines = ["#PI303 spisweep " + bundle,
              "#PIENV model=zero1.3 arm=700 kernel=6.1.21 spi_open=12,34",
@@ -40,7 +40,7 @@ def test_pilog_parses(tmp_path):
         assert (pl.tool, pl.bundle) == ("spisweep", BUNDLE)
         assert pl.env["arm"] == "700" and pl.env["spi_open"] == "12,34"
         assert pl.spi["caps"] == "FF" and pl.spi["core_clk_src"] == "none"
-        assert [r.tag for r in pl.rows] == ["P3WS", "P3RS"]
+        assert [r.tag for r in pl.rows] == ["P3WS", "P3RD"]
         assert pl.rows[0].fields == {"rate": 2000000, "n": 5}
         assert pl.skips == [("P3FR", "FRAMING")]
 

@@ -1,5 +1,5 @@
 ; PI303: P3 Next side. Banks: mailbox 16 ($80000), sled 18 ($88000), read sled 19, row data
-; 20 ($90000), bank 7 save 21 ($94000), loads 22, scratch 24-39 ($A0000-$DFFFF), result 41-43
+; 20 ($90000), bank 7/5 save 21 ($94000), loads 22, scratch 24-39 ($A0000-$DFFFF), result 41-43
 ; ($E4000, the row log); all below $200000. Build: build.ps1 (STAMP_STR), PI303.NEX + PI303.MAP.
     DEVICE ZXSPECTRUMNEXT
 
@@ -19,7 +19,7 @@ MBOX_BANK        equ 16
 SLED_BANK        equ 18          ; P3NP's sled alone
 CODE_BANK        equ 19          ; the read sled (P3RS, P3R5)
 DATA_BANK        equ 20          ; RS buffer, LR source and destination, BF destination
-SAVE_BANK        equ 21          ; bank 7 save page, pre-stream copy page
+SAVE_BANK        equ 21          ; bank 7 save page; pre-stream copy + bank 5 save page
 LOAD_BANK        equ 22          ; LOAD 1 and 3 buffers
 SCR_BANK         equ 24
 SCR_BANKS        equ 16          ; 256 KB scratch, also the U target
@@ -105,6 +105,8 @@ BF_OFF           equ LR_DST_OFF + LDIR_N
 BF_PHYS          equ DATA_PHYS + BF_OFF
 R5_ADDR          equ $6000       ; bank 5 page 11 through MMU3, off the ULA screen
 R5_OFF           equ $2000       ; its bank 5 offset, the Pi's BRAM address
+B5SAVE           equ HI_WIN + $1000  ; R5 region save, COPY_PAGE at MMU7, past the copy area
+    ASSERT NOP_N <= $1000 && BF_LEN <= $1000 && $1000 + RD_N <= $2000
 B5_DATA          equ R5_ADDR + RD_N
 B5_CODE          equ $7000
 B5_PASSES        equ 32
@@ -136,6 +138,7 @@ BF_DOC           equ BLT_GO_DOC + BF_LEN * 2       ; cycle 2 a byte (ops.asm K_F
 BF_COST          equ (BLT_GO_DOC * 4 + 2) / 3 + BF_LEN * 3 + DMA_XFER_PAD
 B7_UNIT          equ 1024
 B7_REPS          equ $2000 / B7_UNIT
+B5_REPS          equ RD_N / B7_UNIT
 B7_DOC           equ 16 + 20 + 10 + B7_UNIT * 21 - 5 + 16 + 20
 B7_COST          equ (B7_DOC * 4 + 2) / 3
 
@@ -194,6 +197,7 @@ main:
     call log_hex8
     call log_eol
     call b7_save
+    call b5_save                 ; S3R5's bank 5 region, before state 1 lets the Pi write
     ld a, NR_DISP1
     call nr_read
     and L2_ON ^ $FF
@@ -827,18 +831,19 @@ b7_init:
     nextreg NR_MMU6, BANK7_PAGE
     nextreg NR_MMU7, B7SAVE_PAGE
     ld hl, HI_WIN
-    ld (b7Src), hl
+    ld (rbSrc), hl
     ld hl, DATA_WIN
-    ld (b7Dst), hl
+    ld (rbDst), hl
     or a
     ret
-b7_body:
-    ld hl, (b7Src)
-    ld de, (b7Dst)
+; P3B7 and P3B5 body: B7_UNIT bytes from rbSrc to rbDst, both advanced.
+rb_body:
+    ld hl, (rbSrc)
+    ld de, (rbDst)
     ld bc, B7_UNIT
     ldir
-    ld (b7Src), hl
-    ld (b7Dst), de
+    ld (rbSrc), hl
+    ld (rbDst), de
     ret
 b7_check:
     ld hl, DATA_WIN
@@ -846,6 +851,44 @@ b7_check:
     call ck16
     ld de, (b7Ck)
     jp ck_cmp
+
+; P3B5 (restore_all): the R5 region (bank 5 page 11, MMU3) back from B5SAVE.
+b5_init:
+    nextreg NR_MMU7, COPY_PAGE
+    ld hl, B5SAVE
+    ld (rbSrc), hl
+    ld hl, R5_ADDR
+    ld (rbDst), hl
+    or a
+    ret
+b5_check:
+    ld hl, R5_ADDR
+    ld bc, RD_N
+    call ck16
+    ld de, (b5Ck)
+    jp ck_cmp
+
+; The R5 region copied to B5SAVE, its ck16 kept. Corrupts all.
+b5_save:
+    nextreg NR_MMU7, COPY_PAGE
+    ld hl, R5_ADDR
+    ld de, B5SAVE
+    ld bc, RD_N
+    ldir
+    ld hl, R5_ADDR
+    ld bc, RD_N
+    call ck16
+    ld (b5Ck), hl
+    jp mmu_canon
+
+; rtCkState after a restore row: anything but OK sets blkBad. Corrupts AF.
+blk_ck:
+    ld a, (rtCkState)
+    cp 1
+    ret z
+    ld a, 1
+    ld (blkBad), a
+    ret
 
 ; Bank 7 page 14 copied to the save page, its ck16 kept. Corrupts all.
 b7_save:
@@ -918,7 +961,8 @@ end_note:
     jp ula_puts
 
 ; Every exit lands here (END, timeout, key; log_flush's failure unwind returns inside).
-; Order: exiting, the Pi settled, bank 7 restored and logged, SD flush, result, state.
+; Order: exiting, the Pi settled, bank 7 then bank 5 restored and logged, SD flush, result,
+; state (3 if either restore fails its checksum).
 restore_all:
     di
     ld sp, STACK_TOP
@@ -936,14 +980,21 @@ restore_all:
     ld a, (disp69)
     nextreg NR_DISP1, a          ; Layer 2 off
     xor a
+    ld (blkBad), a
     ld (rtCkState), a
     ld hl, b7Table
     call run_table               ; P3B7, CK against the startup checksum
+    call blk_ck
+    xor a
+    ld (rtCkState), a
+    ld hl, b5Table
+    call run_table               ; P3B5, the same for the S3R5 bank 5 region
+    call blk_ck
     call log_flush
     call nr64_restore
     call mb_result
-    ld a, (rtCkState)
-    cp 1
+    ld a, (blkBad)
+    or a
     ld a, ST_DONE
     jr z, .st
     ld a, ST_FAILED
@@ -989,7 +1040,10 @@ leadList:
     db 0
 
 b7Table:
-    ROW "P3B7", B7_UNIT, B7_REPS, B7_COST, 3, CPU, b7_init, b7_body, b7_check
+    ROW "P3B7", B7_UNIT, B7_REPS, B7_COST, 3, CPU, b7_init, rb_body, b7_check
+    db 0
+b5Table:
+    ROW "P3B5", B7_UNIT, B5_REPS, B7_COST, 3, CPU, b5_init, rb_body, b5_check
     db 0
 
 ; Region per row code: db page, dw address with the page at MMU6, dw length (> 0).
@@ -1104,8 +1158,10 @@ savedA0:     db 0
 disp69:      db 0
 endState:    db 0
 b7Ck:        dw 0
-b7Src:       dw 0
-b7Dst:       dw 0
+b5Ck:        dw 0
+blkBad:      db 0
+rbSrc:       dw 0
+rbDst:       dw 0
 
     INCLUDE "../../bench/runner_data.asm"
 
@@ -1138,6 +1194,7 @@ MAP_bf_dst_phys        equ BF_PHYS
 MAP_bf_len             equ BF_LEN
 MAP_fill_val           equ FILL_VAL
 MAP_bank7_save_phys    equ B7SAVE_PHYS
+MAP_bank5_save_phys    equ PHYS_RAM + COPY_PAGE * $2000 + (B5SAVE - HI_WIN)
 MAP_result_phys_region equ LOG_PHYS
 MAP_result_len_max     equ LOG_LIMIT
 MAP_row_np             equ ROW_NP

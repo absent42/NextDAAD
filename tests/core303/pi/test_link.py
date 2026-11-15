@@ -815,7 +815,7 @@ def test_pilog_grammar_roundtrip(tmp_path):
     w.env(model="zero1.3", spi_open="", arm=700)
     w.spi(version=0x01, caps=0xFF, core_clk=0, core_clk_src="none")
     w.row("P3WS", rate=2000000, n=5)
-    w.row("P3RS", rate=2500000, n=-1)
+    w.row("P3RD", rate=2500000, n=-1)
     w.skip("P3FR", "FRAMING")
     w.close()
     w.close()
@@ -824,7 +824,7 @@ def test_pilog_grammar_roundtrip(tmp_path):
     assert "#SPI version=01 caps=FF core_clk=0 core_clk_src=none" in text
     pl = parse.parse_pilog(p)
     assert (pl.tool, pl.bundle) == ("spisweep", "0123456789ab")
-    assert [r.tag for r in pl.rows] == ["P3WS", "P3RS"]
+    assert [r.tag for r in pl.rows] == ["P3WS", "P3RD"]
     assert pl.rows[1].fields["n"] == -1
     assert pl.env["spi_open"] == "" and pl.spi["caps"] == "FF"
     assert pl.skips == [("P3FR", "FRAMING")]

@@ -207,11 +207,13 @@ for _code, (_op, _m, _unit, _note) in P3_ROWS.items():
         TAGS[_t + "3" + _code] = Tag("P3", _op, _m, None, _unit, "%s, %s%s" % (_note, _tnote, _ck))
 TAGS["P3B7"] = Tag("P3", "bank 7 restore", CPU, None, "byte",
                    "exit restore, 1024 B a rep; CK = ck16, OK = the startup checksum")
+TAGS["P3B5"] = Tag("P3", "bank 5 restore", CPU, None, "byte",
+                   "exit restore of the S3R5 region, 1024 B a rep; CK = ck16, OK = the startup checksum")
 
-# Pi log tags (#PI303 logs, parse.parse_pilog); kept out of TAGS so CORE303 logs reject them.
-# P3NP P3RS P3R5 P3LR P3BF P3B7 are also CORE303 rows (PI303.LOG, TAGS above).
-PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3B7 P3BF P3CH P3CP "
-           "P3FR P3LR P3NP P3P4 P3R5 P3RD P3RS P3SC P3SV P3TE P3WB P3WP P3WS P4NX P4SK "
+# Pi log tags (#PI303 logs, parse.parse_pilog); disjoint from TAGS: neither grammar accepts
+# the other's tags.
+PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "
+           "P3FR P3P4 P3RD P3SC P3SV P3TE P3WB P3WP P3WS P4NX P4SK "
            "P4TF P4TS P4VF P4VS BUSY").split()   # BUSY: lock-timeout #SKIP tag
 # spi303 stdout rows (tests/core303/pi/c): passes, per-tx losses, end, heartbeat, stream,
 # self-test, error, spidev settings saved/restored.

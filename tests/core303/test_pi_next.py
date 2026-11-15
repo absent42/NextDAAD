@@ -21,6 +21,7 @@ ROW_CODES = {"ROW_NP": "NP", "ROW_RS": "RS", "ROW_R5": "R5", "ROW_LR": "LR", "RO
 TGT_LETTER = {"TGT_U": "U", "TGT_S": "S", "TGT_B": "B"}
 MAP_KEYS = ("mbox_phys scratch_phys scratch_len sled_phys sled_len rs_phys rs_len r5_off "
             "r5_len lr_src_phys lr_len bf_dst_phys bf_len fill_val u_phys bank7_save_phys "
+            "bank5_save_phys "
             "result_phys_region result_len_max row_np row_rs row_r5 row_lr row_bf").split()
 
 
@@ -191,7 +192,7 @@ def test_pi303_banks_below_2mb(built):
     for base, n in (("mbox_phys", 25), ("scratch_phys", kv["scratch_len"]),
                     ("sled_phys", kv["sled_len"]), ("rs_phys", kv["rs_len"]),
                     ("lr_src_phys", kv["lr_len"]), ("bf_dst_phys", kv["bf_len"]),
-                    ("bank7_save_phys", 0x2000),
+                    ("bank7_save_phys", 0x2000), ("bank5_save_phys", kv["r5_len"]),
                     ("result_phys_region", kv["result_len_max"])):
         assert kv[base] + n <= PHYS_LIMIT, base
         assert inside(kv[base], n), base
@@ -223,9 +224,14 @@ def test_pi303_tags_known():
     tags = _asm_tags()
     for t in tags:
         assert t in TAGS, t
-    p3 = {t for t in TAGS if re.fullmatch(r"[PUSB]3(NP|RS|R5|LR|BF)|P3B7", t)}
+    p3 = {t for t in TAGS if re.fullmatch(r"[PUSB]3(NP|RS|R5|LR|BF)|P3B7|P3B5", t)}
     assert p3 == set(tags) - {"CAL0"}
-    assert "P3B7" in tags and "CAL0" in tags
+    assert {"P3B7", "P3B5", "CAL0"} <= set(tags)
+
+
+def test_pi_and_core_tags_disjoint():
+    import tags as tagtab
+    assert not set(tagtab.TAGS) & set(tagtab.PI_TAGS)
 
 
 def test_pi303_loaded_tags_unique():
@@ -305,11 +311,27 @@ def test_pi303_exiting_before_restore():
     assert body.index("call mb_state") == st4 + 1
     settle = body.index("call pi_settle")
     b7 = body.index("ld hl, b7table")
-    assert body[b7 + 1] == "call run_table"
-    assert st4 < settle < b7
+    b5 = body.index("ld hl, b5table")
+    flush = body.index("call log_flush")
+    assert body[b7 + 1] == "call run_table" and body[b5 + 1] == "call run_table"
+    assert st4 < settle < b7 < b5 < flush
+    # Either restore's CK verdict feeds the final state.
+    for k in (b7, b5):
+        assert body[k + 2] == "call blk_ck"
+    last_state = max(i for i, s in enumerate(body) if s == "call mb_state")
+    assert "ld a, (blkbad)" in body[flush:last_state]
     ps = _block(_lines(), "pi_settle")
     assert any("bound_fr" in s for s in ps) and any("settle_fr" in s for s in ps)
     assert "call mb_hb_pi" in ps
+
+
+def test_pi303_block_ram_saved_before_ready():
+    m = _block(_lines(), "main")
+    a0 = _find(m, lambda s: s == "nextreg nr_pi_en, a")
+    assert m.index("call data_init") < a0 < m.index("call b7_save") < \
+        m.index("call b5_save") < m.index("call mb_init")
+    s = _block(_lines(), "b5_save")
+    assert "ld hl, r5_addr" in s and "ld de, b5save" in s and "ld (b5ck), hl" in s
 
 
 def test_pi303_timeout_watches_hb_pi():
@@ -344,7 +366,7 @@ def test_pi303_dma_rows_reset():
 
 def test_pi303_checks_end_ck_cmp():
     lines = _lines()
-    checks = {r[6] for r in _lead_rows() if r[6] != "0"} | {"b7_check"}
+    checks = {r[6] for r in _lead_rows() if r[6] != "0"} | {"b7_check", "b5_check"}
     for c in checks:
         assert _block(lines, c)[-1] == "jp ck_cmp", c
 
@@ -374,7 +396,8 @@ def test_pi303_log_parses(tmp_path):
     lines.append("#SKIP PI3X %s" % s["txtTimeout"])
     lines.append("#SKIP PI3X %s" % s["txtPiBusy"])
     lines.append("P3B7 C=W S=3 R=0008 F=0000 D=0010 N=0400 CK=1234 OK")
-    lines.append("#END %04X" % (n + 1))
+    lines.append("P3B5 C=W S=3 R=0002 F=0000 D=0004 N=0400 CK=5678 BAD")
+    lines.append("#END %04X" % (n + 2))
     p = tmp_path / "PI303.LOG"
     p.write_bytes(("\n".join(lines) + "\n").encode("ascii"))
     log = parse.parse_log(p)
