@@ -747,4 +747,5 @@ def test_counter_rows_unusable_and_excluded(tmp_path):
     nx = next(l for l in text.splitlines() if l.startswith("| P4NX "))
     assert nx.endswith("| - | - | COUNT 960 IN 19719 FRAMES UNUSABLE |")
     assert "CLOCK?" not in text and "NOCAL" not in text
+    log.rows[1].ck_ok = True        # P4NX usable: excluded as a counter, not by CK
     assert ingest._unit_by_tag([log]) == {}

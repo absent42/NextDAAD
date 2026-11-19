@@ -672,7 +672,7 @@ def _report_log(log, lpf, tpl35, out):
     base, groups = {}, {}
     for r in log.rows:
         t = TAGS[r.tag]
-        if r.ck_ok is False or t.size is None:
+        if r.ck_ok is False or t.size is None or t.counter:
             continue
         u = per_unit(log, r, lpf, tpl35)
         if u is None:
