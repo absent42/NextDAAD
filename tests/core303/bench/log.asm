@@ -410,7 +410,13 @@ log_close:
     db ESX_F_CLOSE
     ret
 
-logTxtHdr:   db "#CORE303 STANDALONE ", 0
+    IFNDEF BENCH_NAME_STR
+    DEFINE BENCH_NAME_STR "STANDALONE"
+    ENDIF
+    IFNDEF LOG_NAME_STR
+    DEFINE LOG_NAME_STR "CORE303.LOG"
+    ENDIF
+logTxtHdr:   db "#CORE303 ", BENCH_NAME_STR, " ", 0
 logTxtStamp: db STAMP_STR, 0
 logTxtNr:    db "#NR", 0
 logTxtSram:  db "#SRAM ", 0
@@ -428,7 +434,7 @@ logTxtCK:    db " CK=", 0
 logTxtL:     db " L=", 0
 logTxtOK:    db " OK", 0
 logTxtBAD:   db " BAD", 0
-logName:     db "CORE303.LOG", 0
+logName:     db LOG_NAME_STR, 0
 logTxtLog:   db "LOG ", 0
 logTxtOk:    db "OK", 0
 logTxtFail:  db "FAIL ", 0

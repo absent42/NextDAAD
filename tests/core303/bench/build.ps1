@@ -1,9 +1,11 @@
 # Assemble the CORE303 standalone bench into build\core303\CORE303.NEX.
 # Stamp = last commit touching tests/core303/bench; a dirty folder throws unless -AllowDirty.
-param([switch]$AllowDirty)
+param([switch]$AllowDirty, [Alias('Stamp')][string]$ForceStamp = '')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..\..\..").Path
 $out = Join-Path $root 'build\core303'
+# -Stamp (tests only) builds under build\core303\test, never the staged path.
+if ($ForceStamp) { $out = Join-Path $out 'test' }
 $nex = Join-Path $out 'CORE303.NEX'
 # A refused or failed build leaves no NEX behind to be staged by mistake.
 if (Test-Path $nex) { Remove-Item $nex }
@@ -19,6 +21,9 @@ if ($dirty) {
     $stamp = "$hash-dirty"
 }
 
+# -Stamp forces the baked stamp: tests only.
+if ($ForceStamp) { $stamp = $ForceStamp }
+
 New-Item -ItemType Directory -Force $out | Out-Null
 $src = ($PSScriptRoot -replace '\\', '/') + '/core303.asm'
 Push-Location $out
@@ -31,4 +36,4 @@ try {
 finally { Pop-Location }
 if (-not (Test-Path $nex)) { throw "CORE303.NEX not written" }
 Write-Host "stamp: $stamp"
-Write-Host "built build\core303\CORE303.NEX"
+Write-Host "built $($nex.Substring($root.Length + 1))"

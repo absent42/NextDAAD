@@ -31,6 +31,7 @@ class Tag:
     note: str = ""
     cal: Optional[str] = None
     per_frame: bool = False         # report (row T - cal T) / row F instead of T/unit
+    counter: bool = False           # N is a count over F frames, not a timed body: no T
 
     @property
     def calibration(self):
@@ -183,3 +184,57 @@ def _op_tags():
 
 
 TAGS.update(_op_tags())
+
+# P3 Z80-cost rows (tests/core303/pi/next/pi303.asm, PI303.LOG): P3xx under QUIET (zero
+# SPI), then <target>3xx while the Pi streams: U an unrelated scratch page, S the row's own
+# bytes rewritten unchanged, B bank 7. Pi traffic cost = loaded row minus P3 row.
+P3_ROWS = {
+    "NP": ("NOP", CPU, "NOP", "4096 NOPs in their own declared page"),
+    "RS": ("LD A,(HL) SRAM", CPU, "read", "ld a,(hl) / inc hl over a 2048-byte buffer"),
+    "R5": ("LD A,(HL) bank 5", CPU, "read", "ld a,(hl) / inc hl over 2048 bank 5 bytes"),
+    "LR": ("LDIR SRAM", CPU, "byte", "1024-byte SRAM to SRAM LDIR"),
+    "BF": ("blitter fill", BLT, "byte", "4096-byte fill, physical, cycle 2/2"),
+}
+P3_TARGETS = {
+    "P": "QUIET baseline",
+    "U": "Pi stream to scratch",
+    "S": "Pi stream rewriting the row's own bytes",
+    "B": "Pi stream to bank 7",
+}
+for _code, (_op, _m, _unit, _note) in P3_ROWS.items():
+    for _t, _tnote in P3_TARGETS.items():
+        _ck = "; CK = bytes changed vs the pre-stream copy" \
+            if _t == "S" and _code in ("NP", "RS", "LR") else ""
+        TAGS[_t + "3" + _code] = Tag("P3", _op, _m, None, _unit, "%s, %s%s" % (_note, _tnote, _ck))
+TAGS["P3B7"] = Tag("P3", "bank 7 restore", CPU, None, "byte",
+                   "exit restore, 1024 B a rep; CK = ck16, OK = the startup checksum")
+TAGS["P3B5"] = Tag("P3", "bank 5 restore", CPU, None, "byte",
+                   "exit restore of the S3R5 region, 1024 B a rep; CK = ck16, OK = the startup checksum")
+
+# P4 rows (tests/core303/pi/next/pi303v.asm, PI303V.LOG) in the CORE303 grammar. P4NX and
+# P4HB: R=1, F = frame interrupts from state 1 through exit, D=0, N = the count.
+TAGS["P4NX"] = Tag("P4", "Pi flips seen", CPU, None, "flip",
+                   "N = frames_seen, NR $12 changes seen at frame interrupts, mod 65536; "
+                   "F = frame interrupts from state 1 through exit, the settle included, "
+                   "mod 65536; CK = unknown commands acked, OK = none", counter=True)
+TAGS["P4HB"] = Tag("P4", "load steps", CPU, None, "step",
+                   "N = hb_next at exit (LOAD 0 and 6 steps), mod 65536; "
+                   "F = frame interrupts from state 1 through exit, mod 65536", counter=True)
+TAGS["P4B5"] = Tag("P4", "bank 5 restore", CPU, None, "byte",
+                   "exit restore of the LOAD 6 bank 5 region, 256 B; CK = ck16, OK = the startup checksum")
+
+# Pi log tags (#PI303 logs, parse.parse_pilog); disjoint from TAGS: neither grammar accepts
+# the other's tags.
+PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "
+           "P3FR P3P4 P3RD P3SC P3SV P3TE P3WB P3WP P3WS P4SK "
+           "P4TF P4TS P4VF P4VS BUSY").split()   # BUSY: lock-timeout #SKIP tag
+# pi303_spi: effective rate, ceilings, handover QUIET/STREAM rows and skips, starvation
+# search per rate, no mailbox, result fetch; PIST state != 1 mid-run, PI3S final state 3.
+PI_TAGS += "P3EF P3CE P3HQ P3HS P3HO P3SR P3MB P3RF PIST PI3S".split()
+# pi303_video: per-frame row (pass 0 tf, 1 ts, 2 vf, 3 vs), result fetch, no mailbox.
+# P4SK mis = transactions with a tail mismatch (not bytes, unlike P3). P4TF/P4TS ns = wall
+# time, first push to last flip, Python gate/hb/poll time included; P4FR ns = C push time.
+PI_TAGS += "P4FR P4RF P4MB".split()
+# spi303 stdout rows (tests/core303/pi/c): passes, per-tx losses, end, heartbeat, stream,
+# self-test, error, spidev settings saved/restored.
+PI_TAGS += "C3WP C3BP C3RP C3TX C3EN C3HB C3SM C3ST C3ER C3MX".split()

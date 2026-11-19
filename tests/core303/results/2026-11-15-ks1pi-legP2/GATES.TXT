@@ -1,0 +1,5 @@
+bundle: d80f012d30be
+frames: 16b8292dfed6
+board: ks1pi
+sitting: 2026-11-15
+built: 2026-11-15

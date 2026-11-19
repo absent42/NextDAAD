@@ -1,0 +1,17 @@
+b5_len=000100
+b5_off=002000
+bank5_save_phys=088000
+l2_back_bank=000016
+l2_back_phys=098000
+l2_fill=000002
+l2_front_bank=000013
+l2_front_phys=08C000
+l2_len=00C000
+mbox_phys=080000
+mix_dst_phys=086000
+mix_len=002000
+mix_src_phys=084000
+prof_halt=000000
+prof_mix=000006
+result_len_max=00BF00
+result_phys_region=0E4000

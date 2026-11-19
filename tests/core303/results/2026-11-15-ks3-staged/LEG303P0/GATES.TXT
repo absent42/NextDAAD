@@ -1,0 +1,5 @@
+bundle: 5f165f33ea7c
+frames: 16b8292dfed6
+board: ks3
+sitting: 2026-11-15
+built: 2026-11-15

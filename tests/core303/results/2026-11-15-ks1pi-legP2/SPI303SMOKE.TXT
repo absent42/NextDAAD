@@ -1,0 +1,2 @@
+P2SM ok=1 ns_lo=25963000 ns_hi=4664000 ratio_x100=17
+C3MX saved=2000000 restored=2000000 own=1 mode_saved=0 mode_restored=0

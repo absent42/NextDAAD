@@ -174,7 +174,7 @@ def _parse_run(lines):
         if end is not None:
             raise LogError("data after #END: %r" % line)
         if line.startswith("#CORE303 "):
-            m = re.fullmatch(r"#CORE303 (STANDALONE|BENCH) (\S+)", line)
+            m = re.fullmatch(r"#CORE303 (STANDALONE|BENCH|PI) (\S+)", line)
             if not m:
                 raise LogError("bad header: %r" % line)
             bench, stamp = m.groups()
@@ -206,6 +206,113 @@ def _parse_run(lines):
     if bench is None or sram is None or not nr:
         raise LogError("missing header, #NR or #SRAM")
     return Log(bench, stamp, nr, sram, rows, skips)
+
+
+@dataclass
+class PiRow:
+    tag: str
+    fields: dict
+
+
+@dataclass
+class PiLog:
+    tool: str
+    bundle: str
+    env: dict
+    spi: dict
+    rows: list
+    skips: list
+
+
+def _kv_line(line, what, empty_ok=False):
+    out = {}
+    for t in line.split(" ")[1:]:
+        k, eq, v = t.partition("=")
+        if not eq or not re.fullmatch(r"[a-z][a-z0-9_]*", k) or k in out \
+                or (not v and not empty_ok):
+            raise LogError("bad %s: %r" % (what, line))
+        out[k] = v
+    return out
+
+
+def parse_pilog(path):
+    """Parse a #PI303 log (LF or CRLF). Rows are <TAG> key=<int>...; #END counts rows."""
+    tool = bundle = None
+    env, spi, rows, skips = {}, {}, [], []
+    end = None
+    for line in _read(path).split("\n")[:-1]:
+        line = line.rstrip("\r")
+        if end is not None:
+            raise LogError("data after #END: %r" % line)
+        if line.startswith("#PI303 "):
+            m = re.fullmatch(r"#PI303 (\S+) ([0-9a-f]{12})", line)
+            if not m or tool is not None:
+                raise LogError("bad header: %r" % line)
+            tool, bundle = m.groups()
+        elif line.startswith("#PIENV "):
+            env.update(_kv_line(line, "#PIENV", empty_ok=True))
+        elif line.startswith("#SPI "):
+            spi.update(_kv_line(line, "#SPI"))
+        elif line.startswith("#SKIP "):
+            m = re.fullmatch(r"#SKIP ([A-Z0-9]{4}) (.+)", line)
+            if not m or m.group(1) not in tagtab.PI_TAGS:
+                raise LogError("bad #SKIP: %r" % line)
+            skips.append(m.groups())
+        elif line.startswith("#END "):
+            end = _hex(line[5:], 4, "#END")
+        elif line.startswith("#"):
+            raise LogError("unknown line: %r" % line)
+        else:
+            if tool is None:
+                raise LogError("row before #PI303 header: %r" % line)
+            tok = line.split(" ")
+            if not re.fullmatch(r"[A-Z0-9]{4}", tok[0]) or tok[0] not in tagtab.PI_TAGS:
+                raise LogError("unknown tag: %r" % line)
+            if len(tok) < 2:
+                raise LogError("row without fields: %r" % line)
+            kv = {}
+            for t in tok[1:]:
+                k, eq, v = t.partition("=")
+                if not re.fullmatch(r"[a-z][a-z0-9_]*", k):
+                    raise LogError("malformed key %r in %r" % (k, line))
+                if not re.fullmatch(r"-?[0-9]+", v):
+                    raise LogError("non-integer value %r in %r" % (v, line))
+                if k in kv:
+                    raise LogError("duplicate field %s: %r" % (k, line))
+                kv[k] = int(v)
+            rows.append(PiRow(tok[0], kv))
+    if end is None:
+        raise LogError("truncated: no #END")
+    if tool is None:
+        raise LogError("missing #PI303 header")
+    if end != len(rows):
+        raise LogError("row count %d != #END %d" % (len(rows), end))
+    return PiLog(tool, bundle, env, spi, rows, skips)
+
+
+def report_pi(pilogs, nextlogs):
+    """Markdown for Pi logs, with the Next logs of the same leg listed for context."""
+    out = ["# CORE303 Pi report", ""]
+    for log in nextlogs:
+        out.append("Next log: %s %s" % (log.bench, log.stamp))
+    if nextlogs:
+        out.append("")
+    for pl in pilogs:
+        out.append("## %s %s" % (pl.tool, pl.bundle))
+        out.append("")
+        out.append("ENV: " + " ".join("%s=%s" % kv for kv in pl.env.items()))
+        out.append("SPI: " + " ".join("%s=%s" % kv for kv in pl.spi.items()))
+        out.append("")
+        out.append("| tag | fields |")
+        out.append("|---|---|")
+        for r in pl.rows:
+            out.append("| %s | %s |" % (r.tag, " ".join("%s=%d" % kv
+                                                       for kv in r.fields.items())))
+        out.append("")
+        for tg, why in pl.skips:
+            out.append("SKIP %s %s" % (tg, why))
+        out.append("")
+    return "\n".join(out) + "\n"
 
 
 _NXB_ROW = re.compile(
@@ -393,6 +500,9 @@ def _companion(tag):
 
 
 def _flags(row, lpf, tpl35, log=None):
+    if TAGS[row.tag].counter:
+        return ["COUNT %d IN %d FRAMES" % (row.n, row.f)] + \
+            (["UNUSABLE"] if row.ck_ok is False else [])
     out = []
     if log is not None and _cal_name(row) and _cal_row(log, row) is None:
         out.append("NOCAL")
@@ -533,13 +643,16 @@ def _report_log(log, lpf, tpl35, out):
             notes = _flags(r, lpf, tpl35, log)
             if part == "1a" and t.note:
                 notes.append("[%s]" % t.note)
-            rep = Fraction(row_t(r, lpf, tpl35), r.r)
-            unit = isr_per_frame(log, r, lpf, tpl35) if t.per_frame else \
-                per_unit(log, r, lpf, tpl35)
+            if t.counter:
+                rep = unit = None
+            else:
+                rep = Fraction(row_t(r, lpf, tpl35), r.r)
+                unit = isr_per_frame(log, r, lpf, tpl35) if t.per_frame else \
+                    per_unit(log, r, lpf, tpl35)
             cells = [name, t.op, t.method, "-" if t.size is None else t.size, _fmt(rep),
                      _fmt(unit)]
             if p2:
-                if t.per_frame:
+                if t.per_frame or t.counter:
                     cells.append("-")
                 elif isr is None:
                     cells.append(NO_ISR)
@@ -559,7 +672,7 @@ def _report_log(log, lpf, tpl35, out):
     base, groups = {}, {}
     for r in log.rows:
         t = TAGS[r.tag]
-        if r.ck_ok is False or t.size is None:
+        if r.ck_ok is False or t.size is None or t.counter:
             continue
         u = per_unit(log, r, lpf, tpl35)
         if u is None:

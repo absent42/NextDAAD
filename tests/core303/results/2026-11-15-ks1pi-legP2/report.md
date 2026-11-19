@@ -1,0 +1,32 @@
+# CORE303 Pi report
+
+## pi303_prep d80f012d30be
+
+ENV: model=Raspberry_Pi_Zero_Rev_1.3 governor=ondemand arm_khz=700000 kernel=6.12.67-0-rpi py=3.12.12 numpy=2.3.5 pil=11.3.0 gcc=15.2.0 bufsiz=4096
+SPI: 
+
+| tag | fields |
+|---|---|
+| P2JD | ns=3274627000 frames=120 impl=0 |
+| P2CV | ns=2258798000 frames=120 impl=0 |
+| P2SP | ns=1130193000 frames=119 impl=0 spans=196505 |
+| P2RD | ns=174290000 frames=120 |
+| P2SH | b1=18191 b2=56052 b4=62014 b8=33078 b16=24200 b64=2719 b256=251 |
+| P2JD | ns=1211885000 frames=120 impl=1 |
+| P2CV | ns=239078000 frames=120 impl=1 |
+| P2SP | ns=157428000 frames=119 impl=1 spans=196505 |
+
+
+## pi303_smoke d80f012d30be
+
+ENV: model=Raspberry_Pi_Zero_Rev_1.3 governor=ondemand arm_khz=700000 kernel=6.12.67-0-rpi py=3.12.12 numpy=2.3.5 pil=12.1.1 gcc=15.2.0 bufsiz=4096 spi_max_saved=2000000 spi_max_stale=0 spi_open=2457,14862
+SPI: spi_max_restored=2000000
+
+| tag | fields |
+|---|---|
+| P2PY | ok=1 ret=0 |
+
+
+
+## Gates
+

@@ -1,0 +1,10 @@
+date: 2026-11-19
+board: ks3
+leg: leg1
+stamp: ffeb784
+rerun_of: 2026-11-14-ks1
+core: 33.03
+board_id: 03
+sd_folder: LEG303A3
+logs: CORE303.LOG
+nr: #NR 01=33 0E=03 0F=03 03=33 05=5B 07=33

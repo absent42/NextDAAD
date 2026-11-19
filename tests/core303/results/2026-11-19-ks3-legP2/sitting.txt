@@ -1,0 +1,6 @@
+date: 2026-11-19
+board: ks3
+leg: legP2
+bundle: 5f165f33ea7c
+sd_folder: LEG303P2
+logs: PREP.LOG

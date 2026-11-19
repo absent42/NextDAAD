@@ -1,0 +1,16 @@
+# Every file staged for the KS3 sitting 2026-11-15 (logs excluded), sha256 and where its bytes live.
+# 'here' = preserved in this folder; otherwise the tracked repo path holding identical bytes.
+# bundle 5f165f33ea7c = first 12 hex of sha256(BUNDLE.lst): tests/core303/pi files named by BUNDLE.txt.
+# frames 16b8292dfed6 = first 12 hex of sha256(FRAMES.lst); not copied: tests/core303/pi/frames.py
+# make(n=120) regenerates them (Pillow 12.0.0, numpy 2.3.2). The bytes are as generated
+# on the staging PC: frames.py writes SOURCE.txt with the platform line ending.
+5f165f33ea7c896a78f9c6e936130d9855c16d3133db025f5615f04c218833f1  BUNDLE.lst  here
+16b8292dfed61ac0ca69df82a0ac9501341c9518471c2c6f1fccc281f34fc9d5  FRAMES.lst  here
+b6ae15b7d991f001861fac9451bf5faa9838c93465f835f4c85d3bdcfef92a80  LEG303P0/GATES.TXT  here
+b6ae15b7d991f001861fac9451bf5faa9838c93465f835f4c85d3bdcfef92a80  LEG303P2/GATES.TXT  here
+bba753088d34c81b48f956ab07e09ed89301e7d64e812602a0e3139940224e15  LEG303P3/GATES.TXT  here
+672399961d029fe6ac1830e1b275b6601c1bde1e223a9f685829253940444042  LEG303P3/PI303.MAP  here
+ed68bffe85748bdac87b187ec9af9069afbd884060182c1d698006e1ad7f3fba  LEG303P3/PI303.NEX  here
+4442998b600d474df815dcfe4c76e8ce7f704aa46c728191964225806a659eb5  LEG303P4/GATES.TXT  here
+cfbe8607e0e42ad880cbe9824bc5803d0bf2051d210646f08666fdd62f33f9a1  LEG303P4/PI303V.MAP  here
+13d17738f89b24f1626a3191322e44fede0fb6e9454f64751c4d29f0a4134f7c  LEG303P4/PI303V.NEX  here

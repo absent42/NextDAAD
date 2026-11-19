@@ -82,6 +82,11 @@ def _strings():
         p = BENCH / name
         if p.is_file():
             out.update(DB_STR.findall(p.read_text(encoding="ascii")))
+    # log.asm composes these from the BENCH_NAME_STR and LOG_NAME_STR defaults
+    log = (BENCH / "log.asm").read_text(encoding="ascii")
+    bench = re.search(r'DEFINE BENCH_NAME_STR "([^"]*)"', log).group(1)
+    out["logTxtHdr"] = "#CORE303 " + bench + " "
+    out["logName"] = re.search(r'DEFINE LOG_NAME_STR "([^"]*)"', log).group(1)
     return out
 
 
