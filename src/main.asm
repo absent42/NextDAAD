@@ -418,11 +418,9 @@ spr_call:
     push hl
     push af
     push de
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (sprSavedMmu), a
-    ld e, NR_MMU7
-    call nr_read
+    NRGET NR_MMU7
     ld (sprSavedMmu+1), a
     pop de
     pop af
@@ -759,11 +757,9 @@ xbn_out_hook:
     ld (outHookOn), a
     ld a, c
     ld (outChar), a
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (outSaved), a
-    ld e, NR_MMU7
-    call nr_read
+    NRGET NR_MMU7
     ld (outSaved+1), a
     call xbn_mmu_map
     ld a, (outChar)
@@ -1316,8 +1312,7 @@ svc_busy:
 ; CF clear; foreground-only.
 svc_palread:
     ld c, a                       ; C = bank select (0 displayed, 1 other)
-    ld e, NR_PAL_CTRL
-    call nr_read                  ; A = live $43
+    NRGET NR_PAL_CTRL            ; A = live $43
     ld b, a                       ; B = saved $43 (restored at exit)
     and %00001111                 ; keep display/layer bits, clear edit field
     bit 2, a                      ; display shows bank 2?
@@ -1343,11 +1338,9 @@ svc_palread:
 .loop:
     ld a, b
     nextreg NR_PAL_INDEX, a
-    ld e, NR_PAL_VALUE
-    call nr_read
+    NRGET NR_PAL_VALUE
     ld (ix+0), a
-    ld e, NR_PAL_VALUE9
-    call nr_read
+    NRGET NR_PAL_VALUE9
     and %11000001                ; bits 7-6 priority field (core latches
                                  ; two bits on a $44 write), bit 0 blue LSB
     ld (ix+1), a
@@ -1543,7 +1536,7 @@ ctc2_isr_pair:
 ; Entry: A=0. Corrupts HL, and (via the fall-through) AF and E too -
 ; every caller is tolerant: eng_init_game reloads A with $FF next and
 ; never reads E; gfx_cache_reset's next instruction reloads A too and
-; its loop below uses B, which nr_read preserves; overlay1's same-part
+; its loop below uses B, which NRGET preserves; overlay1's same-part
 ; LOAD site continues into eng_set_done (ld a,1 / ld (isDone),a / ret)
 ; and h_ramload simply rets to the dispatcher, which stamped the done
 ; flag before dispatch and consults neither A, E nor CF for an action
@@ -1572,10 +1565,9 @@ gfx_drawtarget_clear:
 ; sites above call gfx_drawtarget_clear and fall into this body, where
 ; it re-asserts rather than resets. So exactly one routine composes this
 ; field and the byte can never disagree with the register.
-; Corrupts AF, E; preserves BC (nr_read pushes it) and HL.
+; Corrupts AF, E; preserves BC and HL.
 gfx_layer_apply:
-    ld e, NR_LAYERS
-    call nr_read
+    NRGET NR_LAYERS
     and %11100011               ; clear bits 4-2, keep everything else
     ld e, a
     ld a, (gfxLayerOrder)

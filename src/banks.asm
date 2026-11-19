@@ -10,13 +10,10 @@ data_map_page:
     nextreg NR_MMU6, a
     ret
 
-; Save/restore slot 6 only. Preserves DE.
+; Save/restore slot 6 only. Preserves DE (NRGET touches no register but A).
 data_save:
-    push de                     ; nr_read needs E as scratch; callers
-    ld e, NR_MMU6               ; must not lose their DE - this closed
-    call nr_read                ; a five-incident defect class
+    NRGET NR_MMU6
     ld (savedMMU6), a
-    pop de
     ret
 
 data_restore:

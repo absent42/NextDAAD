@@ -8,12 +8,10 @@ hw_init:
     ; bits hard-reset to 0 - CSpect is permissive, real hardware/OS
     ; state is not guaranteed; closes a latent SP7 hardware risk too).
     ; Read-modify-write preserves NextZXOS's other peripheral bits.
-    ld e, NR_PERIPH3
-    call nr_read
+    NRGET NR_PERIPH3
     or %00001010                ; bit 3 DACs, bit 1 Turbo Sound
     nextreg NR_PERIPH3, a
-    ld e, NR_PERIPH_PORTS2
-    call nr_read
+    NRGET NR_PERIPH_PORTS2
     or %00000100                ; bit 2 stereo sample mode, RMW keeps the rest
     nextreg NR_PERIPH_PORTS2, a
     ; NR $06 (Peripheral 2) bits 1:0 - the AUDIO CHIP MODE - is

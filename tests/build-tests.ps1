@@ -2169,14 +2169,13 @@ function Assert-SfxRingLayout {
         $v = if ($t.StartsWith('$')) { [Convert]::ToInt32($t.Substring(1), 16) } else { [int]$t }
         if ($v -ne $want[$k]) { throw "SFXRING: $k is $v, expected $($want[$k])" }
     }
-    # ld e,$84 / call nr_read / or 4 / nextreg $84,a
-    $hits = Find-ByteRuns $nex ([byte[]]@(0x1E, 0x84))
+    # NRGET $84 / or 4 / nextreg $84,a (ED C7 84, or the harness call CD 84 nn)
+    $hits = Find-ByteRuns $nex ([byte[]]@(0xF6, 0x04, 0xED, 0x92, 0x84))
     $ok = $false
     foreach ($h in $hits) {
-        $end = [Math]::Min($h + 2 + 8, $nex.Length - 5)
-        for ($i = $h + 2; $i -le $end; $i++) {
-            if ($nex[$i] -eq 0xF6 -and $nex[$i+1] -eq 0x04 -and $nex[$i+2] -eq 0xED -and $nex[$i+3] -eq 0x92 -and $nex[$i+4] -eq 0x84) { $ok = $true }
-        }
+        if ($h -lt 3) { continue }
+        if (($nex[$h-3] -eq 0xED -and $nex[$h-2] -eq 0xC7 -and $nex[$h-1] -eq 0x84) -or
+            ($nex[$h-3] -eq 0xCD -and $nex[$h-2] -eq 0x84)) { $ok = $true }
     }
     if (-not $ok) { throw "SFXRING: NR `$84 read-modify-write (or 4) not found in NEX" }
     "SFXRING: rings `$4000/`$4800 x 2048, tables `$7C00-`$7FFF, NR `$84 bit 2 RMW present"

@@ -156,8 +156,7 @@ spr_ident_recalc:
 ; palette 0 is the displayed one), bits 2-0 kept. Opened ONCE around a run
 ; of block writes; the old value comes back in spr_pal_leave. Corrupts AF, E.
 spr_pal_enter:
-    ld e, NR_PAL_CTRL
-    call nr_read
+    NRGET NR_PAL_CTRL
     ld (sprPalSave), a
     and %00000111
     or PAL_SPR_EDIT
@@ -581,8 +580,7 @@ cyc_tick:
     ld hl, vidPlaying            ; a clip's pre-arm palette writers run
     or (hl)                      ; before the hook suspend, under this flag
     ret nz
-    ld e, NR_PAL_CTRL
-    call nr_read
+    NRGET NR_PAL_CTRL
     ld (cycSave43), a
     and %00001111                ; keep display selects, drop the edit field
     ld c, a
@@ -593,8 +591,7 @@ cyc_tick:
 .ctl:
     or c
     ld c, a                      ; C = edit the SHOWN bank, display untouched
-    ld e, NR_PAL_INDEX
-    call nr_read
+    NRGET NR_PAL_INDEX
     ld (cycSave40), a
     ld a, c
     nextreg NR_PAL_CTRL, a
@@ -602,19 +599,17 @@ cyc_tick:
     ld d, a                      ; D = index
     ld a, (cycLast)
     sub d
-    ld c, a                      ; C = count-1 for the write loop (nr_read keeps BC)
+    ld c, a                      ; C = count-1 for the write loop (NRGET keeps BC)
     inc a
     ld b, a                      ; B = count, 2..255 (h_gfx pins last > first)
     ld hl, cycScratch
 .rd:
     ld a, d
     nextreg NR_PAL_INDEX, a
-    ld e, NR_PAL_VALUE
-    call nr_read                 ; reads never auto-increment
+    NRGET NR_PAL_VALUE           ; reads never auto-increment
     ld (hl), a
     inc hl
-    ld e, NR_PAL_VALUE9
-    call nr_read
+    NRGET NR_PAL_VALUE9
     and %10000001                ; priority + blue LSB; bits 6-1 must write 0
     ld (hl), a
     inc hl
@@ -1163,8 +1158,7 @@ spr_hw_show:
     call spr_ei
     ld (ix+SR_FRAME), 0
     call spr_apply_frame         ; record unpublished: the tick cannot touch it
-    ld e, NR_SPRITES
-    call nr_read
+    NRGET NR_SPRITES
     or SPR_NR15_ON               ; enable, over border, sprite 0 on top
     nextreg NR_SPRITES, a
     ret
