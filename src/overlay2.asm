@@ -106,12 +106,9 @@ l2ClipY2: db 0
 ; to hardware, so the byte and the register can never disagree. Only
 ; correct together with l2_mode_set's NR $14 transparent fill: without
 ; it, Layer 2 on top would hide the tilemap text instead of letting it
-; show through. Corrupts AF, E (nr_read preserves BC; only the ld e
-; register-select setup touches DE, and gfx_layer_apply corrupts the
-; same pair).
+; show through. Corrupts AF, E (gfx_layer_apply uses E; BC is kept).
 l2_enable:
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     or %10000000                 ; bit7: enable Layer 2
     nextreg NR_DISPLAY_CTRL, a
     jp gfx_layer_apply           ; compose NR $15 bits 4-2 from
@@ -122,11 +119,9 @@ l2_enable:
 ; Disable Layer 2 display (NR $69 bit 7 = 0, other bits preserved).
 ; Layer priority (NR $15) is left as l2_enable set it - harmless,
 ; since with Layer 2 invisible the S/L/U order has nothing to
-; prioritise. Corrupts AF, E (nr_read preserves BC; only the ld e
-; register-select setup touches DE).
+; prioritise. Corrupts AF only.
 l2_disable:
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     and %01111111
     nextreg NR_DISPLAY_CTRL, a
     ret
@@ -216,11 +211,9 @@ l2_pal_mirror:
     nextreg NR_PAL_CTRL, a       ; read side: edit the source bank
     ld a, d
     nextreg NR_PAL_INDEX, a
-    ld e, NR_PAL_VALUE
-    call nr_read                 ; keeps BC
+    NRGET NR_PAL_VALUE           ; keeps BC
     ld l, a                      ; RRRGGGBB
-    ld e, NR_PAL_VALUE9
-    call nr_read                 ; priority + blue LSB (reads do not
+    NRGET NR_PAL_VALUE9          ; priority + blue LSB (reads do not
     ld h, a                      ; auto-increment, so same entry)
     ld a, c
     nextreg NR_PAL_CTRL, a       ; write side: edit the target bank,
@@ -1427,11 +1420,9 @@ h_gfx:
     nextreg NR_PAL_CTRL, a
     ld a, c
     nextreg NR_PAL_INDEX, a
-    ld e, NR_PAL_VALUE
-    call nr_read                 ; no lock: the tick restores $40/$43
+    NRGET NR_PAL_VALUE           ; no lock: the tick restores $40/$43
     ld c, a                      ; C = RRRGGGBB
-    ld e, NR_PAL_VALUE9
-    call nr_read
+    NRGET NR_PAL_VALUE9
     ld e, a                      ; E = second byte, bit 0 = blue LSB
     ld a, d
     nextreg NR_PAL_CTRL, a
@@ -1472,8 +1463,7 @@ h_gfx:
 ; bank while a DISPLAY reveal is pending. Placed after the two handlers -
 ; a bare label here would end h_gfx's dot-local scope. Out: A = value to program, D = the live NR $43 to restore. Corrupts AF, E.
 gfx_pal_ctl:
-    ld e, NR_PAL_CTRL
-    call nr_read
+    NRGET NR_PAL_CTRL
     ld d, a
     and %00001111
     ld e, a
@@ -5041,8 +5031,7 @@ l2scr_run:
     call l2dbg_status            ; bottom row: which probe is running
     ld hl, msgL2sX9
     call dbg_puts
-    ld e, NR_L2_XOFS_MSB
-    call nr_read                 ; NR $71 reads back (guide: RW) - shows
+    NRGET NR_L2_XOFS_MSB         ; NR $71 reads back (guide: RW) - shows
     call dbg_hex8                ; whether the 9th bit even latched
     call l2dbg_status2           ; row above: 14/clipW/scroll/px readback
     call l2scr_wait_release
@@ -5060,8 +5049,8 @@ l2scr_run:
 .mid:                             ; MID: spin until the raster is well
     ld bc, 0                     ; inside the visible field, so the
 .midpoll:                         ; write lands mid-picture. A window
-    ld e, NR_RASTER_LSB          ; (100-149), not an exact line, since
-    call nr_read                 ; nr_read is not single-cycle (it
+    NRGET NR_RASTER_LSB          ; (100-149), not an exact line, since
+                                  ; a read is not single-cycle (it
     cp 100                       ; preserves BC, so the counter is
     jr c, .midnext               ; safe). Raster readback beats a delay
     cp 150                       ; loop - no CPU-speed dependency; no
@@ -5288,8 +5277,7 @@ l2dbg_status2:
     call dbg_at0
     ld hl, msgReg14
     call dbg_puts
-    ld e, NR_L2_TRANSP
-    call nr_read
+    NRGET NR_L2_TRANSP
     call dbg_hex8
     ld hl, msgClipW
     call dbg_puts
@@ -5306,12 +5294,10 @@ l2dbg_status2:
     call dbg_hex8
     ld hl, msgScroll
     call dbg_puts
-    ld e, NR_L2_XOFS
-    call nr_read
+    NRGET NR_L2_XOFS
     call dbg_hex8
     call dbg_space
-    ld e, NR_L2_YOFS
-    call nr_read
+    NRGET NR_L2_YOFS
     call dbg_hex8
     ld hl, msgPx
     call dbg_puts
