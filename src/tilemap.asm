@@ -72,7 +72,7 @@ tm_font_init:
 
 ; tm_width_apply/tm_width_core live in main.asm's resident block, after
 ; gfx_layer_apply (single composer of NR $6B, same residency reason:
-; callable from overlay2). txt_init below tail-calls it cross-file.
+; callable from overlay2). txt_init above tail-calls it cross-file.
 
 ; B=row, C=col -> HL = TM_MAP + row*160 + col*2.
 ; Corrupts AF; preserves BC, DE.

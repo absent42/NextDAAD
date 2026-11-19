@@ -15,13 +15,14 @@ check_nex_core       NEX header bytes 135-137 (required core) of
 check_gate_first     main runs only di, ld sp and the warm re-entry test before
                      its first call, an unconditional call nz, core_gate
                      (source), and every variant's listing assembles that.
-check_gate_once      every variant: core_gate is referenced only by that call,
-                     nothing references main, and core_gate and core_refuse
-                     sit in the IM2 table area with a first byte that is not
+check_gate_once      every variant: each label in the IM2 table area (the gate
+                     code, overwritten by im2_init) is named only from gate
+                     code, except main's one call nz, core_gate; nothing names
+                     main; the gate fits the table and its first byte is not
                      the table fill.
 check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
-                     fall-through included, over the Release, DEBUG,
-                     FORCE_1MB, NXB_QUIET and BENCH listings: every reached
+                     fall-through included, over every variant build.ps1
+                     accepts (LST_VARIANTS, combinations included): every reached
                      routine is in bank 2, its listed bytes match the image,
                      it holds no ED C7 byte pair and no rst, and it is
                      outside the print pipeline. A generated fixture proves
@@ -373,7 +374,9 @@ LST_VARIANTS = {
     "force1mb": ("-DDEBUG=1", "-DFORCE_1MB=1"),
     "force1mb-release": ("-DFORCE_1MB=1",),
     "benchquiet": ("-DDEBUG=1", "-DNXB_QUIET=1"),
+    "force1mb-benchquiet": ("-DDEBUG=1", "-DFORCE_1MB=1", "-DNXB_QUIET=1"),
     "bench": ("-DBENCH=1", "-DBCH_STAMP='0000000'"),
+    "bench-force1mb": ("-DFORCE_1MB=1", "-DBENCH=1", "-DBCH_STAMP='0000000'"),
 }
 # (routine, kind) -> written reason the closure may hold it. kind: "ED C7",
 # "rst", "indirect" or "unresolved". Empty: none may.
@@ -541,30 +544,45 @@ def inc_equ(name):
     return int(m.group(1), 16)
 
 
+def names_label(code, name):
+    return re.search(rf"(?<![\w.@])@?{re.escape(name)}\b", code) is not None
+
+
 def check_gate_once():
-    """im2_init overwrites the gate: only main's guarded first call may reach it,
-    and nothing may call, jump to or take the address of main."""
+    """im2_init overwrites the gate: every label in the IM2 table area is named
+    only from gate code, bar main's one guarded call nz, core_gate; nothing
+    names main."""
     table, fill = inc_equ("IM2_TABLE"), inc_equ("IM2_VECTOR_BYTE")
     for variant in LST_VARIANTS:
         bodies, image = main_listing(variant)
-        by = {b.name: b for b in bodies}
-        refs = [(b.name, re.sub(r"\s*,\s*", ", ", c)) for b in bodies for c in b.codes()
-                if re.search(r"\bcore_gate\b", c)]
-        if refs != [("main", "call nz, core_gate")]:
-            raise Fail(f"{variant}: core_gate referenced by {refs}, want main's call nz, core_gate only")
-        mains = [(b.name, c) for b in bodies for c in b.codes() if re.search(r"(?<![\w.@])@?main\b", c)]
+        names = [b.name for b in bodies]
+        if "core_gate" not in names:
+            raise Fail(f"{variant} listing: no core_gate label")
+        first = names.index("core_gate")
+        if bodies[first].addr != table:
+            raise Fail(f"{variant}: core_gate at ${bodies[first].addr:04X}, want IM2_TABLE ${table:04X}")
+        gate = []
+        for body in bodies[first:]:
+            if not table <= body.addr < table + 257:
+                break
+            gate.append(body)
+        for body in gate:
+            hi = max((e for _, e in body.ranges()), default=body.addr)
+            if hi > table + 257:
+                raise Fail(f"{variant}: {body.name} ends at ${hi:04X}, past the IM2 table ${table:04X}-${table + 256:04X}")
+        gate_names = [b.name for b in gate]
+        outside = [(b.name, n, re.sub(r"\s*,\s*", ", ", c)) for b in bodies if b not in gate
+                   for c in b.codes() for n in gate_names if names_label(c, n)]
+        if outside != [("main", "core_gate", "call nz, core_gate")]:
+            raise Fail(f"{variant}: gate labels {gate_names} named from outside the gate by {outside}, "
+                       "want main's call nz, core_gate only")
+        mains = [(b.name, c) for b in bodies for c in b.codes() if names_label(c, "main")]
         if mains:
             raise Fail(f"{variant}: main is referenced by {mains}")
-        for name in ("core_gate", "core_refuse"):
-            spans = by[name].ranges()
-            lo, hi = min(a for a, _ in spans), max(e for _, e in spans)
-            if lo < table or hi > table + 257:
-                raise Fail(f"{variant}: {name} ${lo:04X}-${hi:04X} is outside the IM2 table ${table:04X}-${table + 256:04X}")
-        if by["core_gate"].addr != table:
-            raise Fail(f"{variant}: core_gate at ${by['core_gate'].addr:04X}, want IM2_TABLE ${table:04X}")
         if image[table - 0x8000] == fill:
             raise Fail(f"{variant}: core_gate's first byte is the IM2 fill ${fill:02X}: main's guard would skip it")
-    return f"main's call only, main never targeted, gate at ${table:04X} in all {len(LST_VARIANTS)} listings"
+    return (f"gate labels {', '.join(gate_names)} named only from gate code and main's call; "
+            f"main never named; {len(LST_VARIANTS)} listings")
 
 
 def resolve(target, by):
