@@ -1,0 +1,10 @@
+date: 2026-11-19
+board: ks3
+leg: legP4
+stamp: f050fed
+bundle: 5f165f33ea7c
+core: 33.03
+board_id: 03
+sd_folder: LEG303P4
+logs: PI303V.LOG,PI_PI303V.LOG,VIDEO.LOG
+nr: #NR 01=33 0E=03 0F=03 03=33 05=5B 07=33

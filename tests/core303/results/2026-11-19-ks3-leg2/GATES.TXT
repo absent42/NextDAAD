@@ -1,0 +1,7 @@
+stamp: 5e4b8b5
+built: 2026-11-14
+quiet_check: OK: quiet timed paths are instruction-identical to release
+bench_check: OK: bench image is instruction-identical to release outside IFDEF BENCH
+nex_sha256: e27da7432eca826989002157e417dd038c7502160a54f41fbcc8b176ac7c46ff
+ddb_sha256: 18288423c676a7f4580931db2f5304ae36fa765be3cfe2f56bea4ff21c697926
+rerun_of: 2026-11-14-ks1

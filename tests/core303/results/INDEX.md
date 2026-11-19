@@ -5,3 +5,10 @@
 | 2026-11-14 | ks1 | leg2 | ingested | 2026-11-14-ks1-leg2 |
 | 2026-11-14 | ks1 | leg3 | ingested | 2026-11-14-ks1-leg3 |
 | 2026-11-15 | ks1pi | legP2 | ingested | 2026-11-15-ks1pi-legP2 |
+| 2026-11-19 | ks3 | legP0 | ingested | 2026-11-19-ks3-legP0 |
+| 2026-11-19 | ks3 | leg1 | WAIT STATES: ABSENT | 2026-11-19-ks3-leg1 |
+| 2026-11-19 | ks3 | leg2 | ingested | 2026-11-19-ks3-leg2 |
+| 2026-11-19 | ks3 | leg3 | ingested | 2026-11-19-ks3-leg3 |
+| 2026-11-19 | ks3 | legP2 | ingested | 2026-11-19-ks3-legP2 |
+| 2026-11-19 | ks3 | legP3 | ingested | 2026-11-19-ks3-legP3 |
+| 2026-11-19 | ks3 | legP4 | ingested | 2026-11-19-ks3-legP4 |

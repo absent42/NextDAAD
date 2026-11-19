@@ -1,0 +1,11 @@
+date: 2026-11-19
+board: ks3
+leg: leg3
+stamp: 5e4b8b5
+rerun_of: 2026-11-14-ks1
+core: 33.03
+board_id: 03
+sd_folder: LEG303C3
+logs: NXBENCH.TXT
+nr: #NR 01=33 0E=03 0F=03 03=33 05=5B 07=33
+timing_from: 2026-11-19-ks3-leg1
