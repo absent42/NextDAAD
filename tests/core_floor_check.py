@@ -718,8 +718,79 @@ def check_refuse_closure():
     return "self-test refused ED C7, rst and a moved image; routines " + ", ".join(notes)
 
 
+ZES_LAUNCHERS = [
+    "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py", "tests/cursor_dump.py",
+    "tests/cycle_dump.py", "tests/intro/zes_intro.py", "tests/l2pos_check.py",
+    "tests/machine_gate.py", "tests/parser/nleg.py", "tests/parser/parser_selftest.py",
+    "tests/poolc/poolc_check.py", "tests/spraud_dump.py", "tests/sprites_dump.py",
+    "tests/txt40_dump.py", "tests/typeahead_run.py", "tests/xbn/hookshape.py",
+    "tests/xbn/namecheck.py", "tests/xbn/tickcheck.py", "tests/xbn/transcheck.py",
+]
+ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py", "tests/core_floor_check.py")
+FADE_CALL = re.compile(r"\bEXTERN\s+\w+\s+4[0-3]\b", re.I)
+
+
+def fade_verbs(dsf):
+    """Verbs of a DSF whose process entries call EXTERN fn 40-43 (fade)."""
+    verbs, cur = set(), None
+    for line in dsf.splitlines():
+        m = re.match(r">\s*(\w+)\s", line)
+        if m:
+            cur = m.group(1)
+        elif line.startswith(("/", ">")):
+            cur = None
+        if cur and FADE_CALL.search(line.split(";", 1)[0]):
+            verbs.add(cur)
+    return verbs
+
+
+def check_no_fade_in_harness():
+    """No ZEsarUX launcher stages the standalone fade extern or types a verb whose
+    entry calls EXTERN 40-43 (extern.dsf, or any DSF the launcher names). Externs
+    assemble NEXTREG A,n with no stand-in, which ZEsarUX lacks."""
+    read = lambda p: p.read_text(encoding="utf-8", errors="replace")
+    ext = fade_verbs(read(ROOT / "tests/extern.dsf"))
+    if not ext:
+        raise Fail("tests/extern.dsf: no fade verbs found, the scan is blind")
+    bad, seen = [], set(ext)
+    for rel in ZES_LAUNCHERS:
+        text = read(ROOT / rel)
+        verbs = set(ext)
+        for name in set(re.findall(r"[\w./-]+\.dsf", text)):
+            for p in (ROOT / "tests").rglob(Path(name).name):
+                if p.relative_to(ROOT / "tests").parts[0] != "out":
+                    verbs |= fade_verbs(read(p))
+        seen |= verbs
+        if re.search(r"-XbnFade|FADE\.XBN", text):
+            bad.append(f"{rel} stages the standalone fade extern")
+        word = re.compile(r"[\"'\s](" + "|".join(sorted(verbs)) + r")[\"'\s]", re.I)
+        hit = word.search(text)
+        if hit:
+            bad.append(f"{rel} types fade verb {hit.group(1)}")
+    if bad:
+        raise Fail("; ".join(bad))
+    return f"{len(ZES_LAUNCHERS)} launchers, fade verbs {' '.join(sorted(seen))}"
+
+
+def check_zes_core_wired():
+    """Every tracked test that names zesarux.exe imports zes_core, and the
+    launcher list above covers them all."""
+    r = subprocess.run(["git", "grep", "-l", "-i", "zesarux.exe", "--", "tests"],
+                       cwd=ROOT, capture_output=True, text=True)
+    users = sorted(f for f in r.stdout.split() if f.endswith(".py")
+                   and not f.startswith(ZES_SKIP[:2]) and f not in ZES_SKIP[2:])
+    bad = [f for f in users
+           if "zes_core" not in (ROOT / f).read_text(encoding="utf-8", errors="replace")]
+    stray = [f for f in users if f not in ZES_LAUNCHERS]
+    if bad or stray:
+        raise Fail(f"no zes_core: {bad}; not in ZES_LAUNCHERS: {stray}")
+    return f"{len(users)} zesarux.exe users patched"
+
+
+
 CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
-          check_nex_core, check_gate_first, check_gate_once, check_refuse_closure]
+          check_nex_core, check_gate_first, check_gate_once, check_refuse_closure,
+          check_no_fade_in_harness, check_zes_core_wired]
 
 
 def main():

@@ -22,6 +22,8 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
+sys.path.insert(0, str(ROOT / "tests"))
+import zes_core                                        # noqa: E402
 import zrcp                                          # noqa: E402
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
@@ -161,7 +163,7 @@ def launch(work, port):
         shutil.rmtree(sd)
     shutil.copytree(LEG, sd)
     shutil.copyfile(NEX, sd / "nextdaad.nex")
-    proc = subprocess.Popen([
+    proc = zes_core.popen([
         str(ZESARUX), "--machine", "tbblue", "--realvideo",
         "--enable-esxdos-handler", "--esxdos-root-dir", str(sd),
         "--vo", "null", "--ao", "null",

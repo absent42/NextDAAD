@@ -183,6 +183,7 @@ nrs_resume  equ $
 nrs_sled:
     ds 256, 0                       ; NOPs into nrs_common
 NRS_PAGE    equ high nrs_sled
+NRS_CANARY  equ $A5                 ; stack-zone fill, see core_gate
 ; Contract as NEXTREG A,n: A = register value, all else kept (flags, $243B).
 ; Own IFF2-preserving DI bracket, nr_read's double sample: frame-ISR safe.
 nrs_common:

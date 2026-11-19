@@ -12,7 +12,8 @@ import argparse, pathlib, shutil, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
-import nleg, symbols  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests"))
+import nleg, symbols, zes_core  # noqa: E402
 
 PORT = 10033
 LINE_FLAG = 190         # OUT_FLAG = 191 is read as the next byte
@@ -73,6 +74,7 @@ def turn(leg, xbn, syms, obj_count, obj_size):
             z.enter()                   # its own wait covers the key hand-off
             wait_ready(nl)
             after = z.read_memory(flags, 2)
+            zes_core.check_stack_harness(z, "hookshape")
         finally:
             z.close()
     finally:

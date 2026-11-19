@@ -56,6 +56,8 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+import zes_core  # noqa: E402
 ZESARUX = os.path.join(ROOT, "tools", "DAAD-READY", "TOOLS", "zesarux", "zesarux.exe")
 NEX = os.path.join(ROOT, "build", "nextdaad.nex")
 SD = os.path.join(ROOT, "sd")
@@ -144,7 +146,7 @@ def stage(workdir, leg):
 
 
 def launch(sd, port):
-    return subprocess.Popen([
+    return zes_core.popen([
         ZESARUX, "--machine", "tbblue", "--realvideo",
         "--enable-esxdos-handler", "--esxdos-root-dir", sd,
         "--vo", "null", "--ao", "null",

@@ -57,6 +57,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -65,6 +66,8 @@ import tilemap
 import zrcp
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "tests"))
+import zes_core  # noqa: E402
 ZESARUX = ROOT / "tools" / "DAAD-READY" / "TOOLS" / "zesarux" / "zesarux.exe"
 
 TM_MAP = 0x6000
@@ -189,7 +192,7 @@ def launch(sd, port):
     already armed. --smartloadpath still sets the esxdos search root so
     the later ZRCP `smartload` command can find the file.
     """
-    return subprocess.Popen([
+    return zes_core.popen([
         str(ZESARUX), "--machine", "tbblue", "--realvideo",
         "--enable-esxdos-handler", "--esxdos-root-dir", str(sd),
         "--vo", "null", "--ao", "null",
@@ -1275,6 +1278,7 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                         print("nleg: NextDAAD raised runtime error %d on the "
                               "last turn and halted" % err)
                         break
+            zes_core.check_stack_harness(z, "nleg")
         finally:
             z.close()
     finally:

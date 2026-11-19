@@ -16,6 +16,8 @@ import argparse, pathlib, shutil, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
+sys.path.insert(0, str(ROOT / "tests"))
+import zes_core                                        # noqa: E402
 import zrcp, tilemap, nleg, normalise, transcript2jsonl  # noqa: E402
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
@@ -82,7 +84,7 @@ def main():
     sd = work / "sd"
     shutil.copytree(leg, sd)
     shutil.copyfile(ROOT / "build" / "nextdaad.nex", sd / "nextdaad.nex")
-    proc = subprocess.Popen([
+    proc = zes_core.popen([
         str(ZESARUX), "--machine", "tbblue", "--realvideo",
         "--enable-esxdos-handler", "--esxdos-root-dir", str(sd),
         "--vo", "null", "--ao", "null",
@@ -109,6 +111,7 @@ def main():
             z.send_keys(verb)
             z.enter(wait=args.wait)
             screen[verb] = screen_turn(z, args.cols)
+        zes_core.check_stack_harness(z, "transcheck")
         z.close()
         src = sd / "TRANS.TXT"
         if not src.exists():

@@ -195,6 +195,13 @@ core_gate:
     or a
     sbc hl, de
     jp c, core_refuse
+ IFDEF NR_STANDIN
+    ld hl, nrs_end                          ; harness stack canary: pattern from the
+    ld de, nrs_end + 1                      ; stand-in's end up to 16 bytes under
+    ld bc, STACK_TOP - 16 - nrs_end - 1     ; SP; the zone is read back over ZRCP
+    ld (hl), NRS_CANARY
+    ldir
+ ENDIF
     ret
 
 ; fatal()'s screen without txt_init, whose print pipeline reads registers.
