@@ -39,12 +39,6 @@ NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
         db $ED, $C7, nrgn             ; NEXTREG A,n: core 3.03.03+, no sjasmplus 1.24 mnemonic
       ENDIF
     ENDM
-; Offset of the register byte inside NRGET's 3 bytes (nr_read patches it).
- IFDEF NR_STANDIN
-NRGET_REG       equ 1           ; call operand low byte
- ELSE
-NRGET_REG       equ 2           ; ED C7 n
- ENDIF
 
 ; --- Resident memory layout (in 16K bank 2, $8000-$BFFF) ---
 CODE_ORG        equ $8000

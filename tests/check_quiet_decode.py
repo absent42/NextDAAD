@@ -119,7 +119,6 @@ TIMED = {
         "vid_ds_xfer", "vid_ds_iblk", "vid_ds_copy_body", "vid_ds_pal",
         "vid_ds_done",
     ],
-    "src/hardware.asm": ["nr_read"],        # vid_mf_disable_h
     "src/interrupts.asm": ["im2_isr"],      # the frame ISR (audEnable = 0)
 }
 
@@ -131,7 +130,6 @@ TIMED_SPANS = [
 # Timed regions: first label to the label after the region (None = EOF).
 REGIONS = {
     "src/video.asm": ("vid_stub", "vidLoopMode"),
-    "src/hardware.asm": ("nr_read", None),
     "src/interrupts.asm": ("im2_isr", "ctc_isr"),
 }
 

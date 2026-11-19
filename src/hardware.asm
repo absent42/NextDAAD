@@ -133,23 +133,6 @@ audio_init:
     out (c), a
     ret
 
-; Read a Next register: E = register, A = value; all else kept, DI-free.
-; Patches its own NRGET 0, putting back the byte found there, so a frame-ISR
-; call landing between the patch and the read cannot change this call's read.
-nr_read:
-    push hl
-    push bc
-    ld hl, .get + NRGET_REG
-    ld b, (hl)                      ; byte an interrupted nr_read stored
-    ld (hl), e
-.get:
-    NRGET 0
-    ld (hl), b
-    pop bc
-    pop hl
-    ret
-    ASSERT {b nr_read.get + NRGET_REG} == 0  ; NRGET_REG names the register byte
-
  IFDEF NR_STANDIN
 ; Harness-only NEXTREG A,n stand-in, assembled at RESIDENT_LIMIT: no resident
 ; byte moves, the cost is stack room (DISPLAY below). NRGET's call lands on

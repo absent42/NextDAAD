@@ -5049,9 +5049,9 @@ l2scr_run:
 .mid:                             ; MID: spin until the raster is well
     ld bc, 0                     ; inside the visible field, so the
 .midpoll:                         ; write lands mid-picture. A window
-    NRGET NR_RASTER_LSB          ; (100-149), not an exact line, since
-                                  ; a read is not single-cycle (it
-    cp 100                       ; preserves BC, so the counter is
+    NRGET NR_RASTER_LSB          ; (100-149), not an exact line: the
+                                  ; poll loop spans many T per read
+    cp 100                       ; (NRGET keeps BC, so the counter is
     jr c, .midnext               ; safe). Raster readback beats a delay
     cp 150                       ; loop - no CPU-speed dependency; no
     jr c, .step                  ; MSB check needed either, since no

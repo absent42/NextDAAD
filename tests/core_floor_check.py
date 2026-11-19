@@ -31,6 +31,9 @@ check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
                      the walker, the scan, rst, the allowlist and the image
                      cross-check.
 
+check_no_const_nr_read no code line under src/ (not src/intro/) references
+                     nr_read: every Next-register read is an NRGET.
+
 Run standalone or via tests\\build-tests.ps1. Exit 0 = every check passed.
 """
 
@@ -435,9 +438,9 @@ LST_VARIANTS = {
 # (routine, kind) -> written reason the closure may hold it. kind: "ED C7",
 # "rst", "indirect" or "unresolved". Empty: none may.
 CLOSURE_ALLOW = {}
-# The print pipeline and nr_read: the refusal path must never reach them.
+# The print pipeline: the refusal path must never reach it.
 CLOSURE_FORBIDDEN = ("fatal", "txt_init", "tm_width_apply", "windows_init", "win_select",
-                     "prn_flush", "prn_glyph", "prn_more_check", "nr_read")
+                     "prn_flush", "prn_glyph", "prn_more_check")
 LST_LINE = re.compile(r"\s*\d+\+*\s*([0-9A-F]{4})")
 LST_FIELD = re.compile(r"(?:[0-9A-F]{2}(?: [0-9A-F]{2})*(?:\.\.\.)?)?")
 DATA_OPS = {"db", "dw", "dd", "defb", "defw", "defd", "defm", "dm", "dz", "dc", "d24",
@@ -915,9 +918,27 @@ def check_zes_core_wired(root=ROOT, listed=None):
     return f"{len(direct)} direct and {len(helper)} helper users, all through zes_core.popen"
 
 
+NR_READ_CODE = re.compile(r"\bnr_read\b")
+
+
+def check_no_const_nr_read(root=ROOT):
+    """nr_read is gone: no code line under src/ (not src/intro/) names it, so
+    every Next-register read is an NRGET."""
+    bad = []
+    for f in sorted((root / "src").rglob("*")):
+        if f.suffix not in (".asm", ".inc") or "intro" in f.relative_to(root / "src").parts:
+            continue
+        for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if NR_READ_CODE.search(line.split(";", 1)[0]):
+                bad.append(f"{f.relative_to(root).as_posix()}:{n}")
+    if bad:
+        raise Fail("nr_read still referenced: " + ", ".join(bad))
+    return "no nr_read reference outside src/intro"
+
+
 CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
           check_nex_core, check_gate_first, check_gate_once, check_refuse_closure,
-          check_no_fade_in_harness, check_zes_core_wired]
+          check_no_fade_in_harness, check_zes_core_wired, check_no_const_nr_read]
 
 
 def main():
