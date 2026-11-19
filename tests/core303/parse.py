@@ -500,6 +500,9 @@ def _companion(tag):
 
 
 def _flags(row, lpf, tpl35, log=None):
+    if TAGS[row.tag].counter:
+        return ["COUNT %d IN %d FRAMES" % (row.n, row.f)] + \
+            (["UNUSABLE"] if row.ck_ok is False else [])
     out = []
     if log is not None and _cal_name(row) and _cal_row(log, row) is None:
         out.append("NOCAL")
@@ -640,13 +643,16 @@ def _report_log(log, lpf, tpl35, out):
             notes = _flags(r, lpf, tpl35, log)
             if part == "1a" and t.note:
                 notes.append("[%s]" % t.note)
-            rep = Fraction(row_t(r, lpf, tpl35), r.r)
-            unit = isr_per_frame(log, r, lpf, tpl35) if t.per_frame else \
-                per_unit(log, r, lpf, tpl35)
+            if t.counter:
+                rep = unit = None
+            else:
+                rep = Fraction(row_t(r, lpf, tpl35), r.r)
+                unit = isr_per_frame(log, r, lpf, tpl35) if t.per_frame else \
+                    per_unit(log, r, lpf, tpl35)
             cells = [name, t.op, t.method, "-" if t.size is None else t.size, _fmt(rep),
                      _fmt(unit)]
             if p2:
-                if t.per_frame:
+                if t.per_frame or t.counter:
                     cells.append("-")
                 elif isr is None:
                     cells.append(NO_ISR)

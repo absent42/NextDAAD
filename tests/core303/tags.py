@@ -31,6 +31,7 @@ class Tag:
     note: str = ""
     cal: Optional[str] = None
     per_frame: bool = False         # report (row T - cal T) / row F instead of T/unit
+    counter: bool = False           # N is a count over F frames, not a timed body: no T
 
     @property
     def calibration(self):
@@ -215,10 +216,10 @@ TAGS["P3B5"] = Tag("P3", "bank 5 restore", CPU, None, "byte",
 TAGS["P4NX"] = Tag("P4", "Pi flips seen", CPU, None, "flip",
                    "N = frames_seen, NR $12 changes seen at frame interrupts, mod 65536; "
                    "F = frame interrupts from state 1 through exit, the settle included, "
-                   "mod 65536; CK = unknown commands acked, OK = none")
+                   "mod 65536; CK = unknown commands acked, OK = none", counter=True)
 TAGS["P4HB"] = Tag("P4", "load steps", CPU, None, "step",
                    "N = hb_next at exit (LOAD 0 and 6 steps), mod 65536; "
-                   "F = frame interrupts from state 1 through exit, mod 65536")
+                   "F = frame interrupts from state 1 through exit, mod 65536", counter=True)
 TAGS["P4B5"] = Tag("P4", "bank 5 restore", CPU, None, "byte",
                    "exit restore of the LOAD 6 bank 5 region, 256 B; CK = ck16, OK = the startup checksum")
 

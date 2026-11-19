@@ -725,4 +725,26 @@ def test_pi303v_log_parses(tmp_path):
     assert log.bench == "PI" and log.nr["A0"] == 0x02 and log.nr["12"] == 0x09
     assert ("PI4X", "TIMEOUT") in log.skips
     assert [r.tag for r in log.rows] == ["P4NX", "P4HB", "P4B5"]
-    assert "P4NX" in parse.report([log], None, None)
+    text = parse.report([log], None, None)
+    row = {l.split(" | ")[0][2:]: l for l in text.splitlines() if l.startswith("| P4")}
+    assert row["P4NX"].endswith("| - | - | COUNT 291 IN 8000 FRAMES |")
+    assert row["P4HB"].endswith("| - | - | COUNT 7680 IN 8000 FRAMES |")
+    assert "COUNT" not in row["P4B5"]
+
+
+def test_counter_rows_unusable_and_excluded(tmp_path):
+    import ingest
+    assert [t for t, v in parse.TAGS.items() if v.counter] == ["P4NX", "P4HB"]
+    p = tmp_path / "PI303V.LOG"
+    p.write_bytes(("\n".join([
+        "#CORE303 PI TEST", "#NR 01=33 0E=03 0F=03 03=33 05=5B 07=33", "#SRAM 2048",
+        "CAL0 C=W S=3 R=FFFF F=0027 D=FFED N=0001",
+        "P4NX C=W S=3 R=0001 F=4D07 D=0000 N=03C0 CK=0002 BAD",
+        "P4HB C=W S=3 R=0001 F=4D07 D=0000 N=5691",
+        "#END 0003"]) + "\n").encode("ascii"))
+    log = parse.parse_log(p)
+    text = parse.report([log], None, None)
+    nx = next(l for l in text.splitlines() if l.startswith("| P4NX "))
+    assert nx.endswith("| - | - | COUNT 960 IN 19719 FRAMES UNUSABLE |")
+    assert "CLOCK?" not in text and "NOCAL" not in text
+    assert ingest._unit_by_tag([log]) == {}

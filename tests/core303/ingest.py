@@ -130,7 +130,7 @@ def _unit_by_tag(logs):
         except LogError:
             continue
         for r in log.rows:
-            if r.tag in out or r.ck_ok is False:
+            if r.tag in out or r.ck_ok is False or parse.TAGS[r.tag].counter:
                 continue
             f = parse.isr_per_frame if parse.TAGS[r.tag].per_frame else parse.per_unit
             v = f(log, r, lpf, tpl)
