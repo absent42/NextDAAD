@@ -166,3 +166,59 @@ nr_read:
 .noei:
     pop bc
     ret
+
+ IFDEF NR_STANDIN
+; Harness-only NEXTREG A,n stand-in, assembled at RESIDENT_LIMIT: no resident
+; byte moves, the cost is stack room (DISPLAY below). NRGET's call lands on
+; NOP NRS_PAGE*256+reg; nrs_common reads reg back from the call operand.
+nrs_resume  equ $
+    ORG RESIDENT_LIMIT
+    ALIGN 256
+nrs_sled:
+    ds 256, 0                       ; NOPs into nrs_common
+NRS_PAGE    equ high nrs_sled
+; Contract as NEXTREG A,n: A = register value, all else kept (flags, $243B).
+; Own IFF2-preserving DI bracket, nr_read's double sample: frame-ISR safe.
+nrs_common:
+    push af                         ; caller F; this A slot takes the value
+    push hl
+    push de
+    push bc
+    ld a, i
+    jp pe, .sampled
+    ld a, i
+.sampled:
+    push af                         ; IFF2 in P/V
+    di
+    ld hl, 10
+    add hl, sp                      ; HL -> return address
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    dec de
+    dec de                          ; DE -> call operand low byte = register
+    ld a, (de)
+    ld bc, TBBLUE_REG_SEL
+    in e, (c)                       ; live selection, port $243B is readable
+    out (c), a
+    inc b
+    in a, (c)
+    dec b
+    out (c), e                      ; selection restored
+    dec hl
+    dec hl                          ; HL -> caller A slot
+    ld (hl), a
+    pop af
+    jp po, .noei
+    ei
+.noei:
+    pop bc
+    pop de
+    pop hl
+    pop af                          ; A = value, F = caller's
+    ret
+nrs_end:
+    ASSERT nrs_sled >= RESIDENT_LIMIT && nrs_end <= STACK_TOP
+    DISPLAY "harness stack room ", /D, STACK_TOP - nrs_end, " bytes (shipped ", /D, STACK_TOP - RESIDENT_LIMIT, ")"
+    ORG nrs_resume
+ ENDIF
