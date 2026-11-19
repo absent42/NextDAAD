@@ -3,8 +3,9 @@
     INCLUDE "../../src/nextdaad.inc"
 FIX_PAGE equ $A7
 NRS_PAGE equ FIX_PAGE
+probe_reg equ $6B               ; argument with a "reg" sub-word: no parameter clash
 
     OUTPUT "tests/out/corefloor/nrget_fixture.bin"
     NRGET $56
-    NRGET $6B
+    NRGET probe_reg
     OUTEND

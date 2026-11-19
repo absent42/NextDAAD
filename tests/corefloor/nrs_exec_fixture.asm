@@ -6,7 +6,7 @@ PROBE equ $C000
     ORG CODE_ORG
     INCLUDE "../../src/hardware.asm"
     ORG PROBE
-    DUP 256, pidx                   ; no "reg" sub-word: NRGET's parameter would recurse
+    DUP 256, pidx
       NRGET pidx
       halt
     EDUP

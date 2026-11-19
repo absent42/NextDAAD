@@ -29,14 +29,14 @@ NR_DMA_INT_EN_1 equ $CC     ; DMA pre-emption: bit 0 ULA, bit 1 line
 NR_DMA_INT_EN_2 equ $CD     ; DMA pre-emption: bit n = CTC channel n
 NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
 
-; NRGET reg: A = Next register reg; every other register, the flags and the
-; $243B selection kept. NR_STANDIN (build.ps1 -Harness only) swaps in a
-; 3-byte call to the stand-in sled at NRS_PAGE (hardware.asm).
-    MACRO NRGET reg
+; NRGET n: A = Next register n; other registers, flags, $243B selection kept.
+; NR_STANDIN (build.ps1 -Harness only): 3-byte call to the NRS_PAGE sled. The
+; parameter is nrgn: sjasmplus substitutes one inside underscore-separated names.
+    MACRO NRGET nrgn
       IFDEF NR_STANDIN
-        call NRS_PAGE * 256 + (reg)   ; harness: sled + port-read stand-in
+        call NRS_PAGE * 256 + (nrgn)  ; harness: sled + port-read stand-in
       ELSE
-        db $ED, $C7, reg              ; NEXTREG A,reg: core 3.03.03+, no sjasmplus 1.24 mnemonic
+        db $ED, $C7, nrgn             ; NEXTREG A,n: core 3.03.03+, no sjasmplus 1.24 mnemonic
       ENDIF
     ENDM
 
