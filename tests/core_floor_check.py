@@ -734,7 +734,9 @@ ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py",
             "tests/zes_core.py", "tests/core_floor_check.py")
 ZES_HELPERS = ("tests/parser/nleg.py", "tests/audio/stopm_dump.py", "tests/sprites_dump.py")
 ZES_NAMES = re.compile(r"zesarux\.exe|--enable-remoteprotocol", re.I)
-ZES_HELPER_CALL = re.compile(r"\b(?:nleg|sd|stopm_dump|sprites_dump)\.(?:launch|play)\(")
+ZES_HELPER_CALLS = {f"{m}.{fn}" for m in ("nleg", "stopm_dump", "sprites_dump") for fn in ("launch", "play")}
+ZES_SPAWNERS = {"subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
+                "subprocess.check_output", "os.system", "os.popen"}
 FADE_CALL = re.compile(r"\bEXTERN\s+\w+\s+4[0-3]\b", re.I)
 
 
@@ -780,40 +782,77 @@ def check_no_fade_in_harness():
     return f"{len(ZES_LAUNCHERS)} launchers, fade verbs {' '.join(sorted(seen))}"
 
 
+def zes_calls(tree):
+    """[(qualified name, Call)] with import aliases resolved: `import subprocess as sp`
+    gives sp.Popen -> subprocess.Popen, `from nleg import launch` gives launch -> nleg.launch."""
+    alias = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                alias[(a.asname or a.name).split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            for a in n.names:
+                alias[a.asname or a.name] = f"{n.module}.{a.name}"
+    out = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            head, _, rest = ast.unparse(n.func).partition(".")
+            out.append(((alias[head] + ("." + rest if rest else "")) if head in alias else
+                        ast.unparse(n.func), n))
+    return out
+
+
+def names_zesarux(call):
+    """True when a call's arguments mention the ZEsarUX executable (a ZESARUX name or a
+    string holding zesarux)."""
+    for arg in [*call.args, *(k.value for k in call.keywords)]:
+        for n in ast.walk(arg):
+            if isinstance(n, (ast.Name, ast.Attribute)) and "zesarux" in (n.id if isinstance(n, ast.Name) else n.attr).lower():
+                return True
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and "zesarux" in n.value.lower():
+                return True
+    return False
+
+
+def zes_parse(root, f):
+    try:
+        return ast.parse((root / f).read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError as err:
+        raise Fail(f"{f}: does not parse: {err}")
+
+
 def zes_users(root=ROOT):
     """(direct, helper) tracked test .py files that start ZEsarUX: direct ones name
-    the exe or its remote-protocol flag, helper ones call a launcher helper."""
+    the exe or its remote-protocol flag, helper ones call a launcher helper
+    (aliases and from-imports resolved)."""
     r = subprocess.run(["git", "ls-files", "tests"], cwd=root, capture_output=True, text=True)
     direct, helper = [], []
     for f in r.stdout.split():
         if not f.endswith(".py") or f.startswith(ZES_SKIP[:2]) or f in ZES_SKIP[2:]:
             continue
-        text = (root / f).read_text(encoding="utf-8", errors="replace")
-        if ZES_NAMES.search(text):
+        if ZES_NAMES.search((root / f).read_text(encoding="utf-8", errors="replace")):
             direct.append(f)
-        if ZES_HELPER_CALL.search(text):
+        if any(q in ZES_HELPER_CALLS for q, _ in zes_calls(zes_parse(root, f))):
             helper.append(f)
     return sorted(direct), sorted(helper)
 
 
 def check_zes_core_wired(root=ROOT, listed=None):
     """Every ZEsarUX launch goes through zes_core.popen: each direct launcher calls it
-    and holds no raw subprocess.Popen, each helper (nleg, stopm_dump, sprites_dump)
+    and makes no subprocess.Popen call, no user (direct or helper) starts the ZEsarUX
+    exe through subprocess/os spawners, each helper (nleg, stopm_dump, sprites_dump)
     is a direct launcher, and ZES_LAUNCHERS equals the discovered direct and helper
-    users exactly."""
+    users exactly. Import aliases are resolved."""
     listed = ZES_LAUNCHERS if listed is None else listed
     direct, helper = zes_users(root)
     bad = []
-    for f in direct:
-        try:
-            tree = ast.parse((root / f).read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError as err:
-            raise Fail(f"{f}: does not parse: {err}")
-        calls = {ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
-        if "zes_core.popen" not in calls:
+    for f in sorted(set(direct) | set(helper)):
+        calls = zes_calls(zes_parse(root, f))
+        if f in direct and not any(q == "zes_core.popen" for q, _ in calls):
             bad.append(f"{f}: no zes_core.popen call")
-        if calls & {"subprocess.Popen", "Popen"}:
-            bad.append(f"{f}: raw subprocess.Popen call")
+        for q, c in calls:
+            if q in ZES_SPAWNERS and (f in direct and q == "subprocess.Popen" or names_zesarux(c)):
+                bad.append(f"{f}: raw {q} call line {c.lineno}")
     bad += [f"helper {h} is not a direct zes_core launcher" for h in ZES_HELPERS if h not in direct]
     found = set(direct) | set(helper)
     bad += [f"{f}: starts ZEsarUX but is not in ZES_LAUNCHERS" for f in sorted(found - set(listed))]
