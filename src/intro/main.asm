@@ -182,7 +182,7 @@ lerpTab:        ds LERP_K*LERP_D
 
     CSPECTMAP "build/intro.map"
     SAVENEX OPEN "build/intro.nex", main, STACK_TOP
-    SAVENEX CORE 3, 0, 0
+    SAVENEX CORE 3, 3, 3
     SAVENEX CFG 0
     SAVENEX AUTO
     SAVENEX CLOSE

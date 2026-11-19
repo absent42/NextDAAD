@@ -9,6 +9,7 @@
 main:
     di
     ld sp, STACK_TOP
+    call core_gate               ; first: returns only on core 3.03.03 or later
  IFDEF DEBUG
     call l2_bareprobe_hook       ; Layer 2 bare-metal isolation ladder
                                   ; (Task 2, round 8); no-op unless P
@@ -169,6 +170,65 @@ boot_data_init:
                                 ; runs, matching cold boot
  ENDIF
     ret
+
+; Boot gate at CORE_GATE_ORG, bank 2's unwritten gap below IM2_STUB: no resident
+; or pre-flags byte. Port-pair reads only; the gate and the refusal path must
+; not reach NEXTREG A,n.
+coreGateResume  equ $
+    ORG CORE_GATE_ORG
+; Returns when (NR $01 << 8) | NR $0E >= $3303, else refuses.
+; Corrupts AF, BC, DE, HL.
+core_gate:
+    ld bc, TBBLUE_REG_SEL
+    ld a, NR_CORE_MAJOR
+    out (c), a
+    inc b
+    in h, (c)
+    dec b
+    ld a, NR_CORE_SUB
+    out (c), a
+    inc b
+    in l, (c)
+    ld de, $3303
+    or a
+    sbc hl, de
+    jp c, core_refuse
+    ret
+
+; fatal()'s screen without txt_init, whose print pipeline reads registers.
+; Never returns.
+core_refuse:
+    ld a, ERR_BORDER_CORE
+    out ($FE), a
+    di
+    call hw_regs
+    call audio_init                         ; silence a held note
+    nextreg NR_TM_MAP_BASE, TM_MAP_MSB      ; txt_init's register writes
+    nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
+    call tm_reserved_pairs
+    call tm_font_init
+    nextreg NR_ULA_CTRL, ULA_OFF
+    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
+    ld a, TM_ATTR_DEFAULT                   ; map fill attribute
+    ld (tmAttr), a
+    ld a, TM_COLS
+    call tm_width_core
+    ld a, TM_ATTR_ERROR
+    ld (tmAttr), a
+    ld bc, 0                                ; row 0, column 0
+    ld de, 256 + TM_COLS                    ; D = 1 row, E = full width
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
+    ld hl, msgCoreOld
+    call fatal_puts
+.halt:
+    di
+    jr .halt
+msgCoreOld: db "NextDAAD needs core 3.03.03 or later", 0
+coreGateEnd:
+    ASSERT CORE_GATE_ORG > IM2_TABLE + 256 && coreGateEnd <= IM2_STUB
+    DISPLAY "core gate ends at ", coreGateEnd, " headroom ", /D, IM2_STUB - coreGateEnd
+    ORG coreGateResume
 
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
@@ -1829,7 +1889,7 @@ akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
     ; .nex if header byte 10 (loading screen), byte 139 (entry bank) or word 140
     ; (file handle) is nonzero, or bank 5 is flagged: keep CFG 0, no SCREEN/handle.
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP
-    SAVENEX CORE 3, 0, 0
+    SAVENEX CORE 3, 3, 3
     SAVENEX CFG 0
     SAVENEX AUTO
     SAVENEX CLOSE

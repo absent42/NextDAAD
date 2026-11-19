@@ -1,15 +1,7 @@
 ; Next hardware setup and register access.
 
 hw_init:
-    nextreg NR_CPU_SPEED, 3         ; 28MHz
-    nextreg NR_SPRITES, 0           ; sprites off
-    nextreg NR_DISPLAY_CTRL, 0      ; Layer 2 off, Timex off
-    nextreg NR_ULA_CTRL, 0          ; ULA output enabled
-    nextreg NR_FALLBACK, 0          ; global fallback colour black: shows
-                                    ; wherever ALL layers are transparent
-                                    ; (or none covers, e.g. the top band
-                                    ; beside 256x192 Layer 2 art); CSpect
-                                    ; powers up non-black
+    call hw_regs
     xor a
     out ($FE), a                    ; black border
     ; SP8: DACs on for sampled sound; Turbo Sound on explicitly (both
@@ -45,6 +37,20 @@ hw_init:
     ; explicitly refuses to touch the internal speaker ("a user
     ; setting, not a game setting").
     jp ula_cls
+
+; hw_init's register writes, no reads: core_refuse runs it on a core that may
+; lack NEXTREG A,n. Preserves all registers.
+hw_regs:
+    nextreg NR_CPU_SPEED, 3         ; 28MHz
+    nextreg NR_SPRITES, 0           ; sprites off
+    nextreg NR_DISPLAY_CTRL, 0      ; Layer 2 off, Timex off
+    nextreg NR_ULA_CTRL, 0          ; ULA output enabled
+    nextreg NR_FALLBACK, 0          ; global fallback colour black: shows
+                                    ; wherever ALL layers are transparent
+                                    ; (or none covers, e.g. the top band
+                                    ; beside 256x192 Layer 2 art); CSpect
+                                    ; powers up non-black
+    ret
 
 ; Clear ULA pixels, set attrs to white ink on black paper.
 ula_cls:

@@ -10,6 +10,16 @@ check_nrs_exec       executes the assembled stand-in (src/hardware.asm under
                      every other register, the flags, the $243B selection,
                      the interrupt state and SP kept. Two broken copies must
                      fail. Matches build\\nextdaad.nex when it is a harness build.
+check_nex_core       NEX header bytes 135-137 (required core) of
+                     build\\nextdaad.nex and build\\intro.nex read 3, 3, 3.
+check_gate_first     main runs only di and ld sp before its first call, which
+                     is an unconditional call core_gate (source), and the
+                     Release and DEBUG listings assemble exactly that.
+check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
+                     fall-through included, over the Release and DEBUG
+                     listings: every reached routine is in bank 2, holds no
+                     ED C7 byte pair and is outside the print pipeline. A
+                     generated fixture proves the walker and the scan.
 
 Run standalone or via tests\\build-tests.ps1. Exit 0 = every check passed.
 """
@@ -342,7 +352,274 @@ def check_nrs_exec():
     return note
 
 
-CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec]
+# ------------------------------------------------------------- boot gate
+
+NEX_HEADERS = (ROOT / "build" / "nextdaad.nex", ROOT / "build" / "intro.nex")
+MAIN_ASM = ROOT / "src" / "main.asm"
+LST_VARIANTS = {"release": (), "debug": ("-DDEBUG=1",)}
+# Reached routine -> written reason it may hold ED C7. Empty: none may.
+CLOSURE_ALLOW = {}
+# The print pipeline and nr_read: the refusal path must never reach them.
+CLOSURE_FORBIDDEN = ("fatal", "txt_init", "tm_width_apply", "windows_init", "win_select",
+                     "prn_flush", "prn_glyph", "prn_more_check", "nr_read")
+LST_LINE = re.compile(r"\s*\d+\+*\s*([0-9A-F]{4})")
+LST_FIELD = re.compile(r"(?:[0-9A-F]{2}(?: [0-9A-F]{2})*(?:\.\.\.)?)?")
+DATA_OPS = {"db", "dw", "dd", "defb", "defw", "defd", "defm", "dm", "dz", "dc", "d24",
+            "ds", "defs", "block", "incbin", "align", "abyte", "abytec", "abytez"}
+ELIDING = {"ds", "defs", "block", "incbin", "align"}
+_listings = {}
+
+
+def check_nex_core():
+    for nex in NEX_HEADERS:
+        if not nex.exists():
+            raise Fail(f"{nex.relative_to(ROOT)} missing: build first")
+        core = list(nex.read_bytes()[135:138])
+        if core != [3, 3, 3]:
+            raise Fail(f"{nex.relative_to(ROOT)} header core {core}, want [3, 3, 3]")
+    return "build\\nextdaad.nex, build\\intro.nex"
+
+
+class Body:
+    """A global label's listing lines up to the next global label."""
+
+    def __init__(self, name, addr):
+        self.name, self.addr, self.lines, self.next = name, addr, [], None
+
+    def instrs(self):
+        """(mnemonic, operands, text) of each line that emits an instruction."""
+        for _, _, code, emits in self.lines:
+            if emits and code:
+                mn, ops = (code.split(None, 1) + [""])[:2]
+                mn = mn.lower()
+                if mn not in DATA_OPS:
+                    yield mn, [o.strip() for o in ops.split(",")] if ops.strip() else [], code
+
+    def ranges(self):
+        return [(a, e) for a, e, _, emits in self.lines if emits and e > a]
+
+
+def parse_listing(text):
+    """Bodies in assembly order from a sjasmplus --lst. Lines skipped by a false
+    conditional (~) are dropped; macro expansion lines (>) are kept."""
+    rows = []
+    for raw in text.splitlines():
+        m = LST_LINE.match(raw)
+        if not m:
+            continue
+        p = m.start(1)
+        if raw[p + 5:p + 6] == "~":
+            continue
+        field = raw[p + 5:p + 17].strip()
+        if not LST_FIELD.fullmatch(field):
+            raise Fail(f"listing line not understood: {raw}")
+        src = raw[p + 18:]
+        macro = src.startswith(">")
+        code = (src[1:] if macro else src).split(";", 1)[0].rstrip()
+        rows.append([int(m.group(1), 16), field, code, macro])
+    bodies, cur = [], None
+    for i, (addr, field, code, macro) in enumerate(rows):
+        nxt = rows[i + 1][0] if i + 1 < len(rows) else addr
+        if not macro and re.match(r"[A-Za-z_@]", code):
+            lm = re.match(r"([A-Za-z_@][\w@!?.]*):?(.*)$", code)
+            rest = lm.group(2).strip()
+            if re.match(r"(equ\b|defl\b|=)", rest, re.I):
+                continue
+            cur = Body(lm.group(1), addr)
+            bodies.append(cur)
+            code = rest
+        code = re.sub(r"^(\.[\w@!?.]*|\d+):?\s*", "", code.strip())   # local or temp label
+        mn = (code.split(None, 1) or [""])[0].lower()
+        emits = bool(field) or mn in ELIDING
+        # Listed bytes give the extent; "..." or none listed (ds, incbin): the next line's address.
+        end = addr + len(field.split()) if field and not field.endswith("...") else nxt
+        if cur is not None and (field or code):
+            cur.lines.append((addr, end if emits else addr, code, emits))
+    for a, b in zip(bodies, bodies[1:]):
+        a.next = b.name
+    return bodies
+
+
+def listing(tag, src, defines, image_of):
+    """Assemble src with --lst in tests/out/corefloor/lst-<tag> (its SAVENEX and
+    CSPECTMAP land there, not in build\\). Returns (bodies, bank 2 image)."""
+    if tag in _listings:
+        return _listings[tag]
+    work = OUT / f"lst-{tag}"
+    (work / "build").mkdir(parents=True, exist_ok=True)
+    lst = work / "main.lst"
+    for old in (lst, work / "build" / "nextdaad.nex", work / "build" / "bank2.bin"):
+        if old.exists():
+            old.unlink()
+    r = subprocess.run([str(SJASM), "--zxnext=cspect", "--msg=war", f"--lst={lst.as_posix()}",
+                        *defines, Path(src).as_posix()], cwd=work, capture_output=True, text=True)
+    if r.returncode != 0 or not lst.exists():
+        raise Fail(f"sjasmplus --lst {tag} failed:\n{r.stdout}{r.stderr}")
+    _listings[tag] = (parse_listing(lst.read_text(encoding="latin-1")), image_of(work))
+    return _listings[tag]
+
+
+def main_listing(variant):
+    return listing(variant, MAIN_ASM, LST_VARIANTS[variant],
+                   lambda work: nex_bank2(work / "build" / "nextdaad.nex"))
+
+
+def check_gate_first():
+    lines = MAIN_ASM.read_text(encoding="utf-8").splitlines()
+    start = next((i for i, s in enumerate(lines) if re.match(r"main:\s*(;.*)?$", s)), None)
+    if start is None:
+        raise Fail("src/main.asm has no main: label")
+    depth, before, at = 0, [], None
+    for i in range(start + 1, len(lines)):
+        if re.match(r"[A-Za-z_@]", lines[i]):
+            break
+        code = lines[i].split(";", 1)[0].strip()
+        if not code:
+            continue
+        word = code.split()[0].lower()
+        if word in ("if", "ifdef", "ifndef", "ifused", "ifnused"):
+            depth += 1
+        elif word == "endif":
+            depth -= 1
+        elif word in ("else", "elseif"):
+            pass
+        elif word == "call":
+            target = code.split(None, 1)[1].replace(" ", "")
+            if target != "core_gate":
+                raise Fail(f"src/main.asm:{i + 1}: first call in main is '{code}', want 'call core_gate'")
+            if depth:
+                raise Fail(f"src/main.asm:{i + 1}: call core_gate is inside a conditional block")
+            at = i + 1
+            break
+        else:
+            before.append(re.sub(r"\s*,\s*", ",", code.lower()))
+    if at is None:
+        raise Fail("main has no call before its next global label")
+    if before != ["di", "ld sp,stack_top"]:
+        raise Fail(f"main runs {before} before call core_gate, want ['di', 'ld sp,stack_top']")
+    for variant in LST_VARIANTS:
+        bodies, _ = main_listing(variant)
+        by = {b.name: b for b in bodies}
+        if "main" not in by or "core_gate" not in by:
+            raise Fail(f"{variant} listing: no main or core_gate label")
+        first = [(mn, ops) for mn, ops, _ in list(by["main"].instrs())[:3]]
+        if first != [("di", []), ("ld", ["sp", "STACK_TOP"]), ("call", ["core_gate"])]:
+            raise Fail(f"{variant} listing: main assembles {first}")
+    return f"src/main.asm:{at}, Release and DEBUG listings agree"
+
+
+def resolve(target, by):
+    """('edge', label) | ('local', None) | ('indirect' | 'unresolved', target)."""
+    if target.startswith("("):
+        return "indirect", target
+    if target.startswith(".") or target == "$" or re.fullmatch(r"\$\s*[-+].*|\d+[BbFf]", target):
+        return "local", None
+    base = target.lstrip("@").split(".", 1)[0]
+    return ("edge", base) if base in by else ("unresolved", target)
+
+
+def terminal(mn, ops):
+    return (mn == "ret" and not ops) or mn in ("reti", "retn") or (mn in ("jp", "jr") and len(ops) == 1)
+
+
+def walk_closure(bodies, roots):
+    """Reached bodies (in visit order) and the edges the walk could not follow."""
+    by = {b.name: b for b in bodies}
+    for r in roots:
+        if r not in by:
+            raise Fail(f"no {r} label in the listing")
+    reached, seen, issues, todo = [], set(), [], list(roots)
+    while todo:
+        name = todo.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        body = by[name]
+        reached.append(body)
+        last = None
+        for mn, ops, code in body.instrs():
+            last = (mn, ops)
+            if mn in ("call", "jp", "jr", "djnz") and ops:
+                kind, target = resolve(ops[-1], by)
+                if kind == "edge":
+                    todo.append(target)
+                elif kind != "local":
+                    issues.append(f"{name}: {kind} '{code}'")
+        if (last is None or not terminal(*last)) and body.next:
+            todo.append(body.next)
+    return reached, issues
+
+
+def scan_closure(bodies, image, roots):
+    """Return (closure text, failures) for the bodies reached from roots."""
+    reached, failures = walk_closure(bodies, roots)
+    shown = []
+    for body in reached:
+        spans = body.ranges()
+        lo = min((a for a, _ in spans), default=body.addr)
+        hi = max((e for _, e in spans), default=body.addr)
+        shown.append(f"{body.name} ${lo:04X}-${hi:04X}")
+        if body.name in CLOSURE_FORBIDDEN:
+            failures.append(f"{body.name} reached: the refusal path must not enter it")
+        if lo < 0x8000 or hi > 0xC000:
+            failures.append(f"{body.name} ${lo:04X}-${hi:04X} is outside bank 2")
+        elif b"\xED\xC7" in image[lo - 0x8000:hi - 0x8000] and body.name not in CLOSURE_ALLOW:
+            failures.append(f"{body.name} ${lo:04X}-${hi:04X} holds ED C7")
+    return ", ".join(shown), failures
+
+
+SELFTEST = """    DEVICE ZXSPECTRUMNEXT
+    INCLUDE "{inc}"
+    ORG $8000
+core_refuse:
+    call st_leaf
+    jp st_tail
+st_leaf:
+    ret nz
+    jr .out
+.out:
+    ret
+st_tail:
+    nop
+st_fallen:
+    NRGET $56
+    ret
+st_never:
+    NRGET $01
+    ret
+    SAVEBIN "build/bank2.bin", $8000, $4000
+"""
+
+
+def check_refuse_closure():
+    unexplained = [name for name, reason in CLOSURE_ALLOW.items() if not str(reason).strip()]
+    if unexplained:
+        raise Fail(f"CLOSURE_ALLOW entries without a written reason: {unexplained}")
+    st_dir = OUT / "lst-selftest"
+    st_dir.mkdir(parents=True, exist_ok=True)
+    st_src = st_dir / "selftest.asm"
+    st_src.write_text(SELFTEST.format(inc=(ROOT / "src" / "nextdaad.inc").as_posix()), encoding="utf-8")
+    bodies, image = listing("selftest", st_src, (), lambda work: (work / "build" / "bank2.bin").read_bytes())
+    reached, issues = walk_closure(bodies, ["core_refuse"])
+    names = [b.name for b in reached]
+    _, failures = scan_closure(bodies, image, ["core_refuse"])
+    if sorted(names) != ["core_refuse", "st_fallen", "st_leaf", "st_tail"] or issues:
+        raise Fail(f"self-test closure {names} {issues}, want core_refuse st_leaf st_tail st_fallen")
+    if not any(f.startswith("st_fallen ") and f.endswith("holds ED C7") for f in failures) or len(failures) != 1:
+        raise Fail(f"self-test scan {failures}, want st_fallen holding ED C7 only")
+    notes = []
+    for variant in LST_VARIANTS:
+        bodies, image = main_listing(variant)
+        shown, failures = scan_closure(bodies, image, ["core_gate", "core_refuse"])
+        print(f"  closure {variant}: {shown}")
+        if failures:
+            raise Fail(f"{variant}: " + "; ".join(failures))
+        notes.append(f"{variant} {shown.count(',') + 1} routines")
+    return "self-test refused st_fallen; " + ", ".join(notes)
+
+
+CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
+          check_nex_core, check_gate_first, check_refuse_closure]
 
 
 def main():

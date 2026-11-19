@@ -46,6 +46,8 @@ RESIDENT_LIMIT  equ $BA00   ; code+data must end below this
 STACK_TOP       equ $BD00   ; SP; grows down toward RESIDENT_LIMIT
 IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00
 IM2_VECTOR_BYTE equ $BE
+CORE_GATE_ORG   equ IM2_TABLE + 257 ; boot gate code (main.asm), assembled into the
+                            ; gap up to IM2_STUB that nothing writes at runtime
 IM2_STUB        equ $BEBE   ; 3-byte JP written at runtime
 IM2_CTC_STUB    equ $BEC2   ; 3-byte JP ctc_isr, runtime-written beside IM2_STUB.
                             ; High byte $BE == IM2_VECTOR_BYTE fill, so only the
@@ -266,6 +268,7 @@ ERR_BORDER_OVERSIZE equ 3   ; magenta
 ERR_BORDER_BADHDR   equ 6   ; yellow
 ERR_BORDER_MACHINE  equ 5   ; cyan
 ERR_BORDER_TEXT2    equ 4   ; green
+ERR_BORDER_CORE     equ 1   ; blue: core older than 3.03.03 (core_refuse)
 
 ; --- esxDOS API ---
 ESX_GETSETDRV   equ $89
