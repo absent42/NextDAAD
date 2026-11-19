@@ -802,7 +802,7 @@ xbn_nl_gate:
     jp prn_flush
 
 svc_version:
-    ld a, 3
+    ld a, 4
     or a                          ; CF clear
     ret
 

@@ -740,7 +740,7 @@ CLOAK   22 noun
            PRINT 221         ; expect 48-52 (50 +- ISR jitter)
            DONE
 > XSVC _   EXTERN 0 21       ; service probe fn - Task 6 fills flags 206+
-           PRINT 206         ; expect 3
+           PRINT 206         ; expect 4
            PRINT 207
            DONE
 > XPRB _   EXTERN  0 42       ; SVC_PAIR probe (fixture fn 42)
