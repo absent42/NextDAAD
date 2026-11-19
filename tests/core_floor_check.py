@@ -97,8 +97,8 @@ def check_nrget_fixture():
 # SLD record: file|line|defFile|defLine|page|value|type|data
 # name -> (records, the nrs_ symbol the guard must name, or None = clean)
 GUARD_CASES = {
-    "guard_clean.sld": ("src/hardware.asm|149||0|4|33088|F|nr_read\n"
-                        "src/hardware.asm|149||0|4|33088|L|,nr_read,,+used\n"
+    "guard_clean.sld": ("src/hardware.asm|149||0|4|33088|F|audio_init\n"
+                        "src/hardware.asm|149||0|4|33088|L|,audio_init,,+used\n"
                         "src/nextdaad.inc|20||0|-1|192|D|NR_INT_CTRL\n"
                         "src/nextdaad.inc|20||0|-1|192|L|,NR_INT_CTRL,,+equ\n", None),
     "guard_f.sld": ("src/hardware.asm|190||0|5|47872|F|nrs_common\n", "nrs_common"),
@@ -921,6 +921,20 @@ def check_zes_core_wired(root=ROOT, listed=None):
 NR_READ_CODE = re.compile(r"\bnr_read\b")
 
 
+def code_part(line):
+    """The line up to the first ';' outside single or double quotes."""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == ";":
+            return line[:i]
+    return line
+
+
 def check_no_const_nr_read(root=ROOT):
     """nr_read is gone: no code line under src/ (not src/intro/) names it, so
     every Next-register read is an NRGET."""
@@ -929,7 +943,7 @@ def check_no_const_nr_read(root=ROOT):
         if f.suffix not in (".asm", ".inc") or "intro" in f.relative_to(root / "src").parts:
             continue
         for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-            if NR_READ_CODE.search(line.split(";", 1)[0]):
+            if NR_READ_CODE.search(code_part(line)):
                 bad.append(f"{f.relative_to(root).as_posix()}:{n}")
     if bad:
         raise Fail("nr_read still referenced: " + ", ".join(bad))

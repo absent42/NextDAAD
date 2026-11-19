@@ -3405,17 +3405,9 @@ vid_ds_copy_body:
 
 ; Direct PAL: 512 palette bytes port -> NR $44, same double-buffer
 ; choreography as vid_op_pal (edit the hidden bank, flip at present).
-; LATCH HAZARD FIX (review, 3c): the select below targets NR_PAL_VALUE9
-; on $243B ONCE, then every out (c),a in .pl relies on that latch
-; across up to 512 bytes. vid_ds_blkopen's fragment-boundary/rewind
-; branch calls vid_win_open_h -> vid_mf_disable_h, whose NRGET read keeps
-; the selection; NR_PAL_VALUE9 is still re-selected unconditionally
-; immediately after every blkopen call (chosen over an unconditional
-; per-byte re-select: blkopen fires at most ~2 times across a 512-byte
-; PAL block - roughly +35T total - vs 512 x ~19T unconditionally; both
-; are cheap against this cold-ish op's SD-wire cost, but the
-; per-blkopen form is exact rather than merely "affordable", doc 01
-; T-state accounting).
+; The burst in .pl relies on one $243B select of NR_PAL_VALUE9 across up to
+; 512 bytes; it is re-selected after every vid_ds_blkopen call (at most ~2
+; per block) rather than per byte.
 vid_ds_pal:
     ld a, (vidPalCtrl)
     xor $40                      ; edit the OTHER bank, display as-is
