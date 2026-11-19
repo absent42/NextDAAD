@@ -297,7 +297,7 @@ def run(z, verbose, upto):
     z.tap_dismiss_key()
     took = wait_text(z, STORM_DONE, STORM_DEADLINE)
     print("cycle_dump: S13 storm done after %.1f s" % took)
-    s = State(z); show("S13", s)
+    s = wait_steps(z, frozen + 6, timeout=5.0); show("S13", s)
     expect(s.armed, "S13 cycling through the storm")
     expect(s.steps > frozen + 5, "S13 the tick kept stepping under 48 pair allocations (steps %d -> %d)" % (frozen, s.steps))
     if done(13): return

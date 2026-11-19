@@ -236,7 +236,7 @@ im2_isr:
     ; (player_aky.asm header).
     ei
     ; MMU 6/7 into D/E for the restore below. NRGET leaves the $243B selection
-    ; alone, so this path cannot split a mainline select-then-write sequence.
+    ; alone, so this save cannot split a mainline select-then-write sequence.
     NRGET NR_MMU6
     ld d, a
     NRGET NR_MMU7

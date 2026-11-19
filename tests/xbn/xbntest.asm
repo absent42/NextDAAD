@@ -851,8 +851,8 @@ mmu_probe:
     ld (XBN_FLAGS+139), hl
     or a                         ; CF discipline: deliberate clear
     ret
-; A = NR $56. Own IFF2-preserving DI bracket (nr_read idiom): does not use
-; the interpreter routine under test. Corrupts BC, F.
+; A = NR $56. Own IFF2-preserving DI bracket (ld a,i sampled twice): does not
+; use the interpreter routine under test. Corrupts BC, F.
 mmu_rd6:
     ld a, i
     jp pe, .on
