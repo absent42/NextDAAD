@@ -471,7 +471,7 @@ cyc_stop:
 ; Mainline DI bracket for one select-then-write group: the sprite tick shares
 ; the NR $34 select-then-write sequence. Resident so overlay0's pointer
 ; sequences can use it with SPR_PAGE unmapped. IFF2 sampled twice through
-; ld a,i (P/V), the nr_read idiom: the erratum can zero P/V once but not on
+; ld a,i (P/V): the erratum can zero P/V once but not on
 ; two successive instructions. A caller that entered with interrupts off
 ; leaves with them off. Corrupts AF.
 spr_di:
@@ -546,43 +546,23 @@ extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
 ; own slot; interrupts.asm's im2_isr never touches extSaved or extTarget.
 extSavedIsr: dw 0
 
-xbn_mmu_save:                   ; corrupts A, BC, HL, F; result in extSaved
+xbn_mmu_save:                   ; corrupts A, HL; result in extSaved
     ld hl, extSaved
     jr mmu_save_hl
-xbn_isr_mmu_save:               ; corrupts A, BC, HL, F; result in extSavedIsr
+xbn_isr_mmu_save:               ; corrupts A, HL; result in extSavedIsr
     ld hl, extSavedIsr
     jr mmu_save_hl
-xbn_svc_mmu_save:               ; corrupts A, BC, HL, F; result in svcSaved - falls through
+xbn_svc_mmu_save:               ; corrupts A, HL; result in svcSaved - falls through
     ld hl, svcSaved
 ; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch:
 ; the cell address rides in HL, so the three entries need no lock between
-; them. DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects
-; $243B without restoring it. `ret po` restores the caller's own interrupt
-; state: off for the ISR's fast path, on for its audio path, which calls
-; here after its own `ei`.
+; them. Interrupt state untouched.
 mmu_save_hl:
-    ld a, i
-    jp pe, .sampled             ; P/V = IFF2
-    ld a, i                     ; re-sample: see nr_read
-.sampled:
-    push af
-    di
-    ld bc, $243B
-    ld a, NR_MMU6
-    out (c), a
-    inc b                       ; $253B
-    in a, (c)
+    NRGET NR_MMU6
     ld (hl), a
     inc hl
-    dec b
-    ld a, NR_MMU7
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_MMU7
     ld (hl), a
-    pop af
-    ret po                      ; P/V = 0: interrupts were off
-    ei
     ret
 
 xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
@@ -767,8 +747,7 @@ outSaved:   dw 0                  ; own MMU cell: the tap fires inside
                                   ; SVC_PUTS with svcSaved and extSaved live
 outChar:    db 0
 ; Format 3 output tap. In: C = character. Preserves AF, BC, DE, HL, IX,
-; IY. Gate cleared while the hook runs (no recursion). MMU reads via
-; nr_read's DI bracket: the frame ISR re-selects $243B.
+; IY. Gate cleared while the hook runs (no recursion).
 xbn_out_hook:
     push af
     push bc
@@ -781,7 +760,7 @@ xbn_out_hook:
     ld a, c
     ld (outChar), a
     ld e, NR_MMU6
-    call nr_read                  ; DI-bracketed, IFF2-preserving
+    call nr_read
     ld (outSaved), a
     ld e, NR_MMU7
     call nr_read
@@ -841,8 +820,8 @@ svc_version:
 ; extern use, not the CHANCE-specific 1..100 scaling.
 ; ISR-safe: the #int hook can call this mid-frame (xbntest.asm fn 35's
 ; soak) while the foreground is also drawing, so rng_step brackets the
-; rngState RMW atomic vs interrupts using nr_read's idiom
-; (hardware.asm:145-165) - RTL-verified SAFE, no erratum on the Z80N
+; rngState RMW atomic vs interrupts using spr_di's double ld a,i
+; sample - RTL-verified SAFE, no erratum on the Z80N
 ; core (P/V latches at T3, interrupt acceptance clears IFF2 at T5, all
 ; four core variants).
 ; Double-sample kept anyway for emulator NMOS-erratum modelling parity.
@@ -865,7 +844,7 @@ svc_random:
 rng_step:
     ld a, i
     jp pe, .sampled
-    ld a, i                       ; erratum re-sample (nr_read idiom)
+    ld a, i                       ; erratum re-sample (spr_di)
 .sampled:
     push af                       ; IFF2 in P/V, on the stack
     di

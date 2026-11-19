@@ -322,32 +322,15 @@ br_log:
     jp log_row_end
 
 ; Out: HL = raster line 0-310. MSB read either side of the LSB, bounded retries.
-; DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects $243B.
-; Corrupts AF, BC, D.
+; Corrupts AF, D.
 bench_line:
-    ld a, i
-    jp pe, .on
-    ld a, i                      ; re-sample: see nr_read
-.on:
-    push af
-    di
     ld d, 4
 .rd:
-    ld bc, TBBLUE_REG_SEL
-    ld a, BCH_LINE_MSB
-    out (c), a
-    inc b
-    in h, (c)
-    dec b
-    ld a, BCH_LINE_LSB
-    out (c), a
-    inc b
-    in l, (c)                    ; the sample point
-    dec b
-    ld a, BCH_LINE_MSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET BCH_LINE_MSB
+    ld h, a
+    NRGET BCH_LINE_LSB           ; the sample point
+    ld l, a
+    NRGET BCH_LINE_MSB
     cp h
     jr z, .ok
     dec d
@@ -356,9 +339,6 @@ bench_line:
     ld a, h
     and 1
     ld h, a
-    pop af
-    ret po
-    ei
     ret
 
 ; Poll until lines BCH_LC_LO-BCH_LC_HI, at most 65536 polls: a timeout sets
@@ -868,7 +848,7 @@ isr_body:
     or e
     jr nz, .spin
     di
-    call bench_line              ; IFF2 = 0 in both twins: the same path
+    call bench_line              ; both twins poll with interrupts off
 isrEiOp:
     ei                           ; SMC: nop in the DI twin
     ld de, (isrPrev)

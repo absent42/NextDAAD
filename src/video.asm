@@ -793,7 +793,6 @@ vid_dst_norm_flat:
 ; Out: nothing. Preserves BC, DE, HL, IX. Corrupts AF only.
 ; ---------------------------------------------------------------------
 vid_rl_poll:
-    push bc
     push de
     push hl
     ld a, VID_RL_DIV
@@ -801,36 +800,18 @@ vid_rl_poll:
     ld (vidRlSpinDiv), a         ; Phase 2-POLL: SPIN divider shares
                                  ; this reset, same pattern as vidRlDiv
                                  ; (decode/ds pair) - see vidRlSpinDiv
-    ld bc, TBBLUE_REG_SEL
-    di                           ; the select/read pair must not be
-                                 ; split by an ISR that selects its own
-                                 ; register (nr_read's own rule); this
-                                 ; bracket is ~30 T, far below the DMA
-                                 ; brackets already in the frame
 .sample:
-    ld a, NR_RASTER_MSB
-    out (c), a
-    inc b                        ; TBBLUE_REG_ACC (low byte is shared)
-    in a, (c)
+    NRGET NR_RASTER_MSB
     and 1
     ld h, a
-    dec b
-    ld a, NR_RASTER_LSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_RASTER_LSB
     ld l, a                      ; HL = 9-bit raster line
-    dec b
-    ld a, NR_RASTER_MSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_RASTER_MSB
     and 1
     cp h
     jr nz, .sample               ; the line crossed 256 mid-read - the
                                  ; MSB/LSB pair would be inconsistent
                                  ; and could fake or hide a wrap
-    ei
     ld de, (vidRlLast)
     ld (vidRlLast), hl
     or a
@@ -842,7 +823,6 @@ vid_rl_poll:
 .out:
     pop hl
     pop de
-    pop bc
     ret
 
 ; PLAY=/NOM= per-DELIVERED-FRAME hook, called from the TOP of the frame
@@ -2233,8 +2213,8 @@ vid_run:
     ld (vidPlaying), a           ; this bail skips .restore_tail: clear it here
     jp .sfxresume
 .hooksusp:
-    ; Suspend the frame hook for the clip: the hook body's $243B/$253B save
-    ; would split vid_op_pal's undefended $44 burst. HOOK_SPR is already off.
+    ; Suspend the frame hook for the clip: author #int code may select $243B
+    ; and split vid_op_pal's undefended $44 burst. HOOK_SPR is already off.
     ld a, (xbnIntOn)
     and HOOK_XBN+HOOK_CYC
     ld (vidSvHook), a
@@ -4576,25 +4556,15 @@ nxb_ds_unsel:
     ret
 
 ; Read the raster line (NR $1E:$1F) with a bounded stability retry.
-; Out: HL = line (9 bits). Corrupts AF, BC, D.
+; Out: HL = line (9 bits). Corrupts AF, D.
 nxb_line:
     ld d, 4                      ; bounded retries (rubric 6)
 .rd:
-    ld bc, TBBLUE_REG_SEL
-    ld a, NXB_LINE_MSB
-    out (c), a
-    inc b
-    in h, (c)
-    dec b
-    ld a, NXB_LINE_LSB
-    out (c), a
-    inc b
-    in l, (c)
-    dec b
-    ld a, NXB_LINE_MSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NXB_LINE_MSB
+    ld h, a
+    NRGET NXB_LINE_LSB
+    ld l, a
+    NRGET NXB_LINE_MSB
     cp h
     jr z, .ok
     dec d

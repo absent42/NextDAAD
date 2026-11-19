@@ -135,43 +135,22 @@ audio_init:
     out (c), a
     ret
 
-; Read a Next register. E = register, returns A = value. Preserves BC.
-; IFF-preserving DI bracket: the ISR (interrupts.asm) shares the
-; $243B/$253B select+read pair to save/restore MMU 6/7 around aud_tick,
-; so the select+read here must be atomic against interrupts - otherwise
-; the ISR could re-select the port between our OUT and IN and we would
-; read back the wrong register. `ld a,i` samples IFF2 into P/V; that
-; result is pushed to the stack immediately (the Z80 stops updating P/V
-; the instant DI executes, but any instruction between the sample and
-; the DI could still clobber it, so it is saved, not held live).
-; LD A,I erratum guard: an interrupt accepted at the instruction's end
-; copies IFF2 AFTER acceptance cleared it - P/V reads 0 despite
-; interrupts being enabled, and the bracket would then never EI again
-; (the next halt hangs). Double-sample: our ISR always exits via EI,
-; so a spurious 0 can only mean an interrupt just fired - the second
-; sample is conclusive. RTL (t80n.vhd) shows P/V latches IFF2 at T3 and
-; acceptance clears it at T5 - the erratum is absent on this core; the
-; re-sample is kept as cheap insurance for emulators.
+; Read a Next register: E = register, A = value; all else kept, DI-free.
+; Patches its own NRGET 0, putting back the byte found there, so a frame-ISR
+; call landing between the patch and the read cannot change this call's read.
 nr_read:
+    push hl
     push bc
-    ld a, i
-    jp pe, .sampled         ; P/V=1: interrupts definitely enabled
-    ld a, i                 ; P/V=0: re-sample (erratum window cannot
-                            ; hit twice in successive instructions)
-.sampled:
-    push af                 ; save IFF2 in P/V on the stack
-    di
-    ld bc, TBBLUE_REG_SEL
-    out (c), e
-    inc b                   ; SEL -> ACC ($24 -> $25), as im2_isr does
-    in b, (c)               ; result straight into B; F is restored by
-    pop af                  ; the pop that follows (P/V = saved IFF2)
-    ld a, b
-    jp po, .noei
-    ei
-.noei:
+    ld hl, .get + NRGET_REG
+    ld b, (hl)                      ; byte an interrupted nr_read stored
+    ld (hl), e
+.get:
+    NRGET 0
+    ld (hl), b
     pop bc
+    pop hl
     ret
+    ASSERT {b nr_read.get + NRGET_REG} == 0  ; NRGET_REG names the register byte
 
  IFDEF NR_STANDIN
 ; Harness-only NEXTREG A,n stand-in, assembled at RESIDENT_LIMIT: no resident
@@ -185,7 +164,7 @@ nrs_sled:
 NRS_PAGE    equ high nrs_sled
 NRS_CANARY  equ $A5                 ; stack-zone fill, see core_gate
 ; Contract as NEXTREG A,n: A = register value, all else kept (flags, $243B).
-; Own IFF2-preserving DI bracket, nr_read's double sample: frame-ISR safe.
+; Own IFF2-preserving DI bracket, spr_di's double ld a,i sample: frame-ISR safe.
 nrs_common:
     push af                         ; caller F; this A slot takes the value
     push hl
