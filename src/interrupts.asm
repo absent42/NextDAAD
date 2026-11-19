@@ -1,6 +1,6 @@
-; IM2 skeleton. The vector table lives at IM2_TABLE ($BD00-$BE00,
-; 257 bytes of IM2_VECTOR_BYTE) and the stub JP at IM2_STUB ($BEBE),
-; both outside the assembled image and written at runtime.
+; IM2 skeleton. The vector table lives at IM2_TABLE ($BD00-$BE00, 257 bytes
+; of IM2_VECTOR_BYTE, over the boot gate code assembled there until this fills
+; it) and the stub JP at IM2_STUB ($BEBE), both written at runtime.
 
 im2_init:
     di

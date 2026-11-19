@@ -223,7 +223,8 @@ core_refuse:
     jr .halt
 msgCoreOld: db "NextDAAD needs core 3.03.03 or later", 0
 coreGateEnd:
-    ASSERT coreGateEnd <= IM2_TABLE + 257 && {b core_gate} != IM2_VECTOR_BYTE
+    ASSERT coreGateEnd <= IM2_TABLE + 257
+    ASSERT {b core_gate} != IM2_VECTOR_BYTE ; main's warm re-entry guard reads this byte
     DISPLAY "core gate ends at ", coreGateEnd, " table headroom ", /D, IM2_TABLE + 257 - coreGateEnd
     ORG coreGateResume
 
