@@ -161,6 +161,8 @@
 
     MODULE fade
 
+MIN_API         equ 4            ; apply/apply9 read NR $43 with NRGET
+
 ; ---- author-editable contract ----
 FLAG_DONE       equ 240          ; 1 = fade complete, 0 = running
 FLAG_SPEED      equ 241          ; frames per step, 0 = DEF_SPEED
@@ -250,6 +252,14 @@ ext:
     ; fns 40-43 are ACTIONS: every exit returns CF CLEAR. CF set fails
     ; the DAAD entry, which inside a GFX 0 4 .. GFX 0 3 bracket would
     ; strand buffer mode.
+    ld a, c
+    cp 40
+    jr c, .notmine
+    cp 44
+    jr nc, .notmine
+    call SVC_VERSION             ; preserves B, C; API 4 = NRGET needs core 3.03.03
+    cp MIN_API
+    jr c, .notmine               ; refused: the hook is never armed
     ld a, c
     cp 40
     jr z, .fadeout
@@ -596,15 +606,11 @@ apply:
     ld bc, TB_SELECT
     in a, (c)
     ld (savesel), a              ; foreground's selected register
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_PAL_CTL             ; read leaves the select latch alone
     ld (savectl), a              ; foreground's palette control
     call pal_apply_ctl
-    out (c), a                   ; edit the displayed bank, or the
+    nextreg NR_PAL_CTL, a        ; edit the displayed bank, or the
                                  ; hidden one when applyOther is set
-    dec b
     ld a, NR_PAL_IDX
     out (c), a
     inc b
@@ -623,12 +629,8 @@ apply:
     jr nz, .wr
 .wr_end:
     ASSERT (.wr_end - .wr) == 8*2 + 3 ; eight OUTINBs per block (rubric 8)
-    dec b
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
     ld a, (savectl)
-    out (c), a                   ; NR $43 back to what the foreground had
+    nextreg NR_PAL_CTL, a        ; NR $43 back to what the foreground had
     dec b
     ld a, (savesel)
     out (c), a                   ; select latch back too
@@ -669,15 +671,11 @@ apply9:
     ld bc, TB_SELECT
     in a, (c)
     ld (savesel), a
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_PAL_CTL
     ld (savectl), a
     call pal_apply_ctl           ; corrupts AF only - HL/DE stay live
-    out (c), a                   ; edit the bank being displayed - and
+    nextreg NR_PAL_CTL, a        ; edit the bank being displayed - and
                                  ; resets the $44 byte toggle
-    dec b
     ld a, NR_PAL_IDX
     out (c), a
     inc b
@@ -697,12 +695,8 @@ apply9:
     jr nz, .wr
 .wr_end:
     ASSERT (.wr_end - .wr) == 8*6 + 2 ; eight pairs per block (rubric 8)
-    dec b
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
     ld a, (savectl)
-    out (c), a                   ; NR $43 back to what the foreground had
+    nextreg NR_PAL_CTL, a        ; NR $43 back to what the foreground had
     dec b
     ld a, (savesel)
     out (c), a                   ; select latch back too

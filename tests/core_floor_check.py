@@ -950,9 +950,71 @@ def check_no_const_nr_read(root=ROOT):
     return "no nr_read reference outside src/intro"
 
 
+KIT = ROOT / "authoring-kit"
+KIT_EXTERNS = ["all", "clock", "fade", "hints", "playername", "realtime",
+               "ticker", "timer", "toolkit", "transcript"]
+FRESH = ROOT / "tests" / "out" / "xbnfresh"
+
+
+def check_extern_fresh():
+    """Each kit extern assembles to exactly its committed GAME.XBN, and
+    STARTER\\GAME.XBN is a byte copy of externs\\all\\GAME.XBN."""
+    bad = []
+    for name in KIT_EXTERNS:
+        out = FRESH / name
+        if out.exists():
+            shutil.rmtree(out)
+        out.mkdir(parents=True)
+        src = KIT / "externs" / name / (name + ".asm")
+        r = subprocess.run([str(SJASM), "--msg=war", "-I", str(KIT), str(src)],
+                           cwd=out, capture_output=True, text=True)
+        built = out / "GAME.XBN"
+        if r.returncode != 0 or not built.exists():
+            raise Fail(f"{name}: assembly failed:\n" + r.stdout + r.stderr)
+        if built.read_bytes() != (KIT / "externs" / name / "GAME.XBN").read_bytes():
+            bad.append(name)
+    if bad:
+        raise Fail("committed GAME.XBN differs from a fresh build: " + ", ".join(bad))
+    if (KIT / "STARTER" / "GAME.XBN").read_bytes() != (KIT / "externs" / "all" / "GAME.XBN").read_bytes():
+        raise Fail("STARTER\\GAME.XBN is not a copy of externs\\all\\GAME.XBN")
+    return f"{len(KIT_EXTERNS)} externs byte-identical to a fresh build, STARTER matches all"
+
+
+FADE_IN_C = re.compile(r"\bin\s+[abcdehl]\s*,\s*\(\s*c\s*\)", re.I)
+
+
+def check_fade_source():
+    """fade.asm: the only in r,(c) is the $243B latch read straight after
+    ld bc, TB_SELECT; apply and apply9 read NR $43 with NRGET and write it
+    back with nextreg; the API 4 gate is present."""
+    text = (KIT / "externs" / "fade" / "fade.asm").read_text(encoding="utf-8")
+    lines = [code_part(l).strip() for l in text.splitlines()]
+    bad = []
+    for i, l in enumerate(lines):
+        if FADE_IN_C.search(l):
+            prev = next((p for p in reversed(lines[:i]) if p), "")
+            if not re.fullmatch(r"ld\s+bc\s*,\s*TB_SELECT", prev, re.I):
+                bad.append(f"line {i + 1}: {l}")
+    if bad:
+        raise Fail("in r,(c) that is not the $243B latch read: " + "; ".join(bad))
+    for label in ("apply", "apply9"):
+        start = lines.index(label + ":")
+        end = next(i for i in range(start, len(lines)) if lines[i] == "ret"
+                   and lines[i - 1] != "")
+        body = "\n".join(lines[start:end + 1])
+        if not re.search(r"^NRGET\s+NR_PAL_CTL$", body, re.M):
+            raise Fail(f"{label}: NR $43 is not read with NRGET")
+        if len(re.findall(r"^nextreg\s+NR_PAL_CTL\s*,\s*a$", body, re.M | re.I)) != 2:
+            raise Fail(f"{label}: NR $43 must be written with nextreg twice (edit, restore)")
+    if not re.search(r"^MIN_API\s+equ\s+4\b", "\n".join(lines), re.M | re.I):
+        raise Fail("fade.asm has no MIN_API equ 4")
+    return "latch read only, NRGET + nextreg in apply/apply9, API 4 gate"
+
+
 CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
           check_nex_core, check_gate_first, check_gate_once, check_refuse_closure,
-          check_no_fade_in_harness, check_zes_core_wired, check_no_const_nr_read]
+          check_no_fade_in_harness, check_zes_core_wired, check_no_const_nr_read,
+          check_extern_fresh, check_fade_source]
 
 
 def main():
