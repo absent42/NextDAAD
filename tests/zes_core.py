@@ -24,11 +24,6 @@ CANARY_TAIL = 16                     # main.asm leaves these bytes under STACK_T
 _PROCESS_RIGHTS = 0x0008 | 0x0010 | 0x0020 | 0x0400   # VM_OPERATION READ WRITE QUERY
 
 
-def args(zesarux_path, version=(3, 3, 3)):
-    """Extra command-line arguments: none exist, see patch()."""
-    return []
-
-
 def popen(argv, **kw):
     """subprocess.Popen for a ZEsarUX command line, then patch()."""
     proc = subprocess.Popen(argv, **kw)
@@ -66,6 +61,8 @@ def patch(proc, version=(3, 3, 3), deadline=10.0):
         if (major, minor, sub) not in (STOCK, DEFAULT, tuple(version)):
             raise OSError("zes_core: version bytes %d.%d.%d at 0x%X, expected stock %d.%d.%d "
                           "(different zesarux.exe?)" % ((major, minor, sub, VERSION_ADDR) + STOCK))
+        # Static data, not re-initialised after start: the patched version survived
+        # hard-reset-cpu and smartload when probed, and the gate read it (refuse_check).
         want = ctypes.create_string_buffer(bytes([version[2], version[1], version[0]]))
         if not k32.WriteProcessMemory(h, VERSION_ADDR, want, 3, ctypes.byref(n)) or n.value != 3:
             raise OSError("zes_core: WriteProcessMemory failed: %d" % ctypes.get_last_error())

@@ -61,6 +61,8 @@ def run_case(version, port, work):
         z.close()
     finally:
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/F", "/T"], capture_output=True)
+    # get-io-ports prints the last value written to port $FE as "Spectrum FE port: nn";
+    # bits 0-2 are the border (cases below read 1 refused, 2 booting to E1).
     m = re.search(r"Spectrum FE port:\s*([0-9A-Fa-f]{2})", ports)
     border = int(m.group(1), 16) & 7 if m else None
     return rows, border

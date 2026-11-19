@@ -32,6 +32,7 @@ check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
 Run standalone or via tests\\build-tests.ps1. Exit 0 = every check passed.
 """
 
+import ast
 import random
 import re
 import shutil
@@ -719,14 +720,21 @@ def check_refuse_closure():
 
 
 ZES_LAUNCHERS = [
-    "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py", "tests/cursor_dump.py",
-    "tests/cycle_dump.py", "tests/intro/zes_intro.py", "tests/l2pos_check.py",
-    "tests/machine_gate.py", "tests/parser/nleg.py", "tests/parser/parser_selftest.py",
+    "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py", "tests/corefloor/refuse_check.py",
+    "tests/cursor_dump.py", "tests/cycle_dump.py", "tests/intro/zes_intro.py",
+    "tests/l2pos_check.py", "tests/machine_gate.py", "tests/parser/nleg.py",
+    "tests/parser/parsertest.py", "tests/parser/scripts/v3probe/run.py",
     "tests/poolc/poolc_check.py", "tests/spraud_dump.py", "tests/sprites_dump.py",
     "tests/txt40_dump.py", "tests/typeahead_run.py", "tests/xbn/hookshape.py",
     "tests/xbn/namecheck.py", "tests/xbn/tickcheck.py", "tests/xbn/transcheck.py",
 ]
-ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py", "tests/core_floor_check.py")
+# Not launchers: the reference ZX interpreter, other machines, zes_core itself
+# (the one raw Popen) and this file.
+ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py",
+            "tests/zes_core.py", "tests/core_floor_check.py")
+ZES_HELPERS = ("tests/parser/nleg.py", "tests/audio/stopm_dump.py", "tests/sprites_dump.py")
+ZES_NAMES = re.compile(r"zesarux\.exe|--enable-remoteprotocol", re.I)
+ZES_HELPER_CALL = re.compile(r"\b(?:nleg|sd|stopm_dump|sprites_dump)\.(?:launch|play)\(")
 FADE_CALL = re.compile(r"\bEXTERN\s+\w+\s+4[0-3]\b", re.I)
 
 
@@ -772,20 +780,47 @@ def check_no_fade_in_harness():
     return f"{len(ZES_LAUNCHERS)} launchers, fade verbs {' '.join(sorted(seen))}"
 
 
-def check_zes_core_wired():
-    """Every tracked test that names zesarux.exe imports zes_core, and the
-    launcher list above covers them all."""
-    r = subprocess.run(["git", "grep", "-l", "-i", "zesarux.exe", "--", "tests"],
-                       cwd=ROOT, capture_output=True, text=True)
-    users = sorted(f for f in r.stdout.split() if f.endswith(".py")
-                   and not f.startswith(ZES_SKIP[:2]) and f not in ZES_SKIP[2:])
-    bad = [f for f in users
-           if "zes_core" not in (ROOT / f).read_text(encoding="utf-8", errors="replace")]
-    stray = [f for f in users if f not in ZES_LAUNCHERS]
-    if bad or stray:
-        raise Fail(f"no zes_core: {bad}; not in ZES_LAUNCHERS: {stray}")
-    return f"{len(users)} zesarux.exe users patched"
+def zes_users(root=ROOT):
+    """(direct, helper) tracked test .py files that start ZEsarUX: direct ones name
+    the exe or its remote-protocol flag, helper ones call a launcher helper."""
+    r = subprocess.run(["git", "ls-files", "tests"], cwd=root, capture_output=True, text=True)
+    direct, helper = [], []
+    for f in r.stdout.split():
+        if not f.endswith(".py") or f.startswith(ZES_SKIP[:2]) or f in ZES_SKIP[2:]:
+            continue
+        text = (root / f).read_text(encoding="utf-8", errors="replace")
+        if ZES_NAMES.search(text):
+            direct.append(f)
+        if ZES_HELPER_CALL.search(text):
+            helper.append(f)
+    return sorted(direct), sorted(helper)
 
+
+def check_zes_core_wired(root=ROOT, listed=None):
+    """Every ZEsarUX launch goes through zes_core.popen: each direct launcher calls it
+    and holds no raw subprocess.Popen, each helper (nleg, stopm_dump, sprites_dump)
+    is a direct launcher, and ZES_LAUNCHERS equals the discovered direct and helper
+    users exactly."""
+    listed = ZES_LAUNCHERS if listed is None else listed
+    direct, helper = zes_users(root)
+    bad = []
+    for f in direct:
+        try:
+            tree = ast.parse((root / f).read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError as err:
+            raise Fail(f"{f}: does not parse: {err}")
+        calls = {ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        if "zes_core.popen" not in calls:
+            bad.append(f"{f}: no zes_core.popen call")
+        if calls & {"subprocess.Popen", "Popen"}:
+            bad.append(f"{f}: raw subprocess.Popen call")
+    bad += [f"helper {h} is not a direct zes_core launcher" for h in ZES_HELPERS if h not in direct]
+    found = set(direct) | set(helper)
+    bad += [f"{f}: starts ZEsarUX but is not in ZES_LAUNCHERS" for f in sorted(found - set(listed))]
+    bad += [f"{f}: in ZES_LAUNCHERS but starts no ZEsarUX" for f in sorted(set(listed) - found)]
+    if bad:
+        raise Fail("; ".join(bad))
+    return f"{len(direct)} direct and {len(helper)} helper users, all through zes_core.popen"
 
 
 CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
