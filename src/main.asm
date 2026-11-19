@@ -417,12 +417,10 @@ spr_boot_init:
 spr_call:
     push hl
     push af
-    push de
     NRGET NR_MMU6
     ld (sprSavedMmu), a
     NRGET NR_MMU7
     ld (sprSavedMmu+1), a
-    pop de
     pop af
     nextreg NR_MMU6, SPR_TAB_PAGE
     nextreg NR_MMU7, SPR_PAGE
@@ -1308,7 +1306,7 @@ svc_busy:
 ; A=1 reads the bank the display does not show - the staged palette
 ; while GFX 87/4 buffer mode is open.
 ; In IX = 512-byte buffer, A = bank select (0 displayed, 1 other/staged);
-; 256 x (RRRGGGBB, %11000001-masked second byte); corrupts AF, BC, E, IX;
+; 256 x (RRRGGGBB, %11000001-masked second byte); corrupts AF, BC, IX;
 ; CF clear; foreground-only.
 svc_palread:
     ld c, a                       ; C = bank select (0 displayed, 1 other)

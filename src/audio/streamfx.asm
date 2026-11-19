@@ -906,7 +906,6 @@ aud_ctc_params:
     ld c, (hl)                  ; byte2 (high) -> C = dividend high
     ld h, b
     ld l, a                     ; HL = clk16 low 16 bits; C:HL = clk16 (24-bit)
-    ; DE = rate
     ; per-mode crossover = clk16 >> 8 (the rate at which the /16 TC reaches 256).
     ; A fixed constant only holds for VGA0; on faster clocks (28-33 MHz, VGA0-6)
     ; a 6836 crossover would leave a band where /16 TC overflows 255 and clamps
