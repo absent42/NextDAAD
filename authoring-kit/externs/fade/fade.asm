@@ -259,7 +259,12 @@ ext:
     jr nc, .notmine
     call SVC_VERSION             ; preserves B, C; API 4 = NRGET needs core 3.03.03
     cp MIN_API
-    jr c, .notmine               ; refused: the hook is never armed
+    jr nc, .apiok
+    ld a, c                      ; refused: the hook is never armed
+    cp 40
+    jp z, .refused               ; fn 40 sets flag 240 so pollers do not hang
+    jr .notmine
+.apiok:
     ld a, c
     cp 40
     jr z, .fadeout

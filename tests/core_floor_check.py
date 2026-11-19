@@ -983,32 +983,56 @@ def check_extern_fresh():
 FADE_IN_C = re.compile(r"\bin\s+[abcdehl]\s*,\s*\(\s*c\s*\)", re.I)
 
 
-def check_fade_source():
-    """fade.asm: the only in r,(c) is the $243B latch read straight after
-    ld bc, TB_SELECT; apply and apply9 read NR $43 with NRGET and write it
-    back with nextreg; the API 4 gate is present."""
-    text = (KIT / "externs" / "fade" / "fade.asm").read_text(encoding="utf-8")
+def fade_source_problems(text):
+    """Problems in fade.asm source text; empty when it is clean."""
     lines = [code_part(l).strip() for l in text.splitlines()]
     bad = []
     for i, l in enumerate(lines):
         if FADE_IN_C.search(l):
             prev = next((p for p in reversed(lines[:i]) if p), "")
             if not re.fullmatch(r"ld\s+bc\s*,\s*TB_SELECT", prev, re.I):
-                bad.append(f"line {i + 1}: {l}")
-    if bad:
-        raise Fail("in r,(c) that is not the $243B latch read: " + "; ".join(bad))
+                bad.append(f"line {i + 1}: in r,(c) that is not the $243B latch read: {l}")
     for label in ("apply", "apply9"):
         start = lines.index(label + ":")
-        end = next(i for i in range(start, len(lines)) if lines[i] == "ret"
-                   and lines[i - 1] != "")
-        body = "\n".join(lines[start:end + 1])
-        if not re.search(r"^NRGET\s+NR_PAL_CTL$", body, re.M):
-            raise Fail(f"{label}: NR $43 is not read with NRGET")
-        if len(re.findall(r"^nextreg\s+NR_PAL_CTL\s*,\s*a$", body, re.M | re.I)) != 2:
-            raise Fail(f"{label}: NR $43 must be written with nextreg twice (edit, restore)")
-    if not re.search(r"^MIN_API\s+equ\s+4\b", "\n".join(lines), re.M | re.I):
-        raise Fail("fade.asm has no MIN_API equ 4")
-    return "latch read only, NRGET + nextreg in apply/apply9, API 4 gate"
+        end = next(i for i in range(start, len(lines)) if lines[i] == "ret")
+        body = lines[start:end + 1]
+        if "NRGET NR_PAL_CTL" not in body:
+            bad.append(f"{label}: NR $43 is not read with NRGET")
+        if sum(bool(re.fullmatch(r"nextreg\s+NR_PAL_CTL\s*,\s*a", l, re.I)) for l in body) != 2:
+            bad.append(f"{label}: NR $43 must be written with nextreg twice (edit, restore)")
+        if any(re.fullmatch(r"ld\s+a\s*,\s*NR_PAL_CTL", l, re.I) for l in body):
+            bad.append(f"{label}: NR $43 selected through a port (ld a, NR_PAL_CTL)")
+    if not any(re.fullmatch(r"MIN_API\s+equ\s+4", l, re.I) for l in lines):
+        bad.append("no MIN_API equ 4")
+    try:
+        ext = lines.index("ext:")
+        first = next(i for i in range(ext, len(lines))
+                     if re.fullmatch(r"jr\s+z\s*,\s*\.fadeout", lines[i], re.I))
+        body = lines[ext:first]
+        v = next(i for i, l in enumerate(body)
+                 if re.fullmatch(r"call\s+SVC_VERSION", l, re.I))
+        if not re.fullmatch(r"cp\s+MIN_API", body[v + 1], re.I):
+            raise StopIteration
+        ok = next(i for i, l in enumerate(body) if l == ".apiok:")
+        refusal = body[v + 2:ok]
+        if not any(re.fullmatch(r"j[rp]\s+z\s*,\s*\.refused", l, re.I) for l in refusal):
+            bad.append("ext: a refused fn 40 does not reach .refused (flag 240)")
+    except StopIteration:
+        bad.append("ext: call SVC_VERSION / cp MIN_API does not precede the function dispatch")
+    return bad
+
+
+def check_fade_source():
+    """fade.asm: the only in r,(c) is the $243B latch read straight after
+    ld bc, TB_SELECT; apply and apply9 read NR $43 with NRGET, write it back
+    with nextreg and never select it through a port; ext checks the API
+    (call SVC_VERSION / cp MIN_API) before dispatch and a refused fn 40 goes
+    to .refused, which sets flag 240."""
+    text = (KIT / "externs" / "fade" / "fade.asm").read_text(encoding="utf-8")
+    bad = fade_source_problems(text)
+    if bad:
+        raise Fail("; ".join(bad))
+    return "latch read only, NRGET + nextreg in apply/apply9, API 4 gate with fn 40 refusal"
 
 
 CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
