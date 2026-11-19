@@ -25,6 +25,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
 sys.path.insert(0, str(ROOT / "tests"))
+import tilemap                                       # noqa: E402
 import zes_core                                        # noqa: E402
 import zrcp                                          # noqa: E402
 
@@ -36,6 +37,9 @@ MAP = ROOT / "build" / "nextdaad.map"
 SNAP = 0x5600
 SNAP_LEN = 16
 HOOK_CYC = 4
+TM_MAP = 0x6000                    # 80x32 tilemap, (glyph, attribute) cells
+STORM_DONE = "S13 storm under a cycle"   # MESSAGE 12, printed after PROCESS 3-6
+STORM_DEADLINE = 20.0              # the storm's length depends on the build
 
 
 _MAP = {}
@@ -155,6 +159,18 @@ def step(z, settle=0.6):
     z.tap_dismiss_key()
     time.sleep(settle)
     return State(z)
+
+
+def wait_text(z, text, deadline):
+    """Seconds until text is on the tilemap; fails after deadline seconds."""
+    t0 = time.time()
+    while True:
+        rows, _ = tilemap.decode(z.read_memory(TM_MAP, tilemap.GRID_BYTES))
+        if any(text in r for r in rows):
+            return time.time() - t0
+        if time.time() - t0 > deadline:
+            sys.exit("cycle_dump: FAIL %r not on screen within %.0f s" % (text, deadline))
+        time.sleep(0.1)
 
 
 def wait_steps(z, at_least, timeout=3.0):
@@ -278,7 +294,10 @@ def run(z, verbose, upto):
     time.sleep(0.5)
     expect(State(z).steps == frozen, "S12 the step counter froze after RAMLOAD")
     if done(12): return
-    s = step(z, settle=4.0); show("S13", s)
+    z.tap_dismiss_key()
+    took = wait_text(z, STORM_DONE, STORM_DEADLINE)
+    print("cycle_dump: S13 storm done after %.1f s" % took)
+    s = State(z); show("S13", s)
     expect(s.armed, "S13 cycling through the storm")
     expect(s.steps > frozen + 5, "S13 the tick kept stepping under 48 pair allocations (steps %d -> %d)" % (frozen, s.steps))
     if done(13): return
