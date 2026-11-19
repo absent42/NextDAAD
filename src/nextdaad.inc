@@ -44,10 +44,9 @@ NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
 CODE_ORG        equ $8000
 RESIDENT_LIMIT  equ $BA00   ; code+data must end below this
 STACK_TOP       equ $BD00   ; SP; grows down toward RESIDENT_LIMIT
-IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00
+IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00; holds the assembled boot
+                            ; gate (main.asm) until im2_init fills it
 IM2_VECTOR_BYTE equ $BE
-CORE_GATE_ORG   equ IM2_TABLE + 257 ; boot gate code (main.asm), assembled into the
-                            ; gap up to IM2_STUB that nothing writes at runtime
 IM2_STUB        equ $BEBE   ; 3-byte JP written at runtime
 IM2_CTC_STUB    equ $BEC2   ; 3-byte JP ctc_isr, runtime-written beside IM2_STUB.
                             ; High byte $BE == IM2_VECTOR_BYTE fill, so only the

@@ -26,17 +26,7 @@
 
 ; Switch the display to tilemap text mode. Corrupts all registers.
 txt_init:
-    nextreg NR_TM_MAP_BASE, TM_MAP_MSB
-    nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
-    call tm_reserved_pairs
-    call tm_font_init
-    nextreg NR_ULA_CTRL, ULA_OFF
-    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR  ; shared register; Layer 2 is
-                                 ; its real owner (overlay2's l2_mode_set
-                                 ; sets the same value). Written here too
-                                 ; so it is correct before Layer 2 comes
-                                 ; up - though $E3 is also the hardware
-                                 ; reset value, so this is belt and braces.
+    call txt_regs
     ld a, (tmCols)
     jp tm_width_apply            ; ctrl written there, after the map fill,
                                  ; preserving the enable-last ordering
@@ -55,6 +45,20 @@ tm_pal_write9:
     nextreg NR_PAL_VALUE9, a
     pop hl
     ret
+
+; txt_init's register writes, reserved pairs and font, no register reads:
+; core_refuse (main.asm) runs it too. Falls into tm_font_init. Corrupts all.
+txt_regs:
+    nextreg NR_TM_MAP_BASE, TM_MAP_MSB
+    nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
+    nextreg NR_ULA_CTRL, ULA_OFF
+    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR  ; shared register; Layer 2 is
+                                 ; its real owner (overlay2's l2_mode_set
+                                 ; sets the same value). Written here too
+                                 ; so it is correct before Layer 2 comes
+                                 ; up - though $E3 is also the hardware
+                                 ; reset value, so this is belt and braces.
+    call tm_reserved_pairs
 
 ; Copy the embedded font to TM_DEFS. The GAME.CHR probe that lived here
 ; was retired (FONT.CHR via font_load, overlay2.asm, is the only custom

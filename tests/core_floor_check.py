@@ -12,14 +12,21 @@ check_nrs_exec       executes the assembled stand-in (src/hardware.asm under
                      fail. Matches build\\nextdaad.nex when it is a harness build.
 check_nex_core       NEX header bytes 135-137 (required core) of
                      build\\nextdaad.nex and build\\intro.nex read 3, 3, 3.
-check_gate_first     main runs only di and ld sp before its first call, which
-                     is an unconditional call core_gate (source), and the
-                     Release and DEBUG listings assemble exactly that.
+check_gate_first     main runs only di, ld sp and the warm re-entry test before
+                     its first call, an unconditional call nz, core_gate
+                     (source), and every variant's listing assembles that.
+check_gate_once      every variant: core_gate is referenced only by that call,
+                     nothing references main, and core_gate and core_refuse
+                     sit in the IM2 table area with a first byte that is not
+                     the table fill.
 check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
-                     fall-through included, over the Release and DEBUG
-                     listings: every reached routine is in bank 2, holds no
-                     ED C7 byte pair and is outside the print pipeline. A
-                     generated fixture proves the walker and the scan.
+                     fall-through included, over the Release, DEBUG,
+                     FORCE_1MB, NXB_QUIET and BENCH listings: every reached
+                     routine is in bank 2, its listed bytes match the image,
+                     it holds no ED C7 byte pair and no rst, and it is
+                     outside the print pipeline. A generated fixture proves
+                     the walker, the scan, rst, the allowlist and the image
+                     cross-check.
 
 Run standalone or via tests\\build-tests.ps1. Exit 0 = every check passed.
 """
@@ -356,8 +363,20 @@ def check_nrs_exec():
 
 NEX_HEADERS = (ROOT / "build" / "nextdaad.nex", ROOT / "build" / "intro.nex")
 MAIN_ASM = ROOT / "src" / "main.asm"
-LST_VARIANTS = {"release": (), "debug": ("-DDEBUG=1",)}
-# Reached routine -> written reason it may hold ED C7. Empty: none may.
+INC = ROOT / "src" / "nextdaad.inc"
+# main before its gate call: im2_init's fill at IM2_TABLE means a warm re-entry.
+GATE_PREFIX = ["di", "ld sp,stack_top", "ld a,(im2_table)", "cp im2_vector_byte"]
+# build.ps1's defines per variant; BENCH takes a fixed dummy stamp here.
+LST_VARIANTS = {
+    "release": (),
+    "debug": ("-DDEBUG=1",),
+    "force1mb": ("-DDEBUG=1", "-DFORCE_1MB=1"),
+    "force1mb-release": ("-DFORCE_1MB=1",),
+    "benchquiet": ("-DDEBUG=1", "-DNXB_QUIET=1"),
+    "bench": ("-DBENCH=1", "-DBCH_STAMP='0000000'"),
+}
+# (routine, kind) -> written reason the closure may hold it. kind: "ED C7",
+# "rst", "indirect" or "unresolved". Empty: none may.
 CLOSURE_ALLOW = {}
 # The print pipeline and nr_read: the refusal path must never reach them.
 CLOSURE_FORBIDDEN = ("fatal", "txt_init", "tm_width_apply", "windows_init", "win_select",
@@ -388,7 +407,7 @@ class Body:
 
     def instrs(self):
         """(mnemonic, operands, text) of each line that emits an instruction."""
-        for _, _, code, emits in self.lines:
+        for _, _, code, emits, _ in self.lines:
             if emits and code:
                 mn, ops = (code.split(None, 1) + [""])[:2]
                 mn = mn.lower()
@@ -396,7 +415,11 @@ class Body:
                     yield mn, [o.strip() for o in ops.split(",")] if ops.strip() else [], code
 
     def ranges(self):
-        return [(a, e) for a, e, _, emits in self.lines if emits and e > a]
+        return [(a, e) for a, e, _, emits, _ in self.lines if emits and e > a]
+
+    def codes(self):
+        """Source text of every line that emits bytes."""
+        return [code for _, _, code, emits, _ in self.lines if emits and code]
 
 
 def parse_listing(text):
@@ -432,9 +455,10 @@ def parse_listing(text):
         mn = (code.split(None, 1) or [""])[0].lower()
         emits = bool(field) or mn in ELIDING
         # Listed bytes give the extent; "..." or none listed (ds, incbin): the next line's address.
-        end = addr + len(field.split()) if field and not field.endswith("...") else nxt
+        listed = bytes.fromhex(field.rstrip(".").replace(" ", ""))
+        end = addr + len(listed) if field and not field.endswith("...") else nxt
         if cur is not None and (field or code):
-            cur.lines.append((addr, end if emits else addr, code, emits))
+            cur.lines.append((addr, end if emits else addr, code, emits, listed))
     for a, b in zip(bodies, bodies[1:]):
         a.next = b.name
     return bodies
@@ -484,9 +508,9 @@ def check_gate_first():
         elif word in ("else", "elseif"):
             pass
         elif word == "call":
-            target = code.split(None, 1)[1].replace(" ", "")
-            if target != "core_gate":
-                raise Fail(f"src/main.asm:{i + 1}: first call in main is '{code}', want 'call core_gate'")
+            norm = re.sub(r"\s*,\s*", ",", code.lower())
+            if norm != "call nz,core_gate":
+                raise Fail(f"src/main.asm:{i + 1}: first call in main is '{code}', want 'call nz, core_gate'")
             if depth:
                 raise Fail(f"src/main.asm:{i + 1}: call core_gate is inside a conditional block")
             at = i + 1
@@ -495,17 +519,52 @@ def check_gate_first():
             before.append(re.sub(r"\s*,\s*", ",", code.lower()))
     if at is None:
         raise Fail("main has no call before its next global label")
-    if before != ["di", "ld sp,stack_top"]:
-        raise Fail(f"main runs {before} before call core_gate, want ['di', 'ld sp,stack_top']")
+    if before != GATE_PREFIX:
+        raise Fail(f"main runs {before} before call core_gate, want {GATE_PREFIX}")
+    want = [("di", []), ("ld", ["sp", "STACK_TOP"]), ("ld", ["a", "(IM2_TABLE)"]),
+            ("cp", ["IM2_VECTOR_BYTE"]), ("call", ["nz", "core_gate"])]
     for variant in LST_VARIANTS:
         bodies, _ = main_listing(variant)
         by = {b.name: b for b in bodies}
         if "main" not in by or "core_gate" not in by:
             raise Fail(f"{variant} listing: no main or core_gate label")
-        first = [(mn, ops) for mn, ops, _ in list(by["main"].instrs())[:3]]
-        if first != [("di", []), ("ld", ["sp", "STACK_TOP"]), ("call", ["core_gate"])]:
+        first = [(mn, ops) for mn, ops, _ in list(by["main"].instrs())[:len(want)]]
+        if first != want:
             raise Fail(f"{variant} listing: main assembles {first}")
-    return f"src/main.asm:{at}, Release and DEBUG listings agree"
+    return f"src/main.asm:{at}, all {len(LST_VARIANTS)} listings agree"
+
+
+def inc_equ(name):
+    m = re.search(rf"^{name}\s+equ\s+\$([0-9A-Fa-f]+)\b", INC.read_text(encoding="utf-8"), re.M)
+    if not m:
+        raise Fail(f"src/nextdaad.inc: no '{name} equ $nn' line")
+    return int(m.group(1), 16)
+
+
+def check_gate_once():
+    """im2_init overwrites the gate: only main's guarded first call may reach it,
+    and nothing may call, jump to or take the address of main."""
+    table, fill = inc_equ("IM2_TABLE"), inc_equ("IM2_VECTOR_BYTE")
+    for variant in LST_VARIANTS:
+        bodies, image = main_listing(variant)
+        by = {b.name: b for b in bodies}
+        refs = [(b.name, re.sub(r"\s*,\s*", ", ", c)) for b in bodies for c in b.codes()
+                if re.search(r"\bcore_gate\b", c)]
+        if refs != [("main", "call nz, core_gate")]:
+            raise Fail(f"{variant}: core_gate referenced by {refs}, want main's call nz, core_gate only")
+        mains = [(b.name, c) for b in bodies for c in b.codes() if re.search(r"(?<![\w.@])@?main\b", c)]
+        if mains:
+            raise Fail(f"{variant}: main is referenced by {mains}")
+        for name in ("core_gate", "core_refuse"):
+            spans = by[name].ranges()
+            lo, hi = min(a for a, _ in spans), max(e for _, e in spans)
+            if lo < table or hi > table + 257:
+                raise Fail(f"{variant}: {name} ${lo:04X}-${hi:04X} is outside the IM2 table ${table:04X}-${table + 256:04X}")
+        if by["core_gate"].addr != table:
+            raise Fail(f"{variant}: core_gate at ${by['core_gate'].addr:04X}, want IM2_TABLE ${table:04X}")
+        if image[table - 0x8000] == fill:
+            raise Fail(f"{variant}: core_gate's first byte is the IM2 fill ${fill:02X}: main's guard would skip it")
+    return f"main's call only, main never targeted, gate at ${table:04X} in all {len(LST_VARIANTS)} listings"
 
 
 def resolve(target, by):
@@ -544,15 +603,20 @@ def walk_closure(bodies, roots):
                 if kind == "edge":
                     todo.append(target)
                 elif kind != "local":
-                    issues.append(f"{name}: {kind} '{code}'")
+                    issues.append((name, kind, code))
+            elif mn == "rst":
+                issues.append((name, "rst", code))
         if (last is None or not terminal(*last)) and body.next:
             todo.append(body.next)
     return reached, issues
 
 
-def scan_closure(bodies, image, roots):
-    """Return (closure text, failures) for the bodies reached from roots."""
-    reached, failures = walk_closure(bodies, roots)
+def scan_closure(bodies, image, roots, allow=None):
+    """Return (closure text, failures) for the bodies reached from roots. Bytes
+    come from the bank 2 image once each listed byte is seen to match it."""
+    allow = CLOSURE_ALLOW if allow is None else allow
+    reached, issues = walk_closure(bodies, roots)
+    failures = [f"{n}: {k} '{c}'" for n, k, c in issues if (n, k) not in allow]
     shown = []
     for body in reached:
         spans = body.ranges()
@@ -563,7 +627,14 @@ def scan_closure(bodies, image, roots):
             failures.append(f"{body.name} reached: the refusal path must not enter it")
         if lo < 0x8000 or hi > 0xC000:
             failures.append(f"{body.name} ${lo:04X}-${hi:04X} is outside bank 2")
-        elif b"\xED\xC7" in image[lo - 0x8000:hi - 0x8000] and body.name not in CLOSURE_ALLOW:
+            continue
+        listed = [(a, data) for a, _, _, emits, data in body.lines if emits and data]
+        wrong = [a for a, data in listed if image[a - 0x8000:a - 0x8000 + len(data)] != data]
+        if wrong:
+            failures.append(f"{body.name} ${wrong[0]:04X}: listed bytes differ from bank 2's image")
+        elif spans and not listed:
+            failures.append(f"{body.name} ${lo:04X}-${hi:04X}: no listed bytes to check the image against")
+        if b"\xED\xC7" in image[lo - 0x8000:hi - 0x8000] and (body.name, "ED C7") not in allow:
             failures.append(f"{body.name} ${lo:04X}-${hi:04X} holds ED C7")
     return ", ".join(shown), failures
 
@@ -576,37 +647,48 @@ core_refuse:
     jp st_tail
 st_leaf:
     ret nz
+    rst $08
     jr .out
 .out:
     ret
 st_tail:
+    rst $18
     nop
 st_fallen:
     NRGET $56
     ret
 st_never:
+    rst $08
     NRGET $01
     ret
     SAVEBIN "build/bank2.bin", $8000, $4000
 """
+SELFTEST_ALLOW = {("st_tail", "rst"): "self-test: an allowlisted rst is not a failure"}
 
 
 def check_refuse_closure():
-    unexplained = [name for name, reason in CLOSURE_ALLOW.items() if not str(reason).strip()]
+    unexplained = [key for key, reason in CLOSURE_ALLOW.items() if not str(reason).strip()]
     if unexplained:
         raise Fail(f"CLOSURE_ALLOW entries without a written reason: {unexplained}")
     st_dir = OUT / "lst-selftest"
     st_dir.mkdir(parents=True, exist_ok=True)
     st_src = st_dir / "selftest.asm"
-    st_src.write_text(SELFTEST.format(inc=(ROOT / "src" / "nextdaad.inc").as_posix()), encoding="utf-8")
+    st_src.write_text(SELFTEST.format(inc=INC.as_posix()), encoding="utf-8")
     bodies, image = listing("selftest", st_src, (), lambda work: (work / "build" / "bank2.bin").read_bytes())
-    reached, issues = walk_closure(bodies, ["core_refuse"])
-    names = [b.name for b in reached]
-    _, failures = scan_closure(bodies, image, ["core_refuse"])
-    if sorted(names) != ["core_refuse", "st_fallen", "st_leaf", "st_tail"] or issues:
-        raise Fail(f"self-test closure {names} {issues}, want core_refuse st_leaf st_tail st_fallen")
-    if not any(f.startswith("st_fallen ") and f.endswith("holds ED C7") for f in failures) or len(failures) != 1:
-        raise Fail(f"self-test scan {failures}, want st_fallen holding ED C7 only")
+    names = sorted(b.name for b in walk_closure(bodies, ["core_refuse"])[0])
+    if names != ["core_refuse", "st_fallen", "st_leaf", "st_tail"]:
+        raise Fail(f"self-test closure {names}, want core_refuse st_fallen st_leaf st_tail")
+    _, failures = scan_closure(bodies, image, ["core_refuse"], SELFTEST_ALLOW)
+    kinds = sorted("ED C7" if f.startswith("st_fallen $") and f.endswith(" holds ED C7") else f
+                   for f in failures)
+    if kinds != ["ED C7", "st_leaf: rst 'rst $08'"]:
+        raise Fail(f"self-test scan {failures}, want st_fallen's ED C7 and st_leaf's rst only")
+    leaf = next(b for b in bodies if b.name == "st_leaf").addr
+    moved = bytearray(image)
+    moved[leaf - 0x8000] ^= 0xFF
+    _, failures = scan_closure(bodies, bytes(moved), ["core_refuse"], SELFTEST_ALLOW)
+    if f"st_leaf ${leaf:04X}: listed bytes differ from bank 2's image" not in failures:
+        raise Fail(f"self-test image mismatch not refused: {failures}")
     notes = []
     for variant in LST_VARIANTS:
         bodies, image = main_listing(variant)
@@ -614,12 +696,12 @@ def check_refuse_closure():
         print(f"  closure {variant}: {shown}")
         if failures:
             raise Fail(f"{variant}: " + "; ".join(failures))
-        notes.append(f"{variant} {shown.count(',') + 1} routines")
-    return "self-test refused st_fallen; " + ", ".join(notes)
+        notes.append(f"{variant} {shown.count(',') + 1}")
+    return "self-test refused ED C7, rst and a moved image; routines " + ", ".join(notes)
 
 
 CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
-          check_nex_core, check_gate_first, check_refuse_closure]
+          check_nex_core, check_gate_first, check_gate_once, check_refuse_closure]
 
 
 def main():

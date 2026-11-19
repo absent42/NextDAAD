@@ -9,7 +9,9 @@
 main:
     di
     ld sp, STACK_TOP
-    call core_gate               ; first: returns only on core 3.03.03 or later
+    ld a, (IM2_TABLE)            ; im2_init's fill: a CSpect nextreg 2,1 warm
+    cp IM2_VECTOR_BYTE           ; re-entry, the gate already passed and is gone
+    call nz, core_gate           ; returns only on core 3.03.03 or later
  IFDEF DEBUG
     call l2_bareprobe_hook       ; Layer 2 bare-metal isolation ladder
                                   ; (Task 2, round 8); no-op unless P
@@ -171,11 +173,11 @@ boot_data_init:
  ENDIF
     ret
 
-; Boot gate at CORE_GATE_ORG, bank 2's unwritten gap below IM2_STUB: no resident
-; or pre-flags byte. Port-pair reads only; the gate and the refusal path must
-; not reach NEXTREG A,n.
+; Boot gate in the IM2 table area: im2_init overwrites it after the gate runs,
+; so never call it after boot. Port-pair reads only; the gate and the refusal
+; path must not reach NEXTREG A,n.
 coreGateResume  equ $
-    ORG CORE_GATE_ORG
+    ORG IM2_TABLE
 ; Returns when (NR $01 << 8) | NR $0E >= $3303, else refuses.
 ; Corrupts AF, BC, DE, HL.
 core_gate:
@@ -203,12 +205,7 @@ core_refuse:
     di
     call hw_regs
     call audio_init                         ; silence a held note
-    nextreg NR_TM_MAP_BASE, TM_MAP_MSB      ; txt_init's register writes
-    nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
-    call tm_reserved_pairs
-    call tm_font_init
-    nextreg NR_ULA_CTRL, ULA_OFF
-    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
+    call txt_regs
     ld a, TM_ATTR_DEFAULT                   ; map fill attribute
     ld (tmAttr), a
     ld a, TM_COLS
@@ -226,8 +223,8 @@ core_refuse:
     jr .halt
 msgCoreOld: db "NextDAAD needs core 3.03.03 or later", 0
 coreGateEnd:
-    ASSERT CORE_GATE_ORG > IM2_TABLE + 256 && coreGateEnd <= IM2_STUB
-    DISPLAY "core gate ends at ", coreGateEnd, " headroom ", /D, IM2_STUB - coreGateEnd
+    ASSERT coreGateEnd <= IM2_TABLE + 257 && {b core_gate} != IM2_VECTOR_BYTE
+    DISPLAY "core gate ends at ", coreGateEnd, " table headroom ", /D, IM2_TABLE + 257 - coreGateEnd
     ORG coreGateResume
 
     INCLUDE "hardware.asm"
