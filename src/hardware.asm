@@ -155,17 +155,21 @@ nr_read:
  IFDEF NR_STANDIN
 ; Harness-only NEXTREG A,n stand-in, assembled at RESIDENT_LIMIT: no resident
 ; byte moves, the cost is stack room (DISPLAY below). NRGET's call lands on
-; NOP NRS_PAGE*256+reg; nrs_common reads reg back from the call operand.
+; sled byte reg; nrs_common reads reg back from the call operand.
 nrs_resume  equ $
     ORG RESIDENT_LIMIT
     ALIGN 256
+; Any offset in the $18 run is jr +$18 (26-byte hops, flags kept) until a hop lands
+; in the 24 NOPs or on nrs_common; the run's last byte reads the first NOP: jr +0.
 nrs_sled:
-    ds 256, 0                       ; NOPs into nrs_common
+    ds 256 - 24, $18
+    ds 24, 0
 NRS_PAGE    equ high nrs_sled
 NRS_CANARY  equ $A5                 ; stack-zone fill, see core_gate
 ; Contract as NEXTREG A,n: A = register value, all else kept (flags, $243B).
 ; Own IFF2-preserving DI bracket, spr_di's double ld a,i sample: frame-ISR safe.
 nrs_common:
+    ASSERT nrs_common == nrs_sled + 256    ; the sled's hops and NOPs end here
     push af                         ; caller F; this A slot takes the value
     push hl
     push de

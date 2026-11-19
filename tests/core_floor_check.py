@@ -8,7 +8,9 @@ check_standin_guard  build.ps1's Assert-NoStandIn throws naming the nrs_
 check_nrs_exec       executes the assembled stand-in (src/hardware.asm under
                      NR_STANDIN) for every register number: A = the value,
                      every other register, the flags, the $243B selection,
-                     the interrupt state and SP kept. Two broken copies must
+                     the interrupt state and SP kept. Every sled entry offset
+                     runs only nop/jr and reaches nrs_common with all state as
+                     called; reports the worst-case T. Three broken copies must
                      fail. Matches build\\nextdaad.nex when it is a harness build.
 check_nex_core       NEX header bytes 135-137 (required core) of
                      build\\nextdaad.nex and build\\intro.nex read 3, 3, 3.
@@ -150,6 +152,12 @@ PUSH = {0xC5: "bc", 0xD5: "de", 0xE5: "hl", 0xF5: "af"}
 POP = {0xC1: "bc", 0xD1: "de", 0xE1: "hl", 0xF1: "af"}
 IN_C = {0x40: "b", 0x48: "c", 0x50: "d", 0x58: "e", 0x60: "h", 0x68: "l", 0x78: "a"}
 OUT_C = {0x41: "b", 0x49: "c", 0x51: "d", 0x59: "e", 0x61: "h", 0x69: "l", 0x79: "a"}
+# Z80 T-states of every modelled opcode (ED ops: the whole instruction).
+T_OP = {0x00: 4, 0x18: 12, 0xF3: 4, 0xFB: 4, 0xEA: 10, 0xE2: 10, 0x01: 10, 0x21: 10,
+        0x39: 11, 0x5E: 7, 0x56: 7, 0x77: 7, 0x1A: 7, 0x23: 6, 0x2B: 6, 0x1B: 6,
+        0x04: 4, 0x05: 4, 0xC9: 10, 0xCD: 17, **{op: 11 for op in PUSH},
+        **{op: 10 for op in POP}}
+T_ED = {0x57: 9, **{op: 12 for op in IN_C}, **{op: 12 for op in OUT_C}}
 
 
 def regval(sel):
@@ -165,6 +173,7 @@ class Z80:
 
     def __init__(self, mem, rng):
         self.m, self.rng = mem, rng
+        self.t = 0
 
     def r16(self, a):
         return self.m[a] | self.m[(a + 1) & 0xFFFF] << 8
@@ -205,9 +214,13 @@ class Z80:
         m, at = self.m, self.pc
         op = m[at]
         self.pc = at + 1
+        self.t += T_OP.get(op, 0)
         hl, de = self.pair("hl"), self.pair("de")
         if op == 0x00:
             pass
+        elif op == 0x18:                         # jr e, flags kept
+            d = m[self.pc]
+            self.pc = (self.pc + 1 + d - 2 * (d & 0x80)) & 0xFFFF
         elif op in PUSH:
             self.push(self.pair(PUSH[op]))
         elif op in POP:
@@ -249,6 +262,7 @@ class Z80:
         elif op == 0xED:
             op2 = m[self.pc]
             self.pc += 1
+            self.t += T_ED.get(op2, 0)
             if op2 == 0x57:                      # ld a,i: P/V = IFF2, but 0 once on the erratum
                 self.a = self.i
                 pv = 0 if self.erratum else self.iff2
@@ -267,7 +281,10 @@ class Z80:
 
 def run_probe(mem, probe, reg, iff, erratum, rng, sel=None):
     """Run NRGET reg from the probe table to its halt; raise Fail on any
-    broken contract item."""
+    broken contract item. The sled (the call's target page) may execute only
+    nop and jr and must leave at the next page start with every register,
+    the flags, SP - 2, the selection and the interrupt state as called.
+    Returns (T call to return, T in the sled)."""
     cpu = Z80(mem, rng)
     start = probe + 4 * reg
     cpu.pc, cpu.sp = start, SP0
@@ -277,15 +294,34 @@ def run_probe(mem, probe, reg, iff, erratum, rng, sel=None):
     cpu.iff1 = cpu.iff2 = iff
     cpu.erratum = erratum
     cpu.sel = rng.randrange(256) if sel is None else sel
-    kept = {n: getattr(cpu, n) for n in "fbcdehl"}
+    called = {n: getattr(cpu, n) for n in "afbcdehl"}
+    kept = {n: v for n, v in called.items() if n != "a"}
     sel0, image = cpu.sel, bytes(mem)
+    tag = f"NRGET ${reg:02X} (interrupts {'on' if iff else 'off'}{', erratum' if erratum else ''})"
+    common = (mem[start + 2] + 1) << 8
+    sled_t0 = sled_t = None
     for _ in range(1000):
         if cpu.pc == start + 3:
             break
+        if sled_t is None and common - 256 <= cpu.pc < common:
+            if sled_t0 is None:
+                sled_t0 = cpu.t
+            if mem[cpu.pc] not in (0x00, 0x18):
+                raise Fail(f"{tag}: sled byte ${mem[cpu.pc]:02X} executed at ${cpu.pc:04X}")
+        elif sled_t0 is not None and sled_t is None:
+            sled_t = cpu.t - sled_t0
+            if cpu.pc != common:
+                raise Fail(f"{tag}: sled left at ${cpu.pc:04X}, not nrs_common ${common:04X}")
+            for n, v in called.items():
+                if getattr(cpu, n) != v:
+                    raise Fail(f"{tag}: {n.upper()} ${v:02X} -> ${getattr(cpu, n):02X} in the sled")
+            if (cpu.sp, cpu.sel, cpu.iff1, cpu.iff2) != (SP0 - 2, sel0, iff, iff):
+                raise Fail(f"{tag}: SP, selection or interrupt state moved in the sled")
         cpu.step()
     else:
-        raise Fail(f"NRGET ${reg:02X}: no return to the probe")
-    tag = f"NRGET ${reg:02X} (interrupts {'on' if iff else 'off'}{', erratum' if erratum else ''})"
+        raise Fail(f"{tag}: no return to the probe")
+    if sled_t is None:
+        raise Fail(f"{tag}: the call never passed through the sled page")
     if cpu.a != regval(reg):
         raise Fail(f"{tag}: A = ${cpu.a:02X}, want ${regval(reg):02X}")
     for n, v in kept.items():
@@ -299,6 +335,7 @@ def run_probe(mem, probe, reg, iff, erratum, rng, sel=None):
         raise Fail(f"{tag}: SP ${SP0:04X} -> ${cpu.sp:04X}")
     if mem[:SP0 - 16] != image[:SP0 - 16] or mem[SP0:] != image[SP0:]:
         raise Fail(f"{tag}: memory written outside its stack")
+    return cpu.t, sled_t
 
 
 def broken(mem, page, pattern, nth):
@@ -335,11 +372,26 @@ def check_nrs_exec():
     page = mem[probe + 2]
     rng = random.Random(1)
     runs = 0
+    worst, sled_worst = (0, 0), (0, 0)
     for reg in range(256):
         for iff, erratum in ((0, False), (1, False), (1, True)):
             for _ in range(2):
-                run_probe(mem, probe, reg, iff, erratum, rng)
+                t, ts = run_probe(mem, probe, reg, iff, erratum, rng)
+                worst, sled_worst = max(worst, (t, reg)), max(sled_worst, (ts, reg))
                 runs += 1
+    # A landing zone two bytes short: a hop from the $18 run lands inside nrs_common.
+    lo = page * 256
+    short = bytearray(mem)
+    k = lo + bytes(mem[lo:lo + 256]).index(0)
+    short[k:k + 2] = b"\x18\x18"
+    try:
+        for reg in range(256):
+            run_probe(short, probe, reg, 0, False, rng)
+    except Fail as e:
+        if "sled left at" not in str(e):
+            raise Fail(f"short landing zone failed for another reason: {e}")
+    else:
+        raise Fail("the executor passed a sled whose landing zone is two bytes short")
     for pattern, nth, iff, erratum, sel, want in (
             (b"\xED\x59", 1, 0, False, 0x56 ^ 0xFF, "$243B selection"),
             (b"\xED\x57", 2, 1, True, None, "interrupt state 1 -> 0")):
@@ -350,9 +402,10 @@ def check_nrs_exec():
                 raise Fail(f"broken {pattern.hex(' ')} #{nth} failed for another reason: {e}")
         else:
             raise Fail(f"the executor passed nrs_common with {pattern.hex(' ')} #{nth} removed")
-    note = f"{runs} runs, 2 broken copies refused"
+    note = (f"{runs} runs, all 256 sled entries reach nrs_common intact, worst "
+            f"{worst[0]} T call to return (reg ${worst[1]:02X}), sled at most "
+            f"{sled_worst[0]} T (reg ${sled_worst[1]:02X}); 3 broken copies refused")
     if HARNESS_MARK.exists() and NEX.exists():
-        lo = page * 256
         if nex_bank2(NEX)[lo - 0x8000:lo - 0x7E00] != bytes(mem[lo:lo + 512]):
             raise Fail(f"build\\nextdaad.nex sled/nrs_common at ${lo:04X} differ from the fixture's")
         note += "; matches build\\nextdaad.nex"
