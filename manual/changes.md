@@ -7,9 +7,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 - **NextDAAD needs core 3.03.03 or later.** An older core stops at start
   with `NextDAAD needs core 3.03.03 or later`. Update the core on
-  real hardware. In CSpect use 4.5.6.0 or later; `RUN.BAT` warns about an
+  real hardware. In CSpect use 4.5.6.0 or later; `RUN.BAT` (or `run.sh` on Linux) warns about an
   older one. No jNext release supports core 3.03.03 yet, so jNext shows the
-  core message or misbehaves and `RUN.BAT` warns; until that changes, video
+  core message or misbehaves and the run launcher warns; until that changes, video
   cutscenes play on real hardware only. See
   [Getting started](getting-started.md#what-you-need).
 - **Extern API version 4.** `SVC_VERSION` returns 4, meaning the

@@ -20,7 +20,7 @@ the incremental build relies on, and the build refuses to run there.
 NextDAAD needs core 3.03.03 or later. On real hardware, update the
 core if a game shows `NextDAAD needs core 3.03.03 or later` at start.
 In an emulator, use CSpect 4.5.6.0 or later: the interpreter reads Next
-registers with `NEXTREG A,n`, which older CSpect lacks, and `RUN.BAT` warns when
+registers with `NEXTREG A,n`, which older CSpect lacks, and `RUN.BAT` (or `run.sh` on Linux) warns when
 it finds an older one. No jNext release supports core 3.03.03 yet, so in jNext
 the game shows that message or misbehaves; until a jNext release
 supports it, video cutscenes play on real hardware only.
@@ -430,11 +430,12 @@ game written for version 2, three behaviours change silently - see
 
 ### Running in jNext
 
-jNext is an optional second emulator. No jNext release supports core
-3.03.03 yet, so `RUN.BAT` warns that the game may stop with the core
-message or misbehave, and video cutscenes need real hardware for now. CSpect cannot play video cutscenes
-and stops a long streamed sound after about a second and a half; jNext
-plays both. CSpect stays the default.
+jNext is an optional second emulator. jNext 1.3.5 and earlier do not
+support core 3.03.03, so the game shows the core refusal there, and
+`RUN.BAT` (or `run.sh` on Linux) warns about it. Until a jNext release
+adds that support, video cutscenes and long streamed sounds need real
+hardware: CSpect cannot play video cutscenes and stops a long streamed
+sound after about a second and a half. CSpect stays the default.
 
 1. Download jNext 1.1.87 or later from
    https://github.com/jorgegv/jnext/releases. On Windows, extract the

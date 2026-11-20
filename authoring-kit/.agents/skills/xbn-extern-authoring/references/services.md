@@ -332,9 +332,9 @@ fails gracefully instead of jumping into whatever used to live there:
     .ok:
         ; ...
 
-The format version (the header's byte 3) and the API version are the same
-number on this release but are separate contracts: the loader enforces the
-first, your code checks the second.
+The format version (the header's byte 3) and the API version are separate
+numbers with separate contracts: the loader enforces the first, your code
+checks the second.
 
 An extern that reads Next registers with the `NRGET n` macro from `xbn.inc` (it
 always emits `NEXTREG A,n`, which needs core 3.03.03) requires API 4: check

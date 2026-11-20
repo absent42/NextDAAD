@@ -788,7 +788,7 @@ interpreter that predates it rejects the header outright and the game
 plays with externs off, where an old <code>xbn.inc</code> simply never calls the
 rows it does not know about. Rows 15 to 19 - <code>SVC_PAIR</code> through
 <code>SVC_VOCFIND</code> - are all API version 3, whichever header format you use;
-the API version is <code>3</code> since <code>SVC_PAIR</code> was appended. They are separate
+<code>SVC_PAIR</code> raised the API version to 3, and it is 4 on this release. They are separate
 contracts: the loader enforces the format version, your code checks the
 API version.</p>
 <p>API version 4 means the interpreter requires core 3.03.03. <code>xbn.inc</code>

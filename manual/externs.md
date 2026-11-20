@@ -679,7 +679,7 @@ interpreter that predates it rejects the header outright and the game
 plays with externs off, where an old `xbn.inc` simply never calls the
 rows it does not know about. Rows 15 to 19 - `SVC_PAIR` through
 `SVC_VOCFIND` - are all API version 3, whichever header format you use;
-the API version is `3` since `SVC_PAIR` was appended. They are separate
+`SVC_PAIR` raised the API version to 3, and it is 4 on this release. They are separate
 contracts: the loader enforces the format version, your code checks the
 API version.
 
