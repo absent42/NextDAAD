@@ -8,6 +8,7 @@ import re
 import time
 from collections import Counter
 from pathlib import Path
+from types import MappingProxyType
 
 from . import launcher
 from .client import CSpectError, read_map
@@ -179,6 +180,11 @@ class Session:
         return self.inst.pid
 
     # -- symbols and memory -----------------------------------------------------------------------
+
+    @property
+    def symbols(self) -> MappingProxyType:
+        """read_map's table, read-only: NAME -> (value, physical, type); sym() resolves from it."""
+        return MappingProxyType(self._syms)
 
     def sym(self, name: str) -> int:
         try:

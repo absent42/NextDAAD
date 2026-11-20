@@ -4,6 +4,7 @@ Prints PASS name / FAIL name: why; exit 1 on any FAIL."""
 import ctypes
 import http.server
 import json
+import operator
 import os
 import re
 import socket
@@ -1002,6 +1003,29 @@ def fake_cpu_server(cpu):
     return FakeMcp(reply)
 
 
+def t_session_symbols():
+    need_session()
+    need(isinstance(getattr(Session, "symbols", None), property), "Session.symbols is not a property")
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "x.map"
+        p.write_text("0000A200 0000A200 00 flags\n00009CB2 00009CB2 00 eng_init_game@seedok\n"
+                     "00000008 00000008 01 AKY_RET_GUARD\n", encoding="ascii")
+        syms = client.read_map(p)
+        s = Session(None, syms, map_file=p)
+        need(dict(s.symbols) == syms, f"symbols {dict(s.symbols)} != read_map {syms}")
+        raises(TypeError, operator.setitem, s.symbols, "FLAGS", (0, 0, 0))   # read-only
+        for name in ("flags", "ENG_INIT_GAME@SEEDOK", "aky_ret_guard"):
+            need(s.sym(name) == s.symbols[name.upper()][0], f"sym({name!r}) disagrees with symbols")
+        twin = Session(None, s.symbols, map_file=p)            # how nleg.key_session builds one
+        need(twin.sym("flags") == 0xA200, "a Session built on symbols resolves differently")
+    if MAP.is_file():
+        s = Session(None, client.read_map(MAP), map_file=MAP)
+        bad = [n for n, v in s.symbols.items() if s.sym(n) != v[0]]
+        need(not bad, f"{len(bad)} names where sym() and symbols disagree, e.g. {bad[:3]}")
+        return f"{len(s.symbols)} names in {MAP.name} agree with sym()"
+    return "synthetic map only (build/nextdaad.map absent)"
+
+
 def t_session_stop_races():
     need_session()
     # I1: time_between on a running CPU whose start breakpoint hits as soon as it is armed
@@ -1428,7 +1452,8 @@ HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, 
         t_port_choice, t_private_copy_excludes, t_job_kills_child, t_mutex_serialises,
         t_mutex_release_checked, t_close_keeps_mutex, t_listener_owner, t_no_answer_names_causes,
         t_fallback_runs, t_guard_parser, t_session_status, t_session_fake_mcp, t_session_boot_args,
-        t_session_raster, t_session_border_index, t_session_wait_until, t_session_stop_races]
+        t_session_raster, t_session_border_index, t_session_wait_until, t_session_symbols,
+        t_session_stop_races]
 LIVE = [l_launch_tools_close, l_private_copy_mcp, l_no_port_11000, l_window_minimised,
         l_parent_killed, l_exception_closes, l_foreign_untouched, l_guard_narrowed, l_boot_rows,
         l_symbols, l_mem_roundtrip, l_flags_frame, l_wait_frames_both_speeds, l_paused_boot_brk,

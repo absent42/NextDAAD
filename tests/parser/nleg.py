@@ -135,7 +135,7 @@ def key_session(s):
     free to service the page stops a play causes."""
     m = Mcp(s.mcp.port)
     m.initialize()
-    return Session(m, s._syms, map_file=s.map_file)
+    return Session(m, s.symbols, map_file=s.map_file)
 
 
 class NextLeg:
