@@ -197,7 +197,7 @@
 #            arm is reachable and byte-correct; the refiller's raw SD
 #            SPI cannot be exercised on CSpect, so its own counters
 #            (refilled blocks, underruns, fails) are read only on
-#            ZEsarUX/hardware - manual wire procedure is in
+#            hardware - manual wire procedure is in
 #            tests\sfxlong.dsf's own header.
 #   -Sfx2    two-channel sampled-effect API fixture, sd\SFX2\: make
 #            tests\sfx2.dsf active AND stage three generated 16000 Hz
