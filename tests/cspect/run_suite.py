@@ -1,13 +1,13 @@
 """Suite runner for the emulator test scripts, one log per entry per emulator tag.
 
-    python tests/cspect/run_suite.py --tag zes|cspect [--only NAME,...] [--list] [--label L]
+    python tests/cspect/run_suite.py --tag cspect [--only NAME,...] [--list] [--label L]
 
 An entry carries per-tag build (build.ps1 arguments), stage (build-tests.ps1
 switches, or a command starting with "python") and cmd (python argv). A build
 runs only when it differs from the previous entry's. An entry with no cmd for
 the tag reports "not ported" and runs nothing. Output: tests/out/cspect-port/<tag>/
 <name>.log and summary.md. --label L writes <name>.L.log and a row "<name> (L)",
-for re-runs. ZEsarUX cannot run NEXTREG A,n, so tag zes builds and stages -Harness.
+for re-runs.
 """
 import argparse
 import os
@@ -27,29 +27,19 @@ STAGE_TIMEOUT_S = 1500
 
 Entry = namedtuple("Entry", "name build stage cmd tags")
 
-HARN = ["-Harness"]
 
-
-def work(name, tag="zes"):
+def work(name, tag="cspect"):
     return "tests/out/cspect-port/%s/work/%s" % (tag, name)
 
 
-def zes(name, stage, cmd, build=HARN):
-    """Entry with only its zes side filled in; the cspect side is a port task's."""
-    return Entry(name, {"zes": build}, {"zes": stage}, {"zes": cmd}, ("zes", "cspect"))
-
-
-def cspect(entry, stage, cmd, build=()):
-    """entry with its cspect side filled in (build: build.ps1 arguments, DEBUG when empty)."""
-    return entry._replace(build={**entry.build, "cspect": list(build)},
-                          stage={**entry.stage, "cspect": stage},
-                          cmd={**entry.cmd, "cspect": cmd})
+def cspect(name, stage, cmd, build=()):
+    """An entry (build: build.ps1 arguments, DEBUG when empty)."""
+    return Entry(name, {"cspect": list(build)}, {"cspect": stage}, {"cspect": cmd}, ("cspect",))
 
 
 def parser(name, argv):
-    """A parser harness entry (no staging; DEBUG on cspect); --out is the tag's work folder."""
-    return cspect(zes(name, None, argv + ["--out", work(name)]),
-                  None, argv + ["--out", work(name, "cspect")])
+    """A parser harness entry (no staging; DEBUG); --out is the tag's work folder."""
+    return cspect(name, None, argv + ["--out", work(name)])
 
 
 INTRO_ARGV = ["python", "tests/intro/zes_intro.py", "sd/INTRO", "--launch", "SHOW.NEX",
@@ -58,84 +48,57 @@ POOLC_STAGE = ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex", "bu
                "build/nextdaad.map", "build/nextdaad.map"]
 
 
-def poolc(name, leg, port, case):
-    """A pool C entry (DEBUG on cspect); the cspect side passes port 0, the first free."""
+def poolc(name, leg, case):
+    """A pool C entry (DEBUG); port 0 is the first free."""
     argv = ["python", "tests/poolc/poolc_check.py", "sd/" + leg, "tests/out/poolc/%s.map" % leg]
-    return cspect(zes(name, POOLC_STAGE, argv + [str(port), case]), POOLC_STAGE, argv + ["0", case])
+    return cspect(name, POOLC_STAGE, argv + ["0", case])
 
 
 ENTRIES = [
-    cspect(zes("aysreg", ["-AysReg"],
-               ["python", "tests/audio/aysreg_check.py", "--out", work("aysreg")]),
-           ["-AysReg"], ["python", "tests/audio/aysreg_check.py", "--out", work("aysreg", "cspect")]),
-    cspect(zes("stopm_ladr", ["-AudLad"],
-               ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladr"), "--restart", "LADR"]),
-           ["-AudLad"], ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladr", "cspect"),
-                         "--restart", "LADR"]),
-    cspect(zes("stopm_lad1", ["-AudLad"],
-               ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_lad1"), "--restart", "LAD1"]),
-           ["-AudLad"], ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_lad1", "cspect"),
-                         "--restart", "LAD1"]),
-    cspect(zes("stopm_ladder", ["-AudLad"],
-               ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladder"), "--ladder"]),
-           ["-AudLad"], ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladder", "cspect"),
-                         "--ladder"]),
-    cspect(zes("refuse", None, ["python", "tests/corefloor/refuse_check.py"]),
-           None, ["python", "tests/corefloor/refuse_check.py"], build=["-Release"]),
-    cspect(zes("cursor", ["-Cursor"], ["python", "tests/cursor_dump.py"]),
-           ["-Cursor"], ["python", "tests/cursor_dump.py"]),
-    cspect(zes("cycle", ["-Cycle"], ["python", "tests/cycle_dump.py"]),
-           ["-Cycle"], ["python", "tests/cycle_dump.py"]),
-    cspect(zes("intro", ["-Intro"], INTRO_ARGV), ["-Intro"], INTRO_ARGV),
-    cspect(zes("l2pos", ["-L2Pos"], ["python", "tests/l2pos_check.py"]),
-           ["-L2Pos"], ["python", "tests/l2pos_check.py"]),
-    cspect(zes("l2pos_wide", ["-L2PosWide"], ["python", "tests/l2pos_check.py", "--mode", "1"]),
-           ["-L2PosWide"], ["python", "tests/l2pos_check.py", "--mode", "1"]),
-    cspect(zes("gfxzx0", ["-L2Pos", "-GfxZx0"], ["python", "tests/l2pos_check.py"]),
-           ["-L2Pos", "-GfxZx0"], ["python", "tests/l2pos_check.py"]),
-    cspect(zes("machine_gate", ["-BigDdb"], ["python", "tests/machine_gate.py"]),
-           ["-BigDdb"], ["python", "tests/machine_gate.py"]),
+    cspect("aysreg", ["-AysReg"], ["python", "tests/audio/aysreg_check.py", "--out", work("aysreg")]),
+    cspect("stopm_ladr", ["-AudLad"],
+           ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladr"), "--restart", "LADR"]),
+    cspect("stopm_lad1", ["-AudLad"],
+           ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_lad1"), "--restart", "LAD1"]),
+    cspect("stopm_ladder", ["-AudLad"],
+           ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladder"), "--ladder"]),
+    cspect("refuse", None, ["python", "tests/corefloor/refuse_check.py"], build=["-Release"]),
+    cspect("cursor", ["-Cursor"], ["python", "tests/cursor_dump.py"]),
+    cspect("cycle", ["-Cycle"], ["python", "tests/cycle_dump.py"]),
+    cspect("intro", ["-Intro"], INTRO_ARGV),
+    cspect("l2pos", ["-L2Pos"], ["python", "tests/l2pos_check.py"]),
+    cspect("l2pos_wide", ["-L2PosWide"], ["python", "tests/l2pos_check.py", "--mode", "1"]),
+    cspect("gfxzx0", ["-L2Pos", "-GfxZx0"], ["python", "tests/l2pos_check.py"]),
+    cspect("machine_gate", ["-BigDdb"], ["python", "tests/machine_gate.py"]),
     parser("parsertest_condacts", ["python", "tests/parser/parsertest.py", "tests/condacts.dsf",
                                    "tests/parser/scripts/condacts/smoke.json"]),
     parser("parsertest_condacts_full", ["python", "tests/parser/parsertest.py",
                                         "tests/condacts.dsf",
                                         "tests/parser/scripts/condacts/full.json"]),
     parser("v3probe", ["python", "tests/parser/scripts/v3probe/run.py"]),
-    poolc("poolc", "LEGPC", 10060, "switch"),
-    poolc("poolc_restore", "LEGPC", 10061, "restore"),
-    poolc("poolc_focus5", "LEGPC", 10062, "focus5"),
-    poolc("poolcc", "LEGPCC", 10063, "control"),
-    cspect(zes("spraud", ["-SprAud"], ["python", "tests/spraud_dump.py"]),
-           ["-SprAud"], ["python", "tests/spraud_dump.py"]),
-    cspect(zes("sprites", ["-Sprites"], ["python", "tests/sprites_dump.py"]),
-           ["-Sprites"], ["python", "tests/sprites_dump.py"]),
-    cspect(zes("txt40", ["-Txt40"], ["python", "tests/txt40_dump.py"]),
-           ["-Txt40"], ["python", "tests/txt40_dump.py"]),
-    cspect(zes("typeahead", ["-KbLog"], ["python", "tests/typeahead_run.py"]),
-           ["-KbLog"], ["python", "tests/typeahead_run.py"]),
-    cspect(zes("xbn_hookshape", ["-Xbn"], ["python", "tests/xbn/hookshape.py", "sd/XBN"]),
-           ["-Xbn"], ["python", "tests/xbn/hookshape.py", "sd/XBN"]),
-    cspect(zes("xbn_namecheck", ["-Xbn", "-XbnAll"], ["python", "tests/xbn/namecheck.py", "sd/XBN"]),
-           ["-Xbn", "-XbnAll"], ["python", "tests/xbn/namecheck.py", "sd/XBN"]),
-    cspect(zes("xbn_tickcheck", ["-Xbn", "-XbnTicker"],
-               ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCK", "XT40"]),
-           ["-Xbn", "-XbnTicker"], ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCK", "XT40"]),
-    cspect(zes("xbn_tickcheck_all", ["-Xbn", "-XbnAll"],
-               ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCK", "XT40"]),
-           ["-Xbn", "-XbnAll"], ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCK", "XT40"]),
-    cspect(Entry("xbn_tickcheck_getdate", {}, {}, {}, ("cspect",)),
-           ["-Xbn", "-XbnTicker"],
+    poolc("poolc", "LEGPC", "switch"),
+    poolc("poolc_restore", "LEGPC", "restore"),
+    poolc("poolc_focus5", "LEGPC", "focus5"),
+    poolc("poolcc", "LEGPCC", "control"),
+    cspect("spraud", ["-SprAud"], ["python", "tests/spraud_dump.py"]),
+    cspect("sprites", ["-Sprites"], ["python", "tests/sprites_dump.py"]),
+    cspect("txt40", ["-Txt40"], ["python", "tests/txt40_dump.py"]),
+    cspect("typeahead", ["-KbLog"], ["python", "tests/typeahead_run.py"]),
+    cspect("xbn_hookshape", ["-Xbn"], ["python", "tests/xbn/hookshape.py", "sd/XBN"]),
+    cspect("xbn_namecheck", ["-Xbn", "-XbnAll"], ["python", "tests/xbn/namecheck.py", "sd/XBN"]),
+    cspect("xbn_tickcheck", ["-Xbn", "-XbnTicker"],
+           ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCK", "XT40"]),
+    cspect("xbn_tickcheck_all", ["-Xbn", "-XbnAll"],
+           ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCK", "XT40"]),
+    cspect("xbn_tickcheck_getdate", ["-Xbn", "-XbnTicker"],
            ["python", "tests/xbn/tickcheck.py", "sd/XBN", "XTCO", "--row", "27",
             "--attr-uniform", "27"]),
-    cspect(zes("xbn_transcheck", ["-Xbn", "-XbnTrans"],
-               ["python", "tests/xbn/transcheck.py", "sd/XBN", "XTRS", "XTR1", "XTRE"]),
-           ["-Xbn", "-XbnTrans"], ["python", "tests/xbn/transcheck.py", "sd/XBN", "XTRS", "XTR1", "XTRE"]),
-    cspect(Entry("text2_reader", {}, {}, {}, ("cspect",)),
-           ["python", "tests/text2/stage_legs.py", "reader"],
+    cspect("xbn_transcheck", ["-Xbn", "-XbnTrans"],
+           ["python", "tests/xbn/transcheck.py", "sd/XBN", "XTRS", "XTR1", "XTRE"]),
+    cspect("text2_reader", ["python", "tests/text2/stage_legs.py", "reader"],
            ["python", "tests/text2/drive_cspect.py", "objverif_walk", "nest4_walk", "xmb_walk",
             "xmb_mismatch_refused", "xmb_fp_refused", "xmb_part_fallback", "timing"]),
-    cspect(Entry("text2_loader", {}, {}, {}, ("cspect",)),
-           ["python", "tests/text2/stage_legs.py", "loader"],
+    cspect("text2_loader", ["python", "tests/text2/stage_legs.py", "loader"],
            ["python", "tests/text2/loader/run_loader_legs.py"]),
 ]
 
@@ -159,7 +122,7 @@ def run(argv, timeout):
 def stage_argv(stage, tag):
     if stage and stage[0] == "python":
         return stage
-    return PS + [os.path.join(ROOT, "tests", "build-tests.ps1")] + (HARN if tag == "zes" else []) + stage
+    return PS + [os.path.join(ROOT, "tests", "build-tests.ps1")] + stage
 
 
 def read_rows(path):
@@ -190,7 +153,7 @@ def write_summary(path, tag, rows, order):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", choices=("zes", "cspect"), required=True)
+    ap.add_argument("--tag", choices=("cspect",), required=True)
     ap.add_argument("--only", default="")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--label", default="")

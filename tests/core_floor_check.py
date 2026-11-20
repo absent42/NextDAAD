@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
 """tests/core_floor_check.py - host checks for the core 3.03.03 floor.
 
-check_nrget_fixture  NRGET emits ED C7 n shipped, and a 3-byte call into
-                     the stand-in sled page under NR_STANDIN.
-check_standin_guard  build.ps1's Assert-NoStandIn throws naming the nrs_
-                     symbol in an SLD that has one, and passes a clean one.
-check_nrs_exec       executes the assembled stand-in (src/hardware.asm under
-                     NR_STANDIN) for every register number: A = the value,
-                     every other register, the flags, the $243B selection,
-                     the interrupt state and SP kept. Every sled entry offset
-                     runs only nop/jr and reaches nrs_common with all state as
-                     called; reports the worst-case T. Three broken copies must
-                     fail. Matches build\\nextdaad.nex when it is a harness build.
+check_nrget_fixture  NRGET emits ED C7 n.
 check_nex_core       NEX header bytes 135-137 (required core) of
                      build\\nextdaad.nex and build\\intro.nex read 3, 3, 3.
 check_gate_first     main runs only di, ld sp and the warm re-entry test before
@@ -33,10 +23,9 @@ check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
 
 check_no_const_nr_read no code line under src/ (not src/intro/) references
                      nr_read: every Next-register read is an NRGET.
-check_no_fade_in_harness no ZEsarUX launcher stages the standalone fade extern
-                     or types a fade verb, in its text or in a script
-                     file it plays; fixture-XBN legs are exempt.
-check_zes_core_wired every ZEsarUX launch goes through the core-wiring helper.
+check_emulator_launchers tests reach CSpect only through Session.boot, launcher.launch
+                     or the nleg helpers: no raw emulator launch, and EMU_LAUNCHERS
+                     equals the discovered session users. Self-tested on generated input.
 check_extern_fresh   each kit extern assembles to its committed GAME.XBN and
                      STARTER matches the all collection.
 check_fade_source    fade.asm source pins: latch read, NRGET + nextreg, API 4
@@ -46,8 +35,6 @@ Run standalone or via tests\\build-tests.ps1. Exit 0 = every check passed.
 """
 
 import ast
-import json
-import random
 import re
 import shutil
 import subprocess
@@ -58,10 +45,6 @@ ROOT = Path(__file__).resolve().parent.parent
 SJASM = ROOT / "tools" / "sjasmplus" / "sjasmplus.exe"
 OUT = ROOT / "tests" / "out" / "corefloor"
 FIXTURE = "tests/corefloor/nrget_fixture.asm"
-EXEC_FIXTURE = "tests/corefloor/nrs_exec_fixture.asm"
-BUILD_PS1 = ROOT / "build.ps1"
-NEX = ROOT / "build" / "nextdaad.nex"
-HARNESS_MARK = ROOT / "build" / "harness.txt"
 
 
 class Fail(Exception):
@@ -83,284 +66,11 @@ def assemble(src, *defines):
     return raw.read_bytes()
 
 
-def fixture_equ(src, name):
-    m = re.search(rf"^{name}\s+equ\s+\$([0-9A-Fa-f]+)\s*$",
-                  (ROOT / src).read_text(encoding="utf-8"), re.M)
-    if not m:
-        raise Fail(f"{src}: no '{name} equ $nn' line")
-    return int(m.group(1), 16)
-
-
 def check_nrget_fixture():
-    FIX_PAGE = fixture_equ(FIXTURE, "FIX_PAGE")
     shipped = assemble(FIXTURE)
     want = bytes([0xED, 0xC7, 0x56, 0xED, 0xC7, 0x6B])
     if shipped != want:
-        raise Fail(f"shipped NRGET bytes {shipped.hex(' ')}, want {want.hex(' ')}")
-    harness = assemble(FIXTURE, "-DNR_STANDIN=1")
-    want = bytes([0xCD, 0x56, FIX_PAGE, 0xCD, 0x6B, FIX_PAGE])
-    if harness != want:
-        raise Fail(f"harness NRGET bytes {harness.hex(' ')}, want {want.hex(' ')}")
-
-
-# SLD record: file|line|defFile|defLine|page|value|type|data
-# name -> (records, the nrs_ symbol the guard must name, or None = clean)
-GUARD_CASES = {
-    "guard_clean.sld": ("src/hardware.asm|149||0|4|33088|F|audio_init\n"
-                        "src/hardware.asm|149||0|4|33088|L|,audio_init,,+used\n"
-                        "src/nextdaad.inc|20||0|-1|192|D|NR_INT_CTRL\n"
-                        "src/nextdaad.inc|20||0|-1|192|L|,NR_INT_CTRL,,+equ\n", None),
-    "guard_f.sld": ("src/hardware.asm|190||0|5|47872|F|nrs_common\n", "nrs_common"),
-    "guard_l.sld": ("src/hardware.asm|186||0|5|47616|L|,nrs_sled,,+used\n", "nrs_sled"),
-    "guard_d.sld": ("src/hardware.asm|185||0|-1|186|D|NRS_PAGE\n", "NRS_PAGE"),
-}
-
-
-def run_guard(sld):
-    """Run Assert-NoStandIn, extracted from build.ps1's own text, on sld.
-    Returns (passed, the thrown message or '')."""
-    pwsh = shutil.which("pwsh")
-    if not pwsh:
-        raise Fail("pwsh not on PATH: cannot run build.ps1's Assert-NoStandIn")
-    script = (
-        "$ErrorActionPreference = 'Stop'; "
-        f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{BUILD_PS1}', [ref]$null, [ref]$null); "
-        "$fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] "
-        "-and $n.Name -eq 'Assert-NoStandIn' }, $true); "
-        "if (-not $fn) { exit 3 }; "
-        ". ([scriptblock]::Create($fn.Extent.Text)); "
-        f"try {{ Assert-NoStandIn '{sld}' }} "
-        "catch { [Console]::Out.WriteLine('THREW ' + $_.Exception.Message); exit 1 }"
-    )
-    r = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", script],
-                       capture_output=True, text=True)
-    if r.returncode == 3:
-        raise Fail("build.ps1 has no Assert-NoStandIn function")
-    if r.returncode not in (0, 1):
-        raise Fail(f"pwsh exit {r.returncode} on {sld.name}:\n{r.stdout}{r.stderr}")
-    return r.returncode == 0, r.stdout.strip()
-
-
-def check_standin_guard():
-    OUT.mkdir(parents=True, exist_ok=True)
-    for name, (body, symbol) in GUARD_CASES.items():
-        sld = OUT / name
-        sld.write_text("|SLD.data.version|1\n" + body, encoding="utf-8")
-        passed, said = run_guard(sld)
-        if symbol is None:
-            if not passed:
-                raise Fail(f"Assert-NoStandIn threw on {name}: {said}")
-        elif passed:
-            raise Fail(f"Assert-NoStandIn passed {name}")
-        elif f"names stand-in symbol {symbol} -" not in said:
-            raise Fail(f"Assert-NoStandIn on {name} did not name {symbol}: {said}")
-
-
-# ---------------------------------------------------------------- executor
-
-TB_SEL, TB_ACC = 0x243B, 0x253B
-SP0 = 0xBD00                     # stack for a probe, clear of the stand-in
-PUSH = {0xC5: "bc", 0xD5: "de", 0xE5: "hl", 0xF5: "af"}
-POP = {0xC1: "bc", 0xD1: "de", 0xE1: "hl", 0xF1: "af"}
-IN_C = {0x40: "b", 0x48: "c", 0x50: "d", 0x58: "e", 0x60: "h", 0x68: "l", 0x78: "a"}
-OUT_C = {0x41: "b", 0x49: "c", 0x51: "d", 0x59: "e", 0x61: "h", 0x69: "l", 0x79: "a"}
-# Z80 T-states of every modelled opcode (ED ops: the whole instruction).
-T_OP = {0x00: 4, 0x18: 12, 0xF3: 4, 0xFB: 4, 0xEA: 10, 0xE2: 10, 0x01: 10, 0x21: 10,
-        0x39: 11, 0x5E: 7, 0x56: 7, 0x77: 7, 0x1A: 7, 0x23: 6, 0x2B: 6, 0x1B: 6,
-        0x04: 4, 0x05: 4, 0xC9: 10, 0xCD: 17, **{op: 11 for op in PUSH},
-        **{op: 10 for op in POP}}
-T_ED = {0x57: 9, **{op: 12 for op in IN_C}, **{op: 12 for op in OUT_C}}
-
-
-def regval(sel):
-    """Value the model's Next register sel holds: distinct for every sel."""
-    return (sel * 37 + 11) & 0xFF
-
-
-class Z80:
-    """The opcodes the sled and nrs_common use, nothing more: an unmodelled
-    opcode fails, so an edit reaching IX, IY or the alternate set must
-    extend this. Flag-writing ops leave random flags, so a kept F is earned.
-    Port model: $243B select latch (readable), $253B = regval(latch)."""
-
-    def __init__(self, mem, rng):
-        self.m, self.rng = mem, rng
-        self.t = 0
-
-    def r16(self, a):
-        return self.m[a] | self.m[(a + 1) & 0xFFFF] << 8
-
-    def pair(self, n):
-        return getattr(self, n[0]) << 8 | getattr(self, n[1])
-
-    def setpair(self, n, v):
-        setattr(self, n[0], v >> 8 & 0xFF)
-        setattr(self, n[1], v & 0xFF)
-
-    def push(self, v):
-        self.sp = (self.sp - 2) & 0xFFFF
-        self.m[self.sp] = v & 0xFF
-        self.m[(self.sp + 1) & 0xFFFF] = v >> 8 & 0xFF
-
-    def pop(self):
-        v = self.r16(self.sp)
-        self.sp = (self.sp + 2) & 0xFFFF
-        return v
-
-    def scramble(self):
-        self.f = self.rng.randrange(256)
-
-    def port(self, bc, value=None):
-        if self.iff1:
-            raise Fail(f"port {bc:04X} accessed with interrupts enabled")
-        if value is None and bc == TB_SEL:
-            return self.sel
-        if value is None and bc == TB_ACC:
-            return regval(self.sel)
-        if value is not None and bc == TB_SEL:
-            self.sel = value
-            return None
-        raise Fail(f"{'IN from' if value is None else 'OUT to'} unmodelled port {bc:04X}")
-
-    def step(self):
-        m, at = self.m, self.pc
-        op = m[at]
-        self.pc = at + 1
-        self.t += T_OP.get(op, 0)
-        hl, de = self.pair("hl"), self.pair("de")
-        if op == 0x00:
-            pass
-        elif op == 0x18:                         # jr e, flags kept
-            d = m[self.pc]
-            self.pc = (self.pc + 1 + d - 2 * (d & 0x80)) & 0xFFFF
-        elif op in PUSH:
-            self.push(self.pair(PUSH[op]))
-        elif op in POP:
-            self.setpair(POP[op], self.pop())
-        elif op in (0xF3, 0xFB):                 # di / ei
-            self.iff1 = self.iff2 = int(op == 0xFB)
-        elif op in (0xEA, 0xE2):                 # jp pe / jp po
-            t = self.r16(self.pc)
-            self.pc += 2
-            if bool(self.f & 4) == (op == 0xEA):
-                self.pc = t
-        elif op in (0x01, 0x21):
-            self.setpair("bc" if op == 0x01 else "hl", self.r16(self.pc))
-            self.pc += 2
-        elif op == 0x39:                         # add hl,sp
-            self.setpair("hl", hl + self.sp)
-            self.scramble()
-        elif op == 0x5E:
-            self.e = m[hl]
-        elif op == 0x56:
-            self.d = m[hl]
-        elif op == 0x77:
-            m[hl] = self.a
-        elif op == 0x1A:
-            self.a = m[de]
-        elif op in (0x23, 0x2B):
-            self.setpair("hl", hl + (1 if op == 0x23 else -1))
-        elif op == 0x1B:
-            self.setpair("de", de - 1)
-        elif op in (0x04, 0x05):
-            self.b = (self.b + (1 if op == 0x04 else -1)) & 0xFF
-            self.scramble()
-        elif op == 0xC9:
-            self.pc = self.pop()
-        elif op == 0xCD:
-            t = self.r16(self.pc)
-            self.push(self.pc + 2)
-            self.pc = t
-        elif op == 0xED:
-            op2 = m[self.pc]
-            self.pc += 1
-            self.t += T_ED.get(op2, 0)
-            if op2 == 0x57:                      # ld a,i: P/V = IFF2, but 0 once on the erratum
-                self.a = self.i
-                pv = 0 if self.erratum else self.iff2
-                self.erratum = False
-                self.f = (self.rng.randrange(256) & ~4) | pv << 2
-            elif op2 in IN_C:
-                setattr(self, IN_C[op2], self.port(self.pair("bc")))
-                self.scramble()
-            elif op2 in OUT_C:
-                self.port(self.pair("bc"), getattr(self, OUT_C[op2]))
-            else:
-                raise Fail(f"executor: unmodelled ED {op2:02X} at {at:04X}")
-        else:
-            raise Fail(f"executor: unmodelled opcode {op:02X} at {at:04X}")
-
-
-def run_probe(mem, probe, reg, iff, erratum, rng, sel=None):
-    """Run NRGET reg from the probe table to its halt; raise Fail on any
-    broken contract item. The sled (the call's target page) may execute only
-    nop and jr and must leave at the next page start with every register,
-    the flags, SP - 2, the selection and the interrupt state as called.
-    Returns (T call to return, T in the sled)."""
-    cpu = Z80(mem, rng)
-    start = probe + 4 * reg
-    cpu.pc, cpu.sp = start, SP0
-    for n in "afbcdehl":
-        setattr(cpu, n, rng.randrange(256))
-    cpu.i = rng.randrange(256)
-    cpu.iff1 = cpu.iff2 = iff
-    cpu.erratum = erratum
-    cpu.sel = rng.randrange(256) if sel is None else sel
-    called = {n: getattr(cpu, n) for n in "afbcdehl"}
-    kept = {n: v for n, v in called.items() if n != "a"}
-    sel0, image = cpu.sel, bytes(mem)
-    tag = f"NRGET ${reg:02X} (interrupts {'on' if iff else 'off'}{', erratum' if erratum else ''})"
-    common = (mem[start + 2] + 1) << 8
-    sled_t0 = sled_t = None
-    for _ in range(1000):
-        if cpu.pc == start + 3:
-            break
-        if sled_t is None and common - 256 <= cpu.pc < common:
-            if sled_t0 is None:
-                sled_t0 = cpu.t
-            if mem[cpu.pc] not in (0x00, 0x18):
-                raise Fail(f"{tag}: sled byte ${mem[cpu.pc]:02X} executed at ${cpu.pc:04X}")
-        elif sled_t0 is not None and sled_t is None:
-            sled_t = cpu.t - sled_t0
-            if cpu.pc != common:
-                raise Fail(f"{tag}: sled left at ${cpu.pc:04X}, not nrs_common ${common:04X}")
-            for n, v in called.items():
-                if getattr(cpu, n) != v:
-                    raise Fail(f"{tag}: {n.upper()} ${v:02X} -> ${getattr(cpu, n):02X} in the sled")
-            if (cpu.sp, cpu.sel, cpu.iff1, cpu.iff2) != (SP0 - 2, sel0, iff, iff):
-                raise Fail(f"{tag}: SP, selection or interrupt state moved in the sled")
-        cpu.step()
-    else:
-        raise Fail(f"{tag}: no return to the probe")
-    if sled_t is None:
-        raise Fail(f"{tag}: the call never passed through the sled page")
-    if cpu.a != regval(reg):
-        raise Fail(f"{tag}: A = ${cpu.a:02X}, want ${regval(reg):02X}")
-    for n, v in kept.items():
-        if getattr(cpu, n) != v:
-            raise Fail(f"{tag}: {n.upper()} ${v:02X} -> ${getattr(cpu, n):02X}")
-    if cpu.sel != sel0:
-        raise Fail(f"{tag}: $243B selection ${sel0:02X} -> ${cpu.sel:02X}")
-    if (cpu.iff1, cpu.iff2) != (iff, iff):
-        raise Fail(f"{tag}: interrupt state {iff} -> {cpu.iff1}")
-    if cpu.sp != SP0:
-        raise Fail(f"{tag}: SP ${SP0:04X} -> ${cpu.sp:04X}")
-    if mem[:SP0 - 16] != image[:SP0 - 16] or mem[SP0:] != image[SP0:]:
-        raise Fail(f"{tag}: memory written outside its stack")
-    return cpu.t, sled_t
-
-
-def broken(mem, page, pattern, nth):
-    """Copy of mem with the nth pattern in nrs_common replaced by NOPs."""
-    common = (page + 1) * 256
-    at = common - 1
-    for _ in range(nth):
-        at = mem.find(pattern, at + 1, common + 64)
-        if at < 0:
-            raise Fail(f"nrs_common has no {pattern.hex(' ')} number {nth} to break")
-    m = bytearray(mem)
-    m[at:at + len(pattern)] = bytes(len(pattern))
-    return m
+        raise Fail(f"NRGET bytes {shipped.hex(' ')}, want {want.hex(' ')}")
 
 
 def nex_bank2(path):
@@ -372,58 +82,6 @@ def nex_bank2(path):
                 return nex[pos:pos + 16384]
             pos += 16384
     raise Fail(f"{path}: no bank 2")
-
-
-def check_nrs_exec():
-    probe = fixture_equ(EXEC_FIXTURE, "PROBE")
-    img = assemble(EXEC_FIXTURE, "-DNR_STANDIN=1")
-    mem = bytearray(0x10000)
-    mem[0x8000:0x8000 + len(img)] = img
-    if mem[probe] != 0xCD:
-        raise Fail(f"probe at ${probe:04X} is not a call: NR_STANDIN NRGET missing")
-    page = mem[probe + 2]
-    rng = random.Random(1)
-    runs = 0
-    worst, sled_worst = (0, 0), (0, 0)
-    for reg in range(256):
-        for iff, erratum in ((0, False), (1, False), (1, True)):
-            for _ in range(2):
-                t, ts = run_probe(mem, probe, reg, iff, erratum, rng)
-                worst, sled_worst = max(worst, (t, reg)), max(sled_worst, (ts, reg))
-                runs += 1
-    # A landing zone two bytes short: a hop from the $18 run lands inside nrs_common.
-    lo = page * 256
-    short = bytearray(mem)
-    k = lo + bytes(mem[lo:lo + 256]).index(0)
-    short[k:k + 2] = b"\x18\x18"
-    try:
-        for reg in range(256):
-            run_probe(short, probe, reg, 0, False, rng)
-    except Fail as e:
-        if "sled left at" not in str(e):
-            raise Fail(f"short landing zone failed for another reason: {e}")
-    else:
-        raise Fail("the executor passed a sled whose landing zone is two bytes short")
-    for pattern, nth, iff, erratum, sel, want in (
-            (b"\xED\x59", 1, 0, False, 0x56 ^ 0xFF, "$243B selection"),
-            (b"\xED\x57", 2, 1, True, None, "interrupt state 1 -> 0")):
-        try:
-            run_probe(broken(mem, page, pattern, nth), probe, 0x56, iff, erratum, rng, sel)
-        except Fail as e:
-            if want not in str(e):
-                raise Fail(f"broken {pattern.hex(' ')} #{nth} failed for another reason: {e}")
-        else:
-            raise Fail(f"the executor passed nrs_common with {pattern.hex(' ')} #{nth} removed")
-    note = (f"{runs} runs, all 256 sled entries reach nrs_common intact, worst "
-            f"{worst[0]} T call to return (reg ${worst[1]:02X}), sled at most "
-            f"{sled_worst[0]} T (reg ${sled_worst[1]:02X}); 3 broken copies refused")
-    if HARNESS_MARK.exists() and NEX.exists():
-        if nex_bank2(NEX)[lo - 0x8000:lo - 0x7E00] != bytes(mem[lo:lo + 512]):
-            raise Fail(f"build\\nextdaad.nex sled/nrs_common at ${lo:04X} differ from the fixture's")
-        note += "; matches build\\nextdaad.nex"
-    else:
-        note += "; no harness build to compare"
-    return note
 
 
 # ------------------------------------------------------------- boot gate
@@ -784,125 +442,50 @@ def check_refuse_closure():
     return "self-test refused ED C7, rst and a moved image; routines " + ", ".join(notes)
 
 
-ZES_LAUNCHERS = []
-# Not launchers: the reference ZX interpreter, other machines, zes_core itself
-# (the one raw Popen) and this file.
-ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py",
-            "tests/zes_core.py", "tests/core_floor_check.py")
-ZES_HELPERS = ()
-ZES_NAMES = re.compile(r"zesarux\.exe|--enable-remoteprotocol", re.I)
-ZES_HELPER_CALLS = set()
-ZES_SPAWNERS = {"subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
+EMU_LAUNCHERS = [
+    "tests/audio/aysreg_check.py",
+    "tests/audio/stopm_dump.py",
+    "tests/corefloor/refuse_check.py",
+    "tests/cursor_dump.py",
+    "tests/cycle_dump.py",
+    "tests/intro/zes_intro.py",
+    "tests/l2pos_check.py",
+    "tests/machine_gate.py",
+    "tests/parser/nleg.py",
+    "tests/parser/parser_selftest.py",
+    "tests/parser/parsertest.py",
+    "tests/parser/scripts/v3probe/run.py",
+    "tests/parser/scripts/zxadj/run.py",
+    "tests/poolc/poolc_check.py",
+    "tests/spraud_dump.py",
+    "tests/sprites_dump.py",
+    "tests/text2/console_move_check.py",
+    "tests/text2/drive_cspect.py",
+    "tests/text2/loader/run_loader_legs.py",
+    "tests/txt40_dump.py",
+    "tests/typeahead_run.py",
+    "tests/xbn/hookshape.py",
+    "tests/xbn/namecheck.py",
+    "tests/xbn/tickcheck.py",
+    "tests/xbn/transcheck.py",
+    "tests/xbn/xbnrun.py",
+]
+# Not session users: the classic-machine drivers, the launcher layer itself
+# (it names CSpect.exe), generated output and this file.
+EMU_SKIP_DIRS = ("tests/cspect/", "tests/objshare/classic/", "tests/out/")
+EMU_SKIP_FILES = ("tests/parser/zleg.py", "tests/parser/zscreen.py", "tests/parser/zrcp.py",
+                  "tests/core_floor_check.py")
+EMU_NAMES = re.compile(r"zesarux\.exe|--enable-remoteprotocol|CSpect\.exe", re.I)
+EMU_BOOT_CALLS = {"cspect.Session.boot", "cspect.session.Session.boot",
+                  "cspect.launcher.launch"}
+EMU_SPAWNERS = {"subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
                 "subprocess.check_output", "os.system", "os.popen"}
-FADE_CALL = re.compile(r"\bEXTERN\s+\w+\s+4[0-3]\b", re.I)
 
 
-def fade_verbs(dsf):
-    """Verbs of a DSF whose process entries call EXTERN fn 40-43 (fade)."""
-    verbs, cur = set(), None
-    for line in dsf.splitlines():
-        m = re.match(r">\s*(\w+)\s", line)
-        if m:
-            cur = m.group(1)
-        elif line.startswith(("/", ">")):
-            cur = None
-        if cur and FADE_CALL.search(line.split(";", 1)[0]):
-            verbs.add(cur)
-    return verbs
-
-
-FADE_STANDALONE = re.compile(r"-XbnFade|FADE\.XBN", re.I)
-FADE_FIXTURE = re.compile(r"xbntest|FIXTURE_XBN|out[\\/]xbn[\\/]GAME\.XBN", re.I)
-FADE_CARRIER = re.compile(r"-XbnAll|-XbnTicker", re.I)
-SCRIPT_TAKERS = ("tests/parser/nleg.py", "tests/parser/parsertest.py")
-
-
-def script_words(path):
-    """Lower-case words of every command in a JSON command script."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
-        return set()
-    words = set()
-    for e in raw if isinstance(raw, list) else []:
-        cmd = e.get("cmd") if isinstance(e, dict) else e
-        if isinstance(cmd, str):
-            words |= set(re.findall(r"\w+", cmd.lower()))
-    return words
-
-
-def fade_launcher_problems(rel, text, verbs, scripts):
-    """Problems for one ZEsarUX launcher. A leg that stages the fixture XBN
-    (xbntest) has no fade module, so fn 40-43 there are fixture probes: only
-    other legs are checked for fade verbs, typed in the launcher or in a
-    script it plays (scripts: [(name, words)])."""
-    bad = []
-    if FADE_STANDALONE.search(text):
-        bad.append(f"{rel} stages the standalone fade extern")
-    if FADE_FIXTURE.search(text) and not FADE_STANDALONE.search(text) and not FADE_CARRIER.search(text):
-        return bad
-    word = re.compile(r"[\"'\s](" + "|".join(sorted(verbs)) + r")[\"'\s]", re.I)
-    hit = word.search(text)
-    if hit:
-        bad.append(f"{rel} types fade verb {hit.group(1)}")
-    for name, words in scripts:
-        both = sorted(w for w in words if w.upper() in verbs)
-        if both:
-            bad.append(f"{rel} plays script {name} typing fade verb {both[0]}")
-    return bad
-
-
-def check_no_fade_in_harness():
-    """No ZEsarUX launcher stages the standalone fade extern or types a verb
-    whose entry calls EXTERN 40-43 (extern.dsf, or any DSF the launcher names), in
-    its own text or in a script file it plays. Externs assemble NEXTREG A,n with
-    no stand-in, which ZEsarUX lacks. Legs on the xbntest fixture are exempt:
-    there fn 40-43 are probes, not fade; fade or all legs are checked."""
-    read = lambda p: p.read_text(encoding="utf-8", errors="replace")
-    ext = fade_verbs(read(ROOT / "tests/extern.dsf"))
-    if not ext:
-        raise Fail("tests/extern.dsf: no fade verbs found, the scan is blind")
-    all_scripts = sorted(p for p in (ROOT / "tests/parser/scripts").rglob("*.json"))
-    if not all_scripts:
-        raise Fail("no command scripts found under tests/parser/scripts, the scan is blind")
-    bad, seen = [], set(ext)
-    for rel in ZES_LAUNCHERS:
-        text = read(ROOT / rel)
-        verbs = set(ext)
-        for name in set(re.findall(r"[\w./-]+\.dsf", text)):
-            for p in (ROOT / "tests").rglob(Path(name).name):
-                if p.relative_to(ROOT / "tests").parts[0] != "out":
-                    verbs |= fade_verbs(read(p))
-        seen |= verbs
-        played = set()
-        for name in set(re.findall(r"[\w./-]+\.json", text)):
-            played |= {p for p in all_scripts if p.name == Path(name).name}
-        if rel in SCRIPT_TAKERS:
-            played |= set(all_scripts)
-        scripts = [(p.relative_to(ROOT).as_posix(), script_words(p)) for p in sorted(played)]
-        bad += fade_launcher_problems(rel, text, verbs, scripts)
-    # The scan itself: each blind spot and the over-match, on generated input.
-    v = {"XFAD"}
-    if not fade_launcher_problems("m", 'type("XFAD")', v, []):
-        raise Fail("scan is blind to a fade verb typed in a launcher")
-    if not fade_launcher_problems("m", "x", v, [("s.json", {"xfad", "look"})]):
-        raise Fail("scan is blind to a fade verb in a played script")
-    if not fade_launcher_problems("m", '-XbnAll type("XFAD")', v, []):
-        raise Fail("scan is blind to a fade verb in an all-collection leg")
-    if not fade_launcher_problems("m", "-XbnFade", v, []):
-        raise Fail("scan is blind to the standalone fade extern")
-    if not fade_launcher_problems("m", 'FIXTURE_XBN refuse -XbnTicker or -XbnAll type("XFAD")', v, []):
-        raise Fail("a fixture-refusing launcher on an all/ticker leg is wrongly exempt")
-    if fade_launcher_problems("m", 'xbntest.asm type("XFAD")', v, [("s.json", {"xfad"})]):
-        raise Fail("fixture-XBN legs are wrongly checked for fn 40-43 probes")
-    if bad:
-        raise Fail("; ".join(bad))
-    return f"{len(ZES_LAUNCHERS)} launchers, fade verbs {' '.join(sorted(seen))}"
-
-
-def zes_calls(tree):
-    """[(qualified name, Call)] with import aliases resolved: `import subprocess as sp`
-    gives sp.Popen -> subprocess.Popen, `from nleg import launch` gives launch -> nleg.launch."""
+def emu_calls(tree, node=None):
+    """[(qualified name, Call)] under node (default the module) with the module's import
+    aliases resolved: `import subprocess as sp` gives sp.Popen -> subprocess.Popen,
+    `from nleg import launch` gives launch -> nleg.launch."""
     alias = {}
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
@@ -912,7 +495,7 @@ def zes_calls(tree):
             for a in n.names:
                 alias[a.asname or a.name] = f"{n.module}.{a.name}"
     out = []
-    for n in ast.walk(tree):
+    for n in ast.walk(tree if node is None else node):
         if isinstance(n, ast.Call):
             head, _, rest = ast.unparse(n.func).partition(".")
             out.append(((alias[head] + ("." + rest if rest else "")) if head in alias else
@@ -920,64 +503,154 @@ def zes_calls(tree):
     return out
 
 
-def names_zesarux(call):
-    """True when a call's arguments mention the ZEsarUX executable (a ZESARUX name or a
-    string holding zesarux)."""
+def names_emulator(call):
+    """True when a call's arguments mention an emulator executable (a name or string
+    holding zesarux, or a string holding cspect.exe)."""
     for arg in [*call.args, *(k.value for k in call.keywords)]:
         for n in ast.walk(arg):
             if isinstance(n, (ast.Name, ast.Attribute)) and "zesarux" in (n.id if isinstance(n, ast.Name) else n.attr).lower():
                 return True
-            if isinstance(n, ast.Constant) and isinstance(n.value, str) and "zesarux" in n.value.lower():
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and (
+                    "zesarux" in n.value.lower() or "cspect.exe" in n.value.lower()):
                 return True
     return False
 
 
-def zes_parse(root, f):
+def emu_parse(root, f):
     try:
         return ast.parse((root / f).read_text(encoding="utf-8", errors="replace"))
     except SyntaxError as err:
         raise Fail(f"{f}: does not parse: {err}")
 
 
-def zes_users(root=ROOT):
-    """(direct, helper) tracked test .py files that start ZEsarUX: direct ones name
-    the exe or its remote-protocol flag, helper ones call a launcher helper
-    (aliases and from-imports resolved)."""
-    r = subprocess.run(["git", "ls-files", "tests"], cwd=root, capture_output=True, text=True)
-    direct, helper = [], []
-    for f in r.stdout.split():
-        if not f.endswith(".py") or f.startswith(ZES_SKIP[:2]) or f in ZES_SKIP[2:]:
-            continue
-        if ZES_NAMES.search((root / f).read_text(encoding="utf-8", errors="replace")):
-            direct.append(f)
-        if any(q in ZES_HELPER_CALLS for q, _ in zes_calls(zes_parse(root, f))):
-            helper.append(f)
-    return sorted(direct), sorted(helper)
+def emu_files(root, files=None):
+    """Tracked tests/**/*.py outside EMU_SKIP_DIRS and EMU_SKIP_FILES (files: an
+    override list, repo-relative)."""
+    if files is None:
+        r = subprocess.run(["git", "ls-files", "tests"], cwd=root, capture_output=True, text=True)
+        files = r.stdout.split()
+    return sorted(f for f in files if f.endswith(".py") and not f.startswith(EMU_SKIP_DIRS)
+                  and f not in EMU_SKIP_FILES)
 
 
-def check_zes_core_wired(root=ROOT, listed=None):
-    """Every ZEsarUX launch goes through zes_core.popen: each direct launcher calls it
-    and makes no subprocess.Popen call, no user (direct or helper) starts the ZEsarUX
-    exe through subprocess/os spawners, each helper (ZES_HELPERS)
-    is a direct launcher, and ZES_LAUNCHERS equals the discovered direct and helper
-    users exactly. Import aliases are resolved."""
-    listed = ZES_LAUNCHERS if listed is None else listed
-    direct, helper = zes_users(root)
+def emu_defs(tree):
+    """{def or class name: qualified calls inside it} for every def in the module."""
+    return {n.name: [q for q, _ in emu_calls(tree, n)] for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+
+
+def emu_launches(q, stem, launching):
+    """True when qualified call q boots CSpect: a session/launcher boot call, or a
+    def known to (a bare or self. name in this module, or module.name elsewhere)."""
+    if q in EMU_BOOT_CALLS:
+        return True
+    head, _, name = q.rpartition(".")
+    mod = head.rpartition(".")[2]
+    if not head or head == "self":
+        return name in launching.get(stem, ())
+    return name in launching.get(mod, ())
+
+
+def emu_users(root=ROOT, files=None):
+    """Sorted tracked test .py files that boot CSpect: they call Session.boot or
+    launcher.launch, or a def (nleg.launch, a Leg class, a boot helper) that does,
+    resolved to a fixpoint across modules by call."""
+    mods = {}
+    for f in emu_files(root, files):
+        tree = emu_parse(root, f)
+        mods[f] = (Path(f).stem, tree, emu_defs(tree))
+    launching = {stem: set() for stem, _, _ in mods.values()}
+    changed = True
+    while changed:
+        changed = False
+        for stem, _, defs in mods.values():
+            for name, qs in defs.items():
+                if name not in launching[stem] and any(emu_launches(q, stem, launching) for q in qs):
+                    launching[stem].add(name)
+                    changed = True
+    return sorted(f for f, (stem, tree, _) in mods.items()
+                  if any(emu_launches(q, stem, launching) for q, _ in emu_calls(tree)))
+
+
+def check_emulator_launchers(root=ROOT, listed=None, files=None, selftest=True):
+    """Tests reach CSpect only through the session layer: no tracked test .py outside
+    the skip lists names zesarux.exe, --enable-remoteprotocol or CSpect.exe, or calls a
+    subprocess/os spawner on an emulator executable, and EMU_LAUNCHERS equals the
+    discovered users of Session.boot / launcher.launch / the nleg helpers exactly."""
+    cases = emu_selftest() if selftest else 0
+    listed = EMU_LAUNCHERS if listed is None else listed
     bad = []
-    for f in sorted(set(direct) | set(helper)):
-        calls = zes_calls(zes_parse(root, f))
-        if f in direct and not any(q == "zes_core.popen" for q, _ in calls):
-            bad.append(f"{f}: no zes_core.popen call")
-        for q, c in calls:
-            if q in ZES_SPAWNERS and (f in direct and q == "subprocess.Popen" or names_zesarux(c)):
+    for f in emu_files(root, files):
+        text = (root / f).read_text(encoding="utf-8", errors="replace")
+        hit = EMU_NAMES.search(text)
+        if hit:
+            bad.append(f"{f}: names {hit.group(0)}")
+        for q, c in emu_calls(emu_parse(root, f)):
+            if q in EMU_SPAWNERS and names_emulator(c):
                 bad.append(f"{f}: raw {q} call line {c.lineno}")
-    bad += [f"helper {h} is not a direct zes_core launcher" for h in ZES_HELPERS if h not in direct]
-    found = set(direct) | set(helper)
-    bad += [f"{f}: starts ZEsarUX but is not in ZES_LAUNCHERS" for f in sorted(found - set(listed))]
-    bad += [f"{f}: in ZES_LAUNCHERS but starts no ZEsarUX" for f in sorted(set(listed) - found)]
+    found = set(emu_users(root, files))
+    bad += [f"{f}: boots CSpect but is not in EMU_LAUNCHERS" for f in sorted(found - set(listed))]
+    bad += [f"{f}: in EMU_LAUNCHERS but boots no CSpect" for f in sorted(set(listed) - found)]
     if bad:
         raise Fail("; ".join(bad))
-    return f"{len(direct)} direct and {len(helper)} helper users, all through zes_core.popen"
+    return f"{len(found)} session users, no raw emulator launch, {cases} self-test cases"
+
+
+EMU_SELFTEST = {
+    "tests/t_zes.py": "import subprocess\nsubprocess.Popen(['zesarux.exe', '--vo', 'null'])\n",
+    "tests/t_cspect.py": "import subprocess\nsubprocess.Popen(['x', 'CSpect.exe', '-w1'])\n",
+    "tests/t_good.py": "from cspect import Session\nwith Session.boot(a, b, c) as s:\n    pass\n",
+    "tests/t_prose.py": "# ZEsarUX drove this before; now CSpect\nx = 1\n",
+    "tests/t_helper.py": "import t_good\nt_good.go()\n",
+    "tests/t_alias.py": "import subprocess as sp\nsp.run(['tools/zesarux/zesarux', 'x'])\n",
+}
+
+
+def emu_selftest():
+    """The check on generated input: a raw ZEsarUX or CSpect.exe launch is flagged, a
+    Session.boot user passes, an unlisted user is flagged, prose is not a hit."""
+    d = OUT / "emu-selftest"
+    if d.exists():
+        shutil.rmtree(d)
+    (d / "tests").mkdir(parents=True)
+    for rel, body in EMU_SELFTEST.items():
+        (d / rel).write_text(body, encoding="utf-8")
+    (d / "tests/t_good.py").write_text(
+        "from cspect import Session\ndef go():\n    with Session.boot(a, b, c) as s:\n        pass\n",
+        encoding="utf-8")
+
+    def verdict(*names, listed):
+        try:
+            check_emulator_launchers(d, listed, [f"tests/{n}.py" for n in names], selftest=False)
+        except Fail as e:
+            return str(e)
+        return ""
+
+    got = verdict("t_zes", listed=[])
+    if "t_zes.py: names zesarux.exe" not in got:
+        raise Fail(f"self-test: a zesarux.exe launch was not flagged: {got!r}")
+    got = verdict("t_cspect", listed=[])
+    if "t_cspect.py: names CSpect.exe" not in got or "raw subprocess.Popen" not in got:
+        raise Fail(f"self-test: a CSpect.exe Popen was not flagged: {got!r}")
+    got = verdict("t_alias", listed=[])
+    if "raw subprocess.run" not in got:
+        raise Fail(f"self-test: an aliased spawner on zesarux was not flagged: {got!r}")
+    got = verdict("t_good", listed=["tests/t_good.py"])
+    if got:
+        raise Fail(f"self-test: a Session.boot user was refused: {got!r}")
+    got = verdict("t_good", listed=[])
+    if "t_good.py: boots CSpect but is not in EMU_LAUNCHERS" not in got:
+        raise Fail(f"self-test: an unlisted session user was not flagged: {got!r}")
+    got = verdict("t_good", "t_helper", listed=["tests/t_good.py"])
+    if "t_helper.py: boots CSpect but is not in EMU_LAUNCHERS" not in got:
+        raise Fail(f"self-test: an unlisted helper caller was not flagged: {got!r}")
+    got = verdict("t_prose", listed=[])
+    if got:
+        raise Fail(f"self-test: prose naming ZEsarUX was flagged: {got!r}")
+    got = verdict("t_prose", listed=["tests/t_prose.py"])
+    if "in EMU_LAUNCHERS but boots no CSpect" not in got:
+        raise Fail(f"self-test: a stale list entry was not flagged: {got!r}")
+    return 8
 
 
 NR_READ_CODE = re.compile(r"\bnr_read\b")
@@ -1101,9 +774,8 @@ def check_fade_source():
     return "latch read only, NRGET + nextreg in apply/apply9, API 4 gate with fn 40 refusal"
 
 
-CHECKS = [check_nrget_fixture, check_standin_guard, check_nrs_exec,
-          check_nex_core, check_gate_first, check_gate_once, check_refuse_closure,
-          check_no_fade_in_harness, check_zes_core_wired, check_no_const_nr_read,
+CHECKS = [check_nrget_fixture, check_nex_core, check_gate_first, check_gate_once,
+          check_refuse_closure, check_emulator_launchers, check_no_const_nr_read,
           check_extern_fresh, check_fade_source]
 
 
