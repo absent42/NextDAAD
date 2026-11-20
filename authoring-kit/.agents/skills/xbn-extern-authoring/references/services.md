@@ -14,7 +14,7 @@ row's Out column names carry a result.
 
 | # | Symbol | For | Hook-safe |
 |---|--------|-----|-----------|
-| 0 | `SVC_VERSION` | the API version in A (`3` on this release) | yes |
+| 0 | `SVC_VERSION` | the API version in A (`4` on this release) | yes |
 | 1 | `SVC_PUTCHAR` | print one character through the current DAAD window | no |
 | 2 | `SVC_PUTS` | print an ASCIIZ string (it may live in your own bank) | no |
 | 3 | `SVC_FOPEN` | open a file on the card, raw esxDOS mode byte in B | no |
@@ -120,8 +120,9 @@ caching it. `xbnmod.inc`'s `xbn_width` is hook-safe and returns the width in
 columns in E (80 or 40), the row stride in D (160 or 80) and a row-27 base in
 HL; for any row use `XBN_TILEMAP + row * stride` (`xbnmod.inc`), as the
 ticker's `tick_field` does. It corrupts AF, BC, DE, HL. From the foreground,
-DI-bracket the call (IFF2-preserving, as the ticker's `tick_field` does): the
-frame ISR re-selects $243B without restoring it. The ticker module calls it
+DI-bracket the call (IFF2-preserving, as the ticker's `tick_field` does): hook
+code run from the frame ISR (such as `xbn_width` via an int hook) re-selects
+$243B without restoring it. The ticker module calls it
 every frame while armed, so a switch mid-message just carries on at the new
 width.
 
@@ -316,7 +317,8 @@ means the whole buffer landed.
 
 ## Checking the version
 
-`SVC_VERSION` returns `3` on this release. Because the table is append-only,
+`SVC_VERSION` returns `4` on this release (4 means the interpreter requires
+core 3.03.03). Because the table is append-only,
 code written against an older `xbn.inc` keeps calling the same rows forever.
 An extern that needs a row its `xbn.inc` did not ship with checks first and
 fails gracefully instead of jumping into whatever used to live there:
@@ -331,9 +333,13 @@ fails gracefully instead of jumping into whatever used to live there:
     .ok:
         ; ...
 
-The format version (the header's byte 3) and the API version are the same
-number on this release but are separate contracts: the loader enforces the
-first, your code checks the second.
+The format version (the header's byte 3) and the API version are separate
+numbers with separate contracts: the loader enforces the first, your code
+checks the second.
+
+An extern that reads Next registers with the `NRGET n` macro from `xbn.inc` (it
+always emits `NEXTREG A,n`, which needs core 3.03.03) requires API 4: check
+`SVC_VERSION` first with `MIN_API equ 4`. The fade extern does this.
 
 Full detail: the manual's [Services section](../../../../docs/externs.html#services)
 and [Versioning](../../../../docs/externs.html#versioning).

@@ -22,6 +22,15 @@ your platform below, then read <a href="#already-have-some-of-these">Already hav
 Windows; ext4, btrfs or xfs on Linux. A FAT or exFAT USB stick, a
 network share or a Docker bind mount cannot keep the precise file times
 the incremental build relies on, and the build refuses to run there.</p>
+<p>NextDAAD needs core 3.03.03 or later. On real hardware, update the
+core if a game shows <code>NextDAAD needs core 3.03.03 or later</code> at start.
+On real hardware started from the Browser or a <code>.nexload</code>, NextZXOS's loader shows its own message instead (<code>Your core is ..., but this file needs 003.003.003. Please update your core.</code>); update the core either way.
+In an emulator, use CSpect 4.5.6.0 or later: the interpreter reads Next
+registers with <code>NEXTREG A,n</code>, which older CSpect lacks, and <code>RUN.BAT</code> (or <code>run.sh</code> on Linux) warns when
+it finds an older one. No jNext release supports core 3.03.03 yet, so in jNext
+the game is refused at load (NextZXOS's <code>Please update your core</code> message or
+NextDAAD's own); until a jNext release
+supports it, video cutscenes play on real hardware only.</p>
 <h3 id="windows-setup">Windows setup</h3>
 <p>Windows 10 or 11. Windows PowerShell, which is part of Windows, runs the
 build; nothing else needs installing for a text-only game.</p>
@@ -446,7 +455,7 @@ it. See <a href="video.html">Video</a>.</p>
   then converts everything from scratch.</li>
 <li><strong><code>DEBUG.BAT</code></strong> (<code>./debug.sh</code>) - builds the game as <code>BUILD.BAT</code> does,
   also writing the source maps the debugger reads, then starts CSpect
-  with the debugger attached. It needs CSpect 4.0 or later and
+  with the debugger attached. It needs CSpect 4.0 or later (4.5.6.0 or later for the game to run correctly) and
   <code>EMULATOR=cspect</code>; <code>RELEASE\&lt;GAME&gt;\</code> is the same as <code>BUILD.BAT</code> makes.
   See <a href="debugger.html">Debugger</a>.</li>
 </ul>
@@ -468,9 +477,12 @@ game folder, so nothing lingers on the card from an earlier build.</p>
 game written for version 2, three behaviours change silently - see
 <a href="daad-v3.html">DAAD V3</a>.</p>
 <h3 id="running-in-jnext">Running in jNext</h3>
-<p>jNext is an optional second emulator. CSpect cannot play video cutscenes
-and stops a long streamed sound after about a second and a half; jNext
-plays both. CSpect stays the default.</p>
+<p>jNext is an optional second emulator. jNext 1.3.5 and earlier do not
+support core 3.03.03, so the game shows the core refusal there, and
+<code>RUN.BAT</code> (or <code>run.sh</code> on Linux) warns about it. Until a jNext release
+adds that support, video cutscenes and long streamed sounds need real
+hardware: CSpect cannot play video cutscenes and stops a long streamed
+sound after about a second and a half. CSpect stays the default.</p>
 <ol>
 <li>Download jNext 1.1.87 or later from
    https://github.com/jorgegv/jnext/releases. On Windows, extract the
@@ -601,6 +613,18 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <tr>
 <td><code>ERROR: EMULATOR=... - use cspect or jnext</code></td>
 <td><code>EMULATOR</code> holds something else. Set it to <code>cspect</code> or <code>jnext</code>, or leave it blank for CSpect.</td>
+</tr>
+<tr>
+<td><code>WARNING: CSpect ... is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave</code></td>
+<td>The CSpect found cannot execute <code>NEXTREG A,n</code>, which the interpreter uses. Install CSpect 4.5.6.0 or later.</td>
+</tr>
+<tr>
+<td><code>WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later</code></td>
+<td>The version of <code>CSpect.exe</code> could not be read. The game starts anyway; use CSpect 4.5.6.0 or later.</td>
+</tr>
+<tr>
+<td><code>WARNING: no jNext release supports core 3.03.03 yet - the game is refused at load (NextZXOS's 'Please update your core' or NextDAAD's own core message). Video cutscenes need real hardware for now.</code></td>
+<td>jNext cannot yet provide the core the interpreter needs, so the game is refused at load, with NextZXOS's loader message or NextDAAD's own. Run with CSpect 4.5.6.0 or later, or on real hardware.</td>
 </tr>
 <tr>
 <td><code>ERROR: jNext not found at ...</code></td>

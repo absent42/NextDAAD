@@ -15,7 +15,7 @@ Export-KitConfig $cfg
 $t = Resolve-KitTools $cfg $kitRoot
 function abs([string]$p) { if ([IO.Path]::IsPathRooted($p)) { return $p } else { return Join-Path $kitRoot $p } }
 
-# ---- preflight: CSpect 4.0 or later, kit files present ----
+# ---- preflight: CSpect 4.0 or later (4.5.6.0 advised), kit files present ----
 if ($t.EMULATOR -eq 'jnext') {
     $runName = if ($OnWindows) { 'RUN.BAT' } else { 'run.sh' }
     Write-Host "ERROR: the debugger runs in CSpect - set EMULATOR=cspect in CONFIG.local.BAT ($runName still runs jNext)"; exit 1
@@ -24,8 +24,7 @@ if ($t.EMULATOR -ne 'cspect') { Write-Host "ERROR: EMULATOR=$($t.EMULATOR) - use
 if (-not (Test-KitCSpect $t)) { exit 1 }
 $cspDir = Split-Path -Parent $t.CSPECT
 $cspAbs = abs $cspDir
-$ver = $null
-try { $ver = [Reflection.AssemblyName]::GetAssemblyName((abs $t.CSPECT)).Version } catch { $ver = $null }
+$ver = Get-KitCSpectVersion (abs $t.CSPECT)
 if ($null -eq $ver) {
     # ImGui.NET.dll ships with CSpect 4.0 and not with 3.x.
     if (Test-Path -LiteralPath (Join-Path $cspAbs 'ImGui.NET.dll') -PathType Leaf) { Write-Host 'note: could not read the CSpect version - assuming 4.0 or later' }
@@ -33,6 +32,9 @@ if ($null -eq $ver) {
 } elseif ($ver -lt [version]'4.0') {
     Write-Host "ERROR: the debugger needs CSpect 4.0 or later - found $ver in $cspDir"; exit 1
 }
+# The interpreter reads Next registers with NEXTREG A,n, which CSpect supports from 4.5.6.0.
+if ($null -eq $ver) { Write-Host 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later' }
+elseif ($ver -lt [version]'4.5.6.0') { Write-Host "WARNING: CSpect $ver is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave" }
 $sym = Join-Path $kitRoot 'NEXTDAAD.SYM'
 $dll = Join-Path $PSScriptRoot 'NextDAADDebug.dll'
 foreach ($need in @($sym, $dll)) {

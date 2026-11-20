@@ -17,6 +17,8 @@ import os, re, shutil, socket, subprocess, sys, time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(ROOT, 'tests', 'parser'))
 import zrcp, tilemap  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, 'tests'))
+import zes_core  # noqa: E402
 
 ZESARUX = r'D:\ZXNextDev\ZEsarUX\zesarux.exe'
 TM_MAP = 0x6000
@@ -55,7 +57,7 @@ class Run:
             raise SystemExit('port %d already answers: a stale emulator holds it' % self.port)
         except OSError:
             pass
-        self.proc = subprocess.Popen([
+        self.proc = zes_core.popen([
             ZESARUX, '--machine', 'tbblue', '--realvideo',
             '--enable-esxdos-handler', '--esxdos-root-dir', sd,
             '--vo', 'null', '--ao', 'null',

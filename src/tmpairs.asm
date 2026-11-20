@@ -103,20 +103,14 @@ pairWantI:  dw 0                ; the 9-bit ink colour being resolved
 ; blue LSB in bit 0. Reads the palette currently selected in NR $43 -
 ; callers select PAL_TM_FIRST before looping. The index is set every
 ; time because the core increments it only on writes. Both value reads
-; go through nr_read (hardware.asm) rather than a raw select+read: the
-; frame ISR shares the $243B/$253B port pair to save/restore MMU 6/7,
-; and interrupts.asm documents that every OTHER mainline user of that
-; pair is DI-bracketed for exactly this reason - an interrupt landing
-; between a raw select and read here could hand back an MMU page
-; number instead of a palette byte, producing a false pair match.
+; use NRGET (NEXTREG A,n), which is atomic and leaves the $243B selection
+; alone, so the frame ISR's own register reads cannot corrupt them.
 ; Preserves BC and HL. Corrupts AF.
 pair_read:
     nextreg NR_PAL_INDEX, a
-    ld e, NR_PAL_VALUE8
-    call nr_read
+    NRGET NR_PAL_VALUE8
     ld d, a
-    ld e, NR_PAL_VALUE9
-    call nr_read
+    NRGET NR_PAL_VALUE9
     and 1                       ; NR $44 reads carry more than the blue
     ld e, a                     ; bit, so mask to bit 0
     ret

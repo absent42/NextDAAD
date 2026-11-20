@@ -68,6 +68,8 @@ function New-CSpectDir([string]$Name, [string]$Version, [switch]$ImGui) {
 }
 $cs40 = New-CSpectDir 'cs40' '4.0.0.0'
 $cs331 = New-CSpectDir 'cs331' '3.3.1.0'
+$cs441 = New-CSpectDir 'cs441' '4.4.1.0'
+$cs459 = New-CSpectDir 'cs459' '4.5.9.0'
 $csBad = New-CSpectDir 'csbad' ''
 $csBadImGui = New-CSpectDir 'csbadimgui' '' -ImGui
 $fakeOld = Join-Path (Join-Path $base 'old') 'NextDAADDebug.dll'
@@ -105,6 +107,10 @@ $dst = Join-Path $cs40 'NextDAADDebug.dll'
 # Linux card roots end in two separators: CSpect's esxDOS plugin trims one and needs one left.
 function Get-MmcArg([string]$Card) { if ($OnWindows) { return "-mmc=$Card" } else { return "-mmc=$Card$sep" } }
 function Get-DebugWarning([string]$File) { return "WARNING: $File has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)" }
+
+. "$root/authoring-kit/lib/kitcspect.ps1"
+Assert-Eq (Get-KitCSpectVersion (Join-Path $cs40 $cspName)) '4.0.0.0' 'Get-KitCSpectVersion reads the assembly version'
+Assert-Eq ($null -eq (Get-KitCSpectVersion (Join-Path $csBad $cspName))) $true 'Get-KitCSpectVersion unreadable is null'
 
 # ---- refusals before any build ----
 $r = Invoke-Debug @('SET GAME=G1', 'SET EMULATOR=jnext', "SET CSPECTDIR=$cs40")
@@ -214,6 +220,15 @@ if ($OnWindows) {
 $r = Invoke-Debug @('SET GAME=G1', "SET CSPECTDIR=$csBadImGui")
 Assert-Eq $r.Rc 0 'cspect-version-unreadable exit (ImGui.NET.dll present)'
 Assert-Has $r 'note: could not read the CSpect version - assuming 4.0 or later' 'cspect-version-unreadable note'
+Assert-Has $r 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later' 'cspect-version-unreadable warning'
+
+# NEXTREG A,n reads need CSpect 4.5.6.0: the debugger warns below it, and not at or above it.
+$r = Invoke-Debug @('SET GAME=G1', "SET CSPECTDIR=$cs441")
+Assert-Eq $r.Rc 0 'cspect-4.4 debug exit'
+Assert-Like $r '*WARNING: CSpect 4.4.1.0 is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave*' 'cspect-4.4 warns'
+$r = Invoke-Debug @('SET GAME=G1', "SET CSPECTDIR=$cs459")
+Assert-Eq $r.Rc 0 'cspect-4.5.9 debug exit'
+Assert-Lacks $r '*older than 4.5.6.0*' 'cspect-4.5.9 no warning'
 
 # ---- legacy-root-game ----
 Copy-Item -LiteralPath (Join-Path $g1 'G1.DSF') -Destination (Join-Path $kit 'L1.DSF')

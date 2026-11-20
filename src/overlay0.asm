@@ -3105,8 +3105,7 @@ h_mouse:
     ld a, 1                     ; mouseReady like the pattern upload is -
     ld (mouseReady), a          ; see h_mouse's header comment for why
 .patternok:                     ; this needs to be unconditional.
-    ld e, NR_SPRITES
-    call nr_read                ; RMW: preserve every other bit (layer
+    NRGET NR_SPRITES            ; RMW: preserve every other bit (layer
     or SPR_NR15_ON              ; priority etc) - only touch bit 0
     nextreg NR_SPRITES, a       ; (sprites enable), bit 1 (sprites over
                                  ; border - our pointer's range legitimately
@@ -4007,23 +4006,19 @@ boot_banner_o:
     call dbg_at0
     ld hl, msgCore
     call dbg_puts
-    ld e, NR_CORE_MAJOR
-    call nr_read
+    NRGET NR_CORE_MAJOR
     call dbg_hex8
     ld a, '.'
     call dbg_putc
-    ld e, NR_CORE_SUB
-    call nr_read
+    NRGET NR_CORE_SUB
     call dbg_hex8
     ld hl, msgMachine
     call dbg_puts
-    ld e, NR_MACHINE_ID
-    call nr_read
+    NRGET NR_MACHINE_ID
     call dbg_hex8
     ld hl, msgSpeed
     call dbg_puts
-    ld e, NR_CPU_SPEED
-    call nr_read
+    NRGET NR_CPU_SPEED
     jp dbg_hex8
 
 ; Expected free-bank counts. Must match what bank_table_init actually
@@ -4192,7 +4187,7 @@ msgTgt:      db " TGT ", 0
 
 ; Like l2dbg_status, but appends a live hex dump of NR $69 (Layer 2
 ; enable)/$70 (resolution)/$12 (bank)/$15 (S/L/U priority), read back
-; via nr_read rather than assumed - so the owner can report the actual
+; via NRGET rather than assumed - so the owner can report the actual
 ; register state alongside what is on screen (a correct-looking enable
 ; write can still leave Layer 2 invisible). Corrupts everything.
 l2dbg_status_regs:
@@ -4200,20 +4195,16 @@ l2dbg_status_regs:
     call l2dbg_ovl2_call
     ld hl, msgRegDump
     call dbg_puts
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     call dbg_hex8
     call dbg_space
-    ld e, NR_L2_CTRL
-    call nr_read
+    NRGET NR_L2_CTRL
     call dbg_hex8
     call dbg_space
-    ld e, NR_L2_BANK
-    call nr_read
+    NRGET NR_L2_BANK
     call dbg_hex8
     call dbg_space
-    ld e, NR_LAYERS
-    call nr_read
+    NRGET NR_LAYERS
     jp dbg_hex8
 
 msgRegDump:      db " 69/70/12/15=", 0

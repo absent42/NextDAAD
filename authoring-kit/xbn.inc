@@ -52,7 +52,9 @@ XBN_STATE_LEN   equ 128         ; with the game (SAVE, LOAD, RAMSAVE,
 ; ISR-safe rows may be called from the #int hook; every other row is
 ; foreground-only.
 XBN_API         equ $BEC8
-SVC_VERSION     equ XBN_API+0   ; out A = API version. ISR-safe.
+SVC_VERSION     equ XBN_API+0   ; out A = API version (4). 4 means the
+                                 ; interpreter requires core 3.03.03.
+                                 ; ISR-safe.
 SVC_PUTCHAR     equ XBN_API+3   ; in A = char. Foreground-only.
 SVC_PUTS        equ XBN_API+6   ; in HL = ASCIIZ (may be in your bank).
                                  ; Foreground-only.
@@ -158,3 +160,9 @@ SVC_FITWORD     equ XBN_API+60  ; in A = length of the word about to be
 XBN_FMODE_R     equ $01         ; read
 XBN_FMODE_RW    equ $03         ; existing file, read/write, no truncate
 XBN_FMODE_W     equ $0E         ; write, create or truncate
+
+; NRGET n: A = Next register n (NEXTREG A,n, ED C7 n). Needs core 3.03.03 and
+; API 4: check SVC_VERSION >= 4 first.
+    MACRO NRGET nrgn
+      db $ED, $C7, nrgn
+    ENDM

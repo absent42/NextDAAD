@@ -126,7 +126,8 @@ EXTERN 0 43
   call can fail the entry that holds the <code>GFX 0 4</code> ... <code>GFX 0 3</code>
   bracket and strand buffer mode open. If another module holds the
   palette when fn 40 is called, the fade is refused and flag 240 reads
-  1 at once - nothing to wait for.</li>
+  1 at once - nothing to wait for. Fade needs interpreter API 4: an older
+interpreter refuses fn 40 the same way.</li>
 </ul>
 <p>Two more palette rules live elsewhere: the hook's interlock (see
 <a href="#the-int-hook">The #int hook</a>) and <code>SVC_BUSY</code> bit 2 (see
@@ -471,7 +472,7 @@ to each row, so you call them by name:</p>
 <td>0</td>
 <td><code>SVC_VERSION</code></td>
 <td>-</td>
-<td>A = API version (<code>3</code> on this release)</td>
+<td>A = API version (<code>4</code> on this release)</td>
 <td>yes</td>
 </tr>
 <tr>
@@ -758,7 +759,7 @@ registers a row's Out column names carry a result.</p>
   using.</li>
 </ul>
 <h3 id="versioning">Versioning</h3>
-<p><code>SVC_VERSION</code> returns <code>3</code> on this release. The service table is
+<p><code>SVC_VERSION</code> returns <code>4</code> on this release. The service table is
 append-only and its address is frozen: existing rows never move and
 never change signature, so code written against an older <code>xbn.inc</code>
 keeps calling the same rows on every later NextDAAD release. What CAN
@@ -788,9 +789,14 @@ interpreter that predates it rejects the header outright and the game
 plays with externs off, where an old <code>xbn.inc</code> simply never calls the
 rows it does not know about. Rows 15 to 19 - <code>SVC_PAIR</code> through
 <code>SVC_VOCFIND</code> - are all API version 3, whichever header format you use;
-the API version is <code>3</code> since <code>SVC_PAIR</code> was appended. They are separate
+<code>SVC_PAIR</code> raised the API version to 3, and it is 4 on this release. They are separate
 contracts: the loader enforces the format version, your code checks the
 API version.</p>
+<p>API version 4 means the interpreter requires core 3.03.03. <code>xbn.inc</code>
+provides <code>NRGET n</code>, which loads Next register <code>n</code> into A with
+<code>NEXTREG A,n</code> (it always emits that opcode, which only core 3.03.03 or later has).
+An extern that uses it requires API 4: check <code>SVC_VERSION</code> first with
+<code>MIN_API equ 4</code>, as above. The fade example does this.</p>
 <h2 id="flags-and-objects">Flags and objects</h2>
 <p>Your extern reads and writes DAAD flags and object state directly, with
 no service in between - the interpreter simply exposes the memory.</p>

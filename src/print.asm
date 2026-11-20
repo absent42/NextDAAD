@@ -259,8 +259,7 @@ prn_more_check:
     ld a, (savedMMU6)
     ld (moreSaveMMU), a
     ; preserve the physical MMU slot exactly as mapped pre-fire
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (morePhysMMU6), a
     ld a, 1
     ld (moreLock), a

@@ -9,10 +9,24 @@
 #
 # -BenchQuiet builds DEBUG plus NXB_QUIET: timed video paths carry no instruments.
 # -Bench builds Release plus BENCH (EXTERN 0 13 driver, BENCH303.LOG); refuses a dirty src\.
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [switch]$Bench, [string]$Leg)
+# -Harness builds DEBUG plus NR_STANDIN (NRGET calls a port-read stand-in) and writes
+# build\harness.txt; every other build deletes the marker and refuses nrs_ symbols.
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [switch]$Bench, [switch]$Harness, [string]$Leg)
 $ErrorActionPreference = 'Stop'
 if ($Bench -and ($BenchQuiet -or $Kit)) { throw "-Bench is a Release image: not with -BenchQuiet or -Kit" }
 if ($BenchQuiet -and ($Release -or $Kit)) { throw "-BenchQuiet is a DEBUG image: not with -Release or -Kit" }
+if ($Harness -and ($Release -or $Kit -or $Bench -or $BenchQuiet)) { throw "-Harness is a DEBUG image: not with -Release, -Kit, -Bench or -BenchQuiet" }
+
+# Throws when an SLD names a stand-in symbol (nrs_*): only -Harness may build one.
+function Assert-NoStandIn([string]$Sld) {
+    foreach ($line in [IO.File]::ReadAllLines($Sld)) {
+        $f = $line.Split('|')
+        if ($f.Count -lt 8 -or $f[6] -notin @('D', 'F', 'L')) { continue }
+        $name = if ($f[6] -eq 'L') { $f[7].Split(',')[1] } else { $f[7] }
+        if ($name -match '^nrs_') { throw "$Sld names stand-in symbol $name - NR_STANDIN reached a non-harness build" }
+    }
+}
+
 $root = $PSScriptRoot
 Push-Location $root
 try {
@@ -27,6 +41,10 @@ try {
     if (-not ($Release -or $Kit -or $Bench)) { $defs += '-DDEBUG=1' }
     if ($Force1MB)                { $defs += '-DFORCE_1MB=1' }
     if ($BenchQuiet)              { $defs += '-DNXB_QUIET=1' }
+    if ($Harness)                 { $defs += '-DNR_STANDIN=1' }
+    # Written before assembly: a failed harness build still refuses normal staging.
+    $marker = "$root\build\harness.txt"
+    if ($Harness) { Set-Content -LiteralPath $marker -Value 'NR_STANDIN harness build: stage with tests\build-tests.ps1 -Harness only' }
     if ($Bench) {
         # The #CORE303 BENCH header carries the stamp, so it is fixed before assembly.
         $benchHash = (& git -C $root log -1 --format=%h -- src 2>$null)
@@ -45,6 +63,12 @@ try {
     # was confirmed unsigned on CSpect too; see nextdaad.inc DAC_SILENCE).
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
+    if (-not $Harness) {
+        # A stand-in image must not survive to be staged: drop it, then refuse.
+        try { Assert-NoStandIn "$root\build\nextdaad.sld" }
+        catch { Remove-Item -LiteralPath "$root\build\nextdaad.nex" -Force -ErrorAction SilentlyContinue; throw }
+        Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    }
     Write-Host "built build\nextdaad.nex"
     $variant = if ($Bench) { 'Bench' } elseif ($Release -or $Kit) { 'Release' } else { 'DEBUG' }
     # Stamp the last commit that touched src\ (everything the NEX assembles),
@@ -95,7 +119,15 @@ try {
             $mmc = if ($staged) { $staged.DirectoryName } else { "$root\sd" }
         }
         Write-Host "mounting $mmc\ as the card"
-        & "$root\tools\CSpect\CSpect.exe" -w3 -zxnext -esc -mmc="$mmc\" "$root\build\nextdaad.nex"
+        # The interpreter reads Next registers with NEXTREG A,n: CSpect 4.5.6.0 or later only.
+        # tools\CSpect is 4.4.1.0, so run the CSPECT_DIR install (default as -Kit).
+        . "$root\authoring-kit\lib\kitcspect.ps1"
+        $runDir = if ($env:CSPECT_DIR) { $env:CSPECT_DIR } else { 'D:\ZXNextDev\cspect' }
+        $runExe = "$runDir\CSpect.exe"
+        $runVer = if (Test-Path -LiteralPath $runExe) { Get-KitCSpectVersion $runExe } else { $null }
+        if ($null -eq $runVer) { throw "ERROR: build.ps1 -Run needs CSpect 4.5.6.0 or later at $runDir (set CSPECT_DIR); cannot read its version" }
+        if ($runVer -lt [version]'4.5.6.0') { throw "ERROR: build.ps1 -Run needs CSpect 4.5.6.0 or later - found $runVer in $runDir (set CSPECT_DIR)" }
+        & "$runExe" -w3 -zxnext -esc -mmc="$mmc\" "$root\build\nextdaad.nex"
     }
 }
 finally { Pop-Location }

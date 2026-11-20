@@ -330,8 +330,7 @@ sfx_sd_blk:
 ; vid_mf_disable_h/vid_mf_restore_h (:3162-3172, commit 29be065). Cells:
 ; vidMfSaveH -> sfxMfSave.
 sfx_mf_disable:
-    ld e, NR_PERIPH2
-    call nr_read
+    NRGET NR_PERIPH2
     ld (sfxMfSave), a
     and %11110111
     nextreg NR_PERIPH2, a
@@ -892,9 +891,7 @@ sfx_stream_rewind:
 ; in slot 7 (sfx_alloc's own precondition), so a nested hop back out to
 ; overlay1 just to reach this would have been the ugly option.
 aud_ctc_params:
-    push de                     ; save the rate; nr_read takes the reg in E
-    ld e, NR_VIDEO_TIMING
-    call nr_read                ; A = nextreg $11 (IFF-preserving)
+    NRGET NR_VIDEO_TIMING       ; A = nextreg $11; DE (rate) untouched
     and $07                     ; video timing mode 0-6 (7 unreachable - a write
                                  ; of 7 to NR $11 stores 0 on core 3.02.04)
     ld l, a
@@ -909,7 +906,6 @@ aud_ctc_params:
     ld c, (hl)                  ; byte2 (high) -> C = dividend high
     ld h, b
     ld l, a                     ; HL = clk16 low 16 bits; C:HL = clk16 (24-bit)
-    pop de                      ; DE = rate
     ; per-mode crossover = clk16 >> 8 (the rate at which the /16 TC reaches 256).
     ; A fixed constant only holds for VGA0; on faster clocks (28-33 MHz, VGA0-6)
     ; a 6836 crossover would leave a band where /16 TC overflows 255 and clamps

@@ -6,8 +6,9 @@
 ; Author interface (from DSF):
 ;   EXTERN colour 40   start a fade OUT to `colour` (RRRGGGBB byte:
 ;                      0 = black, 255 = white, %11100000 = red, ...).
-;                      Refused while another module holds the palette:
-;                      no fade runs and flag 240 is set to 1.
+;                      Refused (no fade runs, flag 240 set to 1) while
+;                      another module holds the palette, or on an
+;                      interpreter older than API 4.
 ;   EXTERN 0 41        start a fade IN back to the original picture
 ;   EXTERN 0 42        re-snapshot the STAGED palette (buffer mode
 ;                      only): the PICTURE changed while faded out. Also
@@ -59,8 +60,9 @@
 ; What this teaches beyond the ticker example:
 ;   - reading the live palette back through the interpreter's own
 ;     service (SVC_PALREAD), which reads either Layer 2 bank on request
-;   - the register-select bracket: ALL hardware access here goes
-;     through the $243B/$253B port pair, saving and restoring both the
+;   - the register-select bracket: palette hardware access goes through
+;     the $243B/$253B port pair (NR $43 is read with NRGET and written
+;     with nextreg), saving and restoring both the
 ;     select latch (port $243B is documented read/write) and NR $43
 ;     around every burst, because the interpreter's own foreground
 ;     code uses the same indexed interface and the #int hook can fire
@@ -161,6 +163,8 @@
 
     MODULE fade
 
+MIN_API         equ 4            ; apply/apply9 read NR $43 with NRGET
+
 ; ---- author-editable contract ----
 FLAG_DONE       equ 240          ; 1 = fade complete, 0 = running
 FLAG_SPEED      equ 241          ; frames per step, 0 = DEF_SPEED
@@ -252,6 +256,19 @@ ext:
     ; strand buffer mode.
     ld a, c
     cp 40
+    jr c, .notmine
+    cp 44
+    jr nc, .notmine
+    call SVC_VERSION             ; preserves B, C; API 4 = NRGET needs core 3.03.03
+    cp MIN_API
+    jr nc, .apiok
+    ld a, c                      ; refused: the hook is never armed
+    cp 40
+    jp z, .refused               ; fn 40 sets flag 240 so pollers do not hang
+    jr .notmine
+.apiok:
+    ld a, c
+    cp 40
     jr z, .fadeout
     cp 41
     jr z, .fadein
@@ -336,7 +353,8 @@ ext:
     or a                         ; CF clear: an action
     ret
 .refused:
-    ; Palette held by another module. Still an ACTION, and flag 240 must
+    ; Palette held by another module, or an interpreter older than API 4.
+    ; Still an ACTION, and flag 240 must
     ; not promise a completion that never comes - fn 43 and a polling
     ; author would both wait forever on a 0.
     ld a, 1
@@ -596,15 +614,11 @@ apply:
     ld bc, TB_SELECT
     in a, (c)
     ld (savesel), a              ; foreground's selected register
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_PAL_CTL             ; read leaves the select latch alone
     ld (savectl), a              ; foreground's palette control
     call pal_apply_ctl
-    out (c), a                   ; edit the displayed bank, or the
+    nextreg NR_PAL_CTL, a        ; edit the displayed bank, or the
                                  ; hidden one when applyOther is set
-    dec b
     ld a, NR_PAL_IDX
     out (c), a
     inc b
@@ -623,12 +637,8 @@ apply:
     jr nz, .wr
 .wr_end:
     ASSERT (.wr_end - .wr) == 8*2 + 3 ; eight OUTINBs per block (rubric 8)
-    dec b
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
     ld a, (savectl)
-    out (c), a                   ; NR $43 back to what the foreground had
+    nextreg NR_PAL_CTL, a        ; NR $43 back to what the foreground had
     dec b
     ld a, (savesel)
     out (c), a                   ; select latch back too
@@ -669,15 +679,11 @@ apply9:
     ld bc, TB_SELECT
     in a, (c)
     ld (savesel), a
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_PAL_CTL
     ld (savectl), a
     call pal_apply_ctl           ; corrupts AF only - HL/DE stay live
-    out (c), a                   ; edit the bank being displayed - and
+    nextreg NR_PAL_CTL, a        ; edit the bank being displayed - and
                                  ; resets the $44 byte toggle
-    dec b
     ld a, NR_PAL_IDX
     out (c), a
     inc b
@@ -697,12 +703,8 @@ apply9:
     jr nz, .wr
 .wr_end:
     ASSERT (.wr_end - .wr) == 8*6 + 2 ; eight pairs per block (rubric 8)
-    dec b
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
     ld a, (savectl)
-    out (c), a                   ; NR $43 back to what the foreground had
+    nextreg NR_PAL_CTL, a        ; NR $43 back to what the foreground had
     dec b
     ld a, (savesel)
     out (c), a                   ; select latch back too

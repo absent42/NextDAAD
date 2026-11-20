@@ -16,6 +16,12 @@ function Test-KitCSpect($Tools) {
     return $true
 }
 
+# The assembly version of the CSpect binary at Path, or $null when it cannot be read.
+function Get-KitCSpectVersion([string]$Path) {
+    if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).Path $Path }
+    try { return [Reflection.AssemblyName]::GetAssemblyName($Path).Version } catch { return $null }
+}
+
 # Puts Source in Dir unless Dir holds a newer version or the same bytes; prints
 # what it did and returns $false when it could not. -Replace is the swap (tests inject one).
 function Install-KitPlugin {

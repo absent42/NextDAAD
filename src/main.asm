@@ -9,11 +9,14 @@
 main:
     di
     ld sp, STACK_TOP
+    ld a, (IM2_TABLE)            ; im2_init's fill: a CSpect nextreg 2,1 warm
+    cp IM2_VECTOR_BYTE           ; re-entry, the gate already passed and is gone
+    call nz, core_gate           ; returns only on core 3.03.03 or later
  IFDEF DEBUG
     call l2_bareprobe_hook       ; Layer 2 bare-metal isolation ladder
                                   ; (Task 2, round 8); no-op unless P
-                                  ; is held - checked before ANY other
-                                  ; init, never returns if entered
+                                  ; is held - runs right after the
+                                  ; core gate, never returns if entered
  ENDIF
     call boot_data_init
     call hw_init
@@ -169,6 +172,68 @@ boot_data_init:
                                 ; runs, matching cold boot
  ENDIF
     ret
+
+; Boot gate in the IM2 table area: im2_init overwrites it after the gate runs,
+; so never call it after boot. Port-pair reads only; the gate and the refusal
+; path must not reach NEXTREG A,n.
+coreGateResume  equ $
+    ORG IM2_TABLE
+; Returns when (NR $01 << 8) | NR $0E >= $3303, else refuses.
+; Corrupts AF, BC, DE, HL.
+core_gate:
+    ld bc, TBBLUE_REG_SEL
+    ld a, NR_CORE_MAJOR
+    out (c), a
+    inc b
+    in h, (c)
+    dec b
+    ld a, NR_CORE_SUB
+    out (c), a
+    inc b
+    in l, (c)
+    ld de, $3303
+    or a
+    sbc hl, de
+    jp c, core_refuse
+ IFDEF NR_STANDIN
+    ld hl, nrs_end                          ; harness stack canary: pattern from the
+    ld de, nrs_end + 1                      ; stand-in's end up to 16 bytes under
+    ld bc, STACK_TOP - 16 - nrs_end - 1     ; SP; the zone is read back over ZRCP
+    ld (hl), NRS_CANARY
+    ldir
+ ENDIF
+    ret
+
+; fatal()'s screen without txt_init, whose print pipeline reads registers.
+; Never returns.
+core_refuse:
+    ld a, ERR_BORDER_CORE
+    out ($FE), a
+    di
+    call hw_regs
+    call audio_init                         ; silence a held note
+    call txt_regs
+    ld a, TM_ATTR_DEFAULT                   ; map fill attribute
+    ld (tmAttr), a
+    ld a, TM_COLS
+    call tm_width_core
+    ld a, TM_ATTR_ERROR
+    ld (tmAttr), a
+    ld bc, 0                                ; row 0, column 0
+    ld de, 256 + TM_COLS                    ; D = 1 row, E = full width
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
+    ld hl, msgCoreOld
+    call fatal_puts
+.halt:
+    di
+    jr .halt
+msgCoreOld: db "NextDAAD needs core 3.03.03 or later", 0
+coreGateEnd:
+    ASSERT coreGateEnd <= IM2_TABLE + 257
+    ASSERT {b core_gate} != IM2_VECTOR_BYTE ; main's warm re-entry guard reads this byte
+    DISPLAY "core gate ends at ", coreGateEnd, " table headroom ", /D, IM2_TABLE + 257 - coreGateEnd
+    ORG coreGateResume
 
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
@@ -352,14 +417,10 @@ spr_boot_init:
 spr_call:
     push hl
     push af
-    push de
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (sprSavedMmu), a
-    ld e, NR_MMU7
-    call nr_read
+    NRGET NR_MMU7
     ld (sprSavedMmu+1), a
-    pop de
     pop af
     nextreg NR_MMU6, SPR_TAB_PAGE
     nextreg NR_MMU7, SPR_PAGE
@@ -406,7 +467,7 @@ cyc_stop:
 ; Mainline DI bracket for one select-then-write group: the sprite tick shares
 ; the NR $34 select-then-write sequence. Resident so overlay0's pointer
 ; sequences can use it with SPR_PAGE unmapped. IFF2 sampled twice through
-; ld a,i (P/V), the nr_read idiom: the erratum can zero P/V once but not on
+; ld a,i (P/V): the erratum can zero P/V once but not on
 ; two successive instructions. A caller that entered with interrupts off
 ; leaves with them off. Corrupts AF.
 spr_di:
@@ -481,43 +542,23 @@ extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
 ; own slot; interrupts.asm's im2_isr never touches extSaved or extTarget.
 extSavedIsr: dw 0
 
-xbn_mmu_save:                   ; corrupts A, BC, HL, F; result in extSaved
+xbn_mmu_save:                   ; corrupts A, HL; result in extSaved
     ld hl, extSaved
     jr mmu_save_hl
-xbn_isr_mmu_save:               ; corrupts A, BC, HL, F; result in extSavedIsr
+xbn_isr_mmu_save:               ; corrupts A, HL; result in extSavedIsr
     ld hl, extSavedIsr
     jr mmu_save_hl
-xbn_svc_mmu_save:               ; corrupts A, BC, HL, F; result in svcSaved - falls through
+xbn_svc_mmu_save:               ; corrupts A, HL; result in svcSaved - falls through
     ld hl, svcSaved
 ; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch:
 ; the cell address rides in HL, so the three entries need no lock between
-; them. DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects
-; $243B without restoring it. `ret po` restores the caller's own interrupt
-; state: off for the ISR's fast path, on for its audio path, which calls
-; here after its own `ei`.
+; them. Interrupt state untouched.
 mmu_save_hl:
-    ld a, i
-    jp pe, .sampled             ; P/V = IFF2
-    ld a, i                     ; re-sample: see nr_read
-.sampled:
-    push af
-    di
-    ld bc, $243B
-    ld a, NR_MMU6
-    out (c), a
-    inc b                       ; $253B
-    in a, (c)
+    NRGET NR_MMU6
     ld (hl), a
     inc hl
-    dec b
-    ld a, NR_MMU7
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_MMU7
     ld (hl), a
-    pop af
-    ret po                      ; P/V = 0: interrupts were off
-    ei
     ret
 
 xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
@@ -702,8 +743,7 @@ outSaved:   dw 0                  ; own MMU cell: the tap fires inside
                                   ; SVC_PUTS with svcSaved and extSaved live
 outChar:    db 0
 ; Format 3 output tap. In: C = character. Preserves AF, BC, DE, HL, IX,
-; IY. Gate cleared while the hook runs (no recursion). MMU reads via
-; nr_read's DI bracket: the frame ISR re-selects $243B.
+; IY. Gate cleared while the hook runs (no recursion).
 xbn_out_hook:
     push af
     push bc
@@ -715,11 +755,9 @@ xbn_out_hook:
     ld (outHookOn), a
     ld a, c
     ld (outChar), a
-    ld e, NR_MMU6
-    call nr_read                  ; DI-bracketed, IFF2-preserving
+    NRGET NR_MMU6
     ld (outSaved), a
-    ld e, NR_MMU7
-    call nr_read
+    NRGET NR_MMU7
     ld (outSaved+1), a
     call xbn_mmu_map
     ld a, (outChar)
@@ -764,7 +802,7 @@ xbn_nl_gate:
     jp prn_flush
 
 svc_version:
-    ld a, 3
+    ld a, 4
     or a                          ; CF clear
     ret
 
@@ -776,8 +814,8 @@ svc_version:
 ; extern use, not the CHANCE-specific 1..100 scaling.
 ; ISR-safe: the #int hook can call this mid-frame (xbntest.asm fn 35's
 ; soak) while the foreground is also drawing, so rng_step brackets the
-; rngState RMW atomic vs interrupts using nr_read's idiom
-; (hardware.asm:145-165) - RTL-verified SAFE, no erratum on the Z80N
+; rngState RMW atomic vs interrupts using spr_di's double ld a,i
+; sample - RTL-verified SAFE, no erratum on the Z80N
 ; core (P/V latches at T3, interrupt acceptance clears IFF2 at T5, all
 ; four core variants).
 ; Double-sample kept anyway for emulator NMOS-erratum modelling parity.
@@ -800,7 +838,7 @@ svc_random:
 rng_step:
     ld a, i
     jp pe, .sampled
-    ld a, i                       ; erratum re-sample (nr_read idiom)
+    ld a, i                       ; erratum re-sample (spr_di)
 .sampled:
     push af                       ; IFF2 in P/V, on the stack
     di
@@ -1268,12 +1306,11 @@ svc_busy:
 ; A=1 reads the bank the display does not show - the staged palette
 ; while GFX 87/4 buffer mode is open.
 ; In IX = 512-byte buffer, A = bank select (0 displayed, 1 other/staged);
-; 256 x (RRRGGGBB, %11000001-masked second byte); corrupts AF, BC, E, IX;
+; 256 x (RRRGGGBB, %11000001-masked second byte); corrupts AF, BC, IX;
 ; CF clear; foreground-only.
 svc_palread:
     ld c, a                       ; C = bank select (0 displayed, 1 other)
-    ld e, NR_PAL_CTRL
-    call nr_read                  ; A = live $43
+    NRGET NR_PAL_CTRL            ; A = live $43
     ld b, a                       ; B = saved $43 (restored at exit)
     and %00001111                 ; keep display/layer bits, clear edit field
     bit 2, a                      ; display shows bank 2?
@@ -1299,11 +1336,9 @@ svc_palread:
 .loop:
     ld a, b
     nextreg NR_PAL_INDEX, a
-    ld e, NR_PAL_VALUE
-    call nr_read
+    NRGET NR_PAL_VALUE
     ld (ix+0), a
-    ld e, NR_PAL_VALUE9
-    call nr_read
+    NRGET NR_PAL_VALUE9
     and %11000001                ; bits 7-6 priority field (core latches
                                  ; two bits on a $44 write), bit 0 blue LSB
     ld (ix+1), a
@@ -1499,7 +1534,7 @@ ctc2_isr_pair:
 ; Entry: A=0. Corrupts HL, and (via the fall-through) AF and E too -
 ; every caller is tolerant: eng_init_game reloads A with $FF next and
 ; never reads E; gfx_cache_reset's next instruction reloads A too and
-; its loop below uses B, which nr_read preserves; overlay1's same-part
+; its loop below uses B, which NRGET preserves; overlay1's same-part
 ; LOAD site continues into eng_set_done (ld a,1 / ld (isDone),a / ret)
 ; and h_ramload simply rets to the dispatcher, which stamped the done
 ; flag before dispatch and consults neither A, E nor CF for an action
@@ -1528,10 +1563,9 @@ gfx_drawtarget_clear:
 ; sites above call gfx_drawtarget_clear and fall into this body, where
 ; it re-asserts rather than resets. So exactly one routine composes this
 ; field and the byte can never disagree with the register.
-; Corrupts AF, E; preserves BC (nr_read pushes it) and HL.
+; Corrupts AF, E; preserves BC and HL.
 gfx_layer_apply:
-    ld e, NR_LAYERS
-    call nr_read
+    NRGET NR_LAYERS
     and %11100011               ; clear bits 4-2, keep everything else
     ld e, a
     ld a, (gfxLayerOrder)
@@ -1829,7 +1863,7 @@ akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
     ; .nex if header byte 10 (loading screen), byte 139 (entry bank) or word 140
     ; (file handle) is nonzero, or bank 5 is flagged: keep CFG 0, no SCREEN/handle.
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP
-    SAVENEX CORE 3, 0, 0
+    SAVENEX CORE 3, 3, 3
     SAVENEX CFG 0
     SAVENEX AUTO
     SAVENEX CLOSE

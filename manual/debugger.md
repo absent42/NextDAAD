@@ -16,9 +16,10 @@ It runs inside the CSpect emulator, as a second window beside the game.
 
 ## What you need
 
-- **CSpect 4.0 or later**, installed as described in
+- **CSpect 4.0 or later** (4.5.6.0 or later for the game itself to run
+  correctly), installed as described in
   [Getting started](getting-started.md#what-you-need). Older CSpect
-  builds still run your game with `RUN.BAT`, but not the debugger.
+  builds cannot run the debugger; below 4.5.6.0 the game misbehaves.
 - **`EMULATOR=cspect`**, which is what you get when `EMULATOR` is blank.
   The debugger does not run in jNext. If `CONFIG.local.BAT` sets
   `EMULATOR=jnext`, remove that line or change it to `cspect`;
@@ -398,8 +399,10 @@ waits for a key before closing the window so you can read it.
 | `ERROR: EMULATOR=<name> - use cspect or jnext` | `EMULATOR` holds something else. Set it to `cspect`. |
 | `ERROR: CSpect not found at <path>` | CSpect is not installed there. Install it in `tools\CSpect\`, or set `CSPECTDIR` in `CONFIG.local.BAT` to the folder you have it in. |
 | `ERROR: <program> not found - CSpect needs mono on Linux (sudo apt install mono-devel), or set CSPECTCMD in CONFIG.BAT` | Linux only: mono is missing. |
-| `ERROR: the debugger needs CSpect 4.0 or later - found <version> in <folder>` | Install CSpect 4.0 or later. Older builds still run with `RUN.BAT`. |
-| `ERROR: could not read the CSpect version in <folder> - the debugger needs CSpect 4.0 or later` | The version of `CSpect.exe` could not be read, and the folder lacks the files CSpect 4.0 brings. Install CSpect 4.0 or later. |
+| `ERROR: the debugger needs CSpect 4.0 or later - found <version> in <folder>` | Install CSpect 4.5.6.0 or later. |
+| `WARNING: CSpect <version> is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave` | The debugger starts, but the interpreter reads Next registers with `NEXTREG A,n`, which this CSpect lacks. Install CSpect 4.5.6.0 or later. |
+| `WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later` | The version could not be read. Use CSpect 4.5.6.0 or later. |
+| `ERROR: could not read the CSpect version in <folder> - the debugger needs CSpect 4.0 or later` | The version of `CSpect.exe` could not be read, and the folder lacks the files CSpect 4.0 brings. The debugger itself needs CSpect 4.0 or later, and the game needs 4.5.6.0 or later: install that. |
 | `note: could not read the CSpect version - assuming 4.0 or later` | Not an error. The version could not be read, but the folder has the files CSpect 4.0 brings. The debugger carries on. |
 | `ERROR: <file> not found - the kit is incomplete` | `NEXTDAAD.SYM` or `lib\NextDAADDebug.dll` is missing from the kit folder. Unzip the kit again over the folder. |
 | `ERROR: pwsh (PowerShell 7) not found - see docs/getting-started.html, Linux setup` | Linux only, printed by `./debug.sh` itself: install PowerShell 7 as described in [Getting started](getting-started.md#linux-setup). |

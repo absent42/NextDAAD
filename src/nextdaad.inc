@@ -29,11 +29,23 @@ NR_DMA_INT_EN_1 equ $CC     ; DMA pre-emption: bit 0 ULA, bit 1 line
 NR_DMA_INT_EN_2 equ $CD     ; DMA pre-emption: bit n = CTC channel n
 NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
 
+; NRGET n: A = Next register n; other registers, flags, $243B selection kept.
+; NR_STANDIN (build.ps1 -Harness only): 3-byte call to the NRS_PAGE sled. The
+; parameter is nrgn: sjasmplus substitutes one inside underscore-separated names.
+    MACRO NRGET nrgn
+      IFDEF NR_STANDIN
+        call NRS_PAGE * 256 + (nrgn)  ; harness: sled + port-read stand-in
+      ELSE
+        db $ED, $C7, nrgn             ; NEXTREG A,n: core 3.03.03+, no sjasmplus 1.24 mnemonic
+      ENDIF
+    ENDM
+
 ; --- Resident memory layout (in 16K bank 2, $8000-$BFFF) ---
 CODE_ORG        equ $8000
 RESIDENT_LIMIT  equ $BA00   ; code+data must end below this
 STACK_TOP       equ $BD00   ; SP; grows down toward RESIDENT_LIMIT
-IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00
+IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00; holds the assembled boot
+                            ; gate (main.asm) until im2_init fills it
 IM2_VECTOR_BYTE equ $BE
 IM2_STUB        equ $BEBE   ; 3-byte JP written at runtime
 IM2_CTC_STUB    equ $BEC2   ; 3-byte JP ctc_isr, runtime-written beside IM2_STUB.
@@ -255,6 +267,7 @@ ERR_BORDER_OVERSIZE equ 3   ; magenta
 ERR_BORDER_BADHDR   equ 6   ; yellow
 ERR_BORDER_MACHINE  equ 5   ; cyan
 ERR_BORDER_TEXT2    equ 4   ; green
+ERR_BORDER_CORE     equ 1   ; blue: core older than 3.03.03 (core_refuse)
 
 ; --- esxDOS API ---
 ESX_GETSETDRV   equ $89

@@ -115,7 +115,7 @@ ext_main:
 
 svc_probe:
     call SVC_VERSION
-    ld (XBN_FLAGS+206), a       ; expect 3
+    ld (XBN_FLAGS+206), a       ; expect 4
     call SVC_RANDOM
     ld b, a
     call SVC_RANDOM
@@ -851,8 +851,8 @@ mmu_probe:
     ld (XBN_FLAGS+139), hl
     or a                         ; CF discipline: deliberate clear
     ret
-; A = NR $56. Own IFF2-preserving DI bracket (nr_read idiom): does not use
-; the interpreter routine under test. Corrupts BC, F.
+; A = NR $56. Own IFF2-preserving DI bracket (ld a,i sampled twice): does not
+; use the interpreter routine under test. Corrupts BC, F.
 mmu_rd6:
     ld a, i
     jp pe, .on

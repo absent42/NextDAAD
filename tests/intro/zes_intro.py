@@ -41,6 +41,8 @@ given."""
 import argparse, pathlib, re, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
+sys.path.insert(0, str(ROOT / "tests"))
+import zes_core                                        # noqa: E402
 import zrcp, tilemap, nleg, symbols
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
@@ -418,11 +420,11 @@ def main():
     hold_pcs = load_hold_pcs() if a.surface_asserts else {}
     if nleg.port_already_listening(a.port):
         raise SystemExit("port %d already in use - a stale emulator is running" % a.port)
-    proc = subprocess.Popen([str(ZESARUX), "--machine", "tbblue", "--realvideo",
-                             "--enable-esxdos-handler", "--esxdos-root-dir", str(card),
-                             "--vo", "null", "--ao", "null",
-                             "--enable-remoteprotocol", "--remoteprotocol-port", str(a.port),
-                             "--smartloadpath", str(card)], cwd=str(card))
+    proc = zes_core.popen([str(ZESARUX), "--machine", "tbblue", "--realvideo",
+                           "--enable-esxdos-handler", "--esxdos-root-dir", str(card),
+                           "--vo", "null", "--ao", "null",
+                           "--enable-remoteprotocol", "--remoteprotocol-port", str(a.port),
+                           "--smartloadpath", str(card)], cwd=str(card))
     ok = True
     try:
         z = None

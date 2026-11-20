@@ -14,6 +14,8 @@ import argparse, pathlib, shutil, subprocess, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
+sys.path.insert(0, str(ROOT / "tests"))
+import zes_core                                        # noqa: E402
 import zrcp, tilemap, nleg  # noqa: E402
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
@@ -67,7 +69,7 @@ def main():
     shutil.copytree(leg, sd)
     shutil.copyfile(ROOT / "build" / "nextdaad.nex", sd / "nextdaad.nex")
 
-    proc = subprocess.Popen([
+    proc = zes_core.popen([
         str(ZESARUX), "--machine", "tbblue", "--realvideo",
         "--enable-esxdos-handler", "--esxdos-root-dir", str(sd),
         "--vo", "null", "--ao", "null",
@@ -133,6 +135,7 @@ def main():
                 print("grabbed %s -> %s" % (args.grab, dst))
             else:
                 print("grab: %s was not written" % args.grab)
+        zes_core.check_stack_harness(z, "tickcheck")
         z.close()
         rc = 3 if bad else 0
     finally:

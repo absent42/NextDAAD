@@ -2816,7 +2816,8 @@ sfx_stop_wait:
 ; target address be loaded before the bracket.
 ;
 ; BC IS THE CALLEE'S, NOT THIS BRACKET'S. The bracket itself preserves it
-; (nr_read pushes it), but that says nothing about what runs inside:
+; (data_save/data_restore corrupt AF only), but that says nothing about what
+; runs inside:
 ; sfx_alloc preserves B deliberately, and sfx_stream_rewind does NOT -
 ; it runs the staging tail, whose LDIR and esx_fread both own BC. A
 ; caller keeping a value in BC across a call through here must know

@@ -793,7 +793,6 @@ vid_dst_norm_flat:
 ; Out: nothing. Preserves BC, DE, HL, IX. Corrupts AF only.
 ; ---------------------------------------------------------------------
 vid_rl_poll:
-    push bc
     push de
     push hl
     ld a, VID_RL_DIV
@@ -801,36 +800,18 @@ vid_rl_poll:
     ld (vidRlSpinDiv), a         ; Phase 2-POLL: SPIN divider shares
                                  ; this reset, same pattern as vidRlDiv
                                  ; (decode/ds pair) - see vidRlSpinDiv
-    ld bc, TBBLUE_REG_SEL
-    di                           ; the select/read pair must not be
-                                 ; split by an ISR that selects its own
-                                 ; register (nr_read's own rule); this
-                                 ; bracket is ~30 T, far below the DMA
-                                 ; brackets already in the frame
 .sample:
-    ld a, NR_RASTER_MSB
-    out (c), a
-    inc b                        ; TBBLUE_REG_ACC (low byte is shared)
-    in a, (c)
+    NRGET NR_RASTER_MSB
     and 1
     ld h, a
-    dec b
-    ld a, NR_RASTER_LSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_RASTER_LSB
     ld l, a                      ; HL = 9-bit raster line
-    dec b
-    ld a, NR_RASTER_MSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NR_RASTER_MSB
     and 1
     cp h
     jr nz, .sample               ; the line crossed 256 mid-read - the
                                  ; MSB/LSB pair would be inconsistent
                                  ; and could fake or hide a wrap
-    ei
     ld de, (vidRlLast)
     ld (vidRlLast), hl
     or a
@@ -842,7 +823,6 @@ vid_rl_poll:
 .out:
     pop hl
     pop de
-    pop bc
     ret
 
 ; PLAY=/NOM= per-DELIVERED-FRAME hook, called from the TOP of the frame
@@ -2161,11 +2141,9 @@ vid_run:
     ; hop's own bracket would capture its own temporary value). The
     ; stop-all above is not a hop: spr_call brackets MMU6/7 and restores
     ; them, so this still reads the caller's own mapping.
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (vidSvMmu6), a
-    ld e, NR_MMU7
-    call nr_read
+    NRGET NR_MMU7
     ld (vidSvMmu7), a
  IFDEF DEBUG
     ; SP17 BENCH (A2): capture the PRE-BORROW MMU3 here too, hot, for
@@ -2176,8 +2154,7 @@ vid_run:
     ; (vidSvMmu3) is a VID_PAGE2 cell the bench cannot reach from here,
     ; hence this hot mirror. Used ONLY by nxb_tm_in/nxb_tm_out, which
     ; bracket the row PRINTS - never a measured loop.
-    ld e, NR_MMU3
-    call nr_read
+    NRGET NR_MMU3
     ld (nxbSvTm3), a
  ENDIF
     ; AUTO-RESUME CAPTURE: a LOOPING sampled effect must resume itself
@@ -2233,8 +2210,8 @@ vid_run:
     ld (vidPlaying), a           ; this bail skips .restore_tail: clear it here
     jp .sfxresume
 .hooksusp:
-    ; Suspend the frame hook for the clip: the hook body's $243B/$253B save
-    ; would split vid_op_pal's undefended $44 burst. HOOK_SPR is already off.
+    ; Suspend the frame hook for the clip: author #int code may select $243B
+    ; and split vid_op_pal's undefended $44 burst. HOOK_SPR is already off.
     ld a, (xbnIntOn)
     and HOOK_XBN+HOOK_CYC
     ld (vidSvHook), a
@@ -3110,8 +3087,7 @@ vid_sd_blk_h:
 ; Multiface disable/restore, streaming half. NR $06 audio-chip-mode
 ; note: see vid_mf_disable - the same %11110111 mask, same verdict.
 vid_mf_disable_h:
-    ld e, NR_PERIPH2
-    call nr_read
+    NRGET NR_PERIPH2
     ld (vidMfSaveH), a
     and %11110111
     nextreg NR_PERIPH2, a
@@ -3202,17 +3178,9 @@ vid_loop_rewind:
 ; an interrupt between instructions exactly as inir does between
 ; iterations), so the audio ISR is never starved.
 ;
-; LATCH HAZARD (review fix, 3c): any ds op that selects a NextReg on
-; the $243B/$253B pair ONCE and then relies on the latch across MORE
-; THAN ONE byte must re-select after every vid_ds_blkopen call in
-; between. blkopen's fragment-boundary/rewind branch calls
-; vid_win_open_h -> vid_mf_disable_h -> nr_read, which re-targets the
-; SAME select latch (to NR_PERIPH2) to do its own read - a latch a
-; caller assumed still pointed at its own register no longer does.
-; vid_ds_pal was the one victim (fixed below, re-selects
-; unconditionally after every blkopen); no other ds routine holds a
-; select across a blkopen call today, but the next one that does must
-; follow the same rule.
+; LATCH NOTE: vid_ds_blkopen's reopen branch reads NR_PERIPH2 via NRGET,
+; which keeps the $243B selection. vid_ds_pal still re-selects after every
+; blkopen, so it does not depend on that.
 ; =====================================================================
 
 ; The direct dispatch loop: every op through the slow parser (whose
@@ -3437,20 +3405,9 @@ vid_ds_copy_body:
 
 ; Direct PAL: 512 palette bytes port -> NR $44, same double-buffer
 ; choreography as vid_op_pal (edit the hidden bank, flip at present).
-; LATCH HAZARD FIX (review, 3c): the select below targets NR_PAL_VALUE9
-; on $243B ONCE, then every out (c),a in .pl relies on that latch
-; across up to 512 bytes. vid_ds_blkopen's fragment-boundary/rewind
-; branch calls vid_win_open_h -> vid_mf_disable_h -> nr_read, which
-; re-targets the SAME latch to NR_PERIPH2 for its own read - any
-; palette byte written after that (before this fix) landed on
-; NR_PERIPH2 instead: silent palette corruption + spurious
-; Peripheral-2 writes. Fix: re-select NR_PAL_VALUE9 unconditionally
-; immediately after every blkopen call (chosen over an unconditional
-; per-byte re-select: blkopen fires at most ~2 times across a 512-byte
-; PAL block - roughly +35T total - vs 512 x ~19T unconditionally; both
-; are cheap against this cold-ish op's SD-wire cost, but the
-; per-blkopen form is exact rather than merely "affordable", doc 01
-; T-state accounting).
+; The burst in .pl relies on one $243B select of NR_PAL_VALUE9 across up to
+; 512 bytes; it is re-selected after every vid_ds_blkopen call (at most ~2
+; per block) rather than per byte.
 vid_ds_pal:
     ld a, (vidPalCtrl)
     xor $40                      ; edit the OTHER bank, display as-is
@@ -3470,7 +3427,7 @@ vid_ds_pal:
     jr nz, .byte
     call vid_ds_blkopen           ; preserves BC, DE; MAY reopen the
                                   ; CMD18 window on a fragment boundary
-                                  ; (nr_read latch hazard - banner above)
+                                  ; (latch note - banner above)
     ld bc, TBBLUE_REG_SEL         ; re-select NR_PAL_VALUE9 (cheap: this
     ld a, NR_PAL_VALUE9           ; branch is taken at most ~2x per PAL
     out (c), a                    ; block, never per-byte)
@@ -3904,9 +3861,8 @@ nxb_blank:
 ; for the copy only and is put back before the return (rubric 3: the
 ; directory and tables are NXB_PAGE labels). Corrupts AF, BC, DE, HL.
 nxb_tab_stage:
-    ld c, a                      ; nr_read preserves BC
-    ld e, NR_MMU6
-    call nr_read
+    ld c, a                      ; NRGET preserves BC
+    NRGET NR_MMU6
     push af                      ; the caller's MMU6
     nextreg NR_MMU6, NXB_PAGE
     ld a, c
@@ -3953,11 +3909,9 @@ nxb_ops_setup:
     ld (nxbSvAudEn), a
     xor a
     ld (audEnable), a
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (nxbSvMmu6), a
-    ld e, NR_MMU2
-    call nr_read
+    NRGET NR_MMU2
     ld (nxbSvMmu2), a
     xor a
     ld (nxbBankCnt), a
@@ -4482,15 +4436,13 @@ nxb_cal:
     call nxb_tick.cmp            ; the final compare against line1
     call nxb_at
     call nxb_puttag
-    ld e, NR_VIDEO_TIMING
-    call nr_read
+    NRGET NR_VIDEO_TIMING
     ld hl, (nxbLcF)
     call nxb_ofrd
     call nxb_at
     ld hl, nxbTagCALR
     call dbg_puts
-    ld e, NXB_LINE_OFS
-    call nr_read
+    NRGET NXB_LINE_OFS
     ld hl, (nxbFrames)
     jp nxb_ofrd
 
@@ -4576,25 +4528,15 @@ nxb_ds_unsel:
     ret
 
 ; Read the raster line (NR $1E:$1F) with a bounded stability retry.
-; Out: HL = line (9 bits). Corrupts AF, BC, D.
+; Out: HL = line (9 bits). Corrupts AF, D.
 nxb_line:
     ld d, 4                      ; bounded retries (rubric 6)
 .rd:
-    ld bc, TBBLUE_REG_SEL
-    ld a, NXB_LINE_MSB
-    out (c), a
-    inc b
-    in h, (c)
-    dec b
-    ld a, NXB_LINE_LSB
-    out (c), a
-    inc b
-    in l, (c)
-    dec b
-    ld a, NXB_LINE_MSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET NXB_LINE_MSB
+    ld h, a
+    NRGET NXB_LINE_LSB
+    ld l, a
+    NRGET NXB_LINE_MSB
     cp h
     jr z, .ok
     dec d
@@ -4697,10 +4639,9 @@ nxb_ds_d:
 ; =====================================================================
 
 ; Call HL on NXB_PAGE: MMU6 maps NXB_PAGE, then gets the caller's page back.
-; Out: the callee's F, BC, DE, HL. Corrupts A and E on entry.
+; Out: the callee's F, BC, DE, HL. Corrupts A on entry.
 nxb_hop6:
-    ld e, NR_MMU6
-    call nr_read                 ; preserves HL
+    NRGET NR_MMU6
     push af
     nextreg NR_MMU6, NXB_PAGE
     call .go
@@ -5377,8 +5318,7 @@ nxb_sess_setup:
     ld (nxbSessReq), a           ; self-clearing
     inc a
     ld (nxbSessLive), a
-    ld e, NR_MMU3
-    call nr_read
+    NRGET NR_MMU3
     ld (nxbSvAud3), a            ; the session's audio page (print bracket)
     ld a, NXB_ROW0
     ld (nxbRow), a
@@ -7600,20 +7540,15 @@ vid_run_orch_body:
 ; freeze, and the AY music park. Plain ret. Corrupts everything.
 ; ---------------------------------------------------------------------
 vid_run_entry_body:
-    ld e, NR_L2_BANK
-    call nr_read
+    NRGET NR_L2_BANK
     ld (vidSvNr12), a
-    ld e, NR_L2_CTRL
-    call nr_read
+    NRGET NR_L2_CTRL
     ld (vidSvNr70), a
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     ld (vidSvNr69), a
-    ld e, NR_LAYERS
-    call nr_read
+    NRGET NR_LAYERS
     ld (vidSvNr15), a
-    ld e, NR_MMU2
-    call nr_read
+    NRGET NR_MMU2
     ld (vidSvMmu2), a
     ld hl, (IM2_CTC_STUB+1)
     ld (vidSvCtcStub), hl
@@ -7775,21 +7710,18 @@ vid_run_l2setup_body:
     ; the whole armed window (vidAudBuf = VID_AUD_WIN; captured here,
     ; restored in step 8 with MMU2 - the same borrowed-window pattern;
     ; FOURTH RULE in the file header)
-    ld e, NR_MMU3
-    call nr_read
+    NRGET NR_MMU3
     ld (vidSvMmu3), a
     ld a, (vidAudBankC)
     add a, a
     nextreg NR_MMU3, a
     ; presentation isolation: tilemap off, fallback black (restored
     ; on every real exit - vid_run_restore_body)
-    ld e, NR_TM_CTRL
-    call nr_read
+    NRGET NR_TM_CTRL
     ld (vidSvNr6b), a            ; page-local (3c cell move)
     and %01111111
     nextreg NR_TM_CTRL, a
-    ld e, NR_FALLBACK
-    call nr_read
+    NRGET NR_FALLBACK
     ld (vidSvNr4a), a            ; page-local (3c cell move)
     xor a
     nextreg NR_FALLBACK, a
@@ -7798,8 +7730,7 @@ vid_run_l2setup_body:
     ; double-buffer tracker to match, restore the constant at teardown
     ld a, PAL_L2_FIRST
     ld (vidPalCtrl+DATA_WINDOW-OVL_ORG), a
-    ld e, NR_L2_TRANSP
-    call nr_read
+    NRGET NR_L2_TRANSP
     ld (vidSvNr14), a            ; page-local (3c cell move)
     ; mode + full-width clip (v2 width code: 1 = 320/mode-1)
     ld a, (vidP_Shape)
@@ -7831,8 +7762,7 @@ vid_run_l2setup_body:
     ld a, (vidP_Yofs)
     nextreg NR_L2_YOFS, a
     nextreg NR_L2_XOFS, 0
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     or %10000000
     nextreg NR_DISPLAY_CTRL, a   ; Layer 2 on
     nextreg NR_LAYERS, 0
@@ -7855,8 +7785,7 @@ vid_run_l2setup_body:
     ; (carried v1 table/derivation). ONE table since mono went - the
     ; open path refuses any channel count but 2, so the rate is always
     ; NXV_RATE_STEREO.
-    ld e, NR_VIDEO_TIMING
-    call nr_read
+    NRGET NR_VIDEO_TIMING
     and 7
     ld c, a
     ld b, 0
@@ -8015,8 +7944,7 @@ vid_run_restore_body:
     ld a, (vidSvL2Back)
     ld (l2BackBank), a
     ; EXIT ORDER FIX steps 2-5 (see the header matrix)
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     and %01111111
     nextreg NR_DISPLAY_CTRL, a   ; hide Layer 2
     ld a, (vidSvNr12)
@@ -8081,8 +8009,8 @@ vid_run_restore_body:
 ; failed open never reaches it, so the copy needs no unwind of its
 ; own. No-op when vidSnapCnt = 0 (Layer 2 was hidden pre-video).
 ; Palette: hardware readback - per entry NR $40 index write (also
-; resets the NR $44 two-byte latch), nr_read $41 (RRRGGGBB) +
-; nr_read $44 (bit7 priority + bit0 blue LSB), stored exactly as the
+; resets the NR $44 two-byte latch), NRGET $41 (RRRGGGBB) +
+; NRGET $44 (bit7 priority + bit0 blue LSB), stored exactly as the
 ; NR $44 replay pair. The readback goes through the FIRST-palette
 ; edit target, the convention every game-side L2 palette writer
 ; asserts (the NR $43 readback finding); the explicit NR $43 select makes
@@ -8103,12 +8031,10 @@ vid_snap_save_body:
 .palrd:
     push af
     nextreg NR_PAL_INDEX, a      ; index write resets the $44 latch
-    ld e, NR_PAL_VALUE
-    call nr_read                 ; preserves DE/HL (hardware.asm)
+    NRGET NR_PAL_VALUE
     ld (hl), a                   ; first byte: RRRGGGBB
     inc hl
-    ld e, NR_PAL_VALUE9
-    call nr_read
+    NRGET NR_PAL_VALUE9
     ld (hl), a                   ; second: bit7 priority + bit0 B0
     inc hl
     pop af
@@ -9050,8 +8976,7 @@ vid_sd_cmd:
 ; static 0 slots, so an unpaired restore would write $00 and set audio
 ; chip mode %00. Every call site is paired - latent shape, not a bug.
 vid_mf_disable:
-    ld e, NR_PERIPH2
-    call nr_read
+    NRGET NR_PERIPH2
     ld (vidMfSave), a
     and %11110111
     nextreg NR_PERIPH2, a
@@ -9138,8 +9063,7 @@ VID_TL_ROW0 equ 24
 vid_tl_report_body:
     ; clear Layer 2 over the report rows (carried v1 fix: stale video
     ; pixels would otherwise show through the tilemap's transparency)
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
+    NRGET NR_DISPLAY_CTRL
     ld (vidTlNr69), a            ; re-asserted at .done: since the SP15
                                  ; snapshot the restore has already
                                  ; repainted the game picture

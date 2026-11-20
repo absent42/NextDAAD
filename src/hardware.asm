@@ -1,27 +1,17 @@
 ; Next hardware setup and register access.
 
 hw_init:
-    nextreg NR_CPU_SPEED, 3         ; 28MHz
-    nextreg NR_SPRITES, 0           ; sprites off
-    nextreg NR_DISPLAY_CTRL, 0      ; Layer 2 off, Timex off
-    nextreg NR_ULA_CTRL, 0          ; ULA output enabled
-    nextreg NR_FALLBACK, 0          ; global fallback colour black: shows
-                                    ; wherever ALL layers are transparent
-                                    ; (or none covers, e.g. the top band
-                                    ; beside 256x192 Layer 2 art); CSpect
-                                    ; powers up non-black
+    call hw_regs
     xor a
     out ($FE), a                    ; black border
     ; SP8: DACs on for sampled sound; Turbo Sound on explicitly (both
     ; bits hard-reset to 0 - CSpect is permissive, real hardware/OS
     ; state is not guaranteed; closes a latent SP7 hardware risk too).
     ; Read-modify-write preserves NextZXOS's other peripheral bits.
-    ld e, NR_PERIPH3
-    call nr_read
+    NRGET NR_PERIPH3
     or %00001010                ; bit 3 DACs, bit 1 Turbo Sound
     nextreg NR_PERIPH3, a
-    ld e, NR_PERIPH_PORTS2
-    call nr_read
+    NRGET NR_PERIPH_PORTS2
     or %00000100                ; bit 2 stereo sample mode, RMW keeps the rest
     nextreg NR_PERIPH_PORTS2, a
     ; NR $06 (Peripheral 2) bits 1:0 - the AUDIO CHIP MODE - is
@@ -45,6 +35,20 @@ hw_init:
     ; explicitly refuses to touch the internal speaker ("a user
     ; setting, not a game setting").
     jp ula_cls
+
+; hw_init's register writes, no reads: core_refuse runs it on a core that may
+; lack NEXTREG A,n. Preserves all registers.
+hw_regs:
+    nextreg NR_CPU_SPEED, 3         ; 28MHz
+    nextreg NR_SPRITES, 0           ; sprites off
+    nextreg NR_DISPLAY_CTRL, 0      ; Layer 2 off, Timex off
+    nextreg NR_ULA_CTRL, 0          ; ULA output enabled
+    nextreg NR_FALLBACK, 0          ; global fallback colour black: shows
+                                    ; wherever ALL layers are transparent
+                                    ; (or none covers, e.g. the top band
+                                    ; beside 256x192 Layer 2 art); CSpect
+                                    ; powers up non-black
+    ret
 
 ; Clear ULA pixels, set attrs to white ink on black paper.
 ula_cls:
@@ -129,40 +133,63 @@ audio_init:
     out (c), a
     ret
 
-; Read a Next register. E = register, returns A = value. Preserves BC.
-; IFF-preserving DI bracket: the ISR (interrupts.asm) shares the
-; $243B/$253B select+read pair to save/restore MMU 6/7 around aud_tick,
-; so the select+read here must be atomic against interrupts - otherwise
-; the ISR could re-select the port between our OUT and IN and we would
-; read back the wrong register. `ld a,i` samples IFF2 into P/V; that
-; result is pushed to the stack immediately (the Z80 stops updating P/V
-; the instant DI executes, but any instruction between the sample and
-; the DI could still clobber it, so it is saved, not held live).
-; LD A,I erratum guard: an interrupt accepted at the instruction's end
-; copies IFF2 AFTER acceptance cleared it - P/V reads 0 despite
-; interrupts being enabled, and the bracket would then never EI again
-; (the next halt hangs). Double-sample: our ISR always exits via EI,
-; so a spurious 0 can only mean an interrupt just fired - the second
-; sample is conclusive. RTL (t80n.vhd) shows P/V latches IFF2 at T3 and
-; acceptance clears it at T5 - the erratum is absent on this core; the
-; re-sample is kept as cheap insurance for emulators.
-nr_read:
+ IFDEF NR_STANDIN
+; Harness-only NEXTREG A,n stand-in, assembled at RESIDENT_LIMIT: no resident
+; byte moves, the cost is stack room (DISPLAY below). NRGET's call lands on
+; sled byte reg; nrs_common reads reg back from the call operand.
+nrs_resume  equ $
+    ORG RESIDENT_LIMIT
+    ALIGN 256
+; Any offset in the $18 run is jr +$18 (26-byte hops, flags kept) until a hop lands
+; in the 24 NOPs or on nrs_common; the run's last byte reads the first NOP: jr +0.
+nrs_sled:
+    ds 256 - 24, $18
+    ds 24, 0
+NRS_PAGE    equ high nrs_sled
+NRS_CANARY  equ $A5                 ; stack-zone fill, see core_gate
+; Contract as NEXTREG A,n: A = register value, all else kept (flags, $243B).
+; Own IFF2-preserving DI bracket, spr_di's double ld a,i sample: frame-ISR safe.
+nrs_common:
+    ASSERT nrs_common == nrs_sled + 256    ; the sled's hops and NOPs end here
+    push af                         ; caller F; this A slot takes the value
+    push hl
+    push de
     push bc
     ld a, i
-    jp pe, .sampled         ; P/V=1: interrupts definitely enabled
-    ld a, i                 ; P/V=0: re-sample (erratum window cannot
-                            ; hit twice in successive instructions)
+    jp pe, .sampled
+    ld a, i
 .sampled:
-    push af                 ; save IFF2 in P/V on the stack
+    push af                         ; IFF2 in P/V
     di
+    ld hl, 10
+    add hl, sp                      ; HL -> return address
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    dec de
+    dec de                          ; DE -> call operand low byte = register
+    ld a, (de)
     ld bc, TBBLUE_REG_SEL
-    out (c), e
-    inc b                   ; SEL -> ACC ($24 -> $25), as im2_isr does
-    in b, (c)               ; result straight into B; F is restored by
-    pop af                  ; the pop that follows (P/V = saved IFF2)
-    ld a, b
+    in e, (c)                       ; live selection, port $243B is readable
+    out (c), a
+    inc b
+    in a, (c)
+    dec b
+    out (c), e                      ; selection restored
+    dec hl
+    dec hl                          ; HL -> caller A slot
+    ld (hl), a
+    pop af
     jp po, .noei
     ei
 .noei:
     pop bc
+    pop de
+    pop hl
+    pop af                          ; A = value, F = caller's
     ret
+nrs_end:
+    ASSERT nrs_sled >= RESIDENT_LIMIT && nrs_end <= STACK_TOP
+    DISPLAY "harness stack room ", /D, STACK_TOP - nrs_end, " bytes (shipped ", /D, STACK_TOP - RESIDENT_LIMIT, ")"
+    ORG nrs_resume
+ ENDIF

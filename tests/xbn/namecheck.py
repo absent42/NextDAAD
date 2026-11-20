@@ -10,7 +10,8 @@ import argparse, pathlib, shutil, sys, tempfile, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
-import nleg, symbols, tilemap, zrcp  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests"))
+import nleg, symbols, tilemap, zrcp, zes_core  # noqa: E402
 
 PORT = 10034
 TM_MAP = 0x6000
@@ -114,6 +115,7 @@ def main():
                 if not ok:
                     print("  screen tail:\n    " + shown.replace("\n", "\n    "))
                     bad += 1
+            zes_core.check_stack_harness(z, "namecheck")
         finally:
             z.close()
     finally:

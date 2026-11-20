@@ -1,6 +1,6 @@
-; IM2 skeleton. The vector table lives at IM2_TABLE ($BD00-$BE00,
-; 257 bytes of IM2_VECTOR_BYTE) and the stub JP at IM2_STUB ($BEBE),
-; both outside the assembled image and written at runtime.
+; IM2 skeleton. The vector table lives at IM2_TABLE ($BD00-$BE00, 257 bytes
+; of IM2_VECTOR_BYTE, over the boot gate code assembled there until this fills
+; it) and the stub JP at IM2_STUB ($BEBE), both written at runtime.
 
 im2_init:
     di
@@ -218,16 +218,15 @@ im2_isr:
     ;  (1) ULA re-entry is impossible: in hw-IM2 daisy-chain the ULA source
     ;      (index 11) is masked while its own handler is in service, and the path
     ;      finishes in << 20ms regardless.
-    ;  (2) A CTC edge may land ANYWHERE below - including between a $243B select
-    ;      and its $253B read, or mid-aud_smp_copy with a source page in slot 7 -
-    ;      yet does no harm: ctc_isr saves only AF/HL and touches no MMU slot, no
-    ;      register-select port, no bank-24 memory (only the resident ring
-    ;      pointers, the always-mapped $4000 ring, and a raw OUT to the DAC). So
-    ;      the selected register, the slot 6/7 mapping, and AF' all survive intact.
+    ;  (2) A CTC edge may land ANYWHERE below - including mid-aud_smp_copy with
+    ;      a source page in slot 7 - yet does no harm: ctc_isr saves only AF/HL
+    ;      and touches no MMU slot, no register-select port, no bank-24 memory
+    ;      (only the resident ring pointers, the always-mapped $4000 ring, and a
+    ;      raw OUT to the DAC). So the selected register, the slot 6/7 mapping,
+    ;      and AF' all survive intact.
     ;  (3) Only one CTC nest is ever live (period >> its ~196T body), +4 bytes of
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
-    ; DI sections: nr_read's bracket ~76T (~2.7us), mmu_save_hl's 137T
-    ; (~4.9us), rng_step's ~162T (~6us) and the tick's pointer brackets
+    ; DI sections: rng_step's ~162T (~6us) and the tick's pointer brackets
     ; ~20T stay well under one CTC period (~64us at 15625 Hz); every
     ; indefinite-DI teardown calls audio_init (resets the CTC) first.
     ; PLY_AKY_PLAY nests too: its ret chain runs on akyRetShadow (main.asm)
@@ -236,34 +235,12 @@ im2_isr:
     ; every CTC edge past the first in a 5.5k-15k T window every frame
     ; (player_aky.asm header).
     ei
-    ; Save MMU 6/7 via the register-select port pair. Mainline users of
-    ; $243B/$253B are DI-bracketed (hardware.asm nr_read, main.asm
-    ; mmu_save_hl), run before im2_init's ei, or are the video palette
-    ; bursts and the DEBUG-only NXBENCH raster read (nxb_line, video.asm),
-    ; which run with the frame hook suspended and audio frozen for the
-    ; clip or bench visit, so this selection cannot race them. A nested
-    ; ctc_isr never touches this pair, so it cannot split the select from
-    ; the read.
-    ; SP14c INT-1 (opus-gated): TBBLUE_REG_SEL ($243B) and
-    ; TBBLUE_REG_ACC ($253B) differ only in B ($24 vs $25) - load the
-    ; pair once and toggle B with inc/dec instead of four LD BC,nn
-    ; reloads. Safe against a nested ctc_isr: that ISR (below, fires
-    ; freely here since 'ei' ran at :149) touches only AF and HL, never
-    ; BC - so B's SEL/ACC state survives a CTC edge landing anywhere in
-    ; this sequence unchanged. BC itself is fully saved/restored around
-    ; the whole .audio path (both register banks, via the push bc's
-    ; above and the pop bc's below) so leaving B on $25 (ACC) on exit
-    ; from this block has no caller-visible effect.
-    ld bc, TBBLUE_REG_SEL
-    ld a, $56
-    out (c), a
-    inc b                    ; B: SEL -> ACC ($24 -> $25)
-    in d, (c)               ; D = MMU6
-    dec b                    ; B: ACC -> SEL
-    ld a, $57
-    out (c), a
-    inc b                    ; B: SEL -> ACC
-    in e, (c)               ; E = MMU7
+    ; MMU 6/7 into D/E for the restore below. NRGET leaves the $243B selection
+    ; alone, so this save cannot split a mainline select-then-write sequence.
+    NRGET NR_MMU6
+    ld d, a
+    NRGET NR_MMU7
+    ld e, a
     push de
     nextreg $56, AUD_PAGE_LO
     nextreg $57, AUD_PAGE_HI

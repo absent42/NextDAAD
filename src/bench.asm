@@ -118,11 +118,9 @@ bench_entry:
     ld a, (hl)
     ld (hl), 0
     ld (benchIsr), a
-    ld e, NR_MMU6
-    call nr_read
+    NRGET NR_MMU6
     ld (benchMmu6), a
-    ld e, NR_CPU_SPEED
-    call nr_read
+    NRGET NR_CPU_SPEED
     ld (benchSpeed), a
     call bench_nr64_zero
     ld hl, (logPtr)
@@ -207,8 +205,7 @@ bench_row:
     ld ix, (brRow)
     ld a, (ix + BR_SPEED)
     nextreg NR_CPU_SPEED, a
-    ld e, NR_CPU_SPEED
-    call nr_read
+    NRGET NR_CPU_SPEED
     and 3                        ; S = NR $07 bits 1:0 as read back
     ld (brS), a
     xor a
@@ -322,32 +319,15 @@ br_log:
     jp log_row_end
 
 ; Out: HL = raster line 0-310. MSB read either side of the LSB, bounded retries.
-; DI-bracketed, IFF2 kept (nr_read idiom): the frame ISR re-selects $243B.
-; Corrupts AF, BC, D.
+; Corrupts AF, D.
 bench_line:
-    ld a, i
-    jp pe, .on
-    ld a, i                      ; re-sample: see nr_read
-.on:
-    push af
-    di
     ld d, 4
 .rd:
-    ld bc, TBBLUE_REG_SEL
-    ld a, BCH_LINE_MSB
-    out (c), a
-    inc b
-    in h, (c)
-    dec b
-    ld a, BCH_LINE_LSB
-    out (c), a
-    inc b
-    in l, (c)                    ; the sample point
-    dec b
-    ld a, BCH_LINE_MSB
-    out (c), a
-    inc b
-    in a, (c)
+    NRGET BCH_LINE_MSB
+    ld h, a
+    NRGET BCH_LINE_LSB           ; the sample point
+    ld l, a
+    NRGET BCH_LINE_MSB
     cp h
     jr z, .ok
     dec d
@@ -356,9 +336,6 @@ bench_line:
     ld a, h
     and 1
     ld h, a
-    pop af
-    ret po
-    ei
     ret
 
 ; Poll until lines BCH_LC_LO-BCH_LC_HI, at most 65536 polls: a timeout sets
@@ -429,8 +406,7 @@ bench_lc_end:
 ; NR $64 saved and zeroed; it applies at vc 64, so two backward steps of the line
 ; are waited, bounded (tests/core303/bench/irq.asm nr64_zero). Corrupts all.
 bench_nr64_zero:
-    ld e, NR_LINE_OFS
-    call nr_read
+    NRGET NR_LINE_OFS
     ld (benchNr64), a
     nextreg NR_LINE_OFS, 0
     ld hl, 0
@@ -868,7 +844,7 @@ isr_body:
     or e
     jr nz, .spin
     di
-    call bench_line              ; IFF2 = 0 in both twins: the same path
+    call bench_line              ; both twins poll with interrupts off
 isrEiOp:
     ei                           ; SMC: nop in the DI twin
     ld de, (isrPrev)
@@ -1178,6 +1154,22 @@ gt_fini0:
     or a
     ret
 
+; " rr=vv" for Next register rr. Corrupts AF.
+    MACRO NRLOG nrn
+    ld a, nrn
+    call log_nrhead
+    NRGET nrn
+    call log_hex8
+    ENDM
+log_nrhead:
+    push af
+    ld a, ' '
+    call log_putc
+    pop af
+    call log_hex8
+    ld a, '='
+    jp log_putc
+
 ; Start the buffer: #CORE303 BENCH <stamp>, #NR and #SRAM lines.
 log_header:
     ld hl, 0
@@ -1192,20 +1184,12 @@ log_header:
     call log_eol
     ld hl, logTxtNr
     call log_puts
-    ld hl, nrList
-    ld b, NR_COUNT
-.nr:
-    ld a, ' '
-    call log_putc
-    ld a, (hl)
-    call log_hex8
-    ld a, '='
-    call log_putc
-    ld e, (hl)
-    call nr_read                 ; preserves BC, DE, HL
-    call log_hex8
-    inc hl
-    djnz .nr
+    NRLOG $01
+    NRLOG $0E
+    NRLOG $0F
+    NRLOG $03
+    NRLOG $05
+    NRLOG $07
     call log_eol
     ld hl, logTxtSram
     call log_puts
@@ -1596,8 +1580,6 @@ benchTab4:                       ; game turn
     BROW "B3GT", 1, GT_R, 2, BCH_PAGE, gt_init, gt_prep, bench_turn, gt_fini
     db 0
 
-nrList:      db $01, $0E, $0F, $03, $05, $07
-NR_COUNT     equ $ - nrList
 logTxtHdr:   db "#CORE303 BENCH ", 0
 logTxtStamp: db BCH_STAMP, 0
 logTxtNr:    db "#NR", 0
