@@ -730,13 +730,73 @@ def l_foreign_untouched():
     return f"helper PID {held.pid} survived the refused launch"
 
 
+def t_guard_parser():
+    src = (TESTS / "build-tests.ps1").read_text(encoding="utf-8-sig")
+    m = re.search(r"^function Test-MmcMountsSd.*?^}", src, re.S | re.M)
+    need(m, "Test-MmcMountsSd not found in build-tests.ps1")
+    sd = r"D:\NextDAAD\sd"
+    cases = [  # (command line, expected)
+        (r"CSpect.exe -zxnext -mcp=1 x.nex", False),
+        (r"CSpect.exe -mmc=D:\NextDAAD\sd\SUITE\ -map=a x.nex", True),
+        (r'CSpect.exe -mmc="D:\NextDAAD\sd\LEG A\" x.nex', True),
+        (r"CSpect.exe -mmc=d:/nextdaad/SD/suite x.nex", True),
+        (r"CSpect.exe -mmc=D:\NextDAAD\sd x.nex", True),
+        (r'CSpect.exe "-mmc=D:\NextDAAD\sd\S\" x.nex', True),
+        (r"CSpect.exe -mmc=D:\NextDAAD\tests\out\cspect-guard\card\ x.nex", False),
+        (r'CSpect.exe -mmc="D:\Next DAAD\sd\" x.nex', False),
+        (r"CSpect.exe -mmc=D:\NextDAAD\sdx\ x.nex", False),
+        (r"CSpect.exe -mmc=D:\NextDAAD\sd\..\build\ x.nex", False),
+        (r"CSpect.exe -mmc=./ x.nex", True),
+        (r"CSpect.exe -mmc= x.nex", True),
+        ("", True),
+    ]
+    lines = [m.group(0), f"$sd = '{sd}'", "$bad = @()"]
+    for i, (cmd, want) in enumerate(cases):
+        lines.append(f"if ((Test-MmcMountsSd '{cmd}' $sd) -ne ${str(want).lower()}) {{ $bad += {i} }}")
+    lines.append("if ((Test-MmcMountsSd $null $sd) -ne $true) { $bad += 99 }")
+    lines.append("Write-Output ('BAD=' + ($bad -join ','))")
+    r = subprocess.run(["pwsh", "-NoProfile", "-Command", "\n".join(lines)], capture_output=True,
+                       text=True, timeout=60)
+    need("BAD=" in r.stdout, f"pwsh failed: {r.stderr[-300:]}")
+    bad = r.stdout.split("BAD=")[1].strip()
+    need(not bad, f"wrong verdict for case indexes {bad}")
+    return f"{len(cases) + 1} command lines"
+
+
+def stage_suite():
+    return subprocess.run(["pwsh", "-NoProfile", "-File", str(TESTS / "build-tests.ps1"), "-Suite"],
+                          capture_output=True, text=True, timeout=600)
+
+
+def l_guard_narrowed():
+    side = ROOT / "tests" / "out" / "cspect-guard" / "card"
+    side.mkdir(parents=True, exist_ok=True)
+    need(CARD.joinpath("GAME.DDB").is_file(), f"{CARD}\\GAME.DDB missing: run tests\\build-tests.ps1 -Suite")
+    (side / "GAME.DDB").write_bytes((CARD / "GAME.DDB").read_bytes())
+    inst = launcher.launch(side, NEX, MAP)
+    held = Held(inst.pid)
+    STARTED.append(held)
+    with inst:
+        r = stage_suite()
+        need(r.returncode == 0, f"staging refused with a CSpect off sd\\ (exit {r.returncode}): {r.stderr[-300:]}")
+    need(not held.alive(), f"PID {held.pid} alive after close")
+    inst, held = live_launch()
+    with inst:
+        r = stage_suite()
+        need(r.returncode != 0, "staging did not refuse with a CSpect on sd\\SUITE")
+        need("CSpect is running - close it before staging" in r.stdout + r.stderr,
+             f"refusal text missing: {(r.stdout + r.stderr)[-300:]}")
+    need(not held.alive(), f"PID {held.pid} alive after close")
+    return "card under tests\\out passes, sd\\SUITE refuses"
+
+
 HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, t_tools_reply_checked,
         t_garbage_listener, t_status_without_pc_raises, t_required_tools_checked, t_version_gate,
         t_port_choice, t_private_copy_excludes, t_job_kills_child, t_mutex_serialises,
         t_mutex_release_checked, t_close_keeps_mutex, t_listener_owner, t_no_answer_names_causes,
-        t_fallback_runs]
+        t_fallback_runs, t_guard_parser]
 LIVE = [l_launch_tools_close, l_private_copy_mcp, l_no_port_11000, l_window_minimised,
-        l_parent_killed, l_exception_closes, l_foreign_untouched]
+        l_parent_killed, l_exception_closes, l_foreign_untouched, l_guard_narrowed]
 
 
 def run(checks, names):

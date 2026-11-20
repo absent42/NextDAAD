@@ -87,7 +87,8 @@
 # "CSpect-lock: see header."): every switch that copies files into a
 # leg folder throws "CSpect is running - close it before staging"
 # rather than warn, because a locked sd\ file under CSpect produces a
-# silently partial fixture instead of a clean failure.
+# silently partial fixture instead of a clean failure. Only a CSpect
+# whose -mmc= mounts sd\ (or a folder under it) counts; see Test-SdCSpect.
 # ===================================================================
 #
 # Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
@@ -442,6 +443,24 @@
 param([switch]$Harness, [switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
+# True when a CSpect mounts sd\ (or a folder under it) via -mmc=. No -mmc is false; a relative,
+# unparseable or unreadable command line is true (cwd unknown).
+function Test-MmcMountsSd([AllowNull()][string]$CommandLine, [string]$SdDir) {
+    if ([string]::IsNullOrEmpty($CommandLine)) { return $true }
+    $m = [regex]::Match($CommandLine, '(?i)(?:^|\s)"?-mmc=(?:"([^"]*)"|([^\s"]*))')
+    if (-not $m.Success) { return $false }
+    $v = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+    if ($v -notmatch '^(?:[A-Za-z]:[\\/]|\\\\)') { return $true }
+    try { $full = [System.IO.Path]::GetFullPath($v).TrimEnd('\', '/') } catch { return $true }
+    $sd = $SdDir.TrimEnd('\', '/')
+    return ($full -ieq $sd) -or $full.StartsWith($sd + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+function Test-SdCSpect {
+    try { $procs = @(Get-CimInstance Win32_Process -Filter "Name='CSpect.exe'" -ErrorAction Stop) } catch { return $true }
+    $sd = [System.IO.Path]::GetFullPath((Join-Path $root 'sd'))
+    foreach ($p in $procs) { if (Test-MmcMountsSd $p.CommandLine $sd) { return $true } }
+    return $false
+}
 # Without -Harness, staging refuses while build\harness.txt exists. -Harness stages into the same
 # leg folders, unmarked; after staging a hardware leg and before running it, rebuild without -Harness and compare
 # that NEX hash to the staged leg's NEXTDAAD.NEX.
@@ -4072,7 +4091,7 @@ if ($text2Any) {
 # is the first thing any run does to sd\, so the hazard applies before
 # any per-switch guard would run. Per-switch guards below are kept as a
 # marker at each site, not because they run first.
-if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+if (Test-SdCSpect) {
     throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
 }
 Reset-LegDir $legName
@@ -4144,7 +4163,7 @@ if ($GMode) {
     # no image-conversion step (see the -Rab block's own note).
     # CSpect-lock (see header): a partial copy here leaves a mixed
     # extension set the loader's probe chain resolves unpredictably.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial gmodegate fixture)"
     }
     Copy-Item "$root\tests\out\gmodegate.ddb" "$leg\GAME.DDB" -Force
@@ -4171,7 +4190,7 @@ if ($V3) {
     # Make the V3 database the active game. CSpect-lock (see header): a
     # partial stage here means XMES reading a stale 0.XMB from another
     # fixture at the same offsets.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial v3probe fixture)"
     }
     Copy-Item "$root\tests\out\v3probe.ddb" "$leg\GAME.DDB" -Force
@@ -4188,7 +4207,7 @@ if ($Xbn) {
     # XBN extern support Task 1 owner leg fixture: tests\extern.dsf's
     # XREG/XCAL/XCNR/XTIK/XSVC/XABS verbs against tests\xbn\xbntest.asm.
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
     }
     Copy-Item "$root\tests\out\extern.ddb" "$leg\GAME.DDB" -Force
@@ -4243,7 +4262,7 @@ if ($Xbn) {
         # stages the one Layer 2 picture XFAD draws, from the same
         # Rabenstein source the -GMode block reuses. CSpect-lock: see
         # header.
-        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        if (Test-SdCSpect) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial fade fixture)"
         }
         $fadeSrcDir = Join-Path $root 'authoring-kit\externs\fade'
@@ -4294,7 +4313,7 @@ if ($Xbn) {
         # (same scratch-cwd build, drift guard and picture staging),
         # targeting different verb sets - reduced to a one-line note
         # each rather than repeating this block.
-        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        if (Test-SdCSpect) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
         $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
@@ -4342,7 +4361,7 @@ if ($Xbn) {
     elseif ($XbnHints) {
         # Same as -XbnAll, targets XHNP/XHNQ/XHNA/XHNR/XHNT (hints module)
         # plus a packed GAME.HNT.
-        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        if (Test-SdCSpect) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
         $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
@@ -4389,7 +4408,7 @@ if ($Xbn) {
     elseif ($XbnClock) {
         # Same as -XbnAll, targets XCLK/XCLA/XCLS/XTMR/XTMI (clock/timer
         # modules), no hint packing.
-        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        if (Test-SdCSpect) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
         $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
@@ -4434,7 +4453,7 @@ if ($Xbn) {
     elseif ($XbnTool) {
         # Same as -XbnAll, targets XTKP/XTKA/XTKO/XTKT/XSLT (toolkit
         # module), no hint packing.
-        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        if (Test-SdCSpect) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
         $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
@@ -4485,7 +4504,7 @@ if ($Xbn) {
         # from all.asm - same scratch-cwd/CSpect-lock pattern as -XbnAll,
         # no shipped binary to drift-check against, no picture or hint
         # staging.
-        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        if (Test-SdCSpect) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
         }
         $transOut = "$root\tests\out\xbn\TRANS.XBN"
@@ -4539,7 +4558,7 @@ if ($Rab) {
     # CSpect-lock (see header): a partial copy here leaves a MIXED set
     # of shapes that the loader's probe chain resolves unpredictably
     # (NX2 variants win over NXI).
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
     }
     # The modernised, next-only DSF (tools\Rabenstein-master\nextdaad) compiles
@@ -4611,7 +4630,7 @@ if ($Rab) {
 $uuActive = $false
 if ($UU) {
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
     }
     # tools\urban-upstart\URBAN-UPSTART.DSF is OWNER-AUTHORED and the vendor
@@ -4679,7 +4698,7 @@ $partActive = $false
 if ($Part) {
     # Two-part fixture pair (four files across two DDBs). CSpect-lock:
     # see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial part staging)"
     }
     # sd\PART\ was emptied at the top of the staging section, so all four
@@ -4758,7 +4777,7 @@ if ($Title) {
     # at all, where a survivor in the shared root used to starve the
     # graphics cache and silently turn burst picture draws into no-ops.
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial title fixture)"
     }
     Copy-Item "$root\tools\demo-files\DAAD.NX2" "$leg\DAAD.NX2" -Force
@@ -4776,7 +4795,7 @@ if ($Font) {
     # full 2048-byte FONT.CHR fresh each run from the .ch8 source
     # plus authoring-kit\lib\default.chr.
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial font fixture)"
     }
     # tools\demo-files\fonts\Crews ships as Crews.zip and is not always
@@ -5045,7 +5064,7 @@ if ($Vid) {
     # NXV v2 leg set fixtures - see the -Vid switch's own header comment
     # above for the shape/source/start/duration mapping. CSpect-lock:
     # see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
     # No stale-clean here: sd\VID\ is emptied once at the top of the
@@ -5100,7 +5119,7 @@ if ($VidLong) {
     # encodes bigger than the pool ring (see the -VidLong header
     # comment). Cached like -Vid, and shares sd\VID\ with it: give both
     # switches in one invocation for the full 001-014+099 card.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
     $vidOutDir = Join-Path $root 'tests\out'
@@ -5202,7 +5221,7 @@ if ($VidLong) {
 if ($NxBench) {
     # Decode-kernel bench payloads - see the -NxBench header comment
     # above. CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial bench fixture set)"
     }
     # NXB8's segment source is a dedicated classic encode built with
@@ -5245,7 +5264,7 @@ if ($Nxv2Test) {
 
 if ($Aud) {
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial audio sets)"
     }
     # No per-kind stale-audio cleanup: the leg folder was emptied at the
@@ -5314,7 +5333,7 @@ if ($AudLad) {
     #
     # CSpect-lock (see header): a partial stage here leaves a partial
     # ladder whose missing rungs read as silent no-ops.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ladder)"
     }
     Copy-Item "$root\tests\out\audlad.ddb" "$leg\GAME.DDB" -Force
@@ -5418,7 +5437,7 @@ if ($SfxDi) {
     #
     # CSpect-lock (see header): a partial stage here leaves a missing
     # WAV reading as a silent no-op rather than an error.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ear fixture)"
     }
     Copy-Item "$root\tests\out\sfxdi.ddb" "$leg\GAME.DDB" -Force
@@ -5484,7 +5503,7 @@ if ($SfxLong) {
     # three assets added by Task 14b.
     #
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\sfxlong.ddb" "$leg\GAME.DDB" -Force
@@ -5597,7 +5616,7 @@ if ($Sfx2) {
     # active DDB, and generate + stage the three stimulus WAVs.
     #
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\sfx2.ddb" "$leg\GAME.DDB" -Force
@@ -5662,7 +5681,7 @@ if ($SfxSt) {
     # active DDB and generates + stages seven stimulus WAVs.
     #
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\sfxst.ddb" "$leg\GAME.DDB" -Force
@@ -5767,7 +5786,7 @@ $aysRegActive = $false
 if ($AysReg) {
     # AYS stream register-loss leg. Stages the fixture DDB, the two
     # generated streams, an AY effects bank and (optionally) a video.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\aysreg.ddb" "$leg\GAME.DDB" -Force
@@ -5819,7 +5838,7 @@ if ($L2Holes) {
     #
     # CSpect-lock (see header): a missing 001.NXI here makes PICTURE
     # fail, so the fixture would report on staging rather than Layer 2.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
     }
     Copy-Item "$root\tests\out\l2holes.ddb" "$leg\GAME.DDB" -Force
@@ -5878,7 +5897,7 @@ if ($L2Pos -or $L2PosWide) {
     # Positioned-picture (NX3) leg: tests\l2pos.dsf + mkl2pos.py's art set
     # for one Layer 2 mode. expect_*.bin, l2pos_tags.txt and the walk json
     # stay in the art dir; only GAME.DDB, the pictures and the NEX go in.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
     }
     $l2posMode = if ($L2PosWide) { 1 } else { 0 }
@@ -6008,7 +6027,7 @@ if ($TmOver) {
     #
     # CSpect-lock (see header): a missing 001.NXI here makes PICTURE
     # fail, so the fixture would report on staging rather than layer order.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
     }
     Copy-Item "$root\tests\out\tmover.ddb" "$leg\GAME.DDB" -Force
@@ -6077,7 +6096,7 @@ if ($TileSlack) {
     #
     # CSpect-lock (see header): a leg missing one arm of the A/B pair
     # cannot be noticed on the glass.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial A/B - one arm of a pair missing is not detectable on screen)"
     }
     Copy-Item "$root\tests\out\tileslack.ddb" "$leg\GAME.DDB" -Force
@@ -6155,7 +6174,7 @@ if ($Uto -or $UtoV3) {
     # Unreachable with the source absent - the compile section throws
     # first - but the guard keeps the staging half honest on its own.
     if (-not $utoBuilt) { throw "-Uto/-UtoV3: no utotest DDB was built (see the tools\TEST.DSF message above)" }
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
     }
     # -UtoV3 last-wins, matching the $legName order resolved at the top.
@@ -6179,7 +6198,7 @@ if ($FontSw) {
     # own leg and its own folder, exactly as -GMode's does for
     # gmodegate.dsf.
     # CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\fontsw.ddb" "$leg\GAME.DDB" -Force
@@ -6248,7 +6267,7 @@ if ($Txt40) {
     # 40-column tilemap mode fixture leg: tests\txt40.dsf drives GFX 0/1
     # 18, WINAT/WINSIZE and CENTRE at both widths, and a synchronous
     # video play from 40-col. CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\txt40.ddb" "$leg\GAME.DDB" -Force
@@ -6275,7 +6294,7 @@ if ($Accent) {
     # accent encodings, the uppercase triple sets, direct sharp-s, MODE 1
     # force-upper and More... paging across shifted words. Expected
     # glyph indices per check are asserted below. CSpect-lock: see header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\accents-autotok.ddb" "$leg\GAME.DDB" -Force
@@ -6374,7 +6393,7 @@ if ($SprAud) {
     # Sprites under audio: four sets, the kit's 9-channel tune and two
     # sampled effects, one COMPLETE and one STREAMING. CSpect-lock: see
     # header.
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
     Copy-Item "$root\tests\out\spraud.ddb" (Join-Path $leg 'GAME.DDB') -Force
@@ -6573,7 +6592,7 @@ else {
 # root boots the MAGIC variant (the checks below read its GAME.DDB).
 # CSpect-lock: see header.
 if ($text2Any) {
-    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
 }
