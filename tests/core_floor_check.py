@@ -786,18 +786,16 @@ def check_refuse_closure():
 
 ZES_LAUNCHERS = [
     "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py",
-    "tests/cycle_dump.py", "tests/intro/zes_intro.py",
-    "tests/l2pos_check.py",
-    "tests/poolc/poolc_check.py", "tests/spraud_dump.py", "tests/sprites_dump.py",
-    "tests/txt40_dump.py",
+    "tests/intro/zes_intro.py",
+    "tests/poolc/poolc_check.py",
 ]
 # Not launchers: the reference ZX interpreter, other machines, zes_core itself
 # (the one raw Popen) and this file.
 ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py",
             "tests/zes_core.py", "tests/core_floor_check.py")
-ZES_HELPERS = ("tests/audio/stopm_dump.py", "tests/sprites_dump.py")
+ZES_HELPERS = ("tests/audio/stopm_dump.py",)
 ZES_NAMES = re.compile(r"zesarux\.exe|--enable-remoteprotocol", re.I)
-ZES_HELPER_CALLS = {f"{m}.{fn}" for m in ("stopm_dump", "sprites_dump") for fn in ("launch", "play")}
+ZES_HELPER_CALLS = {f"{m}.{fn}" for m in ("stopm_dump",) for fn in ("launch", "play")}
 ZES_SPAWNERS = {"subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
                 "subprocess.check_output", "os.system", "os.popen"}
 FADE_CALL = re.compile(r"\bEXTERN\s+\w+\s+4[0-3]\b", re.I)
@@ -964,7 +962,7 @@ def zes_users(root=ROOT):
 def check_zes_core_wired(root=ROOT, listed=None):
     """Every ZEsarUX launch goes through zes_core.popen: each direct launcher calls it
     and makes no subprocess.Popen call, no user (direct or helper) starts the ZEsarUX
-    exe through subprocess/os spawners, each helper (nleg, stopm_dump, sprites_dump)
+    exe through subprocess/os spawners, each helper (stopm_dump)
     is a direct launcher, and ZES_LAUNCHERS equals the discovered direct and helper
     users exactly. Import aliases are resolved."""
     listed = ZES_LAUNCHERS if listed is None else listed

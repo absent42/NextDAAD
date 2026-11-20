@@ -1,35 +1,29 @@
-# Drives tests\sprites.dsf on ZEsarUX and checks the DEBUG snapshot after every
-# step. Layout mirrors spr_dbg_snap in src\sprites.asm; BLOCK is pinned there
-# by an ASSERT.
-#
-# Run from the repo root, after
-#     .\build.ps1                            (DEBUG - the snapshot is DEBUG-only)
-#     pwsh -File tests\build-tests.ps1 -Sprites
-#
-#     python tests\sprites_dump.py [--port N]
-#
-# The ZRCP client is tests\parser\zrcp.py, not a fresh socket client (the
-# next-emulators skill's rule). Each ANYKEY is released with SYMBOL SHIFT
-# through the emulated keyboard matrix - see zrcp.tap_dismiss_key for why
-# that key and not SPACE.
+r"""Drives tests\sprites.dsf on CSpect (tests\cspect) and checks the DEBUG snapshot after every
+step. Layout mirrors spr_dbg_snap in src\sprites.asm; BLOCK is pinned there by an ASSERT.
+
+Run from the repo root, after
+    .\build.ps1                            (DEBUG - the snapshot is DEBUG-only)
+    pwsh -File tests\build-tests.ps1 -Sprites
+
+    python tests\sprites_dump.py [--port N] [--work DIR] [-v]
+
+--port is the harness MCP port (tests\cspect\launcher.py PORT_RANGE, default the first free).
+Each step waits for its own MESSAGE on the tilemap; samples and settles count FRAMECOUNTER.
+tests\spraud_dump.py uses State, step, torch_moves, wait_text, boot and expect."""
 import argparse
 import os
 import pathlib
 import shutil
-import socket
-import subprocess
 import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tests" / "parser"))
 sys.path.insert(0, str(ROOT / "tests"))
-import zes_core                                        # noqa: E402
-import zrcp                                          # noqa: E402
+from cspect import Session                             # noqa: E402
 
-ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
 LEG = ROOT / "sd" / "SPRITES"
 NEX = ROOT / "build" / "nextdaad.nex"
+MAP = ROOT / "build" / "nextdaad.map"
 
 SNAP = 0x5000
 SR_SIZE = 48; CHANS = 8; CE_SIZE = 4; CACHE = 16
@@ -38,20 +32,29 @@ SR = dict(SET=0, KIND=1, W=2, H=3, CELLS=4, ATTR=5, PAT=6, NBLK=7, FRAMES=8, FRA
           CHAN=39, XLO=40, Y=42)
 BLOCK = 488                        # sprRec..sprLoads, ASSERT SPR_DBG_BLOCK == 488
 SNAP_LEN = 4 + 1 + BLOCK + 1 + 1
+PAGE = 0x2000
+# Bare SYMBOL SHIFT: kb_char maps it to 0, wait_key takes any key (src\overlay1.asm, src\print.asm)
+DISMISS_KEY = "SYM"
+DISMISS_HOLD_FRAMES = 6
+LEAVE_KEY = "SPACE"                # a GETMS loop leaves through INKEY, which ignores bare SYM
+STEP_WAIT_S = 30.0                 # host deadline for a step's MESSAGE
+FRAME_WAIT_S = 10.0
+POLL_S = 0.02
+SAMPLE_FRAMES = 4                  # torch samples: delays are 6 and 12 ticks
+SAMPLE_BUDGET_FRAMES = 75
 
 
 class State:
-    def __init__(self, z):
+    def __init__(self, s):
         for i in range(5):
-            b = z.read_memory(SNAP, SNAP_LEN)
+            b = s.read(SNAP, SNAP_LEN)
             if b[:4] == b"SPR1" and b[4] == b[-1]:
                 break
-            # No signature on the FIRST read is a Release .nex, not a race:
-            # nothing ever writes $5000 there, so retrying cannot help.
+            # no signature on the first read is a Release .nex: nothing writes $5000 there
             if i == 0 and b[:4] != b"SPR1":
                 sys.exit("sprites_dump: no DEBUG snapshot at $%04X: build DEBUG "
                          "last (pwsh build.ps1) before staging" % SNAP)
-            time.sleep(0.05)
+            s.wait_frames(1, FRAME_WAIT_S)
         else:
             sys.exit("sprites_dump: snapshot torn at $%04X" % SNAP)
         self.seq = b[4]
@@ -88,34 +91,11 @@ class State:
         return "\n".join(parts)
 
 
-def pool_pages_hold(z, ani, page_gap):
-    """True when three consecutive-by-bank pool pages hold 017.ANI's three
-    8K reads: the file head, the bytes at 8192, and the tail at 16384.
-
-    ZEsarUX zone 0 is the machine's whole 2MB of RAM, so it sees a pool bank
-    the CPU has not mapped - but it is NOT indexed by Next MMU page number
-    (13.0 put page N at flat page N+32), so the head's page is DISCOVERED and
-    the other two are addressed relative to it. That keeps the check free of
-    any emulator-layout constant. `page_gap` is (CE_BANK1 - CE_BANK0) * 2, the
-    distance in 8K pages from the first bank's page 0 to the second's.
-    Zone -1 (mapped memory) is restored before returning - every other read in
-    this file is CPU-visible.
-    """
-    z.cmd("set-memory-zone 0")
-    try:
-        head, mid, tail = ani[:16], ani[8192:8208], ani[16384:16400]
-        for pg in range(256):
-            if z.read_memory(pg * 8192, 16) != head:
-                continue
-            if pg + 1 > 255 or z.read_memory((pg + 1) * 8192, 16) != mid:
-                continue
-            if pg + page_gap > 255:
-                continue
-            if z.read_memory((pg + page_gap) * 8192, 16) == tail:
-                return True
-        return False
-    finally:
-        z.cmd("set-memory-zone -1")
+def pool_pages_hold(s, ani, bank0, bank1):
+    """True when the file's three 8K reads sit in pool pages bank0*2, bank0*2+1 and bank1*2
+    (spr_cache_page: page = CE_BANKn * 2 + image page within the bank)."""
+    parts = ((bank0 * 2, ani[:PAGE]), (bank0 * 2 + 1, ani[PAGE:2 * PAGE]), (bank1 * 2, ani[2 * PAGE:]))
+    return all(s.read_page(pg, 0, len(want)) == want for pg, want in parts)
 
 
 def expect(cond, what):
@@ -123,181 +103,149 @@ def expect(cond, what):
         sys.exit("sprites_dump: FAIL " + what)
 
 
-def step(z, until=None, timeout=3.0, pre=0.0):
-    """Tap the dismiss key, then read the snapshot. With `until`, poll the
-    snapshot until the predicate holds or the timeout passes: the steps
-    that wait in a GETMS tracking loop (S1, S2, S14) leave through a
-    PAUSE 25 debounce, so their successor state lands later than a
-    fixed sleep allows. `pre` sleeps before the key: a predecessor whose
-    predicate fires early (S15's stop-all lands before its picture has
-    finished drawing) is not yet at its key wait when the reader returns."""
-    if pre:
-        time.sleep(pre)
-    if until is None:
-        z.tap_dismiss_key()
-        time.sleep(0.6)
-        return State(z)
-    # A GETMS tracking loop exits through INKEY, which reads key_scan's
-    # character tables: the dismiss key (SYMBOL SHIFT) maps to no key there,
-    # so send a real space instead.
-    z.send_keys(' ')
-    deadline = time.time() + timeout
-    while True:
-        time.sleep(0.2)
-        st = State(z)
-        if until(st) or time.time() > deadline:
-            return st
+def on_screen(s, text):
+    return any(text in r for r in s.rows())
 
 
-def port_free(port):
-    s = socket.socket()
+def wait_text(s, text, timeout=STEP_WAIT_S):
+    """True once text is on the tilemap, False after timeout seconds."""
     try:
-        s.connect(("127.0.0.1", port))
-    except OSError:
+        s.wait_until(lambda: on_screen(s, text), timeout, POLL_S, repr(text))
         return True
-    finally:
-        s.close()
-    return False
+    except TimeoutError:
+        return False
 
 
-def launch(work, port, leg=LEG):
-    """Stage a leg folder (sd\\SPRITES by default; tests\\spraud_dump.py passes
-    its own) into an absolute scratch card, boot it headless and return
-    (process, connected client)."""
+def step(s, text, until=None, timeout=3.0, pre=0):
+    """Leave the current wait, then read the snapshot once text (the next step's MESSAGE) is on
+    the tilemap. until: the wait is a GETMS tracking loop (SPACE leaves it) and the snapshot is
+    polled until until(state) or timeout seconds. pre: frames to run before the key."""
+    if pre:
+        s.wait_frames(pre, FRAME_WAIT_S)
+    if until is None:
+        s.press(DISMISS_KEY, frames=DISMISS_HOLD_FRAMES)
+    else:
+        s.press(LEAVE_KEY)
+    if not wait_text(s, text):
+        sys.exit("sprites_dump: FAIL %r never printed\n%s" % (text, State(s).summary()))
+    st = State(s)
+    deadline = time.monotonic() + timeout
+    while until is not None and not until(st) and time.monotonic() < deadline:
+        time.sleep(POLL_S)
+        st = State(s)
+    return st
+
+
+def torch_moves(s, n):
+    """(moved, pairs): set n's (frame, count) pair sampled every SAMPLE_FRAMES; at least
+    three samples, then until it moves or SAMPLE_BUDGET_FRAMES pass. The pair is
+    2-valued over an 18-tick period, so a fixed gap can alias."""
+    r = State(s).live()
+    pairs = [(r[n][SR["FRAME"]], r[n][SR["COUNT"]])]
+    f0 = s.frame()
+    while True:
+        s.wait_frames(SAMPLE_FRAMES, FRAME_WAIT_S)
+        r = State(s).live()
+        if n not in r:
+            return False, pairs
+        pairs.append((r[n][SR["FRAME"]], r[n][SR["COUNT"]]))
+        moved = any(p != pairs[0] for p in pairs[1:])
+        if len(pairs) >= 3 and (moved or (s.frame() - f0) & 0xFFFF >= SAMPLE_BUDGET_FRAMES):
+            return moved, pairs
+
+
+def boot(work, leg=LEG, port=None):
+    """A Session on a scratch copy of leg (sd\\SPRITES unless tests\\spraud_dump.py passes
+    its own) with the built .nex."""
     sd = pathlib.Path(work).resolve() / "sd"
     if sd.exists():
         shutil.rmtree(sd)
     shutil.copytree(leg, sd)
     shutil.copyfile(NEX, sd / "nextdaad.nex")
-    proc = zes_core.popen([
-        str(ZESARUX), "--machine", "tbblue", "--realvideo",
-        "--enable-esxdos-handler", "--esxdos-root-dir", str(sd),
-        "--vo", "null", "--ao", "null",
-        "--enable-remoteprotocol", "--remoteprotocol-port", str(port),
-        "--smartloadpath", str(sd),
-    ], cwd=str(sd))
-    z = None
-    for _ in range(60):
-        if proc.poll() is not None:
-            proc.wait()
-            sys.exit("sprites_dump: ZEsarUX exited before ZRCP came up")
-        try:
-            z = zrcp.Zrcp(port=port)
-            break
-        except OSError:
-            time.sleep(0.5)
-    if z is None:
-        proc.kill()
-        sys.exit("sprites_dump: ZRCP never answered on port %d" % port)
-    z.cmd("smartload %s" % (sd / "nextdaad.nex"), deadline=60.0)
-    return proc, z
+    return Session.boot(sd, sd / "nextdaad.nex", MAP, port=port)
 
 
-def run(z, verbose):
-    def show(tag, s):
+def run(s, verbose):
+    def show(tag, st):
         if verbose:
-            print("--- %s\n%s" % (tag, s.summary()))
-    time.sleep(4.0)                    # PRO 0 runs MOUSE 0 1, GFX 2 19, MESSAGE 0 at boot
-    s = State(z); show("S1", s)
-    expect(s.pointer == 0x8001, "S1 pointerMask $8001 for the built-in arrow (got %04X)" % s.pointer)
-    r = s.live(); expect(list(r) == [2], "S1 set 2 live, got %r" % list(r))
+            print("--- %s\n%s" % (tag, st.summary()))
+    # PRO 0 runs MOUSE 0 1, GFX 2 19, MESSAGE 0 at boot
+    expect(wait_text(s, "S1 GFX 2 19"), "S1 message never printed")
+    st = State(s); show("S1", st)
+    expect(st.pointer == 0x8001, "S1 pointerMask $8001 for the built-in arrow (got %04X)" % st.pointer)
+    r = st.live(); expect(list(r) == [2], "S1 set 2 live, got %r" % list(r))
     expect(r[2][SR["KIND"]] == 0 and r[2][SR["PATS"]] == 2 and r[2][SR["PAT"]] == 2, "S1 8-bit, 2 patterns at half-slot 2")
     expect(r[2][SR["ATTR"]] == 127, "S1 attribute run top-down at 127")
     expect(r[2][SR["XLO"]] == 56 and r[2][SR["Y"]] == 212, "S1 (24,180) in 256x192 mode is plane (56,212)")
-    expect(s.loads == 1 and s.cached() == [2], "S1 one SD load, set 2 cached")
-    expect(s.hook & 2, "S1 HOOK_SPR armed")
-    # The tick refreshes SR_FRAME/SR_COUNT in the snapshot for every channel
-    # it visits, so a live set's pair has to move on its own between reads.
-    # The refresh runs only on an advance, so the pair is 2-valued: (0,6) for
-    # six ticks then (1,12) for twelve. Any FIXED gap aliases against that
-    # 18-tick period - three samples 0.3s apart read the same pair for a third
-    # of all starting phases (measured). At least three samples, then keep
-    # going until the pair moves or the budget runs out.
-    pairs = [(r[2][SR["FRAME"]], r[2][SR["COUNT"]])]
-    deadline = time.time() + 1.5
-    while True:
-        time.sleep(0.08); s = State(z); r = s.live()
-        pairs.append((r[2][SR["FRAME"]], r[2][SR["COUNT"]]))
-        if len(pairs) >= 3 and (any(p != pairs[0] for p in pairs[1:])
-                                or time.time() > deadline):
-            break
-    expect(any(p != pairs[0] for p in pairs[1:]),
-           "S1 torch advances (delays 6 and 12 ticks): %r" % (pairs,))
+    expect(st.loads == 1 and st.cached() == [2], "S1 one SD load, set 2 cached")
+    expect(st.hook & 2, "S1 HOOK_SPR armed")
+    # the tick refreshes SR_FRAME/SR_COUNT only on an advance: (0,6) for six ticks, (1,12) for twelve
+    moved, pairs = torch_moves(s, 2)
+    expect(moved, "S1 torch advances (delays 6 and 12 ticks): %r" % (pairs,))
     expect(all(p[0] in (0, 1) for p in pairs),
            "S1 torch stays inside its two frames: %r" % (pairs,))
-    s = step(z, until=lambda st: 6 in st.live()); show("S2", s); r = s.live()
+    st = step(s, "S2 GFX 6 19", until=lambda x: 6 in x.live()); show("S2", st); r = st.live()
     expect(sorted(r) == [2, 6], "S2 sets 2 and 6 live")
     expect(r[6][SR["KIND"]] == 1 and r[6][SR["NBLK"]] == 2 and list(r[6][SR["BLOCKS"]:SR["BLOCKS"]+2]) == [1, 2], "S2 4-bit claims blocks 1,2")
-    expect(s.claim == 0b110 and r[6][SR["ATTR"]] == 126 and r[6][SR["PAT"]] == 6, "S2 claim mask, attr 126, half-slot 6")
-    s = step(z, until=lambda st: st.loads >= 3); show("S3", s); r = s.live()
-    expect(sorted(r) == [2, 6] and s.loads == 3 and 15 in s.cached(), "S3 15 refused (block 2 claimed) but cached")
-    s = step(z); show("S4", s); r = s.live()
-    expect(sorted(r) == [2] and s.claim == 0, "S4 set 6 stopped, claim cleared")
-    s = step(z); show("S5", s); r = s.live()
-    expect(sorted(r) == [2, 15] and s.loads == 3 and r[15][SR["ATTR"]] == 126, "S5 15 starts from cache")
-    expect(s.ident == (0x8001 | (1 << 2)), "S5 identity mask includes block 2")
-    s = step(z); show("S6", s); r = s.live()
-    expect(r == {} and not (s.hook & 2) and s.ident == 0x8001, "S6 stop-all: no records, hook disarmed")
-    s = step(z); show("S7", s); r = s.live()
+    expect(st.claim == 0b110 and r[6][SR["ATTR"]] == 126 and r[6][SR["PAT"]] == 6, "S2 claim mask, attr 126, half-slot 6")
+    st = step(s, "S3 GFX 15 19", until=lambda x: x.loads >= 3); show("S3", st); r = st.live()
+    expect(sorted(r) == [2, 6] and st.loads == 3 and 15 in st.cached(), "S3 15 refused (block 2 claimed) but cached")
+    st = step(s, "S4 GFX 6 21"); show("S4", st); r = st.live()
+    expect(sorted(r) == [2] and st.claim == 0, "S4 set 6 stopped, claim cleared")
+    st = step(s, "S5 GFX 15 19"); show("S5", st); r = st.live()
+    expect(sorted(r) == [2, 15] and st.loads == 3 and r[15][SR["ATTR"]] == 126, "S5 15 starts from cache")
+    expect(st.ident == (0x8001 | (1 << 2)), "S5 identity mask includes block 2")
+    st = step(s, "S6 GFX 255 21"); show("S6", st); r = st.live()
+    expect(r == {} and not (st.hook & 2) and st.ident == 0x8001, "S6 stop-all: no records, hook disarmed")
+    st = step(s, "S7 GFX 100 20"); show("S7", st); r = st.live()
     expect(list(r) == [3] and r[3][SR["CELLS"]] == 4 and r[3][SR["ATTR"]] == 124 and r[3][SR["PATS"]] == 3, "S7 set 3 via flags")
     expect(r[3][SR["XLO"]] == 72 and r[3][SR["Y"]] == 132, "S7 override (40,100) is plane (72,132)")
-    # 003.ANI is two frames, no loop: frame 1's delay runs out and the tick
-    # parks there with SR_COUNT 0 rather than wrapping.
-    time.sleep(0.5); s = State(z); r = s.live()
+    # 003.ANI is two frames, no loop: the tick parks on frame 1 with SR_COUNT 0
+    s.wait_frames(25, FRAME_WAIT_S); st = State(s); r = st.live()
     expect(r[3][SR["FRAME"]] == 1 and r[3][SR["COUNT"]] == 0, "S7 one-shot holds its last frame")
-    seq7 = s.seq
-    s = step(z); show("S8", s); r = s.live()
+    seq7 = st.seq
+    st = step(s, "S8 GFX 253 20"); show("S8", st); r = st.live()
     expect(list(r) == [3], "S8 GFX 253 20 refused, state unchanged")
-    # f > 252 now goes through spr_refuse (reason 0C), and every refusal
-    # writes the snapshot - so the sequence byte has to have moved.
-    expect(s.seq != seq7, "S8 the refusal took a snapshot (seq stuck at %d)" % seq7)
-    s = step(z); show("S9", s); r = s.live()
-    expect(sorted(r) == list(range(20, 28)) and s.loads == 12, "S9 eight live, 28 refused before any read: %r loads=%d" % (sorted(r), s.loads))
-    s = step(z); show("S10", s); r = s.live()
-    expect(list(r) == [2] and s.loads == 12, "S10 restart of a live set is not a load (loads=%d)" % s.loads)
-    s = step(z); show("S11", s); r = s.live()
+    # f > 252 goes through spr_refuse (reason 0C), and every refusal writes the snapshot
+    expect(st.seq != seq7, "S8 the refusal took a snapshot (seq stuck at %d)" % seq7)
+    st = step(s, "S9 eight starts"); show("S9", st); r = st.live()
+    expect(sorted(r) == list(range(20, 28)) and st.loads == 12, "S9 eight live, 28 refused before any read: %r loads=%d" % (sorted(r), st.loads))
+    st = step(s, "S10 restart of a live set"); show("S10", st); r = st.live()
+    expect(list(r) == [2] and st.loads == 12, "S10 restart of a live set is not a load (loads=%d)" % st.loads)
+    st = step(s, "S11 two-bank set"); show("S11", st); r = st.live()
     expect(list(r) == [17], "S11 set 17 live, got %r" % list(r))
     expect(r[17][SR["KIND"]] == 1 and r[17][SR["PATS"]] == 126, "S11 4-bit with 126 patterns")
-    ent = s.cache[r[17][SR["CACHE"]]]
+    ent = st.cache[r[17][SR["CACHE"]]]
     expect(ent[0] == 17 and ent[2] != 255, "S11 017.ANI is over 16K: its entry holds two banks (CE_BANK1=%d)" % ent[2])
-    expect(s.loads == 13, "S11 one more SD load (loads=%d)" % s.loads)
-    # The file is 16810 bytes: 8K into bank0 page 0, 8K into bank0 page 1, the
-    # 426-byte tail into bank1 page 0. Read the pool banks straight out of the
-    # machine's RAM - nothing maps them at this point, and a lost page index on
-    # the second-bank read would put that tail somewhere else entirely.
+    expect(st.loads == 13, "S11 one more SD load (loads=%d)" % st.loads)
+    # 16810 bytes: 8K into bank0 page 0, 8K into bank0 page 1, the 426-byte tail into bank1 page 0
     ani = (LEG / "017.ANI").read_bytes()
-    expect(pool_pages_hold(z, ani, (ent[2] - ent[1]) * 2),
-           "S11 the 426-byte tail landed in bank1 page 0 - the second-bank read "
-           "kept its image-page index (banks %d and %d)" % (ent[1], ent[2]))
-    s = step(z); show("S12", s); r = s.live()
-    # Thirteen entries were already cached, so the fourth of these four loads
-    # is the seventeenth and has to evict. The scan that picks the victim runs
-    # a nested liveness check over the records, and its own counter has to
-    # survive that - a full cache is the only shape where losing it shows.
-    expect(len(s.cached()) == 16, "S12 cache full at 16 entries, got %r" % (s.cached(),))
+    expect(pool_pages_hold(s, ani, ent[1], ent[2]),
+           "S11 017.ANI is in bank %d pages 0-1 and bank %d page 0 - the second-bank read "
+           "kept its image-page index" % (ent[1], ent[2]))
+    st = step(s, "S12 cache full"); show("S12", st); r = st.live()
+    # the fourth load is the seventeenth and evicts; the victim scan's counter must survive
+    # its nested liveness check, which only a full cache shows
+    expect(len(st.cached()) == 16, "S12 cache full at 16 entries, got %r" % (st.cached(),))
     expect(sorted(r) == [29, 30, 31, 32], "S12 sets 29-32 live, got %r" % sorted(r))
     for n in (29, 30, 31, 32):
-        ent = s.cache[r[n][SR["CACHE"]]]
+        ent = st.cache[r[n][SR["CACHE"]]]
         expect(ent[0] == n, "S12 set %d still owns cache entry %d (it holds %d)"
                % (n, r[n][SR["CACHE"]], ent[0]))
-    expect(s.loads == 17, "S12 four more SD loads (loads=%d)" % s.loads)
-    # S13 starts one more distinct set with 29-32 still live and the table
-    # still full, so the load MUST evict - and the victim is nameable. LRU
-    # order: set 6 went at S12 (tick 2, the coldest non-live entry then), so
-    # set 15 (tick 4, last touched at S5) is next. 29-32 are live and can
-    # never be taken however cold they are.
-    prev = s.cached()
-    s = step(z); show("S13", s); r = s.live()
+    expect(st.loads == 17, "S12 four more SD loads (loads=%d)" % st.loads)
+    # LRU: set 6 went at S12, so set 15 (last touched at S5) is the coldest non-live entry
+    prev = st.cached()
+    st = step(s, "S13 set 33 evicts"); show("S13", st); r = st.live()
     expect(sorted(r) == [29, 30, 31, 32, 33], "S13 sets 29-33 live, got %r" % sorted(r))
-    expect(s.loads == 18, "S13 one more SD load (loads=%d)" % s.loads)
-    expect(len(s.cached()) == 16, "S13 cache still full at 16 entries, got %r" % (s.cached(),))
-    expect(33 in s.cached(), "S13 set 33 is cached, got %r" % (s.cached(),))
-    expect(15 not in s.cached(),
+    expect(st.loads == 18, "S13 one more SD load (loads=%d)" % st.loads)
+    expect(len(st.cached()) == 16, "S13 cache still full at 16 entries, got %r" % (st.cached(),))
+    expect(33 in st.cached(), "S13 set 33 is cached, got %r" % (st.cached(),))
+    expect(15 not in st.cached(),
            "S13 the coldest non-live entry (set 15) was evicted to make room; "
-           "cache was %r, now %r" % (prev, s.cached()))
+           "cache was %r, now %r" % (prev, st.cached()))
     for n in (29, 30, 31, 32):
-        expect(n in s.cached(), "S13 live set %d was NOT evicted (cache %r)" % (n, s.cached()))
-    s = step(z); show("S14", s); r = s.live()
+        expect(n in st.cached(), "S13 live set %d was NOT evicted (cache %r)" % (n, st.cached()))
+    st = step(s, "S14 4-bit composite"); show("S14", st); r = st.live()
     expect(list(r) == [18], "S14 set 18 live, got %r" % list(r))
     v = r[18]
     expect(v[SR["KIND"]] == 1 and v[SR["CELLS"]] == 4 and v[SR["PATS"]] == 8,
@@ -305,11 +253,11 @@ def run(z, verbose):
            % (v[SR["KIND"]], v[SR["CELLS"]], v[SR["PATS"]]))
     expect(v[SR["NBLK"]] >= 2, "S14 at least two palette blocks (NBLK=%d)" % v[SR["NBLK"]])
     expect(v[SR["ATTR"]] == 124, "S14 anchor attribute 124 for four cells (got %d)" % v[SR["ATTR"]])
-    s = step(z, until=lambda st: st.live() == {}); show("S15", s); r = s.live()
-    expect(r == {} and not (s.hook & 2) and 2 in s.cached(), "S15 PICTURE stops all, cache kept")
-    # Torch (blocks 15 only), not set 3: set 3's green is index $1C in block 1,
-    # which the 4-bit composite claims, so GFX 3 20 here is a correct refusal.
-    s = step(z, until=lambda st: 18 in st.live() and 2 in st.live(), pre=1.5); show("S16", s); r = s.live()
+    st = step(s, "S15 PICTURE stops all", until=lambda x: x.live() == {}); show("S15", st); r = st.live()
+    expect(r == {} and not (st.hook & 2) and 2 in st.cached(), "S15 PICTURE stops all, cache kept")
+    # torch, not set 3: set 3's green is index $1C in block 1, which the 4-bit composite claims
+    st = step(s, "S16 320-wide", until=lambda x: 18 in x.live() and 2 in x.live(), pre=75)
+    show("S16", st); r = st.live()
     expect(sorted(r) == [2, 18], "S16 composite and torch live over the 320-wide picture, got %r" % sorted(r))
     expect(r[2][SR["XLO"]] == 200 and r[2][SR["X8"]] == 0 and r[2][SR["Y"]] == 100,
            "S16 320 mode: picture (200,100) is plane (200,100), no offset (got %d,%d)" % (r[2][SR["XLO"]], r[2][SR["Y"]]))
@@ -320,32 +268,19 @@ def run(z, verbose):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=10016)
+    ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--work", default=None, help="scratch card directory")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print the decoded snapshot at every step")
     args = ap.parse_args()
-    if not ZESARUX.exists():
-        sys.exit("ZEsarUX not found at %s" % ZESARUX)
     if not NEX.exists():
         sys.exit("build\\nextdaad.nex missing - run .\\build.ps1 (DEBUG)")
     if not (LEG / "GAME.DDB").exists():
         sys.exit("sd\\SPRITES\\GAME.DDB missing - run tests\\build-tests.ps1 -Sprites")
-    if not port_free(args.port):
-        sys.exit("port %d is already listening - a stale emulator would be measured "
-                 "instead of a fresh one" % args.port)
     work = args.work or os.path.join(os.environ.get("TEMP", "."), "sprites_dump")
     os.makedirs(work, exist_ok=True)
-    proc, z = launch(work, args.port)
-    try:
-        return run(z, args.verbose)
-    finally:
-        try:
-            z.close()
-        except Exception:
-            pass
-        proc.kill()
-        proc.wait(timeout=20)
+    with boot(work, port=args.port) as s:
+        return run(s, args.verbose)
 
 
 if __name__ == "__main__":
