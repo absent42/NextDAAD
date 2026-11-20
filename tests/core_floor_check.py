@@ -786,10 +786,10 @@ def check_refuse_closure():
 
 ZES_LAUNCHERS = [
     "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py",
-    "tests/cursor_dump.py", "tests/cycle_dump.py", "tests/intro/zes_intro.py",
+    "tests/cycle_dump.py", "tests/intro/zes_intro.py",
     "tests/l2pos_check.py",
     "tests/poolc/poolc_check.py", "tests/spraud_dump.py", "tests/sprites_dump.py",
-    "tests/txt40_dump.py", "tests/typeahead_run.py",
+    "tests/txt40_dump.py",
 ]
 # Not launchers: the reference ZX interpreter, other machines, zes_core itself
 # (the one raw Popen) and this file.
