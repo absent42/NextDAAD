@@ -1068,6 +1068,108 @@ def t_session_stop_races():
         need(got == want, f"stopped_at at ${cpu.pc:04X} (armed {cpu.bps}) = {got}, wanted {want}")
 
 
+class FakeMemCpu(FakeCpu):
+    """FakeCpu with a physical memory image for read_memory / write_memory physical=true."""
+
+    def __init__(self, image, **kw):
+        super().__init__(**kw)
+        self.mem, self.writes = dict(image), []
+
+    def call(self, name, a):
+        if name not in ("read_memory", "write_memory") or not a.get("physical"):
+            return super().call(name, a)
+        self.log.append(name)
+        addr = int(a["address"][1:], 16)
+        if name == "write_memory":
+            data = bytes.fromhex(a["data"])
+            self.writes.append((addr, data))
+            self.mem.update((addr + i, b) for i, b in enumerate(data))
+            return f"Wrote {len(data)} bytes"
+        data = bytes(self.mem.get(addr + i, 0) for i in range(a["length"]))
+        return "\r\n".join(f"${addr + i:05X}  " + " ".join(f"{b:02X}" for b in data[i:i + 16])
+                           for i in range(0, len(data), 16))
+
+
+# mouse_poll, h_mouse.reset and input_scan as assembled (build/nextdaad.nex, build/intro.nex)
+MOUSE_CODE = {"MOUSE_POLL": (0xF311, 0x71311, "01dffaed7832eef301dffbed784f3af1f3b7280b7921eff396"
+                                              "71cd57f3180479" "32eff301dfffed784f"),
+              "H_MOUSE@RESET": (0xF1E3, 0x711E3, "21a00022e9f33e8032ebf3af32eef332ecf332edf301dffbed"
+                                                 "7832eff301dfffed7832f0f33e0132f1f3c9"),
+              "INPUT_SCAN": (0x82A6, 0x82A6, "01fe00ed782fe61f5fdb1fe610b35f01dffaed782fe603b3c9")}
+
+
+def mouse_image(names, change=None):
+    """(symbol table, physical image) for MOUSE_CODE entries; change=(name, index, byte)."""
+    syms, image = {}, {}
+    for n in names:
+        v, p, code = MOUSE_CODE[n]
+        data = bytearray(bytes.fromhex(code))
+        if change and change[0] == n:
+            data[change[1]] = change[2]
+        syms[n] = (v, p, 0)
+        image.update((p + i, b) for i, b in enumerate(data))
+    return syms, image
+
+
+def t_session_mouse_pins():
+    need_session()
+    names = list(MOUSE_CODE)
+    syms, image = mouse_image(names)
+    cpu = FakeMemCpu(image, running=False)
+    with fake_cpu_server(cpu) as srv:
+        pins = Session(client.Mcp(srv.port), syms).pin_mouse()
+    want = {("MOUSE_POLL", 0xFADF, 0x71311 + 3), ("MOUSE_POLL", 0xFBDF, 0x71311 + 11),
+            ("MOUSE_POLL", 0xFFDF, 0x71311 + 38), ("H_MOUSE@RESET", 0xFBDF, 0x711E3 + 24),
+            ("H_MOUSE@RESET", 0xFFDF, 0x711E3 + 32), ("INPUT_SCAN", 0xFADF, 0x82A6 + 18)}
+    need(set(pins) == want and len(pins) == 6, f"pins {pins}")
+    for _, port, at in pins:
+        got = bytes((cpu.mem[at], cpu.mem[at + 1]))
+        need(got == bytes((0x3E, session.MOUSE_PORTS[port])), f"${at:05X} holds {got.hex()} for ${port:04X}")
+    changed = {a for a, _ in image.items() if cpu.mem[a] != image[a]}
+    need(changed == {at + k for _, _, at in pins for k in (0, 1)}, f"bytes changed outside the pins: {sorted(changed)}")
+    need(session.MOUSE_PORTS == {0xFADF: 0xFF, 0xFBDF: 0x00, 0xFFDF: 0x00}, f"pin values {session.MOUSE_PORTS}")
+    cpu = FakeMemCpu({}, running=False)
+    with fake_cpu_server(cpu) as srv:
+        none = Session(client.Mcp(srv.port), {"FRAMECOUNTER": (0xA0, 0xA0, 0)}).pin_mouse()
+    need(none == [] and "read_memory" not in cpu.log, f"map without mouse reads: {none}, calls {cpu.log}")
+    syms, image = mouse_image(["MOUSE_POLL"], change=("MOUSE_POLL", 9, 0xDE))       # ld bc,$FADE
+    cpu = FakeMemCpu(image, running=False)
+    with fake_cpu_server(cpu) as srv:
+        e = raises(client.CSpectError, Session(client.Mcp(srv.port), syms).pin_mouse)
+    need("MOUSE_POLL" in str(e) and "$FBDF" in str(e) and not any(
+        a == 0x71311 + 11 for a, _ in cpu.writes), f"changed image: {e}; writes {cpu.writes}")
+    # boot: pinned at the -debug entry before anything runs, then resumed unless paused
+    orig = launcher.launch
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            mp = Path(d) / "x.map"
+            mp.write_text("".join(f"{v:08X} {p:08X} 00 {n}\n" for n, (v, p, _) in MOUSE_CODE.items()),
+                          encoding="ascii")
+            for kw, debug, ran in (({}, True, True), ({"paused": True}, True, False),
+                                   ({"pin_mouse": False}, False, False)):
+                syms, image = mouse_image(names)
+                cpu = FakeMemCpu(image, running=False)
+                with fake_cpu_server(cpu) as srv:
+                    seen = {}
+
+                    class Inst:
+                        mcp, pid = client.Mcp(srv.port), 0
+
+                        def close(self):
+                            pass
+                    launcher.launch = lambda *a, **k: (seen.update(k), Inst())[1]
+                    s = Session.boot(d, mp, mp, **kw)
+                need(("-debug" in seen["extra"]) == debug, f"boot {kw}: extra {seen['extra']}")
+                need(len(s.mouse_pins) == (6 if debug else 0), f"boot {kw}: {len(s.mouse_pins)} pins")
+                need(("run" in cpu.log) == ran, f"boot {kw}: calls {cpu.log}")
+                if ran:
+                    need(cpu.log.index("run") > max(i for i, n in enumerate(cpu.log) if n == "write_memory"),
+                         f"boot resumed before pinning: {cpu.log}")
+    finally:
+        launcher.launch = orig
+    return "6 reads pinned (overlay0 page 56, intro page 4), nothing else written; changed bytes refused; boot pins at the entry"
+
+
 def t_session_keys():
     need_session()
     cpu = FakeCpu()
@@ -1165,6 +1267,19 @@ def l_boot_rows():
     with live_session() as s:
         rows = booted(s)
     return f"{len(rows)} rows, first {rows[0].strip()!r}"
+
+
+def l_mouse_pins():
+    with live_session() as s:
+        pins, running = list(s.mouse_pins), s.running()
+        held = [s.read_page(p >> 13, p & 0x1FFF, 2) for _, _, p in pins]
+    with live_session(pin_mouse=False) as s:
+        raw = [s.read_page(p >> 13, p & 0x1FFF, 2) for _, _, p in pins]
+    need(len(pins) == 5 and {n for n, _, _ in pins} == {"MOUSE_POLL", "H_MOUSE@RESET"}, f"pins {pins}")
+    need(held == [bytes((0x3E, session.MOUSE_PORTS[port])) for _, port, _ in pins], f"pinned bytes {held}")
+    need(raw == [b"\xed\x78"] * 5, f"pin_mouse=False boot holds {raw}, wanted in a,(c) at each")
+    need(running, "boot left the CPU stopped after pinning")
+    return f"{len(pins)} reads pinned at physical {', '.join(f'${p:05X}' for _, _, p in pins)}; opt-out leaves in a,(c)"
 
 
 def l_symbols():
@@ -1485,10 +1600,10 @@ HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, 
         t_mutex_release_checked, t_close_keeps_mutex, t_listener_owner, t_no_answer_names_causes,
         t_fallback_runs, t_guard_parser, t_session_status, t_session_fake_mcp, t_session_boot_args,
         t_session_raster, t_session_border_index, t_session_wait_until, t_session_symbols,
-        t_session_stop_races, t_session_keys]
+        t_session_stop_races, t_session_keys, t_session_mouse_pins]
 LIVE = [l_launch_tools_close, l_private_copy_mcp, l_no_port_11000, l_window_minimised,
         l_parent_killed, l_exception_closes, l_foreign_untouched, l_guard_narrowed, l_boot_rows,
-        l_symbols, l_mem_roundtrip, l_flags_frame, l_wait_frames_both_speeds, l_paused_boot_brk,
+        l_mouse_pins, l_symbols, l_mem_roundtrip, l_flags_frame, l_wait_frames_both_speeds, l_paused_boot_brk,
         l_regs_step, l_next_regs, l_port_io, l_ay_regs, l_type_enter, l_screenshot_border,
         l_screenshot_paused, l_diff_bytes_image, l_time_between]
 

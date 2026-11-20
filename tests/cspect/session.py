@@ -1,5 +1,7 @@
 """One NextDAAD run on a harness CSpect: boot, symbols, memory, screen, keys, debugger and
-timing primitives over MCP. Waits poll a condition or FRAMECOUNTER against a deadline."""
+timing primitives over MCP. Waits poll a condition or FRAMECOUNTER against a deadline.
+Boot pins the image's Kempston mouse reads (MOUSE_READS) to no button and no movement:
+CSpect passes host mouse input to a minimised window, so the real mouse path is silicon-only."""
 import base64
 import contextlib
 import importlib.util
@@ -29,6 +31,13 @@ ULA_DEFAULT = (0x00, 0x02, 0xA0, 0xA2, 0x14, 0x16, 0xB4, 0xB6)   # ULA 0-7, RRRG
 REG_NAMES = frozenset({"A", "F", "B", "C", "D", "E", "H", "L", "I", "R", "AF", "BC", "DE", "HL",
                        "IX", "IY", "IXH", "IXL", "IYH", "IYL", "SP", "PC", "AF'", "BC'", "DE'",
                        "HL'", "IM", "IFF1", "IFF2"})
+# Kempston mouse value each pinned read returns: buttons idle (active low), X and Y constant, so
+# no button and no movement - what the ZEsarUX baselines read (condacts check 77: 0, 20, 16, 26)
+MOUSE_PORTS = {0xFADF: 0xFF, 0xFBDF: 0x00, 0xFFDF: 0x00}
+# (map symbol, bytes searched from it, ports read there by ld bc,port / in a,(c))
+MOUSE_READS = (("MOUSE_POLL", 48, (0xFADF, 0xFBDF, 0xFFDF)),    # src/overlay0.asm mouse_poll
+               ("H_MOUSE@RESET", 48, (0xFBDF, 0xFFDF)),         # MOUSE sub 0 baseline latch
+               ("INPUT_SCAN", 32, (0xFADF,)))                   # src/intro/input.asm any-key
 
 
 def _load_tilemap():
@@ -137,16 +146,19 @@ class Session:
         self.mcp, self.inst, self.map_file = mcp, inst, map_file
         self._syms = symbols
         self._run_to_stop = None     # run_to's target while the CPU still stands there
+        self.mouse_pins = []         # pin_mouse's (symbol, port, physical) list
 
     @classmethod
     def boot(cls, card, nex, map_file, *, freerun=True, paused=False, brk=None, major=None,
-             minor=None, extra=(), port=None) -> "Session":
+             minor=None, extra=(), port=None, pin_mouse=True) -> "Session":
         """Launch nex on card. paused: stopped at the NEX entry (-debug). brk (label or address):
         +brk=, and unless paused, returns stopped there. major/minor set NR $01/$0E, checked.
-        port: launcher.launch's MCP port (None = first free in PORT_RANGE)."""
+        port: launcher.launch's MCP port (None = first free in PORT_RANGE). pin_mouse: the
+        image's mouse reads are pinned (pin_mouse()) at the entry, before anything runs."""
         syms = read_map(map_file)
         brk_addr = None if brk is None else cls(None, syms, map_file=map_file)._addr(brk)
-        args = boot_args(paused, brk_addr, major, minor)
+        pin = pin_mouse and any(name in syms for name, _, _ in MOUSE_READS)
+        args = boot_args(paused or pin, brk_addr, major, minor)
         inst = launcher.launch(card, nex, map_file, freerun=freerun, extra=(*args, *extra),
                                port=port)
         s = cls(inst.mcp, syms, inst, map_file)
@@ -156,6 +168,10 @@ class Session:
                 got = s.next_regs(list(want))
                 if got != want:
                     raise CSpectError(f"-major/-minor not applied: NR {got}, wanted {want}")
+            if pin:
+                s.pin_mouse()
+                if not paused:
+                    s.resume()
             if brk_addr is not None and not paused:
                 pc = s._wait_stop(STOP_S, f"the boot breakpoint {brk!r}")
                 if pc != brk_addr:
@@ -237,6 +253,29 @@ class Session:
 
     def write_page(self, page: int, offset: int, data: bytes) -> None:
         self._page_io(page, offset, len(data), lambda a, phys: self._write(a, data, phys))
+
+    def pin_mouse(self) -> list[tuple[str, int, int]]:
+        """Each MOUSE_READS site the map names: its in a,(c) becomes ld a,MOUSE_PORTS[port] in the
+        RAM page holding it (overlay0's page is mapped in, never reloaded). The ld bc,port /
+        in a,(c) is checked first and the patch read back. Returns [(symbol, port, physical)]."""
+        for name, span, ports in MOUSE_READS:
+            if name not in self._syms:
+                continue
+            phys = self._syms[name][1]
+            page, off = phys >> 13, phys & (PAGE_SIZE - 1)
+            code = self.read_page(page, off, min(span, PAGE_SIZE - off))
+            for port in ports:
+                pat = bytes((0x01, port & 0xFF, port >> 8, 0xED, 0x78))
+                i = code.find(pat)
+                if i < 0 or code.find(pat, i + 1) >= 0:
+                    raise CSpectError(f"{name} in {self.map_file} does not hold one ld bc,${port:04X} / "
+                                      f"in a,(c) in its first {len(code)} bytes: {code.hex(' ')}")
+                patch = bytes((0x3E, MOUSE_PORTS[port]))          # ld a,n: in a,(c)'s length
+                self.write_page(page, off + i + 3, patch)
+                if self.read_page(page, off + i + 3, 2) != patch:
+                    raise CSpectError(f"mouse pin in {name} at page {page} ${off + i + 3:04X} did not read back")
+                self.mouse_pins.append((name, port, page * PAGE_SIZE + off + i + 3))
+        return self.mouse_pins
 
     def grid(self) -> bytes:
         return self.read(TM_MAP, tilemap.GRID_BYTES)

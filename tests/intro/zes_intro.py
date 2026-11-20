@@ -26,9 +26,9 @@ one whose first sample is more than 32 frames late fails. A SPACE hold runs
 unsampled: press_keys' hold and release gap, then free running until the next
 main_loop stop (about 12-15 frames).
 
-Harness runs patch input_scan's Kempston mouse-button read to "no button" in guest
-RAM (CSpect passes host clicks to the guest even minimised), so the launcher's
-mouse-as-key path is silicon-only coverage; an input edge the harness did not send
+Session.boot pins input_scan's Kempston mouse-button read to "no button" in guest RAM
+(CSpect passes host clicks to the guest even minimised; this script fails if the pin is
+missing), so the launcher's mouse-as-key path is silicon-only coverage; an input edge the harness did not send
 (the mirror's keys count moving with no press) still fails the run. --port is the
 harness MCP port (tests/cspect/launcher.py PORT_RANGE, default the first free)."""
 import argparse, pathlib, sys, time
@@ -53,10 +53,6 @@ INTRO_MAP = ROOT / "build" / "intro.map"
 INTRO_NEX = ROOT / "build" / "intro.nex"
 HOLD_PC_SYMBOL = {2: "SHOW_STEP@HOLD", 3: "SHOW_STEP@KEY"}
 NEEDED = ("MAIN_LOOP", "CHAIN_RUN", "FRAMECOUNTER", "INPUT_SCAN", *HOLD_PC_SYMBOL.values())
-# input_scan (src/intro/input.asm): ld bc,$FADF / in a,(c) / cpl / and 3
-MOUSE_READ = bytes.fromhex("01dffaed782fe603")
-NO_BUTTON = bytes.fromhex("3eff")             # ld a,$FF: same length as in a,(c)
-SCAN_SPAN = 32
 PAGE_SIZE = 8192
 PRESS_FRAMES = 4
 FRAME_OVERSHOOT_MARGIN = 32
@@ -126,20 +122,12 @@ def check_staged_launcher(staged):
     return syms
 
 
-def mute_mouse(s):
-    """Patch input_scan's Kempston button read to ld a,$FF (no button); returns its address.
-    The image bytes are checked first, so a changed input_scan fails instead of misreading."""
-    at = s.sym("INPUT_SCAN")
-    code = s.read(at, SCAN_SPAN)
-    i = code.find(MOUSE_READ)
-    if i < 0 or code.find(MOUSE_READ, i + 1) >= 0:
-        raise SystemExit("input_scan at $%04X does not hold one ld bc,$FADF / in a,(c) / cpl / "
-                         "and 3 in its first %d bytes: %s" % (at, SCAN_SPAN, code.hex(" ")))
-    site = at + i + 3
-    s.write(site, NO_BUTTON)
-    if s.read(site, 2) != NO_BUTTON:
-        raise SystemExit("mouse patch at $%04X did not read back" % site)
-    return site
+def input_scan_pin(s):
+    """Physical address where Session.boot pinned input_scan's $FADF read; fails if it did not."""
+    pin = next((p for n, port, p in s.mouse_pins if n == "INPUT_SCAN" and port == 0xFADF), None)
+    if pin is None:
+        raise SystemExit("Session.boot did not pin input_scan's mouse button read: %s" % s.mouse_pins)
+    return pin
 
 
 def press_space(s, chain):
@@ -241,10 +229,9 @@ def main():
         print("CSpect PID %d on MCP port %d" % (s.pid, s.inst.port), flush=True)
         main_loop, chain = s.sym("MAIN_LOOP"), s.sym("CHAIN_RUN")
         hold_pcs = {st: s.sym(name) for st, name in HOLD_PC_SYMBOL.items()}
-        # CSpect passes host mouse clicks to a minimised guest; input_scan counts a button as
-        # a key, so the harness reads "no button" and the mouse-as-key path is silicon-only
-        print("harness: input_scan's mouse button read at $%04X patched to ld a,$FF "
-              "(mouse-as-key path is silicon-only)" % mute_mouse(s))
+        # input_scan counts a mouse button as a key; Session.boot pinned it to "no button"
+        print("harness: input_scan's mouse button read pinned to ld a,$FF at physical $%05X "
+              "(mouse-as-key path is silicon-only)" % input_scan_pin(s))
         s.set_breakpoint(chain)
         next_print, last_key, sent, held_from = 0.0, None, False, None
         while True:
