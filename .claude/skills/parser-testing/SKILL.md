@@ -81,8 +81,9 @@ plus `tests/parser/scripts/` - was adopted onto `main` on 2026-08-01
 after the SP16 Task 0 repairs; run it straight out of the checkout. Only
 `tests/parser/work/` (every run's output) and `__pycache__/` are
 gitignored. It is deliberately NOT wired into `build.ps1` and never runs
-automatically - it needs ZEsarUX and node as before, and PHP for unDRC,
-all of which live in the untracked `tools/`. The compiler itself is the
+automatically - the NextDAAD leg (`nleg.py`) runs on CSpect through
+`tests/cspect`; it needs node, and PHP for unDRC, plus ZEsarUX only for the
+`--zx` leg, all of which live in the untracked `tools/`. The compiler itself is the
 tracked `authoring-kit\lib\ndrc.exe`, not `tools/`.
 
     python tests/parser/parsertest.py <game.dsf> <script.json> [--out DIR] [--port PORT] [--nex PATH] [--stop-on-first]
@@ -96,9 +97,10 @@ It is plain python, no pytest, and it exercises the whole harness
 including an end-to-end clean run and a negative control that fails if
 the harness stops detecting a deliberately injected fault.
 
-`--port` (default 10000) is the ZRCP port ZEsarUX listens on - see
-Prerequisites below for why a stale emulator on it silently poisons a
-run. `--nex` (default `build/nextdaad.nex`) overrides which built
+`--port` (default: chosen automatically) is the CSpect MCP port for the Next
+leg, in 23460-23499; the launcher refuses a port that already answers and
+never touches a CSpect it did not start. `--zx-port` (default 10010) is the
+ZRCP port of the `--zx` leg's ZEsarUX. `--nex` (default `build/nextdaad.nex`) overrides which built
 interpreter image the Next leg boots.
 
 Exits 0 when the interpreters agreed, 1 when they did not. Writes
@@ -113,23 +115,21 @@ look at when a replay stops reproducing.
 
 ### How the Next leg captures a "More..." page
 
-Not by polling. A ZEsarUX breakpoint on `WAIT_KEY_TIMEOUT` - the pager's
-park point, reached only from `prn_more_check` and `h_anykey` - carries a
-`save-binary` action, so THE EMULATOR writes the tilemap to
-`<out>/nleg-page.bin` at the instruction where the page is finished and
-about to block, and a second breakpoint at the same address counts the
-fires into a user variable the harness polls. The page is therefore
-recorded before anything can dismiss it, including the harness's own
-still-held keystroke, which is what used to lose whole pages.
+Not by polling. A CSpect breakpoint (MCP `set_breakpoint`) on
+`WAIT_KEY_TIMEOUT` - the pager's park point, reached only from
+`prn_more_check` and `h_anykey` - stops the CPU there. `settle()` reads the
+tilemap and `E` ($02 prn_more_check, $04 h_anykey), resumes, then dismisses.
+The page is therefore recorded before anything can dismiss it, including
+the harness's own still-held keystroke, which is what used to lose whole
+pages. Lockless waits that never stop there fall to a static backstop.
 
 Two consequences worth knowing:
 
-- A breakpoint CANNOT stop this emulator. Confirmed live against ZEsarUX
-  13.0 with `--vo null`: a breakpoint whose action is the default
-  menu/break answers "Can not open menu: this video driver does not
-  support menu" on every hit and execution CONTINUES. Only `run` inside
-  cpu-step mode stops on one. That is why the capture is done by an
-  action rather than by breaking, capturing and resuming.
+- Under CSpect a breakpoint really stops the CPU, unlike ZEsarUX `--vo null`
+  where a breakpoint could not stop the emulator and the capture had to be a
+  `save-binary` action. `press_keys`/`type_text` stall while the CPU is
+  stopped, so key plays use a second Session on the same CSpect
+  (`key_session`).
 - `(moreLock, wrapLock) == (1, 1)` is READ TWICE before a turn is called
   ready. That pair is the input editor's signature, but `prn_more_check`
   passes through it too - it holds both locks while the SM32 prompt is
@@ -147,8 +147,9 @@ Two consequences worth knowing:
   post-fix, so none of them was affected in practice; anything else
   captured before that commit from a turn that pages should be re-run
   rather than cited.
-- Pauses are dismissed with SYMBOL SHIFT, driven straight onto the
-  emulated keyboard matrix (`set-ui-io-ports`), NOT with Enter. A bare
+- Pauses are dismissed with SYMBOL SHIFT, driven onto the emulated
+  keyboard (CSpect `press_keys`; `set-ui-io-ports` on the ZEsarUX `--zx`
+  leg), NOT with Enter. A bare
   SYMBOL SHIFT satisfies `wait_key` but maps to 0 in every one of
   `kb_char`'s tables, so the input editor cannot see it. Dismissing with
   Enter handed the same keypress to two readers - the pause took it,
@@ -254,7 +255,11 @@ that back to `get-ocr`.
   table for `findings.json`'s `suspect_condacts`.
 - `node` must be on PATH - the jDAAD reference leg (`jleg.js`) runs under
   it, headless.
-- **ZEsarUX 13.0 or later** (`tools/DAAD-READY/TOOLS/zesarux`). 13.0
+- **CSpect 4.5.9.0 or later with the MCP tier** for the Next leg: the
+  launcher (`tests/cspect/launcher.py`) finds it via `$env:CSPECT_DIR`
+  (default `D:\ZXNextDev\cspect`), runs a private copy, and holds a mutex so
+  one harness CSpect runs at a time. Never launch `CSpect.exe` by hand.
+- **ZEsarUX 13.0 or later**, `--zx` leg only (`tools/DAAD-READY/TOOLS/zesarux`). 13.0
   changed breakpoint semantics: `enable-breakpoints` must come BEFORE
   `set-breakpoint`, and no index ships pre-populated. ZEsarUX 12.1
   accepted either order, so when the toolchain was upgraded the harness
@@ -263,15 +268,13 @@ that back to `get-ocr`.
   it. `zrcp.py` now issues enable-before-set and error-checks every
   reply whose failure would leave a run mis-armed. If you see a run hang
   with nothing armed, check the emulator version first.
-- ZEsarUX needs port 10000 (or whatever `--port` you pass) FREE before
-  you start. A stale emulator left over from an interrupted previous run
-  silently poisons the next one: the new instance fails to bind, the
-  harness attaches to the OLD process instead, and plays the current
-  script against a reference leg paired with a DIFFERENT, previous game.
-  `nleg.py` now guards against this (raises loudly if the port is
-  already accepting connections before launch, or if the launched
-  process dies before ZRCP ever comes up) - but killing any leftover
-  ZEsarUX yourself before a run is still the fastest fix.
+- The `--zx` leg's ZEsarUX needs its `--zx-port` (default 10010) FREE
+  before you start. A stale emulator left over from an interrupted
+  previous run silently poisons the next one: the new instance fails to
+  bind and the harness attaches to the OLD process. `zleg.py` guards
+  against this, but killing any leftover ZEsarUX yourself is still the
+  fastest fix. The CSpect Next leg has no such hazard: the launcher
+  refuses a port that already answers and kills its own CSpect on exit.
 - `suspect_condacts` will be the ENTIRE game's condact set (88 entries on
   `tests/condacts.dsf`) whenever `suspects_narrowed` is `false` - which
   happens on any wildcard-heavy source or an empty/unmatched command.
