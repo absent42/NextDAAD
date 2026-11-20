@@ -209,6 +209,9 @@ def t_read_map():
                      "\n"
                      "00000008 00000008 01 AKY_RET_GUARD\n", encoding="ascii")
         got = client.read_map(p)
+        p.write_text("00009465 00009465 00 win_attr\n0000000A 0000000A 01 WIN_ATTR\n", encoding="ascii")
+        twin = client.read_map(p)["WIN_ATTR"]
+        need(twin == (0x9465, 0x9465, 0), f"twin with the EQU line last resolved to {twin}, not the label")
         p.write_text("0000A200 0000A200 00 flags\n0000C010 00 ovlEntry\n", encoding="ascii")
         e = raises(client.CSpectError, client.read_map, p)
         need("ovlEntry" in str(e), f"malformed-line error does not name the line: {e}")
@@ -226,7 +229,11 @@ def t_read_map():
         twins = sorted({n for n in names if names.count(n) > 1})
         got = client.read_map(real)
         need(set(got) == set(names), f"{real}: {len(got)} symbols, {len(set(names))} names in the file")
-        return f"{real.name}: {len(lines)} lines parsed, {len(got)} names; case twins (last wins): {twins}"
+        labels = {p[3].upper(): (int(p[0], 16), int(p[1], 16), 0) for p in lines if int(p[2], 16) == 0}
+        need("WIN_ATTR" in labels, f"{real} has no WIN_ATTR label")
+        for name in sorted(set(twins) | {"WIN_ATTR"}):
+            need(name not in labels or got[name] == labels[name], f"{name} resolved to {got[name]}, not its label")
+        return f"{real.name}: {len(lines)} lines parsed, {len(got)} names; case twins resolve to labels: {twins}"
     return "no build\\nextdaad.map to cross-check"
 
 

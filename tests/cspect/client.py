@@ -20,7 +20,7 @@ def read_map(path) -> dict[str, tuple[int, int, int]]:
     """sjasmplus CSPECTMAP file -> {NAME: (16-bit value, CSpect physical, type)}.
 
     Type 0 is a label (physical = page * $2000 + offset), 1 an EQU, 2 a DEFL. sjasmplus upper-cases
-    names, so case-only twins share a key and the later line wins. Malformed or empty raises."""
+    names; a case-only twin resolves to its label whatever the line order. Malformed or empty raises."""
     out = {}
     for n, line in enumerate(Path(path).read_text(encoding="ascii").splitlines(), 1):
         parts = line.split()
@@ -29,9 +29,12 @@ def read_map(path) -> dict[str, tuple[int, int, int]]:
         try:
             if len(parts) != 4:
                 raise ValueError
-            out[parts[3].upper()] = (int(parts[0], 16), int(parts[1], 16), int(parts[2], 16))
+            sym = (int(parts[0], 16), int(parts[1], 16), int(parts[2], 16))
         except ValueError:
             raise CSpectError(f"{path}:{n}: not 'value physical type NAME': {line!r}") from None
+        name = parts[3].upper()
+        if sym[2] == 0 or out.get(name, (0, 0, 1))[2] != 0:
+            out[name] = sym
     if not out:
         raise CSpectError(f"{path}: no symbols")
     return out
