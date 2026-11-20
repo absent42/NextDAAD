@@ -471,7 +471,7 @@ to each row, so you call them by name:</p>
 <td>0</td>
 <td><code>SVC_VERSION</code></td>
 <td>-</td>
-<td>A = API version (<code>3</code> on this release)</td>
+<td>A = API version (<code>4</code> on this release)</td>
 <td>yes</td>
 </tr>
 <tr>
@@ -758,7 +758,7 @@ registers a row's Out column names carry a result.</p>
   using.</li>
 </ul>
 <h3 id="versioning">Versioning</h3>
-<p><code>SVC_VERSION</code> returns <code>3</code> on this release. The service table is
+<p><code>SVC_VERSION</code> returns <code>4</code> on this release. The service table is
 append-only and its address is frozen: existing rows never move and
 never change signature, so code written against an older <code>xbn.inc</code>
 keeps calling the same rows on every later NextDAAD release. What CAN
@@ -791,6 +791,11 @@ rows it does not know about. Rows 15 to 19 - <code>SVC_PAIR</code> through
 the API version is <code>3</code> since <code>SVC_PAIR</code> was appended. They are separate
 contracts: the loader enforces the format version, your code checks the
 API version.</p>
+<p>API version 4 means the interpreter requires core 3.03.03. <code>xbn.inc</code>
+provides <code>NRGET n</code>, which loads Next register <code>n</code> into A with
+<code>NEXTREG A,n</code> (it always emits that opcode, which only core 3.03.03 has).
+An extern that uses it requires API 4: check <code>SVC_VERSION</code> first with
+<code>MIN_API equ 4</code>, as above. The fade example does this.</p>
 <h2 id="flags-and-objects">Flags and objects</h2>
 <p>Your extern reads and writes DAAD flags and object state directly, with
 no service in between - the interpreter simply exposes the memory.</p>

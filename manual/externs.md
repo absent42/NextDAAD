@@ -482,7 +482,7 @@ to each row, so you call them by name:
 
 | # | Symbol | In | Out | From the hook |
 |---|--------|----|-----|---------------|
-| 0 | `SVC_VERSION` | - | A = API version (`3` on this release) | yes |
+| 0 | `SVC_VERSION` | - | A = API version (`4` on this release) | yes |
 | 1 | `SVC_PUTCHAR` | A = character | - | no |
 | 2 | `SVC_PUTS` | HL = ASCIIZ string (may live in your own bank) | - | no |
 | 3 | `SVC_FOPEN` | IX = ASCIIZ filename, B = mode | A = handle, or CF set + A = error | no |
@@ -648,7 +648,7 @@ A few things worth knowing about specific rows:
 
 ### Versioning
 
-`SVC_VERSION` returns `3` on this release. The service table is
+`SVC_VERSION` returns `4` on this release. The service table is
 append-only and its address is frozen: existing rows never move and
 never change signature, so code written against an older `xbn.inc`
 keeps calling the same rows on every later NextDAAD release. What CAN
@@ -682,6 +682,12 @@ rows it does not know about. Rows 15 to 19 - `SVC_PAIR` through
 the API version is `3` since `SVC_PAIR` was appended. They are separate
 contracts: the loader enforces the format version, your code checks the
 API version.
+
+API version 4 means the interpreter requires core 3.03.03. `xbn.inc`
+provides `NRGET n`, which loads Next register `n` into A with
+`NEXTREG A,n` (it always emits that opcode, which only core 3.03.03 has).
+An extern that uses it requires API 4: check `SVC_VERSION` first with
+`MIN_API equ 4`, as above. The fade example does this.
 
 ## Flags and objects
 

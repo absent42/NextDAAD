@@ -17,6 +17,14 @@ Windows; ext4, btrfs or xfs on Linux. A FAT or exFAT USB stick, a
 network share or a Docker bind mount cannot keep the precise file times
 the incremental build relies on, and the build refuses to run there.
 
+NextDAAD needs core 3.03.03 or later. On real hardware, update the
+core if a game shows `NextDAAD needs core 3.03.03 or later` at start.
+In an emulator, use CSpect 4.5.6.0 or later: the interpreter reads Next
+registers with `NEXTREG A,n`, which older CSpect lacks, and `RUN.BAT` warns when
+it finds an older one. No jNext release supports core 3.03.03 yet, so in jNext
+the game shows that message or misbehaves; until a jNext release
+supports it, video cutscenes play on real hardware only.
+
 ### Windows setup
 
 Windows 10 or 11. Windows PowerShell, which is part of Windows, runs the
@@ -422,7 +430,9 @@ game written for version 2, three behaviours change silently - see
 
 ### Running in jNext
 
-jNext is an optional second emulator. CSpect cannot play video cutscenes
+jNext is an optional second emulator. No jNext release supports core
+3.03.03 yet, so `RUN.BAT` warns that the game may stop with the core
+message or misbehave, and video cutscenes need real hardware for now. CSpect cannot play video cutscenes
 and stops a long streamed sound after about a second and a half; jNext
 plays both. CSpect stays the default.
 

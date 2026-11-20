@@ -81,6 +81,7 @@ if ($OnWindows -and @(Get-Process -Name jnext -ErrorAction SilentlyContinue).Cou
     Reset-Log
     $r = Invoke-Kit 'run.ps1' $happy
     Assert-Eq $r.Rc 0 'happy path exit'
+    Assert-Like $r.Out '*WARNING: no jNext release supports core 3.03.03 yet*' 'jnext core warning shown, run continues'
     $calls = Get-Calls
     $sep = [IO.Path]::DirectorySeparatorChar
     $cardPath = "$kit${sep}CACHE${sep}jnext${sep}card.img"
@@ -173,6 +174,26 @@ else {
     $s = [IO.Path]::DirectorySeparatorChar
     $mmcWant = if ($OnWindows) { "-mmc=RELEASE${s}G1${s}" } else { "-mmc=RELEASE${s}G1${s}${s}" }
     Assert-Eq ($a -join '|') "-w3|-zxnext|-esc|$mmcWant|RELEASE${s}G1${s}G1.NEX" 'cspect launch arguments'
+    # Version unreadable (no assembly metadata on Windows stand-in is 0.0.0.0; the Linux script has none).
+    if (-not $OnWindows) {
+        Assert-Like $r.Out '*WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later*' 'cspect unreadable version warns, run continues'
+    }
+    if ($OnWindows) {
+        function New-VersionedCSpect([string]$Version) {
+            Remove-Item -LiteralPath $csExe -Force
+            Add-Type -TypeDefinition "[assembly: System.Reflection.AssemblyVersion(`"$Version`")] public static class FakeCSpectV$($Version.Replace('.', 'x')) { public static void Main(string[] a) { System.IO.File.WriteAllLines(System.Environment.GetEnvironmentVariable(`"FAKE_CSPECT_LOG`"), a); } }" -OutputAssembly $csExe -OutputType ConsoleApplication
+        }
+        New-VersionedCSpect '4.4.1.0'
+        Remove-Item -LiteralPath $csLog -Force -ErrorAction SilentlyContinue
+        $r = Invoke-Kit 'run.ps1' $csLocal
+        Assert-Eq $r.Rc 0 'old cspect exit'
+        Assert-Like $r.Out '*WARNING: CSpect 4.4.1.0 is older than 4.5.6.0*' 'old cspect warning names the version'
+        Assert-Eq (Test-Path -LiteralPath $csLog) $true 'old cspect still launched'
+        New-VersionedCSpect '4.5.9.0'
+        $r = Invoke-Kit 'run.ps1' $csLocal
+        Assert-Eq $r.Rc 0 'new cspect exit'
+        Assert-Eq ($r.Out -like '*WARNING*') $false 'cspect 4.5.9.0 prints no warning'
+    }
 }
 Remove-Item Env:FAKE_CSPECT_LOG
 

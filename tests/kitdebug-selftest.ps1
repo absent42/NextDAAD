@@ -106,6 +106,10 @@ $dst = Join-Path $cs40 'NextDAADDebug.dll'
 function Get-MmcArg([string]$Card) { if ($OnWindows) { return "-mmc=$Card" } else { return "-mmc=$Card$sep" } }
 function Get-DebugWarning([string]$File) { return "WARNING: $File has #debug - DEBUG markers are compiled into the game; remove it before release (other DAAD interpreters read a marker as NEWTEXT)" }
 
+. "$root/authoring-kit/lib/kitcspect.ps1"
+Assert-Eq (Get-KitCSpectVersion (Join-Path $cs40 $cspName)) '4.0.0.0' 'Get-KitCSpectVersion reads the assembly version'
+Assert-Eq ($null -eq (Get-KitCSpectVersion (Join-Path $csBad $cspName))) $true 'Get-KitCSpectVersion unreadable is null'
+
 # ---- refusals before any build ----
 $r = Invoke-Debug @('SET GAME=G1', 'SET EMULATOR=jnext', "SET CSPECTDIR=$cs40")
 Assert-Eq $r.Rc 1 'jnext-refused exit'

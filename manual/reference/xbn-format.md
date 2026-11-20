@@ -98,7 +98,7 @@ tables.
 
 | # | Symbol | In | Out | Corrupts | From the `#int` hook |
 |---|--------|----|-----|----------|----------------------|
-| 0 | `SVC_VERSION` | - | A = API version (`3` on this release) | AF | yes |
+| 0 | `SVC_VERSION` | - | A = API version (`4` on this release) | AF | yes |
 | 1 | `SVC_PUTCHAR` | A = character | - | AF, BC, DE, HL, IX, IY | no |
 | 2 | `SVC_PUTS` | HL = ASCIIZ string (may live in your own bank) | - | AF, BC, DE, HL, IX, IY | no |
 | 3 | `SVC_FOPEN` | IX = ASCIIZ filename, B = mode | A = handle, or CF set + A = error | AF, BC, DE, HL, IX, IY | no |

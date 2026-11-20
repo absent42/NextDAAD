@@ -24,8 +24,7 @@ if ($t.EMULATOR -ne 'cspect') { Write-Host "ERROR: EMULATOR=$($t.EMULATOR) - use
 if (-not (Test-KitCSpect $t)) { exit 1 }
 $cspDir = Split-Path -Parent $t.CSPECT
 $cspAbs = abs $cspDir
-$ver = $null
-try { $ver = [Reflection.AssemblyName]::GetAssemblyName((abs $t.CSPECT)).Version } catch { $ver = $null }
+$ver = Get-KitCSpectVersion (abs $t.CSPECT)
 if ($null -eq $ver) {
     # ImGui.NET.dll ships with CSpect 4.0 and not with 3.x.
     if (Test-Path -LiteralPath (Join-Path $cspAbs 'ImGui.NET.dll') -PathType Leaf) { Write-Host 'note: could not read the CSpect version - assuming 4.0 or later' }

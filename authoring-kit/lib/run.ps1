@@ -35,6 +35,7 @@ if ($t.EMULATOR -eq 'jnext') {
         exit 1
     }
     if (Test-JNextRunning) { Write-Host 'ERROR: jNext is running - close it before running the game'; exit 1 }
+    Write-Host (Get-JNextCoreWarning)
     $jwork = Join-Path (Join-Path $kitRoot 'CACHE') 'jnext'
     $card = Join-Path $jwork 'card.img'
     try { $null = Publish-JNextCard $t.JNEXT $t.JNEXTIMG $card $g.RelGame $nexFile.Name $jwork }
@@ -45,5 +46,9 @@ if ($t.EMULATOR -eq 'jnext') {
     exit 0
 }
 if (-not (Test-KitCSpect $t)) { exit 1 }
+# The interpreter reads Next registers with NEXTREG A,n, which CSpect supports from 4.5.6.0.
+$csVer = Get-KitCSpectVersion $t.CSPECT
+if ($null -eq $csVer) { Write-Host 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later' }
+elseif ($csVer -lt [version]'4.5.6.0') { Write-Host "WARNING: CSpect $csVer is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave" }
 Start-KitCSpect -Tools $t -Game $g
 exit 0
