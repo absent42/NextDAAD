@@ -7,7 +7,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 - **NextDAAD needs core 3.03.03 or later.** An older core stops at start
   with `NextDAAD needs core 3.03.03 or later`. Update the core on
-  real hardware. In CSpect use 4.5.6.0 or later; `RUN.BAT` (or `run.sh` on Linux) warns about an
+  real hardware (launched from the Browser or a `.nexload`, NextZXOS's loader
+  shows `Your core is ..., but this file needs 003.003.003.` instead). In CSpect use 4.5.6.0 or later; `RUN.BAT` (or `run.sh` on Linux) warns about an
   older one. No jNext release supports core 3.03.03 yet, so jNext shows the
   core message or misbehaves and the run launcher warns; until that changes, video
   cutscenes play on real hardware only. See

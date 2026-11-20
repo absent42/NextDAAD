@@ -443,7 +443,7 @@ param([switch]$Harness, [switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 # Without -Harness, staging refuses while build\harness.txt exists. -Harness stages into the same
-# leg folders, unmarked; hardware legs are re-verified at staging time against a fresh non-harness build.
+# leg folders, unmarked; before staging a hardware leg, rebuild without -Harness and compare its NEX hash to the leg's.
 $harnessMark = Join-Path $root 'build\harness.txt'
 if ($Harness -and -not (Test-Path -LiteralPath $harnessMark)) { throw "-Harness: no build\harness.txt - build with .\build.ps1 -Harness first" }
 if (-not $Harness -and (Test-Path -LiteralPath $harnessMark)) { throw "build\harness.txt: build\nextdaad.nex is a harness build - stage it with -Harness, or rebuild with .\build.ps1" }

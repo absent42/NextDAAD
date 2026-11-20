@@ -6,8 +6,9 @@
 ; Author interface (from DSF):
 ;   EXTERN colour 40   start a fade OUT to `colour` (RRRGGGBB byte:
 ;                      0 = black, 255 = white, %11100000 = red, ...).
-;                      Refused while another module holds the palette:
-;                      no fade runs and flag 240 is set to 1.
+;                      Refused (no fade runs, flag 240 set to 1) while
+;                      another module holds the palette, or on an
+;                      interpreter older than API 4.
 ;   EXTERN 0 41        start a fade IN back to the original picture
 ;   EXTERN 0 42        re-snapshot the STAGED palette (buffer mode
 ;                      only): the PICTURE changed while faded out. Also
@@ -59,8 +60,9 @@
 ; What this teaches beyond the ticker example:
 ;   - reading the live palette back through the interpreter's own
 ;     service (SVC_PALREAD), which reads either Layer 2 bank on request
-;   - the register-select bracket: ALL hardware access here goes
-;     through the $243B/$253B port pair, saving and restoring both the
+;   - the register-select bracket: palette hardware access goes through
+;     the $243B/$253B port pair (NR $43 is read with NRGET and written
+;     with nextreg), saving and restoring both the
 ;     select latch (port $243B is documented read/write) and NR $43
 ;     around every burst, because the interpreter's own foreground
 ;     code uses the same indexed interface and the #int hook can fire

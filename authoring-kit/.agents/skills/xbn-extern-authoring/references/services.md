@@ -120,8 +120,9 @@ caching it. `xbnmod.inc`'s `xbn_width` is hook-safe and returns the width in
 columns in E (80 or 40), the row stride in D (160 or 80) and a row-27 base in
 HL; for any row use `XBN_TILEMAP + row * stride` (`xbnmod.inc`), as the
 ticker's `tick_field` does. It corrupts AF, BC, DE, HL. From the foreground,
-DI-bracket the call (IFF2-preserving, as the ticker's `tick_field` does): the
-frame ISR re-selects $243B without restoring it. The ticker module calls it
+DI-bracket the call (IFF2-preserving, as the ticker's `tick_field` does): hook
+code run from the frame ISR (such as `xbn_width` via an int hook) re-selects
+$243B without restoring it. The ticker module calls it
 every frame while armed, so a switch mid-message just carries on at the new
 width.
 

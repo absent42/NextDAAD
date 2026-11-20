@@ -22,9 +22,10 @@ you stop the game at the spot and read the answer.</p>
 <p>It runs inside the CSpect emulator, as a second window beside the game.</p>
 <h2 id="what-you-need">What you need</h2>
 <ul>
-<li><strong>CSpect 4.0 or later</strong>, installed as described in
+<li><strong>CSpect 4.0 or later</strong> (4.5.6.0 or later for the game itself to run
+  correctly), installed as described in
   <a href="getting-started.html#what-you-need">Getting started</a>. Older CSpect
-  builds still run your game with <code>RUN.BAT</code>, but not the debugger.</li>
+  builds cannot run the debugger; below 4.5.6.0 the game misbehaves.</li>
 <li><strong><code>EMULATOR=cspect</code></strong>, which is what you get when <code>EMULATOR</code> is blank.
   The debugger does not run in jNext. If <code>CONFIG.local.BAT</code> sets
   <code>EMULATOR=jnext</code>, remove that line or change it to <code>cspect</code>;
@@ -542,7 +543,15 @@ waits for a key before closing the window so you can read it.</p>
 </tr>
 <tr>
 <td><code>ERROR: the debugger needs CSpect 4.0 or later - found &lt;version&gt; in &lt;folder&gt;</code></td>
-<td>Install CSpect 4.0 or later. Older builds still run with <code>RUN.BAT</code>.</td>
+<td>Install CSpect 4.5.6.0 or later.</td>
+</tr>
+<tr>
+<td><code>WARNING: CSpect &lt;version&gt; is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave</code></td>
+<td>The debugger starts, but the interpreter reads Next registers with <code>NEXTREG A,n</code>, which this CSpect lacks. Install CSpect 4.5.6.0 or later.</td>
+</tr>
+<tr>
+<td><code>WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later</code></td>
+<td>The version could not be read. Use CSpect 4.5.6.0 or later.</td>
 </tr>
 <tr>
 <td><code>ERROR: could not read the CSpect version in &lt;folder&gt; - the debugger needs CSpect 4.0 or later</code></td>

@@ -33,11 +33,20 @@ check_refuse_closure static call/jp/jr closure of core_gate and core_refuse,
 
 check_no_const_nr_read no code line under src/ (not src/intro/) references
                      nr_read: every Next-register read is an NRGET.
+check_no_fade_in_harness no ZEsarUX launcher stages the standalone fade extern
+                     or types a fade verb, in its text or in a script
+                     file it plays; fixture-XBN legs are exempt.
+check_zes_core_wired every ZEsarUX launch goes through the core-wiring helper.
+check_extern_fresh   each kit extern assembles to its committed GAME.XBN and
+                     STARTER matches the all collection.
+check_fade_source    fade.asm source pins: latch read, NRGET + nextreg, API 4
+                     gate ordering and the fn 40 refusal.
 
 Run standalone or via tests\\build-tests.ps1. Exit 0 = every check passed.
 """
 
 import ast
+import json
 import random
 import re
 import shutil
@@ -810,14 +819,59 @@ def fade_verbs(dsf):
     return verbs
 
 
+FADE_STANDALONE = re.compile(r"-XbnFade|FADE\.XBN", re.I)
+FADE_FIXTURE = re.compile(r"xbntest|FIXTURE_XBN|out[\\/]xbn[\\/]GAME\.XBN", re.I)
+SCRIPT_TAKERS = ("tests/parser/nleg.py", "tests/parser/parsertest.py")
+
+
+def script_words(path):
+    """Lower-case words of every command in a JSON command script."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return set()
+    words = set()
+    for e in raw if isinstance(raw, list) else []:
+        cmd = e.get("cmd") if isinstance(e, dict) else e
+        if isinstance(cmd, str):
+            words |= set(re.findall(r"\w+", cmd.lower()))
+    return words
+
+
+def fade_launcher_problems(rel, text, verbs, scripts):
+    """Problems for one ZEsarUX launcher. A leg that stages the fixture XBN
+    (xbntest) has no fade module, so fn 40-43 there are fixture probes: only
+    other legs are checked for fade verbs, typed in the launcher or in a
+    script it plays (scripts: [(name, words)])."""
+    bad = []
+    if FADE_STANDALONE.search(text):
+        bad.append(f"{rel} stages the standalone fade extern")
+    if FADE_FIXTURE.search(text) and not FADE_STANDALONE.search(text):
+        return bad
+    word = re.compile(r"[\"'\s](" + "|".join(sorted(verbs)) + r")[\"'\s]", re.I)
+    hit = word.search(text)
+    if hit:
+        bad.append(f"{rel} types fade verb {hit.group(1)}")
+    for name, words in scripts:
+        both = sorted(w for w in words if w.upper() in verbs)
+        if both:
+            bad.append(f"{rel} plays script {name} typing fade verb {both[0]}")
+    return bad
+
+
 def check_no_fade_in_harness():
-    """No ZEsarUX launcher stages the standalone fade extern or types a verb whose
-    entry calls EXTERN 40-43 (extern.dsf, or any DSF the launcher names). Externs
-    assemble NEXTREG A,n with no stand-in, which ZEsarUX lacks."""
+    """No ZEsarUX launcher stages the standalone fade extern or types a verb
+    whose entry calls EXTERN 40-43 (extern.dsf, or any DSF the launcher names), in
+    its own text or in a script file it plays. Externs assemble NEXTREG A,n with
+    no stand-in, which ZEsarUX lacks. Legs on the xbntest fixture are exempt:
+    there fn 40-43 are probes, not fade; fade or all legs are checked."""
     read = lambda p: p.read_text(encoding="utf-8", errors="replace")
     ext = fade_verbs(read(ROOT / "tests/extern.dsf"))
     if not ext:
         raise Fail("tests/extern.dsf: no fade verbs found, the scan is blind")
+    all_scripts = sorted(p for p in (ROOT / "tests/parser/scripts").rglob("*.json"))
+    if not all_scripts:
+        raise Fail("no command scripts found under tests/parser/scripts, the scan is blind")
     bad, seen = [], set(ext)
     for rel in ZES_LAUNCHERS:
         text = read(ROOT / rel)
@@ -827,12 +881,25 @@ def check_no_fade_in_harness():
                 if p.relative_to(ROOT / "tests").parts[0] != "out":
                     verbs |= fade_verbs(read(p))
         seen |= verbs
-        if re.search(r"-XbnFade|FADE\.XBN", text):
-            bad.append(f"{rel} stages the standalone fade extern")
-        word = re.compile(r"[\"'\s](" + "|".join(sorted(verbs)) + r")[\"'\s]", re.I)
-        hit = word.search(text)
-        if hit:
-            bad.append(f"{rel} types fade verb {hit.group(1)}")
+        played = set()
+        for name in set(re.findall(r"[\w./-]+\.json", text)):
+            played |= {p for p in all_scripts if p.name == Path(name).name}
+        if rel in SCRIPT_TAKERS:
+            played |= set(all_scripts)
+        scripts = [(p.relative_to(ROOT).as_posix(), script_words(p)) for p in sorted(played)]
+        bad += fade_launcher_problems(rel, text, verbs, scripts)
+    # The scan itself: each blind spot and the over-match, on generated input.
+    v = {"XFAD"}
+    if not fade_launcher_problems("m", 'type("XFAD")', v, []):
+        raise Fail("scan is blind to a fade verb typed in a launcher")
+    if not fade_launcher_problems("m", "x", v, [("s.json", {"xfad", "look"})]):
+        raise Fail("scan is blind to a fade verb in a played script")
+    if not fade_launcher_problems("m", '-XbnAll type("XFAD")', v, []):
+        raise Fail("scan is blind to a fade verb in an all-collection leg")
+    if not fade_launcher_problems("m", "-XbnFade", v, []):
+        raise Fail("scan is blind to the standalone fade extern")
+    if fade_launcher_problems("m", 'xbntest.asm type("XFAD")', v, [("s.json", {"xfad"})]):
+        raise Fail("fixture-XBN legs are wrongly checked for fn 40-43 probes")
     if bad:
         raise Fail("; ".join(bad))
     return f"{len(ZES_LAUNCHERS)} launchers, fade verbs {' '.join(sorted(seen))}"
@@ -1008,15 +1075,19 @@ def fade_source_problems(text):
         ext = lines.index("ext:")
         first = next(i for i in range(ext, len(lines))
                      if re.fullmatch(r"jr\s+z\s*,\s*\.fadeout", lines[i], re.I))
-        body = lines[ext:first]
-        v = next(i for i, l in enumerate(body)
-                 if re.fullmatch(r"call\s+SVC_VERSION", l, re.I))
-        if not re.fullmatch(r"cp\s+MIN_API", body[v + 1], re.I):
+        body = [l for l in lines[ext:first] if l]
+        norm = [re.sub(r"\s+", " ", l.lower()) for l in body]
+        ver = next(i for i, l in enumerate(norm) if l == "call svc_version")
+        guard = ["ld a, c", "cp 40", "jr c, .notmine", "cp 44", "jr nc, .notmine"]
+        if not any(norm[i:i + 5] == guard for i in range(ver)):
+            bad.append("ext: the fn 40-43 range guard does not precede call SVC_VERSION")
+        if norm[ver + 1] != "cp min_api":
             raise StopIteration
-        ok = next(i for i, l in enumerate(body) if l == ".apiok:")
-        refusal = body[v + 2:ok]
-        if not any(re.fullmatch(r"j[rp]\s+z\s*,\s*\.refused", l, re.I) for l in refusal):
-            bad.append("ext: a refused fn 40 does not reach .refused (flag 240)")
+        ok = next(i for i, l in enumerate(norm) if l == ".apiok:")
+        refusal = norm[ver + 2:ok]
+        refused = ["ld a, c", "cp 40", "jp z, .refused"]
+        if not any(refusal[i:i + 3] == refused for i in range(len(refusal))):
+            bad.append("ext: refusal is not ld a, c / cp 40 / jp z, .refused (flag 240)")
     except StopIteration:
         bad.append("ext: call SVC_VERSION / cp MIN_API does not precede the function dispatch")
     return bad

@@ -119,7 +119,15 @@ try {
             $mmc = if ($staged) { $staged.DirectoryName } else { "$root\sd" }
         }
         Write-Host "mounting $mmc\ as the card"
-        & "$root\tools\CSpect\CSpect.exe" -w3 -zxnext -esc -mmc="$mmc\" "$root\build\nextdaad.nex"
+        # The interpreter reads Next registers with NEXTREG A,n: CSpect 4.5.6.0 or later only.
+        # tools\CSpect is 4.4.1.0, so run the CSPECT_DIR install (default as -Kit).
+        . "$root\authoring-kit\lib\kitcspect.ps1"
+        $runDir = if ($env:CSPECT_DIR) { $env:CSPECT_DIR } else { 'D:\ZXNextDev\cspect' }
+        $runExe = "$runDir\CSpect.exe"
+        $runVer = if (Test-Path -LiteralPath $runExe) { Get-KitCSpectVersion $runExe } else { $null }
+        if ($null -eq $runVer) { throw "ERROR: build.ps1 -Run needs CSpect 4.5.6.0 or later at $runDir (set CSPECT_DIR); cannot read its version" }
+        if ($runVer -lt [version]'4.5.6.0') { throw "ERROR: build.ps1 -Run needs CSpect 4.5.6.0 or later - found $runVer in $runDir (set CSPECT_DIR)" }
+        & "$runExe" -w3 -zxnext -esc -mmc="$mmc\" "$root\build\nextdaad.nex"
     }
 }
 finally { Pop-Location }

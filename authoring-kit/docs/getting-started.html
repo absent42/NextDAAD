@@ -24,6 +24,7 @@ network share or a Docker bind mount cannot keep the precise file times
 the incremental build relies on, and the build refuses to run there.</p>
 <p>NextDAAD needs core 3.03.03 or later. On real hardware, update the
 core if a game shows <code>NextDAAD needs core 3.03.03 or later</code> at start.
+On real hardware started from the Browser or a <code>.nexload</code>, NextZXOS's loader shows its own message instead (<code>Your core is ..., but this file needs 003.003.003. Please update your core.</code>); update the core either way.
 In an emulator, use CSpect 4.5.6.0 or later: the interpreter reads Next
 registers with <code>NEXTREG A,n</code>, which older CSpect lacks, and <code>RUN.BAT</code> (or <code>run.sh</code> on Linux) warns when
 it finds an older one. No jNext release supports core 3.03.03 yet, so in jNext
@@ -453,7 +454,7 @@ it. See <a href="video.html">Video</a>.</p>
   then converts everything from scratch.</li>
 <li><strong><code>DEBUG.BAT</code></strong> (<code>./debug.sh</code>) - builds the game as <code>BUILD.BAT</code> does,
   also writing the source maps the debugger reads, then starts CSpect
-  with the debugger attached. It needs CSpect 4.0 or later and
+  with the debugger attached. It needs CSpect 4.0 or later (4.5.6.0 or later for the game to run correctly) and
   <code>EMULATOR=cspect</code>; <code>RELEASE\&lt;GAME&gt;\</code> is the same as <code>BUILD.BAT</code> makes.
   See <a href="debugger.html">Debugger</a>.</li>
 </ul>
@@ -611,6 +612,14 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <tr>
 <td><code>ERROR: EMULATOR=... - use cspect or jnext</code></td>
 <td><code>EMULATOR</code> holds something else. Set it to <code>cspect</code> or <code>jnext</code>, or leave it blank for CSpect.</td>
+</tr>
+<tr>
+<td><code>WARNING: CSpect ... is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave</code></td>
+<td>The CSpect found cannot execute <code>NEXTREG A,n</code>, which the interpreter uses. Install CSpect 4.5.6.0 or later.</td>
+</tr>
+<tr>
+<td><code>WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later</code></td>
+<td>The version of <code>CSpect.exe</code> could not be read. The game starts anyway; use CSpect 4.5.6.0 or later.</td>
 </tr>
 <tr>
 <td><code>ERROR: jNext not found at ...</code></td>

@@ -19,6 +19,7 @@ the incremental build relies on, and the build refuses to run there.
 
 NextDAAD needs core 3.03.03 or later. On real hardware, update the
 core if a game shows `NextDAAD needs core 3.03.03 or later` at start.
+On real hardware started from the Browser or a `.nexload`, NextZXOS's loader shows its own message instead (`Your core is ..., but this file needs 003.003.003. Please update your core.`); update the core either way.
 In an emulator, use CSpect 4.5.6.0 or later: the interpreter reads Next
 registers with `NEXTREG A,n`, which older CSpect lacks, and `RUN.BAT` (or `run.sh` on Linux) warns when
 it finds an older one. No jNext release supports core 3.03.03 yet, so in jNext
@@ -403,7 +404,7 @@ it. See [Video](video.md).
   then converts everything from scratch.
 - **`DEBUG.BAT`** (`./debug.sh`) - builds the game as `BUILD.BAT` does,
   also writing the source maps the debugger reads, then starts CSpect
-  with the debugger attached. It needs CSpect 4.0 or later and
+  with the debugger attached. It needs CSpect 4.0 or later (4.5.6.0 or later for the game to run correctly) and
   `EMULATOR=cspect`; `RELEASE\<GAME>\` is the same as `BUILD.BAT` makes.
   See [Debugger](debugger.md).
 
@@ -532,6 +533,8 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `wrong DAAD compiler version` | The banner `lib\ndrc.exe` prints does not match the version pinned in `lib\toolversions.txt`. This should not happen with the kit as shipped; if you have replaced `ndrc.exe` yourself, set `NDRCVER` in `CONFIG.local.BAT` to match. |
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
 | `ERROR: EMULATOR=... - use cspect or jnext` | `EMULATOR` holds something else. Set it to `cspect` or `jnext`, or leave it blank for CSpect. |
+| `WARNING: CSpect ... is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave` | The CSpect found cannot execute `NEXTREG A,n`, which the interpreter uses. Install CSpect 4.5.6.0 or later. |
+| `WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later` | The version of `CSpect.exe` could not be read. The game starts anyway; use CSpect 4.5.6.0 or later. |
 | `ERROR: jNext not found at ...` | Install jNext 1.1.87 or later at the path shown, or set `JNEXTDIR` in `CONFIG.local.BAT`. On Linux, installing the `.deb` or `.rpm` package puts `jnext` on your PATH. See [Running in jNext](#running-in-jnext). |
 | `ERROR: no jNext SD-card image at ...` | Start jNext once and let it download its SD-card image, or set `JNEXTIMG` in `CONFIG.local.BAT`. |
 | `ERROR: jNext is running - close it before running the game` | Close jNext and run again. |

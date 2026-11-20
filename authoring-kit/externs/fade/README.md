@@ -33,6 +33,10 @@ before starting the next. After a completed fade-in the snapshot is
 forgotten, so the next fade-out captures whatever picture is on screen
 by then.
 
+Fade needs interpreter API 4 (core 3.03.03). On an older interpreter
+`EXTERN c 40` is refused the same way: nothing fades and flag 240 is
+set to 1.
+
 `EXTERN c 40` is also refused if another extern in the same binary
 already holds the Layer 2 palette. Nothing fades, and flag 240 is set
 to 1 so `EXTERN 0 43` returns at once instead of waiting for a

@@ -126,7 +126,8 @@ EXTERN 0 43
   call can fail the entry that holds the <code>GFX 0 4</code> ... <code>GFX 0 3</code>
   bracket and strand buffer mode open. If another module holds the
   palette when fn 40 is called, the fade is refused and flag 240 reads
-  1 at once - nothing to wait for.</li>
+  1 at once - nothing to wait for. Fade needs interpreter API 4: an older
+interpreter refuses fn 40 the same way.</li>
 </ul>
 <p>Two more palette rules live elsewhere: the hook's interlock (see
 <a href="#the-int-hook">The #int hook</a>) and <code>SVC_BUSY</code> bit 2 (see
@@ -793,7 +794,7 @@ contracts: the loader enforces the format version, your code checks the
 API version.</p>
 <p>API version 4 means the interpreter requires core 3.03.03. <code>xbn.inc</code>
 provides <code>NRGET n</code>, which loads Next register <code>n</code> into A with
-<code>NEXTREG A,n</code> (it always emits that opcode, which only core 3.03.03 has).
+<code>NEXTREG A,n</code> (it always emits that opcode, which only core 3.03.03 or later has).
 An extern that uses it requires API 4: check <code>SVC_VERSION</code> first with
 <code>MIN_API equ 4</code>, as above. The fade example does this.</p>
 <h2 id="flags-and-objects">Flags and objects</h2>

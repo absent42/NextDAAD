@@ -15,8 +15,8 @@ main:
  IFDEF DEBUG
     call l2_bareprobe_hook       ; Layer 2 bare-metal isolation ladder
                                   ; (Task 2, round 8); no-op unless P
-                                  ; is held - checked before ANY other
-                                  ; init, never returns if entered
+                                  ; is held - runs right after the
+                                  ; core gate, never returns if entered
  ENDIF
     call boot_data_init
     call hw_init
