@@ -1,22 +1,22 @@
-"""Loader legs on CSpect 4.3 over MCP: boot each staged card, read the
+"""Loader legs on CSpect (tests/cspect Session): boot each staged card, read the
 format 2 cells, tables and the pool C claim (bankTable 20-23), compare with
 tests/text2/t2model.py, screenshot.
 
 python tests/text2/loader/run_loader_legs.py [card ...]   (default: all)
 Cards: TEXT2, TEXT2W, TEXT2C, TEXT2BAD/<name>, TEXT2REG, TEXT2REGC,
-TEXT2REGBAD/<name>. One CSpect at a time, killed by PID.
+TEXT2REGBAD/<name>. Stage them with tests/text2/stage_legs.py loader.
+One harness CSpect at a time, closed after each card.
 Writes results.md and the screenshots beside this file.
 """
-import json, os, re, subprocess, sys, time, urllib.request, base64
+import json, os, sys
+from pathlib import Path
 
-ROOT = r'D:\NextDAAD'
+ROOT = str(Path(__file__).resolve().parents[3])
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, 'tests', 'text2'))
 import t2model  # noqa: E402
+import drive_cspect  # noqa: E402
 
-CSPECT = r'D:\ZXNextDev\cspect\CSpect.exe'
-NEX = ROOT + r'\build\nextdaad.nex'
-URL = 'http://127.0.0.1:23456/mcp'
 TAG = os.environ.get('T5_TAG', '')     # e.g. _release: separate shots/results
 BAD = ['MAGIC', 'FLAGS', 'NTOK', 'FP', 'EOM', 'SYM', 'KRAFT']
 REGBAD = ['A59', 'REGOVER', 'BLK2', 'F1BIG', 'F1EQ', 'F1P1']
@@ -35,107 +35,37 @@ def pool_c_claim(ddb):
     return 0 if n <= 65536 else min(4, (n - 65536 + 16383) // 16384)
 
 
-class Mcp:
-    def __init__(self):
-        self.id, self.sess = 0, None
-
-    def rpc(self, method, params=None):
-        self.id += 1
-        body = json.dumps({'jsonrpc': '2.0', 'id': self.id, 'method': method,
-                           'params': params or {}}).encode()
-        hdr = {'Content-Type': 'application/json',
-               'Accept': 'application/json, text/event-stream'}
-        if self.sess:
-            hdr['Mcp-Session-Id'] = self.sess
-        with urllib.request.urlopen(urllib.request.Request(URL, body, hdr), timeout=60) as r:
-            self.sess = r.headers.get('Mcp-Session-Id') or self.sess
-            txt = r.read().decode('utf-8', 'replace')
-        for line in txt.splitlines():
-            if line.startswith('data:'):
-                txt = line[5:].strip()
-        return json.loads(txt) if txt.strip() else {}
-
-    def call(self, tool, args=None):
-        return self.rpc('tools/call', {'name': tool, 'arguments': args or {}})
-
-    def text(self, tool, args=None):
-        r = self.call(tool, args)
-        return '\n'.join(c['text'] for c in r.get('result', {}).get('content', [])
-                         if c.get('type') == 'text')
-
-    def mem(self, addr, n):
-        out = []
-        while n > 0:
-            k = min(n, 4096)
-            for line in self.text('read_memory', {'address': '$%04X' % addr, 'length': k}).splitlines():
-                if line.startswith('$'):
-                    out += [int(x, 16) for x in line[6:6 + 49].split()]
-            addr += k
-            n -= k
-        return out
-
-    def shot(self, path):
-        r = self.call('screenshot', {'scale': 1})
-        for c in r.get('result', {}).get('content', []):
-            if c.get('type') == 'image':
-                open(path, 'wb').write(base64.b64decode(c['data']))
-                return True
-        return False
-
-
-def symbols():
-    sym = {}
-    for line in open(ROOT + r'\build\nextdaad.map'):
-        p = line.split()
-        if len(p) == 4:
-            sym[p[3]] = int(p[0], 16)
-    return sym
-
-
-def tm_rows(m, n=32):
-    b = m.mem(0x6000, 160 * n)
-    return [''.join(chr(c) if 32 <= c < 127 else '.' for c in b[r * 160:(r + 1) * 160:2]).rstrip()
-            for r in range(n)]
-
-
 def words(b, off, n):
     return [b[off + 2 * i] | b[off + 2 * i + 1] << 8 for i in range(n)]
 
 
-def run_card(card, sym, log):
+def run_card(card, log):
     folder = os.path.join(ROOT, 'sd', card)
     ddb = open(os.path.join(folder, 'GAME.DDB'), 'rb').read()
     fmt2 = bool(ddb[0] & 0x80)
     model = t2model.t2_model(ddb) if fmt2 else None
-    args = [CSPECT, '-w2', '-zxnext', '-esc', '-mcp=23456', '-mmc=%s\\' % folder, NEX]
-    p = subprocess.Popen(args, cwd=os.path.dirname(CSPECT))
-    log.append('- launch `%s` PID %d' % (' '.join(args), p.pid))
     res = {'card': card}
+    L = drive_cspect.Leg(card, log=None)
+    log.append('- launch %s PID %d' % (card, L.s.pid))
     try:
-        m = Mcp()
-        for _ in range(60):
-            try:
-                m.rpc('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
-                                     'clientInfo': {'name': 'task5', 'version': '1'}})
-                break
-            except Exception:
-                time.sleep(0.5)
-        time.sleep(6)
+        s = L.s
+        sym = s.sym
+        L.settle(more_ok=False)
         shot = 'shot%s_%s.png' % (TAG, card.replace('/', '_').replace('\\', '_'))
-        m.shot(os.path.join(HERE, shot))
+        L.shot(os.path.join(HERE, shot))
         res['shot'] = shot
-        m.call('pause')
-        base = sym['TEXTFORMAT']
-        n = sym['HFSYM'] + 511 - base          # HF_SYM_MAX
-        cells = m.mem(base, n)
+        s.pause()
+        base = sym('TEXTFORMAT')
+        n = sym('HFSYM') + 511 - base          # HF_SYM_MAX
+        cells = list(s.read(base, n))
 
         def at(name, k=1):
-            o = sym[name] - base
+            o = sym(name) - base
             return cells[o] if k == 1 else cells[o] | cells[o + 1] << 8
         got = {'textFormat': at('TEXTFORMAT'), 'text2Err': at('TEXT2ERR')}
-        rows = tm_rows(m, 2)
+        rows = L.rows(2)
         res['row0'] = rows[0]
-        bt = m.mem(sym['BANKTABLE'], 112)
+        bt = list(s.read(sym('BANKTABLE'), 112))
         claim = pool_c_claim(ddb)
         want_c = [0] * claim + [1] * (4 - claim)
         res['poolc'] = 'bankTable[20..23] %s want %s, free %d' % (
@@ -157,10 +87,10 @@ def run_card(card, sym, log):
                        text2Alpha=at('TEXT2ALPHA'), text2Ntok=at('TEXT2NTOK', 2),
                        text2Block=at('TEXT2BLOCK', 2), text2Index=at('TEXT2INDEX', 2),
                        text2Fp=at('TEXT2FP', 2),
-                       hfLimit=words(cells, sym['HFLIMIT'] - base, 15),
-                       hfOffs=words(cells, sym['HFOFFS'] - base, 15),
-                       hfHi=words(cells, sym['HFHI'] - base, 15),
-                       hfSym=cells[sym['HFSYM'] - base:sym['HFSYM'] - base + model['used']])
+                       hfLimit=words(cells, sym('HFLIMIT') - base, 15),
+                       hfOffs=words(cells, sym('HFOFFS') - base, 15),
+                       hfHi=words(cells, sym('HFHI') - base, 15),
+                       hfSym=cells[sym('HFSYM') - base:sym('HFSYM') - base + model['used']])
             bad = [k for k in got if k in model and got[k] != model[k]]
             res['expect'] = 'textFormat 1, tables = t2model (%d symbols), no E-code' % model['used']
             ok = not bad and 'NextDAAD:' not in rows[0]
@@ -173,23 +103,23 @@ def run_card(card, sym, log):
         res['got'] += '; ' + res['poolc']
         res['result'] = 'PASS' if ok else 'FAIL'
     finally:
-        subprocess.run(['taskkill', '/PID', str(p.pid), '/F'], capture_output=True)
-        log.append('  killed PID %d' % p.pid)
-        time.sleep(1)
+        pid = L.s.pid
+        L.close()
+        log.append('  closed PID %d' % pid)
     return res
 
 
 def main():
     cards = sys.argv[1:] or (['TEXT2', 'TEXT2W', 'TEXT2C'] + ['TEXT2BAD\\' + b for b in BAD] +
                              ['TEXT2REG', 'TEXT2REGC'] + ['TEXT2REGBAD\\' + b for b in REGBAD])
-    sym = symbols()
     log, results = [], []
     for c in cards:
-        r = run_card(c, sym, log)
+        r = run_card(c, log)
         print(r)
+        print('%s %s' % (r['result'], r['card']), flush=True)
         results.append(r)
     with open(os.path.join(HERE, 'results%s.md' % TAG), 'w', newline='\n') as f:
-        f.write('# Loader legs (CSpect 4.3 MCP)\n\n')
+        f.write('# Loader legs (CSpect MCP)\n\n')
         f.write('| card | expect | got | result | screenshot |\n|---|---|---|---|---|\n')
         for r in results:
             f.write('| %s | %s | %s | %s | %s |\n' % (r['card'], r['expect'], r['got'].replace('|', '/'),

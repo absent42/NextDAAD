@@ -130,6 +130,13 @@ ENTRIES = [
     cspect(zes("xbn_transcheck", ["-Xbn", "-XbnTrans"],
                ["python", "tests/xbn/transcheck.py", "sd/XBN", "XTRS", "XTR1", "XTRE"]),
            ["-Xbn", "-XbnTrans"], ["python", "tests/xbn/transcheck.py", "sd/XBN", "XTRS", "XTR1", "XTRE"]),
+    cspect(Entry("text2_reader", {}, {}, {}, ("cspect",)),
+           ["python", "tests/text2/stage_legs.py", "reader"],
+           ["python", "tests/text2/drive_cspect.py", "objverif_walk", "nest4_walk", "xmb_walk",
+            "xmb_mismatch_refused", "xmb_fp_refused", "xmb_part_fallback", "timing"]),
+    cspect(Entry("text2_loader", {}, {}, {}, ("cspect",)),
+           ["python", "tests/text2/stage_legs.py", "loader"],
+           ["python", "tests/text2/loader/run_loader_legs.py"]),
 ]
 
 ROW = re.compile(r"^\| (.+?) \| (\S.*?) \| (\d+) \| (\d+) \| ([\d.]+) \| ([\d.]+) \|$")
