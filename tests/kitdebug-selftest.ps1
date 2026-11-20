@@ -220,6 +220,7 @@ if ($OnWindows) {
 $r = Invoke-Debug @('SET GAME=G1', "SET CSPECTDIR=$csBadImGui")
 Assert-Eq $r.Rc 0 'cspect-version-unreadable exit (ImGui.NET.dll present)'
 Assert-Has $r 'note: could not read the CSpect version - assuming 4.0 or later' 'cspect-version-unreadable note'
+Assert-Has $r 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later' 'cspect-version-unreadable warning'
 
 # NEXTREG A,n reads need CSpect 4.5.6.0: the debugger warns below it, and not at or above it.
 $r = Invoke-Debug @('SET GAME=G1', "SET CSPECTDIR=$cs441")

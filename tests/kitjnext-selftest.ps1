@@ -80,7 +80,7 @@ $env:FAKE_JNEXT_RC = '1'; Remove-Item $env:FAKE_JNEXT_LOG
 $msg = $null; try { Publish-JNextCard $fake $base "$work/c2.img" "$work/G1" 'G1.NEX' $work } catch { $msg = $_.Exception.Message }
 Assert-Eq ($msg -like '*step 1, exit 1*') $true 'failed add stops the run'
 Assert-Eq (Get-Calls).Count 1 'nothing after the failed add'
-Assert-Eq (Get-JNextCoreWarning) "WARNING: no jNext release supports core 3.03.03 yet - the game may stop with 'NextDAAD needs core 3.03.03 or later' or misbehave. Video cutscenes need real hardware for now." 'jNext core warning text'
+Assert-Eq (Get-JNextCoreWarning) "WARNING: no jNext release supports core 3.03.03 yet - the game is refused at load (NextZXOS's 'Please update your core' or NextDAAD's own core message). Video cutscenes need real hardware for now." 'jNext core warning text'
 $running = Test-JNextRunning
 Assert-Eq ($running -is [bool]) $true 'Test-JNextRunning returns a bool'
 if ($OnWindows) {

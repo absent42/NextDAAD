@@ -353,7 +353,8 @@ ext:
     or a                         ; CF clear: an action
     ret
 .refused:
-    ; Palette held by another module. Still an ACTION, and flag 240 must
+    ; Palette held by another module, or an interpreter older than API 4.
+    ; Still an ACTION, and flag 240 must
     ; not promise a completion that never comes - fn 43 and a polling
     ; author would both wait forever on a 0.
     ld a, 1

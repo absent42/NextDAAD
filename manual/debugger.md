@@ -402,7 +402,7 @@ waits for a key before closing the window so you can read it.
 | `ERROR: the debugger needs CSpect 4.0 or later - found <version> in <folder>` | Install CSpect 4.5.6.0 or later. |
 | `WARNING: CSpect <version> is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave` | The debugger starts, but the interpreter reads Next registers with `NEXTREG A,n`, which this CSpect lacks. Install CSpect 4.5.6.0 or later. |
 | `WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later` | The version could not be read. Use CSpect 4.5.6.0 or later. |
-| `ERROR: could not read the CSpect version in <folder> - the debugger needs CSpect 4.0 or later` | The version of `CSpect.exe` could not be read, and the folder lacks the files CSpect 4.0 brings. Install CSpect 4.0 or later. |
+| `ERROR: could not read the CSpect version in <folder> - the debugger needs CSpect 4.0 or later` | The version of `CSpect.exe` could not be read, and the folder lacks the files CSpect 4.0 brings. The debugger itself needs CSpect 4.0 or later, and the game needs 4.5.6.0 or later: install that. |
 | `note: could not read the CSpect version - assuming 4.0 or later` | Not an error. The version could not be read, but the folder has the files CSpect 4.0 brings. The debugger carries on. |
 | `ERROR: <file> not found - the kit is incomplete` | `NEXTDAAD.SYM` or `lib\NextDAADDebug.dll` is missing from the kit folder. Unzip the kit again over the folder. |
 | `ERROR: pwsh (PowerShell 7) not found - see docs/getting-started.html, Linux setup` | Linux only, printed by `./debug.sh` itself: install PowerShell 7 as described in [Getting started](getting-started.md#linux-setup). |

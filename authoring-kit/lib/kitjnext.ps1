@@ -75,7 +75,7 @@ function Publish-JNextCard([string]$Exe, [string]$BaseImage, [string]$Card, [str
 }
 
 function Get-JNextCoreWarning {
-    return "WARNING: no jNext release supports core 3.03.03 yet - the game may stop with 'NextDAAD needs core 3.03.03 or later' or misbehave. Video cutscenes need real hardware for now."
+    return "WARNING: no jNext release supports core 3.03.03 yet - the game is refused at load (NextZXOS's 'Please update your core' or NextDAAD's own core message). Video cutscenes need real hardware for now."
 }
 
 # Windows: the process is jnext. Linux: pgrep -x jnext.

@@ -821,6 +821,7 @@ def fade_verbs(dsf):
 
 FADE_STANDALONE = re.compile(r"-XbnFade|FADE\.XBN", re.I)
 FADE_FIXTURE = re.compile(r"xbntest|FIXTURE_XBN|out[\\/]xbn[\\/]GAME\.XBN", re.I)
+FADE_CARRIER = re.compile(r"-XbnAll|-XbnTicker", re.I)
 SCRIPT_TAKERS = ("tests/parser/nleg.py", "tests/parser/parsertest.py")
 
 
@@ -846,7 +847,7 @@ def fade_launcher_problems(rel, text, verbs, scripts):
     bad = []
     if FADE_STANDALONE.search(text):
         bad.append(f"{rel} stages the standalone fade extern")
-    if FADE_FIXTURE.search(text) and not FADE_STANDALONE.search(text):
+    if FADE_FIXTURE.search(text) and not FADE_STANDALONE.search(text) and not FADE_CARRIER.search(text):
         return bad
     word = re.compile(r"[\"'\s](" + "|".join(sorted(verbs)) + r")[\"'\s]", re.I)
     hit = word.search(text)
@@ -898,6 +899,8 @@ def check_no_fade_in_harness():
         raise Fail("scan is blind to a fade verb in an all-collection leg")
     if not fade_launcher_problems("m", "-XbnFade", v, []):
         raise Fail("scan is blind to the standalone fade extern")
+    if not fade_launcher_problems("m", 'FIXTURE_XBN refuse -XbnTicker or -XbnAll type("XFAD")', v, []):
+        raise Fail("a fixture-refusing launcher on an all/ticker leg is wrongly exempt")
     if fade_launcher_problems("m", 'xbntest.asm type("XFAD")', v, [("s.json", {"xfad"})]):
         raise Fail("fixture-XBN legs are wrongly checked for fn 40-43 probes")
     if bad:

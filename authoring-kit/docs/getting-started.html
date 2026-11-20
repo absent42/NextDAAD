@@ -28,7 +28,8 @@ On real hardware started from the Browser or a <code>.nexload</code>, NextZXOS's
 In an emulator, use CSpect 4.5.6.0 or later: the interpreter reads Next
 registers with <code>NEXTREG A,n</code>, which older CSpect lacks, and <code>RUN.BAT</code> (or <code>run.sh</code> on Linux) warns when
 it finds an older one. No jNext release supports core 3.03.03 yet, so in jNext
-the game shows that message or misbehaves; until a jNext release
+the game is refused at load (NextZXOS's <code>Please update your core</code> message or
+NextDAAD's own); until a jNext release
 supports it, video cutscenes play on real hardware only.</p>
 <h3 id="windows-setup">Windows setup</h3>
 <p>Windows 10 or 11. Windows PowerShell, which is part of Windows, runs the
@@ -622,8 +623,8 @@ copy it first - see <a href="#starting-a-new-game">Starting a new game</a>.</p>
 <td>The version of <code>CSpect.exe</code> could not be read. The game starts anyway; use CSpect 4.5.6.0 or later.</td>
 </tr>
 <tr>
-<td><code>WARNING: no jNext release supports core 3.03.03 yet - the game may stop with 'NextDAAD needs core 3.03.03 or later' or misbehave. Video cutscenes need real hardware for now.</code></td>
-<td>jNext cannot yet provide the core the interpreter needs, so the game shows the core refusal or misbehaves. Run with CSpect 4.5.6.0 or later, or on real hardware.</td>
+<td><code>WARNING: no jNext release supports core 3.03.03 yet - the game is refused at load (NextZXOS's 'Please update your core' or NextDAAD's own core message). Video cutscenes need real hardware for now.</code></td>
+<td>jNext cannot yet provide the core the interpreter needs, so the game is refused at load, with NextZXOS's loader message or NextDAAD's own. Run with CSpect 4.5.6.0 or later, or on real hardware.</td>
 </tr>
 <tr>
 <td><code>ERROR: jNext not found at ...</code></td>
