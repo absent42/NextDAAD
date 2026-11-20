@@ -52,6 +52,18 @@ def parser(name, argv):
                   None, argv + ["--out", work(name, "cspect")])
 
 
+INTRO_ARGV = ["python", "tests/intro/zes_intro.py", "sd/INTRO", "--launch", "SHOW.NEX",
+              "--seconds", "90", "--interval", "0.1", "--space-at-frame", "900", "--expect-handoff"]
+POOLC_STAGE = ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex", "build/nextdaad.nex",
+               "build/nextdaad.map", "build/nextdaad.map"]
+
+
+def poolc(name, leg, port, case):
+    """A pool C entry (DEBUG on cspect); the cspect side passes port 0, the first free."""
+    argv = ["python", "tests/poolc/poolc_check.py", "sd/" + leg, "tests/out/poolc/%s.map" % leg]
+    return cspect(zes(name, POOLC_STAGE, argv + [str(port), case]), POOLC_STAGE, argv + ["0", case])
+
+
 ENTRIES = [
     cspect(zes("aysreg", ["-AysReg"],
                ["python", "tests/audio/aysreg_check.py", "--out", work("aysreg")]),
@@ -68,43 +80,31 @@ ENTRIES = [
                ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladder"), "--ladder"]),
            ["-AudLad"], ["python", "tests/audio/stopm_dump.py", "--out", work("stopm_ladder", "cspect"),
                          "--ladder"]),
-    zes("refuse", None, ["python", "tests/corefloor/refuse_check.py"]),
+    cspect(zes("refuse", None, ["python", "tests/corefloor/refuse_check.py"]),
+           None, ["python", "tests/corefloor/refuse_check.py"], build=["-Release"]),
     cspect(zes("cursor", ["-Cursor"], ["python", "tests/cursor_dump.py"]),
            ["-Cursor"], ["python", "tests/cursor_dump.py"]),
     cspect(zes("cycle", ["-Cycle"], ["python", "tests/cycle_dump.py"]),
            ["-Cycle"], ["python", "tests/cycle_dump.py"]),
-    zes("intro", ["-Intro"],
-        ["python", "tests/intro/zes_intro.py", "sd/INTRO", "--launch", "SHOW.NEX",
-         "--seconds", "90", "--interval", "0.1", "--space-at-frame", "900", "--expect-handoff"]),
+    cspect(zes("intro", ["-Intro"], INTRO_ARGV), ["-Intro"], INTRO_ARGV),
     cspect(zes("l2pos", ["-L2Pos"], ["python", "tests/l2pos_check.py"]),
            ["-L2Pos"], ["python", "tests/l2pos_check.py"]),
     cspect(zes("l2pos_wide", ["-L2PosWide"], ["python", "tests/l2pos_check.py", "--mode", "1"]),
            ["-L2PosWide"], ["python", "tests/l2pos_check.py", "--mode", "1"]),
     cspect(zes("gfxzx0", ["-L2Pos", "-GfxZx0"], ["python", "tests/l2pos_check.py"]),
            ["-L2Pos", "-GfxZx0"], ["python", "tests/l2pos_check.py"]),
-    zes("machine_gate", ["-BigDdb"], ["python", "tests/machine_gate.py"]),
+    cspect(zes("machine_gate", ["-BigDdb"], ["python", "tests/machine_gate.py"]),
+           ["-BigDdb"], ["python", "tests/machine_gate.py"]),
     parser("parsertest_condacts", ["python", "tests/parser/parsertest.py", "tests/condacts.dsf",
                                    "tests/parser/scripts/condacts/smoke.json"]),
     parser("parsertest_condacts_full", ["python", "tests/parser/parsertest.py",
                                         "tests/condacts.dsf",
                                         "tests/parser/scripts/condacts/full.json"]),
     parser("v3probe", ["python", "tests/parser/scripts/v3probe/run.py"]),
-    zes("poolc", ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex", "build/nextdaad.nex",
-                  "build/nextdaad.map", "build/nextdaad.map"],
-        ["python", "tests/poolc/poolc_check.py", "sd/LEGPC", "tests/out/poolc/LEGPC.map",
-         "10060", "switch"]),
-    zes("poolc_restore", ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex",
-                          "build/nextdaad.nex", "build/nextdaad.map", "build/nextdaad.map"],
-        ["python", "tests/poolc/poolc_check.py", "sd/LEGPC", "tests/out/poolc/LEGPC.map",
-         "10061", "restore"]),
-    zes("poolc_focus5", ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex",
-                         "build/nextdaad.nex", "build/nextdaad.map", "build/nextdaad.map"],
-        ["python", "tests/poolc/poolc_check.py", "sd/LEGPC", "tests/out/poolc/LEGPC.map",
-         "10062", "focus5"]),
-    zes("poolcc", ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex", "build/nextdaad.nex",
-                   "build/nextdaad.map", "build/nextdaad.map"],
-        ["python", "tests/poolc/poolc_check.py", "sd/LEGPCC", "tests/out/poolc/LEGPCC.map",
-         "10063", "control"]),
+    poolc("poolc", "LEGPC", 10060, "switch"),
+    poolc("poolc_restore", "LEGPC", 10061, "restore"),
+    poolc("poolc_focus5", "LEGPC", 10062, "focus5"),
+    poolc("poolcc", "LEGPCC", 10063, "control"),
     cspect(zes("spraud", ["-SprAud"], ["python", "tests/spraud_dump.py"]),
            ["-SprAud"], ["python", "tests/spraud_dump.py"]),
     cspect(zes("sprites", ["-Sprites"], ["python", "tests/sprites_dump.py"]),

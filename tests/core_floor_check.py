@@ -784,10 +784,7 @@ def check_refuse_closure():
     return "self-test refused ED C7, rst and a moved image; routines " + ", ".join(notes)
 
 
-ZES_LAUNCHERS = [
-    "tests/intro/zes_intro.py",
-    "tests/poolc/poolc_check.py",
-]
+ZES_LAUNCHERS = []
 # Not launchers: the reference ZX interpreter, other machines, zes_core itself
 # (the one raw Popen) and this file.
 ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py",

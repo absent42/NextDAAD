@@ -1,10 +1,14 @@
 """Machine-nibble acceptance matrix: which databases does NextDAAD boot?
 
+    .\\build.ps1
+    pwsh -File tests\\build-tests.ps1 -BigDdb
     python tests\\machine_gate.py [--port N] [--keep]
 
-Boots one database per case under ZEsarUX with byte 1 of the header - the
+Boots one database per case on CSpect (tests\\cspect) with byte 1 of the header - the
 machine/language byte - patched to a different value each time, and reads the
-tilemap to see whether the interpreter ran the game or refused it.
+tilemap to see whether the interpreter ran the game or refused it. A case ends at
+fatal's halt (breakpoint) or at the input editor after the accept marker.
+--port is the harness MCP port (tests\\cspect\\launcher.py PORT_RANGE, default the first free).
 
 WHAT IT PINS. src\\file.asm's ddb_load masks the machine nibble and compares it
 against DDB_MACHINE_NXD, so acceptance depends on the HIGH nibble alone and the
@@ -19,27 +23,30 @@ and 0x11 are now correctly REFUSED. If this file ever reports a failure on
 those two, the fix is not to loosen the expectation.
 
 Not wired into tests\\build-tests.ps1 on purpose - it boots an emulator once per
-case and takes minutes, where that harness is expected to be quick. Run it when
-the acceptance rule itself changes.
+case. Run it when the acceptance rule itself changes.
 """
 import argparse
 import pathlib
 import shutil
 import sys
-import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / 'tests' / 'parser'))
+sys.path.insert(0, str(ROOT / 'tests'))
+sys.path.insert(0, str(ROOT / 'tests' / 'xbn'))
 
-import nleg          # noqa: E402
-import tilemap       # noqa: E402
+from cspect import Session  # noqa: E402
+import xbnrun               # noqa: E402
 
 # The fixture is the oversize one deliberately: its first line is a marker
 # printed by MESSAGE 254, so an ACCEPTED case proves the interpreter got far
 # enough to resolve a pointer past 31744, not merely that it did not refuse.
 FIXTURE = ROOT / 'tests' / 'out' / 'bigddb.ddb'
+NEX = ROOT / 'build' / 'nextdaad.nex'
+MAP = ROOT / 'build' / 'nextdaad.map'
 ACCEPT_MARK = 'BIGDDB TAIL OK'
 REFUSE_MARK = 'wrong machine'
+FATAL_HALT = 'FATAL@HALT'
+BOOT_S = 30.0                   # host deadline for the marker or fatal's halt
 
 # (byte 1, expected accepted, what the value is)
 CASES = [
@@ -57,51 +64,39 @@ CASES = [
     (0xF0, False, 'machine 15'),
 ]
 
-SETTLE_S = 14.0
-
 
 def read_screen(sd, nex, port):
-    """Boot one prepared folder and return its tilemap rows."""
-    if nleg.port_already_listening(port):
-        raise SystemExit('port %d already in use - a stale ZEsarUX is running' % port)
-    proc = nleg.launch(sd, port)
-    try:
-        z = nleg.wait_for_port(proc, port)
-        z.cmd('smartload %s' % nex, wait=1.0, deadline=60.0)
-        last, stable = None, 0
-        deadline = time.time() + SETTLE_S
-        while time.time() < deadline:
-            rows, _ = tilemap.decode(z.read_memory(nleg.TM_MAP, nleg.GRID_BYTES))
-            if rows == last and any(r.strip() for r in rows):
-                stable += 1
-                if stable >= 3:
-                    break
-            else:
-                stable, last = 0, rows
-            time.sleep(0.4)
-        rows, _ = tilemap.decode(z.read_memory(nleg.TM_MAP, nleg.GRID_BYTES))
-        z.close()
-        return rows
-    finally:
-        proc.terminate()
+    """Boot one prepared folder; its tilemap rows once fatal halts or, after the accept
+    marker, the input editor is ready (rows as they stand if neither comes)."""
+    with Session.boot(sd, nex, MAP, paused=True, port=port) as s:
+        print('  CSpect PID %d on MCP port %d' % (s.pid, s.inst.port), flush=True)
+        halt = s.sym(FATAL_HALT)
+        s.set_breakpoint(halt)
+        s.resume()
+
+        def ended():
+            if s.stopped_at() == halt:
+                return 'fatal'
+            return 'accept' if ACCEPT_MARK in '\n'.join(s.rows()) else None
         try:
-            proc.wait(timeout=10)
-        except Exception:                            # noqa: BLE001
-            proc.kill()
+            if s.wait_until(ended, BOOT_S, what='the accept marker or %s' % FATAL_HALT) == 'accept':
+                xbnrun.wait_ready(s)
+        except (TimeoutError, SystemExit) as e:
+            print('  no end state: %s' % e)
+        return s.rows()
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--port', type=int, default=10078)
+    ap.add_argument('--port', type=int, default=None)
     ap.add_argument('--keep', action='store_true',
                     help='keep the per-case boot folders for inspection')
     args = ap.parse_args()
 
     if not FIXTURE.exists():
         raise SystemExit('no %s - run tests\\build-tests.ps1 first' % FIXTURE)
-    nex_src = ROOT / 'build' / 'nextdaad.nex'
-    if not nex_src.exists():
-        raise SystemExit('no %s - run .\\build.ps1 first' % nex_src)
+    if not NEX.exists():
+        raise SystemExit('no %s - run .\\build.ps1 first' % NEX)
 
     base = FIXTURE.read_bytes()
     work = ROOT / 'tests' / 'out' / 'machinegate'
@@ -117,7 +112,7 @@ def main():
         patched[1] = value
         (case / 'GAME.DDB').write_bytes(bytes(patched))
         nex = case / 'NEXTDAAD.NEX'
-        shutil.copyfile(nex_src, nex)
+        shutil.copyfile(NEX, nex)
 
         rows = read_screen(case, nex, args.port)
         joined = '\n'.join(rows)
@@ -135,7 +130,7 @@ def main():
 
         first = next((r.strip() for r in rows if r.strip()), '(blank screen)')
         print('  %02X  %-10s %-4s  %-52s | %s'
-              % (value, verdict, 'ok' if ok else 'FAIL', what, first[:52]))
+              % (value, verdict, 'ok' if ok else 'FAIL', what, first[:52]), flush=True)
         if not ok:
             failures.append((value, verdict, what, first))
 

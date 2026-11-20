@@ -1,30 +1,35 @@
-"""Core-floor refusal on ZEsarUX: boots the -Harness build with the reported
-core set to each version and reads the tilemap and the border.
+"""Core-floor refusal on CSpect (tests/cspect): boots the Release build with the reported
+core set to each version (-major/-minor, NR $01/$0E) and reads the tilemap.
 
-    ./build.ps1 -Harness
+    ./build.ps1 -Release
     python tests/corefloor/refuse_check.py [--port N]
 
-Below 3.03.03 row 0 must read the refusal text and the border must be
-ERR_BORDER_CORE; at or above it the refusal must be absent and the
-interpreter must have printed something else. Exit 1 on a failed case.
+--port is the harness MCP port (tests/cspect/launcher.py PORT_RANGE, default the first free).
+The border is not visible (the tilemap covers it), so the witness is core_refuse's
+out ($FE),a: below 3.03.03 it must run with A = ERR_BORDER_CORE, then at core_refuse.halt
+row 0 must read the refusal text and nothing else; at or above it that out must not run
+before PAST_GATE, and the interpreter must then print something other than the refusal.
+Exit 1 on a failed case.
 """
 import argparse
 import pathlib
 import re
 import shutil
-import subprocess
 import sys
-import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(ROOT / "tests" / "parser"))
 sys.path.insert(0, str(ROOT / "tests"))
-import nleg                                          # noqa: E402
-import tilemap                                       # noqa: E402
-import zes_core                                      # noqa: E402
+from cspect import Session                           # noqa: E402
 
+NEX = ROOT / "build" / "nextdaad.nex"
+MAP = ROOT / "build" / "nextdaad.map"
+SYM = ROOT / "build" / "NEXTDAAD.SYM"
 MESSAGE = "NextDAAD needs core 3.03.03 or later"
-SETTLE_S = 10.0
+# Release calls it right after txt_init clears the tilemap (src/main.asm:29-31); until then
+# $6000 holds whatever RAM held at power-on.
+PAST_GATE = "RAM_DETECT"
+STOP_S = 30.0                                        # host deadline for a boot-path stop
+PRINT_S = 30.0                                       # host deadline for the first text
 
 # (reported core, refused)
 CASES = [
@@ -43,54 +48,83 @@ def err_border():
     return int(m.group(1))
 
 
-def run_case(version, port, work):
+def nr_values(version):
+    """NR $01 (major.minor nibbles) and NR $0E (sub) for a core version."""
+    return (version[0] << 4) | version[1], version[2]
+
+
+def out_address(s, border):
+    """core_refuse's out ($FE),a, checked against the loaded image."""
+    at = s.sym("CORE_REFUSE")
+    code = s.read(at, 4)
+    if code != bytes((0x3E, border, 0xD3, 0xFE)):
+        raise SystemExit("refuse_check: core_refuse at $%04X holds %s, not ld a,%d / out ($FE),a"
+                         % (at, code.hex(" "), border))
+    return at + 2
+
+
+def run_case(version, refused, border, port, work):
+    """(ok, detail) for one reported core."""
     sd = work / ("%d.%d.%d" % version)
     sd.mkdir(parents=True)
     nex = sd / "NEXTDAAD.NEX"
-    shutil.copyfile(ROOT / "build" / "nextdaad.nex", nex)
-    if nleg.port_already_listening(port):
-        raise SystemExit("port %d already in use - a stale ZEsarUX is running" % port)
-    proc = nleg.launch(sd, port)
-    try:
-        z = nleg.wait_for_port(proc, port)
-        zes_core.patch(proc, version)
-        z.cmd("smartload %s" % nex, wait=1.0, deadline=60.0)
-        time.sleep(SETTLE_S)
-        rows, _ = tilemap.decode(z.read_memory(nleg.TM_MAP, nleg.GRID_BYTES))
-        ports = z.cmd("get-io-ports")
-        z.close()
-    finally:
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/F", "/T"], capture_output=True)
-    # get-io-ports prints the last value written to port $FE as "Spectrum FE port: nn";
-    # bits 0-2 are the border (cases below read 1 refused, 2 booting to E1).
-    m = re.search(r"Spectrum FE port:\s*([0-9A-Fa-f]{2})", ports)
-    border = int(m.group(1), 16) & 7 if m else None
-    return rows, border
+    shutil.copyfile(NEX, nex)
+    major, minor = nr_values(version)
+    with Session.boot(sd, nex, MAP, paused=True, major=major, minor=minor, port=port) as s:
+        print("CSpect PID %d on MCP port %d, NR $01=$%02X NR $0E=$%02X"
+              % (s.pid, s.inst.port, major, minor), flush=True)
+        at = out_address(s, border)
+        s.set_breakpoint(at)
+        s.set_breakpoint(PAST_GATE)
+        s.resume()
+        try:
+            pc = s.wait_until(s.stopped_at, STOP_S, what="core_refuse's out or %s" % PAST_GATE)
+        except TimeoutError as e:
+            text = [r.strip() for r in s.rows() if r.strip()]
+            return False, "%s; screen %s" % (e, text[:2] or "blank")
+        if pc != at:
+            if refused:
+                return False, "reached %s, out ($FE),a never ran" % PAST_GATE
+        elif not refused:
+            return False, "out ($FE),a at $%04X ran with A=%d" % (at, s.regs()["A"])
+        else:
+            a = s.regs()["A"]
+            s.clear_breakpoint(at)
+            halt = s.run_to("CORE_REFUSE@HALT", STOP_S)
+            rows = s.rows()
+            shown = rows[0].strip() == MESSAGE
+            rest = [r.strip() for r in rows[1:] if r.strip()]
+            ok = a == border and halt == s.sym("CORE_REFUSE@HALT") and shown and not rest
+            return ok, ("out ($FE),a at $%04X ran with A=%d; row0=%r; other rows %s"
+                        % (pc, a, rows[0].strip()[:40], rest[:2] or "blank"))
+        s.clear_breakpoint(PAST_GATE)
+        s.clear_breakpoint(at)
+        s.resume()
+
+        def printed():
+            return [r.strip() for r in s.rows() if r.strip()]
+        got = s.wait_until(printed, PRINT_S, what="the interpreter's first text")
+        ok = not any(MESSAGE in t for t in got)
+        return ok, "out ($FE),a not reached by %s; row0=%r" % (PAST_GATE, got[0][:40])
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=10091)
+    ap.add_argument("--port", type=int, default=None)
     port = ap.parse_args().port
-    if not (ROOT / "build" / "harness.txt").exists():
-        raise SystemExit("build/nextdaad.nex is not a -Harness build: run ./build.ps1 -Harness")
-    want = err_border()
+    if "\tRelease" not in SYM.read_text(encoding="utf-8", errors="replace").split("\n", 2)[1]:
+        raise SystemExit("build/nextdaad.nex is not a Release build: run ./build.ps1 -Release")
+    border = err_border()
     work = ROOT / "tests" / "out" / "corefloor" / "refuse"
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
     failed = 0
     for version, refused in CASES:
-        rows, border = run_case(version, port, work)
-        shown = rows[0].strip() == MESSAGE
-        other = any(r.strip() and r.strip() != MESSAGE for r in rows)
-        if refused:
-            ok = shown and border == want and not any(r.strip() for r in rows[1:])
-        else:
-            ok = not any(MESSAGE in r for r in rows) and other and border != want
-        print("%s core %d.%02d.%02d %s: row0=%r border=%s"
+        ok, detail = run_case(version, refused, border, port, work)
+        print("%s core %d.%02d.%02d %s: %s"
               % ("PASS" if ok else "FAIL", version[0], version[1], version[2],
-                 "refused" if refused else "boots", rows[0].strip()[:40], border))
+                 "refused" if refused else "boots", detail), flush=True)
         failed += not ok
     return 1 if failed else 0
 
