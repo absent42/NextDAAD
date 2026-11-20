@@ -22,8 +22,8 @@ PORT_RANGE = range(23460, 23500)
 MUTEX_NAME = r"Local\NextDAADCSpectHarness"
 REQUIRED_TOOLS = ("read_memory", "write_memory", "get_status", "set_registers", "pause", "run",
                   "step", "run_to", "wait_for_stop", "set_breakpoint", "clear_breakpoint",
-                  "evaluate", "read_next_registers", "port_in", "debug_command", "screenshot",
-                  "press_keys", "type_text")
+                  "list_breakpoints", "evaluate", "read_next_registers", "write_next_register",
+                  "port_in", "debug_command", "screenshot", "press_keys", "type_text")
 # DeZogPlugin.dll opens port 11000; card images are GBs and a NEX run needs none
 COPY_EXCLUDE = frozenset({"zxnext.mmc", "dezogplugin.dll"})
 IMAGE_SUFFIXES = frozenset({".mmc", ".img", ".hdf"})

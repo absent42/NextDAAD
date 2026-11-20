@@ -1,6 +1,7 @@
 """One NextDAAD run on a harness CSpect: boot, symbols, memory, screen, keys, debugger and
 timing primitives over MCP. Waits poll a condition or FRAMECOUNTER against a deadline."""
 import base64
+import contextlib
 import importlib.util
 import io
 import re
@@ -134,6 +135,7 @@ class Session:
     def __init__(self, mcp, symbols, inst=None, map_file=None):
         self.mcp, self.inst, self.map_file = mcp, inst, map_file
         self._syms = symbols
+        self._run_to_stop = None     # run_to's target while the CPU still stands there
 
     @classmethod
     def boot(cls, card, nex, map_file, *, freerun=True, paused=False, brk=None, major=None,
@@ -206,27 +208,27 @@ class Session:
             raise ValueError(f"${addr:X}+{len(data)} is outside the 64K view")
         self._write(addr, data, False)
 
-    def _page(self, page: int, offset: int, n: int) -> tuple[int, bool]:
-        """(address, physical) for n bytes at page:offset."""
+    def _page_io(self, page: int, offset: int, n: int, io_fn):
+        """io_fn(address, physical) for n bytes at page:offset; bank 5's MMU check and access
+        run with the CPU held stopped, so a remap cannot fall between them."""
         if not 0 <= page <= 0xFF or not (0 <= offset and n >= 0 and offset + n <= PAGE_SIZE):
             raise ValueError(f"page {page} offset ${offset:X} +{n} is outside one 8K page")
         if page not in BANK5_SLOT:
-            return page * PAGE_SIZE + offset, True
+            return io_fn(page * PAGE_SIZE + offset, True)
         slot = BANK5_SLOT[page]
         nr = 0x50 + slot
-        held = self.next_regs([nr])[nr]
-        if held != page:
-            raise CSpectError(f"page {page} is 16K bank 5, absent from CSpect's physical view; its "
-                              f"64K route needs NR ${nr:02X} = {page}, which holds {held}")
-        return slot * PAGE_SIZE + offset, False
+        with self._stopped():
+            held = self.next_regs([nr])[nr]
+            if held != page:
+                raise CSpectError(f"page {page} is 16K bank 5, absent from CSpect's physical view; "
+                                  f"its 64K route needs NR ${nr:02X} = {page}, which holds {held}")
+            return io_fn(slot * PAGE_SIZE + offset, False)
 
     def read_page(self, page: int, offset: int, n: int) -> bytes:
-        addr, physical = self._page(page, offset, n)
-        return self.mcp.read(addr, n, physical=physical)
+        return self._page_io(page, offset, n, lambda a, phys: self.mcp.read(a, n, physical=phys))
 
     def write_page(self, page: int, offset: int, data: bytes) -> None:
-        addr, physical = self._page(page, offset, len(data))
-        self._write(addr, data, physical)
+        self._page_io(page, offset, len(data), lambda a, phys: self._write(a, data, phys))
 
     def grid(self) -> bytes:
         return self.read(TM_MAP, tilemap.GRID_BYTES)
@@ -271,7 +273,7 @@ class Session:
     # -- keys -------------------------------------------------------------------------------------
 
     def _need_running(self, what: str) -> None:
-        if self._status()[0] != "running":
+        if not self.running():
             raise CSpectError(f"{what} needs the CPU running: resume() first")
 
     def _keys(self, tool: str, **args) -> int:
@@ -299,6 +301,26 @@ class Session:
     def _status(self, text: str | None = None, tool: str = "get_status") -> tuple[str, dict[str, int]]:
         return parse_status(self.mcp.status() if text is None else text, tool)
 
+    def running(self) -> bool:
+        return self._status()[0] == "running"
+
+    def _breakpoints(self) -> set[int]:
+        """Armed 64K execute breakpoints."""
+        t = self.mcp.text(self.mcp.call("list_breakpoints"))
+        m = _num(t, r"(?m)^Execute \(64K\): (.*)$", "list_breakpoints")
+        return {int(a, 16) for a in re.findall(r"\$([0-9A-Fa-f]{4})\b", m.group(1))}
+
+    @contextlib.contextmanager
+    def _stopped(self):
+        """Holds the CPU stopped; resumes after only if this pause stopped it (a breakpoint hit
+        between the status read and the pause stays stopped for the caller)."""
+        paused_here = self.running() and self.pause() not in self._breakpoints()
+        try:
+            yield
+        finally:
+            if paused_here:
+                self.resume()
+
     def _wait_stop(self, timeout: float, what: str) -> int:
         """PC once the CPU stops; TimeoutError naming what."""
         deadline = time.monotonic() + timeout
@@ -317,12 +339,14 @@ class Session:
         return self._status(self.mcp.text(self.mcp.call("pause")), "pause")[1]["PC"]
 
     def resume(self) -> None:
+        self._run_to_stop = None
         t = self.mcp.text(self.mcp.call("run"))
         if not t.startswith("Running"):
             raise CSpectError(f"run reply not understood: {t[:200]!r}")
 
     def step(self, n: int = 1) -> int:
         """Steps n instructions (CPU stopped); returns PC."""
+        self._run_to_stop = None
         t = self.mcp.text(self.mcp.call("step", count=n))
         m = re.match(r"Stepped (\d+) instruction", t)          # absent when n is 1
         if (int(m.group(1)) if m else 1) != n:
@@ -335,26 +359,35 @@ class Session:
     def run_to(self, target, timeout: float) -> int:
         """Runs until PC reaches target or another breakpoint stops it; returns the stop PC."""
         addr = self._addr(target)
+        self._run_to_stop = None
         deadline = time.monotonic() + timeout
         ms = max(1, min(RUN_TO_MAX_MS, int(timeout * 1000)))
         t = self.mcp.text(self.mcp.call("run_to", address=f"${addr:04X}", timeout_ms=ms))
+        pc = None
         if not t.startswith("Still running"):
             state, regs = self._status(t, "run_to")
-            if state == "stopped":
-                return regs["PC"]
-        try:
-            return self._wait_stop(max(0.0, deadline - time.monotonic()), f"{target!r} ${addr:04X}")
-        except TimeoutError:
-            # run_to's temporary breakpoint stays until the next stop
-            if self.pause() == addr:
-                return addr
-            self.resume()
-            raise
+            pc = regs["PC"] if state == "stopped" else None
+        if pc is None:
+            try:
+                pc = self._wait_stop(max(0.0, deadline - time.monotonic()), f"{target!r} ${addr:04X}")
+            except TimeoutError:
+                # run_to's temporary breakpoint stays until the next stop
+                if self.pause() != addr:
+                    self.resume()
+                    raise
+                pc = addr
+        if pc == addr:
+            self._run_to_stop = addr         # its temporary breakpoint is gone from the list
+        return pc
 
     def stopped_at(self) -> int | None:
-        """PC while the CPU is stopped (breakpoint, run_to, pause, step), else None."""
+        """PC while stopped at an armed breakpoint or where run_to stopped, else None: a pause,
+        a step or the -debug entry give None."""
         state, regs = self._status()
-        return regs["PC"] if state == "stopped" else None
+        if state != "stopped":
+            return None
+        pc = regs["PC"]
+        return pc if pc == self._run_to_stop or pc in self._breakpoints() else None
 
     def set_breakpoint(self, target) -> None:
         addr = self._addr(target)
@@ -383,6 +416,14 @@ class Session:
         if wrong:
             raise CSpectError(f"set_registers did not take: {wrong}")
 
+    def set_next_reg(self, number: int, value: int) -> int:
+        """Writes a Next register; returns the value CSpect reads back."""
+        t = self.mcp.text(self.mcp.call("write_next_register", register=f"${number:02X}",
+                                        value=f"${value:02X}"))
+        m = _num(t, rf"^NextReg \${number:02X} = \$[0-9A-Fa-f]{{2}} \(reads back \$([0-9A-Fa-f]{{2}})\)",
+                 "write_next_register")
+        return int(m.group(1), 16)
+
     def next_regs(self, numbers) -> dict[int, int]:
         nums = [int(n) for n in numbers]
         if not nums or not all(0 <= n <= 0xFF for n in nums):
@@ -410,30 +451,38 @@ class Session:
             raise CSpectError(f"debug_command OUT ${port:04X},${value:02X}: {t[:200]!r}")
 
     def ay_regs(self, chip: int = 0, *, restore=AY_FRAME_END) -> bytes:
-        """R0-R13 of Turbo Sound PSG chip (0-2), read paused; leaves PSG restore[0] register
-        restore[1] selected and the CPU as it found it."""
+        """R0-R13 of Turbo Sound PSG chip (0-2), read with the CPU held stopped. The previous
+        select cannot be read back, so PSG restore[0] register restore[1] is selected after."""
         if chip not in (0, 1, 2):
             raise ValueError(f"chip {chip} is not 0-2")
-        was_running = self._status()[0] == "running"
-        if was_running:
-            self.pause()
-        try:
-            self.port_out(0xFFFD, AY_SELECTS[chip])
-            out = bytearray()
-            for r in range(14):
-                self.port_out(0xFFFD, r)
-                out.append(self.port_in(0xFFFD))
-        finally:
-            self.port_out(0xFFFD, AY_SELECTS[restore[0]])
-            self.port_out(0xFFFD, restore[1])
-            if was_running:
-                self.resume()
+        with self._stopped():
+            try:
+                self.port_out(0xFFFD, AY_SELECTS[chip])
+                out = bytearray()
+                for r in range(14):
+                    self.port_out(0xFFFD, r)
+                    out.append(self.port_in(0xFFFD))
+            finally:
+                self.port_out(0xFFFD, AY_SELECTS[restore[0]])
+                self.port_out(0xFFFD, restore[1])
         return bytes(out)
 
     # -- screen and comparisons -------------------------------------------------------------------
 
-    def screenshot(self):
-        """The 320x256 display (border included) as an RGB PIL image."""
+    def screenshot(self, advance: bool = False):
+        """The 320x256 display (border included) as an RGB PIL image. A stopped CSpect returns
+        its last running capture, so that raises unless advance: run 2 frames, shoot, pause."""
+        if self.running():
+            return self._shot()
+        if not advance:
+            raise CSpectError("screenshot while stopped shows a stale frame: resume() or advance=True")
+        self.resume()
+        self.wait_frames(2, 10)
+        img = self._shot()
+        self.pause()
+        return img
+
+    def _shot(self):
         from PIL import Image
         res = self.mcp.call("screenshot", scale=1)
         for c in res.get("content", []):
@@ -445,6 +494,7 @@ class Session:
         raise CSpectError(f"screenshot reply has no image: {self.mcp.text(res)[:200]!r}")
 
     def border_index(self) -> int:
+        """ula_border_index of a screenshot (the CPU must be running, see screenshot)."""
         return ula_border_index(self.screenshot())
 
     def diff_bytes(self, expected: bytes, *, addr=None, page=None, offset=0) -> list[tuple[int, int, int]]:
@@ -457,7 +507,8 @@ class Session:
         return [(i, g, w) for i, (g, w) in enumerate(zip(got, expected)) if g != w]
 
     def diff_image(self, expected, box) -> int:
-        """Differing pixels between a screenshot's box and expected (box-sized or full-screen)."""
+        """Differing pixels between a screenshot's box and expected (box-sized or full-screen);
+        the CPU must be running, see screenshot."""
         from PIL import ImageChops
         shot = self.screenshot().crop(box)
         want = expected.convert("RGB")
@@ -469,20 +520,26 @@ class Session:
 
     # -- timing -----------------------------------------------------------------------------------
 
+    def raster_line(self) -> int:
+        """NR $1E/$1F active video line."""
+        nr = self.next_regs([0x1E, 0x1F])
+        return (nr[0x1E] & 1) << 8 | nr[0x1F]
+
     def _clock_at(self, target) -> tuple[int, int]:
         """(FRAMECOUNTER, raster line) at the next execution of target."""
         addr = self._addr(target)
+        # read before arming: a hit within the next frame is already stopped at the next call
+        was_running = self.running()
         self.set_breakpoint(addr)
         try:
-            if self._status()[0] == "stopped":
+            if not was_running:
                 self.resume()
             pc = self._wait_stop(STOP_S, f"{target!r} ${addr:04X}")
         finally:
             self.clear_breakpoint(addr)
         if pc != addr:
             raise CSpectError(f"stopped at ${pc:04X} waiting for {target!r} ${addr:04X}")
-        nr = self.next_regs([0x1E, 0x1F])
-        return self.frame(), (nr[0x1E] & 1) << 8 | nr[0x1F]
+        return self.frame(), self.raster_line()
 
     def time_between(self, start, end, runs: int = 1) -> list[tuple[int, int]]:
         """Per run (frames, lines) from start's next execution to end's, lines in 0..310; clears

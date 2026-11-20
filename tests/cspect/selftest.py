@@ -561,9 +561,13 @@ MAP = ROOT / "build" / "nextdaad.map"
 STARTED = []                 # Held handle for every CSpect the live checks started
 
 
-def live_launch(**kw):
+def need_staged():
     for p in (CARD / "GAME.DDB", NEX, MAP):
         need(p.is_file(), f"{p} missing: run .\\build.ps1 and tests\\build-tests.ps1 -Suite")
+
+
+def live_launch(**kw):
+    need_staged()
     inst = launcher.launch(CARD, NEX, MAP, **kw)
     held = Held(inst.pid)
     STARTED.append(held)
@@ -849,6 +853,7 @@ def t_session_fake_mcp():
         or f"Wrote {len(a['data']) // 2} bytes at {a['address']}",
         "port_in": lambda a: f"IN {a['port']} = $3F (63, %00111111)",
         "debug_command": lambda a: calls.append(("debug", a["command"])) or "OK",
+        "get_status": lambda a: STATUS,
     }
 
     def reply(req):
@@ -925,6 +930,113 @@ def t_session_wait_until():
     need("the moon" in str(e), f"TimeoutError does not name what: {e}")
 
 
+class FakeCpu:
+    """Scripted CSpect run state for host checks. hit_on_arm: a breakpoint armed while running
+    is hit before the next call (MCP is served at the frame interrupt). hit_before_pause: armed
+    address a running CPU stops at before a pause lands. log: tool names called."""
+    FRAME_ADDR = 0x828E
+
+    def __init__(self, running=True, pc=0x99C6, bps=(), hit_on_arm=False, hit_before_pause=None):
+        self.running, self.pc, self.bps = running, pc, set(bps)
+        self.hit_on_arm, self.hit_before_pause = hit_on_arm, hit_before_pause
+        self.log, self.frame = [], 100
+
+    def stop(self, pc):
+        self.running, self.pc = False, pc
+        self.frame += 1
+
+    def status(self):
+        return STATUS.replace("stopped (in the debugger)", "running" if self.running else "stopped "
+                              "(in the debugger)").replace("PC $9CB2", f"PC ${self.pc:04X}")
+
+    def call(self, name, a):
+        self.log.append(name)
+        addr = int(a["address"][1:], 16) if "address" in a else None
+        if name == "get_status":
+            return self.status()
+        if name == "set_breakpoint":
+            self.bps.add(addr)
+            if self.running and self.hit_on_arm:
+                self.stop(addr)
+            return f"Set execute breakpoint at ${addr:04X}"
+        if name == "clear_breakpoint":
+            self.bps.discard(addr)
+            return f"Cleared execute breakpoint at ${addr:04X}"
+        if name == "list_breakpoints":
+            armed = ", ".join(f"${b:04X}" for b in sorted(self.bps)) or "none"
+            return f"Execute (64K): {armed}\r\nExecute (physical): none\r\nRead: none"
+        if name == "run":
+            self.running = True
+            return "Running"
+        if name == "wait_for_stop":
+            if self.running and self.bps:
+                self.stop(min(self.bps))
+            return "Still running after 10ms" if self.running else self.status()
+        if name == "pause":
+            if self.running:
+                self.stop(self.hit_before_pause if self.hit_before_pause in self.bps else 0xBEBE)
+            return self.status()
+        if name == "read_next_registers":
+            vals = {0x1E: 0, 0x1F: 100, 0x52: 0x0A, 0x53: 0x0B}
+            return "\r\n".join(f"NextReg ${n:02X} = ${vals.get(n, 0):02X}  %0" for n in
+                               (int(x[1:], 16) for x in a["registers"].split(",")))
+        if name == "read_memory":
+            data = (self.frame.to_bytes(2, "little") if addr == self.FRAME_ADDR else b"") + bytes(a["length"])
+            return "\r\n".join(f"${addr + i:04X}  " + " ".join(f"{b:02X}" for b in data[i:i + 16])
+                               for i in range(0, a["length"], 16))
+        if name == "debug_command":
+            return "OK"
+        if name == "port_in":
+            return f"IN {a['port']} = $00 (0, %00000000)"
+        raise KeyError(name)
+
+    def session(self, srv):
+        return Session(client.Mcp(srv.port), {"FRAMECOUNTER": (self.FRAME_ADDR, self.FRAME_ADDR, 0)})
+
+
+def fake_cpu_server(cpu):
+    def reply(req):
+        if req["method"] != "tools/call":
+            return {}, ok_json(req, {})
+        return {}, ok_json(req, text_result(cpu.call(req["params"]["name"], req["params"]["arguments"])))
+    return FakeMcp(reply)
+
+
+def t_session_stop_races():
+    need_session()
+    # I1: time_between on a running CPU whose start breakpoint hits as soon as it is armed
+    cpu = FakeCpu(hit_on_arm=True)
+    with fake_cpu_server(cpu) as srv:
+        got = cpu.session(srv).time_between(0x81AE, 0x81AE)
+    first = cpu.log.index("wait_for_stop")
+    need("run" not in cpu.log[:first], f"start stop dropped: run before the first wait: {cpu.log[:first + 1]}")
+    need(got == [(1, 0)], f"time_between {got}")
+    # M3 / M4: a breakpoint hit before the pause lands stays stopped; a plain pause is undone
+    for hit, want_run in ((0x9000, False), (None, True)):
+        for what, act in (("ay_regs", lambda s: s.ay_regs(0)), ("read_page 11", lambda s: s.read_page(11, 0, 16))):
+            cpu = FakeCpu(bps=[0x9000] if hit else [], hit_before_pause=hit)
+            with fake_cpu_server(cpu) as srv:
+                act(cpu.session(srv))
+            ran = "run" in cpu.log[cpu.log.index("pause"):]
+            need(ran == want_run, f"{what}, breakpoint hit before the pause {hit}: resumed {ran}: {cpu.log}")
+            need(cpu.running == want_run, f"{what}: CPU left {'running' if cpu.running else 'stopped'}")
+    cpu = FakeCpu()
+    with fake_cpu_server(cpu) as srv:
+        cpu.session(srv).read_page(11, 0, 16)
+    order = [cpu.log.index(n) for n in ("pause", "read_next_registers", "read_memory", "run")]
+    need(order == sorted(order), f"bank 5 check and read not inside one pause: {cpu.log}")
+    # R1: stopped_at only at an armed breakpoint; M2: no stale screenshot while stopped
+    for cpu, want in ((FakeCpu(running=False, pc=0x9CB2, bps=[0x9CB2]), 0x9CB2),
+                      (FakeCpu(running=False, pc=0x8000), None), (FakeCpu(), None)):
+        with fake_cpu_server(cpu) as srv:
+            s = cpu.session(srv)
+            got = s.stopped_at()
+            if not cpu.running:
+                e = raises(client.CSpectError, s.screenshot)
+                need("advance" in str(e), f"stopped screenshot error: {e}")
+        need(got == want, f"stopped_at at ${cpu.pc:04X} (armed {cpu.bps}) = {got}, wanted {want}")
+
+
 # -- session live checks (DEBUG build, sd\SUITE) --------------------------------------------------
 
 SCRATCH = 0x5710              # dead ULA pixels between CYC_DBG_SNAP's 16 bytes at $5600 and $5800
@@ -933,8 +1045,7 @@ SCRATCH_PAGE = 95             # upper 8K of bank 47: DEBUG reserves the bank and
 
 def live_session(**kw):
     need_session()
-    for p in (CARD / "GAME.DDB", NEX, MAP):
-        need(p.is_file(), f"{p} missing: run .\\build.ps1 and tests\\build-tests.ps1 -Suite")
+    need_staged()
     s = Session.boot(CARD, NEX, MAP, **kw)
     try:
         STARTED.append(Held(s.pid))
@@ -1068,20 +1179,28 @@ def l_wait_frames_both_speeds():
 def l_paused_boot_brk():
     seed = client.read_map(MAP)["ENG_INIT_GAME@SEEDOK"][0]
     with live_session(paused=True) as s:
-        at0 = s.stopped_at()
+        entry, at0, run0 = s.regs()["PC"], s.stopped_at(), s.running()
         pc = s.run_to("ENG_INIT_GAME@SEEDOK", 20)
         at1 = s.stopped_at()
         main = s.sym("MAIN")
         s.resume()
         booted(s)
-    need(at0 == main, f"paused boot stopped at {at0}, not MAIN ${main:04X}")
+    need(entry == main and not run0, f"paused boot at PC ${entry:04X} running {run0}, not stopped at MAIN")
+    need(at0 is None, f"stopped_at() at the -debug entry (no breakpoint) = {at0}, wanted None")
     need(pc == at1 == seed, f"run_to returned {pc}, stopped_at {at1}, wanted ${seed:04X}")
     with live_session(brk="ENG_INIT_GAME@SEEDOK") as s:
         at2 = s.stopped_at()
+        s.step()
+        at3 = s.stopped_at()
         s.resume()
         booted(s)
+        s.pause()
+        at4 = s.stopped_at()
+        s.resume()
     need(at2 == seed, f"brk boot stopped_at {at2}, wanted ${seed:04X}")
-    return f"-debug at MAIN ${main:04X}, run_to and +brk at SEEDOK ${seed:04X}"
+    need(at3 is None and at4 is None, f"stopped_at after a step {at3}, after a pause {at4}, wanted None")
+    return (f"-debug entry PC ${main:04X} (stopped_at None), run_to and +brk at SEEDOK ${seed:04X}; "
+            f"step and pause give None")
 
 
 def l_regs_step():
@@ -1116,8 +1235,7 @@ def l_next_regs():
 AY_PROBE_REGS = (0, 2, 4, 11)     # 8-bit tone fine A-C and envelope period: silent with R8-R10 at 0
 
 
-def ay_value(chip, r):
-    return 0x41 + 0x10 * chip + r
+AY_MARKS = {(c, r): 0x41 + 0x10 * c + r for c in range(3) for r in AY_PROBE_REGS}
 
 
 def ay_rw(s, chip, r, value=None):
@@ -1129,24 +1247,27 @@ def ay_rw(s, chip, r, value=None):
     return s.port_in(0xFFFD)
 
 
+def ay_write(s, values):
+    """{(chip, reg): value} written, then the frame-end select (PSG 3 R13) restored."""
+    for (c, r), v in values.items():
+        ay_rw(s, c, r, v)
+    s.port_out(0xFFFD, session.AY_SELECTS[session.AY_FRAME_END[0]])
+    s.port_out(0xFFFD, session.AY_FRAME_END[1])
+
+
 def l_port_io():
     with live_session() as s:
         booted(s)
         s.pause()
-        old = {(c, r): ay_rw(s, c, r) for c in range(3) for r in (*AY_PROBE_REGS, 7, 8)}
-        for c in range(3):
-            for r in AY_PROBE_REGS:
-                ay_rw(s, c, r, ay_value(c, r))
-        got = {(c, r): ay_rw(s, c, r) for c in range(3) for r in AY_PROBE_REGS}
-        for c in range(3):
-            for r in AY_PROBE_REGS:
-                ay_rw(s, c, r, old[(c, r)])
-        back = {(c, r): ay_rw(s, c, r) for c in range(3) for r in AY_PROBE_REGS}
-        s.port_out(0xFFFD, 0xFD)
-        s.port_out(0xFFFD, 0x0D)
+        old = {k: ay_rw(s, *k) for k in (*AY_MARKS, *((c, r) for c in range(3) for r in (7, 8)))}
+        ay_write(s, AY_MARKS)
+        got = {k: ay_rw(s, *k) for k in AY_MARKS}
+        ay_write(s, {k: old[k] for k in AY_MARKS})
+        back = {k: ay_rw(s, *k) for k in AY_MARKS}
+        ay_write(s, {})
         s.resume()
         booted(s)
-    bad = [f"PSG{c + 1} R{r} {v:02X}" for (c, r), v in got.items() if v != ay_value(c, r)]
+    bad = [f"PSG{c + 1} R{r} {v:02X}" for (c, r), v in got.items() if v != AY_MARKS[(c, r)]]
     need(not bad, "written values not read back: " + ", ".join(bad))
     need(all(back[k] == old[k] for k in back), f"restore failed: {back} vs {old}")
     idle = [old[(c, 7)] == 0x3F and old[(c, 8)] == 0 for c in range(3)]
@@ -1160,23 +1281,17 @@ def l_ay_regs():
         booted(s)
         s.pause()
         base = [s.ay_regs(c) for c in range(3)]
-        for c in range(3):
-            for r in AY_PROBE_REGS:
-                ay_rw(s, c, r, ay_value(c, r))
+        ay_write(s, AY_MARKS)
         marked = [s.ay_regs(c) for c in range(3)]
-        for c in range(3):
-            for r in AY_PROBE_REGS:
-                ay_rw(s, c, r, base[c][r])
-        s.port_out(0xFFFD, 0xFD)
-        s.port_out(0xFFFD, 0x0D)
-        kept = s.stopped_at() is not None
+        ay_write(s, {(c, r): base[c][r] for c, r in AY_MARKS})
+        kept = not s.running()
         s.resume()
         live = [s.ay_regs(c) for c in range(3)]
-        running = s.stopped_at() is None
+        running = s.running()
     for c in range(3):
         want = bytearray(base[c])
         for r in AY_PROBE_REGS:
-            want[r] = ay_value(c, r)
+            want[r] = AY_MARKS[(c, r)]
         need(marked[c] == want, f"PSG{c + 1} {marked[c].hex()} after writes, wanted {want.hex()}")
         need(base[c][7] == 0x3F, f"PSG{c + 1} R7 ${base[c][7]:02X}, wanted audio_init's $3F")
     need(kept and running, f"CPU state not kept: paused stays paused {kept}, running stays running {running}")
@@ -1198,28 +1313,56 @@ def l_type_enter():
     return " | ".join(text[i:i + 3])
 
 
+def set_next_regs(s, values):
+    """{NR: value} written while paused, each read back by next_regs."""
+    s.pause()
+    for n, v in values.items():
+        s.set_next_reg(n, v)
+    s.resume()
+    got = s.next_regs(list(values))
+    need(got == values, f"next_regs after set_next_reg {got}, wanted {values}")
+
+
 def l_screenshot_border():
     with live_session() as s:
         booted(s)
         img = s.screenshot()
         fixture = s.border_index()
-        s.pause()
         nr = s.next_regs([0x68, 0x6B])
-        for cmd in ("NEXTREG $68,$00", f"NEXTREG $6B,${nr[0x6B] & 0x7F:02X}"):   # ULA on, tilemap off
-            s.mcp.call("debug_command", command=cmd)
+        set_next_regs(s, {0x68: 0x00, 0x6B: nr[0x6B] & 0x7F})         # ULA on, tilemap off
         s.port_out(0x00FE, 2)
-        s.resume()
         s.wait_frames(3, 10)
         red = s.border_index()
-        s.pause()
-        for cmd in (f"NEXTREG $68,${nr[0x68]:02X}", f"NEXTREG $6B,${nr[0x6B]:02X}"):
-            s.mcp.call("debug_command", command=cmd)
+        set_next_regs(s, nr)
         s.port_out(0x00FE, 0)
-        s.resume()
+        s.wait_frames(3, 10)
+        back = s.border_index()
     need(img.size == (320, 256), f"screenshot {img.size}")
     need(fixture == 0, f"SUITE border band read as index {fixture}, wanted 0 (black tilemap paper)")
     need(red == 2, f"ULA border 2 read as index {red}")
-    return "SUITE border 0; ULA border 2 (tilemap off, ULA on) read as 2"
+    need(back == 0, f"border band {back} after NR $68/$6B restored")
+    return "SUITE border 0; ULA border 2 (tilemap off, ULA on) read as 2; registers restored"
+
+
+def l_screenshot_paused():
+    with live_session() as s:
+        s.wait_until(lambda: any("More..." in r for r in s.rows()), 30, what="the first More... page")
+        settle(s)
+        before = s.screenshot()
+        row1, attr = s.read(0x6000 + 160, 160), s.read(0x6000, 2)[1]    # the title's visible attribute
+        s.pause()
+        s.write(0x6000 + 160, bytes(b for ch in b"PAUSED SHOT " * 7 for b in (ch, attr))[:160])
+        e = raises(client.CSpectError, s.screenshot)
+        shot = s.screenshot(advance=True)
+        stopped = not s.running()
+        s.write(0x6000 + 160, row1)
+        s.resume()
+    from PIL import ImageChops
+    changed = [r for r in range(32) if ImageChops.difference(before, shot).crop((0, 8 * r, 320, 8 * r + 8)).getbbox()]
+    need("advance" in str(e), f"stopped screenshot error: {e}")
+    need(changed == [1], f"advance=True screenshot changed rows {changed}, wanted [1]")
+    need(stopped, "CPU not stopped again after screenshot(advance=True)")
+    return "stopped screenshot refused; advance=True shows the row written while paused, CPU stopped after"
 
 
 def l_diff_bytes_image():
@@ -1244,16 +1387,40 @@ def l_diff_bytes_image():
     return "bytes (64K and page 11) and image box"
 
 
+def raster_walk(s):
+    """From a stop at the frame interrupt, step until the raster wraps: (lines seen, max line)."""
+    lines = [s.raster_line()]
+    for _ in range(400):
+        s.step(500 if lines[-1] < session.LINES_PER_FRAME - 12 else 40)   # fine steps near the wrap
+        lines.append(s.raster_line())
+        if lines[-1] < lines[-2]:
+            return lines, lines[-2]
+    raise CheckFailed(f"raster never wrapped: {lines[-8:]}")
+
+
 def l_time_between():
     with live_session(paused=True) as s:
         boot = s.time_between("RAM_DETECT", "ENG_INIT_GAME")
-        booted(s)
+        s.wait_until(lambda: any("More..." in r for r in s.rows()), 30, what="the first More... page")
+        tick = (s.run_to("IM2_ISR", 5), s.raster_line())     # mainline idles in a key poll loop
+        lines, top = raster_walk(s)
+        s.resume()
+        resumes, plain = [], s.resume
+        s.resume = lambda: (resumes.append(s.frame()), plain())[1]
         isr = s.time_between("IM2_ISR", "IM2_ISR", runs=2)
-        running = s.stopped_at() is None
+        running = s.running()
+    tick_line = session.FRAME_TICK_LINE
     need(len(boot) == 1 and boot[0][0] >= 0 and 0 <= boot[0][1] <= 311, f"boot path {boot}")
+    need(tick[1] == tick_line, f"stop at IM2_ISR ${tick[0]:04X} reads raster line {tick[1]}, wanted {tick_line}")
+    steps = [b - a for a, b in zip(lines, lines[1:-1])]
+    need(all(0 <= d <= 8 for d in steps) and any(steps), f"raster while stepping {lines}")
+    need(any(256 <= x for x in lines) and top == session.LINES_PER_FRAME - 1 and lines[-1] <= 1,
+         f"raster walk {lines[0]}..{top} then {lines[-1]}: wanted lines past 255, last {session.LINES_PER_FRAME - 1}, wrap to 0")
     need(isr == [(1, 0), (1, 0)], f"frame interrupt to frame interrupt {isr}, wanted one frame each")
+    need(len(resumes) == 4, f"{len(resumes)} resumes for two runs from a running CPU (frames {resumes}), wanted 4")
     need(running, "CPU not running after time_between")
-    return f"RAM_DETECT -> ENG_INIT_GAME {boot[0]}; IM2_ISR -> IM2_ISR {isr}"
+    return (f"RAM_DETECT -> ENG_INIT_GAME {boot[0]}; IM2_ISR stop at line {tick[1]}; stepping "
+            f"{lines[0]}..{top} -> {lines[-1]} in {len(lines)} samples; IM2_ISR -> IM2_ISR {isr}, {len(resumes)} resumes")
 
 
 HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, t_tools_reply_checked,
@@ -1261,12 +1428,12 @@ HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, 
         t_port_choice, t_private_copy_excludes, t_job_kills_child, t_mutex_serialises,
         t_mutex_release_checked, t_close_keeps_mutex, t_listener_owner, t_no_answer_names_causes,
         t_fallback_runs, t_guard_parser, t_session_status, t_session_fake_mcp, t_session_boot_args,
-        t_session_raster, t_session_border_index, t_session_wait_until]
+        t_session_raster, t_session_border_index, t_session_wait_until, t_session_stop_races]
 LIVE = [l_launch_tools_close, l_private_copy_mcp, l_no_port_11000, l_window_minimised,
         l_parent_killed, l_exception_closes, l_foreign_untouched, l_guard_narrowed, l_boot_rows,
         l_symbols, l_mem_roundtrip, l_flags_frame, l_wait_frames_both_speeds, l_paused_boot_brk,
         l_regs_step, l_next_regs, l_port_io, l_ay_regs, l_type_enter, l_screenshot_border,
-        l_diff_bytes_image, l_time_between]
+        l_screenshot_paused, l_diff_bytes_image, l_time_between]
 
 
 def run(checks, names):
