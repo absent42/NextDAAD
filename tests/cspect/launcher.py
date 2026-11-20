@@ -1,10 +1,11 @@
 """Owns the harness CSpect process: private copy (source install fallback), port, mutex held
-for the Instance's life, kill-on-close job, kill by PID on close(), MCP readiness.
-Never touches a CSpect it did not start."""
+for the Instance's life, kill-on-close job, kill by PID on close(), MCP readiness confirmed
+against the listener's owning PID. Never touches a CSpect it did not start."""
 import ctypes
 import os
 import shutil
 import socket
+import struct
 import subprocess
 import time
 from ctypes import wintypes
@@ -29,7 +30,7 @@ IMAGE_SUFFIXES = frozenset({".mmc", ".img", ".hdf"})
 NO_ANSWER_CAUSES = ("Causes: CSpect older than 4.3 (no MCP server), MCP.dll missing from the CSpect "
                     "folder, or the MCP tier (Builder-level Patreon since 4.5.0) not enabled.")
 SW_SHOWMINNOACTIVE = 7
-_TEST_COMMAND = None         # test-only: replaces the CSpect command line
+_TEST_COMMANDS = None        # test-only: one command per attempt replaces CSpect; "{port}" filled in
 
 
 class LaunchError(Exception):
@@ -40,6 +41,7 @@ class LaunchError(Exception):
 
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _ver = ctypes.WinDLL("version", use_last_error=True)
+_ip = ctypes.WinDLL("iphlpapi", use_last_error=True)
 
 
 def _proto(fn, restype, *argtypes):
@@ -61,6 +63,8 @@ _proto(_ver.GetFileVersionInfoW, wintypes.BOOL, wintypes.LPCWSTR, wintypes.DWORD
        wintypes.LPVOID)
 _proto(_ver.VerQueryValueW, wintypes.BOOL, wintypes.LPCVOID, wintypes.LPCWSTR,
        ctypes.POINTER(wintypes.LPVOID), ctypes.POINTER(wintypes.UINT))
+_proto(_ip.GetExtendedTcpTable, wintypes.DWORD, wintypes.LPVOID, ctypes.POINTER(wintypes.DWORD),
+       wintypes.BOOL, wintypes.ULONG, ctypes.c_int, wintypes.ULONG)
 
 
 class _BasicLimits(ctypes.Structure):
@@ -125,40 +129,81 @@ def pid_alive(pid: int) -> bool:
         _k32.CloseHandle(h)
 
 
+def _tcp_listeners(family: int) -> list[tuple[bytes, int, int]]:
+    """[(local address, port, owning PID)] from GetExtendedTcpTable(TCP_TABLE_OWNER_PID_LISTENER)."""
+    size = wintypes.DWORD(0)
+    while True:
+        buf = ctypes.create_string_buffer(max(size.value, 4))
+        r = _ip.GetExtendedTcpTable(buf, ctypes.byref(size), False, family, 3, 0)
+        if r == 0:
+            break
+        if r != 122:                                         # ERROR_INSUFFICIENT_BUFFER: retry
+            raise LaunchError(f"GetExtendedTcpTable: {ctypes.FormatError(r)}")
+    raw, out = buf.raw, []
+    n = struct.unpack_from("<I", raw)[0]
+    for i in range(n):
+        if family == socket.AF_INET:                         # MIB_TCPROW_OWNER_PID, 24 bytes
+            _, addr, port, _, _, pid = struct.unpack_from("<6I", raw, 4 + 24 * i)
+            out.append((struct.pack("<I", addr), socket.ntohs(port & 0xFFFF), pid))
+        else:                                                # MIB_TCP6ROW_OWNER_PID, 56 bytes
+            off = 4 + 56 * i
+            (port,), (pid,) = struct.unpack_from("<I", raw, off + 20), struct.unpack_from("<I", raw, off + 52)
+            out.append((raw[off:off + 16], socket.ntohs(port & 0xFFFF), pid))
+    return out
+
+
+def listener_pids(port: int) -> set[int]:
+    """PIDs listening on port where a 127.0.0.1 client could reach them."""
+    v4 = {pid for a, p, pid in _tcp_listeners(socket.AF_INET)
+          if p == port and a in (b"\x7f\0\0\1", bytes(4))}
+    v6 = {pid for a, p, pid in _tcp_listeners(socket.AF_INET6) if p == port and a == bytes(16)}
+    return v4 | v6
+
+
+def _check_owner(port: int, pid: int) -> None:
+    pids = listener_pids(port)
+    if pids != {pid}:
+        raise LaunchError(f"port {port} answered MCP but its listener is PID {sorted(pids) or 'none'}, "
+                          f"not the launched PID {pid}")
+
+
 class Mutex:
     """MUTEX_NAME, owned by the thread that acquired it; one harness CSpect per machine."""
     _held = False            # this process's own hold (a Win32 mutex is recursive per thread)
 
-    def __init__(self, handle):
-        self._handle = handle
+    def __init__(self, handle, name):
+        self._handle, self.name = handle, name
 
     @classmethod
     def acquire(cls, wait: float | None = None) -> "Mutex":
+        name = MUTEX_NAME
         if wait is None:
             wait = float(os.environ.get("NEXTDAAD_CSPECT_WAIT") or 120)
         if cls._held:
-            raise LaunchError(f"this process already holds {MUTEX_NAME}: one harness CSpect at a time")
-        h = _k32.CreateMutexW(None, False, MUTEX_NAME)
+            raise LaunchError(f"this process already holds {name}: one harness CSpect at a time")
+        h = _k32.CreateMutexW(None, False, name)
         if not h:
-            raise _win_error(f"CreateMutexW {MUTEX_NAME}")
+            raise _win_error(f"CreateMutexW {name}")
         deadline = time.monotonic() + wait
         while True:
             r = _k32.WaitForSingleObject(h, 200)             # short slices keep Ctrl+C live
             if r in (0, 0x80):                               # WAIT_OBJECT_0, WAIT_ABANDONED
-                cls._held = True
-                return cls(h)
+                Mutex._held = True
+                return cls(h, name)
             if r != 0x102:                                   # WAIT_TIMEOUT
-                err = _win_error(f"WaitForSingleObject {MUTEX_NAME}")
+                err = _win_error(f"WaitForSingleObject {name}")
                 _k32.CloseHandle(h)
                 raise err
             if time.monotonic() >= deadline:
                 _k32.CloseHandle(h)
-                raise LaunchError(f"another harness CSpect holds {MUTEX_NAME}; waited {wait:g} s "
+                raise LaunchError(f"another harness CSpect holds {name}; waited {wait:g} s "
                                   f"(NEXTDAAD_CSPECT_WAIT)")
 
     def release(self) -> None:
+        """Must run on the acquiring thread; otherwise raises and the hold stays as it was."""
         if self._handle:
-            _k32.ReleaseMutex(self._handle)
+            if not _k32.ReleaseMutex(self._handle):
+                raise _win_error(f"ReleaseMutex {self.name} (not the acquiring thread?)")
             _k32.CloseHandle(self._handle)
             self._handle = None
             Mutex._held = False
@@ -216,23 +261,22 @@ def _copied(name: str) -> bool:
 
 
 def private_copy(src=None) -> Path:
-    """Refresh PRIVATE_DIR from the source's top-level files; a file is re-copied only when its
-    size or timestamp differs. Excluded files never appear in the copy."""
+    """Mirror the source's top-level files into PRIVATE_DIR: a file is re-copied only when its
+    size or timestamp differs; files gone from the source, and excluded files, are deleted."""
     src = Path(src) if src is not None else source_dir()
     dest = PRIVATE_DIR
     dest.mkdir(parents=True, exist_ok=True)
-    for f in src.iterdir():
-        if not f.is_file() or not _copied(f.name):
-            continue
+    wanted = {f.name.lower(): f for f in src.iterdir() if f.is_file() and _copied(f.name)}
+    for f in dest.iterdir():
+        if f.is_file() and f.name.lower() not in wanted:
+            f.unlink()
+    for f in wanted.values():
         d, s = dest / f.name, f.stat()
         if d.is_file():
             t = d.stat()
             if t.st_size == s.st_size and t.st_mtime_ns == s.st_mtime_ns:
                 continue
         shutil.copy2(f, d)
-    for f in dest.iterdir():
-        if f.is_file() and not _copied(f.name):
-            f.unlink()
     return dest
 
 
@@ -285,21 +329,35 @@ class Instance:
         self.close()
 
     def close(self) -> None:
-        try:
-            if self.proc is not None:
-                if self.proc.poll() is None:
-                    self.proc.kill()
-                self.proc.wait(10)
-                self.proc = None
-        finally:
-            if self._job:
-                _k32.CloseHandle(self._job)
-                self._job = None
-            self._mutex.release()
+        """Safe to call again; the mutex is released only once the process is gone."""
+        if self.proc is not None:
+            job, self._job = self._job, None
+            _stop(self.proc, job)
+            self.proc = None
+        self._mutex.release()
 
 
 class _NoAnswer(Exception):
     pass
+
+
+class _Stuck(LaunchError):
+    """The process outlived TerminateProcess: the mutex stays held."""
+
+
+def _stop(proc, job) -> None:
+    """Kill proc and close its job; raise _Stuck if it has not exited 10 s later."""
+    try:
+        if proc.poll() is None:
+            proc.kill()
+    finally:
+        if job:
+            _k32.CloseHandle(job)
+    try:
+        proc.wait(10)
+    except subprocess.TimeoutExpired:
+        raise _Stuck(f"CSpect PID {proc.pid} still running 10 s after TerminateProcess; "
+                     f"{MUTEX_NAME} kept until this process exits") from None
 
 
 def _args(card, nex, map_file, freerun, extra, port):
@@ -313,7 +371,7 @@ def _args(card, nex, map_file, freerun, extra, port):
 
 
 def _start(cmd, cwd, port, start_timeout, log_path, append):
-    """Start cmd in a kill-on-close job; return (proc, job, mcp) once MCP answers."""
+    """Start cmd in a kill-on-close job; return (proc, job, mcp) once MCP answers from proc."""
     with open(log_path, "a" if append else "w", encoding="utf-8") as log:
         log.write(f"launch: {subprocess.list2cmdline(cmd)}\n")
         log.flush()
@@ -325,6 +383,8 @@ def _start(cmd, cwd, port, start_timeout, log_path, append):
         proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log,
                                 stderr=subprocess.STDOUT, env=env, startupinfo=si,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
+        log.write(f"pid: {proc.pid}\n")
+        log.flush()
     job = None
     try:
         job = kill_on_close_job(proc.pid)
@@ -336,21 +396,17 @@ def _start(cmd, cwd, port, start_timeout, log_path, append):
                                 f"on port {port}")
             try:
                 mcp.initialize(timeout=2)
-                return proc, job, mcp
+                break
             except CSpectError:
                 pass
             if time.monotonic() >= deadline:
                 raise _NoAnswer(f"PID {proc.pid} did not answer MCP on port {port} in "
                                 f"{start_timeout:g} s")
             time.sleep(0.2)                                  # poll interval against the deadline
+        _check_owner(port, proc.pid)
+        return proc, job, mcp
     except BaseException:
-        try:
-            if proc.poll() is None:
-                proc.kill()
-            proc.wait(10)
-        finally:
-            if job:
-                _k32.CloseHandle(job)
+        _stop(proc, job)
         raise
 
 
@@ -370,8 +426,9 @@ def launch(card, nex, map_file=None, *, freerun=True, extra=(), port=None,
         port = choose_port(port)
         HARNESS_DIR.mkdir(parents=True, exist_ok=True)
         log_path = HARNESS_DIR / f"console-{port}.log"
-        if _TEST_COMMAND is not None:
-            attempts = [(HARNESS_DIR, list(_TEST_COMMAND))]
+        if _TEST_COMMANDS is not None:
+            attempts = [(HARNESS_DIR, [a.replace("{port}", str(port)) for a in cmd])
+                        for cmd in _TEST_COMMANDS]
         else:
             src = source_dir()
             copy = private_copy(src)
@@ -393,6 +450,7 @@ def launch(card, nex, map_file=None, *, freerun=True, extra=(), port=None,
             return inst
         raise LaunchError(f"CSpect MCP never answered. {'; '.join(failures)}. {NO_ANSWER_CAUSES} "
                           f"Console: {log_path}")
-    except BaseException:
-        mutex.release()
+    except BaseException as e:
+        if not isinstance(e, _Stuck):
+            mutex.release()
         raise

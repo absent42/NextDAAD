@@ -1,5 +1,6 @@
 """CSpect MCP client: JSON-RPC over POST http://127.0.0.1:<port>/mcp. Replies are plain JSON
 or SSE (last `data:` line); a Mcp-Session-Id header is sent back once given."""
+import http.client
 import json
 import re
 import urllib.error
@@ -18,12 +19,21 @@ class CSpectError(Exception):
 def read_map(path) -> dict[str, tuple[int, int, int]]:
     """sjasmplus CSPECTMAP file -> {NAME: (16-bit value, CSpect physical, type)}.
 
-    Type 0 is a label (physical = page * $2000 + offset), 1 an EQU, 2 a DEFL."""
+    Type 0 is a label (physical = page * $2000 + offset), 1 an EQU, 2 a DEFL. sjasmplus upper-cases
+    names, so case-only twins share a key and the later line wins. Malformed or empty raises."""
     out = {}
-    for line in Path(path).read_text(encoding="ascii").splitlines():
+    for n, line in enumerate(Path(path).read_text(encoding="ascii").splitlines(), 1):
         parts = line.split()
-        if len(parts) == 4:
+        if not parts:
+            continue
+        try:
+            if len(parts) != 4:
+                raise ValueError
             out[parts[3].upper()] = (int(parts[0], 16), int(parts[1], 16), int(parts[2], 16))
+        except ValueError:
+            raise CSpectError(f"{path}:{n}: not 'value physical type NAME': {line!r}") from None
+    if not out:
+        raise CSpectError(f"{path}: no symbols")
     return out
 
 
@@ -34,6 +44,8 @@ def parse_dump(text: str, addr: int, n: int) -> bytes:
         parts = line.split()
         if not parts or not parts[0].startswith("$"):
             continue
+        if not re.fullmatch(r"\$[0-9A-Fa-f]+", parts[0]):
+            raise CSpectError(f"dump line address is not hex: {line!r}")
         if int(parts[0][1:], 16) != addr + len(out):
             raise CSpectError(f"dump line out of order (wanted ${addr + len(out):X}): {line!r}")
         k = min(16, n - len(out))
@@ -84,8 +96,8 @@ class Mcp:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 self.session = r.headers.get("Mcp-Session-Id") or self.session
                 text = r.read().decode("utf-8", "replace")
-        except (urllib.error.URLError, OSError) as e:
-            raise CSpectError(f"{method} on port {self.port}: {e}") from e
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+            raise CSpectError(f"{method} on port {self.port}: {type(e).__name__}: {e}") from e
         reply = decode_reply(text)
         if "error" in reply:
             raise CSpectError(f"{method}: {reply['error']}")
@@ -112,7 +124,12 @@ class Mcp:
         out, params = [], {}
         while True:
             res = self.rpc("tools/list", params)
-            out += [{"name": t["name"], "inputSchema": t.get("inputSchema", {})} for t in res["tools"]]
+            if not isinstance(res.get("tools"), list):
+                raise CSpectError(f"tools/list reply has no 'tools' list: {str(res)[:200]}")
+            for t in res["tools"]:
+                if not isinstance(t, dict) or "name" not in t:
+                    raise CSpectError(f"tools/list entry has no 'name': {str(t)[:200]}")
+                out.append({"name": t["name"], "inputSchema": t.get("inputSchema", {})})
             if not res.get("nextCursor"):
                 return out
             params = {"cursor": res["nextCursor"]}
