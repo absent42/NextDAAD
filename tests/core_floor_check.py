@@ -785,21 +785,19 @@ def check_refuse_closure():
 
 
 ZES_LAUNCHERS = [
-    "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py", "tests/corefloor/refuse_check.py",
+    "tests/audio/aysreg_check.py", "tests/audio/stopm_dump.py",
     "tests/cursor_dump.py", "tests/cycle_dump.py", "tests/intro/zes_intro.py",
-    "tests/l2pos_check.py", "tests/machine_gate.py", "tests/parser/nleg.py",
-    "tests/parser/parsertest.py", "tests/parser/scripts/v3probe/run.py",
+    "tests/l2pos_check.py",
     "tests/poolc/poolc_check.py", "tests/spraud_dump.py", "tests/sprites_dump.py",
-    "tests/txt40_dump.py", "tests/typeahead_run.py", "tests/xbn/hookshape.py",
-    "tests/xbn/namecheck.py", "tests/xbn/tickcheck.py", "tests/xbn/transcheck.py",
+    "tests/txt40_dump.py", "tests/typeahead_run.py",
 ]
 # Not launchers: the reference ZX interpreter, other machines, zes_core itself
 # (the one raw Popen) and this file.
 ZES_SKIP = ("tests/objshare/classic/", "tests/out/", "tests/parser/zleg.py",
             "tests/zes_core.py", "tests/core_floor_check.py")
-ZES_HELPERS = ("tests/parser/nleg.py", "tests/audio/stopm_dump.py", "tests/sprites_dump.py")
+ZES_HELPERS = ("tests/audio/stopm_dump.py", "tests/sprites_dump.py")
 ZES_NAMES = re.compile(r"zesarux\.exe|--enable-remoteprotocol", re.I)
-ZES_HELPER_CALLS = {f"{m}.{fn}" for m in ("nleg", "stopm_dump", "sprites_dump") for fn in ("launch", "play")}
+ZES_HELPER_CALLS = {f"{m}.{fn}" for m in ("stopm_dump", "sprites_dump") for fn in ("launch", "play")}
 ZES_SPAWNERS = {"subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call",
                 "subprocess.check_output", "os.system", "os.popen"}
 FADE_CALL = re.compile(r"\bEXTERN\s+\w+\s+4[0-3]\b", re.I)
