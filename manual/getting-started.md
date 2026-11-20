@@ -535,6 +535,7 @@ copy it first - see [Starting a new game](#starting-a-new-game).
 | `ERROR: EMULATOR=... - use cspect or jnext` | `EMULATOR` holds something else. Set it to `cspect` or `jnext`, or leave it blank for CSpect. |
 | `WARNING: CSpect ... is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave` | The CSpect found cannot execute `NEXTREG A,n`, which the interpreter uses. Install CSpect 4.5.6.0 or later. |
 | `WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later` | The version of `CSpect.exe` could not be read. The game starts anyway; use CSpect 4.5.6.0 or later. |
+| `WARNING: no jNext release supports core 3.03.03 yet - the game may stop with 'NextDAAD needs core 3.03.03 or later' or misbehave. Video cutscenes need real hardware for now.` | jNext cannot yet provide the core the interpreter needs, so the game shows the core refusal or misbehaves. Run with CSpect 4.5.6.0 or later, or on real hardware. |
 | `ERROR: jNext not found at ...` | Install jNext 1.1.87 or later at the path shown, or set `JNEXTDIR` in `CONFIG.local.BAT`. On Linux, installing the `.deb` or `.rpm` package puts `jnext` on your PATH. See [Running in jNext](#running-in-jnext). |
 | `ERROR: no jNext SD-card image at ...` | Start jNext once and let it download its SD-card image, or set `JNEXTIMG` in `CONFIG.local.BAT`. |
 | `ERROR: jNext is running - close it before running the game` | Close jNext and run again. |
