@@ -139,13 +139,15 @@ class Session:
 
     @classmethod
     def boot(cls, card, nex, map_file, *, freerun=True, paused=False, brk=None, major=None,
-             minor=None, extra=()) -> "Session":
+             minor=None, extra=(), port=None) -> "Session":
         """Launch nex on card. paused: stopped at the NEX entry (-debug). brk (label or address):
-        +brk=, and unless paused, returns stopped there. major/minor set NR $01/$0E, checked."""
+        +brk=, and unless paused, returns stopped there. major/minor set NR $01/$0E, checked.
+        port: launcher.launch's MCP port (None = first free in PORT_RANGE)."""
         syms = read_map(map_file)
         brk_addr = None if brk is None else cls(None, syms, map_file=map_file)._addr(brk)
         args = boot_args(paused, brk_addr, major, minor)
-        inst = launcher.launch(card, nex, map_file, freerun=freerun, extra=(*args, *extra))
+        inst = launcher.launch(card, nex, map_file, freerun=freerun, extra=(*args, *extra),
+                               port=port)
         s = cls(inst.mcp, syms, inst, map_file)
         try:
             want = {n: v for n, v in ((0x01, major), (0x0E, minor)) if v is not None}

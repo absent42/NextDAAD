@@ -13,12 +13,9 @@ inp_edit (src/overlay1.asm) sets and holds both; prn_more_check (src/print.asm) 
 both, prints SM32, then drops wrapLock before it waits, so (1, 1) still set a few
 frames later is the editor.
 
-Page capture is stop-read-resume: an execute breakpoint at WAIT_KEY_TIMEOUT, the
-pager's park point, holds the CPU before any key can dismiss the page. settle() reads
-the tilemap and E there ($02 a More... page from prn_more_check, $04 an ANYKEY wait
-from h_anykey), resumes, then dismisses. A wait that reaches neither the locks nor
-WAIT_KEY_TIMEOUT (wait_key_reset's $0C escape, title_boot's wait_key) is inferred from
-a screen static for a number of NextDAAD frames; such turns carry anykey_heuristic.
+Page capture: a breakpoint at WAIT_KEY_TIMEOUT holds the CPU at the pager's park point; settle()
+reads the tilemap and E ($02 prn_more_check, $04 h_anykey), resumes, dismisses. Lockless waits
+that never stop there (wait_key_reset's $0C, GETKEY's key_wait_char) fall to a static backstop.
 
 jleg.js needs no capture: jDAAD keeps every character a turn prints.
 
@@ -46,9 +43,8 @@ import tilemap
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-from cspect import Session, launcher  # noqa: E402
-from cspect.client import CHUNK, Mcp, read_map  # noqa: E402
-from cspect.session import boot_args  # noqa: E402
+from cspect import Session  # noqa: E402
+from cspect.client import CHUNK, Mcp  # noqa: E402
 
 TM_MAP = 0x6000
 GRID_BYTES = tilemap.GRID_BYTES
@@ -75,8 +71,8 @@ PLAY_POLL_S = 0.01
 CONFIRM_FRAMES = 5
 CONFIRM_TIMEOUT_S = 2.0
 # Static-screen backstop in NextDAAD frames, so host speed under -freerun cannot move it.
-# condacts.dsf check 65's three sounding BEEPs hold the screen ~18 frames (h_beep: (cs+1)/2+1
-# each); the boot self-test chains several timed condacts, hence the larger boot threshold.
+# condacts.dsf check 65's three sounding BEEPs hold the screen ~12 frames (DRC scales each to
+# 6 cs, h_beep makes that 4 frames); the boot self-test chains several, hence the boot threshold.
 ANYKEY_STATIC_FRAMES = 50
 BOOT_ANYKEY_STATIC_FRAMES = 250
 
@@ -124,12 +120,7 @@ def launch(sd, nex_path, map_file, port=None):
     """A Session on nex_path with sd as the card, stopped just after eng_init_game's seed
     store with RNGSTATE = RNG_SEED. port: an MCP port in launcher.PORT_RANGE, else the
     first free one."""
-    syms = read_map(map_file)
-    if SEED_SYMBOL not in syms:
-        raise RuntimeError("%s has no %s" % (map_file, SEED_SYMBOL))
-    inst = launcher.launch(sd, nex_path, map_file, port=port,
-                           extra=boot_args(brk_addr=syms[SEED_SYMBOL][0]))
-    s = Session(inst.mcp, syms, inst, map_file)
+    s = Session.boot(sd, nex_path, map_file, brk=SEED_SYMBOL, port=port)
     try:
         seed_rng(s)
     except BaseException:
@@ -144,7 +135,7 @@ def key_session(s):
     free to service the page stops a play causes."""
     m = Mcp(s.mcp.port)
     m.initialize()
-    return Session(m, read_map(s.map_file), map_file=s.map_file)
+    return Session(m, s._syms, map_file=s.map_file)
 
 
 class NextLeg:
@@ -330,9 +321,8 @@ class NextLeg:
 
     def send(self, cmd):
         """Send one non-empty script entry; returns `pre`, the screen its new text is measured
-        against. A command anchors after its echo (jleg.js suppresses jDAAD's), "!" before
-        the keys (no echo); "?" anchors before the keys too, so the one echoed character is
-        known text divergence on that turn."""
+        against: after the echo for a command (jleg.js suppresses jDAAD's), before the keys for
+        "!" (no echo) and "?" (its one echoed character is known text divergence)."""
         if cmd.startswith("!"):
             pre = self.grid_rows()
             self._play("type_text", cmd[1:])
@@ -347,14 +337,9 @@ class NextLeg:
         return pre
 
     def settle(self, pages, boot=False, allow_timeout=False):
-        """Run on to the input editor (moreLock and wrapLock both set, confirmed), appending
-        every page waited on to `pages` and dismissing each. Returns True if a wait was found
-        only by the static-screen backstop.
-
-        allow_timeout: leave inpTOFrames alone, for a turn that is about a TIME expiry (both
-        legs honour the directive; jDAAD cannot time out otherwise). boot: the one settle
-        before the first command; it only raises the backstop threshold. Raises TimeoutError
-        rather than hand the comparison a truncated turn."""
+        """Run on to the confirmed input editor, appending and dismissing every page waited on;
+        True if the static-screen backstop found a wait. allow_timeout: leave inpTOFrames alone
+        (a TIME-expiry turn); boot: raises the backstop threshold only. Times out loudly."""
         deadline = time.monotonic() + SETTLE_TIMEOUT_S
         heuristic = False
         self.dismissed = None

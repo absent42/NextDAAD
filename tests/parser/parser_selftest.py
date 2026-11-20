@@ -1037,9 +1037,10 @@ class _FakeSession:
         raise AssertionError("unexpected read $%X+%d" % (addr, length))
 
     def grid(self):
+        import tilemap
         if self.stop:
             return self.stop[1]
-        return self.live if self.live else bytes(__import__("tilemap").GRID_BYTES)
+        return self.live if self.live else bytes(tilemap.GRID_BYTES)
 
     def stopped_at(self):
         self._stop_calls += 1
@@ -1371,9 +1372,10 @@ def t9_a_wait_turn_arms_the_countdown_once_and_ends_on_output():
     prompt. "Wait for the locks to drop" is unusable as the exit for the
     same reason; the screen moving is the event the turn is about.
     """
+    import tilemap
     before = _dump_of(["58 WAIT - DO NOT TYPE", "What now?>"])
     after = _dump_of(["58 WAIT - DO NOT TYPE", "What now?>", "58 OK"])
-    pre_rows, _ = __import__("tilemap").decode(before)
+    pre_rows, _ = tilemap.decode(before)
 
     class _S(_FakeSession):
         """Parked in a line read throughout: the locks NEVER drop, exactly
@@ -1468,6 +1470,66 @@ def t9_turn_input_paths_and_the_echo_anchor():
     assert "press:ENTER" not in s4.order, "ENTER sent after a dropped key"
 
 
+class _FakeSeed:
+    """Stand-in Session at the boot breakpoint: stop_pc is where the boot stopped,
+    step_len how far one step moves PC, stores whether the step writes HL to RNGSTATE."""
+
+    def __init__(self, stores=True, stop_pc=None, step_len=3):
+        import nleg
+        self.rng = _FAKE_SYMS["RNGSTATE"]
+        self.mem = {self.rng: nleg.RNG_SEED.to_bytes(2, "little")}
+        self.hl, self.stores, self.step_len = 0x0102, stores, step_len
+        self.pc = _FAKE_SYMS["ENG_INIT_GAME@SEEDOK"] if stop_pc is None else stop_pc
+        self.log = []
+        self.closed = False
+
+    @staticmethod
+    def wait_until(pred, timeout, poll=0.05, what=""):
+        return pred()
+
+    def sym(self, name):
+        return _FAKE_SYMS[name]
+
+    def stopped_at(self):
+        return self.pc
+
+    def read(self, addr, n):
+        return self.mem[addr]
+
+    def write(self, addr, data):
+        self.log.append(("write", addr, bytes(data)))
+        self.mem[addr] = bytes(data)
+
+    def set_regs(self, **v):
+        self.log.append(("set_regs", v))
+        self.hl = v["HL"]
+
+    def step(self, n=1):
+        self.log.append(("step", n))
+        if self.stores:
+            self.mem[self.rng] = self.hl.to_bytes(2, "little")
+        self.pc += self.step_len
+        return self.pc
+
+    def clear_breakpoint(self, target):
+        self.log.append(("clear", target))
+
+    def close(self):
+        self.closed = True
+
+
+def _seed_raises(s, needle, why):
+    import nleg
+    try:
+        nleg.seed_rng(s)
+    except RuntimeError as exc:
+        assert needle in str(exc), exc
+    else:
+        raise AssertionError(why)
+    assert ("clear", _FAKE_SYMS["ENG_INIT_GAME@SEEDOK"]) not in s.log, (
+        "a failed seed must leave the boot stop armed: %s" % s.log)
+
+
 @case
 def t9_rng_seed_is_poisoned_set_and_stepped():
     """The image already holds RNG_SEED, so RNGSTATE is poisoned before HL :=
@@ -1476,55 +1538,54 @@ def t9_rng_seed_is_poisoned_set_and_stepped():
     import nleg
     seed_ok, rng = _FAKE_SYMS["ENG_INIT_GAME@SEEDOK"], _FAKE_SYMS["RNGSTATE"]
 
-    class _Seed:
-        def __init__(self, stores=True):
-            self.mem = {rng: nleg.RNG_SEED.to_bytes(2, "little")}
-            self.hl, self.pc, self.stores = 0x0102, seed_ok, stores
-            self.log = []
-
-        @staticmethod
-        def wait_until(pred, timeout, poll=0.05, what=""):
-            return pred()
-
-        def sym(self, name):
-            return _FAKE_SYMS[name]
-
-        def stopped_at(self):
-            return self.pc
-
-        def read(self, addr, n):
-            return self.mem[addr]
-
-        def write(self, addr, data):
-            self.log.append(("write", addr, bytes(data)))
-            self.mem[addr] = bytes(data)
-
-        def set_regs(self, **v):
-            self.log.append(("set_regs", v))
-            self.hl = v["HL"]
-
-        def step(self, n=1):
-            self.log.append(("step", n))
-            if self.stores:
-                self.mem[rng] = self.hl.to_bytes(2, "little")
-            self.pc += 3
-            return self.pc
-
-        def clear_breakpoint(self, target):
-            self.log.append(("clear", target))
-
-    s = _Seed()
+    s = _FakeSeed()
     nleg.seed_rng(s)
     assert s.log == [("write", rng, b"\x00\x00"), ("set_regs", {"HL": nleg.RNG_SEED}),
                      ("step", 1), ("clear", seed_ok)], s.log
 
-    bad = _Seed(stores=False)
+    _seed_raises(_FakeSeed(stores=False), "RNGSTATE now 0000",
+                 "an unwritten seed passed: the poison was not checked")
+    elsewhere = _FakeSeed(stop_pc=0x1234)
+    _seed_raises(elsewhere, "$1234", "a boot stopped at $1234 was taken for SEEDOK")
+    assert elsewhere.log == [], "nothing may be written at the wrong stop: %s" % elsewhere.log
+    _seed_raises(_FakeSeed(step_len=2), "PC $%04X" % (seed_ok + 2),
+                 "a step that did not land on SEEDOK + 3 passed")
+
+
+@case
+def t9_launch_boots_at_seedok_and_closes_cspect_when_the_seed_fails():
+    """launch boots through Session.boot at the SEEDOK breakpoint with the port
+    passed on, returns the seeded session, and closes it if the seed fails."""
+    import nleg
+    calls = []
+
+    class _Boot:
+        result = None
+
+        @classmethod
+        def boot(cls, card, nex, map_file, **kw):
+            calls.append(kw)
+            return cls.result
+
+    saved = nleg.Session
+    nleg.Session = _Boot
     try:
-        nleg.seed_rng(bad)
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("an unwritten seed passed: the poison was not checked")
+        _Boot.result = good = _FakeSeed()
+        assert nleg.launch("sd", "nex", "map", port=23471) is good
+        assert calls[-1] == {"brk": nleg.SEED_SYMBOL, "port": 23471}, calls
+        assert not good.closed, "a seeded session was closed"
+
+        _Boot.result = bad = _FakeSeed(stores=False)
+        try:
+            nleg.launch("sd", "nex", "map")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("launch returned an unseeded session")
+        assert bad.closed, "a failed seed left the CSpect running"
+        assert calls[-1] == {"brk": nleg.SEED_SYMBOL, "port": None}, calls
+    finally:
+        nleg.Session = saved
 
 
 @case

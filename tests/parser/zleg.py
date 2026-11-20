@@ -78,7 +78,7 @@ READY_STATIC_POLLS = 3
 # ...and how many before a settled screen with NO cursor is treated as a
 # pause to dismiss. Larger than READY_STATIC_POLLS so a slow printer is
 # never mistaken for a pause; larger again during boot, where a game can
-# sit mid-intro for a while (nleg's BOOT_ANYKEY_STATIC_POLLS exists for
+# sit mid-intro for a while (nleg's BOOT_ANYKEY_STATIC_FRAMES exists for
 # the same reason).
 PAUSE_STATIC_POLLS = 6
 BOOT_PAUSE_STATIC_POLLS = 16
