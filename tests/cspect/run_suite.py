@@ -30,13 +30,26 @@ Entry = namedtuple("Entry", "name build stage cmd tags")
 HARN = ["-Harness"]
 
 
-def work(name):
-    return "tests/out/cspect-port/zes/work/" + name
+def work(name, tag="zes"):
+    return "tests/out/cspect-port/%s/work/%s" % (tag, name)
 
 
 def zes(name, stage, cmd, build=HARN):
     """Entry with only its zes side filled in; the cspect side is a port task's."""
     return Entry(name, {"zes": build}, {"zes": stage}, {"zes": cmd}, ("zes", "cspect"))
+
+
+def cspect(entry, stage, cmd, build=()):
+    """entry with its cspect side filled in (build: build.ps1 arguments, DEBUG when empty)."""
+    return entry._replace(build={**entry.build, "cspect": list(build)},
+                          stage={**entry.stage, "cspect": stage},
+                          cmd={**entry.cmd, "cspect": cmd})
+
+
+def parser(name, argv):
+    """A parser harness entry (no staging; DEBUG on cspect); --out is the tag's work folder."""
+    return cspect(zes(name, None, argv + ["--out", work(name)]),
+                  None, argv + ["--out", work(name, "cspect")])
 
 
 ENTRIES = [
@@ -58,14 +71,12 @@ ENTRIES = [
     zes("l2pos_wide", ["-L2PosWide"], ["python", "tests/l2pos_check.py", "--mode", "1"]),
     zes("gfxzx0", ["-L2Pos", "-GfxZx0"], ["python", "tests/l2pos_check.py"]),
     zes("machine_gate", ["-BigDdb"], ["python", "tests/machine_gate.py"]),
-    zes("parsertest_condacts", None,
-        ["python", "tests/parser/parsertest.py", "tests/condacts.dsf",
-         "tests/parser/scripts/condacts/smoke.json", "--out", work("parsertest_condacts")]),
-    zes("parsertest_condacts_full", None,
-        ["python", "tests/parser/parsertest.py", "tests/condacts.dsf",
-         "tests/parser/scripts/condacts/full.json", "--out", work("parsertest_condacts_full")]),
-    zes("v3probe", None,
-        ["python", "tests/parser/scripts/v3probe/run.py", "--out", work("v3probe")]),
+    parser("parsertest_condacts", ["python", "tests/parser/parsertest.py", "tests/condacts.dsf",
+                                   "tests/parser/scripts/condacts/smoke.json"]),
+    parser("parsertest_condacts_full", ["python", "tests/parser/parsertest.py",
+                                        "tests/condacts.dsf",
+                                        "tests/parser/scripts/condacts/full.json"]),
+    parser("v3probe", ["python", "tests/parser/scripts/v3probe/run.py"]),
     zes("poolc", ["python", "tests/poolc/stage_poolc.py", "build/nextdaad.nex", "build/nextdaad.nex",
                   "build/nextdaad.map", "build/nextdaad.map"],
         ["python", "tests/poolc/poolc_check.py", "sd/LEGPC", "tests/out/poolc/LEGPC.map",
