@@ -148,16 +148,6 @@ def ply_call_site(s):
     return gate + i
 
 
-def queue_enter(s):
-    """Queue ENTER with the CPU stopped (CSpect presses it once the CPU runs): a stop during
-    a blocking press would stall it. Session.press refuses a stopped CPU, hence the direct call."""
-    if s.running():
-        raise RuntimeError("queue_enter needs the CPU stopped")
-    t = s.mcp.text(s.mcp.call("press_keys", keys="ENTER"))
-    if not t.startswith("Keys queued"):
-        raise RuntimeError("press_keys with the CPU stopped: %r" % t[:200])
-
-
 def effect(s, log):
     """Fire ZAP and return True if PLY_AKY_PLAY ran. The ~5-frame effect plays while ENTER
     is held, so a breakpoint on its call counts the calls taken (Z clear) over
@@ -167,7 +157,7 @@ def effect(s, log):
     site = ply_call_site(s)
     s.type_text("ZAP")
     s.pause()
-    queue_enter(s)
+    s.queue_press("ENTER")              # a stop at the call site would stall a blocking press
     f0, hits = s.frame(), 0
     deadline = time.monotonic() + EFFECT_DEADLINE_S
     s.set_breakpoint(site)

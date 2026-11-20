@@ -4,7 +4,6 @@ typed during a response reach the prompt; taps and rollover kept; dismiss keys n
 Holds are press_keys frame counts; waits poll the lock bytes, the screen and FRAMECOUNTER.
 Exit 1 on a failed check, 2 if a check was inconclusive."""
 import pathlib
-import re
 import shutil
 import sys
 import threading
@@ -59,13 +58,6 @@ def key_session(s):
     m = Mcp(s.mcp.port)
     m.initialize()
     return Session(m, s.symbols, map_file=s.map_file)
-
-
-def press_held(s, keys, frames):
-    """press_keys with gap_frames 0: a key named in consecutive items is never released."""
-    t = s.mcp.text(s.mcp.call("press_keys", keys=keys, hold_frames=frames, gap_frames=0))
-    if not re.match(r"Keys done \(\d+ frames\)", t):
-        raise RuntimeError("press_keys %r reply not understood: %r" % (keys, t[:200]))
 
 
 def locks(s):
@@ -213,7 +205,7 @@ def run(s, keys):
 
     # 4. rollover: K pressed and released while O is held (O's row is
     #    scanned first, so a first-key scan never sees K)
-    press_held(s, ROLLOVER, ROLL_FRAMES)
+    s.press(ROLLOVER, ROLL_FRAMES, gap=0)      # gap 0: O is never released between items
     s.enter()
     wait_ready(s)
     rows = s.rows()

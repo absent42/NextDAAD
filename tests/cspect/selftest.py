@@ -941,6 +941,7 @@ class FakeCpu:
         self.running, self.pc, self.bps = running, pc, set(bps)
         self.hit_on_arm, self.hit_before_pause = hit_on_arm, hit_before_pause
         self.log, self.frame = [], 100
+        self.keys, self.keys_reply = [], None      # press_keys arguments; stopped-CPU reply override
 
     def stop(self, pc):
         self.running, self.pc = False, pc
@@ -989,6 +990,12 @@ class FakeCpu:
             return "OK"
         if name == "port_in":
             return f"IN {a['port']} = $00 (0, %00000000)"
+        if name == "press_keys":
+            self.keys.append(dict(a))
+            if self.running:
+                n = len(a["keys"].replace(",", " ").split())
+                return f"Keys done ({n * a.get('hold_frames', 3) + n * a.get('gap_frames', 3)} frames)"
+            return self.keys_reply or "Keys queued - the CPU is stopped, so they'll be pressed when it runs"
         raise KeyError(name)
 
     def session(self, srv):
@@ -1059,6 +1066,31 @@ def t_session_stop_races():
                 e = raises(client.CSpectError, s.screenshot)
                 need("advance" in str(e), f"stopped screenshot error: {e}")
         need(got == want, f"stopped_at at ${cpu.pc:04X} (armed {cpu.bps}) = {got}, wanted {want}")
+
+
+def t_session_keys():
+    need_session()
+    cpu = FakeCpu()
+    with fake_cpu_server(cpu) as srv:
+        s = cpu.session(srv)
+        got = s.press("O O+K O", 8, gap=0)
+        s.press("SPACE", 4)
+        e = raises(client.CSpectError, s.queue_press, "ENTER")
+        need("stopped" in str(e), f"queue_press while running: {e}")
+    need(cpu.keys[:1] == [{"keys": "O O+K O", "hold_frames": 8, "gap_frames": 0}], f"press gap=0 sent {cpu.keys[:1]}")
+    need(cpu.keys[1:] == [{"keys": "SPACE", "hold_frames": 4}], f"press without gap sent {cpu.keys[1:]}")
+    need(got == 24, f"press returned {got}, wanted the reply's 24 frames")
+    cpu = FakeCpu(running=False)
+    with fake_cpu_server(cpu) as srv:
+        s = cpu.session(srv)
+        raises(client.CSpectError, s.press, "SPACE")
+        need(s.queue_press("SPACE", 4) is None, "queue_press returned a value")
+        cpu.keys_reply = "Keys done (7 frames)"
+        e = raises(client.CSpectError, s.queue_press, "ENTER", gap=0)
+        need("press_keys" in str(e) and "Keys done" in str(e), f"unqueued reply error: {e}")
+    need(cpu.keys == [{"keys": "SPACE", "hold_frames": 4}, {"keys": "ENTER", "gap_frames": 0}],
+         f"stopped-CPU press_keys calls {cpu.keys}")
+    return "press passes hold/gap as asked; queue_press refuses a running CPU and needs 'Keys queued'"
 
 
 # -- session live checks (DEBUG build, sd\SUITE) --------------------------------------------------
@@ -1453,7 +1485,7 @@ HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, 
         t_mutex_release_checked, t_close_keeps_mutex, t_listener_owner, t_no_answer_names_causes,
         t_fallback_runs, t_guard_parser, t_session_status, t_session_fake_mcp, t_session_boot_args,
         t_session_raster, t_session_border_index, t_session_wait_until, t_session_symbols,
-        t_session_stop_races]
+        t_session_stop_races, t_session_keys]
 LIVE = [l_launch_tools_close, l_private_copy_mcp, l_no_port_11000, l_window_minimised,
         l_parent_killed, l_exception_closes, l_foreign_untouched, l_guard_narrowed, l_boot_rows,
         l_symbols, l_mem_roundtrip, l_flags_frame, l_wait_frames_both_speeds, l_paused_boot_brk,

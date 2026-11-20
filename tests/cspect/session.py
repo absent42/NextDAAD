@@ -296,13 +296,29 @@ class Session:
     def enter(self) -> int:
         return self.press("ENTER")
 
-    def press(self, keys: str, frames: int | None = None) -> int:
-        """press_keys items ('A+B' held together, spaced or comma separated), each held frames."""
-        self._need_running("press")
+    @staticmethod
+    def _press_args(keys: str, frames: int | None, gap: int | None) -> dict:
         args = {"keys": keys}
         if frames is not None:
             args["hold_frames"] = int(frames)
-        return self._keys("press_keys", **args)
+        if gap is not None:
+            args["gap_frames"] = int(gap)
+        return args
+
+    def press(self, keys: str, frames: int | None = None, gap: int | None = None) -> int:
+        """press_keys items ('A+B' held together, spaced or comma separated), each held frames,
+        gap frames between items (None: CSpect's defaults); gap 0 keeps a repeated key down."""
+        self._need_running("press")
+        return self._keys("press_keys", **self._press_args(keys, frames, gap))
+
+    def queue_press(self, keys: str, frames: int | None = None, gap: int | None = None) -> None:
+        """press_keys with the CPU stopped: CSpect queues the keys and presses them once it runs
+        freely (a stop inside a blocking press stalls it; per-frame stops never advance a queue)."""
+        if self.running():
+            raise CSpectError("queue_press needs the CPU stopped: pause() first")
+        t = self.mcp.text(self.mcp.call("press_keys", **self._press_args(keys, frames, gap)))
+        if not t.startswith("Keys queued"):
+            raise CSpectError(f"press_keys with the CPU stopped did not queue: {t[:200]!r}")
 
     # -- debugger ---------------------------------------------------------------------------------
 

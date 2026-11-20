@@ -14,18 +14,23 @@ nearest S; --assert-frame F:field=v the first sample whose frame >= F.
 KEY), runs to that hold's step (SHOW_STEP@HOLD / SHOW_STEP@KEY) and byte-compares
 the front Layer 2 surface (10 pages at 320x256, 6 at 256x192) with the compiled
 NXC/NXI after its 512-byte palette. --skip-surface-at-frame F:PC:<picture file>
-queues SPACE, runs to PC (e.g. chain_run's address from build/intro.map) and
-compares the front surface there, before any hand-off code can overwrite it.
+queues SPACE, runs to PC, which must be chain_run's address from build/intro.map,
+and compares the front surface there, before any hand-off code can overwrite it.
 --text-at-frame F (repeatable) decodes the launcher's own tilemap at $4000 (--cols
 40|80, its COLS setting); --expect-caption "s" (repeatable) needs each substring in
 some collected row. --expect-handoff / --expect-text "s": once chain_run has run,
-the interpreter's 80-column tilemap at $6000 must show text / s; s must be seen on
-two consecutive polls, since $6000 holds launcher data until the interpreter clears
-it. A frame anchor whose first sample is more than 32 frames late fails (only a SPACE
-hold runs unsampled). An input edge the harness did not send (the mirror's keys count
-moving with no press) fails the run: CSpect passes host mouse clicks to the guest even
-minimised. --port is the harness MCP port (tests/cspect/launcher.py PORT_RANGE, default
-the first free)."""
+the interpreter's 80-column tilemap at $6000 must settle on text / show s on two
+consecutive polls (it holds launcher data until the interpreter clears it); no
+settle by HANDOFF_S fails. Frame-anchored checks use samples with the mirror only;
+one whose first sample is more than 32 frames late fails. A SPACE hold runs
+unsampled: press_keys' hold and release gap, then free running until the next
+main_loop stop (about 12-15 frames).
+
+Harness runs patch input_scan's Kempston mouse-button read to "no button" in guest
+RAM (CSpect passes host clicks to the guest even minimised), so the launcher's
+mouse-as-key path is silicon-only coverage; an input edge the harness did not send
+(the mirror's keys count moving with no press) still fails the run. --port is the
+harness MCP port (tests/cspect/launcher.py PORT_RANGE, default the first free)."""
 import argparse, pathlib, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
@@ -47,7 +52,11 @@ STUB_PROLOGUE = bytes.fromhex("f331e07f")
 INTRO_MAP = ROOT / "build" / "intro.map"
 INTRO_NEX = ROOT / "build" / "intro.nex"
 HOLD_PC_SYMBOL = {2: "SHOW_STEP@HOLD", 3: "SHOW_STEP@KEY"}
-NEEDED = ("MAIN_LOOP", "CHAIN_RUN", "FRAMECOUNTER", *HOLD_PC_SYMBOL.values())
+NEEDED = ("MAIN_LOOP", "CHAIN_RUN", "FRAMECOUNTER", "INPUT_SCAN", *HOLD_PC_SYMBOL.values())
+# input_scan (src/intro/input.asm): ld bc,$FADF / in a,(c) / cpl / and 3
+MOUSE_READ = bytes.fromhex("01dffaed782fe603")
+NO_BUTTON = bytes.fromhex("3eff")             # ld a,$FF: same length as in a,(c)
+SCAN_SPAN = 32
 PAGE_SIZE = 8192
 PRESS_FRAMES = 4
 FRAME_OVERSHOOT_MARGIN = 32
@@ -55,7 +64,7 @@ STEP_S = 10.0                  # host deadline for one launcher frame
 SKIP_RUN_S = 30.0              # host deadline for a skip press to reach its PC
 HANDOFF_S = 30.0               # host deadline for the interpreter's text after chain_run
 HANDOFF_POLL_S = 0.25
-HANDOFF_STABLE_POLLS = 3       # identical non-empty reads that end an --expect-handoff wait
+HANDOFF_STABLE_POLLS = 3       # identical non-empty reads that settle an --expect-handoff wait
 
 
 def decode(m):
@@ -101,7 +110,7 @@ def surface_at(s, picfile):
 
 def check_staged_launcher(staged):
     """The breakpoint addresses come from build/intro.map, so the staged
-    launcher must be that same build."""
+    launcher must be that same build. Returns the map."""
     if not INTRO_NEX.exists():
         raise SystemExit("%s is missing - build the launcher first" % INTRO_NEX)
     if not staged.exists():
@@ -110,9 +119,27 @@ def check_staged_launcher(staged):
         raise SystemExit("staged launcher %s differs from build\\intro.nex - restage" % staged)
     if not INTRO_MAP.exists():
         raise SystemExit("%s is missing - build the launcher first" % INTRO_MAP)
-    missing = [n for n in NEEDED if n not in read_map(INTRO_MAP)]
+    syms = read_map(INTRO_MAP)
+    missing = [n for n in NEEDED if n not in syms]
     if missing:
         raise SystemExit("symbols %s not found in %s" % (", ".join(missing), INTRO_MAP))
+    return syms
+
+
+def mute_mouse(s):
+    """Patch input_scan's Kempston button read to ld a,$FF (no button); returns its address.
+    The image bytes are checked first, so a changed input_scan fails instead of misreading."""
+    at = s.sym("INPUT_SCAN")
+    code = s.read(at, SCAN_SPAN)
+    i = code.find(MOUSE_READ)
+    if i < 0 or code.find(MOUSE_READ, i + 1) >= 0:
+        raise SystemExit("input_scan at $%04X does not hold one ld bc,$FADF / in a,(c) / cpl / "
+                         "and 3 in its first %d bytes: %s" % (at, SCAN_SPAN, code.hex(" ")))
+    site = at + i + 3
+    s.write(site, NO_BUTTON)
+    if s.read(site, 2) != NO_BUTTON:
+        raise SystemExit("mouse patch at $%04X did not read back" % site)
+    return site
 
 
 def press_space(s, chain):
@@ -125,14 +152,6 @@ def press_space(s, chain):
         if s.stopped_at() == chain:
             return None
         raise
-
-
-def queue_space(s):
-    """Queue SPACE with the CPU stopped; CSpect presses it once the CPU runs (Session.press
-    refuses a stopped CPU)."""
-    t = s.mcp.text(s.mcp.call("press_keys", keys="SPACE", hold_frames=PRESS_FRAMES))
-    if not t.startswith("Keys queued"):
-        raise RuntimeError("press_keys with the CPU stopped: %r" % t[:200])
 
 
 def read_text(s, cols):
@@ -152,7 +171,8 @@ def handoff_rows(s):
 
 def wait_handoff_text(s, expect_text):
     """After chain_run: poll $6000 until expect_text shows on two consecutive polls, or
-    (no expect_text) HANDOFF_STABLE_POLLS identical non-empty reads; rows as they stand."""
+    (no expect_text) HANDOFF_STABLE_POLLS identical non-empty reads. (rows, None) once
+    settled, else (rows as they stand, the timeout message)."""
     seen = []
 
     def settled():
@@ -163,10 +183,10 @@ def wait_handoff_text(s, expect_text):
             return len(tail) == 2 and all(any(expect_text in r for r in t) for t in tail)
         return len(tail) == HANDOFF_STABLE_POLLS and tail[0] and all(t == tail[0] for t in tail)
     try:
-        s.wait_until(settled, HANDOFF_S, HANDOFF_POLL_S, "the interpreter's text at $6000")
+        s.wait_until(settled, HANDOFF_S, HANDOFF_POLL_S, "the interpreter's text at $6000 to settle")
     except TimeoutError as e:
-        print("hand-off text wait: %s" % e)
-    return seen[-1] if seen else []
+        return (seen[-1] if seen else []), str(e)
+    return seen[-1], None
 
 
 def main():
@@ -195,7 +215,7 @@ def main():
     ap.add_argument("--port", type=int, default=None)
     a = ap.parse_args()
     card = pathlib.Path(a.card).resolve()
-    check_staged_launcher(card / a.launch)
+    syms = check_staged_launcher(card / a.launch)
     ok = True
     pending_space = sorted(a.space_at)
     pending_space_frame = sorted(a.space_at_frame)
@@ -205,9 +225,15 @@ def main():
     if a.skip_surface:
         when_s, pc_s, pic_s = a.skip_surface.split(":", 2)
         pending_skip_surface = (int(when_s), int(pc_s, 0), pic_s)
+        chain_at = syms["CHAIN_RUN"][0]
+        if pending_skip_surface[1] != chain_at:
+            raise SystemExit("--skip-surface-at-frame PC %d is not chain_run (%d, $%04X): after any "
+                             "other stop the queued SPACE never reaches the guest, since main_loop "
+                             "stops every frame" % (pending_skip_surface[1], chain_at, chain_at))
     pending_text_frame = sorted(a.text_at_frame)
     collected_text = []
     samples = []
+    unsampled = []                 # (t before, t after) around each SPACE hold
     no_mirror = 0
     handed_off = False
     t0 = time.time()
@@ -215,8 +241,12 @@ def main():
         print("CSpect PID %d on MCP port %d" % (s.pid, s.inst.port), flush=True)
         main_loop, chain = s.sym("MAIN_LOOP"), s.sym("CHAIN_RUN")
         hold_pcs = {st: s.sym(name) for st, name in HOLD_PC_SYMBOL.items()}
+        # CSpect passes host mouse clicks to a minimised guest; input_scan counts a button as
+        # a key, so the harness reads "no button" and the mouse-as-key path is silicon-only
+        print("harness: input_scan's mouse button read at $%04X patched to ld a,$FF "
+              "(mouse-as-key path is silicon-only)" % mute_mouse(s))
         s.set_breakpoint(chain)
-        next_print, last_key, sent = 0.0, None, False
+        next_print, last_key, sent, held_from = 0.0, None, False, None
         while True:
             try:
                 pc = s.run_to(main_loop, STEP_S)
@@ -232,15 +262,19 @@ def main():
             if pc != main_loop:
                 raise CSpectError("stopped at $%04X, not main_loop $%04X" % (pc, main_loop))
             d = decode(s.read(MIRROR, 32))
-            if d["sig"] != "IN":
+            mirror = d["sig"] == "IN"
+            if not mirror:
                 no_mirror += 1
                 d["frame"], d["hz60"] = s.frame(), 0
             t = d["frame"] / (60.0 if d["hz60"] else 50.0)
-            if d["sig"] == "IN":
-                # CSpect passes host mouse clicks to the guest even minimised (input_scan reads $FADF)
+            if held_from is not None:
+                unsampled.append((held_from, t))
+                held_from = None
+            if mirror:
+                # the backstop for host input the mouse patch does not cover
                 if samples and d["keys"] != samples[-1][1]["keys"] and not sent:
                     print("ASSERT FAILED: input edge the harness did not send by frame %d (keys %d -> %d): "
-                          "host mouse click?" % (d["frame"], samples[-1][1]["keys"], d["keys"]))
+                          "host input?" % (d["frame"], samples[-1][1]["keys"], d["keys"]))
                     ok = False
                 sent = False
                 samples.append((t, d))
@@ -249,7 +283,7 @@ def main():
                     next_print, last_key = t + a.interval, key
                     print("t=%.2f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X pcmrd=%04X loadpage=%d fading=%d akytick=%d ayspage=%d"
                           % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["pcmrd"], d["loadpage"], d["fading"], d["akytick"], d["ayspage"]))
-            if pending_text_frame and d["frame"] >= pending_text_frame[0]:
+            if mirror and pending_text_frame and d["frame"] >= pending_text_frame[0]:
                 when = pending_text_frame.pop(0)
                 if frame_overshot(when, d["frame"]):
                     print("ASSERT FAILED: text anchor frame %d overshot to frame %d (>%d past anchor)"
@@ -261,7 +295,7 @@ def main():
                         print("text: " + r)
                     collected_text.extend(text)
                     print("text read frame>=%d (t=%.2f, actual frame=%d)" % (when, t, d["frame"]))
-            if pending_surface and d["frame"] >= pending_surface[0][0]:
+            if mirror and pending_surface and d["frame"] >= pending_surface[0][0]:
                 when, picfile = pending_surface.pop(0)
                 if frame_overshot(when, d["frame"]):
                     print("ASSERT FAILED: surface anchor frame %d overshot to frame %d (>%d past anchor) vs %s"
@@ -273,15 +307,20 @@ def main():
                     ok = False
                 else:
                     pc = hold_pcs[d["state"]]
-                    got_pc = s.run_to(pc, STEP_S)
-                    if got_pc != pc:
+                    try:
+                        got_pc = s.run_to(pc, STEP_S)
+                    except TimeoutError as e:
+                        got_pc = None
+                        print("ASSERT FAILED: surface check frame>=%d: %s" % (when, e))
+                        ok = False
+                    if got_pc is not None and got_pc != pc:
                         print("ASSERT FAILED: surface check frame>=%d stopped at $%04X, not the hold step $%04X"
                               % (when, got_pc, pc))
                         ok = False
-                        handed_off = got_pc == chain
-                        if handed_off:
+                        if got_pc == chain:
+                            handed_off = True
                             break
-                    else:
+                    elif got_pc == pc:
                         s_ok, mism, first, detail, mf = surface_at(s, picfile)
                         if detail:
                             print("ASSERT FAILED: surface check frame>=%d vs %s: %s" % (when, picfile, detail))
@@ -294,7 +333,7 @@ def main():
                                   "mirror frame %d) vs %s: %d bytes differ, first at offset %d"
                                   % (when, t, d["frame"], pc, mf, picfile, mism, first))
                             ok = False
-            if pending_skip_surface and d["frame"] >= pending_skip_surface[0]:
+            if mirror and pending_skip_surface and d["frame"] >= pending_skip_surface[0]:
                 when, pc, picfile = pending_skip_surface
                 pending_skip_surface = None
                 if frame_overshot(when, d["frame"]):
@@ -302,11 +341,12 @@ def main():
                           % (when, d["frame"], FRAME_OVERSHOOT_MARGIN, picfile))
                     ok = False
                 else:
-                    queue_space(s)
+                    s.queue_press("SPACE", PRESS_FRAMES)
                     sent = True
-                    got_pc = s.run_to(pc, SKIP_RUN_S)
-                    if got_pc != pc:
-                        print("ASSERT FAILED: skip-surface run stopped at $%04X before PC=%d" % (got_pc, pc))
+                    try:
+                        s.run_to(pc, SKIP_RUN_S)        # pc is chain_run, armed: the hand-off stop
+                    except TimeoutError as e:
+                        print("ASSERT FAILED: skip-surface check frame>=%d: %s" % (when, e))
                         ok = False
                     else:
                         s_ok, mism, first, detail, _ = surface_at(s, picfile)
@@ -319,7 +359,6 @@ def main():
                             print("ASSERT FAILED: skip-surface mismatch frame>=%d (t=%.2f, actual frame=%d) pc=%d vs %s: "
                                   "%d bytes differ, first at offset %d" % (when, t, d["frame"], pc, picfile, mism, first))
                             ok = False
-                    if got_pc == chain:
                         handed_off = True
                         print("hand-off: chain_run reached under the skip press")
                         break
@@ -327,7 +366,7 @@ def main():
             if pending_space and t >= pending_space[0]:
                 pending_space.pop(0)
                 press = "t"
-            elif pending_space_frame and d["frame"] >= pending_space_frame[0]:
+            elif mirror and pending_space_frame and d["frame"] >= pending_space_frame[0]:
                 when = pending_space_frame.pop(0)
                 press = "frame"
                 if frame_overshot(when, d["frame"]):
@@ -336,7 +375,7 @@ def main():
                     ok = False
                     press = None
             if press:
-                sent = True
+                sent, held_from = True, t
                 held = press_space(s, chain)
                 if held is None:
                     handed_off = True
@@ -364,8 +403,11 @@ def main():
                 when = float(when)
                 t, d = min(samples, key=lambda smp: abs(smp[0] - when))
                 if abs(t - when) > assert_tol:
-                    print("ASSERT FAILED: nearest sample to t=%.1f is at t=%.2f (more than %.2fs "
-                          "away - truncated sample list?)" % (when, t, assert_tol))
+                    hold = next((g for g in unsampled if g[0] < when < g[1]), None)
+                    why = ("it fell in the unsampled SPACE hold t=%.2f-%.2f" % hold if hold
+                           else "truncated sample list?")
+                    print("ASSERT FAILED: nearest sample to t=%.2f is at t=%.2f (more than %.2fs away - %s)"
+                          % (when, t, assert_tol, why))
                     ok = False
                     continue
                 got = d[field]
@@ -427,12 +469,15 @@ def main():
                 s.clear_breakpoint(chain)
                 if not s.running():
                     s.resume()
-                text = wait_handoff_text(s, a.expect_text)
+                text, unsettled = wait_handoff_text(s, a.expect_text)
                 if s.read(0x6000, 4) == STUB_PROLOGUE:
                     print("ASSERT FAILED: $6000 still holds the stub's own prologue - the hand-off never happened")
                     ok = False
                 for r in text:
                     print("game: " + r)
+                if unsettled:
+                    print("ASSERT FAILED: hand-off text: %s" % unsettled)
+                    ok = False
                 if a.expect_handoff and not text:
                     print("ASSERT FAILED: no interpreter text at $6000 - the hand-off did not reach the game")
                     ok = False

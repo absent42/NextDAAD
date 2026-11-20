@@ -48,6 +48,19 @@ def err_border():
     return int(m.group(1))
 
 
+def build_variant():
+    """The variant on build/NEXTDAAD.SYM's 'build <hash> <variant>' line (scripts/make-sym.ps1)."""
+    try:
+        lines = SYM.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as e:
+        raise SystemExit("refuse_check: cannot read %s (%s): run ./build.ps1 -Release" % (SYM, e))
+    for line in lines:
+        f = line.split("\t")
+        if f[0] == "build" and len(f) >= 3:
+            return f[2].strip()
+    raise SystemExit("refuse_check: %s has no 'build' line: run ./build.ps1 -Release" % SYM)
+
+
 def nr_values(version):
     """NR $01 (major.minor nibbles) and NR $0E (sub) for a core version."""
     return (version[0] << 4) | version[1], version[2]
@@ -90,7 +103,10 @@ def run_case(version, refused, border, port, work):
         else:
             a = s.regs()["A"]
             s.clear_breakpoint(at)
-            halt = s.run_to("CORE_REFUSE@HALT", STOP_S)
+            try:
+                halt = s.run_to("CORE_REFUSE@HALT", STOP_S)
+            except TimeoutError as e:
+                return False, "out ($FE),a ran with A=%d, then %s" % (a, e)
             rows = s.rows()
             shown = rows[0].strip() == MESSAGE
             rest = [r.strip() for r in rows[1:] if r.strip()]
@@ -103,7 +119,10 @@ def run_case(version, refused, border, port, work):
 
         def printed():
             return [r.strip() for r in s.rows() if r.strip()]
-        got = s.wait_until(printed, PRINT_S, what="the interpreter's first text")
+        try:
+            got = s.wait_until(printed, PRINT_S, what="the interpreter's first text")
+        except TimeoutError as e:
+            return False, "out ($FE),a not reached by %s, then %s" % (PAST_GATE, e)
         ok = not any(MESSAGE in t for t in got)
         return ok, "out ($FE),a not reached by %s; row0=%r" % (PAST_GATE, got[0][:40])
 
@@ -112,7 +131,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=None)
     port = ap.parse_args().port
-    if "\tRelease" not in SYM.read_text(encoding="utf-8", errors="replace").split("\n", 2)[1]:
+    if build_variant() != "Release":
         raise SystemExit("build/nextdaad.nex is not a Release build: run ./build.ps1 -Release")
     border = err_border()
     work = ROOT / "tests" / "out" / "corefloor" / "refuse"
