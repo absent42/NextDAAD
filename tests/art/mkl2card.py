@@ -35,11 +35,10 @@
 #     card, so they take the smallest damage first.
 #
 # GEOMETRY. 256 wide, 128 rows.
-#   256 WIDE IS MANDATORY, not cosmetic. Only gfx_row_copy256's
-#     dma_copy writes straight into Layer 2 pages; 320-wide art's
-#     dma_copy (gfx_row_fetch) lands in gfxRowBuf, and
-#     gfx_row_scatter320's CPU loop is what actually reaches Layer 2
-#     (see its header). A 320-wide card would exercise nothing there.
+#   256 WIDE IS MANDATORY, not cosmetic. The card targets the
+#     row-major surface, where each row is one blitter transfer of row
+#     bytes; 320-wide art is written column-major, one byte per column,
+#     and would exercise a different transfer shape.
 #     The .NXI extension is what selects mode 0 / width 256 in
 #     gfxExtTab - the file's own bytes carry no width.
 #   128 ROWS puts the card on tilemap rows 4..19 and leaves rows 20..31
@@ -48,8 +47,7 @@
 #     chapter-next-tilemap.tex:18 "Tilemap layer overlaps ULA by 32
 #     pixels on each side", chapter-next-layer2.tex:308), so L2 row r
 #     lands on tilemap row r/8 + 4 and L2 column c on tilemap column
-#     c/4 + 8. 128 rows is also 256 dma_copy calls per DISPLAY 0 (one
-#     fetch and one copy per row).
+#     c/4 + 8. 128 rows is also 128 blitter transfers per DISPLAY 0.
 #
 # FILE FORMAT (Gfx2Next .nxi, as the interpreter consumes it): 512-byte
 # palette FIRST - 256 entries x 2 bytes, byte 0 = RRRGGGBB, byte 1 bit 0

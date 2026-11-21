@@ -176,8 +176,8 @@
 ; NO SOUND, NO MUSIC, NO SECOND PICTURE. Nothing is staged but the
 ; card, so a symptom cannot be an audio interaction or a stale asset
 ; winning the probe chain. The probe chain matters: NX2 variants are
-; tried FIRST, so a leftover 001.NX2 would route the blit through
-; gfx_row_scatter320 and change the geometry under the test. sd\TMOVER\
+; tried FIRST, so a leftover 001.NX2 would be drawn column-major, 320
+; wide, and change the geometry under the test. sd\TMOVER\
 ; is emptied on every stage and holds three files.
 
 ; System flags used by name (DAAD BLANK template spellings)

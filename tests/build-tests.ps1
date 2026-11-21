@@ -185,8 +185,7 @@
 #            only rate this project ships) and 002.WAV (20000 Hz =
 #            AUD_RATE_MAX), plus the Layer 2 corruption-detector card
 #            (tests\art\mkl2card.py) as 001.NXI (256x128, 256-wide so
-#            DISPLAY 0 reaches gfx_row_copy256/dma_copy rather than the
-#            CPU scatter path). No .AKY staged - a playing song would put
+#            DISPLAY 0 takes the blitter's row-major path). No .AKY staged - a playing song would put
 #            the AKY player's own per-frame DI hold under the readout.
 #            Stops and waits for a keypress at each phase boundary so a
 #            symptom can be attributed to its phase. Alternative to
@@ -1560,26 +1559,24 @@ if (Test-StepRun 'bt-manual') {
     Complete-Step 'bt-manual'
 }
 
-# overlay2's dma_copy contract, checked against the EMITTED BYTES of the
-# current build\nextdaad.nex (tests\dma_contract.py has the full why).
-# This runs on every invocation, not behind a switch: dma_copy carries
-# every 256-wide picture row and every GFX 0/1, NOTHING host-side renders
-# a picture, and the routine has now been broken three times by edits
-# that assembled perfectly clean - most recently one that walked the blit
-# out of the slot 6 window and over overlay2's own code at $E000. There
-# is no emulator leg here to catch that; this is the substitute.
+# The DMA contracts, checked against the EMITTED BYTES of the current
+# build\nextdaad.nex: the video kernels' arm shapes (tests\dma_contract.py)
+# and the picture and scroll blits, executed on a host model of the
+# blitter (tests\ddma_contract.py). This runs on every invocation, not
+# behind a switch: these routines carry every picture, clear and scroll,
+# and have been broken before by edits that assembled perfectly clean.
 if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) {
-    Write-NexStaleWarning 'the dma_copy contract check'
+    Write-NexStaleWarning 'the DMA contract checks'
     if (Test-StepRun 'bt-dma-contract') {
         & python "$PSScriptRoot\dma_contract.py"
-        if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - overlay2's dma_copy is mis-emitting its DMA descriptors, do not run this build on hardware" }
+        if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - a video DMA kernel is mis-emitted, do not run this build on hardware" }
         & python "$PSScriptRoot\ddma_contract.py"
         if ($LASTEXITCODE -ne 0) { throw "tests\ddma_contract.py failed - a blitter program is mis-emitted, do not run this build on hardware" }
         Complete-Step 'bt-dma-contract'
     }
 }
 else {
-    "WARNING: no build\nextdaad.nex + .sld - dma_copy contract check SKIPPED (run .\build.ps1 first)"
+    "WARNING: no build\nextdaad.nex + .sld - DMA contract checks SKIPPED (run .\build.ps1 first)"
 }
 
 # Core 3.03.03 floor host checks: NRGET encoding, boot gate, CSpect launch wiring.
@@ -2665,7 +2662,7 @@ if ($gfxHits.Count -ne 1) {
 }
 # The dense shipped-path phase: 24 contiguous DISPLAY 0. Opcode 28 =
 # $1C, one param, so 48 bytes of 1C 00. gfx_blit routes the staged
-# 256-wide card to gfx_row_copy256 -> dma_copy, one call per row.
+# 256-wide card to the blitter (gfx_seg), one transfer per row.
 $dispRun = [byte[]]@(1..24 | ForEach-Object { 28, 0 })
 $dispHits = Find-ByteRuns $sfxdiBytes $dispRun
 if ($dispHits.Count -ne 1) {
@@ -3575,7 +3572,7 @@ if ((Find-ByteRuns $dbgPlain ([byte[]]@(0x16, 0x5C, 0xFF))).Count -ne 1) {
 }
 
 # HALF TWO: what the INTERPRETER does with it, read out of the emitted
-# image the same way tests\dma_contract.py reads dma_copy's descriptors.
+# image the same way tests\dma_contract.py reads the DMA kernels.
 # eng_exec (src\engine.asm) must test for $DC BEFORE the $7F indirection
 # mask and loop back to its own fetch, so the marker is consumed without
 # reaching cprops/cdisp at all. In emitted bytes that is:
@@ -3588,7 +3585,7 @@ if ((Find-ByteRuns $dbgPlain ([byte[]]@(0x16, 0x5C, 0xFF))).Count -ne 1) {
 #           E6 7F        and $7F         <- the mask it must precede
 # The jr displacement is recomputed here rather than hard-coded, so the
 # check says "the skip goes back to the fetch" instead of "the byte is
-# F1". Same skip-with-a-warning rule as the dma_copy contract above: a
+# F1". Same skip-with-a-warning rule as the DMA contracts above: a
 # tree with no build yet is not a failure. The checks below on build\
 # bytes are their own step ($nexStep).
 if (Test-Path "$root\build\nextdaad.nex") {
@@ -5653,15 +5650,14 @@ if ($SfxDi) {
     # stage the Layer 2 corruption-detector card tests\art\mkl2card.py
     # generates as 001.NXI.
     #
-    # THE CARD IS NOT OPTIONAL AND MUST BE .NXI. gfx_blit routes
-    # 256-wide art to gfx_row_copy256, whose dma_copy writes straight
-    # into Layer 2 pages; 320-wide art's dma_copy (gfx_row_fetch) lands
-    # in gfxRowBuf, and gfx_row_scatter320's CPU loop is what actually
-    # reaches Layer 2. gfxExtTab is what decides which: NX2 rows are
+    # THE CARD IS NOT OPTIONAL AND MUST BE .NXI. The detector card is
+    # built for the row-major 256-wide surface (one blitter transfer of
+    # row bytes per row); 320-wide art is written column-major, one
+    # byte per column. gfxExtTab is what decides which: NX2 rows are
     # mode 1 / width 320, NXI rows mode 0 / width 256, and the NX2
     # variants probe FIRST. A leftover 001.NX2 from an earlier
-    # -Rab/-GMode stage winning the chain, drawing through the scatter
-    # path and leaving the fixture exercising nothing IS WHAT HAPPENED
+    # -Rab/-GMode stage winning the chain, drawing in the other mode
+    # and leaving the fixture exercising nothing IS WHAT HAPPENED
     # (2026-08-03, the vacuous run that motivated the leg folders).
     # sd\SFXDI\ is emptied at the top of the staging section and holds
     # this fixture's four files and nothing else, so no other art of
@@ -5971,7 +5967,7 @@ if ($SfxSt) {
         "staged sd\$legName\$($spec.dest)  $($wb.Length) bytes, $wrate Hz, $wch ch, 8-bit, L $($spec.l) Hz R $($spec.r) Hz, data $wdata"
     }
 
-    # Location pictures, both 256-wide .NXI (gfx_row_copy256 path) so they
+    # Location pictures, both 256-wide .NXI (row-major surface) so they
     # sit on tilemap rows 4-19 above the text window (rows 20-29).
     # 001.NXI: mkl2card.py (256x128). 002.NXI: mkl2pos.py's plain 001.NXI
     # (mode 0, 256x96), a visibly different card. mkpalcard.py is not used:
@@ -6557,11 +6553,10 @@ if ($Palette) {
     # to prevent. sd\PALETTE\ is emptied at the top of the staging
     # section, so nothing else of number 001 is reachable.
     #
-    # 320-wide art also takes a different blit path from the .NXI cards
-    # elsewhere in the suite: gfx_blit still fetches each row via
-    # dma_copy (gfx_row_fetch), but writes it through
-    # gfx_row_scatter320's CPU column loop, not gfx_row_copy256's second
-    # DMA call. Damage specific to the scatter path shows up here.
+    # 320-wide art also takes a different blit shape from the .NXI cards
+    # elsewhere in the suite: each row is a 2D transfer of one byte per
+    # column onto the column-major surface. Damage specific to that
+    # shape shows up here.
     & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
     if ($LASTEXITCODE -ne 0) { throw "tests\art\mkpalcard.py failed" }
     $palCardSrc = "$root\tests\out\palcard.nx2"

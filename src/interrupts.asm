@@ -78,8 +78,8 @@ im2_init:
     ; writes can hold ctc_isr off the DAC long enough to audibly distort
     ; sampled playback. $CC/$CD/$CE admit only the DAC sample-timer CTC
     ; channels to interrupt a running DMA (chapter-next-interrupts.tex:
-    ; 296-301, :512-564 for bit layouts) - the only sources dma_copy's
-    ; callers need.
+    ; 296-301, :512-564 for bit layouts) - the only sources the blits
+    ; need.
     ;
     ; ALL THREE WRITTEN EXPLICITLY: the dev guide gives bit layouts but no
     ; reset value for $CC/$CD/$CE, so the ambient default is unknown and
@@ -88,8 +88,8 @@ im2_init:
                                          ; interrupting a DMA - im2_isr remaps
                                          ; MMU6/7 around aud_tick, so a transfer
                                          ; left running would corrupt picture and
-                                         ; audio state. Replaces dma_copy's old DI
-                                         ; (overlay2.asm); do not relax.
+                                         ; audio state. The blits rely on it
+                                         ; (ddma.inc); do not relax.
     nextreg NR_DMA_INT_EN_2, %00000011   ; $CD bit 0 = CTC channel 0 (DAC sample
                                          ; timer) may pre-empt a DMA - safe because
                                          ; ctc_isr is MMU-free by contract (AF/HL

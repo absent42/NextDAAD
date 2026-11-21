@@ -479,268 +479,6 @@ l2_flip_swap:
     ld (l2BackBank), a
     ret
 
-; --- DMA-accelerated block copy (SP11 Task 2) ---
-; HL = source, DE = dest, BC = length - all three within the currently-
-; mapped windows (the zxnDMA reads the live Z80 MMU map).
-;
-; Must not run concurrently with aud_tick's MMU6/7 remap (interrupts.asm)
-; - a transfer left running across that tick would run through the
-; audio banks' mapping instead of the caller's. Closed by hardware, not
-; a DI: NR $CC/$CD/$CE (see interrupts.asm's im2_init) forbid every
-; source but the DAC sample-timer CTC channels from pre-empting a
-; running DMA, and a CONTINUOUS-mode transfer bus-stalls the CPU for
-; its whole duration regardless. Every chunk is one-shot CONTINUOUS
-; mode: never burst, auto-restart, a live counter read, or a refeed
-; while enabled.
-;
-; Chunks are capped at DMA_CHUNK_MAX. THE COST MODEL:
-;
-;     W(chunk) = A + 5.082 * chunk
-;       5.082 T/B is the zxnDMA 2/2-cycle rate at 28 MHz, an upper
-;       bound on this path (dma_copy moves through an MMU window and
-;       does not pay Layer 2's auto-slowdown).
-;     A = (arm upload) + 183 T of zxnDMA disable/load/enable sequencing
-;       latency between the $CF load byte and transfer completion.
-;     28 MHz rule: +1 T on every opcode fetch and every memory read,
-;       none on I/O or writes. OTIR = 24 T/byte repeating, 19 T final;
-;       OUTINB (Z80N ED 90) is a flat 19 T/byte.
-;
-;     11-byte OUTINB arm   A = 402 T
-;       W(128) = 402 + 650.5  = 1052.5 T (37.6 us)
-;       W(256) = 402 + 1301.0 = 1703.0 T (60.8 us)
-;
-; ctc_isr feeds the DAC one byte per CTC zero-count; the period is
-; 16 * TC T-states exactly, with TC = floor(clk16/rate) from
-; aud_ctc_params / aud_clk16_tab (SFX_PAGE, src/audio/streamfx.asm):
-;
-;     rate       VGA0  VGA1  VGA2  VGA3  VGA4  VGA5  VGA6  HDMI
-;     16000 Hz   1744  1776  1840  1872  1936  2000  2048  1680
-;     20000 Hz   1392  1424  1472  1488  1536  1600  1648  1344
-;     (HDMI column: a write of 7 to NR $11 stores 0 on core 3.02.04,
-;      so this mode is unreachable)
-;
-; 16000 Hz is the only rate this project has shipped; 20000 Hz =
-; AUD_RATE_MAX is the published supported ceiling. The pre-emption
-; permission means the DAC feed is serviced INSIDE the transfer, so a
-; chunk's transfer time W may exceed one CTC period P freely - a
-; longer chunk simply admits more CTC edges, each taken on time. The
-; producer is consumption-paced (aud_smp_copy fills only the ring's
-; free space) and hardware IM2 holds a request raised during a stall
-; rather than losing it, so the sample count and pitch stay exact
-; regardless of chunk size.
-;
-; Cap is 256: the row copy and the surface copy hand this routine
-; exactly 256 bytes, one chunk each; gfx_row_fetch hands a whole row
-; (256 bytes for 256-wide art, one chunk; 320 bytes for 320-wide art,
-; two chunks; a page-edge split hands the leftover, a multiple of 64
-; down to GFX_DMA_MIN_LEN). 256 keeps the 256-byte pair's call to one
-; chunk instead of two. 320-wide LOCATION art reaches this routine
-; through gfx_row_fetch's .fits path; only gfx_row_scatter320's own
-; scatter still has no DMA branch (see its own header).
-;
-; ANY CAP IN 1..256 IS LEGAL: the arm's block length is a 16-bit field
-; written whole, so the cap is free anywhere in 1..256 including
-; exactly 256. Changing the cap is a one-constant edit; the ASSERTs
-; below enforce the legal range.
-;
-; DESCRIPTOR SPLIT: dma_prog's five STATIC bytes (the WR1 pair, the
-; WR2 pair, WR5) are the per-call prefix, sent ONCE PER CALL at the top
-; of this routine with interrupts LIVE - the DMA is idle there (WR5 =
-; stop on end of block), so those are register writes, not a transfer.
-; PER-CALL, NEVER A SESSION INIT: a session init would make this
-; overlay depend on video-player state and would break the invariant
-; recorded at video.asm:1517 (descriptors outside the video kernel
-; leave WR1 = INCREMENTING). dma_copy sends WR1 = INCREMENTING on
-; entry to every call and never departs from it, so WR1 is
-; INCREMENTING both during and after any dma_copy, on every exit path.
-;
-; INTERRUPTS ARE LIVE THROUGHOUT, including across the transfer itself.
-; ctc_isr is admitted mid-chunk by $CD bit 0 and services the DAC on
-; time; a pending frame tick is held by $CC = 0 until the chunk ends
-; and then runs with the DMA idle. When the DMA yields for an
-; interrupt the CPU executes one mainline instruction before the
-; interrupt is seen, and RETI returns the bus to the DMA (dev guide).
-; The instruction following the arm here is `pop bc`, then pointer
-; arithmetic reading only dma_prog's own already-loaded fields, so a
-; slip costs nothing; it would only matter if enough edges landed in
-; one chunk to walk the mainline back round to .loop, where dma_prog
-; is re-patched and re-armed - at the shipped rates a chunk sees at
-; most one or two. Anything that shortens the tail below the arm, or
-; moves a DMA write earlier, must be re-checked against that.
-;
-; Splits BC into <=DMA_CHUNK_MAX-byte chunks and loops; returns once
-; the whole length has transferred. Corrupts AF, BC, DE, HL - matches
-; LDIR's own end state exactly (HL/DE left just past the last byte
-; moved, BC = 0), so it drops into any LDIR call site with no other
-; change needed.
-;
-; Unconditional since SP14a T4's follow-up wave: the DMA-during-samples
-; question is closed (real hardware confirmed clean location-art DMA
-; blit mid-sample-playback), so the CPU-only LDIR fallback retired.
-
-; Arm/prefix lengths as assembly-time constants: the DUP counts need
-; them before the blocks exist. The ASSERTs after the blocks pin them to
-; the real lengths, so an edit that forgets an unroll count fails the
-; build instead of desyncing the DMA (video.asm's kernels, same shape).
-DMA_ARM_LEN     equ 11           ; per-chunk arm (program + run)
-DMA_STATIC_LEN  equ 5            ; per-call prefix (port modes + stop)
-    ASSERT DMA_CHUNK_MAX >= 1    ; chunk = min(BC, cap): a zero cap would
-                                  ; loop forever programming empty blocks
-    ASSERT DMA_CHUNK_MAX <= 256  ; the arm's block length is a 16-bit
-                                  ; field written whole, so the cap is
-                                  ; free anywhere in 1..256 - including
-                                  ; exactly 256, which the byte-wise
-                                  ; selection this replaced could not
-                                  ; express (see the header)
-dma_copy:
-    push hl                      ; THE CALLER'S SOURCE POINTER AND LENGTH
-    push bc                      ; MUST SURVIVE THE PREFIX BELOW, which
-                                  ; needs HL and BC for its own OUTINB
-                                  ; stream. Omitting this pair is the
-                                  ; 2026-08-03 regression (4cda75e): .loop
-                                  ; then read HL = dma_prog and BC = $006B
-                                  ; = DMA_PORT as its source and length, so
-                                  ; every call copied 107 bytes of this
-                                  ; overlay's own code instead of the
-                                  ; caller's buffer AND returned DE only
-                                  ; 107 further on. gfx_row_copy256 walks
-                                  ; its destination by that returned DE, so
-                                  ; the 256-wide picture blit marched past
-                                  ; the slot 6 window and wrote 47 bytes
-                                  ; over $E000 - overlay2's own entry, live
-                                  ; in slot 7 - on row 76 of every draw.
-    ld hl, dma_prog_static       ; per-call descriptor prefix, INTERRUPTS
-    ld bc, DMA_PORT              ; LIVE (see header): the DMA is idle, so
-    DUP DMA_STATIC_LEN           ; WR1/WR2/WR5 are plain register writes.
-      outinb                     ; B is OUTINB's spare (address high byte
-    EDUP                         ; only - $6B decodes on the low byte)
-    pop bc                       ; back to the caller's length ...
-    pop hl                       ; ... and source; DE was never touched
-.loop:
-    ld a, b
-    or c
-    ret z                        ; BC == 0: entire length transferred.
-                                  ; `or c` also clears CF for the sbc
-    push hl                      ; HL doubles as the 16-bit compare
-    ld hl, DMA_CHUNK_MAX         ; scratch - the source pointer comes
-    sbc hl, bc                   ; straight back below. CF <=> cap <
-    ld hl, DMA_CHUNK_MAX         ; remaining, i.e. take the whole cap
-    jr c, .len
-    ld h, b
-    ld l, c                      ; else chunk = remaining: the tail
-.len:
-    ld (dma_prog.alen), hl       ; chunk length, BOTH bytes - which is
-    pop hl                       ; what makes a cap of exactly 256
-                                  ; expressible; the tail below reads the
-                                  ; same pair back as one ld de,(nn)
-    ld (dma_prog.aaddr), hl      ; this chunk's source start
-    ld (dma_prog.baddr), de      ; this chunk's dest start
-    push bc                      ; only BC needs saving across the arm
-                                  ; upload (BC carries the port); HL/DE
-                                  ; are rebuilt below from dma_prog's own
-                                  ; fields, which the upload only reads,
-                                  ; never writes
-    ld hl, dma_prog              ; INTERRUPTS STAY LIVE ACROSS THE ARM
-    ld bc, DMA_PORT              ; (2026-08-03): the frame ISR is barred
-                                  ; from a running DMA by nextreg $CC = 0
-                                  ; and the DAC feed is deliberately let
-                                  ; in by $CD bit 0 - see the header and
-                                  ; im2_init
-    DUP DMA_ARM_LEN
-      outinb                     ; program + run to completion - the $87
-    EDUP                          ; enable is the last byte and does not
-                                  ; return until the chunk has moved
-    pop bc
-    ld h, b
-    ld l, c                      ; HL = remaining length (pre-chunk)
-    ld de, (dma_prog.alen)       ; DE = chunk length just transferred
-    or a
-    sbc hl, de                   ; HL = remaining length (post-chunk)
-    ld b, h
-    ld c, l                      ; BC = remaining length (post-chunk)
-    ld hl, (dma_prog.aaddr)      ; HL = this chunk's source start
-    add hl, de                   ; HL = next chunk's source start
-    push hl
-    ld hl, (dma_prog.baddr)      ; HL = this chunk's dest start
-    add hl, de                   ; HL = next chunk's dest start
-    ex de, hl                    ; DE = next chunk's dest start
-    pop hl                       ; HL = next chunk's source start
-    jp .loop
-
-; zxnDMA one-shot program: mem-to-mem, port A (source) -> port B (dest),
-; both memory/incrementing, CONTINUOUS mode, stop on end of block - no
-; auto-restart, ever (WR5). SPLIT 2026-08-03 (see dma_copy's header):
-; the five STATIC bytes are dma_prog_static, sent once per CALL with
-; interrupts live; dma_prog below is the 11-byte per-CHUNK arm, the only
-; thing re-sent per chunk. .aaddr/.alen/.baddr are patched in place
-; first, each chunk.
-;
-; Bytes verified against the Zilog Z80 DMA datasheet's WR0/WR1/WR2/
-; WR4/WR5/WR6 bit tables, cross-checked via tools/NextZXOS/docs/
-; extra-hw/dma/zxndma.txt, which transcribes the same Zilog-convention
-; tables AND ships a worked mem-to-mem CONTINUOUS example, "TransferDMA",
-; that this template matches byte for byte:
-;   - WR1's base byte (%01010100) sets D6, which per the datasheet
-;     requires an associated "port A timing byte" to follow; without it
-;     every subsequent byte in the program desyncs. Added %00000010
-;     (cycle length 2 - zxndma.txt: "cycle lengths... can be set to
-;     their minimum values without ill effects", the auto-slowdown
-;     handles Layer 2 contention transparently regardless of source).
-;   - WR2's base byte (%01010000) sets the same D6 timing-byte flag for
-;     port B; same fix, same cycle-length-2 byte, prescaler bit (D5)
-;     left clear - a plain mem-to-mem copy has no fixed-rate
-;     requirement, and this is the only DMA program in the codebase
-;     (the SP8 sample engine that used a prescaler is fully retired),
-;     so there is no stale prescaler state to inherit.
-; WR5 = $82: zxndma.txt's own worked example mislabels this byte
-; "Restart on end of block" in its comment, but its OWN formal bit
-; table (D5=0) and the retired SP8 engine's code comment both agree
-; $82 = STOP on end of block - the table and the field-tested reference
-; outrank the prose typo. Block length is the EXACT byte count (not
-; N-1): the datasheet's classic-Z80-DMA off-by-one does not apply to
-; the zxnDMA (zxndma.txt states this explicitly; the retired SP8
-; engine's own comment records the same empirical finding).
-; The static half: port modes + the one-shot stop, sent once per
-; dma_copy CALL with interrupts LIVE. These registers persist across the
-; arm's own WR6 disable/load/enable, which is why the arm need not carry
-; them. WR1 = INCREMENTING here is also what keeps video.asm:1517's
-; invariant true from this side.
-dma_prog_static:
-    db %01010100                 ; WR1: A memory, incrementing, timing
-                                  ; byte follows
-    db %00000010                 ; A cycle length 2
-    db %01010000                 ; WR2: B memory, incrementing, timing
-                                  ; byte follows
-    db %00000010                 ; B cycle length 2, no prescaler
-    db %10000010                 ; WR5 $82: /ce only, STOP on end of
-                                  ; block (see header: never auto-restart)
-dma_prog_static_len equ $ - dma_prog_static
-    ASSERT dma_prog_static_len == DMA_STATIC_LEN
-
-; The per-chunk arm: everything that changes, plus load + enable.
-dma_prog:
-    db $83                       ; WR6: disable (clean slate before load)
-    db %01111101                 ; WR0: A->B, port A addr + block length
-                                  ; follow (D3-D6 all set: low,high,lenLo,
-                                  ; lenHi, in that order)
-.aaddr:
-    dw 0                         ; port A start = source (patched)
-.alen:
-    dw 0                         ; block length, EXACT count, patched as
-                                  ; one 16-bit field (dma_copy writes both
-                                  ; bytes and its tail reads them back as
-                                  ; one ld de,(nn)) - that is what lets
-                                  ; DMA_CHUNK_MAX be 256
-    db %10101101                 ; WR4: CONTINUOUS mode, port B addr
-                                  ; (low+high) follows
-.baddr:
-    dw 0                         ; port B start = dest (patched)
-    db $CF                       ; WR6: load
-    db $87                       ; WR6: enable - this OUT does not return
-                                  ; until the chunk has fully transferred
-dma_prog_len equ $ - dma_prog
-    ASSERT dma_prog_len == DMA_ARM_LEN
-
 ; Copy one Layer 2 surface onto the other: blitter copies of
 ; DDMA_XFER_MAX bytes, sized by l2Mode as l2_clear_bank sizes its fill.
 ; In: A = source surface's first bank, D = destination's. GFX 0 (back
@@ -835,18 +573,43 @@ ddma_go:
     ld bc, DDMA_PROG_LEN*256 + DMA_PORT
     otir                         ; the enable is the last byte
     DDMA_PAD DDMA_XFER_MAX
-    ld a, DDMA_MODE              ; flags off for the next DMA user
+; Mode flags off for the next DMA user: the end of every blit.
+; Corrupts AF.
+ddma_end:
+    ld a, DDMA_MODE
     out (DMA_PORT), a
     xor a
     out (DMA_PORT), a
     ret
 
+; One picture row, at most 320 bytes, as a 2D transfer of ddmaRowLen x
+; ddmaRows. The caller ends its draw with ddma_end.
+;   ddma_row       - the full program
+;   ddma_row_again - short reload: both addresses, load, enable. Only
+;                    after a ddma_row of the same shape in the same draw.
+; Corrupt AF, BC, HL.
+ddma_row:
+    ld hl, 1
+    ld (ddmaStrideA), hl
+    ld hl, 256
+    ld (ddmaStrideB), hl
+    ld a, DDMA_F_PHYS|DDMA_F_2D
+    ld (ddmaMode), a
+    ld hl, ddma_prog
+    ld b, DDMA_PROG_LEN
+    jr ddma_row_send
+ddma_row_again:
+    ld hl, ddma_again
+    ld b, DDMA_AGAIN_LEN
+ddma_row_send:
+    ld c, DMA_PORT
+    otir
+    DDMA_PAD 320
+    ret
+
+; The program. Its tail from ddma_again is the short reload.
 ddma_prog:
     db DDMA_RESET
-    db DDMA_EXT_A
-ddmaSrcExt:  db 0
-    db DDMA_EXT_B
-ddmaDstExt:  db 0
     db DDMA_MODE
 ddmaMode:    db 0
     db DDMA_ROWLEN
@@ -859,14 +622,21 @@ ddmaStrideA: dw 0
 ddmaStrideB: dw 0
     db DDMA_FILLVAL
 ddmaFill:    db 0
+    db DDMA_WR1, DDMA_CYCLE
+    db DDMA_WR2, DDMA_CYCLE
+    db DDMA_WR5
+ddma_again:
+    db DDMA_EXT_A
+ddmaSrcExt:  db 0
+    db DDMA_EXT_B
+ddmaDstExt:  db 0
     db DDMA_WR0
 ddmaSrc:     dw 0
 ddmaLen:     dw 0
-    db DDMA_WR1, DDMA_CYCLE
-    db DDMA_WR2, DDMA_CYCLE
     db DDMA_WR4
 ddmaDst:     dw 0
-    db DDMA_WR5, DDMA_LOAD, DDMA_ENABLE
+    db DDMA_LOAD, DDMA_ENABLE
+DDMA_AGAIN_LEN equ $ - ddma_again
 DDMA_PROG_LEN equ $ - ddma_prog
 
 ; 28 DISPLAY (action): B = 0 draws the staged picture, B != 0 clears
@@ -2412,9 +2182,9 @@ gfx_evict_fix:
 ; BACK Layer 2 surface: commit l2Mode (front's mode snapshotted for
 ; the failure restore - see the entry comment) + clear the back, skip
 ; the 512-byte embedded palette, then per
-; row esx_fread gfxWidth bytes into gfxRowBuf and write it with the
-; SAME row writers gfx_blit uses (gfx_row_copy256/gfx_row_scatter320
-; - the walks cannot diverge), enforcing gfx_derive_height's shape
+; row esx_fread gfxWidth bytes into gfxRowBuf and blit it from there
+; (gfx_row_buf: the same gfx_seg the cached draw uses, so the walks
+; cannot diverge), enforcing gfx_derive_height's shape
 ; rules on the fly (>= 1 row, no partial trailing row, <= 192 rows on
 ; the 256-wide surface, <= 256 on the 320-wide). Then the palette:
 ; the file cursor is past it and F_SEEK is unproven in this codebase,
@@ -2427,7 +2197,7 @@ gfx_evict_fix:
 ; WHY RAW ONLY: a compressed fallback would have to depack directly
 ; into the Layer 2 banks, but ZX0 back-references read earlier OUTPUT
 ; bytes assuming the linear layout the depacker's dest window
-; provides, and the 320-wide surface is COLUMN-MAJOR - the scatter
+; provides, and the 320-wide surface is COLUMN-MAJOR - the blit
 ; reorders bytes, so match copies would read reordered data. A 256-
 ; wide surface is linear, but a single fallback shape keeps this
 ; corner simple: compressed loads that exhaust eviction fail cleanly
@@ -2459,11 +2229,13 @@ gfx_direct_stream:
     ld (l2Mode), a              ; variable only - sizes l2_clear_back;
                                 ; NR $70/$12 wait for the flip
     ld a, (l2BackBank)
-    add a, a
-    ld (gfxSurfPage), a
-    call l2_clear_back          ; own data_save/restore - run BEFORE
-                                ; ours, exactly as gfx_blit orders it
-                                ; (no nested data_save)
+    ld (gfxPosBank), a
+    ld hl, 0                    ; each row: the whole buffer at X 0
+    ld (gfxRectX), hl
+    ld (gfxRectSrcX), hl
+    ld hl, (gfxWidth)
+    ld (gfxRectW), hl
+    call l2_clear_back
     call data_save
     ld b, 2                     ; skip the palette: 2 x 256-byte
 .skip:                          ; discard reads through gfxRowBuf
@@ -2473,10 +2245,6 @@ gfx_direct_stream:
     jp c, .fail
     djnz .skip
     ; render state exactly as gfx_blit stages it
-    ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
-    ld (gfxDstPage), a          ; (the 320-wide scatter reinitialises
-    ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
-    ld (gfxDstPtr), hl
     xor a
     ld (gfxRowY), a             ; doubles as the written-row count
     ld (gfxRowFull), a
@@ -2499,15 +2267,12 @@ gfx_direct_stream:
     jp nz, .fail                ; 257th row on the 320-wide surface
     ld a, (gfxMode)
     or a
-    jr nz, .scatter
+    jr nz, .put
     ld a, (gfxRowY)
     cp 192
     jp nc, .fail                ; 193rd row on the 256-wide surface
-    call gfx_row_copy256
-    jr .wrote
-.scatter:
-    call gfx_row_scatter320
-.wrote:
+.put:
+    call gfx_row_buf
     ld hl, gfxRowY
     inc (hl)
     jr nz, .row
@@ -2720,9 +2485,8 @@ gfx_direct_stream_pos:
     ld hl, (gfxWidth)
     jp gfx_direct_readhl
 .write:                          ; A = first 16K bank of the surface
-    add a, a
-    ld (gfxPosSurf), a
-    jp gfx_pos_row_write
+    ld (gfxPosBank), a
+    jp gfx_row_buf
 
 ; --- ZX0 depacker (Task 5) ---
 ; Core algorithm vendored from Einar Saukas's dzx0_standard.asm
@@ -3273,55 +3037,32 @@ zx0_ref_read:
 
 ; In: l2Mode = mode, gfxSrcIdx = the run's first bank index, gfxRowsLeft =
 ; height (0 = 256). Clears the BACK surface unless the picture fills it,
-; opens data_save (the caller closes it after its palette load), streams
-; every row. Corrupts everything.
+; blits every row to it, then opens data_save (the caller closes it after
+; its palette load). Corrupts everything.
 gfx_rows_blit:
-    ld a, (l2BackBank)
-    add a, a
-    ld (gfxSurfPage), a         ; render target = the back surface
     ld a, (l2Mode)
-    or a                        ; the LD below leaves this Z alone
+    or a                        ; the LDs below leave this Z alone
     ld a, (gfxRowsLeft)         ; 0 encodes 256 rows
+    ld hl, 320
     jr nz, .full                ; 320-wide: full iff the height byte is 0
+    ld hl, 256
     sub 192                     ; 256-wide: full iff 192 rows
 .full:
-    or a                        ; Z = the picture covers every page
-    call nz, l2_clear_back      ; short picture: clear the remainder
-                                ; (own data_save/restore - run BEFORE ours)
-    call data_save
+    ld (gfxWidth), hl
+    ld (gfxRectW), hl
+    or a                        ; Z = the picture covers the surface
+    call nz, l2_clear_back
+    ld hl, 0                    ; the rectangle is the whole picture at 0,0
+    ld (gfxRectX), hl
+    ld (gfxRectY), hl
+    ld (gfxRectSrcX), hl
     xor a
-    ld (gfxSrcHalf), a
-    ld hl, DATA_WINDOW+512      ; skip the palette (loaded after the rows)
-    ld (gfxSrcPtr), hl
-    ld a, (l2Mode)
-    or a
-    ld de, 256
-    jr z, .width
-    ld de, 320
-.width:
-    ld (gfxWidth), de
-    ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
-    ld (gfxDstPage), a          ; (320-wide scatter reinitialises
-    ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
-    ld (gfxDstPtr), hl
-    xor a
-    ld (gfxRowY), a
-.row:
-    call gfx_row_fetch
-    ld a, (l2Mode)
-    or a
-    jr z, .linear
-    call gfx_row_scatter320
-    jr .next
-.linear:
-    call gfx_row_copy256
-.next:
-    ld hl, gfxRowY
-    inc (hl)
-    ld hl, gfxRowsLeft
-    dec (hl)
-    jr nz, .row
-    ret
+    ld (gfxRectSrcY), a
+    ld a, (gfxRowsLeft)
+    ld (gfxRectH), a
+    ld a, (l2BackBank)
+    call gfx_pos_rows_at
+    jp data_save
 
 ; Staged picture's rectangle in Layer 2 pixels: header X/Y, floating
 ; (window origin, size clamped to the window) or an armed override.
@@ -3680,24 +3421,31 @@ gfx_frame_gate:
     jr nz, .w
     ret
 
-; A = first 16K bank of the target surface. Rewind the source to the
-; entry's pixel rows, discard gfxRectSrcY rows, then write gfxRectH rows
-; (0 = 256) from row gfxRectY. Corrupts everything.
+; A = first 16K bank of the target surface. Blit gfxRectH rows (0 = 256)
+; of the staged entry - source rows from gfxRectSrcY, columns from
+; gfxRectSrcX - to gfxRectX, gfxRectY, straight from the cache banks.
+; No slot is mapped. Corrupts everything.
 gfx_pos_rows:
-    add a, a                     ; bank -> first 8K page
-    ld (gfxPosSurf), a
-    call gfx_pal_rewind          ; source = run start, HL = DATA_WINDOW
-    inc h
-    inc h                        ; pixels follow the 512-byte palette
-    ld (gfxSrcPtr), hl
+    ld c, a
+    ld a, (stagedEntry)
+    call gce_ptr                 ; keeps BC
+    inc hl
+    ld a, (hl)                   ; GCE_FIRST
+    ld (gfxSrcIdx), a
+    ld a, c
+; As gfx_pos_rows, with the source run already in gfxSrcIdx.
+gfx_pos_rows_at:
+    ld (gfxPosBank), a
+    ld hl, 512                   ; pixels follow the 512-byte palette
+    ld (gfxSrcOff), hl
+    ld hl, $FFFF
+    ld (gfxSegLast), hl          ; nothing sent yet in this draw
     ld a, (gfxRectSrcY)
     or a
     jr z, .top
     ld b, a
 .skip:
-    push bc
-    call gfx_row_fetch
-    pop bc
+    call gfx_cur_next            ; keeps BC
     djnz .skip
 .top:
     ld a, (gfxRectH)
@@ -3707,142 +3455,165 @@ gfx_pos_rows:
     ld (gfxRowY), hl             ; and gfxRowsLeft
     ASSERT gfxRowsLeft == gfxRowY+1
 .row:
-    call gfx_row_fetch
-    call gfx_pos_row_write
+    call gfx_row_cached
+    call gfx_cur_next
     ld hl, gfxRowY
     inc (hl)
     inc hl                       ; gfxRowsLeft
     dec (hl)
     jr nz, .row
+    jp ddma_end
+
+; Source cursor on by one picture row (gfxWidth bytes); a cache bank is
+; 16K, so bit 14 of the offset is the step into the run's next bank.
+; Corrupts AF, DE, HL.
+gfx_cur_next:
+    ld hl, (gfxSrcOff)
+    ld de, (gfxWidth)
+    add hl, de
+    bit 6, h
+    jr z, .keep
+    res 6, h
+    ld a, (gfxSrcIdx)
+    inc a
+    ld (gfxSrcIdx), a
+.keep:
+    ld (gfxSrcOff), hl
     ret
 
-; Row-major surface: page surf + (y >> 5), offset (y & 31)*256 + X;
-; X + W <= 256, so a row never crosses a page. Corrupts AF, BC, DE, HL.
-gfx_pos_row_write256:
-    ld a, (gfxRowY)
-    ld b, a
-    ld e, a
-    ld d, 8
-    mul d, e                     ; D = y >> 5
-    ld a, (gfxPosSurf)
-    add a, d
-    call data_map_page
-    ld a, b
-    and 31
-    or high DATA_WINDOW
-    ld d, a
-    ld a, (gfxRectX)
-    ld e, a
-    ld hl, gfxRowBuf
-    ld bc, (gfxRectSrcX)
-    add hl, bc
+; The rectangle's columns of the source row at the cursor -> row gfxRowY.
+; A row whose bytes run past the end of its cache bank is sent as two
+; pieces: run banks need not be neighbours. Corrupts AF, BC, DE, HL.
+gfx_row_cached:
+    ld hl, $4000
+    ld de, (gfxSrcOff)
+    or a
+    sbc hl, de                   ; bytes of this row's bank from the row start
+    ld de, (gfxRectSrcX)
+    or a
+    sbc hl, de                   ; ... from the rectangle's first column
+    jr c, .next
+    jr z, .next                  ; the rectangle starts in the next bank
     ld bc, (gfxRectW)
-    ; falls into gfx_copy
-
-; dma_copy at GFX_DMA_MIN_LEN or more, LDIR below; BC = 0 copies nothing.
-; Same end state as LDIR. Corrupts AF, BC, DE, HL.
-gfx_copy:
-    ld a, b
     or a
-    jp nz, dma_copy
-    ld a, c
-    cp GFX_DMA_MIN_LEN
-    jp nc, dma_copy
+    sbc hl, bc
+    jr nc, .whole                ; every column is in this bank
+    add hl, bc                   ; HL = columns in this bank (< width)
+    push hl
+    ld b, h
+    ld c, l
+    ld hl, (gfxSrcOff)
+    add hl, de
+    ld de, (gfxRectX)
+    call .seg0
+    pop de                       ; the rest, from the next bank's first byte
+    ld hl, (gfxRectW)
     or a
-    ret z
-    ldir
-    ret
+    sbc hl, de
+    ld b, h
+    ld c, l
+    ld hl, (gfxRectX)
+    add hl, de
+    ex de, hl
+    ld hl, 0
+    jr .seg1
+.whole:
+    ld hl, (gfxSrcOff)
+    add hl, de
+    ld de, (gfxRectX)
+.seg0:
+    xor a
+    jr .seg
+.next:
+    ex de, hl
+    ld hl, 0
+    or a
+    sbc hl, de                   ; offset in the next bank
+    ld bc, (gfxRectW)
+    ld de, (gfxRectX)
+.seg1:
+    ld a, 1
+.seg:                            ; A = 0 this bank, 1 the next
+    push hl
+    ld hl, gfxSrcIdx
+    add a, (hl)
+    ld hl, gfxBankList
+    add hl, a
+    ld a, (hl)
+    pop hl
+    ; falls into gfx_seg
 
-; Write gfxRowBuf's row with the l2Mode writer. Corrupts AF, BC, DE, HL.
-gfx_pos_row_write:
+; A = source bank, HL = offset in it, BC = pixels (1..320), DE = X: blit
+; them to row gfxRowY of the surface at bank gfxPosBank. Row-major
+; surface: one row of BC bytes; column-major: BC rows of one byte, 256
+; apart. A piece the same size as the last one is a short reload.
+; Corrupts AF, BC, DE, HL.
+gfx_seg:
+    push bc
+    push de
+    call ddma_bank_addr
+    ld (ddmaSrc), hl
+    ld (ddmaSrcExt), a
+    pop de
+    ld a, (gfxRowY)
+    ld l, a                      ; column-major: major = X, minor = Y
     ld a, (l2Mode)
     or a
-    jp z, gfx_pos_row_write256
-    ; falls into gfx_pos_row_write320
-
-; Column-major surface: pixel (x, y) at page surf + (x >> 5), offset
-; (x & 31)*256 + y. Runs of up to 32 pixels, one LDWS each; LDWS steps L
-; only, so a run that crosses a source 256-byte boundary is split there.
-; Corrupts AF, BC, DE, HL.
-gfx_pos_row_write320:
-    ld hl, (gfxRectX)
-    ld (gfxPosX), hl
-    ld hl, (gfxRectW)
-    ld (gfxPosLeft), hl
-    ld hl, gfxRowBuf
-    ld de, (gfxRectSrcX)
-    add hl, de                   ; HL = source, live across every run
-.page:
-    ld de, (gfxPosX)
-    ld a, e
-    and $E0
-    or d
-    rlca
-    rlca
-    rlca                         ; A = x >> 5 (x < 512, D = 0/1)
-    ld b, a
-    ld a, (gfxPosSurf)
-    add a, b
-    call data_map_page
-    ld a, e
-    and 31
-    ld c, a
-    or high DATA_WINDOW
-    ld d, a
-    ld a, (gfxRowY)
-    ld e, a                      ; DE = dest
-    ld a, 32
-    sub c                        ; A = room in this page, 1..32
-    ld bc, (gfxPosLeft)
-    inc b
-    dec b
-    jr nz, .run                  ; left >= 256
-    cp c
-    jr c, .run
-    ld a, c                      ; run = left
-.run:
-    ld (gfxPosRun), a
-    ld b, a
-    ld a, l
-    neg                          ; A = pixels before L wraps (0 = 256)
-    jr z, .tail
-    cp b
-    jr nc, .tail                 ; no wrap inside the run
-    ld c, a
-    ld a, b
-    sub c
-    ld b, c
-    ld c, a                      ; B = before the wrap, C = after
-.pre:
-    ldws
-    djnz .pre
-    inc h
-    ld b, c
-.tail:
-    ldws
-    djnz .tail
-    ld a, l
-    or a
-    jr nz, .adv
-    inc h                        ; wrap landed on the run end
-.adv:
-    ld a, (gfxPosRun)
-    ld c, a
-    ld de, (gfxPosX)
-    add de, a
-    ld (gfxPosX), de
-    ld de, (gfxPosLeft)
-    ld a, e
-    sub c
+    jr nz, .major
+    ld a, l                      ; row-major: major = Y, minor = X
+    ld l, e
     ld e, a
-    jr nc, .nob
-    dec d
-.nob:
-    ld (gfxPosLeft), de
-    ld a, d
-    or e
-    jr nz, .page
-    ret
+    ld d, 0
+.major:                          ; DE = major 0..319, L = minor
+    ld a, e
+    and 63
+    ld h, a                      ; HL = offset in the major's bank
+    ld a, e
+    rlca
+    rlca
+    and 3
+    bit 0, d
+    jr z, .bank
+    add a, 4
+.bank:
+    ld e, a
+    ld a, (gfxPosBank)
+    add a, e
+    call ddma_bank_addr
+    ld (ddmaDst), hl
+    ld (ddmaDstExt), a
+    pop bc
+    ld hl, (gfxSegLast)
+    or a
+    sbc hl, bc
+    jp z, ddma_row_again
+    ld (gfxSegLast), bc
+    ld hl, 1
+    ld a, (l2Mode)
+    or a
+    jr nz, .shape                ; row length 1, BC rows
+    ld h, b
+    ld l, c
+    ld bc, 1                     ; row length BC, 1 row
+.shape:
+    ld (ddmaRowLen), hl
+    ld (ddmaRows), bc
+    jp ddma_row
+
+; The fallback stream's row: gfxRowBuf's rectangle columns -> row gfxRowY
+; of the surface at bank gfxPosBank. Full program and flags off each
+; time: a card read runs between rows. Corrupts AF, BC, DE, HL.
+gfx_row_buf:
+    ld hl, $FFFF
+    ld (gfxSegLast), hl
+    ld hl, (gfxRectSrcX)
+    add hl, gfxRowBuf - OVL_ORG  ; this overlay page is the low half of its bank
+    ld bc, (gfxRectW)
+    ld de, (gfxRectX)
+    ld a, BANK_OVL2
+    call gfx_seg
+    jp ddma_end
+
 
 ; Draw the staged cache entry, double-buffered: everything renders to
 ; the BACK surface (invisible - the old picture stays intact on the
@@ -3859,27 +3630,9 @@ gfx_pos_row_write320:
 ; back-to-back, no wrong-mode flash (see l2_flip_swap) - and
 ; l2_enable. Nothing staged: only consumes the override. Corrupts everything.
 ;
-; Walk order: SOURCE-ROWS-SCATTER, chosen over dest-columns-gather.
-; The source stream is row-major (Gfx2Next emits rows sequentially);
-; the 320-wide surface is column-major (dest = x*256 + y). Slot 6
-; remaps per 320x200 picture:
-;   rows-scatter:   per row 1 src remap (the 320-byte row crosses an
-;                   8K page every 8192/320 = 25.6 rows, +1 then) +
-;                   10 dest remaps (page = x>>5 changes every 32
-;                   pixels) = ~11.04; 200 rows -> ~2210 remaps, and
-;                   both the fetch (DMA) and the scatter (fixed row
-;                   in E, INC D per pixel) are straight-line walks.
-;   columns-gather: per column a stride-320 walk of the whole 64000-
-;                   byte pixel area = ceil(64000/8192) = 8 src remaps
-;                   + 1 dest remap (amortised 1/32 but the alternating
-;                   src maps force it every column) = ~9; 320 columns
-;                   -> ~2890 remaps, AND a 16-bit stride-add with a
-;                   page-crossing test per pixel in the inner loop.
-; Scatter wins on both remap count and inner-loop cost. With the back-
-; buffer render the paint is no longer visible mid-blit - a DMA upgrade
-; (SP8 rider) would now only shorten the redraw latency, not fix an
-; artifact. 256-wide mode is trivially linear-to-linear (row-major
-; both sides): 2 remaps per row.
+; Rows go straight from the cache banks to the back surface by blitter
+; (gfx_pos_rows_at). The source is row-major; the column-major 320-wide
+; surface takes each row as a 2D transfer, one byte per column.
 gfx_blit:
     ld a, (stagedEntry)
     inc a                        ; GFX_EMPTY -> 0: nothing staged
@@ -3989,148 +3742,6 @@ gfx_src_remap:
     add a, (hl)
     jp data_map_page
 
-; Advance the source stream to its next 8K page (the bank's upper
-; half, then the next bank in the arena run), map it, and rewind
-; gfxSrcPtr to the window base. Corrupts AF, HL.
-gfx_src_advance:
-    ld hl, gfxSrcHalf
-    ld a, (hl)
-    xor 1
-    ld (hl), a
-    jr nz, .map                 ; 0 -> 1: same bank, upper page
-    ld hl, gfxSrcIdx
-    inc (hl)                    ; 1 -> 0: next bank
-.map:
-    call gfx_src_remap
-    ld hl, DATA_WINDOW
-    ld (gfxSrcPtr), hl
-    ret
-
-; Stage one source row (gfxWidth bytes) from the cache-bank stream
-; into gfxRowBuf, crossing 8K page boundaries as needed. Corrupts
-; AF, BC, DE, HL.
-gfx_row_fetch:
-    call gfx_src_remap
-    ld de, gfxRowBuf
-    ld bc, (gfxWidth)           ; BC = bytes still to stage
-.chunk:
-    ld hl, (gfxSrcPtr)
-    ld a, h
-    cp high GFX_SRC_END
-    jr c, .have
-    call gfx_src_advance        ; previous row drained the page exactly
-    ld hl, (gfxSrcPtr)          ; = DATA_WINDOW
-.have:
-    ; does the whole remainder fit before the window end?
-    push hl
-    add hl, bc                  ; HL = end = src + remaining (cannot
-    ld a, h                     ; carry: src < $E000, remaining <= 320)
-    cp high GFX_SRC_END
-    jr c, .fits                 ; end < $E000
-    jr nz, .nofit               ; end >= $E100
-    ld a, l
-    or a
-    jr z, .fits                 ; end == $E000 exactly: still one page
-.nofit:
-    pop hl                      ; HL = src
-.split:
-    ; copy only what this page still holds, then advance
-    push bc                     ; remaining
-    push de                     ; dest
-    ex de, hl
-    ld hl, GFX_SRC_END
-    or a
-    sbc hl, de                  ; HL = bytes left in the page (>= 1)
-    ld b, h
-    ld c, l
-    ex de, hl                   ; HL = src
-    pop de                      ; dest
-    push bc                     ; left
-    ldir
-    pop hl                      ; HL = left
-    pop bc                      ; BC = remaining
-    ld a, c                     ; remaining -= left
-    sub l
-    ld c, a
-    ld a, b
-    sbc a, h
-    ld b, a
-    call gfx_src_advance        ; preserves BC, DE
-    jr .chunk
-.fits:
-    pop hl                      ; HL = src
-    call gfx_copy               ; LDIR end state (HL = src+BC); NX3 widths
-                                ; can leave a tail under GFX_DMA_MIN_LEN
-    ld (gfxSrcPtr), hl          ; may land exactly on GFX_SRC_END -
-    ret                         ; the next fetch's .chunk check handles it
-
-; Write the staged row to the row-major 256-wide surface: one dma_copy to
-; the linear destination stream, advancing the dest page every 32
-; rows (8192/256; a 256-byte row never splits across pages). Corrupts
-; AF, BC, DE, HL.
-gfx_row_copy256:
-    ld a, (gfxDstPage)
-    call data_map_page
-    ld hl, gfxRowBuf
-    ld de, (gfxDstPtr)
-    ld bc, 256                   ; 256 >= GFX_DMA_MIN_LEN unconditionally
-    call dma_copy
-    ld a, d
-    cp high GFX_SRC_END
-    jr c, .store
-    ld hl, gfxDstPage            ; HL is dead: every caller reloads it
-    inc (hl)
-    ld de, DATA_WINDOW
-.store:
-    ld (gfxDstPtr), de
-    ret
-
-; Write the staged row to the column-major 320-wide surface. Dest
-; address of pixel (x, y): 8K page gfxSurfPage + (x >> 5), in-page
-; offset (x & 31)*256 + y - so with D = $C0 + (x & 31) and E = y, a
-; step of +1 in x is INC D, and the page advances every 32 pixels:
-; ten page runs per row. Reuses gfxDstPage as its page cursor (the
-; linear 256-wide walk and this one never mix within a blit).
-; Corrupts AF, BC, DE, HL.
-;
-; SP11 Task 2 (DMA): evaluated and rejected here, deliberately left on
-; the CPU path unconditionally - no IFDEF, never was one even before
-; -NoDmaGfx retired (SP14a T4 follow-up). The inner .px loop's
-; destination is NOT contiguous: D (the address high byte) increments
-; every byte while E (gfxRowY) stays fixed for all 32 iterations of a
-; page, so successive writes land 256 bytes apart. There is no run
-; longer than one byte to hand to dma_copy - the
-; only "batching" possible would be one DMA chunk per PIXEL, and a
-; length-1 chunk costs ~600T of program+dispatch overhead to move one
-; byte the CPU's own per-pixel loop body moves for ~27T (ldws/djnz) -
-; more than an order of magnitude worse, not just a wash.
-gfx_row_scatter320:
-    ld hl, gfxRowBuf
-    ld a, (gfxSurfPage)
-    ld (gfxDstPage), a
-    ld c, 10
-.page:
-    ld a, (gfxDstPage)
-    call data_map_page
-    ld a, (gfxRowY)
-    ld e, a
-    ld d, high DATA_WINDOW
-    ld b, 32
-.px:
-    ldws                        ; Z80N: ld (de),(hl) / inc l / inc d
-    djnz .px
-    ld a, l                     ; LDWS increments L only: a 32-aligned run
-    or a                        ; cannot wrap inside itself, only at its
-    jr nz, .ok                  ; end - carry that one wrap into H
-    inc h
-.ok:
-    ld a, (gfxDstPage)
-    inc a
-    ld (gfxDstPage), a
-    dec c
-    jr nz, .page
-    ret
-
 ; Extension probe chain, tried in gfx_open_chain order. Row = 7 ASCII
 ; extension characters (NUL-padded; 7 fits the longest, "NX2.ZX0") +
 ; the mode byte (0 = 256-wide row-major, 1 = 320-wide column-major;
@@ -4197,11 +3808,8 @@ gfxExtDst:     dw 0              ; chain walk: where a row's extension lands
 gfxOpenPath:   dw 0              ; chain walk: the name esx_fopen probes
 gfxSrcIdx:     db 0              ; blit source: arena index of current bank
 gfxSrcHalf:    db 0              ; 0 = lower 8K page, 1 = upper
-gfxSrcPtr:     dw 0              ; blit source: window-relative read cursor
-gfxSurfPage:   db 0              ; blit dest: first 8K page of the BACK
-                                 ; surface, latched at blit start
-gfxDstPage:    db 0              ; blit dest: current 8K Layer 2 page
-gfxDstPtr:     dw 0              ; blit dest: linear cursor (256-wide mode)
+gfxSrcOff:     dw 0              ; blit source: offset in the current bank
+gfxSegLast:    dw 0              ; pixels in the last piece sent, $FFFF = none
 gfxRowY:       db 0              ; current pixel row
 gfxRowsLeft:   db 0              ; rows still to copy (initial 0 = 256)
 gfxCompressed: db 0              ; candidate row's compressed flag
@@ -4215,18 +3823,15 @@ gfxRowFull:    db 0              ; direct stream: the 256th row was
 gfxModeSave:   db 0              ; direct stream: front surface's mode
                                  ; at entry, restored to l2Mode on the
                                  ; failure funnel (no flip happened)
-    ALIGN 32                     ; gfx_row_scatter320's LDWS runs: a 32-
-                                 ; aligned start keeps INC L inside the page
-gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
-                                 ; source OR dest, so each row stages here
-                                 ; (in this overlay page - both users above
-                                 ; run only with page 58 mapped; sized for
-                                 ; the wider 320-pixel row). DUAL USE: the
+gfxRowBuf:     ds 320            ; the fallback stream's row, read from the
+                                 ; card and blitted from this overlay page
+                                 ; by physical address (gfx_row_buf); sized
+                                 ; for a 320-pixel row. DUAL USE: the
                                  ; depacker borrows it as the compressed-
                                  ; source chunk buffer (zx0_chunk_refill) -
                                  ; loads and blits never overlap
     ASSERT GFX_ZX0_CHUNK <= 320
-    ASSERT (gfxRowBuf & 31) == 0
+    ASSERT gfxRowBuf + 320 <= OVL_ORG + $2000   ; inside the page gfx_row_buf addresses
 
 ; NX3 positioned pictures state (overlay 2 page only)
 gfxHdrBuf:   ds NX3_HDR_LEN      ; NX3 header as read from the file
@@ -4241,13 +3846,10 @@ gfxRectW:    dw 0                ; visible width after clip
 gfxRectH:    db 0                ; visible rows after clip (0 = 256)
 gfxRectSrcX: dw 0                ; source column skip (left clip)
 gfxRectSrcY: db 0                ; source rows to discard (top clip)
-gfxPosSurf:  db 0                ; 8K page of the surface being written
+gfxPosBank:  db 0                ; first 16K bank of the surface being written
 gfxIsNx3:    db 0                ; 1 = opened chain row is NX3
 gfxPalBank2Only: db 0           ; nonzero = positioned palette to bank 2 only
 stagedPos:   db 0                ; 0 = plain staged picture, bit 7 = positioned
-gfxPosX:     dw 0                ; gfx_pos_row_write320: next x
-gfxPosLeft:  dw 0                ; pixels still to write in the row
-gfxPosRun:   db 0                ; pixels in the current page run
 gfxPosTmp:   ds GFX_POS_SIZE     ; direct-stream NX3 placement row
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the

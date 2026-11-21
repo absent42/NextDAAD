@@ -48,6 +48,7 @@ class Blitter:
         self.stream = []
         self.transfers = []
         self.want = []              # pending follow bytes: (name, shift) per byte
+        self.full = False           # a reset was sent since the last transfer
         self.reg = {}
         self.reset()
         self.loaded = None
@@ -105,6 +106,7 @@ class Blitter:
             raise Fail(f"WR3 {v:02X} in a blit program")
         elif v == 0xC3:
             self.reset()
+            self.full = True
         elif v == 0xCF:
             self.loaded = dict(self.reg)
         elif v == 0x87:
@@ -144,7 +146,9 @@ class Blitter:
             for i in range(rowlen):
                 wr(dst + row * strb + i, self.reg["fill"] if fill else rd(src + row * stra + i))
         self.transfers.append(dict(mode=mode, src=src, dst=dst, rowlen=rowlen, rows=rows,
-                                   stra=stra, strb=strb, n=rowlen * rows, at=len(self.stream)))
+                                   stra=stra, strb=strb, n=rowlen * rows, at=len(self.stream),
+                                   full=self.full))
+        self.full = False
 
 
 # --------------------------------------------------------------------------- Z80 model
@@ -698,10 +702,12 @@ def test_pad(syms):
     pads = find_pads(mc.mem, lo, hi)
     if not pads:
         raise Fail("no arm found between ddma_fill and ddma_prog")
-    want = pad_n(XFER_MAX, isr)
-    for at, n in pads:
-        if n != want:
-            raise Fail(f"arm at ${at:04X}: pad {n}, expected ld b,{want} / djnz $ directly after it")
+    want = [pad_n(XFER_MAX, isr), pad_n(320, isr)]      # ddma_go, then the row sender
+    if len(pads) != len(want):
+        raise Fail(f"{len(pads)} arms between ddma_fill and ddma_prog, expected {len(want)}")
+    for (at, n), w in zip(pads, want):
+        if n != w:
+            raise Fail(f"arm at ${at:04X}: pad {n}, expected ld b,{w} / djnz $ directly after it")
 
 
 # --------------------------------------------------------------------------- tests: clear, copy
@@ -751,8 +757,172 @@ def test_copy_surface(syms):
         check_shape(mc, "l2_copy_back_front")
 
 
+# --------------------------------------------------------------------------- tests: pictures
+
+BANKS = [50, 60, 52, 61, 54, 62, 56]        # a cache run on non-adjacent banks
+
+
+def stage(mc, mode, width, rows, first_idx=3):
+    """A cache entry of width x rows pattern pixels behind a 512-byte palette, on BANKS,
+    its run starting at bank-list index first_idx. Returns the pixel bytes."""
+    pix = bytes(((y * 7) ^ (x * 13) ^ (x >> 8) ^ (y >> 3)) & 0xFF for y in range(rows) for x in range(width))
+    data = bytes(512) + pix
+    lst = mc.sym("gfxBankList")
+    for i in range(0, len(data), 0x4000):
+        bank = BANKS[i // 0x4000]
+        mc.mem[lst + first_idx + i // 0x4000] = bank
+        chunk = data[i:i + 0x4000]
+        mc.phys[bank_base(bank):bank_base(bank) + len(chunk)] = chunk
+    surf_setup(mc, mode)
+    mc.poke("gfxSrcIdx", first_idx)
+    mc.poke16("gfxWidth", width)
+    cache = mc.sym("gfxCache")
+    mc.mem[cache + 1] = first_idx                       # entry 0: GCE_FIRST
+    mc.poke("stagedEntry", 0)
+    return pix
+
+
+def surf_pixel(mc, bank, mode, x, y):
+    return mc.phys[bank_base(bank) + (x * 256 + y if mode else y * 256 + x)]
+
+
+def rect_vars(mc, x, y, w, h, sx, sy):
+    mc.poke16("gfxRectX", x)
+    mc.poke16("gfxRectY", y)
+    mc.poke16("gfxRectW", w)
+    mc.poke("gfxRectH", h & 0xFF)
+    mc.poke16("gfxRectSrcX", sx)
+    mc.poke("gfxRectSrcY", sy)
+
+
+def check_rect(mc, what, bank, mode, pix, width, x, y, w, h, sx, sy):
+    sw, sh = (320, 256) if mode else (256, 192)
+    for yy in range(sh):
+        for xx in range(sw):
+            inside = x <= xx < x + w and y <= yy < y + h
+            want = pix[(sy + yy - y) * width + sx + xx - x] if inside else 0xEE
+            got = surf_pixel(mc, bank, mode, xx, yy)
+            if got != want:
+                raise Fail(f"{what}: pixel {xx},{yy} is {got:02X}, expected {want:02X}")
+
+
+def paint_ee(mc, bank):
+    mc.phys[bank_base(bank):bank_base(bank) + 81920] = bytes([0xEE]) * 81920
+
+
+def straddles(width, rows, sy=0, h=None):
+    """Indices (within the drawn rows) of rows whose bytes span two banks."""
+    out = []
+    for i in range(h if h is not None else rows):
+        o = 512 + (sy + i) * width
+        if o // 0x4000 != (o + width - 1) // 0x4000:
+            out.append(i)
+    return out
+
+
+def test_blit_full(syms):
+    for mode, width, rows in ((0, 256, 192), (1, 320, 256)):
+        mc = fresh(syms)
+        pix = stage(mc, mode, width, rows)
+        paint_ee(mc, 30)
+        mc.poke("gfxRowsLeft", rows & 0xFF)
+        mc.call("gfx_rows_blit", budget=6_000_000)
+        check_rect(mc, f"gfx_rows_blit mode {mode}", 30, mode, pix, width, 0, 0, width, rows, 0, 0)
+        check_shape(mc, f"gfx_rows_blit mode {mode}")
+        if mc.blit.transfers[0]["mode"] & 8:
+            raise Fail(f"gfx_rows_blit mode {mode}: a full picture was pre-cleared")
+        if any(n != 0x56 for n, _ in mc.mmu_writes):
+            raise Fail("gfx_rows_blit maps a slot other than 6")
+
+
+def test_blit_short_clears(syms):
+    mc = fresh(syms)
+    pix = stage(mc, 1, 320, 96)
+    paint_ee(mc, 30)
+    mc.poke("gfxRowsLeft", 96)
+    mc.call("gfx_rows_blit", budget=6_000_000)
+    transp = syms["L2_TRANSP_INDEX"][1]
+    for x, y in ((0, 96), (319, 255), (160, 200)):
+        if surf_pixel(mc, 30, 1, x, y) != transp:
+            raise Fail(f"short picture: pixel {x},{y} below the picture is not cleared")
+    if surf_pixel(mc, 30, 1, 319, 95) != pix[95 * 320 + 319]:
+        raise Fail("short picture: last pixel wrong")
+
+
+def test_pos_256_clipped(syms):
+    mc = fresh(syms)
+    pix = stage(mc, 0, 100, 190)                        # row 158: 72 bytes left in its bank
+    paint_ee(mc, 9)
+    rect_vars(mc, 30, 50, 60, 40, 40, 140)
+    if straddles(100, 190, 140, 40) != [18]:
+        raise Fail("fixture: the rectangle no longer crosses a bank edge")
+    mc.call("gfx_pos_rows", a=9, budget=6_000_000)
+    check_rect(mc, "gfx_pos_rows mode 0", 9, 0, pix, 100, 30, 50, 60, 40, 40, 140)
+    check_shape(mc, "gfx_pos_rows mode 0")
+
+
+def test_pos_320_clipped(syms):
+    mc = fresh(syms)
+    pix = stage(mc, 1, 100, 190)
+    paint_ee(mc, 9)
+    rect_vars(mc, 250, 60, 60, 40, 40, 140)             # columns 250-309: crosses bank column 256
+    mc.call("gfx_pos_rows", a=9, budget=6_000_000)
+    check_rect(mc, "gfx_pos_rows mode 1", 9, 1, pix, 100, 250, 60, 60, 40, 40, 140)
+    check_shape(mc, "gfx_pos_rows mode 1")
+
+
+def test_fallback_row(syms):
+    for mode, width in ((0, 256), (1, 320)):
+        mc = fresh(syms)
+        surf_setup(mc, mode)
+        paint_ee(mc, 30)
+        row = bytes((i * 5 + 9 + (i >> 8)) & 0xFF for i in range(320))
+        mc.poke("gfxRowBuf", row)
+        rect_vars(mc, 16, 0, 200, 1, 24, 0)
+        mc.poke("gfxRowY", 77)
+        mc.poke("gfxPosBank", 30)
+        mc.call("gfx_row_buf")
+        for xx in range(width):
+            want = row[24 + xx - 16] if 16 <= xx < 216 else 0xEE
+            if surf_pixel(mc, 30, mode, xx, 77) != want:
+                raise Fail(f"gfx_row_buf mode {mode}: pixel {xx},77 wrong")
+        if surf_pixel(mc, 30, mode, 16, 76) != 0xEE or surf_pixel(mc, 30, mode, 16, 78) != 0xEE:
+            raise Fail(f"gfx_row_buf mode {mode} wrote outside row 77")
+        check_shape(mc, f"gfx_row_buf mode {mode}")
+        if not all(t["full"] for t in mc.blit.transfers):
+            raise Fail(f"gfx_row_buf mode {mode}: a fallback row used a short reload")
+
+
+def test_reload_shape(syms):
+    mc = fresh(syms)
+    stage(mc, 1, 320, 256)
+    mc.poke("gfxRowsLeft", 0)
+    mc.call("gfx_rows_blit", budget=6_000_000)
+    split = straddles(320, 256)
+    if split[0] != 49:
+        raise Fail(f"fixture: first straddled row is {split[0]}, expected 49")
+    want = []
+    prev_whole = False
+    for r in range(256):
+        if r in split:
+            want += [True, True]
+            prev_whole = False
+        else:
+            want.append(not prev_whole)
+            prev_whole = True
+    got = [t["full"] for t in mc.blit.transfers]
+    if got != want:
+        i = next(k for k in range(min(len(got), len(want))) if got[k] != want[k]) if len(got) == len(want) else -1
+        raise Fail(f"full/reload pattern differs (transfers {len(got)}/{len(want)}, first at {i})")
+    s = mc.blit.stream
+    if [i for i in range(len(s) - 1) if s[i] == 0xDF and s[i + 1] == 0x00 and i + 2 == len(s)] == []:
+        raise Fail("the draw does not end with $DF $00")
+
+
 TESTS = [test_bank_addr, test_fill, test_copy_cross_64k, test_rect_256, test_rect_320_row,
-         test_rect_split_values, test_stream_shape, test_pad, test_clear_back, test_copy_surface]
+         test_rect_split_values, test_stream_shape, test_pad, test_clear_back, test_copy_surface,
+         test_blit_full, test_blit_short_clears, test_pos_256_clipped, test_pos_320_clipped,
+         test_fallback_row, test_reload_shape]
 
 
 def main():

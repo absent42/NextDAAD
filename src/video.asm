@@ -1434,9 +1434,10 @@ vid_pos24:
 ; INCREMENTING after the arm train, so the DMA is idle (a register
 ; write, not a transfer) by the time the CPU reaches restore.
 ; Behaviour-neutral by construction: no state cell, no runtime test.
-; vidSnapDmaArm and overlay2's dma_copy both leave WR1 = INCREMENTING
-; and re-send their own pair in their per-CALL prefix, so neither can
-; break the invariant.
+; vidSnapDmaArm leaves WR1 = INCREMENTING and re-sends its own pair in
+; its per-CALL prefix; overlay2's blits reset the DMA and send a full
+; program each time (ddma.inc) and never run inside a video session, so
+; neither can break the invariant.
 ;
 ; UPLOAD PRIMITIVE. The arm goes out with an unrolled OUTINB run
 ; (Z80N ED 90, out (BC),(HL); HL++, B untouched) instead of OTIR -
@@ -1447,8 +1448,8 @@ vid_pos24:
 ; 16 T spacing floor that reverted vid_ds_pad (commit 01466ec, ERR=FD)
 ; governs PORT_SPI_DAT reads and has nothing to say here.
 ;
-; INTERRUPTS ARE LIVE THROUGHOUT - arm and transfer (overlay2's dma_copy
-; takes the same treatment). ctc_isr /
+; INTERRUPTS ARE LIVE THROUGHOUT - arm and transfer (overlay2's blits
+; take the same treatment). ctc_isr /
 ; video_ctc_isr_stereo are admitted mid-chunk by nextreg $CD bit 0 and
 ; service the DAC on time; the frame ISR is barred from a running DMA
 ; by $CC = 0 and a pending frame tick runs when the chunk ends. Both
@@ -1526,9 +1527,7 @@ vid_copy_dma:
     pop hl
     ret
 
-; Arm programs (zxndma.txt WR bit tables; overlay2.asm's dma_prog +
-; dma_prog_static pair is the canonical full program these derive from,
-; carrying the same descriptor split). WR1/WR2/WR5 persist from the
+; Arm programs (zxndma.txt WR bit tables). WR1/WR2/WR5 persist from the
 ; session init (vidDmaInit, sent by vid_run_l2setup_body).
 vidDmaFiArm:                     ; per-chunk fill arm (13 bytes)
     db $83                       ; WR6: disable (known-clean re-entry)
