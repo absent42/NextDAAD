@@ -9,8 +9,9 @@
 #         both show any stutter
 #   PIC   30 draws of 004.NX3 (320x32 positioned picture, palette 101-150, drawn at y 96)
 #   FULL  30 draws of 001.NX2 (the palette card: a whole picture with a whole palette)
-# A picture that carries a palette holds the palette lock while it loads and the cycle skips its
-# steps under the lock, so under PIC and FULL only the sprite is judged.
+# PICTURE and DISPLAY stop every sprite set, and a picture that carries a palette holds the
+# palette lock while it loads (the cycle skips its steps under the lock): under PIC and FULL the
+# picture alone is judged. COPY is the stutter probe.
 #
 #   pwsh -File tests\blit_legs2.ps1
 #
