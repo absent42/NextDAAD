@@ -3472,7 +3472,8 @@ vidGapFlag:      db 0            ; 1 = mode-1 letterbox (column gaps).
                                  ; from vidP_HeightB / vidP_GapFlag
 vidDstPages:     db 0            ; dest surface span: 10 (mode-1) / 6
 vidABytes:       dw 0            ; REAL audio bytes/frame
-vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block)
+vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block;
+                                 ; raw: (real + 512) & ~511)
 vidFrames:       dw 0            ; container frame count
 vidFileEnd:      ds 3            ; file size in 512-byte BLOCKS (24-bit
                                  ; == last frame's rounded payload end;
@@ -3525,7 +3526,8 @@ vidNeedBlk:      dw 0            ; gate need: cap + apad + 1 blocks
 vidApadBlk:      db 0            ; audio section blocks (1..6 - the
                                  ; NXV_AUD_FRAME_MAX 3072 bound is
                                  ; PINNED to keep this <= 6; see the
-                                 ; .inc's block-arithmetic derivation)
+                                 ; .inc's block-arithmetic derivation;
+                                 ; raw reaches 7, direct-only)
 vidWalkMax:      db 0            ; per-seek source page-walk bound
 vidSrcWalks:     db 0
 vidRingPageCnt:  db 0            ; cnt * 2 (producer wrap modulus)
@@ -5014,6 +5016,15 @@ nxbTabBuf:   ds NXB_TAB_MAX     ; the staged table (nxb_tab_stage)
 vidTokPolls: dw 0
 vidTokCalls: dw 0
  ENDIF
+
+; Raw direct session cells (staged by nxv2_open_body .direct_setup).
+vidRaw:          db 0            ; 1 = raw frame layout session
+vidRawSec:       db 0            ; pixel sectors per frame
+vidRawCap:       db 0            ; header frame cap (pixel sectors + 1)
+vidRawTag:       db 0            ; frame tag: 1 = a palette sector follows
+vidRawSchedPage: db 0            ; schedule bank page (ring bank 0 * 2)
+vidRawPage0:     db 0            ; vidP_RawX0 >> 5: surface page offset
+vidRawH0:        db 0            ; $40 + (vidP_RawX0 & 31): MMU2 dest high
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
@@ -6547,17 +6558,36 @@ nxv2_open_body:
     cp NXV_NATIVE_H_MODE0+1
     jp nc, .badu                 ; > 192
 .h_ok:
-    ; channels + rate must pair. STEREO IS THE ONLY SUPPORTED PAIRING
-    ; (mono withdrawn) and this test is what enforces it:
-    ; a channels = 1 header falls through cp 2 to .badu -> B = 1 ->
-    ; "VID FMT?" at OPEN, before the CTC is programmed, before the ISR
-    ; vector is patched and before a byte of payload is decoded. It
-    ; MUST stay: without it a mono file would be accepted and played
-    ; through the stereo ISR, which would interleave the single
-    ; channel across both DACs at the wrong rate.
-    ld a, (DATA_WINDOW + NXV2_OFF_ACHAN)
-    cp 2
+    ; flags first (the channel rule needs bit4): bit0 set, bit1 = the
+    ; direct-serve hint, bit4 = raw (needs bit1); bits 2, 3 (retired
+    ; OCOPY) and 5-7 are refused. B, C, DE, HL are dead here.
+    ld a, (DATA_WINDOW + NXV2_OFF_FLAGS)
+    ld c, a
+    and %11101101
+    cp NXV2_FLAG_DELTA
     jp nz, .badu
+    ld a, c
+    cp NXV2_FLAG_DELTA|NXV2_FLAG_RAW
+    jp z, .badu                  ; raw without direct
+    and NXV2_FLAG_DIRECT
+    ld (vidHdrDirectC), a        ; 0 / NXV2_FLAG_DIRECT
+    ld a, c
+    swapnib
+    and 1
+    ld (vidP_Raw), a             ; bit4 -> 0/1
+    ; channels: 2, or 1 with raw only (the mono handler is raw-only;
+    ; a mono file through the stereo ISR plays at the wrong rate).
+    ; Refused here, before the CTC or the ISR vector is touched.
+    ld a, (DATA_WINDOW + NXV2_OFF_ACHAN)
+    ld (vidP_AChan), a
+    cp 2
+    jr z, .ch_ok
+    cp 1
+    jp nz, .badu
+    ld a, (vidP_Raw)
+    or a
+    jp z, .badu                  ; mono without raw
+.ch_ok:
     ld de, NXV_RATE_STEREO
     ld hl, (DATA_WINDOW + NXV2_OFF_ARATE)
     or a
@@ -6595,22 +6625,6 @@ nxv2_open_body:
 .nomdone:
     ld (vidNomStepC), hl
  ENDIF
-    ; flags: delta stream set; bit1 = the direct-serve hint - HONOURED
-    ; from 3c (captured here, drives the delivery decision at
-    ; .geodone); EVERY other bit is reserved-zero and REFUSED when set.
-    ; bit3 (NXV2_FLAG_OCOPY) is deliberately inside that refusal since
-    ; the T5a decode was withdrawn: a file carrying OCOPY payload
-    ; declares bit3, so it must fail cleanly at OPEN (VID FMT?) rather
-    ; than reach a decoder that no longer implements the op. Same clean
-    ; refusal a pre-T5a player always gave it - forward hygiene, and the
-    ; next extension inherits it.
-    ld a, (DATA_WINDOW + NXV2_OFF_FLAGS)
-    and %11111101                ; leave only the direct-serve hint free
-    cp NXV2_FLAG_DELTA
-    jp nz, .badu
-    ld a, (DATA_WINDOW + NXV2_OFF_FLAGS)
-    and NXV2_FLAG_DIRECT
-    ld (vidHdrDirectC), a        ; 0 / NXV2_FLAG_DIRECT
     ; frame count: nonzero; < 65536 (a resident-size file cannot hold
     ; more frames than that - a bigger declared count is corrupt)
     ld a, (DATA_WINDOW + NXV2_OFF_FRAMES + 2)
@@ -6640,7 +6654,9 @@ nxv2_open_body:
     ld hl, (vidP_ABytes)
     ld de, 511
     add hl, de
-    ld a, h
+    ld a, (vidP_Raw)
+    add hl, a                    ; raw: +512, a tag byte always follows
+    ld a, h                      ; (<= 3584: no carry)
     and $FE
     ld h, a
     ld l, 0
@@ -6654,16 +6670,66 @@ nxv2_open_body:
     ; corrupt-header range check in .stream_setup
     ld hl, (DATA_WINDOW + NXV2_OFF_RMARGIN)
     ld (vidHdrMarginC), hl
+    ; picture width in columns: 256 on code 0, 320 on code 1, the
+    ; header word on raw code 1 (4..320, a multiple of 4)
+    ld hl, 256
+    ld a, (vidP_Shape)
+    or a
+    jr z, .wset
+    ld hl, NXV_RAW_W_MAX
+    ld a, (vidP_Raw)
+    or a
+    jr z, .wset
+    ld hl, (DATA_WINDOW + NXV2_OFF_RAWW)
+    ld a, l
+    and 3
+    jp nz, .badu                 ; not a multiple of 4
+    ld a, h
+    or l
+    jp z, .badu                  ; 0
+    ld de, NXV_RAW_W_MAX+1
+    or a
+    sbc hl, de
+    jp nc, .badu                 ; > 320
+    add hl, de
+.wset:
+    ld (vidP_RawW), hl
     call data_restore
     ; --- geometry derivation (free heights - no block math) ---
     xor a
     ld (vidP_GapFlag), a
+    ld (vidP_RawX0), a           ; X: full width unless raw on mode-1
+    ld (vidP_ClipX1), a
     ld a, (vidP_Shape)
     or a
     jr z, .geo_m0
     ; mode-1: surface span 10 pages; Y1 = (256-h)/2, YOFS = -Y1
     ld a, 10
     ld (vidP_DstPages), a
+    ld a, NXV_CLIP_X2_MODE1
+    ld (vidP_ClipX2), a
+    ld a, (vidP_Raw)
+    or a
+    jr z, .m1y
+    ; raw: centred. X0 = (320-w)/2 columns; clip (2px units) X1 = X0/2,
+    ; X2 = (X0+w)/2-1. w is a multiple of 4, so X0 is even.
+    ld hl, NXV_RAW_W_MAX
+    ld de, (vidP_RawW)
+    or a
+    sbc hl, de                   ; 0..316
+    srl h
+    rr l                         ; HL = X0, 0..158
+    ld a, l
+    ld (vidP_RawX0), a
+    srl a
+    ld (vidP_ClipX1), a
+    add hl, de                   ; X0+w, <= 320
+    srl h
+    rr l
+    dec l                        ; >= 80: no borrow
+    ld a, l
+    ld (vidP_ClipX2), a
+.m1y:
     ld a, (vidP_HeightB)
     or a
     jr z, .m1full                ; height 256: flat, full surface
@@ -6694,6 +6760,8 @@ nxv2_open_body:
     ; mode-0: always row-linear (never gapped); span 6 pages; YOFS
     ; wraps against the mode's own 192 native height (the owner's
     ; "N2 band addressing" fix, carried)
+    ld a, NXV_CLIP_X2_MODE0
+    ld (vidP_ClipX2), a
     ld a, 6
     ld (vidP_DstPages), a
     ld a, (vidP_HeightB)
@@ -7068,6 +7136,37 @@ nxv2_open_body:
     ld (vidDeliverDir), a
     call vid_strm_validate
     jp c, .fail
+    ; raw: the cap must be ceil(w*h/512) + 1. w = 4k, so that is
+    ; ceil(k*h/128), and k*h <= 80*256 = 20480 cannot carry 16 bits
+    ld a, (vidP_Raw)
+    or a
+    jr z, .capok
+    ld hl, (vidP_RawW)
+    srl h
+    rr l
+    srl h
+    rr l                         ; L = k = w/4, 1..80 (H = 0)
+    ld a, (vidP_HeightB)
+    or a
+    jr z, .cap256
+    ld d, l
+    ld e, a
+    mul d, e                     ; DE = k*h, <= 20400
+    ex de, hl
+    jr .capsum
+.cap256:
+    ld h, l
+    ld l, a                      ; h = 256: HL = k*256 (A = 0)
+.capsum:
+    ld de, 127
+    add hl, de                   ; <= 20607
+    add hl, hl                   ; H = (k*h + 127) >> 7, <= 160
+    ld a, (vidCapBlkC)           ; validated: high byte 0, 1..240
+    dec a                        ; cap - 1 = pixel sectors
+    cp h
+    jp nz, .badc                 ; B = 1: VID FMT?
+    ld (vidRawSecC), a
+.capok:
     ; rewind to file start + consume the header block cold (the
     ; armed session then starts exactly at frame 0's audio)
     call vid_win_close
@@ -7082,8 +7181,9 @@ nxv2_open_body:
     ld hl, (vidStrmRunBlocks)
     dec hl
     ld (vidStrmRunBlocks), hl
-    call vid_ring_free           ; bank 0 served the parse only -
-                                 ; direct needs NO pool banks
+    ld a, (vidP_Raw)             ; non-raw: bank 0 served the parse only.
+    or a                         ; Raw keeps it as the schedule bank (the
+    call z, vid_ring_free        ; restore body and .fail free it)
     call vid_stage_common        ; bracket returns OPEN (stages the
                                  ; ds decode vectors from vidDeliverDir)
     ; --- direct extras (same bracket) ---
@@ -7110,6 +7210,14 @@ nxv2_open_body:
     ld (vidStrmEntryCnt + DATA_WINDOW - OVL_ORG), a
     ld a, 1
     ld (vidStrmEntryIdx + DATA_WINDOW - OVL_ORG), a
+    ; --- raw extras (same bracket) ---
+    ld a, (vidP_Raw)
+    or a
+    jr z, .rawxd
+    ld a, (vidRingBanksC)
+    add a, a
+    ld (vidRawSchedPage + DATA_WINDOW - OVL_ORG), a
+.rawxd:
  IFDEF DEBUG
     ld hl, 0                     ; vidRingMin seed (no ring)
  ENDIF
@@ -7160,12 +7268,12 @@ vid_strm_validate:
     ld (vidCapBlkC), a
     ld hl, (vidP_ABytesPad)
     ld a, h
-    srl a                        ; pad >> 9 (1..6 blocks; the 3072 pin)
-    ld (vidApadBlkC), a
+    srl a                        ; pad >> 9: 1..6 blocks, raw 1..7 (the
+    ld (vidApadBlkC), a          ; 3072 pin; raw adds a tag block)
     ld b, a
     ld a, (vidCapBlkC)
     add a, b
-    inc a                        ; <= 247: no carry
+    inc a                        ; <= 240+7+1 = 248: no carry
     ld (vidNeedBlkC), a
     ld a, (vidTotalBlkC+2)       ; > 65535 blocks: any 16-bit margin
     or a                         ; is inside the file by construction
@@ -7379,8 +7487,8 @@ vid_file_blocks:
 nxvMagic: db "NXVID"
 
 ; Cold staging twin of the hot parameter block (order/sizes MUST
-; match vidHeightB.. exactly - one LDIR stages it). Shape/Clip/Yofs
-; have only cold readers on this page and are not staged.
+; match vidHeightB.. exactly - one LDIR stages it). The cells from
+; vidP_Shape on have only cold readers on this page and are not staged.
 vidP_HeightB:  db 0
 vidP_GapFlag:  db 0
 vidP_DstPages: db 0
@@ -7394,6 +7502,13 @@ vidP_Shape:    db 0
 vidP_ClipY1:   db 0
 vidP_ClipY2:   db 0
 vidP_Yofs:     db 0
+vidP_Raw:      db 0              ; 1 = raw frame layout (flags bit4)
+vidP_AChan:    db 0              ; audio channels: 2, or 1 (raw only)
+vidP_RawW:     dw 0              ; picture width in columns: 256 code 0,
+                                 ; 320 code 1, header word raw code 1
+vidP_RawX0:    db 0              ; left margin in columns (raw mode-1)
+vidP_ClipX1:   db 0              ; NR $18 X1, X2 (mode-1: 2px units)
+vidP_ClipX2:   db 0
 
 ; Ring bookkeeping (cold canonical copy - the allocator-facing list;
 ; the hot copy serves only the armed seam walker).
@@ -7420,6 +7535,7 @@ vidHdrMarginC: dw 0              ; header ring start-margin (advisory;
 vidNomStepC:   dw 0              ; PLAY=/NOM= nominal fields per frame
  ENDIF                            ; (8.8 fixed) - staged at open
 vidCapBlkC:    db 0              ; validated cap (blocks)
+vidRawSecC:    db 0              ; raw: pixel sectors per frame (cap - 1)
 vidApadBlkC:   db 0
 vidNeedBlkC:   db 0
 vidRingCapBlkC: dw 0
@@ -7731,28 +7847,21 @@ vid_run_l2setup_body:
     ld (vidPalCtrl+DATA_WINDOW-OVL_ORG), a
     NRGET NR_L2_TRANSP
     ld (vidSvNr14), a            ; page-local (3c cell move)
-    ; mode + full-width clip (v2 width code: 1 = 320/mode-1)
+    ; mode + clip (v2 width code: 1 = 320/mode-1). X1/X2 from the open:
+    ; non-raw 0 and NXV_CLIP_X2_MODE1/MODE0 (full-bleed), raw centred
     ld a, (vidP_Shape)
     or a
     jr z, .l2mode0
     ld a, NXV_NR70_MODE1
+.l2mode0:                        ; A = 0 here on mode-0 (NXV_NR70_MODE0)
+    ASSERT NXV_NR70_MODE0 == 0
     nextreg NR_L2_CTRL, a
     nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
     nextreg NR_CLIP_IDX, 1
-    xor a
-    nextreg NR_L2_CLIP, a        ; X1 = 0 (full-bleed)
-    ld a, NXV_CLIP_X2_MODE1
-    nextreg NR_L2_CLIP, a
-    jr .clipY
-.l2mode0:
-    xor a
-    nextreg NR_L2_CTRL, a
-    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
-    nextreg NR_CLIP_IDX, 1
-    xor a
-    nextreg NR_L2_CLIP, a
-    ld a, NXV_CLIP_X2_MODE0
-    nextreg NR_L2_CLIP, a
+    ld a, (vidP_ClipX1)
+    nextreg NR_L2_CLIP, a        ; X1
+    ld a, (vidP_ClipX2)
+    nextreg NR_L2_CLIP, a        ; X2
 .clipY:
     ld a, (vidP_ClipY1)
     nextreg NR_L2_CLIP, a
@@ -7781,9 +7890,8 @@ vid_run_l2setup_body:
     otir
     ei
     ; CTC time constant: table-driven from the live video-timing mode
-    ; (carried v1 table/derivation). ONE table since mono went - the
-    ; open path refuses any channel count but 2, so the rate is always
-    ; NXV_RATE_STEREO.
+    ; (carried v1 table/derivation). ONE table: the open path refuses
+    ; any rate but NXV_RATE_STEREO (raw mono runs at it too).
     NRGET NR_VIDEO_TIMING
     and 7
     ld c, a
