@@ -40,7 +40,7 @@ PROTECTED = [
 # (routine, variant, call targets). In that variant, every `call nn` (CD lo hi) in the new
 # routine whose operand is exactly a listed label is removed - each name exactly once - and
 # the rest is compared instruction by instruction; jr/djnz by the instruction they land on.
-MAY_CHANGE = []
+MAY_CHANGE = [("vid_run", "debug", ("vid_dbg_late", "vid_dbg_urun"))]
 
 
 class Setup(Exception):

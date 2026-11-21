@@ -1763,7 +1763,8 @@ vid_src_seek:
 ;     legal file - the pre-T10 shape, restored at every fps), with
 ;     NXV_AUD_PUMP_CHUNK from the .pace spin (the chasing writer, now
 ;     only reachable if the reader is behind), and to completion at
-;     .paced (the force-finish backstop). The rd snapshot (push ix)
+;     .paced (the force-finish backstop). The rd snapshot (push ix,
+;     or HL' under DI in a raw session - vid_raw_rd_de at .rd)
 ;     only goes stale in the safe direction - the reader advances,
 ;     so true room only grows while a chunk runs.
 ;   the .pace consumption integrator - pacing (see the frame loop).
@@ -2309,7 +2310,8 @@ vid_run:
 ; CONSUMPTION of frame f-1's audio - the circular feed has no half-
 ; boundary event, so the boundary detection moved from the ISR to a
 ; MAINLINE CONSUMPTION INTEGRATOR: each .pace poll snapshots the
-; ISR's free-running read pointer (push ix - atomic), accumulates the
+; ISR's free-running read pointer (push ix, or HL' under DI in a raw
+; session via vid_raw_rd_hl - atomic either way), accumulates the
 ; consumed delta (mod ring) and releases the frame when one frame's
 ; real audio bytes have been consumed. PACING HANDOFF (T9+T10 design,
 ; documented per the charter): the pacing SOURCE remains the audio
@@ -2350,7 +2352,13 @@ vid_run:
 .pace:
 .pacecall equ $+1                ; DEBUG bench LOOP row: nxb_lp_pace
     call vid_pace_poll           ; integrate consumption; CF = this
-    jr c, .paced                 ; frame's audio consumed (or past)
+                                 ; frame's audio consumed (or past)
+ IFDEF DEBUG
+  IFNDEF NXB_QUIET
+    call vid_dbg_late            ; LATE=/MAXL=: reads this poll, keeps CF
+  ENDIF
+ ENDIF
+    jr c, .paced
     ; not yet: chase the reader with the staged feed, and (streaming)
     ; produce SD blocks into the source ring
     ld bc, NXV_AUD_PUMP_CHUNK
@@ -2439,6 +2447,11 @@ vid_run:
     ld bc, $FFFF                 ; ask for the whole staged feed: it fits in
     call vid_aud_pump            ; one pass for every legal file
                                  ; (2*NXV_AUD_FRAME_MAX <= ring-guard)
+ IFDEF DEBUG
+  IFNDEF NXB_QUIET
+    call vid_dbg_urun            ; URUN=: a further poll; arms LATE=
+  ENDIF
+ ENDIF
 .qskip:
     call vid_key_any             ; any key ends playback (<= 1 frame
     jr nz, .restore              ; latency; the frame just presented)
@@ -3628,6 +3641,12 @@ vidErrOp:        db 0            ; the offending opcode byte (ERR=OP)
 vidErrPos:       ds 3            ; breadcrumb: failing source position
                                  ; (24-bit linear file offset; only
                                  ; meaningful when ERR != 0)
+ IFNDEF NXB_QUIET
+vidLateArm:      db 0            ; 1 = the next .pace poll is a frame's first
+vidLateCnt:      dw 0            ; LATE=: late frames (vid_dbg_late)
+vidLateMax:      dw 0            ; MAXL=: longest lateness, bytes of sound
+vidUrunCnt:      dw 0            ; URUN=: sound under-runs (vid_dbg_urun)
+ ENDIF
 vidLoopPass:     db 0            ; live loop-pass counter (0 = pass 1);
                                  ; reported as PASS= on EVERY exit
 vidRingMin:      dw 0            ; RING= row: min frame-top depth (3b;
@@ -3655,6 +3674,9 @@ vidNomStep:      dw 0            ; nominal fields per frame, 8.8 fixed
 vidNomAcc:       ds 3            ; nominal fields accumulator, 8.8
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlFrames
 VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlFrames
+ IFNDEF NXB_QUIET
+    ASSERT vidUrunCnt + 2 <= vidTlFrames + VID_TL_ZERO_LEN   ; zeroed per session: frame 0 unarmed
+ ENDIF
 ; SPIN-side poll divider: vid_pace_poll (the .pace/.ffin/.drainlast/
 ; ring-gate wait-loop sites) and vid_aud_pump's .next chunk loop both
 ; called vid_rl_poll on EVERY pass; poll density that high measurably
@@ -5240,6 +5262,52 @@ vid_raw_prime:
     ld hl, vidAudBuf
     exx
     ret
+
+ IFDEF DEBUG
+  IFNDEF NXB_QUIET
+; LATE=/MAXL=, after vid_run.pace's poll: a frame's first poll (armed at
+; .qnext, so never frame 0) with CF set and vidPaceRem < 0 counts.
+; In/out: CF from the poll. Corrupts A, DE, HL, the other flags.
+vid_dbg_late:
+    ld a, (vidLateArm)
+    dec a                        ; CF kept
+    ret nz                       ; not a frame's first poll
+    ld (vidLateArm), a           ; A = 0: disarm
+    ret nc                       ; released by a later poll: not late
+    ld hl, (vidPaceRem)
+    bit 7, h                     ; CF kept
+    ret z                        ; rem = 0: on time
+    ld de, (vidLateCnt)
+    inc de
+    ld (vidLateCnt), de
+    ld de, (vidLateMax)
+    add hl, de                   ; rem $8001-$FFFF: CF = (-rem <= max)
+    ret c
+    ex de, hl
+    sbc hl, de                   ; max - (rem + max) = -rem, borrow: CF set
+    ld (vidLateMax), hl
+    ret
+
+; URUN=, at vid_run .qnext after the stage and pump: a further poll that
+; leaves vidPaceRem <= 0 counts. Arms vid_dbg_late for the next frame.
+; Corrupts AF, DE, HL. Preserves BC, IX.
+vid_dbg_urun:
+    call vid_pace_poll
+    ld a, 1
+    ld (vidLateArm), a
+    ld hl, (vidPaceRem)
+    ld a, h
+    or l
+    jr z, .u                     ; rem = 0
+    add hl, hl                   ; CF = sign
+    ret nc
+.u:
+    ld hl, (vidUrunCnt)
+    inc hl
+    ld (vidUrunCnt), hl
+    ret
+  ENDIF
+ ENDIF
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
@@ -9774,6 +9842,34 @@ vid_tl_report_body:
     call dbg_hex16               ; one big-endian 8-digit number
     ld hl, (vidChkSumL)
     call dbg_hex16
+ IFNDEF NXB_QUIET
+    ; LATE row: late frames, longest lateness (bytes of sound), sound
+    ; under-runs (vid_dbg_late, vid_dbg_urun), and the file's runs
+    ld b, VID_TL_ROW0+3
+    ld c, 0
+    call dbg_at
+    ld hl, msgTlLate
+    call dbg_puts
+    ld hl, (vidLateCntL)
+    call dbg_hex16
+    ld hl, msgTlMaxl
+    call dbg_puts
+    ld hl, (vidLateMaxL)
+    call dbg_hex16
+    ld hl, msgTlUrun
+    call dbg_puts
+    ld hl, (vidUrunCntL)
+    call dbg_hex16
+    ld hl, msgTlRuns
+    call dbg_puts
+    ld a, (vidDeliverStrm)       ; resident: 0 - vidEntCntC is written by
+    ld hl, vidDeliverDir         ; vid_strm_validate only, so it can hold a
+    or (hl)                      ; previous streamed session's count
+    jr z, .runs
+    ld a, (vidEntCntC)
+.runs:
+    call dbg_hex8
+ ENDIF
     jr .done
 .done:
     ld a, (vidTlNr69)            ; hand the picture back
@@ -9817,6 +9913,12 @@ msgTlSnap: db " SNAP=", 0
 msgTlPlay: db "PLAY   =", 0
 msgTlNom:  db " NOM=", 0
 msgTlChk:  db " CHK=", 0
+ IFNDEF NXB_QUIET
+msgTlLate: db "LATE   =", 0
+msgTlMaxl: db " MAXL=", 0
+msgTlUrun: db " URUN=", 0
+msgTlRuns: db " RUNS=", 0
+ ENDIF
 vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
                                  ; live vidSnapCnt is zeroed by the
                                  ; teardown free before the report)
@@ -9829,6 +9931,12 @@ vidTlFramesL:     dw 0
 vidErrCodeL:      db 0
 vidErrOpL:        db 0
 vidErrPosL:       ds 3
+ IFNDEF NXB_QUIET
+vidLateArmL:      db 0
+vidLateCntL:      dw 0
+vidLateMaxL:      dw 0
+vidUrunCntL:      dw 0
+ ENDIF
 vidLoopPassL:     db 0
 vidRingMinL:      dw 0
 vidRingUnderL:    dw 0
@@ -9843,6 +9951,10 @@ vidPlayEndL:      dw 0
 vidNomStepL:      dw 0
 vidNomAccL:       ds 3
     ASSERT vidNomAccL + 3 - vidTlFramesL == VID_TL_BLOCK_LEN
+ IFNDEF NXB_QUIET
+    ASSERT vidLateArmL - vidTlFramesL == vidLateArm - vidTlFrames
+    ASSERT vidUrunCntL - vidTlFramesL == vidUrunCnt - vidTlFrames
+ ENDIF
  ENDIF
 
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $

@@ -8,11 +8,12 @@ generator (vid_raw_sched_build) and hot-cell staging (vid_raw_stage), the raw fr
 (vr_sector, vr_sector_n, vr_page, vid_raw_pal, vid_raw_apad), the per-session operand patches
 (vid_stage_common.vec), the raw sound handlers on the alternate set (video_ctc_isr_raw_st,
 video_ctc_isr_raw_mono), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime)
-and the handler choice in vid_run_l2setup_body.
+and the handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and
+URUN counters (vid_dbg_late, vid_dbg_urun), skipped with a note where they are not assembled.
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
 
-Exit 0 = every test passed. The variant read (DEBUG or Release) is printed.
+Exit 0 = every test passed (skips allowed). The variant read (DEBUG or Release) is printed.
 """
 import bisect
 import sys
@@ -54,6 +55,10 @@ class Stop(Exception):
     def __init__(self, where, a):
         super().__init__(f"{where} reached with A=${a:02X}")
         self.where, self.a = where, a
+
+
+class Skip(Exception):
+    """The test does not apply to the image read."""
 
 
 # --------------------------------------------------------------------------- card model
@@ -1266,12 +1271,129 @@ def test_isr_choice():
             raise Fail(f"raw {raw} channels {ach}: vector ${got:04X}, expected {want}")
 
 
+ALT_ALL = {"b": 0x11, "c": 0x22, "d": 0x33, "e": 0x44, "h": 0x55, "l": 0x66}
+
+
+def dbg_cells(mc, arm=0, cnt=0, mx=0, urun=0, rem=0):
+    mc.poke("vidLateArm", arm)
+    mc.poke16("vidLateCnt", cnt)
+    mc.poke16("vidLateMax", mx)
+    mc.poke16("vidUrunCnt", urun)
+    mc.poke16("vidPaceRem", rem & 0xFFFF)
+
+
+def dbg_state(mc):
+    """(vidLateArm, vidLateCnt, vidLateMax, vidUrunCnt)."""
+    return (mc.peek("vidLateArm"), mc.peek("vidLateCnt", 2), mc.peek("vidLateMax", 2),
+            mc.peek("vidUrunCnt", 2))
+
+
+def dbg_enter(cpu, fc=0, hlp=0x5566, ix=0xDEAD):
+    set_main(cpu)
+    cpu.fc, cpu.ix, cpu.iff = fc, ix, 1
+    cpu.alt.update(ALT_ALL)
+    set_alt_hl(cpu, hlp)
+
+
+def dbg_kept(cpu, what, fc, hlp=0x5566, ix=0xDEAD):
+    """BC, IX, IY, the alternate set, SP, IFF and CF as dbg_enter left them."""
+    alt = dict(ALT_ALL, h=hlp >> 8, l=hlp & 0xFF)
+    got = (cpu.bc, cpu.ix, cpu.iy, {k: cpu.alt[k] for k in alt}, cpu.sp, cpu.iff, cpu.fc)
+    want = (0x1234, ix, 0xBEEF, alt, STACK, 1, fc)
+    if got != want:
+        raise Fail(f"{what}: (BC, IX, IY, alt, SP, IFF, CF) = {got}, expected {want}")
+
+
+def test_dbg_counters():
+    """vid_dbg_late after vid_run.pace's poll (CF in): counts only an armed first poll with
+    CF set and vidPaceRem negative, MAXL = max(MAXL, -rem), CF out = CF in. vid_dbg_urun at
+    .qnext: a further vid_pace_poll (raw form patched to vid_raw_rd_hl; the IX form's 3-byte
+    push ix/pop hl stood in by a trap - the model has no IX) counts rem <= 0 and arms LATE."""
+    if "vid_dbg_late" not in SYMS:
+        raise Skip("vid_dbg_late is not assembled (Release or -BenchQuiet image)")
+    lo, z = S("vidTlFrames"), S("VID_TL_ZERO_LEN")
+    if not (lo <= S("vidLateArm") and S("vidUrunCnt") + 2 <= lo + z):
+        raise Fail("vidLateArm..vidUrunCnt is not inside the session zero span")
+    mc = RawMachine(SYMS)
+    cpu = mc.cpu
+    # (CF in, arm, rem, cnt, max) -> (arm, cnt, max); CF out must equal CF in
+    late = [((1, 1, -0x123, 0, 0), (0, 1, 0x123)),
+            ((1, 1, -0x100, 5, 0x200), (0, 6, 0x200)),          # max keeps the larger
+            ((1, 1, -0x200, 5, 0x200), (0, 6, 0x200)),          # equal
+            ((1, 1, -0x7FFF, 1, 0x200), (0, 2, 0x7FFF)),
+            ((1, 1, -1, 0, 0), (0, 1, 1)),
+            ((1, 1, 0, 3, 7), (0, 3, 7)),                       # rem 0: on time
+            ((0, 1, 0x40, 3, 7), (0, 3, 7)),                    # waited: on time
+            ((0, 1, -0x8000, 3, 7), (0, 3, 7)),                 # the poll's CF is clear here
+            ((1, 0, -0x50, 3, 7), (0, 3, 7))]                   # unarmed: frame 0, a spin poll
+    for (fc, arm, rem, cnt, mx), want in late:
+        dbg_cells(mc, arm=arm, cnt=cnt, mx=mx, rem=rem)
+        dbg_enter(cpu, fc)
+        mc.run("vid_dbg_late")
+        what = f"vid_dbg_late CF {fc} arm {arm} rem {rem} cnt {cnt} max ${mx:04X}"
+        dbg_kept(cpu, what, fc)
+        if dbg_state(mc)[:3] != want or mc.peek("vidPaceRem", 2) != rem & 0xFFFF:
+            raise Fail(f"{what}: (arm, cnt, max) = {dbg_state(mc)[:3]}, expected {want}")
+    base, n = S("vidAudBuf"), S("NXV_AUD_RING")
+    rd = S("vid_pace_poll.rd")
+    if bytes(mc.mem[rd:rd + 3]) != b"\xDD\xE5\xE1":
+        raise Fail("vid_pace_poll.rd is not push ix / pop hl in the image")
+
+    def ixsnap(c):
+        c.hl = c.ix
+        c.pc = rd + 3
+    # (rem before, rd before, rd now, vidRlSpinDiv): rem after = rem - (now - before) mod ring
+    urun = [(300, 100, 300, 100), (300, 100, 400, 100), (300, 100, 399, 100),
+            (300, 100, 600, 1), (100, n - 50, 100, 100), (0x8064, 0, 100, 100),
+            (0x8000, 0, 1, 100)]
+    for form in ("ix", "raw"):
+        if form == "raw":
+            patch_session(mc, 1, 1)
+        for rem0, p0, p1, div in urun:
+            dbg_cells(mc, arm=0, cnt=9, mx=9, urun=4, rem=rem0)
+            mc.poke16("vidAudRdPrev", base + p0)
+            mc.poke("vidRlSpinDiv", div)
+            if form == "raw":
+                dbg_enter(cpu, hlp=base + p1)
+                mc.run("vid_dbg_urun")
+                dbg_kept(cpu, f"vid_dbg_urun {form}", cpu.fc, hlp=base + p1)
+            else:
+                dbg_enter(cpu, ix=base + p1)
+                mc.run("vid_dbg_urun", traps={rd: ixsnap})
+                dbg_kept(cpu, f"vid_dbg_urun {form}", cpu.fc, ix=base + p1)
+            rem = (rem0 - (p1 - p0) % n) & 0xFFFF
+            under = rem == 0 or rem >= 0x8000
+            want = (rem, base + p1, (1, 9, 9, 4 + under))
+            got = (mc.peek("vidPaceRem", 2), mc.peek("vidAudRdPrev", 2), dbg_state(mc))
+            if got != want:
+                raise Fail(f"vid_dbg_urun {form} rem ${rem0:04X} rd {p0}->{p1}: (rem, rdPrev, "
+                           f"(arm, cnt, max, urun)) = {got}, expected {want}")
+    # a session: frame 0 (unarmed), .qnext arms, frame 1's first poll late, a spin poll after
+    # an on-time first poll does not count
+    dbg_cells(mc)
+    for step, (fc, rem, want) in enumerate([(1, -3, (0, 0, 0, 0)), ("q", 1000, (1, 0, 0, 0)),
+                                            (1, -0x40, (0, 1, 0x40, 0)), ("q", 1000, (1, 1, 0x40, 0)),
+                                            (0, 0x10, (0, 1, 0x40, 0)), (1, -5, (0, 1, 0x40, 0))]):
+        mc.poke16("vidPaceRem", rem & 0xFFFF)
+        if fc == "q":
+            mc.poke16("vidAudRdPrev", base)
+            dbg_enter(cpu, hlp=base + 100)
+            mc.run("vid_dbg_urun")
+        else:
+            dbg_enter(cpu, fc)
+            mc.run("vid_dbg_late")
+        if dbg_state(mc) != want:
+            raise Fail(f"session step {step}: (arm, cnt, max, urun) = {dbg_state(mc)}, "
+                       f"expected {want}")
+
+
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_walkfault, test_frame_remain, test_frame_palette, test_frame_runwalk,
          test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
-         test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice]
+         test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
+         test_dbg_counters]
 
 
 def main():
@@ -1281,10 +1403,13 @@ def main():
         return 1
     SYMS.update(read_sld())
     print("vidraw_contract: %s build" % ("DEBUG" if "dbgNoBank" in SYMS else "Release"))
-    passed = failed = 0
+    passed = failed = skipped = 0
     for t in TESTS:
         try:
             t()
+        except Skip as exc:
+            skipped += 1
+            print(f"  skip {t.__name__}: {exc}")
         except (Fail, Stop) as exc:
             failed += 1
             print(f"  FAIL {t.__name__}: {exc}")
@@ -1294,7 +1419,8 @@ def main():
         else:
             passed += 1
             print(f"  ok   {t.__name__}")
-    print(f"vidraw_contract: {passed} passed, {failed} failed")
+    print(f"vidraw_contract: {passed} passed, {failed} failed"
+          + (f", {skipped} skipped" if skipped else ""))
     return 1 if failed else 0
 
 
