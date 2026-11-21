@@ -971,7 +971,8 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;    13      1    keyframe policy byte (encoder bookkeeping, ignored)
 ;    14      3    frame count LE24
 ;    17      2    audio bytes/frame LE (REAL, pre-pad; the wire block
-;                 is this rounded up to a 512 multiple). v2.0 PLAYER
+;                 is this rounded up to a 512 multiple; raw: real /
+;                 512 + 1 blocks). v2.0 PLAYER
 ;                 BOUND (SP17 T10, circular feed): the audio feed is
 ;                 ONE circular NXV_AUD_RING (8192-byte) buffer, so
 ;                 open REJECTS > NXV_AUD_FRAME_MAX (3072) real
@@ -1178,7 +1179,7 @@ VID_ERR_SRCOVR   equ $F8    ; payload ran past the loaded file
                             ; page-walk bound tripped - corrupt input)
 VID_ERR_DSTOVR   equ $F7    ; cursor ran past the Layer 2 surface
 
-; The supported audio rate - ONE since mono was withdrawn (T4 design
+; The supported audio rate - ONE (T4 design
 ; step, T1's derivation method, CW16 across every video mode - see
 ; vidCtcTcNxvStereo, video.asm, and the task report's TC tables). Any
 ; other header rate = VID FMT?.

@@ -764,7 +764,7 @@ $steps = [ordered]@{
     'bt-pngchain'                = New-StepSpec -Files 'tests/art/pngchain.py', 'src/nextdaad.inc' -Tools gfx2next
     'bt-frozen-exes'             = New-StepSpec -Git $kitGit -Files 'tests/check_frozen_exes.py'
     'bt-manual'                  = New-StepSpec -Git 'manual', 'src', $kitGit -Files 'tests/manual_facts.py', 'tests/build-tests.ps1'
-    'bt-dma-contract'            = New-StepSpec -Files 'tests/dma_contract.py', 'tests/ddma_contract.py' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
+    'bt-dma-contract'            = New-StepSpec -Files 'tests/dma_contract.py', 'tests/ddma_contract.py', 'tests/vidraw_contract.py', 'tests/vidraw_oldpaths.py' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
     'bt-core-floor'              = New-StepSpec -Git 'src', $kitGit, 'tests/*.py', 'tests/corefloor' -HashFiles 'build/nextdaad.nex', 'build/intro.nex' -Tools sjasmplus
     'bt-bank-alloc-exec'         = New-StepSpec -Files 'tests/build-tests.ps1' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
     $nexStep                     = New-StepSpec -Git 'src' -Files 'tests/build-tests.ps1', 'tests/sfx2.dsf' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld', 'build/NEXTDAAD.SYM' -Tools ndrc
@@ -1572,6 +1572,15 @@ if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad
         if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - a video DMA kernel is mis-emitted, do not run this build on hardware" }
         & python "$PSScriptRoot\ddma_contract.py"
         if ($LASTEXITCODE -ne 0) { throw "tests\ddma_contract.py failed - a blitter program is mis-emitted, do not run this build on hardware" }
+        # Raw direct video reader on the host model; old video hot paths against the baseline images.
+        & python "$PSScriptRoot\vidraw_contract.py"
+        if ($LASTEXITCODE -ne 0) { throw "tests\vidraw_contract.py failed - the raw video reader is mis-emitted, do not run this build on hardware" }
+        $vrVariant = if (Select-String -Path "$root\build\nextdaad.sld" -Pattern '\|dbgNoBank$' -Quiet) { 'debug' } else { 'release' }
+        if (Test-Path "$root\tests\out\vidraw-base\$vrVariant.nex") {
+            & python "$PSScriptRoot\vidraw_oldpaths.py" --variant $vrVariant
+            if ($LASTEXITCODE -ne 0) { throw "tests\vidraw_oldpaths.py failed - an old video hot path changed its bytes" }
+        }
+        else { "WARNING: no tests\out\vidraw-base\$vrVariant.nex - old video path guard SKIPPED" }
         Complete-Step 'bt-dma-contract'
     }
 }

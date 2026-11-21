@@ -1589,8 +1589,9 @@ vid_decode_frame:
 vid_decode_any:
     ld a, (vidDirect)
     or a
-    jp nz, vid_decode_frame_ds
-    jp vid_decode_frame
+.raw:
+    jp nz, vid_decode_frame_ds   ; operand: vid_raw_frame in raw sessions
+    jp vid_decode_frame          ; (vid_stage_common.vec, every open)
 
 ; Dest-surface setup from the span state (extracted 3c - shared with
 ; the direct-serve decode): span-continuation frames restore the
@@ -2031,7 +2032,8 @@ vid_aud_pump:
     or a
     jr z, .ramdone
     ld hl, (vidDsAudBlkRem)      ; ds: discard the section pad to the
-    call vid_ds_pad              ; block boundary (HL = 0 on exit)
+.apad:                           ; block boundary (HL = 0 on exit); raw
+    call vid_ds_pad              ; sessions: vid_raw_apad (.vec patch)
     ld (vidDsAudBlkRem), hl
     ret
 .ramdone:
@@ -5017,7 +5019,8 @@ vidTokPolls: dw 0
 vidTokCalls: dw 0
  ENDIF
 
-; Raw direct session cells (staged by nxv2_open_body .direct_setup).
+; Raw direct session cells (vidRaw: vid_stage_common.vec; the rest:
+; vid_raw_stage; vidRawTag: vid_raw_apad each frame).
 vidRaw:          db 0            ; 1 = raw frame layout session
 vidRawSec:       db 0            ; pixel sectors per frame
 vidRawCap:       db 0            ; header frame cap (pixel sectors + 1)
@@ -5025,6 +5028,142 @@ vidRawTag:       db 0            ; frame tag: 1 = a palette sector follows
 vidRawSchedPage: db 0            ; schedule bank page (ring bank 0 * 2)
 vidRawPage0:     db 0            ; vidP_RawX0 >> 5: surface page offset
 vidRawH0:        db 0            ; $40 + (vidP_RawX0 & 31): MMU2 dest high
+
+; ---------------------------------------------------------------------
+; RAW DIRECT READER. The frame runs the clip's read schedule (built at
+; open by vid_raw_sched_build) from the schedule bank at MMU6: calls
+; into the 512-ini slide, column ends, vr_page, vr_sector. While it
+; runs: HL = destination, C = PORT_SPI_DAT, B scrap (ini counts it).
+; ---------------------------------------------------------------------
+
+; Raw frame decode (vid_decode_any.raw). The whole-pass remain and the
+; section bound are charged once, before any read. Out: A = VOP_KFLIP.
+; Faults abort via vid_dec_abort_pos. Corrupts all but IX.
+vid_raw_frame:
+    ld a, (vidRawSchedPage)
+    nextreg NR_MMU6, a
+    ld hl, vidRawSec
+    ld a, (vidRawTag)
+    add a, (hl)                  ; sectors this frame, <= 161: CF clear
+    ld e, a
+    ld d, 0
+    ld hl, (vidStrmRemainBlk)
+    sbc hl, de
+    ld a, (vidStrmRemainBlk+2)
+    sbc a, d
+    jr c, .ovr                   ; past the file: no read made
+    ld (vidStrmRemainBlk), hl
+    ld (vidStrmRemainBlk+2), a
+    ld a, (vidRawCap)            ; the next sound blocks and a loop
+    ld (vidDsFrmBlk), a          ; header block stay inside vidDsBound
+    ld a, (vidRawTag)
+    or a
+    call nz, vid_raw_pal
+    ld a, (l2BackBank)
+    call vid_dst_base
+    ld hl, vidDstPage
+    ld a, (vidRawPage0)
+    add a, (hl)
+    ld (hl), a
+    nextreg NR_MMU2, a
+    ld a, (vidRawH0)
+    ld h, a
+    ld l, 0
+    call VR_SCHED
+    ld a, VOP_KFLIP
+    ret
+.ovr:
+    ld a, VID_ERR_SRCOVR
+    jp vid_dec_abort_pos
+
+; Open the next sector of the CMD18 stream: the previous sector's CRC,
+; the run count (filemap walk at a run end), the data token (bounded).
+; Preserves HL. Out: C = PORT_SPI_DAT, A = vidDsCrcDue = 1. Corrupts
+; F, DE, B. Faults abort via vid_dec_abort_pos.
+vr_sector:
+ IFDEF DEBUG
+  IFNDEF NXB_QUIET
+    ld d, 0                      ; PLAY= clock: vid_dst_norm_flat's divider
+    call vid_dst_norm_flat       ; (D < $60: no page step, AF only)
+  ENDIF
+ ENDIF
+    ld a, (vidDsCrcDue)
+    or a
+    jr z, .nocrc
+    in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart, as blkopen
+    nop
+    in a, (PORT_SPI_DAT)
+.nocrc:
+    ld de, (vidStrmRunBlkH)
+    ld a, d
+    or e
+    jr nz, .run
+    push hl
+    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
+    ex de, hl                    ; DE = the fresh run's blocks
+    pop hl
+    jp c, vid_dec_abort_pos
+.run:
+    dec de
+    ld (vidStrmRunBlkH), de
+    call vid_sd_tok_h            ; corrupts AF, BC
+    ld a, VID_ERR_TOKEN
+    jp c, vid_dec_abort_pos
+    ld c, PORT_SPI_DAT
+    ld a, 1
+    ld (vidDsCrcDue), a
+    ret
+
+; Schedule page end: map the next back-surface page at MMU2.
+; Out: HL = VID_DST_WIN. Corrupts AF.
+vr_page:
+    ld hl, vidDstPage
+    inc (hl)
+    ld a, (hl)
+    nextreg NR_MMU2, a
+    ld hl, VID_DST_WIN
+    ret
+
+; One palette sector to the hidden Layer 2 palette, vid_ds_pal's
+; choreography (edit the other bank, flip at present). Corrupts AF, BC,
+; DE.
+vid_raw_pal:
+    call vr_sector               ; A = 1
+    ld (vidPalPending), a
+    ld a, (vidPalCtrl)
+    xor $40
+    nextreg NR_PAL_CTRL, a
+    nextreg NR_PAL_INDEX, 0
+    ld a, NR_PAL_VALUE9
+    ld bc, TBBLUE_REG_SEL
+    out (c), a
+    ld b, high TBBLUE_REG_ACC    ; C stays $3B
+    ld de, NXV_PAL_BYTES
+.pl:
+    in a, (PORT_SPI_DAT)         ; 49 T a byte
+    out (c), a
+    dec de
+    ld a, d
+    or e
+    jr nz, .pl
+    ret
+
+; Raw pump section end (vid_aud_pump.apad): discard the sound pad, read
+; the frame tag (the section's last byte). In: HL = bytes left in the
+; open sector, 0..511 (0: the tag sits alone in the next sector). Out:
+; HL = 0, vidRawTag. A tag above 1 aborts (VID_ERR_OP). Corrupts AF.
+vid_raw_apad:
+    ld a, h
+    or l
+    call z, vid_ds_blkopen       ; HL = 512
+    dec hl
+    call vid_ds_pad              ; HL - 1 pad bytes, HL = 0
+    in a, (PORT_SPI_DAT)
+    ld (vidRawTag), a
+    cp 2
+    ret c
+    ld a, VID_ERR_OP
+    jp vid_dec_abort
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
@@ -7184,6 +7323,17 @@ nxv2_open_body:
     ld a, (vidP_Raw)             ; non-raw: bank 0 served the parse only.
     or a                         ; Raw keeps it as the schedule bank (the
     call z, vid_ring_free        ; restore body and .fail free it)
+    ld a, (vidP_Raw)
+    or a
+    jr z, .nosched
+    call data_save               ; raw: build the schedule in bank 0
+    ld a, (vidRingBanksC)
+    add a, a
+    call data_map_page
+    call vid_raw_sched_build
+    call data_restore            ; keeps F
+    jp c, .badc                  ; B = 1: VID FMT?
+.nosched:
     call vid_stage_common        ; bracket returns OPEN (stages the
                                  ; ds decode vectors from vidDeliverDir)
     ; --- direct extras (same bracket) ---
@@ -7213,11 +7363,7 @@ nxv2_open_body:
     ; --- raw extras (same bracket) ---
     ld a, (vidP_Raw)
     or a
-    jr z, .rawxd
-    ld a, (vidRingBanksC)
-    add a, a
-    ld (vidRawSchedPage + DATA_WINDOW - OVL_ORG), a
-.rawxd:
+    call nz, vid_raw_stage
  IFDEF DEBUG
     ld hl, 0                     ; vidRingMin seed (no ring)
  ENDIF
@@ -7310,6 +7456,221 @@ vid_strm_validate:
     ld b, 4
     scf
     ret
+
+; ---------------------------------------------------------------------
+; vid_raw_sched_build - compile a raw clip's frame read into the
+; schedule bank (mapped at DATA_WINDOW by the caller): the 512-ini slide
+; and its ret, then from VR_SCHED: call vr_sector; per run of n bytes
+; (bounded by the sector, the column [gapped] or the page [flat])
+; call VR_SLIDE_END - 2n; at each boundary, in order, the column end
+; (ld l,0 / inc h), call vr_page, call vr_sector; after the last pixel
+; the pad read into VR_SCRATCH; ret. In: vidP_Shape, vidP_HeightB,
+; vidP_RawW, vidP_RawX0. Out: CF set = the schedule would pass
+; VR_SCHED_LIMIT (nothing written there). Corrupts all.
+; ---------------------------------------------------------------------
+vid_raw_sched_build:
+    ld hl, $A2ED                 ; ini
+    ld (VR_SLIDE), hl
+    ld hl, VR_SLIDE
+    ld de, VR_SLIDE + 2
+    ld bc, 1022
+    ldir                         ; the overlapping copy repeats the pair
+    ld a, $C9
+    ld (de), a                   ; ret at VR_SLIDE_END
+    ; pixel bytes w*h: w = 4k, so A:HL = 4 * k*h (k*h <= 80*256)
+    ld hl, (vidP_RawW)
+    srl h
+    rr l
+    srl h
+    rr l                         ; L = k
+    ld a, (vidP_HeightB)
+    or a
+    jr z, .h256
+    ld d, l
+    ld e, a
+    mul d, e
+    ex de, hl
+    jr .hk
+.h256:
+    ld h, l
+    ld l, a                      ; k*256 (A = 0)
+.hk:
+    xor a
+    add hl, hl
+    rla
+    add hl, hl
+    rla
+    ld (vrgPix), hl
+    ld (vrgPix+2), a
+    ; the first page starts x0 & 31 columns in
+    ld a, (vidP_RawX0)
+    and 31
+    ld b, a
+    ld a, 32
+    sub b
+    ld (vrgCols), a
+    ld b, a
+    ld a, (vidP_Shape)
+    or a
+    jr z, .flat
+    ld a, (vidP_HeightB)
+    or a
+    jr z, .flat
+    ld l, a                      ; gapped: the segment is a column of h
+    ld h, 0
+    ld (vrgSeg), hl
+    ld (vrgSegLen), hl
+    ld a, 1
+    jr .gset
+.flat:
+    ld h, b                      ; flat: the segment is the page, the
+    ld l, 0                      ; first one (32 - x0 & 31) * 256 long
+    ld (vrgSeg), hl
+    ld hl, $2000
+    ld (vrgSegLen), hl
+    xor a
+.gset:
+    ld (vrgGap), a
+    ld hl, 512
+    ld (vrgSec), hl
+    ld de, VR_SCHED
+    ld hl, vr_sector
+    call .ecall
+.loop:
+    ld hl, VR_SCHED_LIMIT - 19   ; one pass and the tail emit <= 19 bytes
+    or a
+    sbc hl, de
+    ret c
+    ld bc, (vrgSec)              ; n = min(sector, segment, pixels left)
+    ld hl, (vrgSeg)
+    or a
+    sbc hl, bc
+    jr nc, .n1
+    ld bc, (vrgSeg)
+.n1:
+    ld a, (vrgPix+2)
+    or a
+    jr nz, .n2
+    ld hl, (vrgPix)
+    sbc hl, bc                   ; CF clear from the or
+    jr nc, .n2
+    ld bc, (vrgPix)
+.n2:
+    call .eread
+    ld hl, (vrgSec)
+    or a
+    sbc hl, bc
+    ld (vrgSec), hl
+    ld hl, (vrgSeg)
+    or a
+    sbc hl, bc
+    ld (vrgSeg), hl
+    ld hl, (vrgPix)
+    or a
+    sbc hl, bc
+    ld (vrgPix), hl
+    ld a, (vrgPix+2)
+    sbc a, 0
+    ld (vrgPix+2), a
+    or h
+    or l
+    jr z, .fin                   ; last pixel: no column or page end
+    ld hl, (vrgSeg)
+    ld a, h
+    or l
+    jr nz, .nseg
+    ld hl, (vrgSegLen)
+    ld (vrgSeg), hl
+    ld a, (vrgGap)
+    or a
+    jr z, .page
+    ld a, $2E
+    ld hl, $2400
+    call .e3                     ; ld l, 0 / inc h
+    ld hl, vrgCols
+    dec (hl)
+    jr nz, .nseg
+    ld (hl), 32
+.page:
+    ld hl, vr_page
+    call .ecall
+.nseg:
+    ld hl, (vrgSec)
+    ld a, h
+    or l
+    jp nz, .loop
+    ld hl, 512
+    ld (vrgSec), hl
+    ld hl, vr_sector
+    call .ecall
+    jp .loop
+.fin:
+    ld bc, (vrgSec)              ; the last sector's pad, if any
+    ld a, b
+    or c
+    jr z, .end
+    ld a, $21
+    ld hl, VR_SCRATCH
+    call .e3                     ; ld hl, VR_SCRATCH
+    call .eread
+.end:
+    ld a, $C9
+    ld (de), a
+    or a
+    ret
+.eread:                          ; call VR_SLIDE_END - 2 * BC (BC <= 512)
+    ld hl, VR_SLIDE_END
+    or a
+    sbc hl, bc
+    sbc hl, bc
+.ecall:
+    ld a, $CD
+.e3:                             ; A, L, H to (DE)+. Preserves BC.
+    ld (de), a
+    inc de
+    ld a, l
+    ld (de), a
+    inc de
+    ld a, h
+    ld (de), a
+    inc de
+    ret
+    ; worst legal schedule: a read and a column end per column, a split
+    ; read and vr_sector per sector, the page calls, the pad read and ret
+    ASSERT VR_SCHED + 320*6 + 160*6 + 10*3 + 8 <= VR_SCHED_LIMIT
+
+; Stage a raw session's hot cells through vid_stage_common's open
+; VID_PAGE window (rubric 3). Corrupts AF, C.
+vid_raw_stage:
+    ld a, (vidRingBanksC)
+    add a, a
+    ld (vidRawSchedPage + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidRawSecC)
+    ld (vidRawSec + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidCapBlkC)
+    ld (vidRawCap + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidP_RawX0)
+    ld c, a
+    rlca
+    rlca
+    rlca
+    and 7                        ; x0 >> 5
+    ld (vidRawPage0 + DATA_WINDOW - OVL_ORG), a
+    ld a, c
+    and 31
+    add a, high VID_DST_WIN
+    ld (vidRawH0 + DATA_WINDOW - OVL_ORG), a
+    xor a
+    ld (vidRawTag + DATA_WINDOW - OVL_ORG), a
+    ret
+
+; vid_raw_sched_build state
+vrgSec:    dw 0                  ; bytes left in the sector
+vrgSeg:    dw 0                  ; bytes left in the column / page
+vrgSegLen: dw 0                  ; column height, or $2000 (flat)
+vrgPix:    ds 3                  ; pixel bytes left (24-bit)
+vrgCols:   db 0                  ; columns left in the page (gapped)
+vrgGap:    db 0                  ; 1 = gapped surface
 
 ; Common hot staging (both deliveries): fileEnd, the parameter block,
 ; ring count + bank list, DEBUG fill row, per-file SMC patches (stub
@@ -7411,6 +7772,18 @@ vid_stage_common:
     ; RAM decode (resident/streaming) or the SD-stream decode (direct).
     ; Patched EVERY open - a previous session may have left the other
     ; set. Same doc-08/rubric-3 bracket as the stub patches above. ---
+    ; Raw sessions: the frame decode and the pump's section-end pad.
+    ld a, (vidP_Raw)
+    ld (vidRaw + DATA_WINDOW - OVL_ORG), a
+    or a
+    ld hl, vid_decode_frame_ds
+    ld de, vid_ds_pad
+    jr z, .rawv
+    ld hl, vid_raw_frame
+    ld de, vid_raw_apad
+.rawv:
+    ld (vid_decode_any.raw + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_aud_pump.apad + 1 + DATA_WINDOW - OVL_ORG), de
     ld a, (vidDeliverDir)
     ld (vidDirect + DATA_WINDOW - OVL_ORG), a
     or a
@@ -7862,7 +8235,6 @@ vid_run_l2setup_body:
     nextreg NR_L2_CLIP, a        ; X1
     ld a, (vidP_ClipX2)
     nextreg NR_L2_CLIP, a        ; X2
-.clipY:
     ld a, (vidP_ClipY1)
     nextreg NR_L2_CLIP, a
     ld a, (vidP_ClipY2)
