@@ -32,8 +32,9 @@ PROTECTED = [
     "video_ctc_isr_stereo", "vid_decode_frame", "vid_decode_frame_ds", "vid_decode_any",
     "vid_ds_next", "vid_ds_byte", "vid_ds_blkopen", "vid_ds_pad", "vid_ds_xfer",
     "vid_ds_iblk", "vid_ds_copy_body", "vid_ds_pal", "vid_ds_done", "vid_pace_poll",
-    "vid_aud_stage", "vid_aud_pump", "vid_loop_rewind", "vid_dst_setup", "vid_dst_base", "vid_dst_next",
-    "vid_dst_norm_gap", "vid_dst_norm_flat", "vid_run_walk_h", "vid_next_run_h", "vid_run",
+    "vid_aud_stage", "vid_aud_pump", "vid_loop_rewind", "vid_dst_setup", "vid_dst_base",
+    "vid_dst_next", "vid_dst_norm_gap", "vid_dst_norm_flat", "vid_run_walk_h",
+    "vid_next_run_h", "vid_run",
 ]
 
 # (routine, variant, call targets). In that variant, every `call nn` (CD lo hi) in the new
@@ -231,8 +232,8 @@ class Image:
         return Rout(page, start, end, buf[:len(buf) - fill], fill)
 
     def fill_len(self, page, start, end, buf):
-        """ALIGN fill ending the span: zeros after the last SLD instruction line, with end
-        aligned past them (ALIGN writes no instruction line). 0 when there is none."""
+        """ALIGN fill ending the span: zeros after the last SLD instruction line, which must
+        never fall through (else the zeros run), with end aligned past them. Else 0."""
         if self.tsorted is None:
             return 0
         ts = self.tsorted.get(page, [])
@@ -240,11 +241,12 @@ class Image:
         if i < 0 or ts[i] < start:
             return 0
         try:
-            stop = ts[i] - start + insn(buf, ts[i] - start)[0]
+            last = Insn(ts[i] - start, *insn(buf, ts[i] - start))
         except Undecodable:
             return 0
+        stop = last.off + last.size
         n = len(buf) - stop
-        if n <= 0 or any(buf[stop:]) or (end & -end) <= n:
+        if n <= 0 or any(buf[stop:]) or (end & -end) <= n or not ends_flow(buf, last):
             return 0
         return n
 
@@ -286,20 +288,18 @@ class Image:
         return out
 
     def nearest_kept(self, v, page, new, npage):
-        """(names, offset): the nearest labels of page at or below v, same slot, that new
-        still has as address labels in npage; ([], None) when none."""
+        """(names, offset): of the labels of page nearest at or below v (same slot), those
+        new still has as address labels in npage. No walk-down: ([], None) when none."""
         vals, names = self.bypage.get(page, ([], []))
         i = bisect.bisect_right(vals, v) - 1
-        while i >= 0 and vals[i] >> 13 == v >> 13:
-            at, group = vals[i], []
-            while i >= 0 and vals[i] == at:
-                group.append(names[i])
-                i -= 1
-            kept = [n for n in group
-                    if new.syms.get(n, (-1, 0))[0] == npage and n not in new.equ]
-            if kept:
-                return kept, v - at
-        return [], None
+        if i < 0 or vals[i] >> 13 != v >> 13:
+            return [], None
+        at, group = vals[i], []
+        while i >= 0 and vals[i] == at:
+            group.append(names[i])
+            i -= 1
+        kept = [n for n in group if new.syms.get(n, (-1, 0))[0] == npage and n not in new.equ]
+        return (kept, v - at) if kept else ([], None)
 
     def check_trace(self, rout, ins):
         """Offset of an SLD instruction-line address that no decoded instruction starts at."""
@@ -355,8 +355,8 @@ def load(label, nex, sld):
 
 
 def follows(old, orout, vo, new, nrout, vn, kind, only=None):
-    """True when vn is where vo's label went: in a page vo can mean (in only, if given), the
-    nearest label at or below vo that new still has, plus the same offset, is vn in new."""
+    """True when vn is where vo's label went: in a page vo can mean (in only, if given), a
+    label nearest at or below vo still exists in new and its new address + offset is vn."""
     for page, any_off in old.pages_for(orout, kind, vo):
         if only is not None and page not in only:
             continue
@@ -371,11 +371,16 @@ def still_means(old, orout, vo, new, nrout, vn, kind):
     """None, or a note when equal operand bytes no longer reach the label they reached."""
     if kind not in ("mem", "rel"):
         return None                     # an immediate may be a constant
-    pages = [p for p, any_off in old.pages_for(orout, kind, vo) if any_off]
-    was = set().union(*(old.resolve(vo, p) for p in pages))    # shared slots: may be a window
+    cand = old.pages_for(orout, kind, vo)
+    pages = [p for p, any_off in cand if any_off]
+    if not pages:                       # shared slot: only a label at vo in one page alone
+        exact = [p for p, _ in cand if any(k == 0 for _, k in old.resolve(vo, p))]
+        pages = exact if len(exact) == 1 else []
+    was = set().union(*(old.resolve(vo, p) for p in pages))
     if not was or follows(old, orout, vo, new, nrout, vn, kind, only=pages):
         return None
-    return "same bytes, but " + "/".join(f"{n}+{k}" for n, k in sorted(was)) + " moved"
+    return ("same bytes, but " + "/".join(f"{n}+{k}" for n, k in sorted(was))
+            + " moved or is gone")
 
 
 # ---------------------------------------------------------------- comparison
@@ -436,7 +441,7 @@ def compare_plain(name, old, orout, new, nrout):
             vo, vn, o = op16(ob, x), op16(nb, y), x.op
         note = still_means(old, orout, vo, new, nrout, vn, x.kind)
         if note:
-            notes[x.off + o] = note
+            notes[x.off + o] = "; ".join(s for s in (notes.get(x.off + o), note) if s)
     if len(ob) != len(nb):
         o = min(len(ob), len(nb))
         notes[o] = "; ".join(s for s in (notes.get(o), f"length old {len(ob)} new {len(nb)}")
@@ -671,6 +676,37 @@ def without(tmp, tag, files, name):
     return write_copy(tmp, tag, *files, sld_lines=lines)
 
 
+def sld_edited(files, edit=None, extra=()):
+    """SLD lines of files, each through edit when given, then extra lines."""
+    lines = Path(files[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+    return [edit(x) if edit else x for x in lines] + list(extra)
+
+
+def renamed(old, new):
+    """SLD line edit: label old and its locals become new."""
+    def edit(line):
+        f = line.split("|")
+        if len(f) >= 8 and f[6] == "F" and (f[7] == old or f[7].startswith(old + ".")):
+            f[7] = new + f[7][len(old):]
+        elif len(f) >= 8 and f[6] == "L" and f[7].split(",")[1:2] == [old]:
+            d = f[7].split(",")
+            d[1] = new
+            f[7] = ",".join(d)
+        return "|".join(f)
+    return edit
+
+
+def nudged(name, d):
+    """SLD line edit: label name moves by d bytes."""
+    def edit(line):
+        f = line.split("|")
+        if len(f) >= 8 and ((f[6] == "F" and f[7] == name)
+                            or (f[6] == "L" and f[7].startswith(f",{name},,"))):
+            f[5] = str(int(f[5]) + d)
+        return "|".join(f)
+    return edit
+
+
 def find_insn(img, name, pred):
     buf = img.routine(name).buf
     for x in decode(buf):
@@ -786,6 +822,12 @@ def selftest():
         sa = img(afiles)
         check("6 bytes inserted before vid_ds_xfer, its ALIGN fill absorbs them", base, sa, 0,
               expect=[n_all, "relocated operands"])
+        ie = sa.syms["vid_ds_xfer.ie"]
+        extra = [f"selftest|1||0|{ie[0]}|{ie[1] + 1}|F|vid_ds_xfer.patch",
+                 f"selftest|1||0|{ie[0]}|{ie[1] + 1}|L|,vid_ds_xfer,patch,+local"]
+        check("LAB: as above, plus a local label at vid_ds_xfer.ie+1", base,
+              img(write_copy(tmp, "lab", *afiles, sld_lines=sld_edited(afiles, extra=extra))),
+              0, expect=[n_all, "relocated operands"])
 
         two = call_to(base.syms["vid_ds_pal"][1]) + call_to(base.syms["vid_ds_done"][1])
         check("two allowed calls inserted in vid_run, the ALIGN fill absorbs them", base,
@@ -812,9 +854,75 @@ def selftest():
               img(poke(base, tmp, "jpz", dfiles, "vid_ds_xfer", last.off, [0xCA])), 1,
               expect=[f"DIFF vid_ds_xfer +{last.off}: old C3 new CA", one])
         full = len(r.buf) + r.fill
+        grow = f"DIFF vid_ds_xfer +{len(r.buf)}: old -- new "
         check("non-zero byte in the ALIGN fill", base,
               img(poke(base, tmp, "fillnz", dfiles, "vid_ds_xfer", full - 1, [0x01])), 1,
-              expect=[f"length old {len(r.buf)} new {full}", one])
+              expect=[f"{grow}00 (length old {len(r.buf)} new {full})", one])
+        check("P4: the jp before the ALIGN fill replaced by three zero bytes", base,
+              img(poke(base, tmp, "p4", dfiles, "vid_ds_xfer", last.off, [0, 0, 0])), 1,
+              expect=[f"DIFF vid_ds_xfer +{last.off}: old C3 new 00",
+                      f"{grow}00 (length old {len(r.buf)} new {full})", one])
+        extra = [f"selftest|1||0|{r.page}|{r.start + len(r.buf)}|T|"]
+        check("P5: an SLD instruction line (nop) at the first fill byte", base,
+              img(write_copy(tmp, "p5", *dfiles, sld_lines=sld_edited(dfiles, extra=extra))),
+              1, expect=[f"{grow}00 (length old {len(r.buf)} new {full})", one])
+        check("P5b: ret at the first fill byte, no SLD instruction line", base,
+              img(poke(base, tmp, "p5b", dfiles, "vid_ds_xfer", len(r.buf), [0xC9])), 1,
+              expect=[f"{grow}C9 (length old {len(r.buf)} new {full})", one])
+        check("P3: one zero byte between vid_dst_setup (runs on) and vid_dst_base", base,
+              img(shifted(base, tmp, "p3", dfiles, "vid_dst_base", 0, b"\0",
+                          upto="vid_ds_iblk")), 1,
+              expect=["DIFF vid_dst_setup +29: old -- new 00 (length old 29 new 30)", one])
+        check("P3b: five zero bytes between vid_dst_setup and vid_dst_base", base,
+              img(shifted(base, tmp, "p3b", dfiles, "vid_dst_base", 0, bytes(5),
+                          upto="vid_ds_iblk")), 1,
+              expect=["DIFF vid_dst_setup +29: old -- new 00 (length old 29 new 34)", one])
+
+        # vid_ds_blkopen's call vid_sd_tok_h: renamed, retargeted and relocated targets
+        tok = base.syms["vid_sd_tok_h"][1]
+        x = find_insn(base, "vid_ds_blkopen",
+                      lambda b, i: b[i.off] == 0xCD and op16(b, i) == tok)
+        co, bl = x.off + 1, f"DIFF vid_ds_blkopen +{x.off + 1}: old {tok & 0xFF:02X} new "
+        gone = "(same bytes, but vid_sd_tok_h+0 moved or is gone"
+        check("P1: equal bytes, call target vid_sd_tok_h renamed in the SLD", base,
+              img(write_copy(tmp, "p1", *dfiles, sld_lines=sld_edited(
+                  dfiles, renamed("vid_sd_tok_h", "vidraw_probe_other")))), 1,
+              expect=[f"{bl}{tok & 0xFF:02X} {gone}", one])
+        p2a = shifted(base, tmp, "p2a_s", dfiles, "vid_sd_tok_h", 0, b"\xC9\0\0",
+                      label="vidraw_probe_new", upto="vid_ds_iblk")
+        ctl = poke(img(p2a), tmp, "p2a_c", p2a, "vid_ds_blkopen", co, le16(tok))
+        check("P2a-control: routine inserted at vid_sd_tok_h's address, call left there",
+              base, img(ctl), 1, expect=[f"{bl}{tok & 0xFF:02X} {gone}", one])
+        check("P2a: as P2a-control, vid_sd_tok_h also renamed vid_sd_tok2_h", base,
+              img(write_copy(tmp, "p2a", *ctl, sld_lines=sld_edited(
+                  ctl, renamed("vid_sd_tok_h", "vid_sd_tok2_h")))), 1,
+              expect=[f"{bl}{tok & 0xFF:02X} {gone}", one])
+        g1 = shifted(base, tmp, "p2b_s1", dfiles, "vid_sd_cmd_h", 0, b"\0\0",
+                     upto="vid_ds_iblk")
+        g2 = shifted(img(g1), tmp, "p2b_s2", g1, "vid_sd_tok_h", 0, b"\xC9\0\0",
+                     label="vidraw_probe_new", upto="vid_ds_iblk")
+        j2 = img(g2)
+        check("P2b-control: two shifts, every operand relocated, labels kept", base, j2, 0,
+              expect=[n_all, "relocated operands"])
+        new = j2.syms["vidraw_probe_new"][1]
+        g3 = poke(j2, tmp, "p2b_p", g2, "vid_ds_blkopen", co, le16(new))
+        check("P2b: call retargeted to the inserted routine, vid_sd_tok_h renamed", base,
+              img(write_copy(tmp, "p2b", *g3, sld_lines=sld_edited(
+                  g3, renamed("vid_sd_tok_h", "vid_sd_tok2_h")))), 1,
+              expect=[f"{bl}{new & 0xFF:02X}", one])
+        tok2 = j2.syms["vid_sd_tok_h"][1]
+        check("P2r: call follows vid_sd_tok_h renamed vid_sd_tok2_h - refused, review by hand",
+              base, img(write_copy(tmp, "p2r", *g2, sld_lines=sld_edited(
+                  g2, renamed("vid_sd_tok_h", "vid_sd_tok2_h")))), 1,
+              expect=[f"{bl}{tok2 & 0xFF:02X}", one])
+
+        sfx = base.syms["sfxChan0"][1]
+        x = find_insn(base, "vid_run", lambda b, i: i.kind == "mem" and op16(b, i) == sfx)
+        check("P6: slot 6, sfxChan0 moved +1, vid_run operand bytes unchanged", base,
+              img(write_copy(tmp, "p6", *dfiles, sld_lines=sld_edited(
+                  dfiles, nudged("sfxChan0", 1)))), 1,
+              expect=[f"DIFF vid_run +{x.off + x.op}: old {sfx & 0xFF:02X} new "
+                      f"{sfx & 0xFF:02X} (same bytes, but sfxChan0+0 moved or is gone", one])
 
         check("labelled 3 bytes inserted where vid_dst_setup runs on into vid_dst_base", base,
               img(shifted(base, tmp, "runon", dfiles, "vid_dst_base", 0, b"\0\0\0",
