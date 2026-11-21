@@ -72,8 +72,12 @@ ula_cls:
 ; Called once from boot after hw_init, before interrupts are enabled.
 ; Corrupts AF, BC, DE.
 audio_init:
-    ld a, $83                       ; kill any in-flight DMA (now unused by the
-    ld bc, DMA_PORT                 ; sample path but harmless - the DMA is free)
+    ld a, $83                       ; kill any in-flight DMA
+    ld bc, DMA_PORT
+    out (c), a
+    ld a, DDMA_MODE                 ; and clear the blitter's mode flags: a program
+    out (c), a                      ; run before this one may have left them set,
+    xor a                           ; and the sprite upload sends no reset
     out (c), a
     ; SP10 CTC pivot: stop the sample CTC channel (double soft-reset = timer +
     ; interrupt off) so no per-sample DAC feed survives a reset, error, or exit.

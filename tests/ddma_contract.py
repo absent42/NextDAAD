@@ -672,10 +672,7 @@ def test_stream_shape(syms):
         for n in ("ddmaRowLen", "ddmaRows", "ddmaStrideA", "ddmaStrideB"):
             mc.poke16(n, 4)
         mc.call(name, **kw)
-        s = mc.blit.stream
         check_shape(mc, name)
-        if s.count(0x87) != 1 and name != "ddma_fill":
-            pass                                        # $87 can occur as data; transfers is the count
         if len(mc.blit.transfers) != 1:
             raise Fail(f"{name}: {len(mc.blit.transfers)} transfers, expected 1")
 
@@ -872,6 +869,33 @@ def test_pos_320_clipped(syms):
     check_shape(mc, "gfx_pos_rows mode 1")
 
 
+def test_pos_equal_halves(syms):
+    """A straddled row whose two pieces are the same size: the second is a short reload."""
+    for mode in (0, 1):
+        mc = fresh(syms)
+        pix = stage(mc, mode, 100, 190)                 # row 158: 72 bytes left in its bank
+        paint_ee(mc, 9)
+        rect_vars(mc, 30, 50, 64, 40, 40, 140)          # columns 40-103: 32 + 32 at the bank edge
+        mc.call("gfx_pos_rows", a=9, budget=6_000_000)
+        check_rect(mc, f"equal halves mode {mode}", 9, mode, pix, 100, 30, 50, 64, 40, 40, 140)
+        full = [t["full"] for t in mc.blit.transfers]
+        if full[18:21] != [True, False, True]:
+            raise Fail(f"equal halves mode {mode}: full/reload around the straddle is {full[18:21]}, "
+                       f"expected full, reload, full")
+        check_shape(mc, f"equal halves mode {mode}")
+
+
+def test_boot_flags_cleared(syms):
+    """audio_init (boot and every teardown) stops the DMA and clears the blitter's mode flags,
+    so a DMA user that sends no reset never inherits another program's flags."""
+    mc = fresh(syms)
+    a = mc.sym("audio_init")
+    want = bytes([0x3E, 0x83, 0x01, 0x6B, 0x00, 0xED, 0x79, 0x3E, 0xDF, 0xED, 0x79, 0xAF, 0xED, 0x79])
+    if bytes(mc.mem[a:a + len(want)]) != want:
+        raise Fail(f"audio_init starts {bytes(mc.mem[a:a + len(want)]).hex()}, expected $83 then $DF $00 "
+                   f"to port $6B")
+
+
 def test_fallback_row(syms):
     for mode, width in ((0, 256), (1, 320)):
         mc = fresh(syms)
@@ -995,7 +1019,7 @@ def test_scroll_pad(syms):
 TESTS = [test_bank_addr, test_fill, test_copy_cross_64k, test_rect_256, test_rect_320_row,
          test_rect_split_values, test_stream_shape, test_pad, test_clear_back, test_copy_surface,
          test_blit_full, test_blit_short_clears, test_pos_256_clipped, test_pos_320_clipped,
-         test_fallback_row, test_reload_shape,
+         test_pos_equal_halves, test_boot_flags_cleared, test_fallback_row, test_reload_shape,
          test_scroll_full, test_scroll_narrow, test_scroll_h1, test_scroll_pad]
 
 

@@ -4,11 +4,13 @@
 #   sd\LEGBLT2\  Release, picture walk, 320x256 set
 #   sd\LEGBLT3\  DEBUG,   picture walk, 256x192 set (the fallback stream steps draw here only)
 #   sd\LEGBLT4\  DEBUG,   picture walk, 320x256 set
-#   sd\LEGBLT5\  Release, colour-cycle fixture (cycling and a sprite across draws and scrolls)
+#   sd\LEGBLT5\  Release, colour-cycle fixture (cycling across scroll bursts)
 #
 # The walk is tests\l2pos.dsf with three condacts added in front of step 1, so every step runs
 # with a looped 20000 Hz sample on each effect channel and a looped AKY song:
 #   SFX 1 12 (001.WAV, channel 1), SFX 2 14 (002.WAV, channel 2), SFX 1 7 (001.AKY).
+# A last step is added after the walk: a full-screen 80-column window scrolled 5 times (the
+# largest single transfer the scroll makes).
 #
 #   pwsh -File tests\blit_legs.ps1
 #
@@ -46,6 +48,91 @@ $dsf = [IO.File]::ReadAllText("$PSScriptRoot\l2pos.dsf")
 $anchor = '> _ _   MES "STEP 1 LOC1+TA "'
 if (([regex]::Matches($dsf, [regex]::Escape($anchor))).Count -ne 1) { throw 'l2pos.dsf: step 1 entry not found exactly once' }
 $dsf = $dsf.Replace($anchor, "> _ _   SFX 1 12`n        SFX 2 14`n        SFX 1 7`n        MES `"STEP 1 LOC1+TA `"")
+$full = @'
+; silicon only: full-screen scroll, the largest scroll transfer
+> _ _   EQ fStep 25
+        WINDOW 6
+        WINAT 0 0
+        WINSIZE 32 80
+        MODE 2
+        MES "FULL SCREEN LINE 01"
+        NEWLINE
+        MES "FULL SCREEN LINE 02"
+        NEWLINE
+        MES "FULL SCREEN LINE 03"
+        NEWLINE
+        MES "FULL SCREEN LINE 04"
+        NEWLINE
+        MES "FULL SCREEN LINE 05"
+        NEWLINE
+        MES "FULL SCREEN LINE 06"
+        NEWLINE
+        MES "FULL SCREEN LINE 07"
+        NEWLINE
+        MES "FULL SCREEN LINE 08"
+        NEWLINE
+        MES "FULL SCREEN LINE 09"
+        NEWLINE
+        MES "FULL SCREEN LINE 10"
+        NEWLINE
+        MES "FULL SCREEN LINE 11"
+        NEWLINE
+        MES "FULL SCREEN LINE 12"
+        NEWLINE
+        MES "FULL SCREEN LINE 13"
+        NEWLINE
+        MES "FULL SCREEN LINE 14"
+        NEWLINE
+        MES "FULL SCREEN LINE 15"
+        NEWLINE
+        MES "FULL SCREEN LINE 16"
+        NEWLINE
+        MES "FULL SCREEN LINE 17"
+        NEWLINE
+        MES "FULL SCREEN LINE 18"
+        NEWLINE
+        MES "FULL SCREEN LINE 19"
+        NEWLINE
+        MES "FULL SCREEN LINE 20"
+        NEWLINE
+        MES "FULL SCREEN LINE 21"
+        NEWLINE
+        MES "FULL SCREEN LINE 22"
+        NEWLINE
+        MES "FULL SCREEN LINE 23"
+        NEWLINE
+        MES "FULL SCREEN LINE 24"
+        NEWLINE
+        MES "FULL SCREEN LINE 25"
+        NEWLINE
+        MES "FULL SCREEN LINE 26"
+        NEWLINE
+        MES "FULL SCREEN LINE 27"
+        NEWLINE
+        MES "FULL SCREEN LINE 28"
+        NEWLINE
+        MES "FULL SCREEN LINE 29"
+        NEWLINE
+        MES "FULL SCREEN LINE 30"
+        NEWLINE
+        MES "FULL SCREEN LINE 31"
+        NEWLINE
+        MES "FULL SCREEN LINE 32"
+        NEWLINE
+        MES "FULL SCREEN LINE 33"
+        NEWLINE
+        MES "FULL SCREEN LINE 34"
+        NEWLINE
+        MES "FULL SCREEN LINE 35"
+        NEWLINE
+        MES "FULL SCREEN LINE 36"
+        NEWLINE
+        MES "FULL SCROLL DONE"
+        PLUS fStep 1
+        DONE
+'@
+if (([regex]::Matches($dsf, '(?m)^/PRO 5\r?$')).Count -ne 1) { throw 'l2pos.dsf: /PRO 5 not found exactly once' }
+$dsf = [regex]::Replace($dsf, '(?m)^/PRO 5\r?$', ($full + "`n/PRO 5"))
 [IO.File]::WriteAllText("$work\BLT.DSF", $dsf)
 Push-Location $work
 try { Invoke-Checked 'ndrc' { & $ndrc nextdaad EN BLT.DSF BLT.DDB -auto-tokens } | Out-Null }
@@ -103,7 +190,7 @@ LEGBLT1  Release  picture walk, 256x192 set, samples and music playing
 LEGBLT2  Release  picture walk, 320x256 set, samples and music playing
 LEGBLT3  DEBUG    picture walk, 256x192 set: the fallback stream steps 10 and 10A draw here
 LEGBLT4  DEBUG    picture walk, 320x256 set: the fallback stream steps 10 and 10A draw here
-LEGBLT5  Release  colour-cycle fixture: cycling and a sprite across draws and scrolls
+LEGBLT5  Release  colour-cycle fixture: colour cycling across scroll bursts
 Copy each folder whole to the card and launch NEXTDAAD.NEX from inside it.
 '@ | Set-Content (Join-Path $sd 'LEGBLT.TXT') -Encoding ascii
 'staged: sd\LEGBLT1-5, index sd\LEGBLT.TXT'

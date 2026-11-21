@@ -42,8 +42,8 @@
 ; The video passes B and C do NOT cover this. video.asm's own kernels
 ; (vid_copy_dma :1595, vid_fill_dma :1570) still carry di/ei around
 ; their arms AND their transfers, so the frame ISR cannot reach the CPU
-; during a video DMA whatever $CC says. dma_copy (overlay2.asm:562) is
-; the ONLY transfer in the tree that runs with interrupts live, so it is
+; during a video DMA whatever $CC says. The picture blits (overlay2.asm)
+; are the ONLY transfers in the tree that run with interrupts live, so they are
 ; the only place the $CC permission is load-bearing - and location
 ; picture drawing is the only shipped thing that reaches it.
 ;
@@ -94,7 +94,7 @@
 ;        is a separate phase and not the whole burst.
 ;   4/5  20 x (GFX 0 1 + GFX 0 0). THE ACCUMULATOR. GFX 0 1 copies
 ;        front->back, GFX 0 0 copies back->front, both through
-;        l2_copy_back_front -> dma_copy. Each copy's SOURCE is the
+;        l2_copy_back_front's blitter copies. Each copy's SOURCE is the
 ;        previous copy's DESTINATION, so every damaged byte is carried
 ;        forward into every later copy and into the final image. Damage
 ;        adds up over the whole phase instead of being overwritten, and
@@ -102,8 +102,8 @@
 ;        burst ends. Sensitivity scales with the iteration count rather
 ;        than with the instantaneous fault rate, and the verdict is read
 ;        off a still image at leisure instead of caught in flight.
-;        It is also the densest DMA in the fixture - 768 dma_copy calls
-;        per iteration at ~73% of wall time inside a transfer, against
+;        It is also the densest DMA in the fixture - a whole surface per
+;        copy, most of the wall time inside a transfer, against
 ;        ~10% for a DISPLAY - so it carries the audio readout too.
 ;
 ; Phase 4 is seeded by phase 3's last render, so damage from that render

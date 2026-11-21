@@ -90,6 +90,7 @@ im2_init:
                                          ; left running would corrupt picture and
                                          ; audio state. The blits rely on it
                                          ; (ddma.inc); do not relax.
+    ASSERT DDMA_CTC_CHANNELS == 2        ; the two channels admitted below size every blit's pad
     nextreg NR_DMA_INT_EN_2, %00000011   ; $CD bit 0 = CTC channel 0 (DAC sample
                                          ; timer) may pre-empt a DMA - safe because
                                          ; ctc_isr is MMU-free by contract (AF/HL
