@@ -5,8 +5,10 @@ Runs the EMITTED bytes of build\\nextdaad.nex on the tests\\ddma_contract.py Z80
 the MMU applied and port $EB fed by a model of the SD card's CMD18 stream: the cold schedule
 generator (vid_raw_sched_build) and hot-cell staging (vid_raw_stage), the raw frame decode
 (vid_raw_frame) with its sector opens, surface page step, palette sector and frame tag
-(vr_sector, vr_sector_n, vr_page, vid_raw_pal, vid_raw_apad), and the per-session operand patches
-(vid_stage_common.vec).
+(vr_sector, vr_sector_n, vr_page, vid_raw_pal, vid_raw_apad), the per-session operand patches
+(vid_stage_common.vec), the raw sound handlers on the alternate set (video_ctc_isr_raw_st,
+video_ctc_isr_raw_mono), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime)
+and the handler choice in vid_run_l2setup_body.
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
 
@@ -29,6 +31,8 @@ STACK = 0xBD00
 RET = 0x0001
 PORT_SPI = 0xEB
 SURF_FILL = 0x55
+DAC_L, DAC_R, DAC_M = 0xF3, 0xF9, 0xB3     # VID_DAC_LEFT, VID_DAC_RIGHT, VID_DAC_MONO
+DAC_PORTS = (DAC_L, DAC_R, DAC_M)
 
 SHAPES = [(0, 256, 192), (1, 320, 160), (1, 320, 192), (1, 280, 224), (1, 320, 240),
           (1, 256, 240)]
@@ -138,6 +142,11 @@ def _ini(c):
     c.fz = 1 if c.b == 0 else 0
 
 
+def _ldi(c):
+    c.m[c.de] = c.m[c.hl]
+    c.hl, c.de, c.bc = (c.hl + 1) & 0xFFFF, (c.de + 1) & 0xFFFF, (c.bc - 1) & 0xFFFF
+
+
 def _reti(c):
     c.pc = c.pop()
 
@@ -162,19 +171,21 @@ def _out_c_r(r):
 
 
 EXT = {0xDB: _in_a_n, 0xD3: _out_n_a, 0xD9: _exx, 0x08: _ex_af, 0xF3: _di, 0xFB: _ei}
-ED_EXT = {0xA2: _ini, 0x4D: _reti, 0x45: _reti, 0x23: _swapnib}
+ED_EXT = {0xA2: _ini, 0xA0: _ldi, 0x4D: _reti, 0x45: _reti, 0x23: _swapnib}
 for _r in range(8):
     ED_EXT[0x40 | _r << 3] = _in_r_c(_r)
     ED_EXT[0x41 | _r << 3] = _out_c_r(_r)
 
 
 class RawCPU(CPU):
-    """ddma_contract's model plus the port, alternate-set and interrupt opcodes."""
+    """ddma_contract's model plus the port, alternate-set and interrupt opcodes. IX and IY
+    are held as values only: no DD/FD opcode is modelled, so code that touches them fails."""
 
     def __init__(self, machine):
         super().__init__(machine)
         self.at = 0
         self.iff = 1
+        self.ix = self.iy = 0
         self.alt = {r: 0 for r in "bcdehla"}
         self.alt["f"] = (0, 0, 0)
 
@@ -221,6 +232,7 @@ class RawMachine(Machine):
         self.mmu_writes = []
         self.sel = 0
         self.card = None
+        self.dac = None             # a list: DAC port writes (low byte, value) are logged
         self.cpu = RawCPU(self)
 
     def map(self, slot, page):
@@ -260,6 +272,8 @@ class RawMachine(Machine):
             self.sel = v
         elif port == 0x253B:
             self.nextreg(self.sel, v)
+        elif self.dac is not None and port & 0xFF in DAC_PORTS:
+            self.dac.append((port & 0xFF, v))
         else:
             raise Fail(f"write to port ${port:04X} at ${self.cpu.at:04X}")
 
@@ -880,10 +894,384 @@ def test_raw_stage():
             raise Fail(f"x0 {x0} bank {bank}: {got}, expected {want}")
 
 
+# --------------------------------------------------------------------------- sound handlers
+
+MAIN = {"a": 0x5A, "b": 0x12, "c": 0x34, "d": 0x56, "e": 0x78, "h": 0x9A, "l": 0xBC}
+MAIN_F = (1, 0, 1)                          # fz, fc, fs
+ALT_BCDE = {"b": 0x11, "c": 0x22, "d": 0x33, "e": 0x44}
+
+
+def set_main(cpu):
+    for k, v in MAIN.items():
+        setattr(cpu, k, v)
+    cpu.fz, cpu.fc, cpu.fs = MAIN_F
+    cpu.ix, cpu.iy = 0xDEAD, 0xBEEF
+
+
+def main_kept(cpu, what, but=()):
+    got = {k: getattr(cpu, k) for k in MAIN if k not in but}
+    want = {k: v for k, v in MAIN.items() if k not in but}
+    if got != want or (cpu.fz, cpu.fc, cpu.fs) != MAIN_F or (cpu.ix, cpu.iy) != (0xDEAD, 0xBEEF):
+        raise Fail(f"{what}: main set {got} F {(cpu.fz, cpu.fc, cpu.fs)} IX ${cpu.ix:04X} "
+                   f"IY ${cpu.iy:04X}, expected {want} F {MAIN_F} IX $DEAD IY $BEEF")
+
+
+def alt_hl(cpu):
+    return cpu.alt["h"] << 8 | cpu.alt["l"]
+
+
+def set_alt_hl(cpu, v):
+    cpu.alt["h"], cpu.alt["l"] = v >> 8, v & 0xFF
+
+
+def ring_pattern():
+    """Ring bytes that differ from their neighbours and from the same offset a page away."""
+    return bytes((i * 37 + 11 + (i >> 8) * 101) & 0xFF for i in range(S("NXV_AUD_RING")))
+
+
+def isr_machine():
+    mc = RawMachine(SYMS)
+    mc.map(7, S("VID_PAGE"))
+    ring = ring_pattern()
+    base = S("vidAudBuf")
+    mc.mem[base:base + len(ring)] = ring
+    mc.dac = []
+    return mc, ring
+
+
+def isr_tick(mc, name, hlp):
+    """One interrupt into handler name: IFF clear (the acknowledge), HL' = hlp, run to RETI.
+    Asserts the main set, IX, IY, BC', DE' and SP are kept, no memory or NR write, IFF set,
+    and the last three bytes executed are FB ED 4D. Returns HL'."""
+    cpu = mc.cpu
+    set_main(cpu)
+    cpu.alt.update(ALT_BCDE)
+    set_alt_hl(cpu, hlp)
+    cpu.iff = 0
+    cpu.sp = STACK
+    cpu.push(RET)
+    before, nr0 = bytes(mc.mem), len(mc.nrlog)
+    pcs = []
+    cpu.pc = S(name)
+    while cpu.pc != RET:
+        if len(pcs) > 64:
+            raise Fail(f"{name}: no RETI after 64 instructions")
+        pcs.append(cpu.pc)
+        cpu.step()
+    main_kept(cpu, name)
+    if cpu.sp != STACK or {k: cpu.alt[k] for k in ALT_BCDE} != ALT_BCDE:
+        raise Fail(f"{name}: SP ${cpu.sp:04X} or BC'/DE' changed")
+    if bytes(mc.mem) != before or len(mc.nrlog) != nr0:
+        raise Fail(f"{name}: wrote memory or a next register")
+    if cpu.iff != 1:
+        raise Fail(f"{name}: returned with interrupts disabled")
+    p, q = pcs[-2], pcs[-1]
+    if (mc.mem[p], bytes(mc.mem[q:q + 2]), q - p) != (0xFB, b"\xED\x4D", 1):
+        raise Fail(f"{name}: last bytes executed {mc.mem[p]:02X} {bytes(mc.mem[q:q + 2]).hex()}"
+                   f" at ${p:04X}/${q:04X}, expected FB ED 4D")
+    return alt_hl(cpu)
+
+
+def test_isr_stereo():
+    if (S("VID_DAC_LEFT"), S("VID_DAC_RIGHT")) != (DAC_L, DAC_R):
+        raise Fail("VID_DAC_LEFT / VID_DAC_RIGHT are not $F3 / $F9")
+    mc, ring = isr_machine()
+    base, n = S("vidAudBuf"), S("NXV_AUD_RING")
+    for off, nxt in ((10, 12), (0xFE, 0x100), (n - 2, 0)):
+        mc.dac = []
+        hl = isr_tick(mc, "video_ctc_isr_raw_st", base + off)
+        want = [(DAC_L, ring[off]), (DAC_R, ring[off + 1])]
+        if mc.dac != want or hl != base + nxt:
+            raise Fail(f"HL' = base+${off:X}: ports {mc.dac}, HL' ${hl:04X}; expected {want}, "
+                       f"${base + nxt:04X}")
+    mc.dac, hl = [], base                    # a whole lap: every pair in order, back to base
+    for _ in range(n // 2):
+        hl = isr_tick(mc, "video_ctc_isr_raw_st", hl)
+    want = [(DAC_R if i & 1 else DAC_L, ring[i]) for i in range(n)]
+    if mc.dac != want or hl != base:
+        bad = next((i for i, (x, y) in enumerate(zip(mc.dac, want)) if x != y), len(mc.dac))
+        raise Fail(f"lap: first wrong write {bad} of {len(want)}, HL' ${hl:04X}")
+
+
+def test_isr_mono():
+    if S("VID_DAC_MONO") != DAC_M:
+        raise Fail("VID_DAC_MONO is not $B3")
+    mc, ring = isr_machine()
+    base, n = S("vidAudBuf"), S("NXV_AUD_RING")
+    for off, nxt in ((10, 11), (0xFF, 0x100), (n - 1, 0)):
+        mc.dac = []
+        hl = isr_tick(mc, "video_ctc_isr_raw_mono", base + off)
+        if mc.dac != [(DAC_M, ring[off])] or hl != base + nxt:
+            raise Fail(f"HL' = base+${off:X}: ports {mc.dac}, HL' ${hl:04X}; expected "
+                       f"[($B3, {ring[off]})], ${base + nxt:04X}")
+    mc.dac, hl = [], base
+    for _ in range(n):
+        hl = isr_tick(mc, "video_ctc_isr_raw_mono", hl)
+    if mc.dac != [(DAC_M, v) for v in ring] or hl != base:
+        raise Fail(f"lap: {len(mc.dac)} writes, HL' ${hl:04X}")
+
+
+def span(name):
+    """(start, bytes) of routine name: to the next non-local label on VID_PAGE."""
+    hot, start = S("VID_PAGE"), S(name)
+    nxt = min(v for k, (p, v) in SYMS.items() if p == hot and "." not in k and v > start)
+    rd = RawMachine(SYMS)
+    return start, bytes(rd.mem[start:nxt])
+
+
+def test_isr_static():
+    from vidraw_oldpaths import decode, ends_flow
+    for name, ports in (("video_ctc_isr_raw_st", {DAC_L, DAC_R}),
+                        ("video_ctc_isr_raw_mono", {DAC_M})):
+        start, buf = span(name)
+        ins = decode(buf)
+        offs = {x.off for x in ins}
+        retis = 0
+        for x in ins:
+            b = buf[x.off:x.off + x.size]
+            at = f"{name}+{x.off} ({b.hex(' ').upper()})"
+            if b[0] in (0xC5, 0xD5, 0xE5, 0xF5) or b[:2] == b"\xED\x8A":
+                raise Fail(f"{at}: push")
+            if b[:2] in (b"\xED\x91", b"\xED\x92"):
+                raise Fail(f"{at}: nextreg")
+            if b[0] in (0xDD, 0xFD):
+                raise Fail(f"{at}: IX/IY")
+            if b[0] == 0xD3 and (b[1] == 0x6B or b[1] not in ports):
+                raise Fail(f"{at}: out to ${b[1]:02X}")
+            if b[0] == 0xED and (b[1] & 0xC7 == 0x41 or b[1] in (0x90, 0xA3, 0xAB, 0xB3, 0xBB)):
+                raise Fail(f"{at}: port write by (C)")
+            if b[0] in (0xC3, 0xCD, 0xC9, 0xE9) or (b[0] & 0xC0 == 0xC0 and b[0] & 7 in (0, 2, 4, 7)):
+                raise Fail(f"{at}: leaves the handler other than by RETI")
+            if x.kind == "rel" and x.off + 2 + (b[1] - 256 if b[1] > 127 else b[1]) not in offs:
+                raise Fail(f"{at}: jumps out of the handler")
+            retis += b == b"\xED\x4D"
+        if not retis or not ends_flow(buf, ins[-1]):
+            raise Fail(f"{name}: no RETI, or falls through its end")
+
+
+def test_rd_bytes():
+    mc = RawMachine(SYMS)
+    b = S("vidAudBuf")
+    want = {"vid_raw_rd_hl": bytes.fromhex("F3D9E5D9FBE1C9"),
+            "vid_raw_rd_de": bytes.fromhex("F3D9E5D9FBD1C9"),
+            "vid_raw_prime": bytes([0xD9, 0x21, b & 0xFF, b >> 8, 0xD9, 0xC9])}
+    for name, w in want.items():
+        got = bytes(mc.mem[S(name):S(name) + len(w)])
+        if got != w:
+            raise Fail(f"{name}: {got.hex(' ').upper()}, expected {w.hex(' ').upper()}")
+    cpu = mc.cpu
+    for name, reg in (("vid_raw_rd_hl", "h"), ("vid_raw_rd_de", "d")):
+        set_main(cpu)
+        cpu.alt.update(ALT_BCDE)
+        set_alt_hl(cpu, 0x6789)
+        cpu.iff = 1
+        mc.run(name)
+        got = getattr(cpu, reg + ("l" if reg == "h" else "e"))
+        main_kept(cpu, name, but=(reg, "l" if reg == "h" else "e"))
+        if (got, alt_hl(cpu), cpu.iff) != (0x6789, 0x6789, 1):
+            raise Fail(f"{name}: read ${got:04X}, HL' ${alt_hl(cpu):04X}, IFF {cpu.iff}")
+    for iff in (0, 1):
+        set_main(cpu)
+        set_alt_hl(cpu, 0x1234)
+        cpu.iff = iff
+        mc.run("vid_raw_prime")
+        main_kept(cpu, "vid_raw_prime")
+        if (alt_hl(cpu), cpu.iff) != (b, iff):
+            raise Fail(f"vid_raw_prime: HL' ${alt_hl(cpu):04X} IFF {cpu.iff}")
+
+
+def ix_form():
+    b = S("vidAudBuf")
+    return bytes([0xDD, 0x21, b & 0xFF, b >> 8])
+
+
+def test_patch_sites_default():
+    mc = RawMachine(SYMS)                    # MMU7 = VID_PAGE as assembled
+    for name, w in (("vid_pace_poll.rd", b"\xDD\xE5\xE1"), ("vid_aud_pump.rd", b"\xDD\xE5\xD1"),
+                    ("vid_run.ixp1", ix_form()), ("vid_run.ixp2", ix_form())):
+        got = bytes(mc.mem[S(name):S(name) + len(w)])
+        if got != w:
+            raise Fail(f"{name}: {got.hex(' ').upper()}, expected {w.hex(' ').upper()}")
+
+
+def patch_session(mc, direct, raw):
+    """vid_stage_common.vec as an open runs it: vidDeliverDir and vidP_Raw seeded, VID_PAGE
+    at MMU6 (the open's bracket). Only VID_PAGE and the stack may change."""
+    hot = S("VID_PAGE")
+    mc.map(7, S("VID_PAGE2"))
+    mc.map(6, hot)
+    mc.poke("vidDeliverDir", direct)
+    mc.poke("vidP_Raw", raw)
+    mc.sync()
+    before = bytes(mc.phys)
+    mc.run("vid_stage_common.vec")
+    stray_writes(before, bytes(mc.phys),
+                 {hot: True, 5: lambda k: (STACK - 0x100) - 0xA000 <= k < STACK - 0xA000})
+    mc.map(6, 12)
+    mc.map(7, hot)
+
+
+def hot_page(mc):
+    mc.sync()
+    h = S("VID_PAGE")
+    return bytes(mc.phys[h * SLOT:(h + 1) * SLOT])
+
+
+def le(v):
+    return bytes([v & 0xFF, v >> 8])
+
+
+def vec_writes(direct, raw):
+    """[(address, bytes)]: every byte the .vec tail sets for an open."""
+    nxt, fetch, cj, pal, term = (("vid_ds_next", "vid_ds_byte", "vid_ds_copy_body", "vid_ds_pal",
+                                  "vid_ds_done") if direct else
+                                 ("vid_next", "vid_fetch_ram", "vid_copy_body", "vid_op_pal",
+                                  "vid_dec_done"))
+    out = [(S("vid_fetch.vec") + 1, le(S(fetch))), (S("vid_slow_op.cj") + 1, le(S(cj))),
+           (S("vid_stub") + S("VOP_PAL") + 1, le(S(pal))), (S("vid_term_exit") + 1, le(S(term)))]
+    out += [(S(k + ".next") + 1, le(S(nxt)))
+            for k in ("vid_skip_body", "vid_run_body", "vid_op_kstart")]
+    out += [(S("vid_decode_any.raw") + 1, le(S("vid_raw_frame" if raw else "vid_decode_frame_ds"))),
+            (S("vid_aud_pump.apad") + 1, le(S("vid_raw_apad" if raw else "vid_ds_pad")))]
+    if raw:
+        prime = b"\xCD" + le(S("vid_raw_prime")) + b"\x00"
+        out += [(S("vid_pace_poll.rd"), b"\xCD" + le(S("vid_raw_rd_hl"))),
+                (S("vid_aud_pump.rd"), b"\xCD" + le(S("vid_raw_rd_de"))),
+                (S("vid_run.ixp1"), prime), (S("vid_run.ixp2"), prime)]
+    else:
+        out += [(S("vid_pace_poll.rd"), b"\xDD\xE5\xE1"), (S("vid_aud_pump.rd"), b"\xDD\xE5\xD1"),
+                (S("vid_run.ixp1"), ix_form()), (S("vid_run.ixp2"), ix_form())]
+    return out + [(S("vidRaw"), bytes([raw])), (S("vidDirect"), bytes([direct]))]
+
+
+def with_writes(page, writes):
+    page = bytearray(page)
+    for a, bs in writes:
+        if not 0xE000 <= a <= 0x10000 - len(bs):
+            raise Fail(f"vec_writes: ${a:04X} is not on the hot page")
+        page[a - 0xE000:a - 0xE000 + len(bs)] = bs
+    return bytes(page)
+
+
+def describe(want, got):
+    """The first differing hot page bytes, each named by the nearest label at or below."""
+    hot = S("VID_PAGE")
+    labels = sorted((v, k) for k, (p, v) in SYMS.items() if p == hot and 0xE000 <= v < 0x10000)
+    addrs = [v for v, _ in labels]
+    out = []
+    for o in [o for o in range(SLOT) if want[o] != got[o]][:8]:
+        a = 0xE000 + o
+        i = bisect.bisect_right(addrs, a) - 1
+        at = f"{labels[i][1]}+{a - labels[i][0]}" if i >= 0 else "?"
+        out.append(f"${a:04X} ({at}) ${want[o]:02X} -> ${got[o]:02X}")
+    return "; ".join(out)
+
+
+def test_patch_roundtrip():
+    # premise: the assembled defaults are the RAM, non-raw set the tail writes for (0, 0)
+    mc = RawMachine(SYMS)
+    snap = hot_page(mc)
+    patch_session(mc, 0, 0)
+    if hot_page(mc) != snap:
+        raise Fail("PREMISE FAILED (stop and report): patch_session(0, 0) on the fresh image "
+                   "changed the hot page: " + describe(snap, hot_page(mc)))
+    if with_writes(snap, vec_writes(0, 0)) != snap:
+        raise Fail("test model: vec_writes(0, 0) differs from the assembled image: "
+                   + describe(snap, with_writes(snap, vec_writes(0, 0))))
+    mc = RawMachine(SYMS)
+    snap = hot_page(mc)
+    for direct, raw in ((1, 1), (1, 0), (0, 0)):
+        patch_session(mc, direct, raw)
+        got, want = hot_page(mc), with_writes(snap, vec_writes(direct, raw))
+        if got != want:
+            raise Fail(f"patch_session({direct}, {raw}): " + describe(want, got))
+    if hot_page(mc) != snap:
+        raise Fail("after (1, 1), (1, 0), (0, 0) the hot page is not the assembled image")
+
+
+def run_to(mc, start, stop, budget=10_000):
+    cpu = mc.cpu
+    cpu.sp = STACK
+    cpu.pc = start
+    while cpu.pc != stop:
+        budget -= 1
+        if budget <= 0:
+            raise Fail(f"${start:04X} never reached ${stop:04X}")
+        cpu.step()
+    mc.sync()
+    return cpu
+
+
+def test_patched_reads():
+    """After a raw open the pace poll, the pump and the two arm sites run on HL' (the model
+    has no IX: an unpatched site would fail on its DD prefix)."""
+    mc = RawMachine(SYMS)
+    patch_session(mc, 1, 1)
+    base, n, guard = S("vidAudBuf"), S("NXV_AUD_RING"), S("NXV_AUD_GUARD")
+    cpu = mc.cpu
+    if "vidRlSpinDiv" in SYMS:
+        mc.poke("vidRlSpinDiv", 100)
+    mc.poke16("vidAudRdPrev", base + 100)
+    mc.poke16("vidPaceRem", 500)
+    set_alt_hl(cpu, base + 300)
+    cpu.iff = 1
+    mc.run("vid_pace_poll", bc=0x1357)
+    got = (mc.peek("vidPaceRem", 2), mc.peek("vidAudRdPrev", 2), cpu.fc, cpu.bc, cpu.iff)
+    if got != (300, base + 300, 0, 0x1357, 1):
+        raise Fail(f"vid_pace_poll: (rem, rdPrev, CF, BC, IFF) = {got}")
+    if "vidRlSpinDiv" in SYMS:
+        mc.poke("vidRlSpinDiv", 100)
+    mc.poke16("vidAudFeedRem", 1000)
+    mc.poke16("vidAudWr", base + 1500)
+    mc.poke16("vidDsAudBlkRem", 7)
+    set_alt_hl(cpu, base + 2000)
+    seen = []
+
+    def xfer(c):
+        seen.append(c.bc)
+        c.de = (c.de + c.bc) & 0xFFFF
+        c.hl = 3
+    mc.run("vid_aud_pump", traps={S("vid_ds_xfer"): ret_trap(xfer), **aborts()},
+           bc=0xFFFF, de=0x2468)
+    room = n - guard - (1500 - 2000) % n
+    got = (seen, mc.peek("vidAudFeedRem", 2), mc.peek("vidAudWr", 2), cpu.iff)
+    if got != ([room], 1000 - room, base + 1500 + room, 1):
+        raise Fail(f"vid_aud_pump: (chunks, feedRem, wr, IFF) = {got}, expected "
+                   f"([{room}], {1000 - room}, {base + 1500 + room}, 1)")
+    for site in ("vid_run.ixp1", "vid_run.ixp2"):
+        set_main(cpu)
+        set_alt_hl(cpu, 0x1234)
+        cpu.iff = 1
+        run_to(mc, S(site), S(site) + 4)
+        main_kept(cpu, site)
+        if (alt_hl(cpu), cpu.sp, cpu.iff) != (base, STACK, 1):
+            raise Fail(f"{site}: HL' ${alt_hl(cpu):04X} SP ${cpu.sp:04X} IFF {cpu.iff}")
+
+
+def test_isr_choice():
+    stub = S("IM2_CTC_STUB") + 1
+    for raw, ach, want in ((0, 2, "video_ctc_isr_stereo"), (0, 1, "video_ctc_isr_stereo"),
+                           (1, 2, "video_ctc_isr_raw_st"), (1, 1, "video_ctc_isr_raw_mono")):
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE2"))
+        mc.poke("vidP_Raw", raw)
+        mc.poke("vidP_AChan", ach)
+        mc.mem[stub:stub + 2] = b"\x00\x00"
+        at = S("vid_run_l2setup_body.isrset")
+        if bytes(mc.mem[at:at + 3]) != b"\x22" + le(stub):
+            raise Fail(".isrset is not ld (IM2_CTC_STUB+1), hl")
+        run_to(mc, S("vid_run_l2setup_body.isrsel"), at + 3)
+        got = mc.mem[stub] | mc.mem[stub + 1] << 8
+        if got != S(want):
+            raise Fail(f"raw {raw} channels {ach}: vector ${got:04X}, expected {want}")
+
+
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_walkfault, test_frame_remain, test_frame_palette, test_frame_runwalk,
-         test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage]
+         test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage,
+         test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
+         test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice]
 
 
 def main():

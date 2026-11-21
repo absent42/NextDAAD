@@ -1820,6 +1820,7 @@ vid_pace_poll:
                                  ; often than once a field there
   ENDIF
  ENDIF
+.rd:                             ; raw: call vid_raw_rd_hl (.vec patch)
     push ix
     pop hl                       ; HL = read pointer (atomic snapshot)
     ld de, (vidAudRdPrev)
@@ -1868,6 +1869,7 @@ vid_aud_pump:
     ld bc, (vidAudBudget)
 .bud:
     ; room = ring - guard - unplayed; unplayed = (wr - rd) mod ring
+.rd:                             ; raw: call vid_raw_rd_de (.vec patch)
     push ix
     pop de                       ; DE = rd (single-instruction snap)
     ld hl, (vidAudWr)
@@ -2243,6 +2245,7 @@ vid_run:
                                  ; input (.restore is safe pre-arm -
                                  ; the CTC park no-ops on an unarmed
                                  ; CTC)
+.ixp1:                           ; raw: call vid_raw_prime / nop (.vec)
     ld ix, vidAudBuf
     ld hl, vidAudBuf
     ld (vidAudWr), hl
@@ -2264,6 +2267,7 @@ vid_run:
     out (c), a                   ; double soft-reset (unknown -> clean)
     ld a, AUD_CTC_CW16
     out (c), a                   ; control word - timer not running yet
+.ixp2:                           ; raw: call vid_raw_prime / nop (.vec)
     ld ix, vidAudBuf             ; the ISR's exclusive play pointer
     ; --- SP17 T9: frame-clock VBLANK PHASE LOCK. The time-constant
     ; write below starts the whole playback clock (the CTC audio timer
@@ -2630,10 +2634,8 @@ vid_key_any:
 ; vid_run_l2setup_body patching IM2_CTC_STUB; MMU7 = VID_PAGE for the
 ; whole armed window (doc 11 / rubric 3).
 ;
-; ONE ISR, because the format carries ONE channel count. The mono
-; twin (one DAC write per SAMPLE at 23325 Hz) was withdrawn with mono
-; itself - see nextdaad.inc NXV2_OFF_ACHAN. The routine below is
-; UNCHANGED by that removal, byte for byte.
+; Delta and old-layout direct sessions only: raw sessions install
+; video_ctc_isr_raw_st or video_ctc_isr_raw_mono (play pointer HL').
 ; DMA-PRE-EMPTION CONTRACT (SP18 item 5): this ISR may run INSIDE a
 ; suspended video DMA transfer ($CD bit 0). It is MMU-free, never
 ; touches port $6B, and MUST EXIT VIA RETI - the RETI is what returns
@@ -5168,6 +5170,76 @@ vid_raw_apad:
     ret c
     ld a, VID_ERR_OP
     jp vid_dec_abort
+
+; Raw session CTC handlers: play pointer HL' (the alternate set is free in
+; the armed window). MMU-free, no port $6B, exit by RETI (the stereo
+; handler's DMA pre-emption contract). Base T with IM2 ack + stub: 124 / 102.
+    ASSERT vidAudBuf + NXV_AUD_RING == $8000 && low vidAudBuf == 0
+video_ctc_isr_raw_st:
+    ex af, af'
+    exx
+    ld a, (hl)
+    out (VID_DAC_LEFT), a
+    inc l                        ; HL' even: a pair never crosses a page
+    ld a, (hl)
+    out (VID_DAC_RIGHT), a
+    inc hl
+    bit 7, h                     ; HL' = $8000: the ring end
+    jr nz, .wrap
+.r:
+    exx
+    ex af, af'
+    ei
+    reti
+.wrap:
+    ld h, high vidAudBuf         ; L = 0
+    jr .r
+
+video_ctc_isr_raw_mono:
+    ex af, af'
+    exx
+    ld a, (hl)
+    out (VID_DAC_MONO), a        ; DAC B and C: both sides
+    inc hl
+    bit 7, h
+    jr nz, .wrap
+.r:
+    exx
+    ex af, af'
+    ei
+    reti
+.wrap:
+    ld h, high vidAudBuf
+    jr .r
+
+; Play pointer reads for vid_pace_poll.rd / vid_aud_pump.rd (raw sessions):
+; HL' snapped with interrupts off (the handler swaps the set). Callers run
+; with interrupts on. Out: HL (or DE) = HL', interrupts on. Nothing else.
+vid_raw_rd_hl:
+    di
+    exx
+    push hl
+    exx
+    ei
+    pop hl
+    ret
+vid_raw_rd_de:
+    di
+    exx
+    push hl
+    exx
+    ei
+    pop de
+    ret
+
+; HL' = ring base (vid_run.ixp1 / .ixp2, raw). Call only while CTC 0 is
+; stopped: a raw handler inside the exx pair would swap the wrong set.
+; Corrupts nothing.
+vid_raw_prime:
+    exx
+    ld hl, vidAudBuf
+    exx
+    ret
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
@@ -7768,18 +7840,41 @@ vid_stage_common:
     ; RAM decode (resident/streaming) or the SD-stream decode (direct).
     ; Patched EVERY open - a previous session may have left the other
     ; set. Same doc-08/rubric-3 bracket as the stub patches above. ---
-    ; Raw sessions: the frame decode and the pump's section-end pad.
+    ; Raw sessions: the frame decode, the pump's section-end pad and the
+    ; four play pointer sites (HL' forms, else the assembled IX forms).
     ld a, (vidP_Raw)
     ld (vidRaw + DATA_WINDOW - OVL_ORG), a
     or a
     ld hl, vid_decode_frame_ds
     ld de, vid_ds_pad
+    ld bc, vidPtrIx
     jr z, .rawv
     ld hl, vid_raw_frame
     ld de, vid_raw_apad
+    ld bc, vidPtrRaw
 .rawv:
     ld (vid_decode_any.raw + 1 + DATA_WINDOW - OVL_ORG), hl
     ld (vid_aud_pump.apad + 1 + DATA_WINDOW - OVL_ORG), de
+    ld h, b
+    ld l, c
+    ld de, vid_pace_poll.rd + DATA_WINDOW - OVL_ORG
+    ldi
+    ldi
+    ldi
+    ld de, vid_aud_pump.rd + DATA_WINDOW - OVL_ORG
+    ldi
+    ldi
+    ldi
+    ld de, vid_run.ixp1 + DATA_WINDOW - OVL_ORG
+    ldi
+    ldi
+    ldi
+    ldi
+    ld de, vid_run.ixp2 + DATA_WINDOW - OVL_ORG
+    ldi
+    ldi
+    ldi
+    ldi
     ld a, (vidDeliverDir)
     ld (vidDirect + DATA_WINDOW - OVL_ORG), a
     or a
@@ -7811,6 +7906,25 @@ vid_stage_common:
     ld hl, vid_ds_done
     ld (vid_term_exit + 1 + DATA_WINDOW - OVL_ORG), hl
     ret
+
+; .vec sources, site order vid_pace_poll.rd, vid_aud_pump.rd, vid_run.ixp1,
+; vid_run.ixp2 (equal lengths per site). Data, never executed here.
+vidPtrIx:
+    push ix
+    pop hl
+    push ix
+    pop de
+    ld ix, vidAudBuf
+    ld ix, vidAudBuf
+vidPtrRaw:
+    call vid_raw_rd_hl
+    call vid_raw_rd_de
+    call vid_raw_prime
+    nop
+    call vid_raw_prime
+    nop
+vidPtrEnd:
+    ASSERT vidPtrRaw - vidPtrIx == 14 && vidPtrEnd - vidPtrRaw == 14
 
 ; ---------------------------------------------------------------------
 ; vid_file_blocks - the CEILING LIFT's one conversion point: the
@@ -8258,8 +8372,8 @@ vid_run_l2setup_body:
     otir
     ei
     ; CTC time constant: table-driven from the live video-timing mode
-    ; (carried v1 table/derivation). ONE table: the open path refuses
-    ; any rate but NXV_RATE_STEREO (raw mono runs at it too).
+    ; (carried v1 table/derivation). ONE table, 15625 Hz for stereo and
+    ; raw mono alike: the open path refuses any other rate.
     NRGET NR_VIDEO_TIMING
     and 7
     ld c, a
@@ -8269,11 +8383,22 @@ vid_run_l2setup_body:
     ld a, (hl)
     ld (vidCtcTc+DATA_WINDOW-OVL_ORG), a
     ; IM2_CTC_STUB (ISR vector) - RESIDENT memory, single atomic
-    ; LD (nn),HL; strictly before the CTC arm (hot, after this body)
+    ; LD (nn),HL; strictly before the CTC arm (hot, after this body).
+    ; Raw sessions: the HL' handler for the clip's channel count.
+.isrsel:
     ld hl, video_ctc_isr_stereo
+    ld a, (vidP_Raw)
+    or a
+    jr z, .isrset
+    ld hl, video_ctc_isr_raw_st
+    ld a, (vidP_AChan)
+    dec a
+    jr nz, .isrset
+    ld hl, video_ctc_isr_raw_mono
+.isrset:
     ld (IM2_CTC_STUB+1), hl
-    ; T10: no per-file ISR end markers any more - both ISRs' ring-end
-    ; wrap compares are assembly constants (the ring geometry never
+    ; T10: no per-file ISR end markers any more - every ISR's ring-end
+    ; wrap compare is an assembly constant (the ring geometry never
     ; changes); the feed cells are primed hot by the .orchret preload
     ; (vidAudWr/RdPrev/PaceRem), and the feed state is zeroed below
     ; with the rest of the session init
