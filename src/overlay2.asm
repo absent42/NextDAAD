@@ -127,51 +127,29 @@ l2_disable:
     ret
 
 ; Fill a Layer 2 surface with L2_TRANSP_INDEX, the reserved pixel value
-; whose palette entry l2_pal9_stamp holds at the transparent colour.
-; With Layer 2 on top
-; (l2_enable) a pixel whose palette output equals that colour lets the
-; tilemap/ULA below show through. Page count per l2Mode: 256x192 = 6 x
-; 8K pages, 320x256 = 10 x 8K pages (guide 160/306). A flat memset
-; works for both regardless of the row-/column-major layout, since
-; every byte gets the same value. Brackets the remap with data_save/
-; data_restore so slot 6 is left as the caller found it. Three entry
-; points - all corrupt AF, BC, DE, HL:
-;   l2_clear      - the FRONT (displayed) surface: DEBUG diagnostics,
-;                   which have no flip step;
-;   l2_clear_back - the BACK (render target) surface: h_display's
-;                   instant clear, gfx_direct_stream, GFX 87/6, and
-;                   gfx_rows_blit's conditional pre-clear - all
-;                   invisible until the flip;
-;   l2_clear_at   - A = first 8K page of any surface (internal).
+; whose palette entry l2_pal9_stamp holds at the transparent colour, so
+; the tilemap/ULA below shows through. Blitter fills of DDMA_XFER_MAX
+; bytes over the surface's 3 (256x192) or 5 (320x256) banks; no slot is
+; mapped. All corrupt AF, BC, DE, HL:
+;   l2_clear      - the FRONT (displayed) surface;
+;   l2_clear_back - the BACK (render target) surface, invisible until
+;                   the flip.
 l2_clear:
     ld a, (l2FrontBank)
-    add a, a
-    jr l2_clear_at
+    jr l2_clear_bank
 l2_clear_back:
     ld a, (l2BackBank)
-    add a, a
-l2_clear_at:
-    ld d, a                      ; D = 8K page cursor
-    call data_save               ; preserves DE (banks.asm)
-    ld a, (l2Mode)
-    or a
-    ld e, 6                      ; 256x192: 6 pages (ld e,n sets no flag)
-    jr z, .loop
-    ld e, 10                     ; 320x256: 10 pages
+l2_clear_bank:                   ; A = first 16K bank of the surface
+    call ddma_surf_dst
 .loop:
-    ld a, d
-    call data_map_page           ; corrupts AF only
-    ld hl, DATA_WINDOW
-    ld (hl), L2_TRANSP_INDEX     ; the reserved PIXEL value, not the NR $14 colour
-    push de
-    ld de, DATA_WINDOW+1
-    ld bc, 8191
-    ldir
-    pop de
-    inc d
-    dec e
-    jr nz, .loop
-    jp data_restore
+    push bc
+    ld a, L2_TRANSP_INDEX        ; the reserved PIXEL value, not the NR $14 colour
+    ld bc, DDMA_XFER_MAX
+    call ddma_fill
+    call ddma_dst_next
+    pop bc
+    djnz .loop
+    ret
 
 ; Copy all 256 Layer 2 palette entries from one bank into the other,
 ; full 9 bits (both bytes, so the blue LSB and the per-pixel priority
@@ -763,81 +741,133 @@ dma_prog:
 dma_prog_len equ $ - dma_prog
     ASSERT dma_prog_len == DMA_ARM_LEN
 
-; Copy one Layer 2 surface onto the other, page for page. Slot 6 is
-; the ONLY data window available to this overlay - slot 7 holds this
-; very code (see gfxRowBuf's header, and banks.asm's ovl_map_page
-; "DISPATCHER/ISR ONLY") - so source and destination pages can never
-; be mapped at once: unlike a dual-window LDIR, each GFX_COPY_CHUNK-
-; byte slice bounces through gfxRowBuf (idle here - same "loads and
-; blits never overlap" invariant gfxRowBuf's header already relies
-; on), mirroring gfx_row_fetch/gfx_row_copy256's source-OR-dest shape.
-; Page count follows l2Mode exactly as l2_clear_back sizes it: 6 x 8K
-; pages (256x192, 3 banks) or 10 x 8K pages (320x256, 5 banks) - NOT a
-; fixed 5-bank assumption, so a 256-wide surface never touches its
-; unused banks 3-4. In: A = source surface's first bank number, D =
-; dest surface's first bank number - GFX 0 (copy back->front) and GFX
-; 1 (copy front->back) are h_gfx's only two callers, and pass
-; l2FrontBank/l2BackBank in swapped order: that swap IS the entire
-; difference between the two subs, this routine is otherwise
-; direction-blind. Brackets data_save/data_restore itself (mainline,
-; NON-NESTABLE - one bracket, opened and closed on every path - see
-; banks.asm). Corrupts everything.
-GFX_COPY_CHUNK equ 256                  ; divides 8192 evenly, fits
-                                         ; inside gfxRowBuf (320 bytes)
-GFX_COPY_CHUNKS_PER_PAGE equ 8192/GFX_COPY_CHUNK
+; Copy one Layer 2 surface onto the other: blitter copies of
+; DDMA_XFER_MAX bytes, sized by l2Mode as l2_clear_bank sizes its fill.
+; In: A = source surface's first bank, D = destination's. GFX 0 (back
+; to front) and GFX 1 (front to back) are the callers and differ only
+; in that order. No slot is mapped. Corrupts AF, BC, DE, HL.
 l2_copy_back_front:
-    add a, a
-    ld (l2CopySrcPage), a
+    ld hl, 0
+    call ddma_bank_addr
+    ld (ddmaSrc), hl
+    ld (ddmaSrcExt), a
     ld a, d
-    add a, a
-    ld (l2CopyDstPage), a
-    call data_save
+    call ddma_surf_dst
+.loop:
+    push bc
+    ld bc, DDMA_XFER_MAX
+    call ddma_copy
+    ld hl, ddmaSrc+1
+    ld de, ddmaSrcExt
+    call ddma_addr_next
+    call ddma_dst_next
+    pop bc
+    djnz .loop
+    ret
+
+; --- zxnDDMA primitives (rules and constants: ddma.inc) ---
+; A = first 16K bank of a surface: destination = its first byte.
+; Out: B = transfers of DDMA_XFER_MAX that cover it. Corrupts AF, HL.
+ddma_surf_dst:
+    ld hl, 0
+    call ddma_bank_addr
+    ld (ddmaDst), hl
+    ld (ddmaDstExt), a
     ld a, (l2Mode)
     or a
-    ld a, 6
-    jr z, .cnt
-    ld a, 10
-.cnt:
-    ld (l2CopyPageCnt), a
-.page:
-    ld hl, DATA_WINDOW
-    ld (l2CopyPtr), hl
-    ld a, GFX_COPY_CHUNKS_PER_PAGE
-    ld (l2CopyChunkCnt), a
-.chunk:
-    ld a, (l2CopySrcPage)
-    call data_map_page
-    ld hl, (l2CopyPtr)
-    ld de, gfxRowBuf
-    ld bc, GFX_COPY_CHUNK
-    call dma_copy                ; source page -> bounce buffer
-    ld a, (l2CopyDstPage)
-    call data_map_page
-    ld hl, gfxRowBuf
-    ld de, (l2CopyPtr)
-    ld bc, GFX_COPY_CHUNK
-    call dma_copy                ; bounce buffer -> dest page
-    ld hl, (l2CopyPtr)
-    ld de, GFX_COPY_CHUNK
-    add hl, de
-    ld (l2CopyPtr), hl
-    ld hl, l2CopyChunkCnt
-    dec (hl)
-    jr nz, .chunk
-    ld hl, l2CopySrcPage         ; page done: advance both cursors
-    inc (hl)
-    ld hl, l2CopyDstPage
-    inc (hl)
-    ld hl, l2CopyPageCnt
-    dec (hl)
-    jr nz, .page
-    jp data_restore
+    ld b, 6*8192/DDMA_XFER_MAX
+    ret z
+    ld b, 10*8192/DDMA_XFER_MAX
+    ret
 
-l2CopySrcPage:  db 0
-l2CopyDstPage:  db 0
-l2CopyPtr:      dw 0
-l2CopyPageCnt:  db 0
-l2CopyChunkCnt: db 0
+; Step an address on by DDMA_XFER_MAX. ddma_dst_next: the destination;
+; ddma_addr_next: HL = its high byte, DE = its extended byte.
+; Corrupts AF, DE, HL.
+ddma_dst_next:
+    ld hl, ddmaDst+1
+    ld de, ddmaDstExt
+ddma_addr_next:
+    ld a, (hl)
+    add a, high DDMA_XFER_MAX
+    ld (hl), a
+    ret nc
+    ex de, hl
+    inc (hl)
+    ret
+
+; A = 16K bank, HL = offset 0..$3FFF. Out: HL = low 16 bits, A = extended
+; byte of the physical address $40000 + bank*$4000 + offset. Corrupts F.
+ddma_bank_addr:
+    push de
+    ld e, a
+    and 3
+    rrca
+    rrca
+    or h
+    ld h, a
+    ld a, e
+    srl a
+    srl a
+    add a, DDMA_PHYS_BASE
+    pop de
+    ret
+
+; Physical transfers through ddma_prog; addresses in ddmaSrc/ddmaSrcExt
+; and ddmaDst/ddmaDstExt are left as given. At most DDMA_XFER_MAX bytes.
+;   ddma_fill - A = value, BC = length
+;   ddma_copy - BC = length
+;   ddma_rect - ddmaRowLen x ddmaRows, pitches ddmaStrideA/ddmaStrideB
+; Corrupt AF, BC, HL. Interrupts must be enabled (ddma.inc).
+ddma_fill:
+    ld (ddmaFill), a
+    ld a, DDMA_F_PHYS|DDMA_F_FILL
+    jr ddma_go_len
+ddma_copy:
+    ld a, DDMA_F_PHYS
+ddma_go_len:
+    ld (ddmaLen), bc
+    jr ddma_go
+ddma_rect:
+    ld a, DDMA_F_PHYS|DDMA_F_2D
+ddma_go:
+    ld (ddmaMode), a
+    ld hl, ddma_prog
+    ld bc, DDMA_PROG_LEN*256 + DMA_PORT
+    otir                         ; the enable is the last byte
+    DDMA_PAD DDMA_XFER_MAX
+    ld a, DDMA_MODE              ; flags off for the next DMA user
+    out (DMA_PORT), a
+    xor a
+    out (DMA_PORT), a
+    ret
+
+ddma_prog:
+    db DDMA_RESET
+    db DDMA_EXT_A
+ddmaSrcExt:  db 0
+    db DDMA_EXT_B
+ddmaDstExt:  db 0
+    db DDMA_MODE
+ddmaMode:    db 0
+    db DDMA_ROWLEN
+ddmaRowLen:  dw 0
+    db DDMA_ROWS
+ddmaRows:    dw 0
+    db DDMA_STRIDE_A
+ddmaStrideA: dw 0
+    db DDMA_STRIDE_B
+ddmaStrideB: dw 0
+    db DDMA_FILLVAL
+ddmaFill:    db 0
+    db DDMA_WR0
+ddmaSrc:     dw 0
+ddmaLen:     dw 0
+    db DDMA_WR1, DDMA_CYCLE
+    db DDMA_WR2, DDMA_CYCLE
+    db DDMA_WR4
+ddmaDst:     dw 0
+    db DDMA_WR5, DDMA_LOAD, DDMA_ENABLE
+DDMA_PROG_LEN equ $ - ddma_prog
 
 ; 28 DISPLAY (action): B = 0 draws the staged picture, B != 0 clears
 ; the picture plane. Semantics pinned against jdaad _DISPLAY

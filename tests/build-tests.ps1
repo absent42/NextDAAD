@@ -765,7 +765,7 @@ $steps = [ordered]@{
     'bt-pngchain'                = New-StepSpec -Files 'tests/art/pngchain.py', 'src/nextdaad.inc' -Tools gfx2next
     'bt-frozen-exes'             = New-StepSpec -Git $kitGit -Files 'tests/check_frozen_exes.py'
     'bt-manual'                  = New-StepSpec -Git 'manual', 'src', $kitGit -Files 'tests/manual_facts.py', 'tests/build-tests.ps1'
-    'bt-dma-contract'            = New-StepSpec -Files 'tests/dma_contract.py' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
+    'bt-dma-contract'            = New-StepSpec -Files 'tests/dma_contract.py', 'tests/ddma_contract.py' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
     'bt-core-floor'              = New-StepSpec -Git 'src', $kitGit, 'tests/*.py', 'tests/corefloor' -HashFiles 'build/nextdaad.nex', 'build/intro.nex' -Tools sjasmplus
     'bt-bank-alloc-exec'         = New-StepSpec -Files 'tests/build-tests.ps1' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
     $nexStep                     = New-StepSpec -Git 'src' -Files 'tests/build-tests.ps1', 'tests/sfx2.dsf' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld', 'build/NEXTDAAD.SYM' -Tools ndrc
@@ -1573,6 +1573,8 @@ if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad
     if (Test-StepRun 'bt-dma-contract') {
         & python "$PSScriptRoot\dma_contract.py"
         if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - overlay2's dma_copy is mis-emitting its DMA descriptors, do not run this build on hardware" }
+        & python "$PSScriptRoot\ddma_contract.py"
+        if ($LASTEXITCODE -ne 0) { throw "tests\ddma_contract.py failed - a blitter program is mis-emitted, do not run this build on hardware" }
         Complete-Step 'bt-dma-contract'
     }
 }

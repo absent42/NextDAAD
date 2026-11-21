@@ -4,6 +4,7 @@
     DEVICE ZXSPECTRUMNEXT
     SLDOPT COMMENT WPMEM, LOGPOINT, ASSERTION
     INCLUDE "nextdaad.inc"
+    INCLUDE "ddma.inc"
 
     ORG CODE_ORG
 main:
