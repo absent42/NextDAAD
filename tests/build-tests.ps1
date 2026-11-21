@@ -1573,15 +1573,22 @@ if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad
         & python "$PSScriptRoot\ddma_contract.py"
         if ($LASTEXITCODE -ne 0) { throw "tests\ddma_contract.py failed - a blitter program is mis-emitted, do not run this build on hardware" }
         # Raw direct video reader on the host model; old video hot paths against the baseline images.
+        # A skipped guard leaves the step unstamped, as a skipped check does elsewhere here.
         & python "$PSScriptRoot\vidraw_contract.py"
         if ($LASTEXITCODE -ne 0) { throw "tests\vidraw_contract.py failed - the raw video reader is mis-emitted, do not run this build on hardware" }
-        $vrVariant = if (Select-String -Path "$root\build\nextdaad.sld" -Pattern '\|dbgNoBank$' -Quiet) { 'debug' } else { 'release' }
-        if (Test-Path "$root\tests\out\vidraw-base\$vrVariant.nex") {
+        $vrSld = "$root\build\nextdaad.sld"
+        $vrVariant = if (Select-String -Path $vrSld -Pattern '\|dbgNoBank$' -Quiet) { 'debug' } else { 'release' }
+        if (Select-String -Path $vrSld -Pattern '\|nxbQuietImage$' -Quiet) {
+            "WARNING: build\nextdaad.nex is a -BenchQuiet image (no baseline) - old video path guard SKIPPED"
+        }
+        elseif (-not (Test-Path "$root\tests\out\vidraw-base\$vrVariant.nex")) {
+            "WARNING: no tests\out\vidraw-base\$vrVariant.nex - old video path guard SKIPPED"
+        }
+        else {
             & python "$PSScriptRoot\vidraw_oldpaths.py" --variant $vrVariant
             if ($LASTEXITCODE -ne 0) { throw "tests\vidraw_oldpaths.py failed - an old video hot path changed its bytes" }
+            Complete-Step 'bt-dma-contract'
         }
-        else { "WARNING: no tests\out\vidraw-base\$vrVariant.nex - old video path guard SKIPPED" }
-        Complete-Step 'bt-dma-contract'
     }
 }
 else {

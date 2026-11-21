@@ -3684,6 +3684,9 @@ vid_tl_report:
 vid_tl_report_ret:
     ret
 
+ IFDEF NXB_QUIET
+nxbQuietImage   equ 1            ; SLD marker of a -BenchQuiet image (no bytes)
+ ENDIF
 ; =====================================================================
 ; NXB - player-path silicon bench. DEBUG builds only; Release carries
 ; none of it (byte-identity is a commit-time gate).
@@ -5029,12 +5032,8 @@ vidRawSchedPage: db 0            ; schedule bank page (ring bank 0 * 2)
 vidRawPage0:     db 0            ; vidP_RawX0 >> 5: surface page offset
 vidRawH0:        db 0            ; $40 + (vidP_RawX0 & 31): MMU2 dest high
 
-; ---------------------------------------------------------------------
-; RAW DIRECT READER. The frame runs the clip's read schedule (built at
-; open by vid_raw_sched_build) from the schedule bank at MMU6: calls
-; into the 512-ini slide, column ends, vr_page, vr_sector. While it
-; runs: HL = destination, C = PORT_SPI_DAT, B scrap (ini counts it).
-; ---------------------------------------------------------------------
+; RAW DIRECT READER: the schedule (vid_raw_sched_build) runs at MMU6 with
+; HL = destination, C = PORT_SPI_DAT, B scrap (ini counts it).
 
 ; Raw frame decode (vid_decode_any.raw). The whole-pass remain and the
 ; section bound are charged once, before any read. Out: A = VOP_KFLIP.
@@ -5076,43 +5075,48 @@ vid_raw_frame:
     ld a, VID_ERR_SRCOVR
     jp vid_dec_abort_pos
 
-; Open the next sector of the CMD18 stream: the previous sector's CRC,
-; the run count (filemap walk at a run end), the data token (bounded).
-; Preserves HL. Out: C = PORT_SPI_DAT, A = vidDsCrcDue = 1. Corrupts
-; F, DE, B. Faults abort via vid_dec_abort_pos.
+; Open a frame's first sector (CRC if due). Preserves HL. Out: C =
+; PORT_SPI_DAT, vidDsCrcDue = 1. Corrupts AF, DE, B. Faults abort.
 vr_sector:
+    ld a, (vidDsCrcDue)
+    or a
+    ld a, 1
+    ld (vidDsCrcDue), a          ; flags kept: Z = no CRC pends
+    jr z, vr_sector_n.nocrc
+; Open sectors 2..n (a CRC always pends; vidDsCrcDue untouched). Same
+; contract. Faults (run walk, token) abort via vid_dec_abort_pos.
+vr_sector_n:
+    in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart, as blkopen
+    nop
+    in a, (PORT_SPI_DAT)
+.nocrc:
  IFDEF DEBUG
   IFNDEF NXB_QUIET
     ld d, 0                      ; PLAY= clock: vid_dst_norm_flat's divider
     call vid_dst_norm_flat       ; (D < $60: no page step, AF only)
   ENDIF
  ENDIF
-    ld a, (vidDsCrcDue)
-    or a
-    jr z, .nocrc
-    in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart, as blkopen
-    nop
-    in a, (PORT_SPI_DAT)
-.nocrc:
     ld de, (vidStrmRunBlkH)
     ld a, d
     or e
-    jr nz, .run
-    push hl
-    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
-    ex de, hl                    ; DE = the fresh run's blocks
-    pop hl
-    jp c, vid_dec_abort_pos
+    jr z, .walk
 .run:
     dec de
     ld (vidStrmRunBlkH), de
     call vid_sd_tok_h            ; corrupts AF, BC
-    ld a, VID_ERR_TOKEN
-    jp c, vid_dec_abort_pos
+    jr c, .tokf
     ld c, PORT_SPI_DAT
-    ld a, 1
-    ld (vidDsCrcDue), a
     ret
+.walk:
+    push hl
+    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
+    ex de, hl                    ; DE = the fresh run's blocks
+    pop hl
+    jr nc, .run
+    jp vid_dec_abort_pos
+.tokf:
+    ld a, VID_ERR_TOKEN
+    jp vid_dec_abort_pos
 
 ; Schedule page end: map the next back-surface page at MMU2.
 ; Out: HL = VID_DST_WIN. Corrupts AF.
@@ -5128,7 +5132,8 @@ vr_page:
 ; choreography (edit the other bank, flip at present). Corrupts AF, BC,
 ; DE.
 vid_raw_pal:
-    call vr_sector               ; A = 1
+    call vr_sector
+    ld a, 1
     ld (vidPalPending), a
     ld a, (vidPalCtrl)
     xor $40
@@ -5148,10 +5153,9 @@ vid_raw_pal:
     jr nz, .pl
     ret
 
-; Raw pump section end (vid_aud_pump.apad): discard the sound pad, read
-; the frame tag (the section's last byte). In: HL = bytes left in the
-; open sector, 0..511 (0: the tag sits alone in the next sector). Out:
-; HL = 0, vidRawTag. A tag above 1 aborts (VID_ERR_OP). Corrupts AF.
+; Raw pump section end (vid_aud_pump.apad). In: HL = bytes left in the
+; open sound sector, 0..511 (0: the tag is alone in the next). Out: HL =
+; 0, vidRawTag = the last byte; above 1 aborts (VID_ERR_OP). Corrupts AF.
 vid_raw_apad:
     ld a, h
     or l
@@ -7457,17 +7461,9 @@ vid_strm_validate:
     scf
     ret
 
-; ---------------------------------------------------------------------
-; vid_raw_sched_build - compile a raw clip's frame read into the
-; schedule bank (mapped at DATA_WINDOW by the caller): the 512-ini slide
-; and its ret, then from VR_SCHED: call vr_sector; per run of n bytes
-; (bounded by the sector, the column [gapped] or the page [flat])
-; call VR_SLIDE_END - 2n; at each boundary, in order, the column end
-; (ld l,0 / inc h), call vr_page, call vr_sector; after the last pixel
-; the pad read into VR_SCRATCH; ret. In: vidP_Shape, vidP_HeightB,
-; vidP_RawW, vidP_RawX0. Out: CF set = the schedule would pass
-; VR_SCHED_LIMIT (nothing written there). Corrupts all.
-; ---------------------------------------------------------------------
+; Build the slide and the frame read schedule in the bank at DATA_WINDOW.
+; In: vidP_Shape, vidP_HeightB, vidP_RawW, vidP_RawX0. Out: CF set = it
+; would pass VR_SCHED_LIMIT (nothing written there). Corrupts all.
 vid_raw_sched_build:
     ld hl, $A2ED                 ; ini
     ld (VR_SLIDE), hl
@@ -7601,7 +7597,7 @@ vid_raw_sched_build:
     jp nz, .loop
     ld hl, 512
     ld (vrgSec), hl
-    ld hl, vr_sector
+    ld hl, vr_sector_n           ; sectors 2..n: the CRC always pends
     call .ecall
     jp .loop
 .fin:

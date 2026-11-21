@@ -4,8 +4,8 @@
 Runs the EMITTED bytes of build\\nextdaad.nex on the tests\\ddma_contract.py Z80 model, with
 the MMU applied and port $EB fed by a model of the SD card's CMD18 stream: the cold schedule
 generator (vid_raw_sched_build) and hot-cell staging (vid_raw_stage), the raw frame decode
-(vid_raw_frame) with its sector open, surface page step, palette sector and frame tag
-(vr_sector, vr_page, vid_raw_pal, vid_raw_apad), and the per-session operand patches
+(vid_raw_frame) with its sector opens, surface page step, palette sector and frame tag
+(vr_sector, vr_sector_n, vr_page, vid_raw_pal, vid_raw_apad), and the per-session operand patches
 (vid_stage_common.vec).
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
@@ -438,12 +438,15 @@ def run_frame(mc, code, w, h, tag=0, waits=1, crc_due=0, pad=0, pal=None, remain
     expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px),
            f"{code},{w}x{h} back surface")
     stray_writes(before, bytes(mc.phys), frame_allow())
+    if mc.peek("vidDsFrmBlk") != sectors + 1:
+        raise Fail(f"{code},{w}x{h}: vidDsFrmBlk = {mc.peek('vidDsFrmBlk')}, expected "
+                   f"vidRawCap {sectors + 1}")
     return card, sectors, x0
 
 
 def parse_sched(mc):
-    """[(kind, value, addr)] from VR_SCHED to its ret; kind: read (value n), sector, page,
-    colend, ldhl (value operand), ret."""
+    """[(kind, value, addr)] from VR_SCHED to its ret; kind: read (value n), sector,
+    sectorn (vr_sector_n), page, colend, ldhl (value operand), ret."""
     base = SCHED_PAGE * SLOT - S("VR_SLIDE")
     ph = mc.phys
     a, out = S("VR_SCHED"), []
@@ -455,6 +458,8 @@ def parse_sched(mc):
         if b == 0xCD:
             if v == S("vr_sector"):
                 out.append(("sector", v, a))
+            elif v == S("vr_sector_n"):
+                out.append(("sectorn", v, a))
             elif v == S("vr_page"):
                 out.append(("page", v, a))
             elif S("VR_SLIDE") <= v < slide_end and (slide_end - v) % 2 == 0:
@@ -491,7 +496,8 @@ def owner_fn(mc):
     return owner
 
 
-ALLOWED = {"crc": {"vr_sector"}, "wait": {"vid_sd_tok_h"}, "token": {"vid_sd_tok_h"},
+ALLOWED = {"crc": {"vr_sector", "vr_sector_n"}, "wait": {"vid_sd_tok_h"},
+           "token": {"vid_sd_tok_h"},
            "data": {"slide", "vid_raw_pal", "vid_ds_pad", "vid_raw_apad"}}
 
 
@@ -533,13 +539,14 @@ def test_sched_shape():
         raise Fail("320x192: CF set")
     items, _ = parse_sched(mc)
     kinds = [k for k, _, _ in items]
-    got = {k: kinds.count(k) for k in ("read", "sector", "colend", "page", "ldhl")}
-    want = {"read": 400, "sector": 120, "colend": 319, "page": 9, "ldhl": 0}
-    if got != want or kinds[-1] != "ret":
-        raise Fail(f"320x192 schedule: {got}, last {kinds[-1]}; expected {want}, ret")
+    got = {k: kinds.count(k) for k in ("read", "sector", "sectorn", "colend", "page", "ldhl")}
+    want = {"read": 400, "sector": 1, "sectorn": 119, "colend": 319, "page": 9, "ldhl": 0}
+    if got != want or kinds[0] != "sector" or kinds[-1] != "ret":
+        raise Fail(f"320x192 schedule: {got}, first {kinds[0]}, last {kinds[-1]}; expected "
+                   f"{want}, vr_sector first, ret last")
+    calls = ("read", "sector", "sectorn", "page")
     for i, k in enumerate(kinds):
-        if k == "colend" and not (kinds[i - 1] in ("read", "sector", "page")
-                                  and kinds[i + 1] in ("read", "sector", "page")):
+        if k == "colend" and not (kinds[i - 1] in calls and kinds[i + 1] in calls):
             raise Fail(f"320x192: column end at ${items[i][2]:04X} not between two calls")
     if sum(v for k, v, _ in items if k == "read") != 320 * 192:
         raise Fail("320x192: the reads do not add up to the picture")
@@ -547,11 +554,11 @@ def test_sched_shape():
     items, _ = parse_sched(mc)
     kinds = [k for k, _, _ in items]
     reads = [v for k, v, _ in items if k == "read"]
-    if (kinds.count("sector"), len(reads), set(reads), kinds.count("page"),
-            kinds.count("colend")) != (96, 96, {512}, 5, 0):
-        raise Fail(f"256x192 schedule: {kinds.count('sector')} sector, {len(reads)} reads "
-                   f"{sorted(set(reads))}, {kinds.count('page')} page, "
-                   f"{kinds.count('colend')} colend")
+    if (kinds.count("sector"), kinds.count("sectorn"), len(reads), set(reads),
+            kinds.count("page"), kinds.count("colend")) != (1, 95, 96, {512}, 5, 0):
+        raise Fail(f"256x192 schedule: {kinds.count('sector')} + {kinds.count('sectorn')} "
+                   f"sector, {len(reads)} reads {sorted(set(reads))}, "
+                   f"{kinds.count('page')} page, {kinds.count('colend')} colend")
     if kinds[0] != "sector" or kinds[-1] != "ret":
         raise Fail("256x192: the schedule does not open with vr_sector and end with ret")
 
@@ -640,18 +647,96 @@ def test_sector_runwalk():
 
 
 def test_sector_badtoken():
+    for entry, crc in (("vr_sector", False), ("vr_sector_n", True)):
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE"))
+        mc.poke16("vidStrmRunBlkH", 100)
+        mc.poke("vidDsCrcDue", int(crc))
+        mc.set_card(Card(blocks(bytes(512)), token=0xFC, crc_first=crc))
+        try:
+            mc.run(entry, traps=aborts(), hl=0)
+        except Stop as e:
+            if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_TOKEN"):
+                raise Fail(f"{entry} bad token: {e}")
+            continue
+        raise Fail(f"{entry} bad token: returned")
+
+
+def test_sector_n():
+    """vr_sector_n reads the CRC pair whatever vidDsCrcDue holds and leaves the cell alone."""
     mc = RawMachine(SYMS)
     mc.map(7, S("VID_PAGE"))
     mc.poke16("vidStrmRunBlkH", 100)
     mc.poke("vidDsCrcDue", 0)
-    mc.set_card(Card(blocks(bytes(512)), token=0xFC))
-    try:
-        mc.run("vr_sector", traps=aborts(), hl=0)
-    except Stop as e:
-        if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_TOKEN"):
-            raise Fail(f"bad token: {e}")
-        return
-    raise Fail("bad token: vr_sector returned")
+    card = Card(blocks(bytes(512)), waits=2, crc_first=True)
+    mc.set_card(card)
+    cpu = mc.run("vr_sector_n", traps={**aborts(), **forbid("vid_run_walk_h")}, hl=0x2345)
+    phases = [p for p, _ in card.log]
+    if phases != ["crc", "crc", "wait", "wait", "token"]:
+        raise Fail(f"vr_sector_n reads {phases}")
+    if mc.peek("vidDsCrcDue") != 0:
+        raise Fail(f"vr_sector_n wrote vidDsCrcDue = {mc.peek('vidDsCrcDue')}")
+    if cpu.hl != 0x2345 or cpu.c != PORT_SPI or mc.peek("vidStrmRunBlkH", 2) != 99:
+        raise Fail(f"vr_sector_n: HL ${cpu.hl:04X} C ${cpu.c:02X} run "
+                   f"{mc.peek('vidStrmRunBlkH', 2)}")
+    check_log(mc, card, "vr_sector_n")
+
+
+def test_sector_walkfault():
+    """A run walk fault aborts with the walk's A after exactly the two CRC reads."""
+    for entry in ("vr_sector", "vr_sector_n"):
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE"))
+        mc.poke16("vidStrmRunBlkH", 0)
+        mc.poke("vidDsCrcDue", 1)
+        card = Card(blocks(bytes(512)), crc_first=True)
+        mc.set_card(card)
+
+        def walk(cpu):
+            cpu.fc, cpu.a, cpu.hl = 1, S("VID_ERR_SHORT"), 0x7777
+        try:
+            mc.run(entry, traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()}, hl=0x1234)
+        except Stop as e:
+            if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_SHORT") or card.pos != 2:
+                raise Fail(f"{entry} walk fault: {e}, {card.pos} card reads")
+            continue
+        raise Fail(f"{entry} walk fault: returned")
+
+
+def test_frame_runwalk():
+    """A fragment run ends at sector 50 inside a frame: the walk fires once, after that
+    sector's CRC, and the frame completes exactly."""
+    for code, w, h, tag in ((1, 320, 192, 1), (1, 280, 224, 0)):
+        mc = RawMachine(SYMS)
+        build_sched(mc, code, w, h)
+        x0, sectors = setup_frame(mc, code, w, h, tag=tag, remain=0x020000, crc_due=1)
+        mc.poke16("vidStrmRunBlkH", 50)
+        px = pixels(w * h)
+        data = blocks(px)
+        if tag:
+            data = [bytes(range(256)) * 2] + data
+        card = Card(data, waits=2, crc_first=True)
+        mc.set_card(card)
+        fired = []
+
+        def walk(cpu):
+            fired.append(card.pos)
+            cpu.hl, cpu.fc = 1000, 0
+            cpu.a = cpu.b = cpu.c = cpu.d = cpu.e = 0x5A
+        cpu = mc.run("vid_raw_frame", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()})
+        what = f"{code},{w}x{h} tag {tag}"
+        per = 2 + 2 + 1 + 512
+        base = BACK_BANK * 0x4000
+        expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px),
+               f"{what} back surface")
+        got = (cpu.a, fired, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3),
+               len(card.stream) - card.pos, mc.peek("vidDsFrmBlk"))
+        want = (S("VOP_KFLIP"), [50 * per + 2], 1000 - (sectors + tag - 50),
+                0x020000 - sectors - tag, 0, sectors + 1)
+        if got != want:
+            raise Fail(f"{what}: (A, walk at, run left, remain, unread, FrmBlk) = {got}, "
+                       f"expected {want}")
+        check_log(mc, card, what)
 
 
 def test_frame_remain():
@@ -796,9 +881,9 @@ def test_raw_stage():
 
 
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
-         test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_frame_remain,
-         test_frame_palette, test_apad, test_apad_boundary, test_vr_page, test_vec_patch,
-         test_raw_stage]
+         test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
+         test_sector_walkfault, test_frame_remain, test_frame_palette, test_frame_runwalk,
+         test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage]
 
 
 def main():
