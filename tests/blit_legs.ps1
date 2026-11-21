@@ -185,12 +185,17 @@ Get-ChildItem (Join-Path $sd 'CYCLE') -File | ForEach-Object { Copy-Item $_.Full
 Copy-Item $nexRel "$leg\NEXTDAAD.NEX" -Force
 "LEGBLT5: {0} files" -f @(Get-ChildItem $leg -File).Count
 
-@'
-LEGBLT1  Release  picture walk, 256x192 set, samples and music playing
-LEGBLT2  Release  picture walk, 320x256 set, samples and music playing
-LEGBLT3  DEBUG    picture walk, 256x192 set: the fallback stream steps 10 and 10A draw here
-LEGBLT4  DEBUG    picture walk, 320x256 set: the fallback stream steps 10 and 10A draw here
-LEGBLT5  Release  colour-cycle fixture: colour cycling across scroll bursts
-Copy each folder whole to the card and launch NEXTDAAD.NEX from inside it.
-'@ | Set-Content (Join-Path $sd 'LEGBLT.TXT') -Encoding ascii
+# LEGBLT6 is staged by tests\core303\blit\stage.ps1; its index line is kept when it is there.
+$index = @(
+    'LEGBLT1  Release  picture walk, 256x192 set, samples and music playing'
+    'LEGBLT2  Release  picture walk, 320x256 set, samples and music playing'
+    'LEGBLT3  DEBUG    picture walk, 256x192 set: the fallback stream steps 10 and 10A draw here'
+    'LEGBLT4  DEBUG    picture walk, 320x256 set: the fallback stream steps 10 and 10A draw here'
+    'LEGBLT5  Release  colour-cycle fixture: colour cycling across scroll bursts'
+)
+if (Test-Path (Join-Path $sd 'LEGBLT6\BLT303.NEX')) {
+    $index += 'LEGBLT6  bench    BLT303.NEX: blit timing and pad proof rows; writes BLT303.LOG beside itself'
+}
+$index += 'Copy each folder whole to the card and launch the NEX inside it.'
+$index | Set-Content (Join-Path $sd 'LEGBLT.TXT') -Encoding ascii
 'staged: sd\LEGBLT1-5, index sd\LEGBLT.TXT'
