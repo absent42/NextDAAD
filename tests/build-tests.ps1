@@ -440,7 +440,8 @@
 #              copies 080-086 (tests\mkrawbad.py), old-layout direct 010
 #              (tests\videnc_old_direct.py) and the -Vid delta 004. Encodes are
 #              cached in tests\out\vidraw\ by source, shape, rate, channels, cut
-#              and $vidLegSettlementTag. Every staging asserts each raw header,
+#              and $vidLegSettlementTag (the tone source and its clips also by
+#              tests\mktoneclip.py's text). Every staging asserts each raw header,
 #              walks each raw clip's layout and checks its sound stimulus with
 #              tests\rawsound_check.py, and checks each fault copy differs from
 #              its parent only at the offsets mkrawbad printed. CSpect-lock: see
@@ -5494,7 +5495,10 @@ if ($VidRawBench) {
     $vrDir = Join-Path $root 'tests\out\vidraw'
     New-Item -ItemType Directory -Force $vrDir | Out-Null
     $vrFfmpeg = "$root\tools\ffmpeg\bin\ffmpeg.exe"
-    $vrTone = Join-Path $vrDir 'tone8s.mp4'
+    # The tone source and its clips are keyed on mktoneclip.py's text (line endings normalised).
+    $vrToneKey = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(
+        [Text.Encoding]::UTF8.GetBytes(([IO.File]::ReadAllText("$PSScriptRoot\mktoneclip.py")).Replace("`r`n", "`n")))).Replace('-', '').Substring(0, 8).ToLower()
+    $vrTone = Join-Path $vrDir "tone8s_$vrToneKey.mp4"
     if (-not (Test-Path -LiteralPath $vrTone)) {
         & python "$PSScriptRoot\mktoneclip.py" --out $vrTone --ffmpeg $vrFfmpeg
         if ($LASTEXITCODE -ne 0) { throw "mktoneclip.py failed (exit $LASTEXITCODE)" }
@@ -5532,7 +5536,8 @@ if ($VidRawBench) {
     $vrCache = @{}
     foreach ($clip in $vrRaw.Keys) {
         $e = $vrRaw[$clip]
-        $name = "raw_$($e.src)_$($e.w)x$($e.h)_$($e.fps -replace '\.', 'p')_$(if ($e.ch -eq 2) { 'st' } else { 'mo' })_0-$([int][double]$e.dur)_$vidLegSettlementTag.vid"
+        $srcTag = if ($e.src -eq 'tone') { "tone$vrToneKey" } else { $e.src }
+        $name = "raw_${srcTag}_$($e.w)x$($e.h)_$($e.fps -replace '\.', 'p')_$(if ($e.ch -eq 2) { 'st' } else { 'mo' })_0-$([int][double]$e.dur)_$vidLegSettlementTag.vid"
         $cache = Join-Path $vrDir $name
         if (-not (Test-Path -LiteralPath $cache)) {
             "encoding $clip ($($e.w)x$($e.h) @ $($e.fps), $($e.ch) ch, $($e.src)) via mkrawclip.py -> tests\out\vidraw\$name"
@@ -5540,14 +5545,17 @@ if ($VidRawBench) {
             if ($LASTEXITCODE -ne 0) { throw "mkrawclip.py failed (exit $LASTEXITCODE) - $clip not staged" }
             Move-Item -LiteralPath "$cache.tmp" -Destination $cache -Force
         }
-        # Header, byte level: the fields the player validates at open.
-        $hb = New-Object byte[] 512
+        # Header, byte level: the fields the player validates at open, the fps byte the DEBUG
+        # NOM= is derived from, and frame 0's tag (last byte of its sound section: 1 = palette).
+        $section = ([math]::Floor($e.real / 512) + 1) * 512
+        $hb = New-Object byte[] (512 + $section)
         $fs = [IO.File]::OpenRead($cache)
-        try { [void]$fs.Read($hb, 0, 512) } finally { $fs.Close() }
+        try { [void]$fs.Read($hb, 0, $hb.Length) } finally { $fs.Close() }
         $sw = if ($e.w -eq 256 -and $e.h -le 192) { 256 } else { 320 }
         $want = [ordered]@{
             magic = @([Text.Encoding]::ASCII.GetString($hb, 0, 5), 'NXVID'); version = @($hb[5], 2)
             'width code' = @($hb[6], [int]($sw -eq 320)); 'height byte' = @($hb[7], ($e.h % 256))
+            'fps byte' = @($hb[8], [int][math]::Round([double]$e.fps * 10)); 'frame 0 tag' = @($hb[512 + $section - 1], 1)
             channels = @($hb[9], $e.ch); rate = @(($hb[10] + 256 * $hb[11]), 15625); flags = @($hb[12], 0x13)
             'sound bytes' = @(($hb[17] + 256 * $hb[18]), $e.real)
             cap = @(($hb[21] + 256 * $hb[22]), ([math]::Ceiling($e.w * $e.h / 512) + 1))
@@ -5560,7 +5568,6 @@ if ($VidRawBench) {
         $nominal = [math]::Round([double]$e.fps * [double]$e.dur)
         if ($frames -lt 33 -or [math]::Abs($frames - $nominal) -gt 2) { throw "-VidRawBench ${clip}: $frames frames, expected $nominal +- 2 (and at least 33 for NXBW)" }
         # Layout walk to EOF and the sound stimulus (pad and tag excluded).
-        $section = ([math]::Floor($e.real / 512) + 1) * 512
         if ($e.section -and $e.section -ne $section) { throw "-VidRawBench ${clip}: table section $($e.section) disagrees with $section" }
         $chk = & python "$PSScriptRoot\rawsound_check.py" $cache --expect $e.check 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { throw "-VidRawBench ${clip}: rawsound_check --expect $($e.check) failed: $($chk -join ' | ')" }
