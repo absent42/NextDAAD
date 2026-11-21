@@ -4756,7 +4756,7 @@ def t11_total_size_gate():
            "the gate is defined exactly once")
     writers = [m.start() for m in
                re.finditer(r'with open\(out_path, "wb"\) as f:', src)]
-    expect(len(writers) == 2, f"expected 2 .VID writers, found {len(writers)}")
+    expect(len(writers) == 3, f"expected 3 .VID writers, found {len(writers)}")
     for at in writers:
         body = src[src.rindex("\ndef ", 0, at):at]
         expect("total_size_check(" in body,
@@ -7938,6 +7938,179 @@ def t22_prefilter():
                                prefilter="hqdn3d=2:1.5:3:2.25")
     expect(not np.array_equal(ex_a["orig"], ex_c["orig"]),
            "a set prefilter must actually filter the frames")
+
+
+# =======================================================================
+# Step 16 (raw direct video): raw layout writer, header fields, mono
+# layout, gate equation
+# =======================================================================
+
+def _raises(exc, fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except exc:
+        return
+    raise AssertionError(f"{getattr(fn, '__name__', fn)} did not raise {exc.__name__}")
+
+
+def _hdr_args(**over):
+    a = dict(width=256, height=100, fps=25, channels=2, arate=15625,
+             frame_count=10, audio_bytes_per_frame=1250,
+             ring_start_margin_blocks=10, per_frame_cap_blocks=10,
+             flags=enc.FLAG_DELTA_STREAM | enc.FLAG_DIRECT_SERVE)
+    a.update(over)
+    return a
+
+
+@case(16, "raw layout - header: flags $13, mono, raw width, refusals")
+def t16_raw_header():
+    h = enc.pack_header(width=320, height=224, fps=25, channels=1, arate=15625,
+        frame_count=10, audio_bytes_per_frame=625, ring_start_margin_blocks=124,
+        per_frame_cap_blocks=124, raw_width=280,
+        flags=enc.FLAG_DELTA_STREAM | enc.FLAG_DIRECT_SERVE | enc.FLAG_RAW)
+    assert h[12] == 0x13 and h[9] == 1 and h[6] == 1 and h[7] == 224
+    assert int.from_bytes(h[23:25], "little") == 280 and not any(h[25:])
+    for bad in (dict(channels=1, flags=3), dict(channels=1, flags=1)):   # mono without the raw flag
+        _raises(ValueError, enc.pack_header, **_hdr_args(**bad))
+    for w in (0, 6, 322):
+        _raises(SystemExit, enc.raw_surface, w, 100, "320")
+    # raw flag needs raw_width and the direct-serve bit; non-raw keeps 23-24 zero
+    raw = enc.FLAG_DELTA_STREAM | enc.FLAG_DIRECT_SERVE | enc.FLAG_RAW
+    _raises(ValueError, enc.pack_header, **_hdr_args(flags=raw))
+    _raises(ValueError, enc.pack_header, **_hdr_args(
+        flags=enc.FLAG_DELTA_STREAM | enc.FLAG_RAW, raw_width=256))
+    _raises(ValueError, enc.pack_header, **_hdr_args(width=320, flags=raw, raw_width=322))
+    g = enc.pack_header(**_hdr_args(flags=raw, raw_width=256))
+    assert int.from_bytes(g[23:25], "little") == 256
+    assert not any(enc.pack_header(**_hdr_args())[23:])
+
+
+@case(16, "raw layout - audio padding always leaves a tag byte; mono only raw")
+def t16_raw_audio_pad():
+    assert enc.audio_layout(25, 2, raw=True)[2:] == (1250, 1536)
+    assert enc.audio_layout(25, 1, raw=True)[2:] == (625, 1024)
+    assert enc.audio_layout(16.67, 2, raw=True)[2:] == (1874, 2048)
+    assert enc.audio_layout(15625 / 1024, 1, raw=True)[2:] == (1024, 1536)   # exact multiple
+    assert enc.audio_layout(25, 2)[2:] == (1250, 1536)                       # non-raw unchanged
+    _raises(ValueError, enc.audio_layout, 25, 1)
+
+
+@case(16, "raw layout - pixel sectors, pad, columns, frame cap for the target shapes")
+def t16_raw_layout():
+    L = enc.raw_layout
+    assert [L(w, h, s)["sectors"] for w, h, s in
+            ((256,192,256),(320,160,320),(320,192,320),(280,224,320),(320,240,320),(256,240,320))] \
+           == [96, 100, 120, 123, 150, 120]
+    assert L(280, 224, 320)["pad"] == 256 and L(280, 224, 320)["cap_blocks"] == 124
+    assert L(280, 224, 320)["pixel_bytes"] == 280 * 224
+    assert L(256, 192, 256)["columns"] == 0 and L(320, 256, 320)["columns"] == 0
+    assert L(256, 240, 320)["columns"] == 256
+    assert enc.raw_surface(256, 192) == (256, False) and enc.raw_surface(256, 240) == (320, True)
+    assert enc.raw_surface(256, 192, "320") == (320, True)
+    assert enc.raw_surface(256, 100, "256") == (256, False)
+    assert enc.raw_surface(320, 160) == (320, True)
+    for args in ((256, 240, "256"), (320, 100, "256"), (320, 257, "320"), (322, 100, "320")):
+        _raises(SystemExit, enc.raw_surface, *args)
+
+
+@case(16, "raw layout - gate equation terms and total")
+def t16_raw_model():
+    k = dict(tb=17.0, ts=200.0, tsnd=11000.0, tc=40.0, tf=5000.0, tp=9000.0)
+    r = enc.raw_model_t(120, 3, 320, True, k)
+    assert r["byte_t"] == 120 * 512 * 17.0 and r["sector_t"] == 24000.0 and r["snd_t"] == 33000.0
+    assert r["col_t"] == 12800.0 and r["frame_t"] == 5000.0 and r["pal_t"] == 9000.0 and r["stall_t"] == 0
+    assert r["total_t"] == sum(v for n, v in r.items() if n != "total_t")
+    assert enc.raw_model_t(120, 3, 320, False, k, transport_factor=1.1, stall=5600)["total_t"] \
+           == 120 * 512 * 17.0 * 1.1 + 24000 + 33000 + 12800 + 5000 + 5600
+
+
+@case(16, "raw layout - frame bytes: sound, pad, tag, palette, pixels")
+def t16_raw_frame_bytes():
+    snd = bytes(range(250)) * 5                      # 1250 real bytes
+    px = bytes((i * 7 + 3) & 255 for i in range(280 * 224))
+    f = enc.emit_raw_frame(snd, 1536, px, bytes(512))
+    assert len(f) == 1536 + 512 + 123 * 512
+    assert f[:1250] == snd and set(f[1250:1535]) == {0x80} and f[1535] == 1
+    assert f[2048:2048 + len(px)] == px and not any(f[2048 + len(px):])
+    g = enc.emit_raw_frame(snd, 1536, px, None)
+    assert g[1535] == 0 and len(g) == 1536 + 123 * 512
+    b = enc.emit_raw_frame(bytes(1024), 1536, px, None)      # boundary: the tag has a sector to itself
+    assert set(b[1024:1535]) == {0x80} and b[1535] == 0
+
+
+def _raw_demo_src():
+    src = ROOT / "tools" / "demo-files" / "1920x1080-25p.mp4"
+    if not src.exists() or not FFMPEG.exists():
+        skip("tools\\demo-files\\1920x1080-25p.mp4 or ffmpeg not available")
+    return src
+
+
+@case(16, "raw layout - mkrawclip writes a 280x224 stereo clip with the contracted bytes")
+def t16_raw_clip_file():
+    import subprocess
+    src = _raw_demo_src()
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "raw.vid"
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "mkrawclip.py"), "--src", str(src),
+             "--shape", "280x224", "--fps", "25", "--channels", "2",
+             "--start", "00:00:00", "--duration", "2", "--out", str(out)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        expect(r.returncode == 0, "mkrawclip failed:\n" + r.stdout.decode("utf-8", "replace"))
+        data = out.read_bytes()
+    h = data[:512]
+    expect(h[12] == 0x13, f"flags {h[12]:#x}")
+    expect(h[6] == 1 and h[7] == 224 and h[9] == 2, "width code 1, height 224, stereo")
+    expect(int.from_bytes(h[23:25], "little") == 280, "raw width 280")
+    expect(int.from_bytes(h[21:23], "little") == 124, "frame cap 124")
+    nframes = int.from_bytes(h[14:17], "little")
+    expect(nframes == 50, f"frames {nframes}")
+    expect(int.from_bytes(h[17:19], "little") == 1250, "audio bytes per frame 1250")
+    # walk the frame sections: sound 1536 (tag last), optional 512 palette, 123 pixel sectors
+    pos, tags = 512, []
+    for _ in range(nframes):
+        tag = data[pos + 1535]
+        expect(tag in (0, 1), f"tag {tag}")
+        tags.append(tag)
+        pos += 1536 + (512 if tag else 0) + 123 * 512
+    expect(pos == len(data), f"file size {len(data)} != sum of sections {pos}")
+    expect(tags[0] == 1, "frame 0 carries a palette sector")
+    # frame 0 against the encoder's own quantised column-major frame
+    ex = enc._extract_source(src, 280, 224, 25.0, "00:00:00", "2", str(FFMPEG),
+                             None, raw=True, channels=2)
+    expect(ex["nframes"] == 50, "extraction frame count")
+    cuts = [c for c in enc.detect_scene_cuts(ex["chg"]) if 0 < c < 50]
+    end0 = (cuts + [50])[0]
+    pal = enc.scene_palette(ex["orig"], 0, end0)
+    idx, _dec = enc.dither_quantize(ex["orig"][0], pal)
+    flat = enc.flatten_frame(idx, True).tobytes()
+    expect(data[512:512 + 1250] == ex["audio_bytes"][:1250], "frame 0 sound bytes")
+    expect(data[512 + 1536:512 + 2048] == enc.build_palette_block(pal), "frame 0 palette sector")
+    px0 = 512 + 2048
+    expect(data[px0:px0 + 224] == flat[:224], "pixel bytes [0:224] are quantised column 0")
+    expect(data[px0:px0 + len(flat)] == flat, "frame 0 pixels are column-major")
+    expect(not any(data[px0 + len(flat):px0 + 123 * 512]), "pixel pad is zero")
+
+
+@case(16, "raw layout - old direct writer stays reachable and byte-identical")
+def t16_old_layout_writer():
+    import hashlib
+    import subprocess
+    src = _raw_demo_src()
+    want = (ROOT / "tests" / "nxv2" / "old_direct_256x100.sha1").read_text().split()[0]
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "old.vid"
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "videnc_old_direct.py"), "--direct",
+             "--shape", "256x100", "--fps", "25", "--start", "00:00:00",
+             "--duration", "1.0", "--ffmpeg", str(FFMPEG), str(src), str(out)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        expect(r.returncode == 0, "videnc_old_direct failed:\n" + r.stdout.decode("utf-8", "replace"))
+        data = out.read_bytes()
+    expect(data[12] == 3, f"flags {data[12]:#x}")
+    expect(not any(data[23:25]), "bytes 23-24 are zero")
+    expect(data[512 + 1536] == enc.OP_KSTART, "first payload byte is OP_KSTART")
+    expect(hashlib.sha1(data).hexdigest() == want, "sha1 differs from the pre-change capture")
 
 
 def main():
