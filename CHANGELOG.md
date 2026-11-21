@@ -2,8 +2,32 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## Unreleased
+## v0.14.0 - Unreleased
 
+- **Core 3.03.03 or later required**: the interpreter checks NR $01/$0E
+  first at boot and on an older core stops with a blue border and
+  `NextDAAD needs core 3.03.03 or later`. `nextdaad.nex` and `intro.nex`
+  carry core 3.3.3 in their NEX headers, so NextZXOS's loader refuses
+  them on an older core before the interpreter runs. Constant Next
+  register reads use the core 3.03.03 read-register instruction.
+- **Drawing on the zxnDDMA blitter**: picture draws (full and
+  positioned), Layer 2 clears, back-to-front surface copies and tilemap
+  window scrolls are blitter transfers by physical address. The chunked
+  DMA copy, row buffer bounce and slot 6 remaps they replaced are gone.
+  The blitter flags are cleared at boot.
+- **Extern API version 4**: `SVC_VERSION` returns 4 (interpreter requires
+  core 3.03.03). `xbn.inc` adds an `NRGET n` macro that reads Next
+  register `n`; an extern using it should check for API 4 first. The
+  fade extern requires API 4: below it fn 40 sets flag 240 to 1 and
+  fns 41-43 do nothing. Existing extern binaries are unchanged.
+- **CSpect 4.5.9.0 minimum**: `RUN.BAT`/`run.sh` and `DEBUG.BAT`/
+  `debug.sh` warn below CSpect 4.5.9.0 or when the version cannot be
+  read; `build.ps1 -Run` refuses an older CSpect and uses `CSPECT_DIR`.
+  With `EMULATOR=jnext` the run launcher warns that no jNext release
+  supports core 3.03.03 yet, so video cutscenes play on real hardware
+  only.
+- **Debugger plugin 0.2.4**: implements `GetName` and `GetDescription`,
+  required by CSpect 4.5's plugin interface.
 - **Stereo samples, volume and pan**: a WAV sample may be stereo (8-bit
   unsigned PCM, 3500-20000 Hz, even data length) and plays on the left
   and right outputs. New SFX subs 17/18 set channel 1/2 volume and 19/20
