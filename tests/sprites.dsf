@@ -1,5 +1,5 @@
 ; NextDAAD sprite animation fixture. STIMULUS fixture: tests\build-tests.ps1
-; asserts the compiled bytes; tests\sprites_dump.py drives it over ZRCP and
+; asserts the compiled bytes; tests\sprites_dump.py drives it on CSpect and
 ; reads the DEBUG snapshot after every ANYKEY. Sets: 002 torch 8-bit,
 ; 003 32x32 one-shot, 006 4-bit two blocks, 015 8-bit in block 2, 017 4-bit
 ; 126 patterns (16810 bytes, two pool banks), 018 4-bit 2x2 composite with

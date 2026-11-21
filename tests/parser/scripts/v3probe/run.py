@@ -80,7 +80,9 @@ def build_v3(workdir, lang="EN"):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=None)
-    ap.add_argument("--port", type=int, default=10000)
+    ap.add_argument("--port", type=int, default=None,
+                    help="CSpect MCP port for the Next leg (23460-23499; default: the "
+                         "first free one)")
     ap.add_argument("--nex", default=str(ROOT / "build" / "nextdaad.nex"))
     ap.add_argument("--script", default=str(SCRIPT))
     args = ap.parse_args(argv)

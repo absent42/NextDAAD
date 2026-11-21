@@ -1,5 +1,5 @@
 ; NextDAAD sprites-under-audio fixture. STIMULUS fixture: tests\build-tests.ps1
-; asserts the compiled bytes; tests\spraud_dump.py drives it over ZRCP and
+; asserts the compiled bytes; tests\spraud_dump.py drives it on CSpect and
 ; reads the DEBUG sprite snapshot after every step. Staged by
 ; tests\build-tests.ps1 -SprAud into sd\SPRAUD\ with 002/006/020/021.ANI,
 ; 006.AKY (the kit's 9-channel tune, SongToAky of authoring-kit\STARTER\AUDIO\1.aks),

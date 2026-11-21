@@ -1614,7 +1614,7 @@ aud_psg3_write:
 ; back off the chips, plus the AKY player's own register arrays and its
 ; self-modified position cells - into the always-mapped staging ring at
 ; AUD_STAGE0, once per frame, right after aud_tick (call site:
-; src\interrupts.asm im2_isr). A scripted ZEsarUX/DeZog leg then reads
+; src\interrupts.asm im2_isr). A scripted CSpect leg (tests/audio/stopm_dump.py) reads
 ; AUD_DBG_LEN (203) plain bytes out of the 64K map with no bank juggling and no
 ; breakpoint choreography: the STOPM three-point dump (pre-STOPM,
 ; post-STOPM, post-restart-MUSIC) is three reads of this block, and the

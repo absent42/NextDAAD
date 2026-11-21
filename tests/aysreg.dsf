@@ -13,7 +13,7 @@
 ; No 001.WAV is staged, deliberately: SFX 1 1 must fall back to AY
 ; effect 1 on PSG 3.
 ;
-; Headless check: tests\audio\aysreg_check.py (DEBUG build, ZEsarUX).
+; Headless check: tests\audio\aysreg_check.py (DEBUG build, CSpect).
 ; Voice checks by ear belong to the silicon sheet.
 
 #define fPlayer             38

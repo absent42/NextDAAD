@@ -969,96 +969,117 @@ def t9_prompt_is_blanked_in_the_grid_not_filtered_after():
     assert nleg.blank_prompt_rows(rows, None) == rows
 
 
-_FAKE_SYMS = {"MORELOCK": 1, "WRAPLOCK": 2, "INPTOFRAMES": 3, "ERRCODE": 4,
+_FAKE_SYMS = {"MORELOCK": 1, "WRAPLOCK": 2, "INPTOFRAMES": 3, "ERRCODE": 5,
+              "FRAMECOUNTER": 6, "INPLINE": 8, "RNGSTATE": 0x40,
+              "ENG_INIT_GAME@SEEDOK": 0x9CB2, "WAIT_KEY_TIMEOUT": 0x99E0,
               "FLAGS": 100}
+_MORE, _ANYKEY = 0x02, 0x04
 
 
-class _FakeSettleZ:
-    """Stand-in for zrcp.Zrcp, just enough for settle() cases.
+class _FakeSession:
+    """Stand-in for cspect.Session. Per poll (clock: the ERRCODE read, settle()'s
+    first read): states (moreLock, wrapLock), last one repeating; stops None or
+    (E, rows), stopped at WAIT_KEY_TIMEOUT until resume(). FRAMECOUNTER += frame_step."""
 
-    `states` is one (moreLock, wrapLock) pair per poll and `fires` the
-    CUMULATIVE page-capture counter the emulator would report on that
-    same poll (nleg's breakpoint-driven page capture - see its module
-    docstring). Both advance together, driven by the ERRCODE read, which
-    is the FIRST thing settle() does on every poll and the only thing it
-    does exactly once per poll - the counter is deliberately read more
-    than once when a page fires (captured_page re-checks it after
-    reading the dump), so it cannot be the clock here.
-    """
-
-    def __init__(self, states, fires, grid=None, errcodes=None,
-                 timeout_flags=(0, 0), toframes=b"\x00\x00",
-                 confirms=None):
-        assert len(states) == len(fires), "one fire count per poll"
+    def __init__(self, states, stops=None, grid=None, errcodes=None,
+                 timeout_flags=(0, 0), toframes=b"\x00\x00", confirms=None,
+                 late_stops=None, frame_step=1, stop_pc=None, inpline=b""):
         self.states = list(states)
-        self.fires = list(fires)
-        # What the SECOND (moreLock, wrapLock) read of a poll sees, if
-        # it should differ from the first - i.e. what _ready_confirmed
-        # gets. None means "the same as the first", the ordinary case.
-        self.confirms = list(confirms) if confirms else None
-        self.grid = grid                        # what the LIVE screen holds
-        # Per-poll runtime-error code, so a case can make the interpreter
-        # raise part-way through a settle.
-        self.errcodes = list(errcodes) if errcodes else [0] * len(states)
-        self.timeout_flags = bytes(timeout_flags)   # flags 48, 49
-        self.toframes = bytes(toframes)             # inpTOFrames
-        self.writes = []
-        self.enters = 0
-        self.dismissals = 0
-        self.evaluates = 0
+        self.stops = list(stops) if stops else []
+        self.confirms = dict(confirms or {})      # poll -> pair the 2nd lock read sees
+        self.late_stops = dict(late_stops or {})  # poll -> stop from its 2nd stopped_at
+        self.live = grid                          # what the screen holds when running
+        self.errcodes = list(errcodes) if errcodes else [0]
+        self.timeout_flags = bytes(timeout_flags)  # flags 48, 49
+        self.toframes = bytes(toframes)            # inpTOFrames
+        self.frame_step = frame_step
+        self.stop_pc = stop_pc or _FAKE_SYMS["WAIT_KEY_TIMEOUT"]
+        self.inpline = inpline
+        self.frames = 0
         self.polls = 0
-        self.lock_reads = 0
+        self.stop = None                           # (E, grid bytes) while stopped
+        self.writes, self.presses, self.typed = [], [], []
+        self.resumes = 0
+        self._lock_reads = self._stop_calls = 0
 
-    def read_memory(self, addr, length):
+    def _at(self, seq):
+        return seq[min(self.polls - 1, len(seq) - 1)]
+
+    def _tick(self):
+        self.polls += 1
+        self._lock_reads = self._stop_calls = 0
+        i = self.polls - 1
+        if i < len(self.stops) and self.stops[i] is not None:
+            e, rows = self.stops[i]
+            self.stop = (e, _dump_of(rows))
+
+    def read(self, addr, length):
+        if addr == _FAKE_SYMS["ERRCODE"]:
+            self._tick()
+            return bytes([self._at(self.errcodes)])
+        if addr == _FAKE_SYMS["MORELOCK"]:
+            assert length == 2, "both locks in one read: %d" % length
+            more, wrap = self._at(self.states)
+            if self._lock_reads and (self.polls - 1) in self.confirms:
+                more, wrap = self.confirms[self.polls - 1]
+            self._lock_reads += 1
+            return bytes([1 if more else 0, 1 if wrap else 0])
+        if addr == _FAKE_SYMS["FRAMECOUNTER"]:
+            v = self.frames & 0xFFFF
+            self.frames += self.frame_step
+            return v.to_bytes(2, "little")
         if addr == _FAKE_SYMS["INPTOFRAMES"]:
             return self.toframes
         if addr == _FAKE_SYMS["FLAGS"] + 48:
             return self.timeout_flags[:length]
-        if length == 1:
-            if addr == _FAKE_SYMS["ERRCODE"]:
-                if self.polls:                  # not the first poll
-                    self.states.pop(0)
-                    self.fires.pop(0)
-                    if self.confirms and len(self.confirms) > 1:
-                        self.confirms.pop(0)
-                    if len(self.errcodes) > 1:
-                        self.errcodes.pop(0)
-                self.polls += 1
-                self.lock_reads = 0
-                return bytes([self.errcodes[0]])
-            pair = self.states[0]
-            if self.lock_reads >= 2 and self.confirms:
-                pair = self.confirms[0]
-            self.lock_reads += 1
-            more, wrap = pair
-            if addr == _FAKE_SYMS["MORELOCK"]:
-                return bytes([1 if more else 0])
-            return bytes([1 if wrap else 0])
-        return self.grid if self.grid else bytes(length)   # the tilemap grid
+        if addr == _FAKE_SYMS["INPLINE"]:
+            return (self.inpline + bytes(length))[:length]
+        raise AssertionError("unexpected read $%X+%d" % (addr, length))
 
-    def tap_dismiss_key(self, hold=0.0, settle=0.0):
-        self.dismissals += 1
-        self.enters += 1                        # "a key was sent" either way
+    def grid(self):
+        import tilemap
+        if self.stop:
+            return self.stop[1]
+        return self.live if self.live else bytes(tilemap.GRID_BYTES)
 
-    def write_memory(self, addr, data):
+    def stopped_at(self):
+        self._stop_calls += 1
+        late = self.late_stops.pop(self.polls - 1, None) if self._stop_calls >= 2 else None
+        if late is not None:
+            self.stop = (late[0], _dump_of(late[1]))
+        return self.stop_pc if self.stop else None
+
+    def regs(self):
+        assert self.stop, "registers read while running"
+        return {"E": self.stop[0]}
+
+    def resume(self):
+        self.stop = None
+        self.resumes += 1
+
+    def write(self, addr, data):
         self.writes.append((addr, bytes(data)))
 
-    def enter(self, wait=0.0):
-        self.enters += 1
+    def press(self, keys, frames=None):
+        assert not self.stop, "a key play while stopped stalls CSpect"
+        self.presses.append(keys)
 
-    def evaluate(self, expr):
-        self.evaluates += 1
-        return str(self.fires[0])
+    def enter(self):
+        self.press("ENTER")
+
+    def type_text(self, text):
+        assert not self.stop, "a key play while stopped stalls CSpect"
+        self.typed.append(text)
 
 
-def _fake_settle_leg(z, dump):
+def _fake_settle_leg(s, keys=None):
     import nleg
-    return nleg.NextLeg(z, _FAKE_SYMS, obj_count=1, obj_size=6, page_dump=dump)
+    return nleg.NextLeg(s, _FAKE_SYMS, obj_count=1, obj_size=6, keys=keys)
 
 
 def _dump_of(rows):
-    """Encode text rows the way the tilemap holds them, so a fake page
-    dump decodes back to those rows."""
+    """Encode text rows the way the tilemap holds them, so a fake grid
+    decodes back to those rows."""
     import tilemap
     out = bytearray(tilemap.GRID_BYTES)
     for r in range(tilemap.ROWS):
@@ -1068,230 +1089,207 @@ def _dump_of(rows):
     return bytes(out)
 
 
-def _write_dump(data):
-    import tempfile
-    d = Path(tempfile.mkdtemp())
-    p = d / "nleg-page.bin"
-    p.write_bytes(data)
-    return p
-
-
 @case
-def t9_page_capture_comes_from_the_emulator_dump_not_the_live_screen():
-    """The MORE-page content in the transcript must be the emulator's own
-    save-binary dump, taken at the pager's park point, NOT a read of the
-    live screen at poll time.
-
-    That is the whole point of the breakpoint: the page can already be
-    gone by the time the harness polls (the Enter that submitted the
-    command is still held for KEY_DELAY_MS and wait_key is
-    press-then-release, so it dismisses the page itself). Here the fake
-    emulator reports the counter moving while moreLock is ALREADY back
-    down and the editor is ready again - the exact state the old polled
-    design captured nothing at all in - and the page must still land in
-    `pages`, with the dump's text, not the blank live grid.
-
-    And NOTHING may be pressed: the interpreter is not waiting for a key,
-    so an Enter here submits an empty command line and burns a turn.
-    """
-    page = ["a page that already scrolled away", "second line"]
-    z = _FakeSettleZ([(True, True), (True, True)], fires=[1, 1])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(page)))
+def t9_a_page_is_read_at_the_stop_not_from_the_live_screen():
+    """The page in the transcript is the tilemap read while the CPU is held
+    at WAIT_KEY_TIMEOUT, not whatever the screen shows once it runs again."""
+    page = ["a page that scrolls away later", "second line"]
+    s = _FakeSession([(True, False), (True, True)], stops=[(_MORE, page)])
     pages = []
-    anykey = leg.settle(pages)
-
-    assert len(pages) == 1, (
-        "the page fired (counter moved) while moreLock was already down - "
-        "it must still be captured, that is the race being closed")
+    anykey = _fake_settle_leg(s).settle(pages)
+    assert len(pages) == 1, pages
     assert pages[0][0].rstrip() == page[0], pages[0][0]
     assert pages[0][1].rstrip() == page[1], pages[0][1]
     assert all(not r.strip() for r in pages[0][2:]), "rest of the grid blank"
-    assert z.enters == 0, (
-        "the interpreter had already moved on - pressing a key here "
-        "submits an empty command line and burns a turn")
+    assert s.resumes == 1, "the stop must be resumed exactly once: %d" % s.resumes
     assert anykey is False
 
 
 @case
-def t9_a_parked_page_is_captured_from_the_dump_and_dismissed_once():
-    """The ordinary case: the counter moves and the interpreter is still
-    parked (moreLock up, wrapLock down). The page comes from the dump and
-    is dismissed with exactly one keypress."""
+def t9_a_more_stop_is_captured_once_and_dismissed_once():
+    """E=$02 is prn_more_check's page: one page, one key, however many polls
+    the locks stay (1, 0) afterwards."""
+    import nleg
     page = ["page one", "page one line two"]
-    z = _FakeSettleZ([(True, False), (True, True)], fires=[1, 1])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(page)))
+    s = _FakeSession([(True, False)] * 4 + [(True, True)],
+                     stops=[(_MORE, page)])
     pages = []
-    leg.settle(pages)
+    _fake_settle_leg(s).settle(pages)
     assert len(pages) == 1 and pages[0][0].rstrip() == page[0], pages
-    assert z.enters == 1, z.enters
+    assert s.presses == [nleg.DISMISS_KEY], s.presses
 
 
 @case
-def t9_anykey_backstop_does_not_append_the_same_screen_twice():
-    """A wait that sets no lock still fires the pager breakpoint (h_anykey
-    reaches the same routine), so its screen arrives from the dump. The
-    static-screen backstop then dismisses it - and must NOT put the same
-    screen into the transcript a second time."""
+def t9_an_anykey_stop_is_dismissed_once_and_not_appended_again():
+    """E=$04 is h_anykey (no lock): captured at the stop, dismissed once; the
+    backstop neither re-appends the unchanged screen nor presses again, and the
+    turn is not marked a guess."""
+    import nleg
     screen = ["Press any key."]
-    polls = [(False, False)] * 6 + [(True, True)]
-    fires = [1] * 6 + [1]
-    # The live screen still SHOWS the ANYKEY page - nothing has run since
-    # the dump was taken, which is exactly why the backstop would
-    # otherwise re-append it.
-    z = _FakeSettleZ(polls, fires, grid=_dump_of(screen))
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(screen)))
+    polls = [(False, False)] * 8 + [(True, True)]
+    step = nleg.ANYKEY_STATIC_FRAMES          # well past the threshold over 8 polls
+    s = _FakeSession(polls, stops=[(_ANYKEY, screen)], grid=_dump_of(screen),
+                     frame_step=step)
     pages = []
-    anykey = leg.settle(pages)
+    anykey = _fake_settle_leg(s).settle(pages)
     assert len(pages) == 1, (
-        "the ANYKEY screen was appended twice - once from the dump and "
-        "once by the backstop: %d page(s)" % len(pages))
-    assert z.enters == 1, "the backstop must still dismiss it"
-    assert anykey is True, "and still mark the turn"
+        "the ANYKEY screen was appended %d time(s)" % len(pages))
+    assert s.presses == [nleg.DISMISS_KEY], s.presses
+    assert anykey is False, "a stop identified by E is not a screen-static guess"
 
 
 @case
 def t9_page_capture_never_reads_a_half_drawn_page():
-    """moreLock up, wrapLock down, counter NOT moved means prn_more_check
-    has taken the lock but is still printing SM32 - the page is not
-    finished. Nothing may be captured in that state; the old polled
-    design captured exactly there."""
-    z = _FakeSettleZ([(True, False), (True, False), (True, True)],
-                     fires=[0, 0, 0])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(["unfinished"])))
+    """moreLock up and wrapLock down with no stop is prn_more_check short of
+    its park point. Nothing may be captured or pressed there."""
+    s = _FakeSession([(True, False), (True, False), (True, True)])
     pages = []
-    leg.settle(pages)
-    assert pages == [], (
-        "captured a page the counter never announced - that grid is a "
-        "half-drawn page, mid-SM32")
-    assert z.enters == 0, "nothing to dismiss: the pager has not parked yet"
+    _fake_settle_leg(s).settle(pages)
+    assert pages == [], "captured a page no stop announced"
+    assert s.presses == [], "nothing to dismiss: the pager has not parked yet"
 
 
 @case
-def t9_two_pages_between_polls_raise_rather_than_truncate():
-    """The dump file holds ONE page. If the counter moves by more than one
-    between two polls, an earlier page's dump was overwritten before it
-    could be read, and that is lost transcript text - it must be named,
-    not silently dropped."""
-    z = _FakeSettleZ([(True, False), (True, True)], fires=[2, 2])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(["only the last one"])))
-    try:
-        leg.settle([])
-    except RuntimeError as exc:
-        assert "lost" in str(exc), exc
-    else:
-        raise AssertionError(
-            "two pages between polls must raise, not quietly keep the last")
+def t9_each_stop_is_its_own_page_in_order():
+    """Two pages on successive polls are two stops: both captured, in order,
+    each dismissed once. The CPU is held at each, so none can be overrun."""
+    import nleg
+    s = _FakeSession([(True, False), (True, False), (True, True)],
+                     stops=[(_MORE, ["first"]), (_MORE, ["second"])])
+    pages = []
+    _fake_settle_leg(s).settle(pages)
+    assert [p[0].rstrip() for p in pages] == ["first", "second"], pages
+    assert s.presses == [nleg.DISMISS_KEY] * 2, s.presses
+
+
+@case
+def t9_a_stop_during_a_key_play_is_serviced_and_the_play_completes():
+    """A key play stalls while the CPU is stopped: page two stops during the
+    play that dismisses page one, and the play may only finish once that stop
+    is serviced and resumed; settle() then captures and dismisses page two."""
+    import threading
+    import nleg
+
+    s = _FakeSession([(False, False), (True, True)],
+                     stops=[(_MORE, ["page one"])])
+
+    class _Keys:
+        def __init__(self):
+            self.presses = []
+            self.released = threading.Event()
+
+        def press(self, keys, frames=None):
+            self.presses.append(keys)
+            if len(self.presses) == 1:
+                self.released.clear()
+                s.stop = (_MORE, _dump_of(["page two"]))
+                if not self.released.wait(5):
+                    raise RuntimeError("Keys still being pressed (the CPU stopped)")
+
+    keys = _Keys()
+    real_resume = s.resume
+
+    def _resume():
+        real_resume()
+        keys.released.set()
+
+    s.resume = _resume
+    pages = []
+    _fake_settle_leg(s, keys=keys).settle(pages)
+    assert [p[0].rstrip() for p in pages] == ["page one", "page two"], pages
+    assert keys.presses == [nleg.DISMISS_KEY] * 2, keys.presses
+    assert s.resumes == 2, s.resumes
 
 
 @case
 def t9_both_locks_are_confirmed_before_a_turn_is_called_ready():
-    """See nleg._ready_confirmed's docstring for why both locks must agree.
-
-    Both ways out of the confirmation window are checked here: wrapLock
-    dropping, and the page counter moving because the pager reached its
-    park point.
-    """
+    """(1, 1) also holds inside prn_more_check while SM32 prints. Both ways out
+    of the confirmation window are checked: wrapLock dropping, and the pager
+    stopping at WAIT_KEY_TIMEOUT."""
     # wrapLock drops on the confirmation read -> it was the pager
-    z = _FakeSettleZ([(True, True), (True, True)], fires=[0, 0],
-                     confirms=[(True, False), (True, True)])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
-    leg.settle([])
-    assert z.polls == 2, (
-        "settle called the SM32 window READY and ended the turn on a "
-        "half-drawn page (stopped after %d poll(s))" % z.polls)
+    s = _FakeSession([(True, True), (True, True)], confirms={0: (True, False)})
+    _fake_settle_leg(s).settle([])
+    assert s.polls == 2, (
+        "settle called the SM32 window READY (stopped after %d poll(s))" % s.polls)
 
-    # the counter moves instead -> also the pager, also not READY. The
-    # page it announced is then picked up by the NEXT poll, exactly as a
-    # page announced any other way is.
-    z2 = _FakeSettleZ([(True, True)] * 3, fires=[0, 1, 1])
-    leg2 = _fake_settle_leg(z2, _write_dump(_dump_of(["More..."])))
-    real = z2.evaluate
-
-    def _fires_on_confirm(expr):
-        return "1" if z2.evaluates else real(expr)
-
-    z2.evaluate = _fires_on_confirm
-    leg2.settle([])
-    assert z2.polls >= 2, (
-        "a page parking during the confirmation read must not be READY")
+    # the pager stops during the confirmation window -> not READY; its page is
+    # picked up on the next poll like any other stop
+    s2 = _FakeSession([(True, True), (True, False), (True, True)],
+                      late_stops={0: (_MORE, ["More..."])})
+    pages = []
+    _fake_settle_leg(s2).settle(pages)
+    assert s2.polls >= 3 and len(pages) == 1, (s2.polls, pages)
 
     # and the genuine editor still returns on the FIRST poll it is seen
-    z3 = _FakeSettleZ([(True, True)], fires=[0])
-    leg3 = _fake_settle_leg(z3, _write_dump(_dump_of([])))
-    leg3.settle([])
-    assert z3.polls == 1, (
+    s3 = _FakeSession([(True, True)])
+    _fake_settle_leg(s3).settle([])
+    assert s3.polls == 1, (
         "the confirmation must not cost an extra poll when the editor "
-        "really is ready: %d" % z3.polls)
+        "really is ready: %d" % s3.polls)
 
 
 @case
-def t9_a_page_firing_while_the_dump_is_read_raises():
-    """Sampling the counter and reading the dump file are two separate
-    ZRCP round trips. A page firing BETWEEN them overwrites the dump with
-    a later page while the caller still believes it holds the one the
-    counter named - and settle()'s >1-per-poll guard cannot see it,
-    because the counter was already sampled. captured_page re-reads the
-    counter after the file and refuses on a mismatch, so that last silent
-    loss becomes a named failure."""
-    z = _FakeSettleZ([(True, False)], fires=[1])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(["page one"])))
-
-    real_evaluate = z.evaluate
-
-    def _racing_evaluate(expr):
-        # the FIRST read is settle()'s (the counter says 1); the second is
-        # captured_page's re-check, by which time another page has fired
-        if z.evaluates:
-            return "2"
-        return real_evaluate(expr)
-
-    z.evaluate = _racing_evaluate
+def t9_a_stop_anywhere_else_or_with_another_e_raises():
+    """WAIT_KEY_TIMEOUT has two callers, E=$02 and E=$04. Any other E, or a
+    stop at another breakpoint, means the harness no longer knows what it is
+    looking at."""
+    s = _FakeSession([(True, False)], stops=[(0x07, ["?"])])
     try:
-        leg.settle([])
+        _fake_settle_leg(s).settle([])
     except RuntimeError as exc:
-        assert "gone" in str(exc), exc
+        assert "$07" in str(exc), exc
     else:
-        raise AssertionError(
-            "a page overwritten between the counter read and the file read "
-            "was accepted as if it were the page the counter named")
-
-    # and the ordinary case, where nothing fires in that window, is
-    # unaffected - the re-read must not become a second failure mode
-    z2 = _FakeSettleZ([(True, False), (True, True)], fires=[1, 1])
-    leg2 = _fake_settle_leg(z2, _write_dump(_dump_of(["page one"])))
-    pages = []
-    leg2.settle(pages)
-    assert len(pages) == 1 and pages[0][0].rstrip() == "page one", pages
+        raise AssertionError("E=$07 at WAIT_KEY_TIMEOUT was accepted")
+    s2 = _FakeSession([(True, False)], stops=[(_MORE, ["?"])], stop_pc=0x1234)
+    try:
+        _fake_settle_leg(s2).settle([])
+    except RuntimeError as exc:
+        assert "$1234" in str(exc), exc
+    else:
+        raise AssertionError("a stop at $1234 was taken for a page")
 
 
 @case
-def t9_boot_settle_advances_past_a_lockless_wait_to_ready():
-    """The boot settle must run the interpreter out to the SAME positive
-    READY state jleg.js's own boot settle reaches, dismissing an
-    ANYKEY-class pause on the way rather than parking on it.
-
-    It used to park, back when NextDAAD's QUIT confirmation was a single
-    raw keypress and therefore indistinguishable from such a pause.
-    confirm_read takes BOTH locks now (SP16 Task 5), so the QUIT prompt is
-    a READY stop and cannot reach the backstop - while parking on a real
-    ANYKEY left the first scripted command being typed INTO the pause,
-    which is what made the Rabenstein replay's turn 0 vary run to run.
-
-    Also pins the shortcut: a screen a pager fire has already announced,
-    and that has not moved since, is a KNOWN wait, so the long
-    boot-only threshold (which exists for fixtures whose timed condacts
-    merely look static) does not apply to it.
-    """
+def t9_boot_settle_advances_past_an_anykey_stop_to_ready():
+    """Boot settles to READY as jleg.js's does, dismissing an ANYKEY pause on
+    the way (parking typed the first command into it), without waiting out
+    the boot threshold for a wait E already named."""
+    import nleg
     screen = ["Press any key."]
     polls = [(False, False)] * 6 + [(True, True)]
-    z = _FakeSettleZ(polls, [1] * len(polls), grid=_dump_of(screen))
-    leg = _fake_settle_leg(z, _write_dump(_dump_of(screen)))
-    assert leg.settle([], boot=True) is True
-    assert z.enters == 1, (
-        "boot must dismiss the pause and go on to READY, not park on it")
-    assert z.polls <= 7, (
-        "the announced-wait shortcut did not apply - boot waited out the "
-        "long threshold on a wait the breakpoint had already named")
+    s = _FakeSession(polls, stops=[(_ANYKEY, screen)], grid=_dump_of(screen))
+    assert _fake_settle_leg(s).settle([], boot=True) is False
+    assert s.presses == [nleg.DISMISS_KEY], (
+        "boot must dismiss the pause and go on to READY: %s" % s.presses)
+    assert s.polls == len(polls), (
+        "boot settle took %d polls for %d states" % (s.polls, len(polls)))
+
+
+@case
+def t9_the_static_backstop_counts_nextdaad_frames():
+    """A wait reaching neither the locks nor WAIT_KEY_TIMEOUT is a screen static
+    for ANYKEY_STATIC_FRAMES NextDAAD frames (BOOT_ at boot), not polls, so host
+    speed under -freerun cannot move it; dismissed once, appended once, a guess."""
+    import nleg
+    screen = ["Press a key to go on"]
+    polls = [(False, False)] * 8 + [(True, True)]
+    step = nleg.ANYKEY_STATIC_FRAMES // 2 + 1  # past the threshold within 8 polls
+    assert step * 8 < nleg.BOOT_ANYKEY_STATIC_FRAMES, "boot threshold must stay out of reach"
+
+    s = _FakeSession(polls, grid=_dump_of(screen), frame_step=step)
+    pages = []
+    assert _fake_settle_leg(s).settle(pages) is True
+    assert s.presses == [nleg.DISMISS_KEY], s.presses
+    assert len(pages) == 1 and pages[0][0].rstrip() == screen[0], pages
+
+    s2 = _FakeSession(polls, grid=_dump_of(screen), frame_step=step)
+    assert _fake_settle_leg(s2).settle([], boot=True) is False
+    assert s2.presses == [], "boot pressed before its own threshold: %s" % s2.presses
+
+    # eight static polls one frame apart are not a wait: polls are not time
+    s3 = _FakeSession(polls, grid=_dump_of(screen), frame_step=1)
+    assert _fake_settle_leg(s3).settle([]) is False
+    assert s3.presses == [], "poll count, not frames, tripped the backstop"
 
 
 @case
@@ -1301,36 +1299,37 @@ def t9_allow_timeout_leaves_the_countdown_alone():
     expiry is a harness-manufactured divergence. A turn the script marks
     allow_timeout is the deliberate exception: the countdown is the only
     thing that can end its wait, so settle() must not touch it."""
-    z = _FakeSettleZ([(False, False), (True, True)], fires=[0, 0])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
-    leg.settle([], allow_timeout=True)
-    assert not z.writes, (
+    s = _FakeSession([(False, False), (True, True)])
+    _fake_settle_leg(s).settle([], allow_timeout=True)
+    assert not s.writes, (
         "allow_timeout must stop the disarm entirely, or the timeout the "
-        "turn exists to observe can never fire: %s" % z.writes)
+        "turn exists to observe can never fire: %s" % s.writes)
 
-    z2 = _FakeSettleZ([(False, False), (True, True)], fires=[0, 0])
-    leg2 = _fake_settle_leg(z2, _write_dump(_dump_of([])))
-    leg2.settle([])
-    assert z2.writes, "the DEFAULT must still disarm every poll"
+    s2 = _FakeSession([(False, False), (True, True)])
+    _fake_settle_leg(s2).settle([])
+    assert s2.writes, "the DEFAULT must still disarm every poll"
 
 
 @case
 def t9_a_raised_runtime_error_ends_the_settle_at_once():
-    """err_raise (src/errors.asm) halts with interrupts off and spins
-    forever. No lock will change again and no page will ever fire, so a
-    settle that keeps polling for them just burns its whole timeout and
-    then blames the last lock pair - which says nothing about what
-    happened. tests/condacts.dsf reaches this state ON PURPOSE: its tail
-    chains PROCESS 5..14 to prove the PROC_DEPTH limit is enforced, and
-    error 3 IS the pass."""
+    """err_raise (src/errors.asm) halts with di (condacts.dsf's E03 is the pass):
+    settle ends at once instead of burning its timeout, and a page captured but
+    not yet settled still reaches the transcript."""
     polls = [(False, False)] * 4
-    z = _FakeSettleZ(polls, [0] * 4, errcodes=[0, 0, 3, 3])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
+    s = _FakeSession(polls, errcodes=[0, 0, 3])
+    leg = _fake_settle_leg(s)
     leg.settle([])
-    assert z.polls <= 3, (
-        "settle kept polling after the interpreter halted (%d poll(s))"
-        % z.polls)
+    assert s.polls <= 3, (
+        "settle kept polling after the interpreter halted (%d poll(s))" % s.polls)
     assert leg.fatal_error() == 3
+
+    s2 = _FakeSession(polls, errcodes=[3])
+    leg2 = _fake_settle_leg(s2)
+    leg2.pending.append((["captured mid-play"], _ANYKEY))
+    pages = []
+    leg2.settle(pages)
+    assert [p[0] for p in pages] == ["captured mid-play"], pages
+    assert s2.presses == [], "nothing may be pressed into a halted machine"
 
 
 @case
@@ -1341,23 +1340,22 @@ def t9_a_pager_timeout_turn_lets_the_page_expire_instead_of_pressing():
     at a page. Pressing is precisely what would stop the thing the check
     measures (tests/condacts.dsf check 104). Without allow_timeout the
     same state must still be dismissed normally."""
-    page = _dump_of(["104 PAGER TIMEOUT"])
+    page = ["104 PAGER TIMEOUT"]
     polls = [(True, False), (True, False), (True, True)]
 
-    z = _FakeSettleZ(polls, [1, 1, 1], timeout_flags=(1, 0x02))
-    leg = _fake_settle_leg(z, _write_dump(page))
+    s = _FakeSession(polls, stops=[(_MORE, page)], timeout_flags=(1, 0x02))
     pages = []
-    leg.settle(pages, allow_timeout=True)
+    _fake_settle_leg(s).settle(pages, allow_timeout=True)
     assert len(pages) == 1, pages
-    assert z.enters == 0, (
+    assert s.presses == [], (
         "a key was sent into a page the fixture armed a timeout for - the "
         "timeout can now never expire and the check can never pass")
+    assert s.resumes == 1, "the stop must still be resumed"
 
-    z2 = _FakeSettleZ(list(polls), [1, 1, 1], timeout_flags=(1, 0x02))
-    leg2 = _fake_settle_leg(z2, _write_dump(page))
-    leg2.settle([])                              # no directive
-    assert z2.enters == 1, (
-        "an ordinary turn must still dismiss the page: %d" % z2.enters)
+    s2 = _FakeSession(polls, stops=[(_MORE, page)], timeout_flags=(1, 0x02))
+    _fake_settle_leg(s2).settle([])              # no directive
+    assert len(s2.presses) == 1, (
+        "an ordinary turn must still dismiss the page: %s" % s2.presses)
 
 
 @case
@@ -1374,42 +1372,37 @@ def t9_a_wait_turn_arms_the_countdown_once_and_ends_on_output():
     prompt. "Wait for the locks to drop" is unusable as the exit for the
     same reason; the screen moving is the event the turn is about.
     """
-    import nleg
-
+    import tilemap
     before = _dump_of(["58 WAIT - DO NOT TYPE", "What now?>"])
     after = _dump_of(["58 WAIT - DO NOT TYPE", "What now?>", "58 OK"])
-    pre_rows, _ = __import__("tilemap").decode(before)
+    pre_rows, _ = tilemap.decode(before)
 
-    class _Z(_FakeSettleZ):
+    class _S(_FakeSession):
         """Parked in a line read throughout: the locks NEVER drop, exactly
         as they do not in the live case."""
 
         def __init__(self):
-            super().__init__([(True, True)] * 40, [0] * 40, grid=before)
-            self.polls = 0
+            super().__init__([(True, True)], grid=before)
+            self.grid_reads = 0
 
-        def read_memory(self, addr, length):
-            if addr == 0x6000 or length > 2:     # the tilemap grid
-                self.polls += 1
-                # the timed-out check prints its verdict a few polls in,
-                # but ONLY if the countdown was actually armed
-                if self.polls > 3 and self.toframes != b"\x00\x00":
-                    return after
-                return before
-            return super().read_memory(addr, length)
+        def grid(self):
+            self.grid_reads += 1
+            # the timed-out check prints its verdict a few polls in, but
+            # ONLY if the countdown was actually armed
+            if self.grid_reads > 3 and self.toframes != b"\x00\x00":
+                return after
+            return before
 
-    z = _Z()
+        def write(self, addr, data):
+            super().write(addr, data)
+            if addr == _FAKE_SYMS["INPTOFRAMES"]:
+                self.toframes = bytes(data)
 
-    def _write(addr, data):
-        z.writes.append((addr, bytes(data)))
-        if addr == _FAKE_SYMS["INPTOFRAMES"]:
-            z.toframes = bytes(data)
-
-    z.write_memory = _write
-    leg = _fake_settle_leg(z, _write_dump(before))
+    s = _S()
+    leg = _fake_settle_leg(s)
     leg.wait_for_input_wait_to_end(pre_rows, arm_frames=100)
 
-    arms = [w for w in z.writes if w[0] == _FAKE_SYMS["INPTOFRAMES"]]
+    arms = [w for w in s.writes if w[0] == _FAKE_SYMS["INPTOFRAMES"]]
     assert len(arms) == 1, (
         "the countdown was armed %d times - each extra one times out the "
         "NEXT read too and walks the fixture past the script" % len(arms))
@@ -1417,9 +1410,182 @@ def t9_a_wait_turn_arms_the_countdown_once_and_ends_on_output():
 
     # And the duration comes from the fixture's own flag 48, converted the
     # way inp_edit converts it (flag48 * 50).
-    z2 = _FakeSettleZ([(True, True)], [0], timeout_flags=(2, 0))
-    assert _fake_settle_leg(z2, _write_dump(before)).armed_timeout_frames() \
-        == 100
+    s2 = _FakeSession([(True, True)], timeout_flags=(2, 0))
+    assert _fake_settle_leg(s2).armed_timeout_frames() == 100
+
+
+@case
+def t9_turn_input_paths_and_the_echo_anchor():
+    """A command: type, confirm the editor's line, read `pre`, ENTER. "?X" and
+    "!X" read `pre` before any key; only "?X" ends with ENTER. A key the editor
+    never got raises instead of comparing the wrong turn."""
+    import nleg
+    shown = ["What now?>GET LAMP"]
+
+    class _S(_FakeSession):
+        def __init__(self):
+            super().__init__([(True, True)], grid=_dump_of(["What now?>"]),
+                             inpline=b"GET LAMP\x00")
+            self.order = []
+
+        def grid(self):
+            self.order.append("grid")
+            return _dump_of(shown) if "type:GET LAMP" in self.order else self.live
+
+        def type_text(self, text):
+            super().type_text(text)
+            self.order.append("type:" + text)
+
+        def press(self, keys, frames=None):
+            super().press(keys, frames)
+            self.order.append("press:" + keys)
+
+    s = _S()
+    pre = _fake_settle_leg(s).send("GET LAMP")
+    assert pre[0].rstrip() == shown[0], pre[0]
+    assert s.order[0] == "type:GET LAMP" and s.order[-1] == "press:ENTER", s.order
+    assert s.order.index("grid") < s.order.index("press:ENTER"), s.order
+
+    s2 = _S()
+    pre = _fake_settle_leg(s2).send("?N")
+    assert s2.order == ["grid", "type:N\n"], s2.order
+    assert pre[0].rstrip() == "What now?>", pre[0]
+
+    s3 = _S()
+    _fake_settle_leg(s3).send("!A")
+    assert s3.order == ["grid", "type:A"], s3.order
+
+    s4 = _S()
+    s4.inpline = b"GET LAM\x00"
+    saved = nleg.ECHO_TIMEOUT_S
+    nleg.ECHO_TIMEOUT_S = 0.2
+    try:
+        _fake_settle_leg(s4).send("GET LAMP")
+    except RuntimeError as exc:
+        assert "GET LAM" in str(exc), exc
+    else:
+        raise AssertionError("a dropped key was not noticed")
+    finally:
+        nleg.ECHO_TIMEOUT_S = saved
+    assert "press:ENTER" not in s4.order, "ENTER sent after a dropped key"
+
+
+class _FakeSeed:
+    """Stand-in Session at the boot breakpoint: stop_pc is where the boot stopped,
+    step_len how far one step moves PC, stores whether the step writes HL to RNGSTATE."""
+
+    def __init__(self, stores=True, stop_pc=None, step_len=3):
+        import nleg
+        self.rng = _FAKE_SYMS["RNGSTATE"]
+        self.mem = {self.rng: nleg.RNG_SEED.to_bytes(2, "little")}
+        self.hl, self.stores, self.step_len = 0x0102, stores, step_len
+        self.pc = _FAKE_SYMS["ENG_INIT_GAME@SEEDOK"] if stop_pc is None else stop_pc
+        self.log = []
+        self.closed = False
+
+    @staticmethod
+    def wait_until(pred, timeout, poll=0.05, what=""):
+        return pred()
+
+    def sym(self, name):
+        return _FAKE_SYMS[name]
+
+    def stopped_at(self):
+        return self.pc
+
+    def read(self, addr, n):
+        return self.mem[addr]
+
+    def write(self, addr, data):
+        self.log.append(("write", addr, bytes(data)))
+        self.mem[addr] = bytes(data)
+
+    def set_regs(self, **v):
+        self.log.append(("set_regs", v))
+        self.hl = v["HL"]
+
+    def step(self, n=1):
+        self.log.append(("step", n))
+        if self.stores:
+            self.mem[self.rng] = self.hl.to_bytes(2, "little")
+        self.pc += self.step_len
+        return self.pc
+
+    def clear_breakpoint(self, target):
+        self.log.append(("clear", target))
+
+    def close(self):
+        self.closed = True
+
+
+def _seed_raises(s, needle, why):
+    import nleg
+    try:
+        nleg.seed_rng(s)
+    except RuntimeError as exc:
+        assert needle in str(exc), exc
+    else:
+        raise AssertionError(why)
+    assert ("clear", _FAKE_SYMS["ENG_INIT_GAME@SEEDOK"]) not in s.log, (
+        "a failed seed must leave the boot stop armed: %s" % s.log)
+
+
+@case
+def t9_rng_seed_is_poisoned_set_and_stepped():
+    """The image already holds RNG_SEED, so RNGSTATE is poisoned before HL :=
+    RNG_SEED and the one step of ld (rngState),hl; then RNGSTATE and PC =
+    SEEDOK + 3 are checked and the stop cleared."""
+    import nleg
+    seed_ok, rng = _FAKE_SYMS["ENG_INIT_GAME@SEEDOK"], _FAKE_SYMS["RNGSTATE"]
+
+    s = _FakeSeed()
+    nleg.seed_rng(s)
+    assert s.log == [("write", rng, b"\x00\x00"), ("set_regs", {"HL": nleg.RNG_SEED}),
+                     ("step", 1), ("clear", seed_ok)], s.log
+
+    _seed_raises(_FakeSeed(stores=False), "RNGSTATE now 0000",
+                 "an unwritten seed passed: the poison was not checked")
+    elsewhere = _FakeSeed(stop_pc=0x1234)
+    _seed_raises(elsewhere, "$1234", "a boot stopped at $1234 was taken for SEEDOK")
+    assert elsewhere.log == [], "nothing may be written at the wrong stop: %s" % elsewhere.log
+    _seed_raises(_FakeSeed(step_len=2), "PC $%04X" % (seed_ok + 2),
+                 "a step that did not land on SEEDOK + 3 passed")
+
+
+@case
+def t9_launch_boots_at_seedok_and_closes_cspect_when_the_seed_fails():
+    """launch boots through Session.boot at the SEEDOK breakpoint with the port
+    passed on, returns the seeded session, and closes it if the seed fails."""
+    import nleg
+    calls = []
+
+    class _Boot:
+        result = None
+
+        @classmethod
+        def boot(cls, card, nex, map_file, **kw):
+            calls.append(kw)
+            return cls.result
+
+    saved = nleg.Session
+    nleg.Session = _Boot
+    try:
+        _Boot.result = good = _FakeSeed()
+        assert nleg.launch("sd", "nex", "map", port=23471) is good
+        assert calls[-1] == {"brk": nleg.SEED_SYMBOL, "port": 23471}, calls
+        assert not good.closed, "a seeded session was closed"
+
+        _Boot.result = bad = _FakeSeed(stores=False)
+        try:
+            nleg.launch("sd", "nex", "map")
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("launch returned an unseeded session")
+        assert bad.closed, "a failed seed left the CSpect running"
+        assert calls[-1] == {"brk": nleg.SEED_SYMBOL, "port": None}, calls
+    finally:
+        nleg.Session = saved
 
 
 @case
@@ -1464,48 +1630,29 @@ def t9_script_directives_are_normalised_and_validated():
 
 @case
 def t9_settle_disarms_the_timeout_on_every_poll():
-    """Every DAAD wait in NextDAAD counts down the SAME inpTOFrames, but
-    only the command line announces itself through moreLock/wrapLock.
-    wait_key_timeout (src/print.asm) re-arms it independently from
-    prn_more_check (E=$02) and from ANYKEY (E=$04), reading flag 48 fresh
-    at the moment the page fires - so a game that re-arms TIME mid-turn
-    can time out on a page even though the harness zeroed flag 48 at the
-    top of the turn. jDAAD has no counterpart timeout at all, so any such
-    expiry is a one-sided, harness-manufactured divergence.
-
-    settle() must therefore clear the countdown on EVERY poll, not only
-    when the editor goes ready. Pinned by counting the writes across a
-    settle that walks a MORE page before becoming ready.
-
-    Plus ONE more on the way out. Each poll disarms BEFORE reading the
-    locks, so on the poll that reports READY the interpreter had the
-    whole read window to reach the command line and arm the countdown
-    itself - which is precisely what READY means it just did. Nothing
-    can expire in that gap (see disarm_input_timeout), but returning
-    with a live clock for no reason is a gap worth not having.
-    """
+    """wait_key_timeout (src/print.asm) re-arms the shared inpTOFrames from flag
+    48 at every page or ANYKEY, so settle() clears it on EVERY poll, plus once on
+    the READY return (the editor arms it after that poll's disarm)."""
     import nleg
-
-    z = _FakeSettleZ([(False, False), (False, False), (True, False), (True, True)],
-                     fires=[0, 0, 1, 1])
-    leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
+    s = _FakeSession([(False, False), (False, False), (True, False), (True, True)],
+                     stops=[None, None, (_MORE, [])])
     pages = []
-    leg.settle(pages)
+    _fake_settle_leg(s).settle(pages)
 
-    disarms = [w for w in z.writes if w[0] == _FAKE_SYMS["INPTOFRAMES"]]
+    disarms = [w for w in s.writes if w[0] == _FAKE_SYMS["INPTOFRAMES"]]
     assert len(disarms) == 5, (
         "expected one disarm per poll (4 polls) plus one on the READY "
         "return, got %d - a wait the harness parks on can now time out "
         "unobserved" % len(disarms))
     assert all(d[1] == b"\x00\x00" for d in disarms), disarms
-    assert len(pages) == 1 and z.enters == 1, (
+    assert len(pages) == 1 and s.presses == [nleg.DISMISS_KEY], (
         "the MORE page must still be captured and dismissed exactly once")
     # Flag writes are the caller's job and must not creep in here: flag 48
     # is COMPARED, and both legs must write it at the same logical point
     # (flag 48's retraction, ruled not a NextDAAD fault - see this
     # module's KNOWN_DIVERGENT_FLAGS note above).
-    assert not [w for w in z.writes if w[0] != _FAKE_SYMS["INPTOFRAMES"]], (
-        "settle() must write nothing but inpTOFrames: %s" % z.writes)
+    assert not [w for w in s.writes if w[0] != _FAKE_SYMS["INPTOFRAMES"]], (
+        "settle() must write nothing but inpTOFrames: %s" % s.writes)
 
 
 # ---- Task 10: report -------------------------------------------------------
@@ -2215,9 +2362,8 @@ def t11_negative_control_is_detected():
 
 
 # ---- Task 11: RNG-seed breakpoint fix (zrcp additions) - pure logic only --
-# No running emulator needed for these - see nleg._seed_rng_via_breakpoint
-# and zrcp.py's enter_cpu_step/set_breakpoint/run/cpu_step/exit_cpu_step
-# additions for the live-verified sequence these support.
+# No running emulator needed for these - they pin zrcp.py's breakpoint and
+# cpu-step commands (zrcp is the ZEsarUX client zleg.py uses).
 
 @case
 def t11_pc_breakpoint_condition_formatting():
@@ -2841,9 +2987,12 @@ def zb8_text_only_comparison_ranks_and_truncates():
     assert res["divergences"][-1]["text_nd"] == "1 turns"
 
 
-def main():
+def main(argv=None):
+    # optional case-name prefixes: run only the cases that start with one
+    prefixes = tuple(sys.argv[1:] if argv is None else argv)
+    cases = [fn for fn in CASES if not prefixes or fn.__name__.startswith(prefixes)]
     failed = 0
-    for fn in CASES:
+    for fn in cases:
         try:
             fn()
             print("PASS %s" % fn.__name__)
@@ -2852,7 +3001,7 @@ def main():
             print("FAIL %s" % fn.__name__)
             traceback.print_exc()
     print("---")
-    print("%d/%d passed" % (len(CASES) - failed, len(CASES)))
+    print("%d/%d passed" % (len(cases) - failed, len(cases)))
     return 1 if failed else 0
 
 

@@ -525,7 +525,7 @@ spr_refuse_flags:
  IFDEF DEBUG
 msgSprRefuse: db "SPR? ", 0
 sprDbgSeq:    db 0
-; Mirror the state block into the dead ULA pixel window for the ZRCP reader:
+; Mirror the state block into the dead ULA pixel window for the DEBUG snapshot reader:
 ; signature, sequence, sprRec..sprLoads, xbnIntOn, sequence again.
 ; Corrupts AF, BC, DE, HL.
 spr_dbg_snap:
@@ -653,7 +653,7 @@ cycDbgSeq:    db 0
 cycDbgSteps:  dw 0                ; completed steps; cycDbgReason must follow
 cycDbgReason: db 0                ; last refusal reason, 0 after a start/stop
 msgCycSig:    db "CYC1"
-; Mirror the cycle state into the dead ULA pixel window for the ZRCP reader:
+; Mirror the cycle state into the dead ULA pixel window for the DEBUG snapshot reader:
 ; sig, seq, armed, cycFirst..cycCount, steps, reason, pad, seq. Corrupts AF, BC, DE, HL.
 cyc_dbg_snap:
     ld hl, cycDbgSeq

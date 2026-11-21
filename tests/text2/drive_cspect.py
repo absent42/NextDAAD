@@ -1,139 +1,94 @@
-"""Task 6 reader legs on CSpect 4.3 over MCP (port 23456).
+"""Task 6 reader legs on CSpect (tests/cspect Session).
 
 python tests/text2/drive_cspect.py TEST [...]
 Tests: objverif_walk, nest4_walk, xmb_walk, xmb_mismatch_refused,
-xmb_fp_refused, timing,
-tools (print the MCP tool list). Each leg is one CSpect launch, killed by
-PID. Walk screens (tilemap text per step, PNG at the end of each step)
-go to tests/text2/reader/<LEG>/; results.md is rewritten from all
-results gathered so far (results.json).
+xmb_fp_refused, xmb_part_fallback, timing, f1_walks, f1_identity,
+tools (print the MCP tool list). Each leg is one harness CSpect launch, closed
+after the leg. Stage the legs with tests/text2/stage_legs.py reader. Walk screens
+(tilemap text per step, PNG at the end of each step) go to tests/text2/reader/<LEG>/;
+results.md is rewritten from all results gathered so far (results.json).
+Environment: T6_NEX, T6_MAP (build\\nextdaad.nex/.map), T6_TAG, F1_BASE.
 """
-import base64, json, os, subprocess, sys, time, urllib.request
+import json, os, sys, time
+from pathlib import Path
 
-ROOT = r'D:\NextDAAD'
+ROOT = str(Path(__file__).resolve().parents[2])
+sys.path.insert(0, os.path.join(ROOT, 'tests'))
+from cspect import Session  # noqa: E402
+from cspect.session import raster_elapsed  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'reader')
-CSPECT = r'D:\ZXNextDev\cspect\CSpect.exe'
 NEX = os.environ.get('T6_NEX', ROOT + r'\build\nextdaad.nex')
 MAP = os.environ.get('T6_MAP', ROOT + r'\build\nextdaad.map')
 TAG = os.environ.get('T6_TAG', '')
-URL = 'http://127.0.0.1:23456/mcp'
 LAUNCHES = os.path.join(OUT, 'launches%s.log' % TAG)
-
-
-class Mcp:
-    def __init__(self):
-        self.id, self.sess = 0, None
-
-    def rpc(self, method, params=None, timeout=60):
-        self.id += 1
-        body = json.dumps({'jsonrpc': '2.0', 'id': self.id, 'method': method,
-                           'params': params or {}}).encode()
-        hdr = {'Content-Type': 'application/json',
-               'Accept': 'application/json, text/event-stream'}
-        if self.sess:
-            hdr['Mcp-Session-Id'] = self.sess
-        with urllib.request.urlopen(urllib.request.Request(URL, body, hdr), timeout=timeout) as r:
-            self.sess = r.headers.get('Mcp-Session-Id') or self.sess
-            txt = r.read().decode('utf-8', 'replace')
-        for line in txt.splitlines():
-            if line.startswith('data:'):
-                txt = line[5:].strip()
-        return json.loads(txt) if txt.strip() else {}
-
-    def call(self, tool, args=None, timeout=60):
-        return self.rpc('tools/call', {'name': tool, 'arguments': args or {}}, timeout)
-
-    def text(self, tool, args=None, timeout=60):
-        r = self.call(tool, args, timeout)
-        return '\n'.join(c['text'] for c in r.get('result', {}).get('content', [])
-                         if c.get('type') == 'text')
-
-    def mem(self, addr, n):
-        out = []
-        while n > 0:
-            k = min(n, 4096)
-            for line in self.text('read_memory', {'address': '$%04X' % addr, 'length': k}).splitlines():
-                if line.startswith('$'):
-                    out += [int(x, 16) for x in line[6:6 + 49].split()]
-            addr += k
-            n -= k
-        return out
-
-    def shot(self, path):
-        r = self.call('screenshot', {'scale': 1})
-        for c in r.get('result', {}).get('content', []):
-            if c.get('type') == 'image':
-                open(path, 'wb').write(base64.b64decode(c['data']))
-                return True
-        return False
-
-
-def symbols():
-    sym = {}
-    for line in open(MAP):
-        p = line.split()
-        if len(p) == 4:
-            sym[p[3]] = int(p[0], 16)
-    return sym
-
-
-def rows(m, n=32):
-    b = m.mem(0x6000, 160 * n)
-    return [''.join(chr(c) if 32 <= c < 127 else '.' for c in b[r * 160:(r + 1) * 160:2]).rstrip()
-            for r in range(n)]
+BOOT_S = 30.0           # first tilemap text after boot
+SETTLE_S = 60.0         # a screen that never holds still
+POLL_FRAMES = 15        # settle samples the tilemap this many NextDAAD frames apart
+STILL_POLLS = 3         # identical samples in a row = settled
+FROZEN_S = 3.0          # no FRAMECOUNTER tick for this long = halted
+STOP_S = 15.0          # a breakpoint stop in the timing leg
 
 
 class Leg:
-    def __init__(self, leg):
-        self.leg = leg
-        folder = os.path.join(ROOT, 'sd', leg)
-        args = [CSPECT, '-w2', '-zxnext', '-esc', '-mcp=23456', '-mmc=%s\\' % folder,
-                '-map=%s' % MAP, NEX]
-        self.p = subprocess.Popen(args, cwd=os.path.dirname(CSPECT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        with open(LAUNCHES, 'a') as f:
-            f.write('%s launch `%s` PID %d\n' % (time.strftime('%H:%M:%S'), ' '.join(args), self.p.pid))
-        self.m = Mcp()
-        for _ in range(60):
-            try:
-                self.m.rpc('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
-                                          'clientInfo': {'name': 'task6', 'version': '1'}})
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+    """One harness CSpect on sd\\<leg>, booted to the first tilemap text."""
+
+    def __init__(self, leg, log=LAUNCHES):
+        self.leg, self.log = leg, log
+        self.s = Session.boot(os.path.join(ROOT, 'sd', leg), NEX, MAP)
+        self._note('launch %s PID %d' % (leg, self.s.pid))
+        try:
+            self.s.wait_until(lambda: any(self.rows()), BOOT_S, what='tilemap text from %s' % leg)
+        except BaseException:
             self.close()
-            raise SystemExit('MCP never came up')
-        time.sleep(6)
+            raise
+
+    def _note(self, msg):
+        if self.log:
+            with open(self.log, 'a') as f:
+                f.write('%s %s\n' % (time.strftime('%H:%M:%S'), msg))
 
     def close(self):
-        subprocess.run(['taskkill', '/PID', str(self.p.pid), '/F'], capture_output=True)
-        with open(LAUNCHES, 'a') as f:
-            f.write('%s killed PID %d\n' % (time.strftime('%H:%M:%S'), self.p.pid))
-        time.sleep(1.5)
+        pid = self.s.pid
+        self.s.close()
+        self._note('closed PID %d' % pid)
 
-    def settle(self, more_ok=True, limit=60):
+    def rows(self, n=32):
+        return [r.rstrip() for r in self.s.rows()[:n]]
+
+    def settle(self, more_ok=True, limit=SETTLE_S):
         """Poll the tilemap until it holds still; answer More... with SPACE."""
+        s = self.s
         last, same, mores = None, 0, 0
-        t0 = time.time()
-        while time.time() - t0 < limit:
-            time.sleep(0.4)
-            r = rows(self.m)
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            try:
+                s.wait_frames(POLL_FRAMES, min(FROZEN_S, max(1.0, deadline - time.monotonic())))
+            except TimeoutError:
+                # a boot-error screen halts with interrupts off: no frame tick, nothing can change
+                r = self.rows()
+                if r == self.rows():
+                    return r, mores
+                continue
+            r = self.rows()
             if more_ok and any('More...' in x for x in r):
-                time.sleep(0.3)
-                self.m.call('press_keys', {'keys': 'SPACE'})
+                s.press('SPACE')
                 mores += 1
                 last, same = None, 0
-                time.sleep(0.6)
+                s.wait_frames(2 * POLL_FRAMES, 30)
                 continue
             if r == last:
                 same += 1
-                if same >= 3:
+                if same >= STILL_POLLS:
                     return r, mores
             else:
                 same = 0
             last = r
         return last, mores
+
+    def shot(self, path):
+        self.s.screenshot().save(path)
 
     def walk(self, lines, sub):
         d = os.path.join(OUT, sub)
@@ -142,10 +97,10 @@ class Leg:
         r, mo = self.settle()
         steps.append({'cmd': '(boot)', 'rows': r, 'more': mo})
         for i, cmd in enumerate(lines, 1):
-            self.m.call('type_text', {'text': cmd + '\n'})
+            self.s.type_text(cmd + '\n')
             r, mo = self.settle()
             steps.append({'cmd': cmd, 'rows': r, 'more': mo})
-            self.m.shot(os.path.join(d, 'step%02d.png' % i))
+            self.shot(os.path.join(d, 'step%02d.png' % i))
         json.dump(steps, open(os.path.join(d, 'screens.json'), 'w'), indent=0)
         return steps
 
@@ -205,13 +160,12 @@ def t_xmb():
 
 
 def t_mismatch():
-    sym = symbols()
     L = Leg('TEXT2X')
     try:
         st = L.walk(['LOOK', 'READ'], 'TEXT2X' + TAG)
-        L.m.call('pause')
-        err = L.m.mem(sym['TEXT2ERR'], 1)[0]
-        r = rows(L.m, 2)
+        L.s.pause()
+        err = L.s.read(L.s.sym('TEXT2ERR'), 1)[0]
+        r = L.rows(2)
     finally:
         L.close()
     ok = st[1]['rows'] and 'NextDAAD' not in st[1]['rows'][0] and \
@@ -222,73 +176,60 @@ def t_mismatch():
 
 
 def t_fp_mismatch():
-    """Card sd\\LEGT2X3: NEST4 format 2 + its own 0.XMB, "X2" kept, fingerprint XORed."""
-    sym = symbols()
-    L = Leg('LEGT2X3')
+    """Card sd\\TEXT2X3: NEST4 format 2 + its own 0.XMB, "X2" kept, fingerprint XORed."""
+    L = Leg('TEXT2X3')
     try:
         st = L.walk(['READ'], 'TEXT2X3' + TAG)
-        L.m.call('pause')
-        err = L.m.mem(sym['TEXT2ERR'], 1)[0]
-        fp = L.m.mem(sym['TEXT2FP'], 2)
-        r = rows(L.m, 2)
+        L.s.pause()
+        err = L.s.read(L.s.sym('TEXT2ERR'), 1)[0]
+        fp = list(L.s.read(L.s.sym('TEXT2FP'), 2))
+        r = L.rows(2)
     finally:
         L.close()
-    hdr = open(os.path.join(ROOT, 'sd', 'LEGT2X3', '0.XMB'), 'rb').read(4)
+    hdr = open(os.path.join(ROOT, 'sd', 'TEXT2X3', '0.XMB'), 'rb').read(4)
     booted = any('NEST4' in x for x in st[0]['rows'] or []) and 'NextDAAD' not in st[0]['rows'][0]
     ok = booted and hdr[:2] == b'X2' and list(hdr[2:]) != fp and (
         r[0].startswith('NextDAAD: DDB text format - E5') and err == 8)
-    return [{'test': 'xmb_fp_refused LEGT2X3', 'expect': 'boots; READ -> E5 screen, text2Err 8',
+    return [{'test': 'xmb_fp_refused TEXT2X3', 'expect': 'boots; READ -> E5 screen, text2Err 8',
              'got': 'boot %s, XMB fp %02X%02X vs text2Fp %02X%02X, row0 %r, text2Err %d' % (
                  'seen' if booted else 'MISSING', hdr[3], hdr[2], fp[1], fp[0], r[0], err),
              'result': 'PASS' if ok else 'FAIL', 'evidence': 'reader/TEXT2X3%s/' % TAG}]
 
 
-def regs_of(g):
-    import re
-    r = {k: int(v, 16) for k, v in re.findall(r"\b(AF|BC|DE|HL|SP|PC) \$([0-9A-F]{4})", g)}
-    r['A'], r['E'] = r['AF'] >> 8, r['DE'] & 0xFF
-    return r
-
-
-def raster(m, sym):
-    """(frameCounter, raster line) - NR $1E/$1F active video line."""
-    t = m.text('read_next_registers', {'registers': '$1E,$1F'})
-    import re
-    v = [int(x, 16) for x in re.findall(r'\$1[EF]\D+\$?([0-9A-Fa-f]{2})', t)]
-    return m.mem(sym['FRAMECOUNTER'], 1)[0], ((v[0] & 1) << 8 | v[1]) if len(v) == 2 else None, t
-
-
-def timing_leg(leg, sym, runs=3):
+def timing_leg(leg, runs=3):
     """print_msg for STORY (MESSAGE 48): frames and raster lines, entry to return."""
     L = Leg(leg)
     out = {'leg': leg, 'runs': []}
     try:
-        m = L.m
+        s = L.s
         L.settle()
         for _ in range(runs):
-            m.call('set_breakpoint', {'address': 'print_msg'})
-            m.call('type_text', {'text': 'STORY\n'})
+            s.type_text('STORY')
+            s.pause()
+            s.set_breakpoint('PRINT_MSG')
+            s.queue_press('ENTER')
+            s.resume()
             for _ in range(20):
-                m.text('wait_for_stop', {'timeout_ms': 15000})
-                r = regs_of(m.text('get_status'))
+                s.wait_until(s.stopped_at, STOP_S, what='print_msg for STORY')
+                r = s.regs()
                 if r['A'] == 1 and r['E'] == 48:
                     break
-                m.call('run')
-            m.call('clear_breakpoint', {'address': 'print_msg'})
-            sp = m.mem(r['SP'], 2)
-            ret = sp[0] | sp[1] << 8
-            f0, l0, t0 = raster(m, sym)
-            m.call('set_breakpoint', {'address': '$%04X' % ret})
-            m.call('run')
-            m.text('wait_for_stop', {'timeout_ms': 15000})
-            r2 = regs_of(m.text('get_status'))
-            f1, l1, t1 = raster(m, sym)
-            m.call('clear_breakpoint', {'address': '$%04X' % ret})
-            m.call('run')
-            lines = ((f1 - f0) & 0xFF) * 311 + (l1 - l0)
-            out['runs'].append({'ret': '$%04X' % ret, 'pc_after': '$%04X' % r2['PC'],
-                                'frames': (f1 - f0) & 0xFF, 'line0': l0, 'line1': l1,
-                                'lines': lines, 'ms': round(lines * 64e-3, 2), 'nr': t0})
+                s.resume()
+            else:
+                raise TimeoutError('print_msg never ran with A=1 E=48 for STORY')
+            s.clear_breakpoint('PRINT_MSG')
+            ret = int.from_bytes(s.read(r['SP'], 2), 'little')
+            f0, l0 = s.frame(), s.raster_line()
+            pc = s.run_to(ret, STOP_S)
+            if pc != ret:
+                raise RuntimeError('stopped at $%04X, not at the return $%04X' % (pc, ret))
+            f1, l1 = s.frame(), s.raster_line()
+            frames, rest = raster_elapsed(f0, l0, f1, l1)
+            lines = frames * 311 + rest
+            out['runs'].append({'ret': '$%04X' % ret, 'pc_after': '$%04X' % pc, 'frames': frames,
+                                'line0': l0, 'line1': l1, 'lines': lines,
+                                'ms': round(lines * 64e-3, 2)})
+            s.resume()
             L.settle()
         return out
     finally:
@@ -296,8 +237,7 @@ def timing_leg(leg, sym, runs=3):
 
 
 def t_timing():
-    sym = symbols()
-    r = [timing_leg('TEXT2N', sym), timing_leg('TEXT2NC', sym)]
+    r = [timing_leg('TEXT2N'), timing_leg('TEXT2NC')]
     json.dump(r, open(os.path.join(OUT, 'timing%s.json' % TAG), 'w'), indent=1)
     return [{'test': 'timing STORY (MESSAGE 48) print_msg', 'expect': 'recorded, format 2 vs format 1 (311 lines x 64 us per frame)',
              'got': '; '.join('%s %s ms' % (x['leg'], [y['ms'] for y in x['runs']]) for x in r),
@@ -307,15 +247,14 @@ def t_timing():
 def t_part_fallback():
     """Part 1 (format 1) switches to part 2 = NEST4 format 2; no PART2 folder, so READ
     reads the root format 1 0.XMB through ext_xmes's fallback: E5, text2Err 8."""
-    sym = symbols()
     L = Leg('TEXT2X2')
     try:
         st = L.walk(['READ'], 'TEXT2X2' + TAG)
-        L.m.call('pause')
-        err = L.m.mem(sym['TEXT2ERR'], 1)[0]
-        part = L.m.mem(sym['CURPART'], 1)[0]
-        fmt = L.m.mem(sym['TEXTFORMAT'], 1)[0]
-        r = rows(L.m, 2)
+        L.s.pause()
+        err = L.s.read(L.s.sym('TEXT2ERR'), 1)[0]
+        part = L.s.read(L.s.sym('CURPART'), 1)[0]
+        fmt = L.s.read(L.s.sym('TEXTFORMAT'), 1)[0]
+        r = L.rows(2)
     finally:
         L.close()
     booted = any('NEST4' in x for x in st[0]['rows'] or [])
@@ -357,7 +296,7 @@ def t_f1_identity():
 def t_tools():
     L = Leg('TEXT2C')
     try:
-        print(json.dumps(L.m.rpc('tools/list'), indent=1))
+        print(json.dumps(L.s.mcp.tools(), indent=1))
     finally:
         L.close()
     return []
@@ -376,11 +315,12 @@ def main():
         res = TESTS[t]()
         for r in res:
             print(r)
+            print('%s %s' % (r['result'], r['test']), flush=True)
         if res:
             allr[t] = res
     json.dump(allr, open(rj, 'w'), indent=1)
     with open(os.path.join(OUT, 'results%s.md' % TAG), 'w', newline='\n') as f:
-        f.write('# Task 6 reader legs (CSpect 4.3 MCP)%s\n\n' % (' ' + TAG if TAG else ''))
+        f.write('# Task 6 reader legs (CSpect MCP)%s\n\n' % (' ' + TAG if TAG else ''))
         f.write('Interpreter: %s\n\n' % os.environ.get('T6_NEX_NAME', 'DEBUG build (build.ps1)'))
         f.write('| test | expect | got | result | evidence |\n|---|---|---|---|---|\n')
         for t in TESTS:

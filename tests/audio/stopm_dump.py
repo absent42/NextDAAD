@@ -1,68 +1,53 @@
-# SP16 Task 7b - the STOPM three-point AY/player state dump.
-#
-# Headless, scripted, no ears involved: this reproduces
-#     boot autoplay -> STOPM -> MUSIC restart
-# under ZEsarUX and dumps the DEBUG build's per-frame AY mirror
-# (src\audio\audiobank.asm aud_dbg_snap, at AUD_STAGE0 $4000) at each
-# point, then does the same on a fresh boot with NO stop/restart as the
-# control. The two are compared at MATCHED SONG PHASE, so a difference
-# in the tables is a difference in state, not in where the tune had got
-# to.
-#
-# Run from the repo root, after
-#     .\build.ps1                       (DEBUG - the mirror is DEBUG-only)
-#     pwsh -File tests\build-tests.ps1 -AudLad
-#
-#     python tests/audio/stopm_dump.py --out <workdir>
-#
-# WHY PHASE MATCHING. Almost every interesting cell (track pointers,
-# block pointers, wait counters, the tone periods themselves) advances
-# with the tune. Comparing two dumps taken at arbitrary moments would
-# report the tune's own motion as a difference. So each run COLLECTS a
-# burst of samples keyed by (linker position, frames-left-in-pattern) -
-# the AKY player's exact song phase - and the comparison is over phase
-# keys the two runs have in common. GAME.AKY is a byte-identical copy
-# of 006.AKY in sd\AUDLAD\ (build-tests.ps1 -AudLad), so at equal phase the two
-# runs are playing literally the same bytes of the same song.
-#
-# WHICH MATERIAL. The default restart verb is LADR = 006.AKY = the kit's
-# own 9-channel tune - the material BOTH parked SP14b sightings were
-# actually heard on, and the one that uses noise, hardware envelopes and
-# retrigs. `--restart LAD1` runs the same comparison against the
-# synthetic single-channel rung instead: a much weaker stimulus, and NOT
-# byte-identical to the autoplay, so its control is only a
-# same-player-state control, not a same-material one.
-#
-# COLLECTION WINDOW. Both scenarios collect from their FIRST live frame,
-# not after a settle, so a DECAYING residue right after PLY_AKY_INIT
-# stays inside the compared set instead of being silently dropped.
-#
-# EMULATOR-MODEL CAVEAT. Everything here is ZEsarUX's model of the AY
-# and of the Next's Turbo Sound, not silicon. The register-array half of
-# the mirror is plain Z80 memory and is as trustworthy as any other
-# memory read; the chip-readback half (offsets $10-$39) depends on
-# ZEsarUX implementing AY register READ on $FFFD per selected chip. Any
-# verdict from this script is emulator-model evidence, not a silicon
-# fidelity verdict.
+r"""STOPM three-point AY/player state dump on CSpect (tests\cspect), DEBUG build.
+
+Boots the -AudLad leg, plays boot autoplay -> STOPM -> MUSIC restart and dumps the
+aud_dbg_snap mirror (src\audio\audiobank.asm, AUD_STAGE0 $4000) at each point; a fresh
+boot with no STOPM is the control. --ladder instead checks that each ladder rung drives
+the channels it claims.
+
+Run from the repo root, after
+    .\build.ps1                            (DEBUG - the mirror is DEBUG-only)
+    pwsh -File tests\build-tests.ps1 -AudLad
+
+    python tests/audio/stopm_dump.py --out <workdir> [--restart LADR|LAD1] [--ladder] [--port N]
+
+--port is the harness MCP port (tests\cspect\launcher.py PORT_RANGE, default the first free).
+
+Sampling: the CPU stops at every aud_dbg_snap entry (run_to), where the mirror holds the
+previous frame whole, so each frame is read once and none is torn. Boot starts paused, so
+the first live frame is seen; POINT 2 and 3 are the first frames stepped after type_text
+returns (a CSpect key press does not advance while the CPU stops every frame, so ENTER's
+hold and gap run unstepped). Samples are keyed by song phase (linker position, frames
+left in the pattern) and the runs are compared at the phases they share, collected from
+each run's first live frame. GAME.AKY is a copy of 006.AKY, so LADR replays the
+autoplay's bytes; LAD1 is another tune (same-player-state control only).
+
+Chip readback: after each point PSG 1-3 R0-R13 are read with Session.ay_regs at the
+aud_dbg_snap entry and compared with the mirror that frame then takes.
+
+Everything here is CSpect's AY model, not silicon: emulator evidence, not a fidelity verdict."""
 
 import argparse
 import os
-import re
 import shutil
-import socket
 import struct
-import subprocess
 import sys
-import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "tests"))
-import zes_core  # noqa: E402
-ZESARUX = os.path.join(ROOT, "tools", "DAAD-READY", "TOOLS", "zesarux", "zesarux.exe")
+sys.path.insert(0, os.path.join(ROOT, "tests", "xbn"))
+from cspect import Session  # noqa: E402
+import xbnrun  # noqa: E402  (wait_ready, submit)
+
 NEX = os.path.join(ROOT, "build", "nextdaad.nex")
+MAP = os.path.join(ROOT, "build", "nextdaad.map")
 SD = os.path.join(ROOT, "sd")
 
-COLLECT_S = 25.0                # collection window per scenario
+FPS = 50                        # the old wall-clock windows, as frames
+COLLECT_FRAMES = 25 * FPS       # collection window per scenario
+SNAP_LABEL = "AUD_DBG_SNAP"     # read_map resolves the label, not its $4000 EQU twin
+STEP_TIMEOUT_S = 10.0           # host deadline for one frame step
+FRAME_TIMEOUT_S = 30.0
 SNAP = 0x4000
 OFF_SEQ = 0x04
 OFF_AY = 0x10
@@ -78,55 +63,6 @@ CELL_NAMES = (
     + ["ch%d.wait" % (i + 1) for i in range(9)]
     + ["ch%d.lineState" % (i + 1) for i in range(9)]
 )
-
-PROMPT_RE = re.compile(r"command(@cpu-step)?>\s*$")
-
-
-class Zrcp:
-    """Minimal ZEsarUX remote-protocol client. Deliberately self-
-    contained: tests\\parser\\zrcp.py is the fuller client, but this
-    script must not depend on the parser harness being present.
-    Addresses are DECIMAL (measured, see that file's header)."""
-
-    def __init__(self, port, timeout=20):
-        self.s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
-        self._drain()
-
-    def _drain(self, deadline=20.0):
-        buf = b""
-        start = time.monotonic()
-        self.s.settimeout(0.2)
-        while not PROMPT_RE.search(buf.decode("latin-1", "replace")):
-            if time.monotonic() - start > deadline:
-                raise IOError("no ZRCP prompt in %.1fs: %r" % (deadline, buf[-200:]))
-            try:
-                chunk = self.s.recv(65536)
-            except socket.timeout:
-                continue
-            if chunk:
-                buf += chunk
-        return buf.decode("latin-1")
-
-    def cmd(self, text, wait=0.0, deadline=20.0):
-        self.s.sendall((text + "\n").encode("latin-1"))
-        if wait:
-            time.sleep(wait)
-        reply = self._drain(deadline)
-        return PROMPT_RE.sub("", reply).strip()
-
-    def read(self, addr, length):
-        reply = self.cmd("read-memory %d %d" % (addr, length))
-        hexs = "".join(reply.split())
-        if len(hexs) != length * 2 or not re.fullmatch(r"[0-9A-Fa-f]*", hexs):
-            raise IOError("bad read-memory reply: %r" % reply[:200])
-        return bytes.fromhex(hexs)
-
-    def keys(self, text):
-        settle = 0.15 * len(text) + 0.8
-        self.cmd("send-keys-string 150 %s" % text, wait=settle, deadline=settle + 20)
-
-    def enter(self, wait=1.0):
-        self.cmd("send-keys-ascii 150 13", wait=wait, deadline=wait + 20)
 
 
 def stage(workdir, leg):
@@ -145,32 +81,42 @@ def stage(workdir, leg):
     return sd
 
 
-def launch(sd, port):
-    return zes_core.popen([
-        ZESARUX, "--machine", "tbblue", "--realvideo",
-        "--enable-esxdos-handler", "--esxdos-root-dir", sd,
-        "--vo", "null", "--ao", "null",
-        "--enable-remoteprotocol", "--remoteprotocol-port", str(port),
-        "--smartloadpath", sd,
-    ], cwd=sd)
+def boot(card, port=None, nex=None, map_file=MAP):
+    """A harness Session on card's nextdaad.nex (or nex), stopped at the NEX entry so the
+    first frame step sees boot from its start."""
+    return Session.boot(card, nex or os.path.join(card, "nextdaad.nex"), map_file,
+                        paused=True, port=port)
 
 
-def connect(proc, port, attempts=60, delay=0.5):
-    for _ in range(attempts):
-        if proc.poll() is not None:
-            raise RuntimeError("ZEsarUX exited early (%r)" % proc.returncode)
-        try:
-            return Zrcp(port)
-        except OSError:
-            time.sleep(delay)
-    raise TimeoutError("ZRCP never answered on port %d" % port)
+def run_free(s):
+    if not s.running():
+        s.resume()
+
+
+def settle(s, frames):
+    """Run `frames` frames; the CPU is left running."""
+    run_free(s)
+    s.wait_frames(frames, FRAME_TIMEOUT_S)
+
+
+def type_line(s, text):
+    """Type text and ENTER at the ready input editor; returns once typed, CPU running."""
+    run_free(s)
+    xbnrun.wait_ready(s)
+    s.type_text(text + "\n")
+
+
+def next_frame(s):
+    """The mirror at the next aud_dbg_snap entry (the previous frame's); CPU left stopped there."""
+    snap = s.sym(SNAP_LABEL)
+    pc = s.run_to(snap, STEP_TIMEOUT_S)
+    if pc != snap:
+        raise RuntimeError("stopped at $%04X, not at aud_dbg_snap $%04X" % (pc, snap))
+    return s.read(SNAP, SNAP_LEN)
 
 
 def intact(dump):
-    """A sample is usable only if its signature is right AND the leading
-    and trailing copies of the sequence byte agree - the emulator keeps
-    running during the read, so a straddled frame splices two frames
-    together and must be thrown away, not diffed."""
+    """Signature present and both copies of the sequence byte agree."""
     return dump[0:4] == b"AYS1" and dump[OFF_SEQ] == dump[OFF_SEQ2]
 
 
@@ -186,29 +132,55 @@ def playing(dump):
     return bool(dump[0x05] & 1)
 
 
-def collect(z, seconds, want_playing=True):
-    """Sample the mirror for `seconds`, keyed by song phase. Returns
-    {phase: dump}. Only frames whose signature is intact are kept."""
+def collect(s, frames, seed=(), want_playing=True):
+    """{phase: dump} over the next `frames` frames, seeded with dumps already taken."""
     out = {}
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        d = z.read(SNAP, SNAP_LEN)
-        if not intact(d):
-            continue
-        if want_playing and not playing(d):
-            continue
-        out.setdefault(phase(d), d)
+
+    def keep(d):
+        if intact(d) and (playing(d) or not want_playing):
+            out.setdefault(phase(d), d)
+    for d in seed:
+        keep(d)
+    for _ in range(frames):
+        keep(next_frame(s))
     return out
 
 
-def wait_for(z, pred, seconds, what):
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        d = z.read(SNAP, SNAP_LEN)
+def wait_for(s, pred, frames, what):
+    """The first intact mirror within `frames` frames satisfying pred; CPU left stopped there."""
+    for _ in range(frames):
+        d = next_frame(s)
         if intact(d) and pred(d):
             return d
-        time.sleep(0.05)
-    raise TimeoutError("timed out waiting for %s" % what)
+    raise TimeoutError("timed out waiting for %s (%d frames)" % (what, frames))
+
+
+def chip_readback(s):
+    """(mirror, [R0-R13 x 3]): Session.ay_regs at this aud_dbg_snap stop, then the mirror
+    that frame takes, which reads the same chip state."""
+    snap = s.sym(SNAP_LABEL)
+    if s.running() or s.regs()["PC"] != snap:
+        raise RuntimeError("chip readback needs the CPU stopped at aud_dbg_snap $%04X" % snap)
+    chips = [s.ay_regs(p) for p in range(3)]
+    return next_frame(s), chips
+
+
+def chip_mismatch(dump, chips):
+    out = []
+    for p in range(3):
+        for r in range(14):
+            m = dump[OFF_AY + 14 * p + r]
+            if chips[p][r] != m:
+                out.append("PSG%d R%d ay=%02X mirror=%02X" % (p + 1, r, chips[p][r], m))
+    return out
+
+
+def chip_text(dump, chips):
+    bad = chip_mismatch(dump, chips)
+    if not bad:
+        return "  chip readback (ay_regs): equals the mirror on all 42 registers"
+    return ("  chip readback (ay_regs): %d register(s) differ from the mirror - %s"
+            % (len(bad), ", ".join(bad)))
 
 
 def fmt_ay(dump):
@@ -274,42 +246,34 @@ def describe(off):
 
 
 def run_scenario(sd, port, do_stopm, log, restart="LADR"):
-    proc = launch(sd, port)
-    try:
-        z = connect(proc, port)
-        z.cmd("smartload %s" % os.path.join(sd, "nextdaad.nex"), wait=1.0,
-              deadline=60)
-        # Boot: the interpreter takes over, aud_boot_probe loads GAME.AKY
-        # and files the start-music request. Wait for the mirror to show
-        # the song actually running.
-        d0 = wait_for(z, lambda d: playing(d), 60, "boot autoplay")
+    with boot(sd, port) as s:
+        # aud_boot_probe loads GAME.AKY and files the start-music request
+        d0 = wait_for(s, playing, 60 * FPS, "boot autoplay")
         log.append(dump_text("--- boot autoplay (first frame with music live)", d0))
+        d1, chips = chip_readback(s)
+        log.append(chip_text(d1, chips))
         if not do_stopm:
-            # No settle before collecting - see COLLECTION WINDOW above.
-            return collect(z, COLLECT_S), log
-        time.sleep(2.0)                     # let the tune get past its first note
-        pre = wait_for(z, playing, 10, "a clean pre-STOPM sample")
+            return collect(s, COLLECT_FRAMES, (d0, d1)), log
+        settle(s, 2 * FPS)                  # let the tune get past its first note
+        xbnrun.wait_ready(s)
+        pre = wait_for(s, playing, 10 * FPS, "a clean pre-STOPM sample")
         log.append(dump_text("--- POINT 1: pre-STOPM", pre))
-        z.keys("STOPM")
-        z.enter()
-        post = wait_for(z, lambda d: not playing(d), 15, "STOPM to take effect")
+        log.append(chip_text(*chip_readback(s)))
+        type_line(s, "STOPM")
+        post = wait_for(s, lambda d: not playing(d), 15 * FPS, "STOPM to take effect")
         log.append(dump_text("--- POINT 2: post-STOPM", post))
-        time.sleep(1.0)
-        post2 = wait_for(z, lambda d: not playing(d), 10, "a clean post-STOPM sample")
+        log.append(chip_text(*chip_readback(s)))
+        settle(s, FPS)
+        post2 = wait_for(s, lambda d: not playing(d), 10 * FPS, "a clean post-STOPM sample")
         log.append(dump_text("--- POINT 2b: post-STOPM, one second later", post2))
-        z.keys(restart)
-        z.enter()
-        rst = wait_for(z, lambda d: playing(d), 20, "MUSIC restart")
+        log.append(chip_text(*chip_readback(s)))
+        type_line(s, restart)
+        rst = wait_for(s, playing, 20 * FPS, "MUSIC restart")
         log.append(dump_text("--- POINT 3: post-restart MUSIC (first live frame)", rst))
+        r1, chips = chip_readback(s)
+        log.append(chip_text(r1, chips))
         log.append("restart transient phase = %04X:%04X" % phase(rst))
-        # No settle here either - see COLLECTION WINDOW above.
-        return collect(z, COLLECT_S), log
-    finally:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        proc.wait(timeout=20)
+        return collect(s, COLLECT_FRAMES, (rst, r1)), log
 
 
 LADDER = [("LAD1", 1), ("LAD3", 3), ("LAD6", 6), ("LAD9", 9), ("LADQ", 9),
@@ -332,36 +296,25 @@ def sounding(dump, only_psg=None):
 
 
 def run_ladder(sd, port, log):
-    """Task 7a support leg: walk the ladder verbs and dump what actually
-    reaches the three PSGs on each rung. This does NOT judge the sound -
-    it answers the prior question the ear card depends on, namely
-    whether rung k is driving exactly k channels with the intended
-    periods and volumes, so a PASS/DISTORTED row is scoring real
-    stimulus rather than a staging miss."""
-    proc = launch(sd, port)
-    try:
-        z = connect(proc, port)
-        z.cmd("smartload %s" % os.path.join(sd, "nextdaad.nex"), wait=1.0,
-              deadline=60)
-        wait_for(z, playing, 60, "boot autoplay")
-        time.sleep(3.0)                 # let the fixture reach its prompt
+    """Per rung, whether it drives exactly the channels it claims with the intended
+    periods and volumes - stimulus verification for the ear card, not a sound verdict."""
+    with boot(sd, port) as s:
+        wait_for(s, playing, 60 * FPS, "boot autoplay")
+        run_free(s)
+        xbnrun.wait_ready(s)
         for verb, channels in LADDER:
-            # No STOPM needed between rungs: aud_load_song stops whatever
-            # is playing before it overwrites the song area (overlay1).
-            z.keys(verb)
-            z.enter()
-            d = wait_for(z, playing, 20, verb)
-            time.sleep(0.4)
-            d = wait_for(z, playing, 5, verb + " settled")
+            # aud_load_song stops the previous rung before it overwrites the song area
+            run_free(s)
+            xbnrun.submit(s, verb)
+            d = wait_for(s, playing, 20 * FPS, verb)
+            settle(s, 20)
+            d = wait_for(s, playing, 5 * FPS, verb + " settled")
             live = sounding(d)
             if channels is None:
-                # Real material: one instant proves nothing about how
-                # many voices the composer uses, so watch it for a while
-                # and report the peak and the per-PSG reach.
+                # real material: report the peak and per-PSG reach over the window
                 peak, psgs, best = 0, [False] * 3, d
-                end = time.monotonic() + 25.0
-                while time.monotonic() < end:
-                    q = z.read(SNAP, SNAP_LEN)
+                for _ in range(25 * FPS):
+                    q = next_frame(s)
                     if not intact(q) or not playing(q):
                         continue
                     n = sounding(q)
@@ -376,25 +329,22 @@ def run_ladder(sd, port, log):
                            ", ".join("PSG%d" % (i + 1)
                                      for i in range(3) if psgs[i]) or "none"))
                 log.append(fmt_ay(best))
+                log.append(chip_text(*chip_readback(s)))
                 continue
             log.append("--- rung %s: %d channel(s) expected, %d sounding"
                        % (verb, channels, live))
             log.append(fmt_ay(d))
             if live != channels:
                 log.append("  MISMATCH - the rung is not driving what it should")
+            log.append(chip_text(*chip_readback(s)))
         return log
-    finally:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        proc.wait(timeout=20)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--port", type=int, default=10077)
+    ap.add_argument("--port", type=int, default=None,
+                    help="harness MCP port (default the first free in PORT_RANGE)")
     ap.add_argument("--leg", default="AUDLAD",
                     help="leg subfolder under sd\\ staged by build-tests.ps1 "
                          "(default AUDLAD, written by -AudLad)")
@@ -407,8 +357,6 @@ def main():
                     help="Task 7a: verify each ladder rung drives the "
                          "channels it claims, instead of the 7b STOPM dump")
     args = ap.parse_args()
-    if not os.path.exists(ZESARUX):
-        sys.exit("ZEsarUX not found at %s" % ZESARUX)
     if not os.path.exists(NEX):
         sys.exit("build/nextdaad.nex missing - run .\\build.ps1 (DEBUG)")
     if not os.path.isfile(os.path.join(SD, args.leg, "GAME.DDB")):
@@ -433,15 +381,14 @@ def main():
     ctrl, log = run_scenario(sd, args.port, False, log, args.restart)
     log.append("")
     log.append("=== REPRO: fresh boot, autoplay -> STOPM -> %s ===" % args.restart)
-    repro, log = run_scenario(sd, args.port + 1, True, log, args.restart)
+    repro, log = run_scenario(sd, args.port, True, log, args.restart)
 
     common = sorted(set(ctrl) & set(repro))
     log.append("")
     log.append("=== PHASE-MATCHED COMPARISON ===")
     log.append("control samples %d, repro samples %d, phases in common %d"
                % (len(ctrl), len(repro), len(common)))
-    # Confirm the restart transient phase is actually in the compared
-    # set (see COLLECTION WINDOW above), not just count matching phases.
+    # the restart transient must be in the compared set, not just counted
     for line in log:
         if line.startswith("restart transient phase = "):
             tp = line.split("= ")[1].split(":")
@@ -455,7 +402,7 @@ def main():
             else:
                 log.append("WARNING: restart transient phase %04X:%04X is "
                            "NOT in the compared set - the transient was "
-                           "not covered, widen COLLECT_S" % tph)
+                           "not covered, widen COLLECT_FRAMES" % tph)
             break
     if not common:
         log.append("NO COMMON PHASE - comparison impossible, widen the collect window")

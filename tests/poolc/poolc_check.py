@@ -1,4 +1,4 @@
-"""ZEsarUX check for the pool C part switch cards. Controller only.
+"""CSpect (tests/cspect) check for the pool C part switch cards. Controller only.
 
 python tests/poolc/poolc_check.py <card> <map> <port> <case>
   control  sd\\LEGPCC + main's map: song pages include bank 20; bank 20
@@ -9,124 +9,91 @@ python tests/poolc/poolc_check.py <card> <map> <port> <case>
            song again, LOAD PCSAVE from part 1 lands in part 2 (P2 ROOM)
   focus5   sd\\LEGPC: partBanksMax poked to 4; aysHdr and smpClaim* show
            the file opened and the claim ran, which fails with nothing held
+<port> is the harness MCP port (tests/cspect/launcher.py PORT_RANGE), 0 for the first free.
 Every case marks each BT_FREE bank outside pool C BT_USED at the P1 BOOT
-pause. Runs on a scratch copy, tests/out/poolc/run-<case>/sd.
+pause. Runs on a scratch copy, tests/out/poolc/run-<case>/sd. Banked symbols
+are read at their map physical address (Session.read_page); settles count FRAMECOUNTER.
 """
-import os, re, shutil, socket, subprocess, sys, time
+import os, shutil, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-sys.path.insert(0, os.path.join(ROOT, 'tests', 'parser'))
-import zrcp, tilemap  # noqa: E402
 sys.path.insert(0, os.path.join(ROOT, 'tests'))
-import zes_core  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, 'tests', 'parser'))
+from cspect import Session  # noqa: E402
+import nleg  # noqa: E402
 
-ZESARUX = r'D:\ZXNextDev\ZEsarUX\zesarux.exe'
-TM_MAP = 0x6000
-ZONE0_RAM = 0x40000             # zone 0 = 2MB SRAM, RAM page 0 at 0x40000
 SAVE_NAME = 'PCSAVE'
-_MAP = re.compile(r'^([0-9A-Fa-f]{8})\s+([0-9A-Fa-f]{8})\s+\S+\s+(\S+)\s*$')
+POLL_S = 0.1
+FRAME_WAIT_S = 30.0             # host deadline for a frame-counted settle
+SECOND = 50                     # frames
+SAVE_WAIT_S = 10.0              # host deadline for PCSAVE.SAV on the card
 
 results = []
 
 
 def expect(name, ok, detail):
     results.append((name, ok))
-    print('%s  %s: %s' % ('PASS' if ok else 'FAIL', name, detail))
-
-
-def load_map(path):
-    syms = {}
-    with open(path, encoding='utf-8', errors='replace') as f:
-        for line in f:
-            m = _MAP.match(line)
-            if m:
-                syms[m.group(3)] = (int(m.group(1), 16), int(m.group(2), 16))
-    return syms
+    print('%s  %s: %s' % ('PASS' if ok else 'FAIL', name, detail), flush=True)
 
 
 class Run:
-    def __init__(self, syms, port):
-        self.s, self.port = syms, port
-        self.k = {n: syms[n][0] for n in ('BT_FREE', 'BT_USED', 'BANK_POOL_C',
-                                          'BANK_POOL_C_END', 'BANK_TABLE_SIZE')}
+    def __init__(self, mapf, port):
+        self.mapf, self.port, self.s = mapf, port, None
 
     def launch(self, sd):
         self.nex = os.path.join(sd, 'NEXTDAAD.NEX')
-        try:
-            socket.create_connection(('127.0.0.1', self.port), timeout=0.5).close()
-            raise SystemExit('port %d already answers: a stale emulator holds it' % self.port)
-        except OSError:
-            pass
-        self.proc = zes_core.popen([
-            ZESARUX, '--machine', 'tbblue', '--realvideo',
-            '--enable-esxdos-handler', '--esxdos-root-dir', sd,
-            '--vo', 'null', '--ao', 'null',
-            '--enable-remoteprotocol', '--remoteprotocol-port', str(self.port),
-            '--smartloadpath', sd], cwd=sd)
-        self.z = None
-        for _ in range(60):
-            if self.proc.poll() is not None:
-                raise SystemExit('ZEsarUX died before ZRCP came up')
-            try:
-                self.z = zrcp.Zrcp(port=self.port)
-                break
-            except OSError:
-                time.sleep(0.5)
-        if self.z is None:
-            raise SystemExit('ZRCP never came up')
-        self.z.cmd('smartload %s' % os.path.join(sd, 'NEXTDAAD.NEX'), deadline=30.0)
+        self.s = Session.boot(sd, self.nex, self.mapf, port=self.port)
+        print('CSpect PID %d on MCP port %d' % (self.s.pid, self.s.inst.port), flush=True)
+        self.k = {n: self.s.sym(n) for n in ('BT_FREE', 'BT_USED', 'BANK_POOL_C',
+                                             'BANK_POOL_C_END', 'BANK_TABLE_SIZE')}
 
     def kill(self):
-        if getattr(self, 'z', None):
-            try:
-                self.z.close()
-            except Exception:
-                pass
-            self.z = None
-        if getattr(self, 'proc', None):
-            self.proc.kill()
-            self.proc.wait(timeout=10)
-            self.proc = None
+        if self.s is not None:
+            self.s.close()
+            self.s = None
 
     def rd(self, name, n=1):
-        return self.z.read_memory(self.s[name][0], n)
+        return self.s.read(self.s.sym(name), n)
 
     def rdz(self, name, n=1):
-        # banked symbol: zone 0 at its physical address
-        self.z.cmd('set-memory-zone 0')
-        try:
-            return self.z.read_memory(ZONE0_RAM + self.s[name][1], n)
-        finally:
-            self.z.cmd('set-memory-zone -1')
+        # banked symbol: CSpect physical = page * $2000 + offset
+        phys = self.s.symbols[name.upper()][1]
+        return self.s.read_page(phys >> 13, phys & 0x1FFF, n)
 
     def wr(self, name, data):
-        reply = self.z.cmd('write-memory-raw %d %s' % (self.s[name][0], data.hex().upper()))
-        zrcp.check_error(reply)
+        self.s.write(self.s.sym(name), data)
         if self.rd(name, len(data)) != data:
             raise SystemExit('write to %s did not read back' % name)
 
     def screen(self):
-        rows, _ = tilemap.decode(self.z.read_memory(TM_MAP, tilemap.GRID_BYTES))
-        return [r.rstrip() for r in rows]
+        return [r.rstrip() for r in self.s.rows()]
+
+    def settle(self, frames):
+        self.s.wait_frames(frames, FRAME_WAIT_S)
+
+    def dismiss(self):
+        self.s.press(nleg.DISMISS_KEY, nleg.DISMISS_HOLD_FRAMES)
 
     def wait_for(self, needles, deadline):
-        end, taps = time.monotonic() + deadline, 0
-        while True:
+        taps = [0]
+
+        def seen():
             rows = self.screen()
             text = '\n'.join(rows)
-            for n in needles:
-                if n in text:
-                    return n, rows
-            if time.monotonic() > end:
-                return None, rows
-            if 'More...' in text and taps < 5:
-                taps += 1
-                self.z.tap_dismiss_key()
-            time.sleep(0.5)
+            hit = next((n for n in needles if n in text), None)
+            if hit:
+                return hit, rows
+            if 'More...' in text and taps[0] < 5:
+                taps[0] += 1
+                self.dismiss()
+            return None
+        try:
+            return self.s.wait_until(seen, deadline, POLL_S, ' or '.join(needles))
+        except TimeoutError:
+            return None, self.screen()
 
     def typed(self, line):
-        self.z.send_keys(line)
-        self.z.enter()
+        self.s.type_text(line + '\n')
 
     def bank_table(self):
         return self.rd('BANKTABLE', self.k['BANK_TABLE_SIZE'])
@@ -134,14 +101,14 @@ class Run:
     def zone_sanity(self):
         # resident bankTable sits in bank 2, so both views must agree
         if self.rdz('BANKTABLE', self.k['BANK_TABLE_SIZE']) != self.bank_table():
-            raise SystemExit('zone 0 view of bankTable disagrees: ZONE0_RAM offset wrong')
+            raise SystemExit('physical view of bankTable disagrees with the 64K view')
         # page 48 code must match the NEX image's bank 24
-        phys = self.s['AUD_AYS_RDB'][1]
+        phys = self.s.symbols['AUD_AYS_RDB'][1]
         want = nex_bank(self.nex, phys // 16384)[phys % 16384:phys % 16384 + 16]
         got = self.rdz('AUD_AYS_RDB', 16)
         if got != want:
-            raise SystemExit('zone 0 page 48 read %s, NEX holds %s' % (got.hex(), want.hex()))
-        print('zone 0 sanity: bankTable (bank 2) and aud_ays_rdb (page 48) match')
+            raise SystemExit('physical page 48 read %s, NEX holds %s' % (got.hex(), want.hex()))
+        print('physical view sanity: bankTable (bank 2) and aud_ays_rdb (page 48) match')
 
     def fill_pools(self):
         bt = bytearray(self.bank_table())
@@ -164,11 +131,11 @@ class Run:
         return self.rdz('AYSTABIDX')[0], int.from_bytes(self.rdz('AYSOFF', 2), 'little')
 
     def pbm(self):
-        return self.rd('PARTBANKSMAX')[0] if 'PARTBANKSMAX' in self.s else None
+        return self.rd('PARTBANKSMAX')[0] if 'PARTBANKSMAX' in self.s.symbols else None
 
     def stream_live(self):
         a = self.pos()
-        time.sleep(1.0)
+        self.settle(SECOND)
         b = self.pos()
         return bool(self.rdz('AYSFLAGS')[0] & 1) and a != b, a, b
 
@@ -186,12 +153,12 @@ class Run:
         print('marked %d free banks outside pool C BT_USED' % n)
         if before_tap:
             before_tap()
-        self.z.tap_dismiss_key()
+        self.dismiss()
         hit, rows = self.wait_for(['P1 SONG ON'], 30.0)
         if not hit:
             dump(rows)
             raise SystemExit('part 1 never printed P1 SONG ON')
-        time.sleep(1.0)
+        self.settle(SECOND)
         sg = self.song()
         bt = self.bank_table()
         c0, c1 = self.k['BANK_POOL_C'], self.k['BANK_POOL_C_END']
@@ -259,11 +226,19 @@ def case_switch(r):
     check_switch(r, sg)
 
 
+def saved_file(sd):
+    """(name, size) of a non-empty SAVE_NAME.SAV on the card, else None."""
+    for f in os.listdir(sd):
+        if f.upper() == SAVE_NAME + '.SAV' and os.path.getsize(os.path.join(sd, f)):
+            return f, os.path.getsize(os.path.join(sd, f))
+    return None
+
+
 def case_restore(r, sd):
     sg, _, _ = r.boot_to_song()
     if not check_switch(r, sg):
         return
-    time.sleep(2.0)
+    r.settle(2 * SECOND)
     r.typed('SAVE')
     hit, rows = r.wait_for(['Type in name'], 20.0)
     if not hit:
@@ -271,15 +246,15 @@ def case_restore(r, sd):
         expect('part 2 save written', False, 'no filename prompt')
         return
     r.typed(SAVE_NAME)
-    end = time.monotonic() + 10.0
-    while time.monotonic() < end and not any(f.upper() == SAVE_NAME + '.SAV' for f in os.listdir(sd)):
-        time.sleep(0.5)
-    saved = [f for f in os.listdir(sd) if f.upper() == SAVE_NAME + '.SAV']
+    try:
+        saved = r.s.wait_until(lambda: saved_file(sd), SAVE_WAIT_S, POLL_S, SAVE_NAME + '.SAV')
+    except TimeoutError:
+        saved = None
     expect('part 2 save written', bool(saved),
-           '%s %d B' % (saved[0], os.path.getsize(os.path.join(sd, saved[0]))) if saved else 'missing ' + SAVE_NAME + '.SAV')
+           '%s %d B' % saved if saved else 'missing ' + SAVE_NAME + '.SAV')
     if not saved:
         return
-    time.sleep(1.0)
+    r.settle(SECOND)
     r.kill()
     print('relaunch: fresh boot on the same card')
     r.launch(sd)
@@ -314,7 +289,7 @@ def case_focus5(r):
     c0, c1 = r.k['BANK_POOL_C'], r.k['BANK_POOL_C_END']
     with open(r.nex.replace('NEXTDAAD.NEX', '001.AYS'), 'rb') as f:
         hdr = f.read(16)
-    tab = r.s['AYSPAGETAB'][0]
+    tab = r.s.sym('AYSPAGETAB')
     post = claim_trace(r)
     fresh = pre[0][0] != hdr and pre[0][1] != tab
     expect('song opened and the claim ran',
@@ -330,14 +305,13 @@ def case_focus5(r):
 
 
 def main(card, mapf, port, case):
-    syms = load_map(mapf)
     run_dir = os.path.join(ROOT, 'tests', 'out', 'poolc', 'run-' + case)
     sd = os.path.join(run_dir, 'sd')
     if os.path.exists(sd):
         shutil.rmtree(sd)
     shutil.copytree(os.path.abspath(card), sd)
-    print('case %s: card %s, map %s, port %d' % (case, os.path.abspath(card), mapf, port))
-    r = Run(syms, port)
+    print('case %s: card %s, map %s, port %s' % (case, os.path.abspath(card), mapf, port or 'first free'))
+    r = Run(mapf, port or None)
     try:
         r.launch(sd)
         if case == 'control':

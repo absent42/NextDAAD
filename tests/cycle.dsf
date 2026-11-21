@@ -1,6 +1,6 @@
 ; NextDAAD colour cycle fixture (GFX 9, 10, 11, 12). STIMULUS fixture:
 ; tests\build-tests.ps1 asserts the compiled bytes; tests\cycle_dump.py
-; drives it over ZRCP and reads the DEBUG snapshot after every ANYKEY.
+; drives it on CSpect and reads the DEBUG snapshot after every ANYKEY.
 ; 001.NX2 is the 16 x 16 palette card tests\art\mkpalcard.py generates:
 ; swatch n is index n on the identity palette, so a cycled row marches.
 ; Flag 200 is the phase: S10 ends in RESTART, which re-runs process 0

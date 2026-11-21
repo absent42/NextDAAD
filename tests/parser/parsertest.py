@@ -5,7 +5,8 @@
 
 Builds the game for both interpreters, plays the script through each,
 compares them, and writes report.md and findings.json. Exits 0 when the
-two interpreters agreed on every turn, 1 otherwise.
+two interpreters agreed on every turn, 1 otherwise. jDAAD runs under node
+(jleg.js), NextDAAD on a harness CSpect (nleg.py through tests/cspect).
 
 Nothing this produces should ever be committed.
 """
@@ -67,7 +68,9 @@ def main(argv=None):
     ap.add_argument("game", help="path to a .dsf source file")
     ap.add_argument("script", help="path to a JSON command script")
     ap.add_argument("--out", default=None, help="output directory")
-    ap.add_argument("--port", type=int, default=10000)
+    ap.add_argument("--port", type=int, default=None,
+                    help="CSpect MCP port for the Next leg (23460-23499; default: the "
+                         "first free one)")
     ap.add_argument("--nex", default=str(ROOT / "build" / "nextdaad.nex"))
     ap.add_argument("--stop-on-first", action="store_true",
                     help="truncate the comparison at the primary divergence")

@@ -1,6 +1,6 @@
 ; NextDAAD parser cursor fixture (GFX 22-26). STIMULUS fixture:
 ; tests\build-tests.ps1 asserts the compiled bytes; tests\cursor_dump.py
-; drives it over ZRCP and reads the cursor's tilemap cell after each verb.
+; drives it on CSpect and reads the cursor's tilemap cell after each verb.
 ; The text window sits on rows 16-31: TRANS draws the palette card on
 ; rows 0-15 and a hidden prompt would cost extra keys. STORM prints its
 ; cells with MES (no newline) under MODE 2 (More disabled) so 134 pairs

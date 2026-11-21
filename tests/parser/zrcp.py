@@ -365,8 +365,7 @@ class Zrcp:
         itself on. Needed because `enable-breakpoints` is a global switch:
         turning it back on after a `disable-breakpoints` re-arms every
         index that still holds a condition, including ones a previous
-        phase of the run set for its own purposes (nleg's RNG-seed trap at
-        SEED_BP_INDEX is exactly that). Retiring the index is cheaper and
+        phase of the run set for its own purposes. Retiring the index is cheaper and
         clearer than overwriting its condition with something that can
         never match."""
         reply = self.cmd("disable-breakpoint %d" % index)
@@ -387,7 +386,7 @@ class Zrcp:
         breakpoint (see run() above). A NON-menu action, however, does run
         on every hit while free-running - which is what makes an
         emulator-side capture (`save-binary`) possible without taking the
-        turn loop into cpu-step. See nleg.NextLeg.arm_page_capture."""
+        turn loop into cpu-step."""
         reply = self.cmd("set-breakpointaction %d %s" % (index, action))
         check_error(reply)
         return reply
