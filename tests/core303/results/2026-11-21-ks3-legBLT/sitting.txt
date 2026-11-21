@@ -1,0 +1,9 @@
+date: 2026-11-21
+board: ks3
+leg: legBLT
+stamp: 989ce72
+core: 33.03
+board_id: 03
+sd_folder: LEGBLT6
+logs: BLT303.LOG
+nr: #NR 01=33 0E=03 0F=03 03=33 05=5B 07=33
