@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""Old-path guard: the existing video hot routines keep their emitted bytes.
-
-For each name in PROTECTED, the routine's bytes in build\\nextdaad.nex must equal its bytes
-in the baseline image captured at the branch point, wherever either copy sits. A routine
-is the span from its label to the next non-local address label in the same page of the
-same SLD. The one allowance: a 16-bit operand whose old and new values read as the same
-label plus the same offset (old SLD vs new SLD, see targets()). MAY_CHANGE lists the only
-other exceptions. A routine with no closing jp/jr/ret must still run on into the same label.
+"""Old-path guard: each PROTECTED video hot routine keeps its emitted bytes.
 
     .\\build.ps1            then  python tests\\vidraw_oldpaths.py --variant debug
     .\\build.ps1 -Release   then  python tests\\vidraw_oldpaths.py --variant release
     python tests\\vidraw_oldpaths.py --selftest
 
 Baselines read: tests\\out\\vidraw-base\\debug.nex, debug.sld, release.nex, release.sld.
-Exit 0 = every routine equal; 1 = a difference or a missing routine; 2 = setup error.
+Exit 0 = equal, 1 = a difference or a missing routine, 2 = setup error.
 """
 
 import argparse
@@ -38,8 +31,8 @@ MAX_LISTED = 16                 # differences listed per routine
 PROTECTED = [
     "video_ctc_isr_stereo", "vid_decode_frame", "vid_decode_frame_ds", "vid_decode_any",
     "vid_ds_next", "vid_ds_byte", "vid_ds_blkopen", "vid_ds_pad", "vid_ds_xfer",
-    "vid_ds_copy_body", "vid_ds_pal", "vid_ds_done", "vid_pace_poll", "vid_aud_stage",
-    "vid_aud_pump", "vid_loop_rewind", "vid_dst_setup", "vid_dst_base", "vid_dst_next",
+    "vid_ds_iblk", "vid_ds_copy_body", "vid_ds_pal", "vid_ds_done", "vid_pace_poll",
+    "vid_aud_stage", "vid_aud_pump", "vid_loop_rewind", "vid_dst_setup", "vid_dst_base", "vid_dst_next",
     "vid_dst_norm_gap", "vid_dst_norm_flat", "vid_run_walk_h", "vid_next_run_h", "vid_run",
 ]
 
@@ -64,7 +57,7 @@ class Undecodable(Exception):
 # op: offset of the 16-bit operand or None. kind: "imm" (a value), "mem" (an address
 # read, written or jumped to), "rel" (jr/djnz) or None.
 Insn = namedtuple("Insn", "off size op big kind")
-Rout = namedtuple("Rout", "page start end buf")
+Rout = namedtuple("Rout", "page start end buf fill")    # end: successor; fill: bytes cut
 
 N8 = {0x06, 0x0E, 0x16, 0x1E, 0x26, 0x2E, 0x36, 0x3E, 0xC6, 0xCE, 0xD6, 0xDE,
       0xE6, 0xEE, 0xF6, 0xFE, 0xD3, 0xDB}
@@ -194,6 +187,7 @@ class Image:
         self.syms = syms                # name -> (page, value); page -1 = EQU
         self.local, self.equ = local, equ
         self.trace = trace              # page -> set of instruction-line addresses, or None
+        self.tsorted = {p: sorted(s) for p, s in trace.items()} if trace is not None else None
         self._page_fn = page_fn
         self._pages = {}
         self.bypage = {}                # page -> (sorted values, names): address labels
@@ -232,7 +226,27 @@ class Image:
             raise Setup(f"{name}: no following non-local label in page {page} of the "
                         f"{self.label} SLD - routine end unknown")
         end = vals[k]
-        return Rout(page, start, end, self.page(page)[start - base:end - base])
+        buf = self.page(page)[start - base:end - base]
+        fill = self.fill_len(page, start, end, buf)
+        return Rout(page, start, end, buf[:len(buf) - fill], fill)
+
+    def fill_len(self, page, start, end, buf):
+        """ALIGN fill ending the span: zeros after the last SLD instruction line, with end
+        aligned past them (ALIGN writes no instruction line). 0 when there is none."""
+        if self.tsorted is None:
+            return 0
+        ts = self.tsorted.get(page, [])
+        i = bisect.bisect_left(ts, end) - 1
+        if i < 0 or ts[i] < start:
+            return 0
+        try:
+            stop = ts[i] - start + insn(buf, ts[i] - start)[0]
+        except Undecodable:
+            return 0
+        n = len(buf) - stop
+        if n <= 0 or any(buf[stop:]) or (end & -end) <= n:
+            return 0
+        return n
 
     def successors(self, rout):
         """Names of the non-local address labels that end rout."""
@@ -252,23 +266,40 @@ class Image:
             i -= 1
         return out
 
-    def targets(self, rout, kind, v):
-        """(label, offset) readings of operand v in rout. Own slot: the running page is mapped,
-        so mem/rel read only it; imm reads it at any offset, other pages as exact labels only.
+    def pages_for(self, rout, kind, v):
+        """[(page, any offset)] operand v in rout can mean. Own slot: the running page is
+        mapped, so mem/rel mean only it; imm means it, or another page as an exact label.
         Other slots: a lone page at any offset, several pages as exact labels only."""
         slot = v >> 13
         pages = self.slot_pages.get(slot, set())
         if slot == rout.start >> 13:
-            own = rout.page
             if kind in ("mem", "rel"):
-                pages = {own}
-        else:
-            own = next(iter(pages)) if len(pages) == 1 else None
+                return [(rout.page, True)]
+            return [(p, p == rout.page) for p in sorted(pages)]
+        return [(p, len(pages) == 1) for p in sorted(pages)]
+
+    def targets(self, rout, kind, v):
+        """{(label, offset)}: readings of operand v in rout (see pages_for)."""
         out = set()
-        for p in pages:
-            r = self.resolve(v, p)
-            out |= r if p == own else {x for x in r if x[1] == 0}
+        for p, any_off in self.pages_for(rout, kind, v):
+            out |= {x for x in self.resolve(v, p) if any_off or x[1] == 0}
         return out
+
+    def nearest_kept(self, v, page, new, npage):
+        """(names, offset): the nearest labels of page at or below v, same slot, that new
+        still has as address labels in npage; ([], None) when none."""
+        vals, names = self.bypage.get(page, ([], []))
+        i = bisect.bisect_right(vals, v) - 1
+        while i >= 0 and vals[i] >> 13 == v >> 13:
+            at, group = vals[i], []
+            while i >= 0 and vals[i] == at:
+                group.append(names[i])
+                i -= 1
+            kept = [n for n in group
+                    if new.syms.get(n, (-1, 0))[0] == npage and n not in new.equ]
+            if kept:
+                return kept, v - at
+        return [], None
 
     def check_trace(self, rout, ins):
         """Offset of an SLD instruction-line address that no decoded instruction starts at."""
@@ -276,7 +307,7 @@ class Image:
             return None
         starts = {x.off for x in ins}
         for a in sorted(self.trace.get(rout.page, ())):
-            if rout.start <= a < rout.end and (a - rout.start) not in starts:
+            if rout.start <= a < rout.start + len(rout.buf) and (a - rout.start) not in starts:
                 return a - rout.start
         return None
 
@@ -323,8 +354,28 @@ def load(label, nex, sld):
     return Image(label, syms, local, equ, trace, page_fn)
 
 
-def same_target(old, orout, vo, new, nrout, vn, kind):
-    return vo == vn or bool(old.targets(orout, kind, vo) & new.targets(nrout, kind, vn))
+def follows(old, orout, vo, new, nrout, vn, kind, only=None):
+    """True when vn is where vo's label went: in a page vo can mean (in only, if given), the
+    nearest label at or below vo that new still has, plus the same offset, is vn in new."""
+    for page, any_off in old.pages_for(orout, kind, vo):
+        if only is not None and page not in only:
+            continue
+        npage = nrout.page if page == orout.page else page
+        kept, k = old.nearest_kept(vo, page, new, npage)
+        if kept and (any_off or k == 0) and any(new.syms[n][1] + k == vn for n in kept):
+            return True
+    return False
+
+
+def still_means(old, orout, vo, new, nrout, vn, kind):
+    """None, or a note when equal operand bytes no longer reach the label they reached."""
+    if kind not in ("mem", "rel"):
+        return None                     # an immediate may be a constant
+    pages = [p for p, any_off in old.pages_for(orout, kind, vo) if any_off]
+    was = set().union(*(old.resolve(vo, p) for p in pages))    # shared slots: may be a window
+    if not was or follows(old, orout, vo, new, nrout, vn, kind, only=pages):
+        return None
+    return "same bytes, but " + "/".join(f"{n}+{k}" for n, k in sorted(was)) + " moved"
 
 
 # ---------------------------------------------------------------- comparison
@@ -370,10 +421,22 @@ def compare_plain(name, old, orout, new, nrout):
         if x.off not in verdict:
             y = nstart.get(x.off)
             verdict[x.off] = (y is not None and same_shape(ob, x, nb, y)
-                              and same_target(old, orout, op16(ob, x), new, nrout,
-                                              op16(nb, y), x.kind))
+                              and follows(old, orout, op16(ob, x), new, nrout,
+                                          op16(nb, y), x.kind))
         if not verdict[x.off]:
             notes.setdefault(o, "")
+    for x in oi:                     # equal bytes must still reach the same label
+        y = nstart.get(x.off)
+        if (y is None or x.kind not in ("mem", "rel") or y.size != x.size
+                or ob[x.off:x.off + x.size] != nb[x.off:x.off + x.size]):
+            continue
+        if x.kind == "rel":
+            vo, vn, o = orout.start + rel_target(ob, x), nrout.start + rel_target(nb, y), 1
+        else:
+            vo, vn, o = op16(ob, x), op16(nb, y), x.op
+        note = still_means(old, orout, vo, new, nrout, vn, x.kind)
+        if note:
+            notes[x.off + o] = note
     if len(ob) != len(nb):
         o = min(len(ob), len(nb))
         notes[o] = "; ".join(s for s in (notes.get(o), f"length old {len(ob)} new {len(nb)}")
@@ -415,29 +478,35 @@ def compare_aligned(name, old, orout, new, nrout, calls):
     for x, y in zip(oi, kept):
         xb, yb = ob[x.off:x.off + x.size], nb[y.off:y.off + y.size]
         why = f"instruction old {xb.hex().upper()} new {yb.hex().upper()}"
+        k = None                     # byte reported: first differing, or the one named
         if x.kind == "rel" or y.kind == "rel":
             ok = x.kind == y.kind and xb[0] == yb[0]
             if ok:
+                k = 1                # the displacement: the landing is what differs
                 to, tn = rel_target(ob, x), rel_target(nb, y)
                 inside_o, inside_n = 0 <= to <= len(ob), 0 <= tn <= len(nb)
                 if inside_o and inside_n:
                     ok = to in oidx and tn in nidx and oidx[to] == nidx[tn]
-                    why += f", lands on old +{to} new +{tn}, not the same instruction"
+                    why = f"lands on old +{to} new +{tn}, not the same instruction"
                 elif not inside_o and not inside_n:
-                    ok = same_target(old, orout, orout.start + to, new, nrout,
-                                     nrout.start + tn, "rel")
-                    why += ", lands outside on different targets"
+                    ok = follows(old, orout, orout.start + to, new, nrout,
+                                 nrout.start + tn, "rel")
+                    why = f"lands outside, old ${orout.start + to:04X} new " \
+                          f"${nrout.start + tn:04X}, not the same label"
                 else:
                     ok = False
-                    why += ", lands inside the routine on one side only"
+                    why = f"lands on old +{to} new +{tn}, inside the routine on one side only"
         elif xb == yb:
-            ok = True
+            note = (still_means(old, orout, op16(ob, x), new, nrout, op16(nb, y), x.kind)
+                    if x.op is not None else None)
+            ok, why, k = note is None, note, x.op
         else:
-            ok = same_shape(ob, x, nb, y) and same_target(
+            ok = same_shape(ob, x, nb, y) and follows(
                 old, orout, op16(ob, x), new, nrout, op16(nb, y), x.kind)
             relocated += ok
         if not ok:
-            k = next((j for j in range(min(x.size, y.size)) if xb[j] != yb[j]), 0)
+            if k is None:
+                k = next((j for j in range(min(x.size, y.size)) if xb[j] != yb[j]), 0)
             diffs.append((x.off + k, at(xb, k), at(yb, k), why))
     if len(oi) != len(kept):
         diffs.append((len(ob), None, None,
@@ -470,9 +539,9 @@ def guard(variant, old, new, names, may_change, out):
         else:
             diffs, rel = compare_plain(name, old, orout, new, nrout)
         relocated += rel
-        last = decode(orout.buf)[-1]
+        last = decode(orout.buf)[-1]     # run-on or ALIGN fill: same successor label
         so, sn = old.successors(orout), new.successors(nrout)
-        if not ends_flow(orout.buf, last) and not so & sn:
+        if (orout.fill or nrout.fill or not ends_flow(orout.buf, last)) and not so & sn:
             diffs.append((len(orout.buf), None, None,
                           f"runs on into {'/'.join(sorted(so))} in the baseline, "
                           f"{'/'.join(sorted(sn))} in the build"))
@@ -537,27 +606,26 @@ def poke(img, tmp, tag, files, name, off, values):
     return write_copy(tmp, tag, *files, r.page, pb)
 
 
-def shifted(base, tmp, tag, files, addr_name, delta, ins, label=None):
+def shifted(base, tmp, tag, files, addr_name, delta, ins, label=None, upto=None):
     """Copy of the baseline with ins inserted at addr_name+delta (under a new non-local
-    label when label is given): page bytes, SLD addresses, protected 16-bit operands and
-    crossing relative branches all moved as the assembler would move them."""
+    label when given). Everything from there up to label upto (default: the page end)
+    moves as the assembler would move it; the zeros just before upto absorb the shift."""
     r0 = base.routine(addr_name)
     page, a, n = r0.page, r0.start + delta, len(ins)
     lo = r0.start & ~(PAGE - 1)
+    u = base.syms[upto][1] if upto else lo + PAGE
     pb = bytearray(base.page(page))
     old_pb = bytes(pb)
-    top = base.bypage[page][0][-1] + 16     # past the last label: constants, not references
+    top = min(u, base.bypage[page][0][-1] + 16)     # past the last label: constants
 
     def moved(x):
-        return x + n if x >= a else x
+        return x + n if a <= x < u else x
     for name in PROTECTED:
         r = base.routine(name)
         if r.page != page:
             continue
-        if r.end + n > lo + PAGE:
-            raise Setup(f"selftest: shift pushes {name} off its page")
         ins_list = decode(r.buf)
-        if r.start < a < r.end and (a - r.start) not in {x.off for x in ins_list}:
+        if r.start < a < r.start + len(r.buf) and (a - r.start) not in {x.off for x in ins_list}:
             raise Setup(f"selftest: insertion point splits an instruction in {name}")
         for x in ins_list:
             src = r.start + x.off
@@ -572,16 +640,16 @@ def shifted(base, tmp, tag, files, addr_name, delta, ins, label=None):
                 if not -128 <= d <= 127:
                     raise Setup(f"selftest: shift puts a branch in {name} out of range")
                 pb[src - lo + 1] = d & 0xFF
-    if any(old_pb[PAGE - n:]):
-        raise Setup("selftest: shift drops non-zero bytes at the page end")
+    if any(old_pb[u - lo - n:u - lo]):
+        raise Setup("selftest: the bytes the shift drops are not zero")
     o = a - lo
-    new_pb = pb[:o] + bytearray(ins) + pb[o:PAGE - n]
+    new_pb = pb[:o] + bytearray(ins) + pb[o:u - lo - n] + pb[u - lo:]
     lines = []
     for line in Path(files[1]).read_text(encoding="utf-8", errors="replace").splitlines():
         f = line.split("|")
         if len(f) >= 8 and f[6] in ("F", "L", "T") and f[4] == str(page):
             v = int(f[5])
-            if v >= a:
+            if a <= v < u:
                 f[5] = str(v + n)
                 line = "|".join(f)
         lines.append(line)
@@ -653,6 +721,10 @@ def call_to(addr):
     return bytes([0xCD, addr & 0xFF, addr >> 8])
 
 
+def le16(v):
+    return [v & 0xFF, v >> 8]
+
+
 def selftest():
     dfiles = (BASE_DIR / "debug.nex", BASE_DIR / "debug.sld")
     rfiles = (BASE_DIR / "release.nex", BASE_DIR / "release.sld")
@@ -676,71 +748,98 @@ def selftest():
     def img(files):
         return load("build", *files)
 
+    n_all, one = f"0 differences in {len(PROTECTED)} routines", f"in 1 of {len(PROTECTED)}"
+    r = base.routine("vid_ds_xfer")
     with tempfile.TemporaryDirectory() as tmp:
-        check("baseline debug vs itself", base, base, 0,
-              expect=["0 differences in 24 routines"])
-        check("baseline release vs itself", rbase, rbase, 0, variant="release",
-              expect=["0 differences in 24 routines"])
+        check("baseline debug vs itself", base, base, 0, expect=[n_all])
+        check("baseline release vs itself", rbase, rbase, 0, variant="release", expect=[n_all])
 
         x = find_insn(base, "vid_ds_xfer", lambda b, i: b[i.off] == 0xB1)
         check("flip one opcode byte in vid_ds_xfer (or c -> or b)", base,
               img(poke(base, tmp, "flip", dfiles, "vid_ds_xfer", x.off, [0xB0])), 1,
-              expect=[f"DIFF vid_ds_xfer +{x.off}: old B1 new B0", "1 differences in 1 of 24"])
+              expect=[f"DIFF vid_ds_xfer +{x.off}: old B1 new B0", f"1 differences {one}"])
 
         x = find_insn(base, "vid_ds_xfer", lambda b, i: b[i.off:i.off + 2] == b"\xE6\x1F")
         check("8-bit immediate changed in vid_ds_xfer (and 31 -> and 30)", base,
               img(poke(base, tmp, "imm", dfiles, "vid_ds_xfer", x.off + 1, [0x1E])), 1,
-              expect=[f"DIFF vid_ds_xfer +{x.off + 1}: old 1F new 1E"])
+              expect=[f"DIFF vid_ds_xfer +{x.off + 1}: old 1F new 1E", one])
 
         blk = base.syms["vid_ds_blkopen"][1]
         pad = base.syms["vid_ds_pad"][1]
         x = find_insn(base, "vid_ds_xfer", lambda b, i: b[i.off] == 0xCC and op16(b, i) == blk)
         check("16-bit operand pointed at another symbol (call z,vid_ds_pad)", base,
-              img(poke(base, tmp, "sym", dfiles, "vid_ds_xfer", x.off + 1,
-                       [pad & 0xFF, pad >> 8])), 1,
-              expect=[f"DIFF vid_ds_xfer +{x.off + 1}:"])
+              img(poke(base, tmp, "sym", dfiles, "vid_ds_xfer", x.off + 1, le16(pad))), 1,
+              expect=[f"DIFF vid_ds_xfer +{x.off + 1}: old {blk & 0xFF:02X} new "
+                      f"{pad & 0xFF:02X}", one])
         check("16-bit operand moved one byte (call z,vid_ds_blkopen+1)", base,
-              img(poke(base, tmp, "off1", dfiles, "vid_ds_xfer", x.off + 1,
-                       [(blk + 1) & 0xFF, (blk + 1) >> 8])), 1,
-              expect=[f"DIFF vid_ds_xfer +{x.off + 1}:"])
+              img(poke(base, tmp, "off1", dfiles, "vid_ds_xfer", x.off + 1, le16(blk + 1))), 1,
+              expect=[f"DIFF vid_ds_xfer +{x.off + 1}: old {blk & 0xFF:02X} new "
+                      f"{(blk + 1) & 0xFF:02X}", one])
 
-        sfiles = shifted(base, tmp, "shift", dfiles, "vid_ds_xfer", 0, b"\0\0\0",
-                         label="vidraw_selftest_ins")
-        sh = img(sfiles)
-        check("insert 3 bytes before vid_ds_xfer, symbols and operands moved", base, sh, 0,
-              expect=["0 differences in 24 routines", "relocated operands"])
+        check("3 bytes inserted before vid_ds_copy_body, page tail and hot cells moved", base,
+              img(shifted(base, tmp, "tail", dfiles, "vid_ds_copy_body", 0, b"\0\0\0",
+                          label="vidraw_selftest_tail")), 0,
+              expect=[n_all, "relocated operands"])
 
-        xfer = base.syms["vid_ds_xfer"][1] + 3
-        x = find_insn(sh, "vid_ds_copy_body",
-                      lambda b, i: b[i.off] == 0xCD and op16(b, i) == xfer)
-        check("shifted copy with one call operand relocated by 2, not 3", base,
-              img(poke(sh, tmp, "wrong", sfiles, "vid_ds_copy_body", x.off + 1,
-                       [(xfer - 1) & 0xFF, (xfer - 1) >> 8])), 1,
-              expect=[f"DIFF vid_ds_copy_body +{x.off + 1}:", "in 1 of 24"])
+        afiles = shifted(base, tmp, "align", dfiles, "vid_ds_xfer", 0, bytes(6),
+                         label="vidraw_selftest_ins", upto="vid_ds_iblk")
+        sa = img(afiles)
+        check("6 bytes inserted before vid_ds_xfer, its ALIGN fill absorbs them", base, sa, 0,
+              expect=[n_all, "relocated operands"])
+
+        two = call_to(base.syms["vid_ds_pal"][1]) + call_to(base.syms["vid_ds_done"][1])
+        check("two allowed calls inserted in vid_run, the ALIGN fill absorbs them", base,
+              img(shifted(base, tmp, "task7", dfiles, "vid_run", 2, two, upto="vid_ds_iblk")),
+              0, may=[("vid_run", "debug", ("vid_ds_pal", "vid_ds_done"))],
+              expect=[n_all, "2 MAY_CHANGE calls removed"])
+
+        moved = r.start + 6
+        x = find_insn(sa, "vid_ds_copy_body",
+                      lambda b, i: b[i.off] == 0xCD and op16(b, i) == moved)
+        check("as above, call vid_ds_xfer relocated by 5, not 6", base,
+              img(poke(sa, tmp, "wrong", afiles, "vid_ds_copy_body", x.off + 1,
+                       le16(moved - 1))), 1,
+              expect=[f"DIFF vid_ds_copy_body +{x.off + 1}: old {r.start & 0xFF:02X} new "
+                      f"{(moved - 1) & 0xFF:02X}", one])
+        check("as above, call operand left at the old address, now the new label", base,
+              img(poke(sa, tmp, "same", afiles, "vid_ds_copy_body", x.off + 1,
+                       le16(r.start))), 1,
+              expect=[f"DIFF vid_ds_copy_body +{x.off + 1}: old {r.start & 0xFF:02X} new "
+                      f"{r.start & 0xFF:02X} (same bytes, but vid_ds_xfer+0", one])
+
+        last = decode(r.buf)[-1]
+        check("last instruction before the ALIGN fill changed (jp -> jp z)", base,
+              img(poke(base, tmp, "jpz", dfiles, "vid_ds_xfer", last.off, [0xCA])), 1,
+              expect=[f"DIFF vid_ds_xfer +{last.off}: old C3 new CA", one])
+        full = len(r.buf) + r.fill
+        check("non-zero byte in the ALIGN fill", base,
+              img(poke(base, tmp, "fillnz", dfiles, "vid_ds_xfer", full - 1, [0x01])), 1,
+              expect=[f"length old {len(r.buf)} new {full}", one])
 
         check("labelled 3 bytes inserted where vid_dst_setup runs on into vid_dst_base", base,
               img(shifted(base, tmp, "runon", dfiles, "vid_dst_base", 0, b"\0\0\0",
-                          label="vidraw_selftest_runon")), 1,
-              expect=["runs on into vid_dst_base in the baseline, vidraw_selftest_runon in "
-                      "the build", "in 1 of 24"])
+                          label="vidraw_selftest_runon", upto="vid_ds_iblk")), 1,
+              expect=["DIFF vid_dst_setup +29: old -- new -- (runs on into vid_dst_base in "
+                      "the baseline, vidraw_selftest_runon in the build)", one])
 
         check("insert a nop inside vid_ds_pad, the rest moved", base,
-              img(shifted(base, tmp, "nop", dfiles, "vid_ds_pad", 3, b"\0")), 1,
-              expect=["DIFF vid_ds_pad +3: old DB new 00", "length old 11 new 12",
-                      "in 1 of 24"])
+              img(shifted(base, tmp, "nop", dfiles, "vid_ds_pad", 3, b"\0",
+                          upto="vid_ds_iblk")), 1,
+              expect=["DIFF vid_ds_pad +3: old DB new 00", "length old 11 new 12", one])
 
         x = find_insn(base, "vid_ds_xfer", lambda b, i: b[i.off] == 0xB1)
         check("undecodable opcode in the build (ED 00 over or c / ret z)", base,
               img(poke(base, tmp, "undec", dfiles, "vid_ds_xfer", x.off, [0xED, 0x00])), 1,
-              expect=[f"DIFF vid_ds_xfer +{x.off}: old B1 new ED (undecodable opcode ED00"])
+              expect=[f"DIFF vid_ds_xfer +{x.off}: old B1 new ED (undecodable opcode ED00",
+                      one])
 
         x = find_insn(base, "vid_ds_xfer", lambda b, i: b[i.off] == 0xCC)
-        r = base.routine("vid_ds_xfer")
         extra = [f"selftest|1||0|{r.page}|{r.start + x.off + 1}|T|"]
         lines = Path(dfiles[1]).read_text(encoding="utf-8").splitlines() + extra
         check("SLD instruction line inside a decoded instruction", base,
               img(write_copy(tmp, "desync", *dfiles, sld_lines=lines)), 1,
-              expect=[f"SLD instruction line at +{x.off + 1} is inside a decoded instruction"])
+              expect=[f"SLD instruction line at +{x.off + 1} is inside a decoded instruction",
+                      one])
 
         a4 = r.start + 4
         extra = [f"selftest|1||0|-1|{a4}|D|vidraw_selftest_equ",
@@ -753,8 +852,7 @@ def selftest():
                  f"selftest|1||0|{r.page}|{a4}|L|,vid_ds_xfer,vidraw_selftest,+local"]
         lines = Path(dfiles[1]).read_text(encoding="utf-8").splitlines() + extra
         check("equ, page 58 and local labels inside vid_ds_xfer do not end it", base,
-              img(write_copy(tmp, "spans", *dfiles, sld_lines=lines)), 0,
-              expect=["0 differences in 24 routines"])
+              img(write_copy(tmp, "spans", *dfiles, sld_lines=lines)), 0, expect=[n_all])
 
         check("protected label missing from the build SLD", base,
               img(without(tmp, "miss", dfiles, "vid_ds_pal")), 1,
@@ -765,9 +863,11 @@ def selftest():
 
     ref = ["syn_ref"]
     check("cross-page: ld a,(cellA) -> (cellB) while page 57 moved by the same 4", crosspage(
-        b"\x3A\x00\xE1", 0xE0F0), crosspage(b"\x3A\x04\xE1", 0xE0F4), 1, names=ref)
+        b"\x3A\x00\xE1", 0xE0F0), crosspage(b"\x3A\x04\xE1", 0xE0F4), 1, names=ref,
+        expect=["DIFF syn_ref +1: old 00 new 04", "in 1 of 1"])
     check("cross-page: ld hl,cellA -> cellB while page 57 moved by the same 4", crosspage(
-        b"\x21\x00\xE1", 0xE0F0), crosspage(b"\x21\x04\xE1", 0xE0F4), 1, names=ref)
+        b"\x21\x00\xE1", 0xE0F0), crosspage(b"\x21\x04\xE1", 0xE0F4), 1, names=ref,
+        expect=["DIFF syn_ref +1: old 00 new 04", "in 1 of 1"])
     check("cross-page: ld hl,cold with cold moved in page 57", crosspage(
         b"\x21\xF0\xE0", 0xE0F0), crosspage(b"\x21\xF4\xE0", 0xE0F4), 0, names=ref,
         expect=["1 relocated operands"])
@@ -779,23 +879,31 @@ def selftest():
           synthetic(call_to(0xE100)), 0, names=syn, may=may,
           expect=["0 differences in 1 routines", "1 MAY_CHANGE calls removed"])
     check("synthetic: unlisted call inserted", old,
-          synthetic(call_to(0xE106)), 1, names=syn, may=may)
+          synthetic(call_to(0xE106)), 1, names=syn, may=may,
+          expect=["DIFF syn_run +8: old 3D new CD", "call vid_dbg_late inserted 0 times"])
     check("synthetic: ld hl,nn inserted", old,
-          synthetic(bytes([0x21, 0x00, 0xE1])), 1, names=syn, may=may)
+          synthetic(bytes([0x21, 0x00, 0xE1])), 1, names=syn, may=may,
+          expect=["DIFF syn_run +8: old 3D new 21"])
     check("synthetic: allowed call, jr displacement not adjusted", old,
-          synthetic(call_to(0xE100), jr_disp=8), 1, names=syn, may=may)
+          synthetic(call_to(0xE100), jr_disp=8), 1, names=syn, may=may,
+          expect=["DIFF syn_run +4: old 08 new 08 (lands on old +13 new +13"])
     check("synthetic: allowed call, jr lands on another instruction", old,
-          synthetic(call_to(0xE100), jr_disp=9), 1, names=syn, may=may)
+          synthetic(call_to(0xE100), jr_disp=9), 1, names=syn, may=may,
+          expect=["DIFF syn_run +4: old 08 new 09 (lands on old +13 new +14"])
     check("synthetic: allowed call, jr widened to jp", old,
-          synthetic(call_to(0xE100), jr_as_jp=True), 1, names=syn, may=may)
+          synthetic(call_to(0xE100), jr_as_jp=True), 1, names=syn, may=may,
+          expect=["DIFF syn_run +3: old 28 new CA"])
     check("synthetic: allowed call inserted twice", old,
-          synthetic(call_to(0xE100) * 2), 1, names=syn, may=may)
+          synthetic(call_to(0xE100) * 2), 1, names=syn, may=may,
+          expect=["call vid_dbg_late inserted 2 times, want exactly 1"])
     check("synthetic: entry listed but no call inserted", old, synthetic(), 1,
-          names=syn, may=may)
+          names=syn, may=may, expect=["call vid_dbg_late inserted 0 times, want exactly 1"])
     check("synthetic: allowed call in the other variant", old,
-          synthetic(call_to(0xE100)), 1, names=syn, may=may, variant="release")
+          synthetic(call_to(0xE100)), 1, names=syn, may=may, variant="release",
+          expect=["release: FAIL", "length old 14 new 17"])
     check("synthetic: allowed call with no entry", old,
-          synthetic(call_to(0xE100)), 1, names=syn)
+          synthetic(call_to(0xE100)), 1, names=syn,
+          expect=["debug: FAIL", "length old 14 new 17"])
 
     bad = results.count(False)
     print(f"vidraw_oldpaths: selftest {len(results) - bad}/{len(results)} passed")
