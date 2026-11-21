@@ -253,6 +253,30 @@ for _s in "XYZ":
                 "3" + _s, "pad proof: " + _op, BLT, None, "byte",
                 "CK = reps whose last byte had not landed after the pad; T is not a figure")
 
+# NXB session RW1 (src/video.asm nxbSesRw1, verb NXBW) on a raw direct clip: the printed
+# rows, in the NXB screen grammar (parse.parse_nxb), not in TAGS. The log step then appends
+# "#HIST <tag>" and NXB_HIST_BINS 4-digit words per histogram row (parse.parse_hist): bin k
+# counts the data-token waits whose number of $FF polls has bit length k, a poll being
+# NXB_HIST_POLL_T T at 28 MHz (nxb_rh_sec). ARM1/ARM2/ARMO and DSRM print nothing.
+NXB_RW1 = {
+    "IDEN": "O = delivery (02), R = frames, F = picture width, D = height byte",
+    "RFR0": "frame 0: nxb_rw_feed + raw decode, its palette sector included; unarmed, R = 1",
+    "RSWP": "frames 1-16 on one clock, each nxb_rw_feed + raw decode; unarmed",
+    "ARSW": "frames 17-32 as RSWP, the session's raw handler armed",
+    "RSEC": "vr_sector_n + one 512-byte slide read into VR_SCRATCH; a sector a rep",
+    "RCOL": "RSEC's sector as 8 reads of 64, each followed by ld l,0 / inc h",
+    "RHST": "RSEC with the token wait binned; T is not a figure, see #HIST",
+    "SPN0": "a 2000-pass count loop, no card",
+    "ARSE": "RSEC, raw handler armed",
+    "ARCO": "RCOL, raw handler armed",
+    "AHST": "RHST, raw handler armed",
+    "ASPN": "SPN0, raw handler armed",
+    "OSPN": "SPN0, video_ctc_isr_stereo (IX play pointer) armed",
+}
+NXB_HIST_TAGS = ("RHST", "AHST")
+NXB_HIST_BINS = 17
+NXB_HIST_POLL_T = 48
+
 # Pi log tags (#PI303 logs, parse.parse_pilog); disjoint from TAGS: neither grammar accepts
 # the other's tags.
 PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "

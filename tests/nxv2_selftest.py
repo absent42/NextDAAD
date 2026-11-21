@@ -1504,18 +1504,98 @@ def _synth_frame(frame, preset, sites):
     return "no terminal within 64 ops"
 
 
+SESSION_ASM_LABELS = {"DS1": "nxbSesDs1", "REAL": "nxbSesReal", "SYN": "nxbSesSyn",
+                      "SYS": "nxbSesSys", "RW1": "nxbSesRw1"}
+
+
+def _session_asm_parity(asm):
+    """src/video.asm against nxv2_bench_rows: every NXB_K_* code, nxbSessDir (mode order,
+    delivery masks, tables) and every table row (tag, kind, variant, reps, thr, strm;
+    SYNTH rows: reps, frame, preset, sites). -> [problem]."""
+    import re as _re
+    bad, equ = [], {}
+    for m in _re.finditer(r"^(NXB_\w+)\s+equ\s+(\$[0-9A-Fa-f]+|%[01]+|\d+)\b", asm, _re.M):
+        t = m.group(2)
+        equ[m.group(1)] = int(t[1:], 16) if t[0] == "$" else int(t[1:], 2) if t[0] == "%" else int(t)
+
+    def val(tok):
+        tok = tok.strip()
+        if tok in equ:
+            return equ[tok]
+        if _re.fullmatch(r"\$[0-9A-Fa-f]+", tok):
+            return int(tok[1:], 16)
+        if _re.fullmatch(r"\d+", tok):
+            return int(tok)
+        raise ValueError(f"cannot read {tok!r}")
+    for i, kind in enumerate(bench.SESSION_KINDS):
+        if equ.get("NXB_K_" + kind.upper()) != i:
+            bad.append(f"NXB_K_{kind.upper()} is {equ.get('NXB_K_' + kind.upper())}, the table index {i}")
+    if equ.get("NXB_K_COUNT") != len(bench.SESSION_KINDS):
+        bad.append(f"NXB_K_COUNT {equ.get('NXB_K_COUNT')} against {len(bench.SESSION_KINDS)} kinds")
+    for name in ("NXB_DS_REPS", "NXB_RW_REPS", "NXB_RW_HREPS", "NXB_RW_SREPS", "NXB_RW_SPIN",
+                 "NXB_RW_MIN"):
+        if equ.get(name) != getattr(bench, name):
+            bad.append(f"{name}: video.asm {equ.get(name)}, nxv2_bench_rows {getattr(bench, name)}")
+    kind_of = {f"NXB_K_{k.upper()}": k for k in bench.SESSION_KINDS}
+    d = asm.index("\nnxbSessDir:")
+    sdir = _re.findall(r"^\s+NXBSDIR %([01]{3}), (\w+), (\w+)", asm[d:d + 2000], _re.M)
+    by_label = {v: k for k, v in SESSION_ASM_LABELS.items()}
+    bits = {"resident": 1, "streaming": 2, "direct": 4}
+    for mode, (mask, tab, end) in enumerate(sdir, 1):
+        name = by_label.get(tab)
+        if name is None or end != tab + "End":
+            bad.append(f"nxbSessDir mode {mode}: {tab}/{end} is no known table")
+            continue
+        if bench.SESSION_MODES.get(name) != mode:
+            bad.append(f"nxbSessDir: {name} is mode {mode}, SESSION_MODES says {bench.SESSION_MODES.get(name)}")
+        if int(mask, 2) != sum(bits[x] for x in bench.SESSION_DELIVERY[name]):
+            bad.append(f"nxbSessDir {name}: mask %{mask} against {bench.SESSION_DELIVERY[name]}")
+    if len(sdir) != len(bench.SESSION_MODES):
+        bad.append(f"nxbSessDir has {len(sdir)} modes, SESSION_MODES {len(bench.SESSION_MODES)}")
+    for name, label in SESSION_ASM_LABELS.items():
+        m = _re.search(rf"^{label}:\n(.*?)^{label}End:", asm, _re.M | _re.S)
+        if not m:
+            bad.append(f"{label}: table not found in video.asm")
+            continue
+        got = []
+        for line in m.group(1).splitlines():
+            st = line.split(";")[0].strip()
+            r = _re.fullmatch(r'NXBSROW "(\w{4})", ([\w |]+), ([\w$]+), ([\w$]+), ([\w$]+)', st)
+            y = _re.fullmatch(r'NXBYROW "(\w{4})", (\w+), (.*)', st)
+            if r:
+                parts = [p.strip() for p in r.group(2).split("|")]
+                got.append((r.group(1), kind_of.get(parts[0], parts[0]), val(r.group(3)),
+                            val(r.group(4)), val(r.group(5)), "NXB_K_STRM" in parts[1:]))
+            elif y:
+                v = [val(t) for t in y.group(3).split(",")]
+                sites = tuple((v[k], tuple(v[k + 2:k + 2 + v[k + 1]])) for k in (3, 8))
+                got.append((y.group(1), kind_of.get(y.group(2), y.group(2)), v[0], v[1], v[2])
+                           + sites)
+            elif st and not st.startswith(("NXBSTAB", "db 0")):
+                bad.append(f"{label}: unread line {st!r}")
+        want = [tuple(r) for r in bench.SESSION_TABLES.get(name, ())]
+        if got != want:
+            diff = next((i for i, (x, y) in enumerate(zip(got, want)) if x != y), min(len(got), len(want)))
+            bad.append(f"{label} row {diff}: video.asm {got[diff:diff + 1]}, "
+                       f"nxv2_bench_rows {want[diff:diff + 1]} ({len(got)} / {len(want)} rows)")
+    return bad
+
+
 @case(10, "session bench tables - layout by kind, tags, printed rows, armed rows, deliveries")
 def t10_session_tables():
     # Session rows (src/video.asm nxbSes* tables, nxb_srow_next/nxb_srow_go):
     # 10 bytes, or 25 for a SYNTH kind, plus a terminator, staged into
     # nxbTabBuf (560 B); 32 printed rows at most (rows 8-23, two columns).
+    import re as _re
+    asm = (ROOT / "src" / "video.asm").read_text(encoding="utf-8")
+    last = _re.search(r"^NXB_SESS_LAST\s+equ (\d+)\b", asm, _re.M)
+    expect(last and int(last.group(1)) == 5, "video.asm NXB_SESS_LAST equ 5")
     expect(sorted(bench.SESSION_TABLES) == sorted(bench.SESSION_MODES)
            == sorted(bench.SESSION_DELIVERY),
            "every session table has a flags+248 mode and its deliveries")
-    expect(len(set(bench.SESSION_MODES.values())) == len(bench.SESSION_MODES)
-           and all(1 <= m <= 4 for m in bench.SESSION_MODES.values()),
-           "session modes are distinct, 1-4")
-    bad = []
+    expect(sorted(bench.SESSION_MODES.values()) == list(range(1, int(last.group(1)) + 1)),
+           "session modes are 1..NXB_SESS_LAST, each once")
+    bad = _session_asm_parity(asm)
     for name, rows in sorted(bench.SESSION_TABLES.items()):
         deliveries = bench.SESSION_DELIVERY[name]
         if not deliveries or not set(deliveries) <= {"resident", "streaming", "direct"}:
@@ -1527,14 +1607,20 @@ def t10_session_tables():
         for tag in tags:
             if len(tag) != 4 or not all(0x21 <= ord(ch) <= 0x7E for ch in tag):
                 bad.append(f"{name} {tag!r}: a tag is exactly 4 printable characters")
-        for tag in sorted({t for t in tags if tags.count(t) > 1}):
-            bad.append(f"{name} {tag}: repeated in the table")
+        shown = [r[0] for r in rows if r[1] not in bench.SESSION_SILENT]
+        for tag in sorted({t for t in shown if shown.count(t) > 1}):
+            bad.append(f"{name} {tag}: a printed tag repeated in the table")
+        if any(r[1] in bench.SESSION_SILENT and r[0] in shown for r in rows):
+            bad.append(f"{name}: a silent row shares a printed row's tag")
         if not rows or rows[0][:2] != ("IDEN", "id"):
             bad.append(f"{name}: the first row is IDEN (kind id)")
         tail = [bench.session_strm(r) for r in rows if r[1] in bench.SESSION_KINDS]
         if True in tail and not all(tail[tail.index(True):]):
             bad.append(f"{name}: streaming-only rows must form the table's tail")
-        scanned = blocks_direct = False
+        raw = any(r[1] in bench.SESSION_RAW for r in rows)
+        if raw and any(r[1] in ("dsweep", "dsblk", "dskip") for r in rows):
+            bad.append(f"{name}: raw kinds and DS1 kinds never share a table")
+        scanned = blocks_direct = card_rows = False
         shape_ok = True
         for row in rows:
             tag, kind = row[0], row[1]
@@ -1596,7 +1682,7 @@ def t10_session_tables():
                 bad.append(f"{name} {tag}: param={param} reps={reps} thr={thr} do not fit")
                 shape_ok = False
             if (kind in bench.SESSION_REPS) != (reps >= 1):
-                bad.append(f"{name} {tag}: reps {reps} (1+ for FRAME/AUD/PACE/PROD/DSBLK, else 0)")
+                bad.append(f"{name} {tag}: reps {reps} (1+ for {'/'.join(bench.SESSION_REPS)}, else 0)")
             if (kind in bench.SESSION_DECODE) != (thr >= 1):
                 bad.append(f"{name} {tag}: thr {thr} (1+ for SCAN/SWEEP/FRAME/LOOP/DSWEEP, else 0)")
             if kind == "frame" and (param > 2 or not scanned):
@@ -1611,10 +1697,17 @@ def t10_session_tables():
                 bad.append(f"{name} {tag}: {kind.upper()} after a DSBLK row (the frames are off the wire)")
             if kind == "dsblk" and param > 3:
                 bad.append(f"{name} {tag}: DSBLK body {param} must be 0-3")
-            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk") and param:
+            if kind == "rblk" and param > 1:
+                bad.append(f"{name} {tag}: RBLK body {param} must be 0 (sector) or 1 (columns)")
+            if kind in ("rframe", "rsweep") and card_rows:
+                bad.append(f"{name} {tag}: {kind.upper()} after a card row (the frames are off the wire)")
+            if kind in bench.SESSION_RAW_CARD and reps + 1 >= bench.NXB_RW_MIN:
+                bad.append(f"{name} {tag}: {reps} reps and the untimed sector reach NXB_RW_MIN")
+            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk", "rblk") and param:
                 bad.append(f"{name} {tag}: {kind} rows carry param 0")
             scanned |= kind == "scan"
             blocks_direct |= kind == "dsblk"
+            card_rows |= kind in bench.SESSION_RAW_CARD
         if shape_ok:
             lengths = [len(bench.session_row_bytes(r)) for r in rows]
             want = [bench.SESSION_SYNTH_LEN if r[1] in bench.SESSION_SYNTH
@@ -1634,11 +1727,13 @@ def t10_session_tables():
             state = bench.session_armed(name, delivery)
             armed = False
             for tag, kind, *_ in bench.session_rows(name, delivery):
-                if kind == "arm" and armed:
+                if kind in bench.SESSION_ARMS and armed:
                     bad.append(f"{name} {view} {tag}: ARM while armed")
                 if kind == "disarm" and not armed:
                     bad.append(f"{name} {view} {tag}: DISARM while unarmed")
-                armed = kind == "arm" or (armed and kind != "disarm")
+                armed = kind in bench.SESSION_ARMS or (armed and kind != "disarm")
+            if armed and name == "RW1":
+                bad.append(f"{name} {view}: ends armed (ARMOLD's handler is only undone by a DISARM)")
             for tag in printed:
                 if state[tag] != (tag in armed_tags):
                     bad.append(f"{name} {view} {tag}: runs {'armed' if state[tag] else 'unarmed'}"
@@ -1856,6 +1951,18 @@ def t10_bench_log():
            f"a lost capture before the first stamp: {one.warnings}")
     fmt = blog.parse(_bench_capture(0x0600, _bench_screen({0: {0: "> nxbq"}, 23: {0: "VID NOBANK2"}})))[0]
     expect(fmt.report == ["VID NOBANK2"] and len(fmt.warnings) == 1, f"VID NOBANK2 alone: {fmt.warnings}")
+    # NXBW: the RW1 rows (one column), then the log step's #HIST lines after the screen
+    w_rows = vals(bench.session_printed("RW1", "direct"), 0x00)
+    bins = {"RHST": [2040, 7, 1] + [0] * 14, "AHST": [0] * 16 + [1]}
+    w_text = _bench_capture(0x0700, _bench_screen({0: {0: "> pick 71"}, 1: {0: "> nxbw"},
+                                                   **{8 + i: {0: _bench_group(*g)}
+                                                      for i, g in enumerate(w_rows)}}))
+    w_text += "".join(f"#HIST {t}" + "".join(f" {n:04X}" for n in b) + "\r\n" for t, b in bins.items())
+    wrun = blog.parse(w_text)[0]
+    expect((wrun.command, wrun.table, wrun.clip, wrun.rows, wrun.hist, wrun.report, wrun.warnings)
+           == ("NXBW", "RW1", 71, w_rows, bins, [], []),
+           f"NXBW capture: {wrun.command} {wrun.rows} {wrun.hist} {wrun.report} {wrun.warnings}")
+    expect(len(w_rows) == 13, f"RW1 prints 13 rows (6 silent arm/disarm rows), got {len(w_rows)}")
     import io
     with tempfile.TemporaryDirectory() as td:
         for body, want in ((log2, "4 runs, 3 with a problem"), (_bench_capture(0x0100, s_a), "1 runs, 0 with a problem")):

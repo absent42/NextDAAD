@@ -342,8 +342,14 @@ LS256 111     verb
 ;          resident clip (23 rows, two columns).
 ;   NXBY - verb 129, flag 248 = 4: the SYS synthetic-frame rows on a
 ;          streaming clip (14 rows).
+;   NXBW - verb 130, flag 248 = 5 + GFX @140 13 after PICK nn: the RW1
+;          rows on a raw direct clip (13 rows: frame 0, two 16-frame
+;          sweeps, sector, column and wait histogram rows, handler
+;          spins); the log step adds a #HIST line per histogram row.
+;          A card row with under 5000 blocks left prints NXB SHORT.
 ;          Session verbs REPLACE playback; a clip of the wrong delivery
-;          prints NXB SESSION.
+;          (or a raw clip on NXBD, a non-raw clip on NXBW) prints NXB
+;          SESSION.
 ; Rows print at tilemap rows 8+ and become visible when the timeline
 ; report hides Layer 2 at teardown. Each verb ends with the log step
 ; (mode 15): NXBENCH.TXT in the launch folder, LOG OK or LOG ERR xx on
@@ -365,6 +371,7 @@ NXBV  126     verb
 NXBR  127     verb
 NXBQ  128     verb
 NXBY  129     verb
+NXBW  130     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -664,7 +671,7 @@ S 1
                 #endif
                 WINDOW 1
                 WINAT 0 0               ; Full screen text window
-                WINSIZE 8 127           ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-26
+                WINSIZE 8 127           ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-27
                 CLS
 $pictureOK
 
@@ -1089,7 +1096,7 @@ $pictureOK
 ; SP17 player bench (see the vocabulary block). The standalone
 ; modes set flag 250 then share EXTERN 0 12; the mode cell self-clears
 ; in the handler, so a stray EXTERN can never re-run a row set. The
-; session verbs (NXBD/NXBR/NXBQ/NXBY) set flag 248, arm it with mode 14
+; session verbs (NXBD/NXBR/NXBQ/NXBY/NXBW) set flag 248, arm it with mode 14
 ; (EXTERN 0 12, which clears flag 248), and then play the
 ; clip PICK armed: the player opens the file exactly as it ships, and
 ; the bench hook diverts to the session rows once the session is staged
@@ -1163,8 +1170,8 @@ $pictureOK
                 EXTERN  0 12
                 DONE
 
-; NXBD/NXBR/NXBQ/NXBY: the DS1/REAL/SYN/SYS session bench on the clip
-; PICK armed (flag 140). Mode 14 copies flag 248 into the arm cell.
+; NXBD/NXBR/NXBQ/NXBY/NXBW: the DS1/REAL/SYN/SYS/RW1 session bench on the
+; clip PICK armed (flag 140). Mode 14 copies flag 248 into the arm cell.
 > NXBD    _     LET     248 1
                 LET     250 14
                 EXTERN  0 12
@@ -1193,6 +1200,15 @@ $pictureOK
                 DONE
 
 > NXBY    _     LET     248 4
+                LET     250 14
+                EXTERN  0 12
+                GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
+                PROCESS 10
+                DONE
+
+> NXBW    _     LET     248 5
                 LET     250 14
                 EXTERN  0 12
                 GFX     @140 13
@@ -1250,7 +1266,7 @@ $pictureOK
 > _       _     
                 WINDOW  0                  ; Make window 0 be full screen, and clear it
                 WINAT 0 0
-                WINSIZE 8 128              ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-26
+                WINSIZE 8 128              ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-27
                 BORDER 1                   ; blue surround: one-look NR $4A fallback check
                 CLS
                 WINDOW  1                  ; Define text Window starting at line 14

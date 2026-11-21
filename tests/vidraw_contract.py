@@ -9,7 +9,10 @@ generator (vid_raw_sched_build) and hot-cell staging (vid_raw_stage), the raw fr
 (vid_stage_common.vec), the raw sound handlers on the alternate set (video_ctc_isr_raw_st,
 video_ctc_isr_raw_mono), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime)
 and the handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and
-URUN counters (vid_dbg_late, vid_dbg_urun), skipped with a note where they are not assembled.
+URUN counters (vid_dbg_late, vid_dbg_urun) and their call sites, and the RW1 bench session
+(the mode 5 route through nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the
+binned token wait, the arm kinds and DISARM, the log step's #HIST lines); each is skipped
+with a note where it is not assembled.
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
 
@@ -160,6 +163,12 @@ def _swapnib(c):
     c.a = ((c.a << 4) | (c.a >> 4)) & 0xFF
 
 
+def _ex_sp_hl(c):
+    v = c.r16(c.sp)
+    c.w16(c.sp, c.hl)
+    c.hl = v
+
+
 def _in_r_c(r):
     def h(c):
         v = c.mc.port_in(c.bc)
@@ -175,7 +184,8 @@ def _out_c_r(r):
     return h
 
 
-EXT = {0xDB: _in_a_n, 0xD3: _out_n_a, 0xD9: _exx, 0x08: _ex_af, 0xF3: _di, 0xFB: _ei}
+EXT = {0xDB: _in_a_n, 0xD3: _out_n_a, 0xD9: _exx, 0x08: _ex_af, 0xF3: _di, 0xFB: _ei,
+       0xE3: _ex_sp_hl}
 ED_EXT = {0xA2: _ini, 0xA0: _ldi, 0x4D: _reti, 0x45: _reti, 0x23: _swapnib}
 for _r in range(8):
     ED_EXT[0x40 | _r << 3] = _in_r_c(_r)
@@ -1387,13 +1397,553 @@ def test_dbg_counters():
                        f"expected {want}")
 
 
+# --------------------------------------------------------------------------- RW1 bench session
+
+def bench_only():
+    """Release has no NXB bench: skip. A DEBUG image without nxb_rw_feed fails."""
+    if "dbgNoBank" not in SYMS:
+        raise Skip("Release image: nxb_rw_feed and the NXB bench are DEBUG-only")
+    S("nxb_rw_feed")
+
+
+def mapnr(mc, slot, page):
+    mc.map(slot, page)
+    mc.nr[0x50 + slot] = page
+
+
+def nxb_machine(cls=None):
+    """A machine with the NXB page in physical RAM and NR $50-$57 readable (NRGET)."""
+    mc = (cls or RawMachine)(SYMS)
+    nxb = S("NXB_PAGE")
+    mc.phys[nxb * SLOT:(nxb + 1) * SLOT] = read_page(nxb)
+    for s in range(8):
+        mc.nr[0x50 + s] = mc.mmu[s]
+    return mc
+
+
+def find_code(mc, start, end, pat):
+    """The address of byte pattern pat in [start, end), both in the slot that maps them."""
+    o = bytes(mc.mem[start:end]).find(pat)
+    if o < 0:
+        raise Fail(f"{pat.hex(' ').upper()} not found in ${start:04X}-${end:04X}")
+    return start + o
+
+
+def code_is(mc, name, want):
+    got = bytes(mc.mem[S(name):S(name) + len(want)])
+    if got != want:
+        raise Fail(f"{name}: {got.hex(' ').upper()}, expected {want.hex(' ').upper()}")
+
+
+def rw_cells(mc, run=0xFFFF, crc=0):
+    mc.poke("vidDsCrcDue", crc)
+    mc.poke("vidDsFrmBlk", 0)
+    mc.poke("vidDsBound", 255)
+    mc.poke("vidStrmRemainBlk", (0x012345).to_bytes(3, "little"))
+    mc.poke16("vidStrmRunBlkH", run)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 100)
+
+
+def rw_sched(mc):
+    """The slide built in the schedule page (vid_raw_sched_build), MMU6 = it, MMU7 = VID_PAGE."""
+    if build_sched(mc, 1, 320, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    mapnr(mc, 7, S("VID_PAGE"))
+    mc.nr[0x56] = SCHED_PAGE
+
+
+def test_dbg_calls():
+    """vid_run's two DEBUG helper calls (DEBUG image, not -BenchQuiet): at .pace, call
+    vid_pace_poll / call vid_dbg_late / jr c; just before .qskip, call vid_dbg_urun."""
+    if "vid_dbg_late" not in SYMS:
+        raise Skip("vid_dbg_late is not assembled (Release or -BenchQuiet image)")
+    mc = RawMachine(SYMS)
+    code_is(mc, "vid_run.pace", b"\xCD" + le(S("vid_pace_poll")) + b"\xCD" + le(S("vid_dbg_late"))
+            + b"\x38")
+    q = S("vid_run.qskip")
+    if bytes(mc.mem[q - 3:q]) != b"\xCD" + le(S("vid_dbg_urun")):
+        raise Fail(f"before vid_run.qskip: {bytes(mc.mem[q - 3:q]).hex(' ').upper()}, "
+                   f"expected call vid_dbg_urun")
+
+
+def test_rw_shapes():
+    """The timed bodies as emitted: what lies inside each RW1 row's window."""
+    bench_only()
+    mc = RawMachine(SYMS)
+    slide, end, scr = S("VR_SLIDE"), S("VR_SLIDE_END"), S("VR_SCRATCH")
+    code_is(mc, "nxb_rw_fbody", b"\xCD" + le(S("nxb_rw_feed")) + b"\xC3" + le(S("vid_decode_any")))
+    code_is(mc, "nxb_rw_sec", b"\x21" + le(scr) + b"\xCD" + le(S("vr_sector_n")) + b"\xC3" + le(slide))
+    code_is(mc, "nxb_rw_col", b"\x21" + le(S("VID_DST_WIN")) + b"\xCD" + le(S("vr_sector_n"))
+            + (b"\xCD" + le(end - 128) + b"\x2E\x00\x24") * 8 + b"\xC3" + le(end))
+    code_is(mc, "nxb_rh_body", b"\x21" + le(scr) + b"\xCD" + le(S("nxb_rh_sec")) + b"\xC3" + le(slide))
+    n = S("NXB_RW_SPIN")
+    code_is(mc, "nxb_rw_spin", b"\x01" + le(n) + b"\x0B\x78\xB1\x20\xFB\xC9")
+    # the binned wait polls as vid_sd_tok_h does: in 11, inc a 4, jr nz 7, a 16-bit step 6,
+    # ld a,r 4, or r 4, jr nz 12 = 48 T between data-port reads
+    for name, step in (("nxb_rh_sec.w", b"\x13\x7A\xB3"), ("vid_sd_tok_h.wt", b"\x0B\x78\xB1")):
+        w = S(name)
+        b = bytes(mc.mem[w:w + 10])
+        if b[:4] != b"\xDB\xEB\x3C\x20" or b[5:8] != step or b[8:] != b"\x20\xF6" or b[4] > 0x7F:
+            raise Fail(f"{name}: {b.hex(' ').upper()} is not the 48 T poll loop")
+    if SYMS["nxbHistBin"][0] != S("VID_PAGE") or SYMS["nxbHistN"][0] != S("VID_PAGE"):
+        raise Fail("nxbHistBin / nxbHistN are not on VID_PAGE (written with MMU6 = schedule)")
+
+
+def test_rw_feed():
+    """nxb_rw_feed after a raw open's patches: the pointer from HL' (IX is garbage and never
+    read), the writer half a ring ahead, one frame's sound off the wire, the tag stored."""
+    bench_only()
+    mc = RawMachine(SYMS)
+    patch_session(mc, 1, 1)
+    cpu = mc.cpu
+    base, ring = S("vidAudBuf"), S("NXV_AUD_RING")
+    snd = bytes((i * 11 + 5) & 0xFF for i in range(1250))
+    card = Card(blocks(snd + bytes([0x80]) * (3 * 512 - 1250 - 1) + b"\x01"), waits=2)
+    mc.set_card(card)
+    rw_cells(mc)
+    mc.poke16("vidABytes", 1250)
+    mc.poke("vidRawTag", 0x77)
+    mc.mem[base:base + ring] = bytes([0xEE]) * ring
+    set_alt_hl(cpu, base + 100)
+    cpu.ix, cpu.iff = 0x1234, 1
+    mc.run("nxb_rw_feed", traps=aborts())
+    wr0 = (base + 100) ^ (ring // 2)
+    o = wr0 - base
+    want = bytes([0xEE]) * o + snd + bytes([0xEE]) * (ring - o - 1250)
+    if bytes(mc.mem[base:base + ring]) != want:
+        bad = next(i for i in range(ring) if mc.mem[base + i] != want[i])
+        raise Fail(f"ring differs first at +${bad:04X} (sound expected at +${o:04X})")
+    got = (mc.peek("vidAudFeedRem", 2), mc.peek("vidRawTag"), card.pos, cpu.ix, alt_hl(cpu),
+           cpu.iff, mc.peek("vidAudWr", 2))
+    if got != (0, 1, len(card.stream), 0x1234, base + 100, 1, wr0 + 1250):
+        raise Fail(f"(feedRem, tag, reads, IX, HL', IFF, wr) = {got}")
+    owner = owner_fn(mc)
+    allowed = {"crc": {"vid_ds_blkopen"}, "wait": {"vid_sd_tok_h"}, "token": {"vid_sd_tok_h"},
+               "data": {"vid_ds_iblk", "vid_ds_pad", "vid_raw_apad"}}
+    for i, (ph, pc) in enumerate(card.log):
+        if owner(pc) not in allowed[ph]:
+            raise Fail(f"card read {i} ({ph}) by {owner(pc)}")
+
+
+def route(req, direct, raw, streaming=0, hlp=0x1234):
+    """nxb_sess's entry state for one request; returns (machine, traps)."""
+    mc = nxb_machine()
+    cpu = mc.cpu
+    for name, v in (("nxbSessReq", req), ("vidDirect", direct), ("vidRaw", raw),
+                    ("vidStreaming", streaming), ("vidDsBound", 9), ("nxbHistN", 2)):
+        mc.poke(name, v)
+    tab = S("nxbTabBuf")
+    mc.mem[tab:tab + 4] = b"OLD!"
+    stub = S("IM2_CTC_STUB") + 1
+    mc.mem[stub:stub + 2] = le(S("video_ctc_isr_raw_st"))
+    pr = S("nxb_lrow.pr")
+    mc.mem[pr:pr + 2] = le(S("nxb_rh_done"))
+    set_alt_hl(cpu, hlp)
+    noop = ret_trap(lambda c: None)
+    traps = {S(n): noop for n in ("nxb_tm_in", "nxb_blank", "nxb_tm_out", "dbg_at", "dbg_puts")}
+    nxb, base = S("NXB_PAGE"), S("vidAudBuf")
+    mapnr(mc, 6, nxb)
+    at = find_code(mc, S("nxb_sess_setup"), S("nxb_deliv"), b"\xDD\x21" + le(base))
+    mapnr(mc, 6, 12)
+
+    def ldix(c):                         # the model has no IX: ld ix, vidAudBuf by hand
+        c.ix = base
+        c.pc += 4
+    traps[at] = ldix
+
+    def walk(c):
+        raise Stop("nxb_sess_walk", c.a)
+    traps[S("nxb_sess_walk")] = walk
+    return mc, traps
+
+
+def test_rw_route():
+    """Mode 5 through the hook's route: nxb_sess returns NC (nxb_sess_setup's vidDirect exit,
+    table staged, walk not entered); nxb_ds_rows then lifts the bound, primes HL' and walks.
+    Mode 1 keeps HL'; mode 5 on a non-raw clip and mode 1 on a raw clip print NXB SESSION."""
+    bench_only()
+    import nxv2_bench_rows as bench
+    mc = RawMachine(SYMS)
+    a = find_code(mc, S("vid_run"), S("vid_run.restore"), b"\xCD" + le(S("nxb_sess")))
+    want = (b"\xCD" + le(S("nxb_sess")) + b"\x38\x03\xCD" + le(S("nxb_ds_rows")) + b"\xC3"
+            + le(S("vid_run.restore")))
+    if bytes(mc.mem[a:a + len(want)]) != want:
+        raise Fail(f"vid_run's hook: {bytes(mc.mem[a:a + len(want)]).hex(' ').upper()}")
+    base = S("vidAudBuf")
+    for req, raw, name, hl_after in ((5, 1, "RW1", base), (1, 0, "DS1", 0x1234)):
+        mc, traps = route(req, 1, raw)
+        try:
+            cpu = mc.run("nxb_sess", traps=traps)
+        except Stop as e:
+            raise Fail(f"mode {req}: {e} - nxb_sess walked the table itself")
+        if cpu.fc or mc.mmu[6] != 12:
+            raise Fail(f"mode {req}: CF {cpu.fc}, MMU6 {mc.mmu[6]} after nxb_sess")
+        mapnr(mc, 6, S("NXB_PAGE"))
+        cells = (mc.peek("nxbSessVec", 2), mc.peek("nxb_lrow.pr", 2), mc.peek("nxbHistN"))
+        mapnr(mc, 6, 12)
+        if cells != (S("video_ctc_isr_raw_st"), S("nxb_sprint"), 0):
+            raise Fail(f"mode {req}: (nxbSessVec, nxb_lrow.pr, nxbHistN) = {cells}")
+        if alt_hl(cpu) != 0x1234:
+            raise Fail(f"mode {req}: nxb_sess changed HL' to ${alt_hl(cpu):04X}")
+        try:
+            mc.run("nxb_ds_rows", traps=traps)
+        except Stop as e:
+            if e.where != "nxb_sess_walk":
+                raise
+        else:
+            raise Fail(f"mode {req}: nxb_ds_rows returned without walking")
+        staged = bench.session_table_bytes(name)
+        tab = S("nxbTabBuf")
+        got = (alt_hl(cpu), mc.peek("vidDsBound"), bytes(mc.mem[tab:tab + len(staged)]))
+        if got != (hl_after, 255, staged):
+            raise Fail(f"mode {req}: (HL', vidDsBound) = (${got[0]:04X}, {got[1]}), staged "
+                       f"{got[2][:12]!r}..., expected {staged[:12]!r}...")
+    for req, direct, raw, strm in ((5, 1, 0, 0), (1, 1, 1, 0), (5, 0, 0, 1)):
+        mc, traps = route(req, direct, raw, strm)
+        cpu = mc.run("nxb_sess", traps=traps)
+        tab = S("nxbTabBuf")
+        if (cpu.fc, cpu.fz, bytes(mc.mem[tab:tab + 4]), alt_hl(cpu)) != (1, 1, b"OLD!", 0x1234):
+            raise Fail(f"mode {req} direct {direct} raw {raw}: CF {cpu.fc} Z {cpu.fz}, table "
+                       f"{bytes(mc.mem[tab:tab + 4])!r}, HL' ${alt_hl(cpu):04X}")
+
+
+def test_rw_card():
+    """nxb_rw_go's untimed sector, then one rep of RSEC and of RCOL: 2 CRC + waits + token +
+    512 data reads each; RSEC into VR_SCRATCH, RCOL as 8 columns of 64 on the surface page."""
+    bench_only()
+    mc = RawMachine(SYMS)
+    rw_sched(mc)
+    rw_cells(mc, run=1000, crc=1)
+    mc.poke("vidRawSchedPage", SCHED_PAGE)
+    mapnr(mc, 6, 12)
+    scr = S("VR_SCRATCH")
+    data = [bytes((i * 13 + 7 * k) & 0xFF for i in range(512)) for k in range(3)]
+    fired = []
+    card = Card([data[0]], waits=1, crc_first=True)
+    mc.set_card(card)
+    mc.run("nxb_rw_go", traps={S("nxb_lrow"): ret_trap(lambda c: fired.append(c.pc)), **aborts()})
+    got = (len(fired), mc.mmu[6], card.pos, mc.peek("vidDsCrcDue"), mc.peek("vidStrmRunBlkH", 2))
+    if got != (1, SCHED_PAGE, len(card.stream), 1, 999) or bytes(mc.mem[scr:scr + 512]) != data[0]:
+        raise Fail(f"nxb_rw_go: (lrow entries, MMU6, reads, crcDue, run) = {got}")
+    check_log(mc, card, "nxb_rw_go")
+    mc.poke("vidDsCrcDue", 0)                 # no CRC pends: vr_sector reads none
+    mapnr(mc, 6, 12)
+    card = Card([data[2]], waits=1)
+    mc.set_card(card)
+    mc.run("nxb_rw_go", traps={S("nxb_lrow"): ret_trap(lambda c: fired.append(c.pc)), **aborts()})
+    if (card.pos, mc.peek("vidDsCrcDue"), mc.peek("vidStrmRunBlkH", 2)) != (len(card.stream), 1, 998):
+        raise Fail(f"nxb_rw_go, no CRC due: {card.pos} reads, crcDue {mc.peek('vidDsCrcDue')}")
+    mc.poke16("vidStrmRunBlkH", 999)
+    logs = []
+    for name, k in (("nxb_rw_sec", 1), ("nxb_rw_col", 2)):
+        card = Card([data[k]], waits=3, crc_first=True)
+        mc.set_card(card)
+        mapnr(mc, 2, BACK_BANK * 2)
+        mc.load_phys(BACK_BANK * 0x4000, bytes([SURF_FILL]) * 0x2000)
+        mc.sync()
+        before = bytes(mc.phys)
+        run0 = mc.peek("vidStrmRunBlkH", 2)
+        cpu = mc.run(name, traps=aborts())
+        phases = [ph for ph, _ in card.log]
+        if phases != ["crc"] * 2 + ["wait"] * 3 + ["token"] + ["data"] * 512:
+            raise Fail(f"{name}: reads {phases[:8]}... ({len(phases)})")
+        check_log(mc, card, name)
+        if mc.peek("vidStrmRunBlkH", 2) != run0 - 1 or cpu.c != PORT_SPI:
+            raise Fail(f"{name}: run {mc.peek('vidStrmRunBlkH', 2)}, C ${cpu.c:02X}")
+        surf = BACK_BANK * 2 * SLOT
+        if name == "nxb_rw_sec":
+            if bytes(mc.mem[scr:scr + 512]) != data[k]:
+                raise Fail("nxb_rw_sec: VR_SCRATCH does not hold the sector")
+            allow = frame_allow()
+            allow[BACK_BANK * 2] = None
+        else:
+            want = bytearray([SURF_FILL]) * SLOT
+            for c in range(8):
+                want[c * 256:c * 256 + 64] = data[k][c * 64:(c + 1) * 64]
+            if bytes(mc.phys[surf:surf + SLOT]) != bytes(want) or cpu.hl != 0x4800:
+                raise Fail(f"nxb_rw_col: surface page differs or HL ${cpu.hl:04X} != $4800")
+            allow = frame_allow()
+            allow[SCHED_PAGE] = None
+        stray_writes(before, bytes(mc.phys), allow)
+        logs.append(phases)
+    if logs[0] != logs[1]:
+        raise Fail("RSEC and RCOL reps read different sequences")
+
+
+def test_rw_hist():
+    """nxb_rh_body: a sector as RSEC with the token wait of k $FF polls counted into bin
+    bitlength(k); a fragment walk's wait binned too; 65536 polls abort with VID_ERR_TOKEN."""
+    bench_only()
+    mc = RawMachine(SYMS)
+    rw_sched(mc)
+    rw_cells(mc, run=1000, crc=1)
+    nb, hb, scr = S("NXB_HIST_BINS"), S("nxbHistBin"), S("VR_SCRATCH")
+    if nb != 17:
+        raise Fail(f"NXB_HIST_BINS = {nb}")
+    mc.mem[hb:hb + 2 * nb] = bytes(2 * nb)
+    allowed = {"crc": {"nxb_rh_sec"}, "wait": {"nxb_rh_sec"}, "token": {"nxb_rh_sec"},
+               "data": {"slide"}}
+    owner = owner_fn(mc)
+    want = [0] * nb
+    fired = []
+
+    def walk(c):
+        fired.append(card.pos)
+        c.hl, c.fc = 50, 0
+    for i, k in enumerate((0, 1, 2, 3, 4, 7, 8, 255, 256, 1000, 65535, 5)):
+        sec = bytes((j * 5 + i) & 0xFF for j in range(512))
+        card = Card([sec], waits=k, crc_first=True)
+        mc.set_card(card)
+        if k == 5:
+            mc.poke16("vidStrmRunBlkH", 0)
+        run0 = mc.peek("vidStrmRunBlkH", 2)
+        cpu = mc.run("nxb_rh_body", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()},
+                     budget=5_000_000)
+        want[k.bit_length()] += 1
+        bins = [mc.mem[hb + 2 * j] | mc.mem[hb + 2 * j + 1] << 8 for j in range(nb)]
+        run1 = mc.peek("vidStrmRunBlkH", 2)
+        if bins != want or card.pos != len(card.stream) or bytes(mc.mem[scr:scr + 512]) != sec:
+            raise Fail(f"{k} polls: bins {bins}, expected {want}; {card.pos} of "
+                       f"{len(card.stream)} reads")
+        if run1 != (49 if k == 5 else run0 - 1) or cpu.c != PORT_SPI or cpu.hl != scr + 512:
+            raise Fail(f"{k} polls: run {run0} -> {run1}, C ${cpu.c:02X}, HL ${cpu.hl:04X}")
+        for j, (ph, pc) in enumerate(card.log):
+            if owner(pc) not in allowed[ph]:
+                raise Fail(f"{k} polls: read {j} ({ph}) by {owner(pc)}")
+    if fired != [2]:
+        raise Fail(f"vid_run_walk_h entries at reads {fired}, expected one after the 2 CRC reads")
+    for what, card in (("65536 polls", Card([bytes(512)], waits=65536, crc_first=True)),
+                       ("token $FD", Card([bytes(512)], waits=3, crc_first=True, token=0xFD))):
+        mc.set_card(card)
+        try:
+            mc.run("nxb_rh_body", traps=aborts(), budget=5_000_000)
+        except Stop as e:
+            if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_TOKEN"):
+                raise Fail(f"{what}: {e}")
+        else:
+            raise Fail(f"{what}: no VID_ERR_TOKEN abort")
+    bins = [mc.mem[hb + 2 * j] | mc.mem[hb + 2 * j + 1] << 8 for j in range(nb)]
+    if bins != want:
+        raise Fail(f"a timed-out wait changed the bins: {bins}")
+
+
+class PortMachine(RawMachine):
+    """Logs CTC 0 and DAC port writes with HL', IX and the CTC 0 vector at each write."""
+
+    def __init__(self, syms):
+        super().__init__(syms)
+        self.ports = []
+
+    def port_out(self, port, v):
+        lo, ctc = port & 0xFF, S("AUD_CTC_PORT")
+        if port == ctc or lo in (S("DAC_PORT"),) + DAC_PORTS:
+            stub = S("IM2_CTC_STUB") + 1
+            self.ports.append((port if port == ctc else lo, v, alt_hl(self.cpu), self.cpu.ix,
+                               self.mem[stub] | self.mem[stub + 1] << 8))
+            return
+        super().port_out(port, v)
+
+
+def test_rw_arms():
+    """RARM primes HL' after CTC 0's reset and control word, before its time constant, and
+    leaves IX alone; ARMOLD installs video_ctc_isr_stereo with CTC 0 stopped and primes IX;
+    ARM is unchanged; DISARM stops CTC 0, parks the DACs, then puts nxbSessVec back."""
+    bench_only()
+    ctc, base, sil = S("AUD_CTC_PORT"), S("vidAudBuf"), S("DAC_SILENCE")
+    raw_st, stereo = S("video_ctc_isr_raw_st"), S("video_ctc_isr_stereo")
+    stub = S("IM2_CTC_STUB") + 1
+    cw, rst = S("AUD_CTC_CW16"), S("AUD_CTC_RESET")
+    for kind in ("nxb_kind_rarm", "nxb_kind_armold", "nxb_kind_arm", "nxb_kind_disarm"):
+        mc = nxb_machine(PortMachine)
+        mapnr(mc, 6, S("NXB_PAGE"))
+        cpu = mc.cpu
+        mc.poke("vidCtcTc", 0x70)
+        mc.mem[stub:stub + 2] = le(stereo if kind == "nxb_kind_disarm" else raw_st)
+        mc.poke16("nxbSessVec", raw_st)
+        mc.mem[base:base + S("NXV_AUD_RING")] = bytes([0x11]) * S("NXV_AUD_RING")
+        set_alt_hl(cpu, 0x1234)
+        cpu.ix = 0xDEAD
+        traps = {}
+        if kind in ("nxb_kind_armold", "nxb_kind_arm"):
+            code_is(mc, "nxb_arm_ix", b"\xDD\x21" + le(base))
+
+            def ldix(c):
+                c.ix = base
+                c.pc += 4
+            traps[S("nxb_arm_ix")] = ldix
+        mc.run(kind, traps=traps)
+        vec = mc.mem[stub] | mc.mem[stub + 1] << 8
+        if kind == "nxb_kind_disarm":
+            want = [(ctc, rst, 0x1234, 0xDEAD, stereo)] * 2 + [
+                (p, sil, 0x1234, 0xDEAD, stereo) for p in (S("DAC_PORT"), DAC_L, DAC_R, DAC_M)]
+            if mc.ports != want or vec != raw_st:
+                raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}")
+            continue
+        hl1, ix1, v1 = {"nxb_kind_rarm": (base, 0xDEAD, raw_st),
+                        "nxb_kind_armold": (0x1234, base, stereo),
+                        "nxb_kind_arm": (0x1234, base, raw_st)}[kind]
+        want = [(ctc, rst, 0x1234, 0xDEAD, raw_st)] * 2 + [(ctc, cw, 0x1234, 0xDEAD, raw_st),
+                                                         (ctc, 0x70, hl1, ix1, v1)]
+        ring = bytes(mc.mem[base:base + S("NXV_AUD_RING")])
+        if mc.ports != want or vec != v1 or ring != bytes([sil]) * len(ring):
+            raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}, ring silent "
+                       f"{ring == bytes([sil]) * len(ring)}")
+
+
+def test_rw_kinds():
+    """The NXB kinds' untimed setup: RBLK/RHIST charge reps + 1 to the 24-bit remain and pick
+    the body (RBLK maps the hidden surface page at MMU2, RHIST zeroes the bins and patches the
+    print), fewer than NXB_RW_MIN blocks print NXB SHORT and run nothing; RHIST's print saves
+    tag and bins (at most NXB_HIST_MAX) and restores the exit; RFRAME/SPIN bodies; IDEN's
+    raw picture width."""
+    bench_only()
+    hb, nb = S("nxbHistBin"), S("NXB_HIST_BINS")
+
+    def kmc():
+        mc = nxb_machine()
+        mapnr(mc, 6, S("NXB_PAGE"))
+        mc.poke("l2BackBank", BACK_BANK)
+        mc.poke16("nxbReps", 128)
+        mc.poke("nxbSO", 0x77)
+        return mc
+    seen = {}
+
+    def at(name):
+        def t(c):
+            seen[name] = (c.pc, mc.mem[S("nxb_body") + 1] | mc.mem[S("nxb_body") + 2] << 8)
+            c.pc = c.pop()
+        return t
+    for kind, param, reps, remain, body, left in (
+            ("nxb_kind_rblk", 0, 128, 0x012345, "nxb_rw_sec", 0x012345 - 129),
+            ("nxb_kind_rblk", 1, 128, 0x010000, "nxb_rw_col", 0x010000 - 129),
+            ("nxb_kind_rblk", 1, 128, 5000, "nxb_rw_col", 5000 - 129),
+            ("nxb_kind_rhist", 0, 2048, 0x020000, "nxb_rh_body", 0x020000 - 2049),
+            ("nxb_kind_rblk", 0, 128, 4999, None, 4999),
+            ("nxb_kind_rhist", 0, 2048, 0, None, 0)):
+        mc = kmc()
+        mc.poke16("nxbParam", param)
+        mc.poke16("nxbReps", reps)
+        mc.poke("vidStrmRemainBlk", remain.to_bytes(3, "little"))
+        mc.mem[hb:hb + 2 * nb] = b"\x5A" * (2 * nb)
+        pr = S("nxb_lrow.pr")
+        mc.mem[pr:pr + 2] = le(S("nxb_sprint"))
+        seen.clear()
+        msgs = []
+        noop = ret_trap(lambda c: None)
+        traps = {S("nxb_rw_go"): at("go"), S("nxb_sat"): noop, S("nxb_tm_out"): noop,
+                 S("dbg_puts"): ret_trap(lambda c: msgs.append(c.hl))}
+        cpu = mc.run(kind, traps=traps)
+        what = f"{kind} param {param} remain ${remain:06X}"
+        if mc.peek("vidStrmRemainBlk", 3) != left:
+            raise Fail(f"{what}: remain ${mc.peek('vidStrmRemainBlk', 3):06X}, expected ${left:06X}")
+        if body is None:
+            if "go" in seen or not cpu.fc or msgs != [S("nxbMsgShort")]:
+                raise Fail(f"{what}: refused row ran or printed {msgs} (CF {cpu.fc})")
+            continue
+        if seen.get("go", (0, 0))[1] != S(body) or mc.peek("nxbSO") != 0:
+            raise Fail(f"{what}: body ${seen.get('go', (0, 0))[1]:04X}, expected {body}")
+        bins = bytes(mc.mem[hb:hb + 2 * nb])
+        patched = mc.mem[pr] | mc.mem[pr + 1] << 8
+        if kind == "nxb_kind_rhist":
+            if bins != bytes(2 * nb) or patched != S("nxb_rh_done"):
+                raise Fail(f"{what}: bins not zeroed or nxb_lrow.pr ${patched:04X}")
+        elif mc.mmu[2] != BACK_BANK * 2 or patched != S("nxb_sprint"):
+            raise Fail(f"{what}: MMU2 {mc.mmu[2]}, nxb_lrow.pr ${patched:04X}")
+    # RHIST's print: slots 0 and 1, then capped
+    mc = kmc()
+    tab = S("nxbTabBuf")
+    sav, ln = S("nxbHistSav"), S("NXB_HIST_LEN")
+    mc.mem[sav:sav + 2 * ln] = b"\xEE" * (2 * ln)
+    saved = []
+    for n, tag in ((0, b"RHST"), (1, b"AHST"), (2, b"XHST")):
+        mc.poke("nxbHistN", n)
+        mc.mem[tab:tab + 4] = tag
+        mc.poke16("nxbTag", tab)
+        pr = S("nxb_lrow.pr")
+        mc.mem[pr:pr + 2] = le(S("nxb_rh_done"))
+        binv = bytes((n * 16 + j) & 0xFF for j in range(2 * nb))
+        mc.mem[hb:hb + 2 * nb] = binv
+        sp = []
+        mc.run("nxb_rh_done", traps={S("nxb_sprint"): ret_trap(lambda c: sp.append(1))})
+        want_n = min(n + 1, S("NXB_HIST_MAX"))
+        if mc.peek("nxbHistN") != want_n or sp != [1] or mc.peek("nxb_lrow.pr", 2) != S("nxb_sprint"):
+            raise Fail(f"nxb_rh_done at {n}: nxbHistN {mc.peek('nxbHistN')}, prints {len(sp)}")
+        if n < 2:
+            saved.append(tag + binv)
+        if bytes(mc.mem[sav:sav + 2 * ln]) != b"".join(saved) + b"\xEE" * ((2 - len(saved)) * ln):
+            raise Fail(f"nxb_rh_done at {n}: slots hold {bytes(mc.mem[sav:sav + 2 * ln])[:12]!r}...")
+    for kind, body in (("nxb_kind_rfr", "nxb_rw_fbody"), ("nxb_kind_spin", "nxb_rw_spin")):
+        mc = kmc()
+        seen.clear()
+        mc.run(kind, traps={S("nxb_lrow"): at("lrow")})
+        if seen.get("lrow", (0, 0))[1] != S(body) or mc.peek("nxbSO") != 0:
+            raise Fail(f"{kind}: body ${seen.get('lrow', (0, 0))[1]:04X}, expected {body}")
+    # IDEN: F = the surface width, less 2 x x0 for a raw clip
+    for raw, pages, page0, h0, want in ((1, 10, 0, 0x40, 320), (1, 10, 0, 0x54, 280),
+                                        (1, 10, 1, 0x40, 256), (1, 10, 4, 0x5E, 4),
+                                        (1, 6, 0, 0x40, 256), (0, 10, 3, 0x41, 320),
+                                        (0, 6, 3, 0x41, 256)):
+        mc = kmc()
+        for name, v in (("vidRaw", raw), ("vidDstPages", pages), ("vidRawPage0", page0),
+                        ("vidRawH0", h0), ("vidHeightB", 192)):
+            mc.poke(name, v)
+        mc.run("nxb_kind_id", traps={S("nxb_fprint"): ret_trap(lambda c: None)})
+        if mc.peek("nxbLcF", 2) != want:
+            raise Fail(f"IDEN raw {raw} pages {pages} x0 {page0 * 32 + h0 - 0x40}: F "
+                       f"{mc.peek('nxbLcF', 2)}, expected {want}")
+
+
+def test_rw_histlog():
+    """The log step's pass: after the header and the (here empty) rows, one line per saved
+    histogram, "#HIST <tag>" and 17 words, as hist.py and parse.parse_hist read it."""
+    bench_only()
+    import re
+    mc = nxb_machine()
+    mapnr(mc, 6, S("NXB_PAGE"))
+    mc.mem[0x4000:0x4000 + 2 * 80] = b"\x20" * 160
+    mc.poke("tmCols", 80)
+    mc.poke16("nxbLogFc", 0x1234)
+    line0 = S("nxbLogLine")
+    lines = []
+    io = 0x0100
+
+    def put(c):
+        lines.append(bytes(mc.mem[line0:line0 + c.bc]).decode("ascii"))
+
+    def cell(c):
+        c.hl = 0x4000
+    traps = {io: ret_trap(put), S("tm_cell_addr"): ret_trap(cell)}
+    bins = {"RHST": [0x07F8, 5, 2] + [0] * 13 + [0xABCD], "AHST": [0] * 16 + [1]}
+    sav, ln = S("nxbHistSav"), S("NXB_HIST_LEN")
+    for i, (t, b) in enumerate(bins.items()):
+        mc.mem[sav + i * ln:sav + (i + 1) * ln] = t.encode() + b"".join(le(n) for n in b)
+    for n in (2, 1, 0):
+        mc.poke("nxbHistN", n)
+        lines.clear()
+        mc.run("nxb_log_pass", traps=traps, hl=io)
+        want = ["#NXB 1234\r\n"] + ["#HIST " + t + "".join(f" {x:04X}" for x in b) + "\r\n"
+                                    for t, b in list(bins.items())[:n]]
+        if lines != want:
+            raise Fail(f"nxbHistN {n}: lines {lines}, expected {want}")
+    for t, b in bins.items():
+        text = "#HIST " + t + "".join(f" {x:04X}" for x in b) + "\r\n"
+        m = re.fullmatch(r"#HIST ([A-Z0-9]{4})((?: [0-9A-F]{4})+)\s*", text)
+        if not m or [int(x, 16) for x in m.group(2).split()] != b:
+            raise Fail(f"hist.py's pattern does not read {text!r}")
+        if len(text) > S("nxbLogRd") - line0:
+            raise Fail(f"a #HIST line ({len(text)} B) overruns nxbLogLine")
+
+
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_walkfault, test_frame_remain, test_frame_palette, test_frame_runwalk,
          test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
-         test_dbg_counters]
+         test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
+         test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog]
 
 
 def main():

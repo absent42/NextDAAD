@@ -3754,7 +3754,8 @@ nxbQuietImage   equ 1            ; SLD marker of a -BenchQuiet image (no bytes)
 ; clip at vid_run's hook:
 ;   1 DS1 (direct: frame sweeps, then the transport rows), 2 REAL (real
 ;   frames, audio, the frame loop, the producer, an armed pass), 3 SYN and
-;   4 SYS (synthetic frames written into a resident / streaming clip).
+;   4 SYS (synthetic frames written into a resident / streaming clip),
+;   5 RW1 (raw direct: frames, card rows, handler spins; nxb_rw_go).
 ;
 ; STANDALONE MODES (2-12) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
@@ -3799,7 +3800,9 @@ NXB_YROW_LEN     equ 25      ; SYNTH row: ds 4 tag, db kind, dw reps, d24 frame,
                              ; db preset, then two sites
 NXB_YSITE1       equ 11      ; the first site: d24 offset, db length, ds 3 bytes
     ASSERT NXB_YSITE1 == 4 + 1 + 2 + 3 + 1 && NXB_YROW_LEN == NXB_YSITE1 + 2 * 7
-NXB_SESS_LAST    equ 4       ; session modes 1..NXB_SESS_LAST (nxbSessDir)
+NXB_SESS_LAST    equ 5       ; session modes 1..NXB_SESS_LAST (nxbSessDir)
+NXB_SESS_RW1     equ 5       ; raw clips only; DS1 (mode 1) refuses them
+    ASSERT NXB_SESS_RW1 == NXB_SESS_LAST
 NXB_SESS_ROWS    equ 16      ; session rows per column (rows 8-23)
 NXB_SESS_COL2    equ 40      ; the second column
 NXB_RUN_REF      equ 71      ; RUN select for the session decode rows
@@ -3821,11 +3824,28 @@ NXB_K_PROD       equ 11
 NXB_K_DSWEEP     equ 12
 NXB_K_DSBLK      equ 13
 NXB_K_DSKIP      equ 14
-NXB_K_SYNTH      equ 15      ; the SYNTH kinds are the NXB_YROW_LEN rows
-NXB_K_SYNTH_NOCALL equ 16
-NXB_K_COUNT      equ 17
+NXB_K_RFRAME     equ 15      ; raw kinds: RW1 (mode 5) only
+NXB_K_RSWEEP     equ 16
+NXB_K_RARM       equ 17
+NXB_K_RBLK       equ 18
+NXB_K_RHIST      equ 19
+NXB_K_SPIN       equ 20
+NXB_K_ARMOLD     equ 21
+NXB_K_SYNTH      equ 22      ; the SYNTH kinds are the NXB_YROW_LEN rows
+NXB_K_SYNTH_NOCALL equ 23
+NXB_K_COUNT      equ 24
 NXB_K_STRM       equ $80
     ASSERT NXB_K_SYNTH_NOCALL == NXB_K_COUNT - 1 && NXB_K_STRM == $80
+NXB_RW_REPS      equ 128     ; RW1: sectors per RSEC/RCOL row
+NXB_RW_HREPS     equ 2048    ; sectors per histogram row
+NXB_RW_SREPS     equ 512     ; spin reps
+NXB_RW_SPIN      equ 2000    ; count-loop passes per spin rep
+NXB_RW_MIN       equ 5000    ; a card row needs this many blocks left
+    ASSERT NXB_RW_MIN > NXB_RW_HREPS + 1 && NXB_RW_MIN > NXB_RW_REPS + 1
+NXB_HIST_BINS    equ 17      ; bin k: waits whose $FF poll count has bit length k
+NXB_HIST_MAX     equ 2       ; histogram rows the log step carries
+NXB_HIST_LEN     equ 4 + 2 * NXB_HIST_BINS   ; nxbHistSav entry: tag, bins
+NXB_HIST_TXT     equ 6 + 4 + 5 * NXB_HIST_BINS   ; "#HIST tttt" and " hhhh" per bin
     ; nxb_aud_body/nxb_lp_pace put the writer half a ring ahead of IX with xor
     ASSERT vidAudBuf == $6000 && NXV_AUD_RING == $2000
 
@@ -3970,6 +3990,7 @@ nxb_ops_setup:
     ld (vidDirect), a
     ld (nxbSessLive), a
     ld (nxbSessReq), a
+    ld (nxbHistN), a             ; no session histograms in this capture
     ; per-session SMC: RAM fetch, RAM bodies
     ld hl, vid_fetch_ram
     ld (vid_fetch.vec + 1), hl
@@ -4683,11 +4704,15 @@ nxb_hop6:
 .go:
     jp (hl)
 
-; Mode 1 (DS1): the per-frame section bound lifted for the visit (the
-; transport rows' block runs are not frame sections), then the table.
+; Modes 1 (DS1) and 5 (RW1): the per-frame section bound lifted for the visit
+; (block runs are not frame sections); RW1 (vidRaw) primes HL' - the hook fires
+; before the preload and CTC 0 is stopped. Then the table.
 nxb_ds_rows:
     ld a, 255
     ld (vidDsBound), a
+    ld a, (vidRaw)
+    or a
+    call nz, vid_raw_prime
     jr nxb_sess_walk
 
 ; Out: NC = a direct session, DS1 staged (the hook runs nxb_ds_rows); CF = done.
@@ -4731,6 +4756,7 @@ nxb_lrow:
     or l
     jr nz, .rep
     call nxb_lc_end
+.pr equ $+1                      ; SMC: nxb_rh_done for an RHIST row (it restores)
     ld hl, nxb_sprint
     jp nxb_hop6
 
@@ -4742,6 +4768,7 @@ nxb_aud_body:
 .feed:                           ; DSWEEP: the live cursors
     push ix
     pop hl
+.ptr:                            ; nxb_rw_feed: HL = the play pointer
     ld a, h
     xor high (NXV_AUD_RING / 2)
     ld h, a
@@ -5266,7 +5293,7 @@ vid_raw_prime:
  IFDEF DEBUG
   IFNDEF NXB_QUIET
 ; LATE=/MAXL=, after vid_run.pace's poll: a frame's first poll (armed at
-; .qnext, so never frame 0) with CF set and vidPaceRem < 0 counts.
+; .qnext, so never the session's frame 0) with CF set and vidPaceRem < 0 counts.
 ; In/out: CF from the poll. Corrupts A, DE, HL, the other flags.
 vid_dbg_late:
     ld a, (vidLateArm)
@@ -5307,6 +5334,124 @@ vid_dbg_urun:
     ld (vidUrunCnt), hl
     ret
   ENDIF
+
+; RW1 (session mode 5) timed bodies: on VID_PAGE because they run with MMU6 =
+; the schedule page (slide, VR_SCRATCH) or inside a measured window.
+
+; RFRAME/RSWEEP rep: one frame's sound off the wire, then its raw decode (the
+; palette sector when the tag says so), in the frame loop's order.
+nxb_rw_fbody:
+    call nxb_rw_feed
+    jp vid_decode_any
+
+; The raw twin of nxb_aud_body.feed: the play pointer from HL', then its writer,
+; stage and whole pump (vid_raw_apad stores the tag). Run with interrupts on.
+nxb_rw_feed:
+    call vid_raw_rd_hl
+    jp nxb_aud_body.ptr
+
+; Card rows (nxb_kind_rblk/rhist): the schedule page at MMU6, one untimed sector
+; into VR_SCRATCH (a CRC then pends for vr_sector_n), then the reps.
+nxb_rw_go:
+    ld a, (vidRawSchedPage)
+    nextreg NR_MMU6, a
+    ld hl, VR_SCRATCH
+    call vr_sector
+    call VR_SLIDE
+    jp nxb_lrow
+
+; RSEC rep: a frame's steady-state sector open, then one 512-byte read.
+nxb_rw_sec:
+    ld hl, VR_SCRATCH
+    call vr_sector_n
+    jp VR_SLIDE                  ; the slide's RET returns to nxb_lrow
+
+; RCOL rep: RSEC's 512 bytes as 8 reads of 64 to the surface page at MMU2, each
+; with the schedule's column end; the empty tail read leaves only the split.
+nxb_rw_col:
+    ld hl, VID_DST_WIN
+    call vr_sector_n
+    DUP 8
+      call VR_SLIDE_END - 128
+      ld l, 0
+      inc h
+    EDUP
+    jp VR_SLIDE_END
+
+; RHIST rep: RSEC with the token wait binned.
+nxb_rh_body:
+    ld hl, VR_SCRATCH
+    call nxb_rh_sec
+    jp VR_SLIDE
+
+; vr_sector_n with the token wait's $FF polls (vid_sd_tok_h's 48 T loop) counted
+; into nxbHistBin by bit length. Preserves HL; C = PORT_SPI_DAT. Faults abort.
+nxb_rh_sec:
+    in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart
+    nop
+    in a, (PORT_SPI_DAT)
+    ld de, (vidStrmRunBlkH)
+    ld a, d
+    or e
+    jr z, .walk
+.run:
+    dec de
+    ld (vidStrmRunBlkH), de
+    ld de, 0
+.w:
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr nz, .got
+    inc de
+    ld a, d
+    or e
+    jr nz, .w
+    jr .bad                      ; 65536 polls (rubric 6)
+.got:
+    cp $FF                       ; A = byte + 1: the $FE token
+    jr nz, .bad
+    push hl
+    ld hl, nxbHistBin
+.bl:
+    ld a, d
+    or e
+    jr z, .bd
+    srl d
+    rr e
+    inc hl
+    inc hl
+    jr .bl
+.bd:
+    inc (hl)
+    jr nz, .bx
+    inc hl
+    inc (hl)
+.bx:
+    pop hl
+    ld c, PORT_SPI_DAT
+    ret
+.walk:
+    push hl
+    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
+    ex de, hl
+    pop hl
+    jr nc, .run
+    jp vid_dec_abort_pos
+.bad:
+    jp vr_sector_n.tokf
+
+; SPIN rep: a fixed count loop, no card: the armed handler's cost alone.
+nxb_rw_spin:
+    ld bc, NXB_RW_SPIN
+.l:
+    dec bc
+    ld a, b
+    or c
+    jr nz, .l
+    ret
+
+nxbHistBin:  ds 2 * NXB_HIST_BINS   ; RHIST bins, zeroed per row (nxb_kind_rhist)
+nxbHistN:    db 0               ; histograms in nxbHistSav for the log step
  ENDIF
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
@@ -5600,11 +5745,17 @@ nxbTabEvtEnd:
 ; ---------------------------------------------------------------------
 
 ; Session entry: the selector cleared, the entry state, S0, the mode's
-; delivery check and table. Out: NC = direct, DS1 staged; C with Z = a
-; mismatch, printed; C with NZ = the table is staged in nxbTabBuf.
+; delivery check (and raw: RW1 only) and table. Out: NC = direct, DS1/RW1
+; staged; C with Z = a mismatch, printed; C with NZ = the table is staged.
 nxb_sess_setup:
     ld hl, (vidDecSp)
     ld (nxbSessSp), hl
+    ld hl, (IM2_CTC_STUB+1)
+    ld (nxbSessVec), hl          ; the session's handler: DISARM puts it back
+    ld hl, nxb_sprint
+    ld (nxb_lrow.pr), hl         ; the shipping exit (a faulted RHIST row's SMC)
+    xor a
+    ld (nxbHistN), a
     ld a, (nxbSessReq)
     ld (nxbMode), a
     xor a
@@ -5645,6 +5796,14 @@ nxb_sess_setup:
     pop hl
     and (hl)
     jr z, .bad
+    ld a, (nxbMode)              ; the mask cannot tell DS1 from RW1: a raw
+    sub NXB_SESS_RW1             ; clip runs RW1 only, RW1 runs raw clips only
+    ld a, (vidRaw)
+    jr nz, .rawc
+    xor 1
+.rawc:
+    or a
+    jr nz, .bad
     inc hl
     ld e, (hl)
     inc hl
@@ -5667,7 +5826,7 @@ nxb_sess_setup:
     ld (nxbSynCur), hl
     ld a, (vidDirect)
     or a                         ; NC
-    ret nz                       ; direct: nxb_ds_rows walks DS1
+    ret nz                       ; direct: nxb_ds_rows walks DS1 or RW1
     inc a                        ; NZ
     scf
     ret
@@ -5756,9 +5915,11 @@ nxbKindTab:
     dw nxb_kind_id, nxb_kind_ring, nxb_kind_remn, nxb_kind_scan
     dw nxb_kind_sweep, nxb_kind_frame, nxb_kind_aud, nxb_kind_pace
     dw nxb_kind_loop, nxb_kind_arm, nxb_kind_disarm, nxb_kind_prod
-    dw nxb_kind_dsweep, nxb_kind_dsblk, nxb_kind_dskip, nxb_kind_synth
-    dw nxb_kind_synth_nocall
+    dw nxb_kind_dsweep, nxb_kind_dsblk, nxb_kind_dskip, nxb_kind_rfr
+    dw nxb_kind_rfr, nxb_kind_rarm, nxb_kind_rblk, nxb_kind_rhist
+    dw nxb_kind_spin, nxb_kind_armold, nxb_kind_synth, nxb_kind_synth_nocall
     ASSERT $ - nxbKindTab == NXB_K_COUNT * 2
+    ASSERT NXB_K_RFRAME == 15 && NXB_K_ARMOLD == 21 && NXB_K_SYNTH == 22
 
 ; Field rows: nxbSO, nxbLcF (F) and nxbReps (R) set, HL = D.
 nxb_fprint:
@@ -5776,6 +5937,13 @@ nxb_sprint0:
 ; TAG O=(nxbSO) R=nxbReps-nxbLeft F=(nxbLcF) D=nxbL1-nxbL0 on the next
 ; session row: rows 8-23 at column 0, then at column NXB_SESS_COL2.
 nxb_sprint:
+    call nxb_sat
+    ld a, (nxbSO)
+    ld hl, (nxbLcF)
+    call nxb_ofrd
+    jp nxb_tm_out
+; Print bracket in, the cursor at the next session row, the tag.
+nxb_sat:
     call nxb_tm_in
     ld a, (nxbRow)
     ld b, a
@@ -5790,11 +5958,7 @@ nxb_sprint:
     ld c, NXB_SESS_COL2
 .at:
     call dbg_at
-    call nxb_puttag
-    ld a, (nxbSO)
-    ld hl, (nxbLcF)
-    call nxb_ofrd
-    jp nxb_tm_out
+    jp nxb_puttag
 
 ; ID: O = delivery, R = vidFrames, F = width, D = the height byte.
 nxb_kind_id:
@@ -5808,11 +5972,28 @@ nxb_kind_id:
     jr nz, .w
     ld l, $40
 .w:
+    ld a, (vidRaw)
+    or a
+    jr z, .wd
+    ld a, (vidRawPage0)          ; raw: the picture, x0 = page0 * 32 + H0 - $40
+    rrca                         ; on each side of the surface (page0 <= 4)
+    rrca
+    rrca
+    ld e, a
+    ld a, (vidRawH0)
+    sub $40
+    add a, e
+    ld e, a
+    ld d, 0
+    or a
+    sbc hl, de
+    sbc hl, de
+.wd:
     ld (nxbLcF), hl
     ld a, (vidHeightB)
     ld l, a
     ld h, 0
-    jr nxb_fprint
+    jp nxb_fprint
 
 ; RING: O = 00, R = vidRingDepth at entry (0 resident), F = vidTlFillFrames,
 ; D = vidPoolAtOpen.
@@ -6102,7 +6283,28 @@ nxb_loop_done:
     jp nxb_sprint1
 
 ; ARM: a silent ring, then vid_run's CTC start without the field-phase wait.
+; ARMOLD (raw sessions): video_ctc_isr_stereo installed for the row, the DISARM
+; after it restores the session's handler. RARM: HL' primed in place of IX.
+nxb_kind_armold:
+    call nxb_arm_ring
+    ld hl, video_ctc_isr_stereo
+    ld (IM2_CTC_STUB+1), hl      ; CTC 0 stopped: no tick sees the swap
+    jr nxb_arm_ix
 nxb_kind_arm:
+    call nxb_arm_ring            ; BC = AUD_CTC_PORT
+nxb_arm_ix:
+    ld ix, vidAudBuf             ; before the time constant starts the timer
+nxb_arm_tc:
+    ld a, (vidCtcTc)
+    out (c), a
+    ret
+nxb_kind_rarm:
+    call nxb_arm_ring
+    call vid_raw_prime           ; CTC 0 stopped until the time constant; keeps BC
+    jr nxb_arm_tc
+; The silent ring, CTC 0 double reset and its control word (timer not running).
+; Out: BC = AUD_CTC_PORT.
+nxb_arm_ring:
     ld hl, vidAudBuf
     ld de, vidAudBuf + 1
     ld bc, NXV_AUD_RING - 1
@@ -6111,11 +6313,9 @@ nxb_kind_arm:
     call nxb_ctc_rst             ; BC = AUD_CTC_PORT
     ld a, AUD_CTC_CW16
     out (c), a
-    ld ix, vidAudBuf             ; before the time constant starts the timer
-    ld a, (vidCtcTc)
-    out (c), a
     ret
-; DISARM: vid_run.restore's CTC stop and DAC park.
+; DISARM: vid_run.restore's CTC stop and DAC park, then the session's own
+; handler vector (an ARMOLD row swapped it).
 nxb_kind_disarm:
     call nxb_ctc_rst
     ld a, DAC_SILENCE
@@ -6123,6 +6323,8 @@ nxb_kind_disarm:
     out (VID_DAC_LEFT), a
     out (VID_DAC_RIGHT), a
     out (DAC2_PORT), a
+    ld hl, (nxbSessVec)
+    ld (IM2_CTC_STUB+1), hl
     ret
 nxb_ctc_rst:
     ld bc, AUD_CTC_PORT
@@ -6147,6 +6349,102 @@ nxb_kind_dsblk:
     ld (nxbSO), a
     jp nxb_ds_go
 nxbDsBody:   dw nxb_ds_i, nxb_ds_b, nxb_ds_c, nxb_ds_d
+
+; RFRAME and RSWEEP (raw): nxbReps frames from the live wire position, each
+; nxb_rw_feed then its raw decode, on one long clock. O = 00.
+nxb_kind_rfr:
+    ld hl, nxb_rw_fbody
+    jp nxb_lrow0
+; SPIN: nxbReps reps of nxb_rw_spin, no card. O = 00.
+nxb_kind_spin:
+    ld hl, nxb_rw_spin
+    jp nxb_lrow0
+; RBLK (raw card row, param 0 RSEC, 1 RCOL into the hidden surface page at
+; MMU2) and RHIST (bins zeroed, the print saving them): nxb_rw_go. O = 00.
+nxb_kind_rblk:
+    call nxb_rw_charge
+    ret c
+    ld a, (l2BackBank)
+    add a, a
+    nextreg NR_MMU2, a           ; untimed, so RSEC and RCOL differ by the split only
+    ld hl, nxb_rw_sec
+    ld a, (nxbParam)
+    or a
+    jr z, nxb_rw_body
+    ld hl, nxb_rw_col
+    jr nxb_rw_body
+nxb_kind_rhist:
+    call nxb_rw_charge
+    ret c
+    ld hl, nxbHistBin
+    ld b, 2 * NXB_HIST_BINS
+.z:
+    ld (hl), 0
+    inc hl
+    djnz .z
+    ld hl, nxb_rh_done
+    ld (nxb_lrow.pr), hl
+    ld hl, nxb_rh_body
+nxb_rw_body:
+    ld (nxb_body + 1), hl
+    xor a
+    ld (nxbSO), a
+    jp nxb_rw_go
+    ASSERT 2 * NXB_HIST_BINS < 256
+
+; Card rows: CF = fewer than NXB_RW_MIN blocks remain, TAG NXB SHORT printed and
+; the row skipped; else the row's sectors and nxb_rw_go's one charged to the remain.
+nxb_rw_charge:
+    ld a, (vidStrmRemainBlk+2)
+    or a
+    jr nz, .ok
+    ld hl, (vidStrmRemainBlk)
+    ld de, NXB_RW_MIN
+    sbc hl, de                   ; CF clear from or a
+    jr c, .short
+.ok:
+    ld hl, (vidStrmRemainBlk)
+    ld de, (nxbReps)
+    scf                          ; + nxb_rw_go's untimed sector
+    sbc hl, de
+    ld (vidStrmRemainBlk), hl
+    ld hl, vidStrmRemainBlk+2
+    ld a, (hl)
+    sbc a, 0
+    ld (hl), a
+    or a                         ; NC: remain >= NXB_RW_MIN > reps + 1
+    ret
+.short:
+    call nxb_sat
+    ld hl, nxbMsgShort
+    call dbg_puts
+    call nxb_tm_out
+    scf
+    ret
+
+; RHIST's print (nxb_lrow.pr): the shipping exit back, the tag and bins saved
+; for the log step (at most NXB_HIST_MAX), then the row.
+nxb_rh_done:
+    ld hl, nxb_sprint
+    ld (nxb_lrow.pr), hl
+    ld hl, nxbHistN
+    ld a, (hl)
+    cp NXB_HIST_MAX
+    jp nc, nxb_sprint
+    inc (hl)
+    ld d, a
+    ld e, NXB_HIST_LEN
+    mul d, e
+    ld hl, nxbHistSav
+    add hl, de
+    ex de, hl
+    ld hl, (nxbTag)
+    ld bc, 4
+    ldir
+    ld hl, nxbHistBin
+    ld c, 2 * NXB_HIST_BINS      ; B = 0
+    ldir
+    jp nxb_sprint
 
 ; SYNTH and SYNTH-NOCALL (the NXB_YROW_LEN row at nxbTag): nxbReps, O = the
 ; span preset, nxbCells = S0 with the frame offset (streaming: its block and
@@ -6210,6 +6508,9 @@ nxb_kind_syn:
     ASSERT VID_DST_WIN == $4000 && vidSpanDstPage == vidInSpan + 1 && vidSpanDE == vidInSpan + 2
 
 nxbMsgSess:  db "NXB SESSION", 0
+nxbMsgShort: db " NXB SHORT", 0
+nxbSessVec:  dw 0               ; IM2_CTC_STUB+1 at session entry (DISARM)
+nxbHistSav:  ds NXB_HIST_MAX * NXB_HIST_LEN   ; RHIST rows: tag, bins (log step)
 nxbTop:      ds 3 * NXB_SLOT    ; the three longest SCAN frames, longest first
 nxbTopCur:   ds NXB_SLOT        ; the frame just scanned
 nxbScanF:    dw 0               ; SCAN sums: F, and D kept below 311
@@ -6231,6 +6532,7 @@ nxbSessDir:
     NXBSDIR %011, nxbSesReal, nxbSesRealEnd     ; mode 2: REAL
     NXBSDIR %001, nxbSesSyn, nxbSesSynEnd       ; mode 3: SYN
     NXBSDIR %010, nxbSesSys, nxbSesSysEnd       ; mode 4: SYS
+    NXBSDIR %100, nxbSesRw1, nxbSesRw1End       ; mode 5: RW1 (raw clips)
     ASSERT $ - nxbSessDir == NXB_SESS_LAST * 5
 
 ; A session table opens with NXBSTAB (strm 1: every SYNTH frame offset is a
@@ -6250,6 +6552,7 @@ NXB_ROW_AT defl $
       ASSERT $ - NXB_ROW_AT == NXB_SROW_LEN
       ASSERT (kind & ~NXB_K_STRM) < NXB_K_SYNTH
       ASSERT kind != NXB_K_DSBLK || param < 4
+      ASSERT kind != NXB_K_RBLK || param < 2
 NXB_STAB_B defl NXB_STAB_B + NXB_SROW_LEN
     ENDM
 
@@ -6297,6 +6600,34 @@ nxbSesDs1:
     db 0
 nxbSesDs1End:
     ASSERT nxbSesDs1End - nxbSesDs1 == NXB_STAB_B + 1
+
+; RW1: raw direct. RFR0 frame 0 with its palette sector, RSWP/ARSW frames 1-16
+; and 17-32; card rows RSEC (sector), RCOL (8 column ends), RHST (#HIST bins);
+; SPN0/ASPN/OSPN the same spin under no, the raw and the old stereo handler.
+nxbSesRw1:
+    NXBSTAB 0
+    NXBSROW "IDEN", NXB_K_ID, 0, 0, 0
+    NXBSROW "RFR0", NXB_K_RFRAME, 0, 1, 0
+    NXBSROW "RSWP", NXB_K_RSWEEP, 0, 16, 0
+    NXBSROW "ARM1", NXB_K_RARM, 0, 0, 0
+    NXBSROW "ARSW", NXB_K_RSWEEP, 0, 16, 0
+    NXBSROW "DSRM", NXB_K_DISARM, 0, 0, 0
+    NXBSROW "RSEC", NXB_K_RBLK, 0, NXB_RW_REPS, 0
+    NXBSROW "RCOL", NXB_K_RBLK, 1, NXB_RW_REPS, 0
+    NXBSROW "RHST", NXB_K_RHIST, 0, NXB_RW_HREPS, 0
+    NXBSROW "SPN0", NXB_K_SPIN, 0, NXB_RW_SREPS, 0
+    NXBSROW "ARM2", NXB_K_RARM, 0, 0, 0
+    NXBSROW "ARSE", NXB_K_RBLK, 0, NXB_RW_REPS, 0
+    NXBSROW "ARCO", NXB_K_RBLK, 1, NXB_RW_REPS, 0
+    NXBSROW "AHST", NXB_K_RHIST, 0, NXB_RW_HREPS, 0
+    NXBSROW "ASPN", NXB_K_SPIN, 0, NXB_RW_SREPS, 0
+    NXBSROW "DSRM", NXB_K_DISARM, 0, 0, 0
+    NXBSROW "ARMO", NXB_K_ARMOLD, 0, 0, 0
+    NXBSROW "OSPN", NXB_K_SPIN, 0, NXB_RW_SREPS, 0
+    NXBSROW "DSRM", NXB_K_DISARM, 0, 0, 0
+    db 0
+nxbSesRw1End:
+    ASSERT nxbSesRw1End - nxbSesRw1 == NXB_STAB_B + 1
 
 ; REAL: real frames of the staged clip. SCAN keeps the three longest for the
 ; FRAME rows; W0tt sweep every frame at COPY select tt; the A and X rows
@@ -6394,9 +6725,9 @@ nxbSesSysEnd:
     ASSERT nxbSesSysEnd - nxbSesSys == NXB_STAB_B + 1
 
 ; ---------------------------------------------------------------------
-; LOG STEP (mode 15, via nxb_hop6): "#NXB <frameCounter>" and text rows 0-31
-; appended to NXBENCH.TXT, read back and compared, then LOG OK or LOG ERR xx
-; on row 31. Untimed. Corrupts everything.
+; LOG STEP (mode 15, via nxb_hop6): "#NXB <frameCounter>", text rows 0-31 and a
+; "#HIST" line per saved RHIST row appended to NXBENCH.TXT, read back and
+; compared, then LOG OK or LOG ERR xx on row 31. Untimed. Corrupts everything.
 ; ---------------------------------------------------------------------
 NXB_LOG_WMODE    equ $0B     ; F_OPEN open_creat + read/write: the API append (.extract -a)
 ; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0 for
@@ -6592,6 +6923,40 @@ nxb_log_pass:
     ld a, b
     cp TM_ROWS
     jr c, .row
+    ld a, (nxbHistN)             ; then "#HIST tttt" and NXB_HIST_BINS words
+    or a                         ; per saved RHIST row
+    ret z
+    ld b, a
+    ld hl, nxbHistSav
+.hist:
+    push bc
+    ld de, nxbLogLine
+    push hl
+    ld hl, nxbLogHist
+    ld bc, 6
+    ldir
+    pop hl
+    ld c, 4                      ; B = 0: the tag
+    ldir
+    ld b, NXB_HIST_BINS
+.bin:
+    ld a, ' '
+    ld (de), a
+    inc de
+    ld c, (hl)
+    inc hl
+    ld a, (hl)
+    inc hl
+    call nxb_log_hex             ; high byte, then low
+    ld a, c
+    call nxb_log_hex
+    djnz .bin
+    push hl
+    ld bc, NXB_HIST_TXT
+    call .line
+    pop hl
+    pop bc
+    djnz .hist
     ret
 ; C = the content length (B = 0): CRLF after it, then the pass's routine.
 .line:
@@ -6668,6 +7033,8 @@ nxb_log_get:
 nxbLogName:   db "NXBENCH.TXT", 0
 nxbLogHdr:    db "#NXB "
 NXB_LOG_HDR_LEN equ $ - nxbLogHdr
+nxbLogHist:   db "#HIST "
+    ASSERT $ - nxbLogHist == 6
 nxbLogMsg:    db "LOG ", 0
 nxbLogOk:     db "OK", 0
 nxbLogErrMsg: db "ERR ", 0
@@ -6679,9 +7046,11 @@ nxbLogErr:    db 0
 nxbLogLen:    dw 0
 nxbLogOfs:    ds 4
 nxbLogStat:   ds 11
-nxbLogLine:   ds TM_COLS + 2
-nxbLogRd:     ds TM_COLS + 2
-    ASSERT TM_COLS + 2 < 256 && TM_ROWS == 32 && GLYPH_SPACE == ' '
+NXB_LOG_LINE  equ NXB_HIST_TXT + 2     ; a #HIST line and CRLF: longer than a row
+    ASSERT NXB_HIST_TXT >= TM_COLS
+nxbLogLine:   ds NXB_LOG_LINE
+nxbLogRd:     ds NXB_LOG_LINE
+    ASSERT NXB_LOG_LINE < 256 && TM_ROWS == 32 && GLYPH_SPACE == ' '
 
     DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
     ASSERT $ <= DATA_WINDOW + $2000

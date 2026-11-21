@@ -118,6 +118,11 @@ TIMED = {
         "vid_ds_next", "vid_ds_byte", "vid_ds_blkopen", "vid_ds_pad",
         "vid_ds_xfer", "vid_ds_iblk", "vid_ds_copy_body", "vid_ds_pal",
         "vid_ds_done",
+        # raw direct reader, its sound handlers and play pointer access (after
+        # the region: the hot page tail, so listed here only)
+        "vid_raw_frame", "vr_sector", "vr_sector_n", "vr_page", "vid_raw_pal",
+        "vid_raw_apad", "video_ctc_isr_raw_st", "video_ctc_isr_raw_mono",
+        "vid_raw_rd_hl", "vid_raw_rd_de", "vid_raw_prime",
     ],
     "src/interrupts.asm": ["im2_isr"],      # the frame ISR (audEnable = 0)
 }
@@ -179,6 +184,12 @@ QUIET_PINNED = [
     ("src/video.asm", "vid_run", ".frameloop:",
      ("call vid_play_frame",),
      "FRM=/PLAY=/NOM= per-frame hook"),
+    ("src/video.asm", "vid_run", "call vid_pace_poll",
+     ("call vid_dbg_late",),
+     "LATE=/MAXL= on a frame's first pace poll"),
+    ("src/video.asm", "vid_run", "call vid_aud_pump",
+     ("call vid_dbg_urun",),
+     "URUN= poll after the .qnext pump"),
     ("src/video.asm", "vid_ring_gate", "vid_ring_gate:",
      ("ld hl, (vidRingDepth)", "ld de, (vidRingMin)", "or a", "sbc hl, de",
       "jr nc, .nomin", "ld hl, (vidRingDepth)", "ld (vidRingMin), hl",
@@ -196,6 +207,9 @@ QUIET_PINNED = [
     ("src/video.asm", "vid_ds_blkopen", "vid_ds_blkopen:",
      ("ld a, (vidRlDiv)", "dec a", "ld (vidRlDiv), a", "call z, vid_rl_poll"),
      "PLAY= raster arm, per direct-serve block"),
+    ("src/video.asm", "vr_sector_n", ".nocrc:",
+     ("ld d, 0", "call vid_dst_norm_flat"),
+     "PLAY= raster arm, per raw sector (vid_dst_norm_flat's divider)"),
 ]
 
 # The other COLD top-level IFDEF DEBUG blocks, for --list only - never
@@ -227,7 +241,7 @@ COLD = [
      "report after teardown"),
     ("src/video.asm", "vidSvHook", ("vid_tl_report:",),
      "report cells, report hop and the NXB bench"),
-    ("src/video.asm", "vidSvHook", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
+    ("src/video.asm", "vid_raw_prime", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
      "NXB_PAGE: bench tables"),
     ("src/video.asm", "nxv2_open_body", ("ld (vidFillT0), hl",),
      "open: FILL= start stamp"),

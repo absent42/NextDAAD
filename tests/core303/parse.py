@@ -14,7 +14,8 @@ from typing import Optional
 import tags as tagtab
 from tags import TAGS
 
-# Standalone NXB verbs, modes 2-12 (tests/test.dsf:322-332). NXBR/NXBD are session verbs.
+# Standalone NXB verbs, modes 2-12 (tests/test.dsf:322-332). NXBR/NXBD/NXBQ/NXBY/NXBW
+# are session verbs.
 STANDALONE_VERBS = frozenset(
     "nxbo nxbc nxbk nxbx nxbg nxbl nxbt nxbe nxbh nxbf nxbv".split())
 
@@ -318,6 +319,31 @@ def report_pi(pilogs, nextlogs):
 _NXB_ROW = re.compile(
     r"(?<![A-Z0-9])([A-Z0-9]{4}) O=([0-9A-F]{2}) R=([0-9A-F]{4}) F=([0-9A-F]{4}) D=([0-9A-F]{4})")
 _SIZE_TAG = re.compile(r"[A-Z]\d{3}")
+_NXB_HIST = re.compile(r"#HIST ([A-Z0-9]{4})((?: [0-9A-F]{4})+)")
+
+
+def _hist_line(line):
+    """One "#HIST" line -> (tag, bins); a tag outside NXB_HIST_TAGS or a bin count other
+    than NXB_HIST_BINS is a LogError."""
+    m = _NXB_HIST.fullmatch(line)
+    if not m:
+        raise LogError("malformed #HIST line: %r" % line)
+    bins = [int(x, 16) for x in m.group(2).split()]
+    if m.group(1) not in tagtab.NXB_HIST_TAGS or len(bins) != tagtab.NXB_HIST_BINS:
+        raise LogError("#HIST %s with %d bins: expected one of %s with %d" % (
+            m.group(1), len(bins), "/".join(tagtab.NXB_HIST_TAGS), tagtab.NXB_HIST_BINS))
+    return m.group(1), bins
+
+
+def parse_hist(path):
+    """The log step's wait histograms (RW1 RHST/AHST) of an NXB log, in order:
+    [(tag, [NXB_HIST_BINS counts])]. Bin k: waits whose $FF poll count has bit length k."""
+    out = []
+    for line in _read(path).split("\n")[:-1]:
+        line = line.rstrip("\r")
+        if line.startswith("#HIST"):
+            out.append(_hist_line(line))
+    return out
 
 
 def parse_nxb(path):
@@ -342,6 +368,9 @@ def parse_nxb(path):
             section += 1
             verb = None
             prev_keys, cur_keys = cur_keys, set()
+            continue
+        if line.startswith("#HIST"):
+            _hist_line(line)                       # rows only here: parse_hist reads these
             continue
         m = re.match(r">\s*(\S+)", line)
         if m:

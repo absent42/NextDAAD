@@ -14,7 +14,7 @@ tables define them: each row carries its own explicit kernel-select value
 (thr) for its kind, so the bench measures a fixed select value directly
 instead of depending on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN
 currently ships. SESSION_TABLES holds the session modes that ride a
-staged clip (DS1/REAL/SYN/SYS, verbs NXBD/NXBR/NXBQ/NXBY) the same way.
+staged clip (DS1/REAL/SYN/SYS/RW1, verbs NXBD/NXBR/NXBQ/NXBY/NXBW) the same way.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -1062,20 +1062,33 @@ BENCH_TABLES = {
 # (tag, kind, reps, frame, preset, site1, site2), a site = (offset, bytes).
 SESSION_KINDS = ("id", "ring", "remn", "scan", "sweep", "frame", "aud", "pace",
                  "loop", "arm", "disarm", "prod", "dsweep", "dsblk", "dskip",
+                 "rframe", "rsweep", "rarm", "rblk", "rhist", "spin", "armold",
                  "synth", "synth_nocall")
-SESSION_SILENT = ("arm", "disarm", "dskip")
-SESSION_REPS = ("frame", "aud", "pace", "prod", "dsblk")   # reps >= 1
+SESSION_SILENT = ("arm", "disarm", "dskip", "rarm", "armold")
+SESSION_ARMS = ("arm", "rarm", "armold")              # kinds that start CTC 0
+SESSION_REPS = ("frame", "aud", "pace", "prod", "dsblk",
+                "rframe", "rsweep", "rblk", "rhist", "spin")   # reps >= 1
 SESSION_DECODE = ("scan", "sweep", "frame", "loop", "dsweep")  # thr = COPY select
 SESSION_SYNTH = ("synth", "synth_nocall")
-SESSION_DIRECT = ("dsweep", "dsblk", "dskip")        # direct-serve only
+# Raw direct sessions only (mode 5): frames and sweeps (feed + raw decode), the arm
+# that primes HL', card rows (rblk 0 sector, 1 column split; rhist), the spin
+# loop, the arm that installs the old stereo handler.
+SESSION_RAW = ("rframe", "rsweep", "rarm", "rblk", "rhist", "spin", "armold")
+SESSION_RAW_CARD = ("rblk", "rhist")
+SESSION_DIRECT = ("dsweep", "dsblk", "dskip") + SESSION_RAW   # direct-serve only
 SESSION_ROW_LEN = 10
 SESSION_SYNTH_LEN = 25
-SESSION_MODES = {"DS1": 1, "REAL": 2, "SYN": 3, "SYS": 4}   # flags+248
+SESSION_MODES = {"DS1": 1, "REAL": 2, "SYN": 3, "SYS": 4, "RW1": 5}   # flags+248
 # The deliveries each mode runs on (nxbSessDir's mask); anything else prints
-# NXB SESSION.
+# NXB SESSION. DS1 also refuses a raw clip and RW1 anything but a raw clip.
 SESSION_DELIVERY = {"DS1": ("direct",), "REAL": ("resident", "streaming"),
-                    "SYN": ("resident",), "SYS": ("streaming",)}
+                    "SYN": ("resident",), "SYS": ("streaming",), "RW1": ("direct",)}
 NXB_DS_REPS = 128                                    # blocks per DT row
+NXB_RW_REPS = 128                                    # sectors per RSEC/RCOL row
+NXB_RW_HREPS = 2048                                  # sectors per histogram row
+NXB_RW_SREPS = 512                                   # spin reps
+NXB_RW_SPIN = 2000                                   # count-loop passes per spin rep
+NXB_RW_MIN = 5000                                    # a card row needs this many blocks left
 NOSITE = (0, ())
 
 SESSION_TABLES = {
@@ -1168,6 +1181,27 @@ SESSION_TABLES = {
         ("ARM2", "arm", 0, 0, 0, True),
         ("APRD", "prod", 0, 128, 0, True),
     ),
+    "RW1": (    # NXBW - nxbSesRw1: raw frames, sweeps, card rows, handler spins
+        ("IDEN", "id", 0, 0, 0, False),
+        ("RFR0", "rframe", 0, 1, 0, False),
+        ("RSWP", "rsweep", 0, 16, 0, False),
+        ("ARM1", "rarm", 0, 0, 0, False),
+        ("ARSW", "rsweep", 0, 16, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+        ("RSEC", "rblk", 0, NXB_RW_REPS, 0, False),
+        ("RCOL", "rblk", 1, NXB_RW_REPS, 0, False),
+        ("RHST", "rhist", 0, NXB_RW_HREPS, 0, False),
+        ("SPN0", "spin", 0, NXB_RW_SREPS, 0, False),
+        ("ARM2", "rarm", 0, 0, 0, False),
+        ("ARSE", "rblk", 0, NXB_RW_REPS, 0, False),
+        ("ARCO", "rblk", 1, NXB_RW_REPS, 0, False),
+        ("AHST", "rhist", 0, NXB_RW_HREPS, 0, False),
+        ("ASPN", "spin", 0, NXB_RW_SREPS, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+        ("ARMO", "armold", 0, 0, 0, False),
+        ("OSPN", "spin", 0, NXB_RW_SREPS, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+    ),
 }
 
 # (unarmed, armed) twins per session table: the same row, run before and
@@ -1179,6 +1213,8 @@ SESSION_ARMED_PAIRS = {
              ("LOOP", "ALOP"), ("PROD", "APRD")),
     "SYN": (("K43K", "AK43"), ("FE00", "AFE0"), ("C4K0", "AC4K")),
     "SYS": (("K24K", "AK24"), ("FE00", "AFE0")),
+    "RW1": (("RSWP", "ARSW"), ("RSEC", "ARSE"), ("RCOL", "ARCO"), ("RHST", "AHST"),
+            ("SPN0", "ASPN"), ("SPN0", "OSPN")),
 }
 
 
@@ -1226,6 +1262,21 @@ def direct_frames(name):
     return pos, swept, blocks
 
 
+def raw_blocks(name, frame_blocks, palettes=1):
+    """Blocks a raw table reads off the wire after the header block: its frames
+    (rframe/rsweep reps x frame_blocks, sound and pixel sectors, plus palettes),
+    then each card row's reps and the untimed sector before it (nxb_rw_go).
+    -> (frames, frame blocks, card blocks, the largest card row's need)."""
+    frames = card = need = 0
+    for row in SESSION_TABLES[name]:
+        if row[1] in ("rframe", "rsweep"):
+            frames += row[3]
+        elif row[1] in SESSION_RAW_CARD:
+            card += row[3] + 1
+            need = max(need, row[3] + 1)
+    return frames, frames * frame_blocks + palettes, card, need
+
+
 def session_rows(name, delivery):
     """The rows one session runs, in order. delivery is "resident",
     "streaming" or "direct" (True/False read as streaming/resident): only a
@@ -1244,7 +1295,7 @@ def session_armed(name, delivery):
     """{tag: True when the row runs after ARM with no DISARM since}."""
     armed, out = False, {}
     for tag, kind, *_ in session_rows(name, delivery):
-        if kind == "arm":
+        if kind in SESSION_ARMS:
             armed = True
         elif kind == "disarm":
             armed = False
