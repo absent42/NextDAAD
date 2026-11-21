@@ -89,6 +89,17 @@
 # rather than warn, because a locked sd\ file under CSpect produces a
 # silently partial fixture instead of a clean failure. Only a CSpect
 # whose -mmc= mounts sd\ (or a folder under it) counts; see Test-SdCSpect.
+#
+# CHANGE-AWARE: every always-on step and the leg staging reruns only when
+# its input set (see "change-aware steps" below) changed since its last
+# pass, stamped in tests\out\stamps\ by tests\stamps.py. Sources count by
+# mtime; another step's outputs (build\ files, compiled fixtures) by
+# content, so a rerun that writes the same bytes restages nothing. A
+# skipped step prints "<step>: unchanged since <time>"; a leg is skipped
+# only while its sd\<LEG>\ folder still holds the bytes it staged. -Full
+# ignores the stamps and reruns everything; -Plan prints each step's
+# stamp state and runs nothing. The last line names the staged folder:
+# "staged leg: sd\<LEG>".
 # ===================================================================
 #
 # Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
@@ -437,7 +448,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky', [switch]$Full, [switch]$Plan)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 # True when a CSpect mounts sd\ (or a folder under it) via -mmc=. No -mmc is false; a relative,
@@ -684,12 +695,174 @@ function New-SfxStereoWav([int]$Rate, [double]$LeftHz, [double]$RightHz, [int]$P
 New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
 New-Item -ItemType Directory -Force $sd | Out-Null
 
+# ---- change-aware steps (see CHANGE-AWARE in the header) ------------
+# An input set names a step's own files where its code names them, else the
+# tracked tree; outputs a later step or leg reads are checked before a skip.
+. "$PSScriptRoot\stamps.ps1"
+$stepTool = @{
+    ndrc = $ndrc; kitndrc = "$root\authoring-kit\lib\ndrc.exe"; drf = $drcDrf
+    sjasmplus = "$root\tools\sjasmplus\sjasmplus.exe"; gfx2next = "$root\tools\gfx2next\gfx2next.exe"
+    s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"; s2y = "$root\tools\ArkosTracker3\tools\SongToYm.exe"
+    s2e = "$root\tools\ArkosTracker3\tools\SongToSoundEffects.exe"; ffmpeg = "$root\tools\ffmpeg\bin\ffmpeg.exe"
+    zx0 = "$root\tools\z88dk\bin\z88dk-zx0.exe"
+}
+function New-StepSpec {
+    # Git/Files/Trees/Globs are sources (mtime); HashFiles/HashTrees are other steps' outputs
+    # (content). -Upstream: @{ step; files } for -Plan. -With merges other specs' inputs.
+    param([string[]]$Git, [string[]]$Files, [string[]]$Trees, [string[]]$Globs, [string[]]$Tools,
+          [string[]]$HashFiles, [string[]]$HashTrees, [hashtable[]]$Upstream,
+          [string[]]$Outputs, [string[]]$OutputTrees, [switch]$HashOutputs, [hashtable[]]$With)
+    $s = @{ git = @($Git | Where-Object { $_ }); files = @($Files | Where-Object { $_ })
+            trees = @($Trees | Where-Object { $_ }); globs = @($Globs | Where-Object { $_ })
+            hash_files = @($HashFiles | Where-Object { $_ }); hash_trees = @($HashTrees | Where-Object { $_ })
+            upstream = @($Upstream | Where-Object { $_ }); tools = @{}; ident = @{} }
+    foreach ($n in @($Tools | Where-Object { $_ })) { $s.tools[$n] = $stepTool[$n] }
+    foreach ($w in @($With | Where-Object { $_ })) {
+        foreach ($k in 'git', 'files', 'trees', 'globs', 'hash_files', 'hash_trees', 'upstream') { $s[$k] = @($s[$k]) + @($w[$k] | Where-Object { $_ }) }
+        foreach ($n in $w.tools.Keys) { $s.tools[$n] = $w.tools[$n] }
+    }
+    if ($Outputs) { $s.outputs = $Outputs }
+    if ($OutputTrees) { $s.output_trees = $OutputTrees }
+    if ($HashOutputs) { $s.hash_outputs = $true }
+    $s
+}
+# Compiler-dependent steps are stamped per compiler: the text2 legs use NEXTDAAD_NDRC.
+$ndrcTag = if ($ndrc -eq $stepTool.kitndrc) { 'kit' } else { Split-Path -Leaf (Split-Path -Parent $ndrc) }
+$fxStep = "bt-fixtures@$ndrcTag"; $nexStep = "bt-nex-bytes@$ndrcTag"; $t2Step = "bt-text2-fixtures@$ndrcTag"
+$text2Any = $Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad -or $Text2WideCtl -or $Text2Nest -or $Text2NestCtl -or $Text2Xmb -or $Text2XmbPart -or $Text2XmbFp -or $Text2Region -or $Text2RegionCtl -or $Text2RegionPart -or $Text2RegionBad
+$kitGit = 'authoring-kit'
+$fxDsf = @('test', 'condacts', 'doallnest', 'bigddb', 'bigddb-autotok', 'gmodegate', 'audlad', 'sfxdi', 'sfxlong',
+           'sfx2', 'sfxst', 'aysreg', 'debugflag', 'l2holes', 'l2pos', 'tmover', 'tileslack', 'fontsw', 'sprites',
+           'cycle', 'cursor', 'kblog', 'spraud', 'txt40', 'accents', 'palette', 'v3probe', 'extern') | ForEach-Object { "tests/$_.dsf" }
+$fxOut = @('template.ddb', 'template.xmb', 'condacts.ddb', 'condacts.xmb', 'doallnest.ddb', 'bigddb.ddb',
+           'bigddb-autotok.ddb', 'gmodegate.ddb', 'audlad.ddb', 'sfxdi.ddb', 'sfxlong.ddb', 'sfx2.ddb', 'sfxst.ddb',
+           'aysreg.ddb', 'debugflag.ddb', 'debugflag-debug.ddb', 'l2holes.ddb', 'l2pos.ddb', 'l2pos-work\NDL2POS.json',
+           'tmover.ddb', 'tileslack.ddb', 'fontsw.ddb', 'sprites.ddb', 'cycle.ddb', 'cursor.ddb', 'kblog.ddb',
+           'spraud.ddb', 'txt40.ddb', 'accents.ddb', 'accents-autotok.ddb', 'palette.ddb', 'v3probe.ddb', 'v3probe.xmb',
+           'utotest.ddb', 'utotest_v3.ddb', 'extern.ddb', 'xbn\GAME.XBN', 'xbn\xbntest.sym', 'xbn\BADMAGIC.XBN',
+           'xbn\BADVER.XBN', 'xbn\BADRSV.XBN', 'xbn\BADLINE.XBN', 'xbn\SHORTHDR.XBN', 'xbn\BADSIZE.XBN', 'xbn\TRUNC.XBN',
+           'corrupt.ddb', 'oversize.ddb', 'badwav.bin', 'truncwav.bin') | ForEach-Object { "tests/out/$_" }
+$t2Out = @('objverif2-nx.ddb', 'objverif2-tok.ddb', 'objverif3-nx.ddb', 'objverif3-tok.ddb', 'nest4-nx.ddb',
+           'nest4-nx.xmb', 'nest4-tok.ddb', 'nest4-tok.xmb', 'nest4-nx-badfp.xmb', 't2x2-parta.ddb', 't2x2-parta.xmb',
+           'region-nx.ddb', 'region-tok.ddb', 'regpart1-nx.ddb', 'regpart1-nx.xmb') | ForEach-Object { "tests/out/$_" }
+$aniIn = New-StepSpec -Git $kitGit -Files 'tests/anipack-selftest.ps1', 'tests/testtools.ps1', 'tests/art/mkanisheets.py' -Tools gfx2next
+$introIn = New-StepSpec -Git $kitGit, 'src/intro' -Files 'tests/intro-selftest.ps1', 'tests/testtools.ps1', 'tests/art/mkintro.py',
+    'tests/art/mkanisheets.py', 'src/font.chr', 'tools/NextDAW/DemoCode/z88dk_asm/Silver-Surfer.NDR',
+    'tools/NextDAW/RuntimePlayer/NextDAW_RuntimePlayer_E000.bin' -Tools gfx2next, ffmpeg, s2a, s2y
+$steps = [ordered]@{
+    'bt-check-cprops'            = New-StepSpec -Files 'tests/check-cprops.ps1', 'src/engine.asm' -Tools drf
+    # the optional font pack is the path fontconv-selftest.ps1 reads
+    'bt-fontconv-selftest'       = New-StepSpec -Git $kitGit -Files 'tests/fontconv-selftest.ps1', 'tests/testtools.ps1' -Trees 'D:\Urban Upstart\fonts\oldschool_pc_font_pack_v2.2_FULL\fon - Bm (windows bitmap)'
+    'bt-anipack-selftest'        = New-StepSpec -With $aniIn -HashOutputs -Outputs ('002.ANI', '003.ANI', '006.ANI', '015.png', '015.txt', '017.png', '017.txt', '018.png', '018.txt' | ForEach-Object { "tests/out/anipack/$_" })
+    'bt-l2pos-selftest'          = New-StepSpec -Git $kitGit -Files 'tests/l2pos-selftest.ps1', 'tests/testtools.ps1', 'tests/art/mkl2pos.py' -Tools gfx2next
+    'bt-intro-selftest'          = New-StepSpec -With $introIn -HashOutputs -Outputs ('font.png', 'p320a.png', 'p256a.png', 'p320c.png' | ForEach-Object { "tests/out/intro/$_" })
+    'bt-xbn-drift'               = New-StepSpec -Git $kitGit -Tools sjasmplus -Outputs 'tests/out/xbn-subset-drift.XBN'
+    'bt-xbnbuild-selftest'       = New-StepSpec -Git $kitGit, 'tests/xbn' -Files 'tests/xbnbuild-selftest.ps1', 'tests/testtools.ps1' -Tools sjasmplus
+    'bt-audit-externs-selftest'  = New-StepSpec -Git $kitGit -Files 'tests/audit-externs-selftest.ps1', 'tests/audit-externs.ps1', 'tests/testtools.ps1', 'src/overlay0.asm' -Tools sjasmplus
+    'bt-hintpack-selftest'       = New-StepSpec -Git $kitGit -Files 'tests/hintpack-selftest.ps1', 'tests/extern.dsf' -Tools kitndrc
+    'bt-hintpack-accent-oracle'  = New-StepSpec -Git $kitGit -Files 'tests/hintpack-accent-oracle.ps1', 'tests/testtools.ps1', 'tests/decode-ddb.ps1' -Tools kitndrc
+    'bt-source-asserts'          = New-StepSpec -Git 'src', $kitGit -Files 'tests/build-tests.ps1', 'tests/art/mkpalcard.py'
+    'bt-pngchain'                = New-StepSpec -Files 'tests/art/pngchain.py', 'src/nextdaad.inc' -Tools gfx2next
+    'bt-frozen-exes'             = New-StepSpec -Git $kitGit -Files 'tests/check_frozen_exes.py'
+    'bt-manual'                  = New-StepSpec -Git 'manual', 'src', $kitGit -Files 'tests/manual_facts.py', 'tests/build-tests.ps1'
+    'bt-dma-contract'            = New-StepSpec -Files 'tests/dma_contract.py' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
+    'bt-core-floor'              = New-StepSpec -Git 'src', $kitGit, 'tests/*.py', 'tests/corefloor' -HashFiles 'build/nextdaad.nex', 'build/intro.nex' -Tools sjasmplus
+    'bt-bank-alloc-exec'         = New-StepSpec -Files 'tests/build-tests.ps1' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld'
+    $nexStep                     = New-StepSpec -Git 'src' -Files 'tests/build-tests.ps1', 'tests/sfx2.dsf' -HashFiles 'build/nextdaad.nex', 'build/nextdaad.sld', 'build/NEXTDAAD.SYM' -Tools ndrc
+    $fxStep                      = New-StepSpec -Git 'tests/xbn' -Files (@($fxDsf) + 'tests/build-tests.ps1', 'authoring-kit/xbn.inc', 'tools/TEST.DSF') -Tools ndrc, sjasmplus -Outputs $fxOut -HashOutputs
+}
+$steps['bt-xbn-drift'].ident = @{ args = 'ticker fade hints clock timer realtime toolkit playername' }
+if ($text2Any) {
+    $steps[$t2Step] = New-StepSpec -Git 'tests/text2' -Files 'tests/build-tests.ps1', 'tests/NDPARTA.DSF' -Tools ndrc -Outputs $t2Out -OutputTrees 'tests/out/text2bad', 'tests/out/text2regbad' -HashOutputs
+}
+# Leg staging: the switches given, the leg's own sources (audited switch sets below) or the
+# whole tracked tree plus the tools\ corpora, build\nextdaad.nex, and the staged folder itself.
+$legKey = (@($PSBoundParameters.Keys | Where-Object { $_ -notin 'Full', 'Plan', 'IntroMusic' }) + @(if ($Intro) { 'Intro' }) |
+           Sort-Object -Unique | ForEach-Object { "-$_" }) -join ' '
+$legIdent = (@($PSBoundParameters.Keys | Where-Object { $_ -notin 'Full', 'Plan' } | Sort-Object | ForEach-Object {
+    $v = $PSBoundParameters[$_]; if ($v -is [System.Management.Automation.SwitchParameter]) { "-$_" } else { "-$_ $v" } }) +
+    @(if ($Intro) { "intro music $IntroMusic" })) -join ' '
+$vidCache = 'tests/out/*_leg_cache.vid'
+# An audited leg keys on the compiled fixture and self-test output bytes it copies, so a
+# recompile that writes the same bytes restages nothing; -Upstream names their sources.
+function Get-FxSpec([string[]]$Out, [string[]]$Dsf) {
+    New-StepSpec -HashFiles ($Out | ForEach-Object { "tests/out/$_" }) -Upstream @{ step = $fxStep; files = @($Dsf | ForEach-Object { "tests/$_" }) }
+}
+$aniOut = New-StepSpec -HashFiles ('002.ANI', '003.ANI', '006.ANI', '015.png', '015.txt', '017.png', '017.txt', '018.png', '018.txt' |
+    ForEach-Object { "tests/out/anipack/$_" }) -Upstream @{ step = 'bt-anipack-selftest' }
+$introOut = New-StepSpec -HashFiles ('font.png', 'p320a.png', 'p256a.png', 'p320c.png' | ForEach-Object { "tests/out/intro/$_" }) -Upstream @{ step = 'bt-intro-selftest' }
+$legXbn = New-StepSpec -With (Get-FxSpec ('extern.ddb', 'xbn\GAME.XBN', 'xbn\BADMAGIC.XBN', 'xbn\BADVER.XBN', 'xbn\BADRSV.XBN',
+    'xbn\BADLINE.XBN', 'xbn\SHORTHDR.XBN', 'xbn\BADSIZE.XBN', 'xbn\TRUNC.XBN') 'extern.dsf') -Git 'tests/xbn', $kitGit `
+    -Files 'tools/Rabenstein-master/nextdaad/1.NX2', 'tools/Rabenstein-master/nextdaad/2.NX2' -Tools sjasmplus
+$legL2Pos = New-StepSpec -With (Get-FxSpec ('l2pos.ddb', 'l2pos-work\NDL2POS.json') 'l2pos.dsf') -Files 'tests/art/mkl2pos.py' -Tools zx0
+$legText2 = New-StepSpec -HashFiles $t2Out -HashTrees 'tests/out/text2bad', 'tests/out/text2regbad' -Files 'tests/art/mkl2card.py' -Upstream @{ step = $t2Step }
+$legNarrow = @{
+    '-AysReg'    = New-StepSpec -With (Get-FxSpec 'aysreg.ddb' 'aysreg.dsf') -Files 'tests/audio/mkays.py', 'authoring-kit/STARTER/AUDIO/STARTER_FX.aks' -Globs $vidCache -Tools s2e -OutputTrees 'tests/out/aysreg'
+    '-AudLad'    = New-StepSpec -With (Get-FxSpec 'audlad.ddb' 'audlad.dsf') -Files 'tests/audio/L1.AKY', 'tests/audio/L3.AKY', 'tests/audio/L6.AKY', 'tests/audio/L9.AKY', 'tests/audio/L9Q.AKY', 'authoring-kit/STARTER/AUDIO/1.aks', 'authoring-kit/RELEASE/STARTER/DATA/GAME.AKY' -Tools s2a
+    '-Cursor'    = New-StepSpec -With (Get-FxSpec 'cursor.ddb' 'cursor.dsf') -Files 'tests/art/mkpalcard.py'
+    '-Cycle'     = New-StepSpec -With (Get-FxSpec 'cycle.ddb' 'cycle.dsf'), $aniOut -Files 'tests/art/mkpalcard.py', 'authoring-kit/externs/all/GAME.XBN' -Globs $vidCache
+    '-Intro'     = New-StepSpec -With (Get-FxSpec 'condacts.ddb' 'condacts.dsf'), $introOut -Git $kitGit -Files 'tests/intro/fixtures/harness.txt',
+                       'tools/NextDAW/DemoCode/z88dk_asm/Silver-Surfer.NDR', 'tools/NextDAW/RuntimePlayer/NextDAW_RuntimePlayer_E000.bin' -HashFiles 'build/intro.nex' -Tools gfx2next, s2a, s2y, ffmpeg
+    '-L2Pos'     = New-StepSpec -With $legL2Pos -OutputTrees 'tests/out/l2pos-art'
+    '-GfxZx0 -L2Pos' = New-StepSpec -With $legL2Pos -OutputTrees 'tests/out/l2pos-art'
+    '-L2PosWide' = New-StepSpec -With $legL2Pos -OutputTrees 'tests/out/l2pos-art-wide'
+    '-GfxZx0 -L2PosWide' = New-StepSpec -With $legL2Pos -OutputTrees 'tests/out/l2pos-art-wide'
+    '-BigDdb'    = Get-FxSpec 'bigddb.ddb' 'bigddb.dsf'
+    '-BigDdbTok' = Get-FxSpec 'bigddb-autotok.ddb' 'bigddb-autotok.dsf'
+    '-SprAud'    = New-StepSpec -With (Get-FxSpec 'spraud.ddb' 'spraud.dsf'), $aniOut -Files 'authoring-kit/STARTER/AUDIO/1.aks', 'authoring-kit/RELEASE/STARTER/DATA/GAME.AKY' -Tools s2a
+    '-Sprites'   = New-StepSpec -With (Get-FxSpec 'sprites.ddb' 'sprites.dsf'), $aniOut -Files 'tests/art/mkpalcard.py', 'authoring-kit/lib/anipack.ps1' -Tools gfx2next
+    '-Txt40'     = New-StepSpec -With (Get-FxSpec 'txt40.ddb' 'txt40.dsf') -Globs $vidCache
+    '-KbLog'     = Get-FxSpec 'kblog.ddb' 'kblog.dsf'
+}
+foreach ($k in '', 'All', 'Ticker', 'Trans', 'Fade', 'Hints', 'Clock', 'Tool', 'NoBin', 'Bad') { $legNarrow[('-Xbn ' + $(if ($k) { "-Xbn$k" })).Trim()] = $legXbn }
+foreach ($k in 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad', 'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb',
+               'Text2XmbPart', 'Text2XmbFp', 'Text2Region', 'Text2RegionCtl', 'Text2RegionPart', 'Text2RegionBad') { $legNarrow["-$k"] = $legText2 }
+$legSpec = if ($legNarrow.ContainsKey($legKey)) { $legNarrow[$legKey] }
+           else {
+               New-StepSpec -Git 'src', 'tests', $kitGit, 'build.ps1' -Files 'tools/TEST.DSF' -HashFiles 'build/intro.nex' -Globs 'tests/out/*.vid' `
+                   -Trees 'tools/Rabenstein-master', 'tools/urban-upstart', 'tools/demo-files', 'tools/audio_assets', 'tools/NextDAW' `
+                   -Tools sjasmplus, gfx2next, s2a, s2y, s2e, ffmpeg, zx0
+           }
+$legSpec = New-StepSpec -With $legSpec -Files 'tests/build-tests.ps1' -HashFiles 'build/nextdaad.nex' -Tools ndrc -OutputTrees (@("sd/$legName") + @($legSpec.output_trees | Where-Object { $_ }))
+$legSpec.ident = @{ switches = $legIdent }
+$legSpec.hash_outputs = $true
+# One stamp per switch set. A folder another switch set restaged since (the guard records
+# who last wrote it) is put back from this stamp's copy; any other change restages.
+$legStep = "leg-$legName@$legIdent"
+$legSpec.cache_dir = 'tests/out/stamps/cache/' + ($legStep -replace '[^A-Za-z0-9._-]', '_')
+$legSpec.cache_guard = "tests/out/stamps/sd-$legName.json"
+$legSpec.cache_guard_tree = "sd/$legName"
+$legSpec.cache_limit = 64MB
+$steps[$legStep] = $legSpec
+if ($Plan) {
+    # Report only: no step runs and no stamp is written.
+    $stepCheck = Invoke-StampCheck $root $steps -Plan
+    foreach ($n in $steps.Keys) { "PLAN`t$n`t$($stepCheck[$n].State)`t$($stepCheck[$n].Info)" }
+    "PLAN-LEG`tsd\$legName`t$legStep`t$($stepCheck[$legStep].State)`t$($stepCheck[$legStep].Info)"
+    return
+}
+# The leg is checked at the staging section: the steps below may rewrite outputs it reads.
+$steps.Remove($legStep)
+$stepCheck = Invoke-StampCheck $root $steps -Full:$Full
+function Test-StepRun([string]$Name) {
+    # True when the step must run; prints one line either way.
+    $r = $stepCheck[$Name]
+    if ($r.Fresh) { Write-Host "${Name}: unchanged since $($r.Info)"; return $false }
+    Write-Host "${Name}: run ($($r.Info))"
+    return $true
+}
+function Complete-Step([string]$Name) { Complete-Stamp $root @($Name) }
+$runFx = Test-StepRun $fxStep
+
 # The COMPILE half of this script writes nothing into sd\ - every
 # fixture lands in tests\out\ and the STAGING section further down copies
 # whichever ones the run's switches ask for into the one leg folder.
 # Keeping the two halves apart is what makes cross-contamination
 # impossible by construction rather than by careful cleaning.
+# The fixture compiles and their byte checks are one step ($fxStep): its
+# blocks below sit inside "if ($runFx) {" ... "}" guards, left unindented.
 $templateXmb = $false
+if ($runFx) {
 $templateWork = Join-Path $root 'tests\out\template-work'
 Remove-Item $templateWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $templateWork | Out-Null
@@ -707,24 +880,22 @@ try {
         Move-Item '0.XMB' "$root\tests\out\template.xmb" -Force
         $templateXmb = $true
     }
+    # A stale copy would read as this compile's XMB when the step is skipped.
+    else { Remove-Item "$root\tests\out\template.xmb" -Force -ErrorAction SilentlyContinue }
 }
 finally { Pop-Location }
+}
 
-& "$PSScriptRoot\check-cprops.ps1"
-
-& "$PSScriptRoot\fontconv-selftest.ps1"
-
-& "$PSScriptRoot\anipack-selftest.ps1"
-
-& "$PSScriptRoot\l2pos-selftest.ps1"
-
-& "$PSScriptRoot\intro-selftest.ps1"
+foreach ($selftest in 'check-cprops', 'fontconv-selftest', 'anipack-selftest', 'l2pos-selftest', 'intro-selftest') {
+    if (Test-StepRun "bt-$selftest") { & "$PSScriptRoot\$selftest.ps1"; Complete-Step "bt-$selftest" }
+}
 
 # xbnbuild.ps1 drift guard: its generated subset source must stay
 # equivalent to the hand-written externs\all\all.asm. Builds every
 # shipping module through the generator and requires a byte-identical
 # GAME.XBN to the committed all\GAME.XBN - catches both a broken
 # generator and any future divergence between the two paths.
+if (Test-StepRun 'bt-xbn-drift') {
 $xbnDriftOut = "$root\tests\out\xbn-subset-drift.XBN"
 & "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer realtime toolkit playername -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
 $xbnDriftFresh = [IO.File]::ReadAllBytes($xbnDriftOut)
@@ -738,12 +909,12 @@ $xbnKitRoot = [IO.File]::ReadAllBytes("$root\authoring-kit\STARTER\GAME.XBN")
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnKitRoot, $xbnDriftShipped)) {
     throw "authoring-kit\STARTER\GAME.XBN differs from authoring-kit\externs\all\GAME.XBN - copy the combined build to STARTER\ and commit both together"
 }
+Complete-Step 'bt-xbn-drift'
+}
 
-& "$PSScriptRoot\xbnbuild-selftest.ps1"
-& "$PSScriptRoot\audit-externs-selftest.ps1"
-
-& "$PSScriptRoot\hintpack-selftest.ps1"
-& "$PSScriptRoot\hintpack-accent-oracle.ps1"
+foreach ($selftest in 'xbnbuild-selftest', 'audit-externs-selftest', 'hintpack-selftest', 'hintpack-accent-oracle') {
+    if (Test-StepRun "bt-$selftest") { & "$PSScriptRoot\$selftest.ps1"; Complete-Step "bt-$selftest" }
+}
 
 # ---- Layer 2 transparency constants: five files, three value classes ----
 # The transparent COLOUR ($E3), the reserved INDEX (255), and the dodge
@@ -1304,23 +1475,29 @@ function Assert-KitAudioDocs {
     "KITAUDIO: audio.html documents SFX n 17-20, stereo and 15625 Hz, no 16000 Hz"
 }
 
-Assert-TranspConstantsInSync
-Assert-KitAudioDocs
-Assert-PalColourDodge
-Assert-LayerOrderReset
-Assert-RestartLeavesSprites
-Assert-CycleStopSites
-Assert-CursorStateWriters
-Assert-PaletteWriterCensus
-Assert-WidthSwitchKeepsStyle
-Assert-PartBanksScan
-Assert-BankAllocCensus
+if (Test-StepRun 'bt-source-asserts') {
+    Assert-TranspConstantsInSync
+    Assert-KitAudioDocs
+    Assert-PalColourDodge
+    Assert-LayerOrderReset
+    Assert-RestartLeavesSprites
+    Assert-CycleStopSites
+    Assert-CursorStateWriters
+    Assert-PaletteWriterCensus
+    Assert-WidthSwitchKeepsStyle
+    Assert-PartBanksScan
+    Assert-BankAllocCensus
+    Complete-Step 'bt-source-asserts'
+}
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
 # reserved slot must survive gfx2next with its palette index intact.
-& python "$PSScriptRoot\art\pngchain.py"
-if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-transparency chain is broken" }
+if (Test-StepRun 'bt-pngchain') {
+    & python "$PSScriptRoot\art\pngchain.py"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-transparency chain is broken" }
+    Complete-Step 'bt-pngchain'
+}
 
 # tools\vidtools\ (videnc.exe + vidtune.exe) is a PyInstaller bundle that
 # FREEZES the encoder source in; a stale bundle has silently shipped
@@ -1328,9 +1505,12 @@ if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-tran
 # tests\check_frozen_exes.py diffs each bundle against the working tree:
 # exit 1 = stale, exit 2 = not verified (missing, LFS pointer, unreadable,
 # or host Python minor version differs from the bundle's).
-& python "$PSScriptRoot\check_frozen_exes.py"
-if ($LASTEXITCODE -eq 1) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild with scripts\build-vidtools.ps1" }
-if ($LASTEXITCODE -ne 0) { throw "tests\check_frozen_exes.py could not verify the frozen kit exes - see its NOT VERIFIED lines" }
+if (Test-StepRun 'bt-frozen-exes') {
+    & python "$PSScriptRoot\check_frozen_exes.py"
+    if ($LASTEXITCODE -eq 1) { throw "tests\check_frozen_exes.py failed - a frozen kit exe is stale, rebuild with scripts\build-vidtools.ps1" }
+    if ($LASTEXITCODE -ne 0) { throw "tests\check_frozen_exes.py could not verify the frozen kit exes - see its NOT VERIFIED lines" }
+    Complete-Step 'bt-frozen-exes'
+}
 
 function Assert-ManualFresh {
     # authoring-kit\docs is GENERATED and SHIPPED. A .md edited without
@@ -1370,12 +1550,14 @@ function Assert-ManualIndexed {
     }
 }
 
-Assert-ManualFresh
-Assert-ManualIndexed
-
-if (Test-Path (Join-Path $root 'manual')) {
-    & python "$PSScriptRoot\manual_facts.py"
-    if ($LASTEXITCODE -ne 0) { throw "tests\manual_facts.py failed - the manual contradicts the source" }
+if (Test-StepRun 'bt-manual') {
+    Assert-ManualFresh
+    Assert-ManualIndexed
+    if (Test-Path (Join-Path $root 'manual')) {
+        & python "$PSScriptRoot\manual_facts.py"
+        if ($LASTEXITCODE -ne 0) { throw "tests\manual_facts.py failed - the manual contradicts the source" }
+    }
+    Complete-Step 'bt-manual'
 }
 
 # overlay2's dma_copy contract, checked against the EMITTED BYTES of the
@@ -1388,16 +1570,22 @@ if (Test-Path (Join-Path $root 'manual')) {
 # is no emulator leg here to catch that; this is the substitute.
 if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) {
     Write-NexStaleWarning 'the dma_copy contract check'
-    & python "$PSScriptRoot\dma_contract.py"
-    if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - overlay2's dma_copy is mis-emitting its DMA descriptors, do not run this build on hardware" }
+    if (Test-StepRun 'bt-dma-contract') {
+        & python "$PSScriptRoot\dma_contract.py"
+        if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - overlay2's dma_copy is mis-emitting its DMA descriptors, do not run this build on hardware" }
+        Complete-Step 'bt-dma-contract'
+    }
 }
 else {
     "WARNING: no build\nextdaad.nex + .sld - dma_copy contract check SKIPPED (run .\build.ps1 first)"
 }
 
 # Core 3.03.03 floor host checks: NRGET encoding, boot gate, CSpect launch wiring.
-& python "$PSScriptRoot\core_floor_check.py"
-if ($LASTEXITCODE -ne 0) { throw "tests\core_floor_check.py failed - see its FAIL lines" }
+if (Test-StepRun 'bt-core-floor') {
+    & python "$PSScriptRoot\core_floor_check.py"
+    if ($LASTEXITCODE -ne 0) { throw "tests\core_floor_check.py failed - see its FAIL lines" }
+    Complete-Step 'bt-core-floor'
+}
 
 # bank_alloc / bank_alloc_long executed from the emitted resident bytes over
 # random bank tables: with partBanksMax 0 both hand out the same bank and
@@ -1511,9 +1699,12 @@ function Assert-BankAllocLongExec {
     }
     "bank_alloc_long exec: $cases emitted-byte runs; partBanksMax 0 matches bank_alloc exactly, 1-4 skip banks 20..19+n only, no DE writer, stack balanced"
 }
-if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) { Assert-BankAllocLongExec }
+if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) {
+    if (Test-StepRun 'bt-bank-alloc-exec') { Assert-BankAllocLongExec; Complete-Step 'bt-bank-alloc-exec' }
+}
 else { "WARNING: no build\nextdaad.nex + .sld - bank_alloc_long exec check SKIPPED (run .\build.ps1 first)" }
 
+if ($runFx) {
 $condactsWork = Join-Path $root 'tests\out\condacts-work'
 Remove-Item $condactsWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $condactsWork | Out-Null
@@ -2120,6 +2311,7 @@ try {
 finally {
     Pop-Location
 }
+}
 
 function Find-ByteRuns {
     # Every start offset of $needle in $hay. Plain scan - the images
@@ -2450,6 +2642,7 @@ function Assert-SfxLoopAfterWait {
     "SFXLOOP: h_sfx commits audReqSmpLoop once (line $($s + 1)), after .pend (line $($pend + 1)) and before sfx_alloc_call (line $($alloc + 1))"
 }
 
+if ($runFx) {
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
 # ANYKEY is the V2 wait-for-key condact and this fixture must stay V2 -
 # under V3 the interpreter reads PAUSE 0 as GETKEY and SYNONYM changes
@@ -3377,6 +3570,7 @@ if ((Find-ByteRuns $dbgDebug ([byte[]]@(0x16, 0xDC, 0x5C, 0xDC, 0xFF))).Count -n
 if ((Find-ByteRuns $dbgPlain ([byte[]]@(0x16, 0x5C, 0xFF))).Count -ne 1) {
     throw "debugflag: expected exactly one bare NEWTEXT (5C) entry in tests\out\debugflag.ddb"
 }
+}
 
 # HALF TWO: what the INTERPRETER does with it, read out of the emitted
 # image the same way tests\dma_contract.py reads dma_copy's descriptors.
@@ -3393,8 +3587,10 @@ if ((Find-ByteRuns $dbgPlain ([byte[]]@(0x16, 0x5C, 0xFF))).Count -ne 1) {
 # The jr displacement is recomputed here rather than hard-coded, so the
 # check says "the skip goes back to the fetch" instead of "the byte is
 # F1". Same skip-with-a-warning rule as the dma_copy contract above: a
-# tree with no build yet is not a failure.
+# tree with no build yet is not a failure. The checks below on build\
+# bytes are their own step ($nexStep).
 if (Test-Path "$root\build\nextdaad.nex") {
+if (Test-StepRun $nexStep) {
     $nex = [System.IO.File]::ReadAllBytes("$root\build\nextdaad.nex")
     $guard = Find-MaskedRuns $nex @(0xFE, 0xFF, 0xCA, $null, $null, 0xFE, 0xDC, 0x28, $null, 0xE6, 0x7F)
     if ($guard.Count -ne 1) {
@@ -3472,6 +3668,8 @@ if (Test-Path "$root\build\nextdaad.nex") {
     Assert-SfxModeSites $nex
     Assert-SfxLevelSubs $nex
     Assert-SfxLoopAfterWait
+    Complete-Step $nexStep
+}
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"
@@ -3489,6 +3687,7 @@ else {
 # second parameter and rejects GETKEY outside V3. Do not "simplify"
 # this to reuse the plain invocation above.
 #
+if ($runFx) {
 $v3probeWork = Join-Path $root 'tests\out\v3probe-work'
 Remove-Item $v3probeWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $v3probeWork | Out-Null
@@ -3676,6 +3875,7 @@ try {
     Move-Item NDXBN.DDB "$root\tests\out\extern.ddb" -Force
 }
 finally { Pop-Location }
+}
 
 # ---- -DrcDiff: NDRC against its reference implementation ------------
 # Compiles each fixture through both pipelines and asserts identical
@@ -3789,6 +3989,7 @@ if ($DrcDiff) {
 # call_target's address for extern.dsf's XCAL entry - see the coupling
 # comment on both sides (tests\xbn\xbntest.asm's call_target label,
 # tests\extern.dsf's XCAL entry).
+if ($runFx) {
 New-Item -ItemType Directory -Force "$root\tests\out\xbn" | Out-Null
 Push-Location $root
 try {
@@ -3877,6 +4078,18 @@ $truncWav.AddRange([System.BitConverter]::GetBytes([UInt16]8))     # bits per sa
 $truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
 $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (promised, not delivered)
 [System.IO.File]::WriteAllBytes("$root\tests\out\truncwav.bin", $truncWav.ToArray())
+Complete-Step $fxStep
+}
+else {
+    # Skipped fixtures: the values staging reads, from their checked outputs.
+    $templateXmb = Test-Path -LiteralPath "$root\tests\out\template.xmb"
+    $bigLen = (Get-Item -LiteralPath "$root\tests\out\bigddb.ddb").Length
+    $bigTokLen = (Get-Item -LiteralPath "$root\tests\out\bigddb-autotok.ddb").Length
+    $accentTokBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\accents-autotok.ddb")
+    $l2posBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\l2pos.ddb")
+    $l2posWork = Join-Path $root 'tests\out\l2pos-work'
+    $utoBuilt = Test-Path -LiteralPath "$root\tools\TEST.DSF"
+}
 
 # Text format 2 fixtures (-Text2 / -Text2Ctl / -Text2Wide / -Text2Bad only): the kit's
 # ndrc has no -nxtext, so these need NEXTDAAD_NDRC=D:\NDRC\ndrc.exe (0.4.0+).
@@ -3884,9 +4097,26 @@ $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (
 # -nxtext to choose format 2; -auto-tokens on the same source is the control.
 # OBJVERIF3.DSF has more prose, enough for the 383-token alphabet.
 # NEST4.DSF (reader nesting, XMESSAGE) compiles in its own folders: ndrc
-# writes 0.XMB beside the DDB, one per format.
-$text2Any = $Text2 -or $Text2Ctl -or $Text2Wide -or $Text2Bad -or $Text2WideCtl -or $Text2Nest -or $Text2NestCtl -or $Text2Xmb -or $Text2XmbPart -or $Text2XmbFp -or $Text2Region -or $Text2RegionCtl -or $Text2RegionPart -or $Text2RegionBad
-if ($text2Any) {
+# writes 0.XMB beside the DDB, one per format. One step ($t2Step); $text2Any
+# is set with the step list above.
+$t2BadDir = Join-Path $root 'tests\out\text2bad'
+$rgBadDir = Join-Path $root 'tests\out\text2regbad'
+# name, expected T2E_* code, patch (the patches run only when the step runs)
+$t2BadSet = @(
+    @('MAGIC', 1, { param($b) $b[$t2Blk + 1] = [byte][char]'3' }),
+    @('FLAGS', 2, { param($b) $b[$t2Blk + 2] = [byte]($b[$t2Blk + 2] -bor 8) }),
+    @('NTOK', 3, { param($b) $b[$t2Blk + 3] = 0; $b[$t2Blk + 4] = 0 }),
+    @('FP', 4, { param($b) $b[$t2Blk + 5] = [byte]($b[$t2Blk + 5] -bxor 0xFF) }),
+    @('EOM', 5, { param($b) Set-Text2Len $b 10 0; Set-Text2Fp $b 128 }),
+    @('SYM', 6, { param($b) $b[$t2Blk + 3] = 1; $b[$t2Blk + 4] = 0 }),
+    @('KRAFT', 7, { param($b) Set-Text2Len $b 10 1; Set-Text2Len $b 32 1; Set-Text2Len $b 101 1; Set-Text2Fp $b 128 })
+)
+if ($text2Any -and -not (Test-StepRun $t2Step)) {
+    $rgNx = [System.IO.File]::ReadAllBytes("$root\tests\out\region-nx.ddb")
+    $rgTok = [System.IO.File]::ReadAllBytes("$root\tests\out\region-tok.ddb")
+    $rgA = $rgNx[0x20] + 256 * $rgNx[0x21]
+}
+elseif ($text2Any) {
     $t2Work = Join-Path $root 'tests\out\text2-work'
     Remove-Item $t2Work -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $t2Work | Out-Null
@@ -4000,17 +4230,7 @@ if ($text2Any) {
         $b[$t2Blk + 5] = [byte]($c -band 0xFF)
         $b[$t2Blk + 6] = [byte]($c -shr 8)
     }
-    # name, expected T2E_* code, patch
-    $t2BadSet = @(
-        @('MAGIC', 1, { param($b) $b[$t2Blk + 1] = [byte][char]'3' }),
-        @('FLAGS', 2, { param($b) $b[$t2Blk + 2] = [byte]($b[$t2Blk + 2] -bor 8) }),
-        @('NTOK', 3, { param($b) $b[$t2Blk + 3] = 0; $b[$t2Blk + 4] = 0 }),
-        @('FP', 4, { param($b) $b[$t2Blk + 5] = [byte]($b[$t2Blk + 5] -bxor 0xFF) }),
-        @('EOM', 5, { param($b) Set-Text2Len $b 10 0; Set-Text2Fp $b 128 }),
-        @('SYM', 6, { param($b) $b[$t2Blk + 3] = 1; $b[$t2Blk + 4] = 0 }),
-        @('KRAFT', 7, { param($b) Set-Text2Len $b 10 1; Set-Text2Len $b 32 1; Set-Text2Len $b 101 1; Set-Text2Fp $b 128 })
-    )
-    $t2BadDir = Join-Path $root 'tests\out\text2bad'
+    # $t2BadSet and the two output folders are defined above the step guard.
     Remove-Item $t2BadDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $t2BadDir | Out-Null
     foreach ($v in $t2BadSet) {
@@ -4051,7 +4271,6 @@ if ($text2Any) {
         @('REGOVER', { param($b) $w = $b.Length - 65536; $b[0x20] = [byte]($w -band 0xFF); $b[0x21] = [byte]($w -shr 8) }),
         @('BLK2', { param($b) $b[8] = 2; $b[9] = 0 })
     )
-    $rgBadDir = Join-Path $root 'tests\out\text2regbad'
     Remove-Item $rgBadDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $rgBadDir | Out-Null
     foreach ($v in $rgBadSet) {
@@ -4073,6 +4292,7 @@ if ($text2Any) {
         [System.IO.File]::WriteAllBytes((Join-Path $rgBadDir "$($f1[0]).DDB"), $f1b)
     }
     "text2regbad: A59 REGOVER BLK2 (T2E 9), F1BIG ($($f1Big.Length) bytes), F1EQ (65536), F1P1 (65537), format 1"
+    Complete-Step $t2Step
 }
 
 # ===================================================================
@@ -4082,6 +4302,31 @@ if ($text2Any) {
 # is the first thing any run does to sd\, so the hazard applies before
 # any per-switch guard would run. Per-switch guards below are kept as a
 # marker at each site, not because they run first.
+function Write-LegListing {
+    $legFiles = @(Get-ChildItem -LiteralPath $leg -Force -Recurse -File | Sort-Object FullName)
+    $legBytes = ($legFiles | Measure-Object -Property Length -Sum).Sum
+    ""
+    "=== sd\$legName\ - $($legFiles.Count) file(s), $legBytes bytes ==="
+    foreach ($f in $legFiles) {
+        $rel = $f.FullName.Substring($leg.Length + 1)
+        "  {0,-18} {1,12}" -f $rel, $f.Length
+    }
+    "COPY   sd\$legName\  (the whole folder, to the card)"
+    if ($Intro) {
+        "LAUNCH SHOW.NEX  (from inside that folder - runs the scripted show, then hands off to the game; NEXTDAAD.NEX skips it)"
+    }
+    else {
+        "LAUNCH NEXTDAAD.NEX  (from inside that folder - the game reads GAME.DDB and every asset from its own directory)"
+    }
+    "staged leg: sd\$legName"
+}
+# An unchanged leg whose folder still matches its stamp is left exactly as staged. Checked
+# only now, after the fixture and self-test steps above wrote the outputs it copies.
+$stepCheck[$legStep] = (Invoke-StampCheck $root @{ $legStep = $legSpec } -Full:$Full)[$legStep]
+if (-not (Test-StepRun $legStep)) {
+    Write-LegListing
+    return
+}
 if (Test-SdCSpect) {
     throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
 }
@@ -6740,18 +6985,5 @@ elseif ($Suite) { "active: suite" }
 else { "active: template" }
 
 # ---- what to copy, what to launch ---------------------------------
-$legFiles = @(Get-ChildItem -LiteralPath $leg -Force -Recurse -File | Sort-Object FullName)
-$legBytes = ($legFiles | Measure-Object -Property Length -Sum).Sum
-""
-"=== sd\$legName\ - $($legFiles.Count) file(s), $legBytes bytes ==="
-foreach ($f in $legFiles) {
-    $rel = $f.FullName.Substring($leg.Length + 1)
-    "  {0,-18} {1,12}" -f $rel, $f.Length
-}
-"COPY   sd\$legName\  (the whole folder, to the card)"
-if ($Intro) {
-    "LAUNCH SHOW.NEX  (from inside that folder - runs the scripted show, then hands off to the game; NEXTDAAD.NEX skips it)"
-}
-else {
-    "LAUNCH NEXTDAAD.NEX  (from inside that folder - the game reads GAME.DDB and every asset from its own directory)"
-}
+Complete-Step $legStep
+Write-LegListing

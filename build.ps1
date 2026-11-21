@@ -9,7 +9,10 @@
 #
 # -BenchQuiet builds DEBUG plus NXB_QUIET: timed video paths carry no instruments.
 # -Bench builds Release plus BENCH (EXTERN 0 13 driver, BENCH303.LOG); refuses a dirty src\.
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [switch]$Bench, [string]$Leg)
+# A variant whose sources and output bytes match its stamp (tests\stamps.py) is not reassembled,
+# only restored from build\variants\ if another variant overwrote it. -Full and -Kit always
+# assemble (-Kit is not stamped); -Plan prints "PLAN<TAB>build-<variant><TAB>state<TAB>why" only.
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$BenchQuiet, [switch]$Bench, [string]$Leg, [switch]$Full, [switch]$Plan)
 $ErrorActionPreference = 'Stop'
 if ($Bench -and ($BenchQuiet -or $Kit)) { throw "-Bench is a Release image: not with -BenchQuiet or -Kit" }
 if ($BenchQuiet -and ($Release -or $Kit)) { throw "-BenchQuiet is a DEBUG image: not with -Release or -Kit" }
@@ -44,18 +47,46 @@ try {
     # DAC signedness is UNSIGNED everywhere on the CPU-OUT path - one convention,
     # no build toggle (the -DacCSpect accommodation was retired once the OUT path
     # was confirmed unsigned on CSpect too; see nextdaad.inc DAC_SILENCE).
-    & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
-    if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
-    Write-Host "built build\nextdaad.nex"
     $variant = if ($Bench) { 'Bench' } elseif ($Release -or $Kit) { 'Release' } else { 'DEBUG' }
     # Stamp the last commit that touched src\ (everything the NEX assembles),
     # so rebuilding an unchanged interpreter leaves the SYM unchanged.
     $hash = (& git -C $root log -1 --format=%h -- src 2>$null)
     if ($hash -and (& git -C $root status --porcelain -- src 2>$null)) { $hash = "$hash-dirty" }
-    & "$root\scripts\make-sym.ps1" -Sld "$root\build\nextdaad.sld" -Nex "$root\build\nextdaad.nex" -Root $root -Out "$root\build\NEXTDAAD.SYM" -Variant $variant -Build "$hash"
-    & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\intro.sld" @defs "src/intro/main.asm"
-    if ($LASTEXITCODE -ne 0) { throw "intro assembly failed" }
-    Write-Host "built build\intro.nex"
+    $variantKey = $variant + $(if ($Force1MB) { '-Force1MB' } else { '' }) + $(if ($BenchQuiet) { '-BenchQuiet' } else { '' })
+    $stampName = "build-$variantKey"
+    $stamped = (-not $Kit) -and [bool](Get-Command python -ErrorAction SilentlyContinue)
+    if ($Plan -and -not $stamped) { Write-Output "PLAN`t$stampName`tSTALE`tnot stamped (-Kit, or no python)"; return }
+    $fresh = $false
+    if ($stamped) {
+        . "$root\tests\stamps.ps1"
+        $spec = @{
+            git = @('src'); files = @('build.ps1', 'scripts/make-sym.ps1')
+            tools = @{ sjasmplus = "$root\tools\sjasmplus\sjasmplus.exe" }
+            ident = @{ variant = $variantKey; defs = ($defs -join ' '); src = "$hash" }
+            outputs = @('build/nextdaad.nex', 'build/nextdaad.map', 'build/nextdaad.sld', 'build/NEXTDAAD.SYM',
+                        'build/intro.nex', 'build/intro.map', 'build/intro.sld')
+            hash_outputs = $true; cache_dir = "build/variants/$variantKey"
+        }
+        if ($Plan) {
+            $chk = (Invoke-StampCheck $root @{ $stampName = $spec } -Plan)[$stampName]
+            Write-Output "PLAN`t$stampName`t$($chk.State)`t$($chk.Info)"
+            return
+        }
+        $chk = (Invoke-StampCheck $root @{ $stampName = $spec } -Full:$Full)[$stampName]
+        $fresh = $chk.Fresh
+        if ($fresh) { Write-Host "build ${variantKey}: unchanged since $($chk.Info)" }
+        else { Write-Host "build ${variantKey}: assembling ($($chk.Info))" }
+    }
+    if (-not $fresh) {
+        & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
+        if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
+        Write-Host "built build\nextdaad.nex"
+        & "$root\scripts\make-sym.ps1" -Sld "$root\build\nextdaad.sld" -Nex "$root\build\nextdaad.nex" -Root $root -Out "$root\build\NEXTDAAD.SYM" -Variant $variant -Build "$hash"
+        & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\intro.sld" @defs "src/intro/main.asm"
+        if ($LASTEXITCODE -ne 0) { throw "intro assembly failed" }
+        Write-Host "built build\intro.nex"
+        if ($stamped) { Complete-Stamp $root @($stampName) }
+    }
     # Only -Kit publishes the interpreter into the shippable authoring kit, so
     # routine -Release dev builds never overwrite the kit's committed nextdaad.nex.
     if ($Kit) {

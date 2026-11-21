@@ -1,7 +1,9 @@
 """Stage the text2 legs: one build-tests.ps1 run per switch (it stages a single leg per run).
 
-python tests/text2/stage_legs.py reader|loader
+python tests/text2/stage_legs.py reader|loader [--full | --plan]
 Needs an NDRC with -nxtext: NEXTDAAD_NDRC defaults to D:\\NDRC\\ndrc.exe.
+build-tests.ps1 skips unchanged legs; --full passes -Full to it (restage everything),
+--plan passes -Plan (report each leg's state, stage nothing).
 """
 import os
 import shutil
@@ -19,13 +21,16 @@ SETS = {
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in SETS:
+    args = sys.argv[1:]
+    extra = (['-Full'] if '--full' in args else []) + (['-Plan'] if '--plan' in args else [])
+    args = [a for a in args if a not in ('--full', '--plan')]
+    if len(args) != 1 or args[0] not in SETS:
         sys.exit(__doc__)
     env = dict(os.environ)
     env.setdefault('NEXTDAAD_NDRC', r'D:\NDRC\ndrc.exe')
-    for sw in SETS[sys.argv[1]]:
+    for sw in SETS[args[0]]:
         argv = [SHELL, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                os.path.join(ROOT, 'tests', 'build-tests.ps1'), sw]
+                os.path.join(ROOT, 'tests', 'build-tests.ps1'), sw] + extra
         print('stage', sw, flush=True)
         rc = subprocess.run(argv, cwd=ROOT, env=env).returncode
         if rc:

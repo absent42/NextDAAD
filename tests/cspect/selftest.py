@@ -1601,6 +1601,9 @@ HOST = [t_parse_dump_ok, t_dump_rejects_gap, t_read_map, t_reply_sse_and_plain, 
         t_fallback_runs, t_guard_parser, t_session_status, t_session_fake_mcp, t_session_boot_args,
         t_session_raster, t_session_border_index, t_session_wait_until, t_session_symbols,
         t_session_stop_races, t_session_keys, t_session_mouse_pins]
+# change-aware stamp helper (tests/stamps.py) checks
+import test_stamps  # noqa: E402
+HOST += test_stamps.HOST
 LIVE = [l_launch_tools_close, l_private_copy_mcp, l_no_port_11000, l_window_minimised,
         l_parent_killed, l_exception_closes, l_foreign_untouched, l_guard_narrowed, l_boot_rows,
         l_mouse_pins, l_symbols, l_mem_roundtrip, l_flags_frame, l_wait_frames_both_speeds, l_paused_boot_brk,
