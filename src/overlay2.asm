@@ -982,7 +982,11 @@ h_display:
 ; unknown-sub idiom (SP7 Task 4, overlay1.asm). Corrupts everything.
 h_gfx:
     ld a, c                     ; sub-command; B (P1) and C reach every sub
+ IFDEF DEBUG
+    cp GFX_SUB_COUNT+1          ; sub 28 exists in DEBUG only
+ ELSE
     cp GFX_SUB_COUNT
+ ENDIF
     jr nc, .unk
     add a, a
     ld hl, .tab
@@ -1016,6 +1020,9 @@ h_gfx:
     dw .curglyph, .curblink, .curink, .curpaper, .curreset
     dw gfx_pos_consume           ; sub 27: disarm, axes back to 0
     ASSERT $ - .tab == 2*GFX_SUB_COUNT
+ IFDEF DEBUG
+    dw .nobank                   ; sub 28: B -> dbgNoBank
+ ENDIF
     ; Offset ASSERTs miss a swapped label: read every slot back.
     ASSERT {.tab+2*0} == .backfront && {.tab+2*1} == .frontback && {.tab+2*2} == .swap
     ASSERT {.tab+2*3} == .toscreen && {.tab+2*4} == .tobuffer
@@ -1067,6 +1074,12 @@ h_gfx:
     pop bc
  ENDIF
     ret
+ IFDEF DEBUG
+.nobank:                         ; sub 28: nonzero forces gfx_bank_get's
+    ld a, b                      ; pool-dry exit, so tests reach the
+    ld (dbgNoBank), a            ; fallback stream
+    ret
+ ENDIF
 .tobuffer:                       ; sub 4: graphics write to back buffer.
     ld a, 1                      ; DISPLAY stages without revealing.
     ld (gfxDrawTarget), a        ; Transient: GFX n 3, RESTART, LOAD or
@@ -2134,6 +2147,11 @@ gfx_load_rollback:
 ; remains and the pool is still dry - TRUE exhaustion, gfx_load's
 ; fallback trigger. Corrupts AF, BC, DE, HL.
 gfx_bank_get:
+ IFDEF DEBUG
+    ld a, (dbgNoBank)
+    or a
+    jr nz, .dry                 ; pool and cache left as they are
+ ENDIF
 .try:
     ld a, (gfxBankNext)
     cp GFX_BANKLIST_MAX
@@ -2143,10 +2161,14 @@ gfx_bank_get:
 .evict:
     call gfx_evict_fix
     jr nc, .try
+.dry:
     ld a, 1
     ld (gfxAllocFail), a
     scf
     ret
+ IFDEF DEBUG
+dbgNoBank: db 0
+ ENDIF
 
 ; --- LRU eviction (moved from resident gfxcache.asm, SP8 Task 1: the
 ; only caller is gfx_evict_fix below; frees ~200 resident bytes) -----

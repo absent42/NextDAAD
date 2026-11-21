@@ -1,15 +1,18 @@
 # Positioned-picture (NX3) fixture art, and the expected Layer 2 FRONT
 # surface after every step of the fixture walk (tests/l2pos.dsf).
 #
-#   mkl2pos.py <outdir> [--mode 0|1]   001.NXI|NX2, 002-007.NX3,
-#                                      expect_<id>.bin, l2pos_tags.txt,
-#                                      l2pos_walk.json
+#   mkl2pos.py <outdir> [--mode 0|1]   001/008/010.NXI|NX2, 002-007, 009,
+#                                      011.NX3, expect_<id>.bin,
+#                                      l2pos_tags.txt, l2pos_walk.json
 #   mkl2pos.py <outdir> --png [--mode 0|1]
 #                                      indexed PNGs + sidecars 001-006
 #
 # WALK is the single step list: the fixture runs each step's condacts
 # verbatim, the model below replays the same strings, the checker reads
-# the json. Step 8 (bank exhaustion) has no composite and is not listed.
+# the json. Steps 10/10a reach the fallback stream through the DEBUG-only
+# GFX n 28 (pool reported dry); steps 12-12b scroll text windows and are
+# also compared against tests/l2pos_tm/tm_<id>.bin (tilemap rows 0-27,
+# captured once with l2pos_check.py --capture).
 #
 # Model (overlay2 gfx_blit / gfx_blit_pos / h_display / h_gfx): two raw
 # 10-page surfaces; mode 0 row-major y*256+x, mode 1 column-major x*256+y;
@@ -41,6 +44,8 @@ FONT.update({
     'F': ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
     'B': ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
 })
+PLAIN = (1, 8, 10)             # .NXI/.NX2 files; the rest are NX3
+RAW_ONLY = (10, 11)            # fallback-stream pictures: never ZX0
 
 # --- palette (RGB333) ----------------------------------------------
 RANGES = {'loc': (0, 100), 'hud': (101, 150), 'tilea': (151, 200), 'tileb': (201, 250)}
@@ -114,7 +119,19 @@ PICS = {
             fill=(220, 230), frame=245, lab=249, text='FLT', scale=3, hole=None),
     6: dict(w=32, h=32, fl=False, x=8, y=160, pal=(201, 250), ink=(201, 250),
             fill=(210, 215), frame=240, lab=250, text='TB', scale=2, hole=(28, 2)),
+    # h None = surface height (320x256: height byte 0; rows 224+ are
+    # index 255 so the text window below stays visible on a real screen)
+    8: dict(w=None, h=None, fl=False, x=0, y=0, pal=(0, 255), ink=(0, 100),
+            fill=(10, 80), frame=100, lab=0, text='FULL', scale=3, hole=None),
+    # 100 bytes wide: row 158 straddles the first cache bank
+    9: dict(w=100, h=180, fl=False, x=40, y=8, pal=(101, 150), ink=(101, 150),
+            fill=(105, 140), frame=150, lab=101, text='TALL', scale=3, hole=None),
+    10: dict(w=None, h=96, fl=False, x=0, y=0, pal=(0, 255), ink=(0, 100),
+             fill=(25, 75), frame=5, lab=99, text='FB1', scale=3, hole=None),
+    11: dict(w=64, h=32, fl=False, x=100, y=100, pal=(151, 200), ink=(151, 200),
+             fill=(155, 185), frame=200, lab=151, text='FB2', scale=2, hole=(59, 2)),
 }
+TEXT_TOP = 224                 # pixel row of text window 0 on the 320x256 surface
 
 
 def draw_label(px, text, idx, scale):
@@ -138,9 +155,13 @@ def draw_label(px, text, idx, scale):
     return (left, top, left + tw - 1, top + th - 1)
 
 
+def pic_h(n, sw):
+    return PICS[n]['h'] or (256 if sw == 320 else 192)
+
+
 def picture(n, sw):
     p = PICS[n]
-    w, h = p['w'] or sw, p['h']
+    w, h = p['w'] or sw, pic_h(n, sw)
     f0, f1 = p['fill']
     # 8x8 checker: any one-pixel shift breaks a block edge
     px = [[f0 if ((x >> 3) + (y >> 3)) & 1 == 0 else f1 for x in range(w)] for y in range(h)]
@@ -156,6 +177,9 @@ def picture(n, sw):
         for yy in (hy, hy + 1):
             for xx in (hx, hx + 1):
                 px[yy][xx] = TRANSP
+    if p['h'] is None and h > TEXT_TOP:
+        for yy in range(TEXT_TOP, h):
+            px[yy] = [TRANSP] * w
     lo, hi = p['ink']
     for row in px:
         for v in row:
@@ -172,8 +196,8 @@ def nx3_header(mode, floating, x, y, w, h, pf, pl):
             + bytes([y]) + struct.pack('<H', w) + bytes([h & 255, pf, pl, 0, 0]))
 
 
-def plain_name(mode):
-    return '001.' + ('NX2' if mode else 'NXI')
+def plain_name(mode, n=1):
+    return '%03d.' % n + ('NX2' if mode else 'NXI')
 
 
 def build(mode):
@@ -183,8 +207,8 @@ def build(mode):
         px = picture(n, sw)
         pics[n] = px
         body = pal_bytes(file_palette(n)) + flat(px)
-        if n == 1:
-            files[plain_name(mode)] = body
+        if n in PLAIN:
+            files[plain_name(mode, n)] = body
         else:
             w = p['w'] or sw
             files['%03d.NX3' % n] = nx3_header(mode, p['fl'], p['x'], p['y'], w, p['h'], *p['pal']) + body
@@ -199,9 +223,10 @@ def decode_back(files, mode):
     """Re-read every file from its bytes: header, length, pixel ranges."""
     sw, sh = (320, 256) if mode else (256, 192)
     for name, data in sorted(files.items()):
-        if name.startswith('001.'):
-            assert (len(data) - 512) % sw == 0 and (len(data) - 512) // sw == 96, name
-            pix, (lo, hi), pmode = data[512:], PICS[1]['ink'], mode
+        if not name.endswith('.NX3'):
+            pn = int(name[:3])
+            assert (len(data) - 512) % sw == 0 and (len(data) - 512) // sw == pic_h(pn, sw), name
+            pix, (lo, hi), pmode = data[512:], PICS[pn]['ink'], mode
         else:
             n = int(name[:3])
             p = PICS[6 if n == 7 else n]
@@ -265,7 +290,28 @@ WALK = [
      'both surfaces transparent'),
     ('7', 'STEP 7 MODE ', ['PICTURE 7', 'DISPLAY 0'],
      'other-mode NX3: both cleared, mode switched, TB at 8,160'),
+    ('8', 'STEP 8 FULL ', ['PICTURE 8', 'DISPLAY 0'],
+     'plain full-surface FULL, back in the set mode'),
+    ('8a', 'STEP 8A SHORT ', ['PICTURE 1', 'DISPLAY 0'],
+     'plain LOC1 after a full picture: clear below row 95'),
+    ('8b', 'STEP 8B FRONT TO BACK ', ['GFX 0 1', 'GFX 0 2'],
+     'front copied to back, then swapped: no visible change'),
+    ('9', 'STEP 9 TALL ', ['PICTURE 9', 'DISPLAY 0'],
+     'NX3 TALL 100x180 at 40,8'),
+    ('10', 'STEP 10 FALLBACK ', ['GFX 1 28', 'PICTURE 10', 'GFX 0 28'],
+     'no bank free: plain FB1 streamed from the card, rest clear'),
+    ('10a', 'STEP 10A FALLBACK POS ', ['GFX 1 28', 'PICTURE 11', 'GFX 0 28'],
+     'no bank free: NX3 FB2 streamed to 100,100'),
+    ('11', 'STEP 11 CLEAR ', ['GFX 0 7', 'DISPLAY 1'],
+     'both surfaces transparent'),
+    ('12', 'STEP 12 SCROLL WIDE ', ['PROCESS 5'],
+     'window rows 0-7 x 80 columns scrolled 3 times'),
+    ('12a', 'STEP 12A SCROLL NARROW ', ['PROCESS 6'],
+     'window rows 10-17, columns 30-49 scrolled 3 times'),
+    ('12b', 'STEP 12B SCROLL ROW ', ['PROCESS 7'],
+     'one-row window at row 20: blanked by its scroll'),
 ]
+TM_STEPS = ('12', '12a', '12b')
 
 
 class Model:
@@ -280,6 +326,8 @@ class Model:
         self.staged = None
         self.wins = {0: [28, 0, 4, 80]}  # row, col, height, width
         self.cur = 0
+        self.nobank = 0                  # GFX n 28 (DEBUG)
+        self.cached = set()
 
     def pmode(self, n):
         return 1 - self.set_mode if n == 7 else self.set_mode
@@ -312,8 +360,8 @@ class Model:
         assert n is not None, "DISPLAY 0 with nothing staged"
         p = PICS[6 if n == 7 else n]
         sw = 320 if self.pmode(n) else 256
-        w, h = p['w'] or sw, p['h']
-        if n == 1 and self.ovr is None:
+        w, h = p['w'] or sw, p['h'] or (256 if sw == 320 else 192)
+        if n in PLAIN and self.ovr is None:
             # gfx_blit: mode commit, clear a short back, render, flip
             self.l2mode = self.pmode(n)
             if h < (256 if self.l2mode else 192):
@@ -328,7 +376,7 @@ class Model:
             self.l2mode = self.pmode(n)
             self.clear(0)
             self.clear(1)
-        if n == 1:
+        if n in PLAIN:
             x, y = 0, 0                  # plain under override: full size
         else:
             x, y = p['x'], p['y']
@@ -349,7 +397,27 @@ class Model:
         op, *a = condact.split()
         a = [int(v) for v in a]
         if op == 'PICTURE':
-            self.staged = a[0]
+            n = a[0]
+            if self.nobank and n not in self.cached:
+                # gfx_load's fallback: drawn at once, nothing cached or staged
+                assert self.target == 0 and self.ovr is None, "fallback outside the walk's shape"
+                self.staged = None
+                p = PICS[n]
+                sw = 320 if self.pmode(n) else 256
+                w, h = p['w'] or sw, p['h'] or (256 if sw == 320 else 192)
+                if n in PLAIN:           # gfx_direct_stream: clear back, rows, flip
+                    self.l2mode = self.pmode(n)
+                    self.clear(self.back())
+                    self.paint([self.back()], n, 0, 0, w, h)
+                    self.front = self.back()
+                else:                    # gfx_direct_stream_pos: both surfaces
+                    assert self.pmode(n) == self.l2mode
+                    self.paint([0, 1], n, p['x'], p['y'], w, h)
+                return
+            self.staged = n
+            self.cached.add(n)
+        elif op == 'PROCESS':
+            pass                         # text only (the scroll steps)
         elif op == 'DISPLAY':
             if a[0] == 0:
                 self.display0()
@@ -371,6 +439,12 @@ class Model:
                 n = (10 if self.l2mode else 6) * PAGE
                 self.surf[self.front][:n] = self.surf[self.back()][:n]
                 self.known[self.front][:n] = self.known[self.back()][:n]
+            elif sub == 1:
+                n = (10 if self.l2mode else 6) * PAGE
+                self.surf[self.back()][:n] = self.surf[self.front][:n]
+                self.known[self.back()][:n] = self.known[self.front][:n]
+            elif sub == 28:
+                self.nobank = p1
             elif sub == 2:
                 self.front = self.back()
             elif sub in (3, 4):
@@ -397,6 +471,9 @@ class Model:
         n = (10 if self.l2mode else 6) * PAGE
         assert all(self.known[self.front][:n]), "step %s: front holds unknown bytes" % sid
         return bytes(self.surf[self.front][:n])
+
+
+WALK_IDS = [w[0] for w in WALK]
 
 
 def surface_bytes(mode, rects):
@@ -433,7 +510,7 @@ def replay(pics, mode):
         '4d': [(8, 160, 6)], '5': [], '5a': [(128, 128, 3)], '5b': [(32, 64, 6)],
     }
     rects = []
-    for s in out[:-2]:
+    for s in out[:WALK_IDS.index('6')]:
         rects += [(x, y, pics[n]) for x, y, n in adds[s['id']]]
         assert by[s['id']] == surface_bytes(mode, rects), "step %s differs from the independent replay" % s['id']
     # the walk's claims
@@ -443,10 +520,26 @@ def replay(pics, mode):
     assert (by['4c'] == by['4b']) == m0, "4c: mode 0 off-surface, mode 1 eight columns"
     assert by['4d'] == by['4c'] and by['5'] == by['4d']
     assert by['5a'] != by['5'] and by['5b'] != by['5a']
-    assert out[-2]['id'] == '6' and by['6'] == bytes([TRANSP]) * len(by['6'])
-    assert out[-1]['id'] == '7' and out[-1]['mode'] == 1 - mode
+    md = {s['id']: s['mode'] for s in out}
+    assert by['6'] == bytes([TRANSP]) * len(by['6'])
+    assert md['7'] == 1 - mode
     assert by['7'] == surface_bytes(1 - mode, [(8, 160, pics[6])])
+    assert all(md[i] == mode for i in WALK_IDS[WALK_IDS.index('8'):])
+    assert by['8'] == surface_bytes(mode, [(0, 0, pics[8])])
+    assert by['8a'] == surface_bytes(mode, [(0, 0, pics[1])]) and by['8b'] == by['8a']
+    assert by['9'] == surface_bytes(mode, [(0, 0, pics[1]), (40, 8, pics[9])])
+    assert by['10'] == surface_bytes(mode, [(0, 0, pics[10])])
+    assert by['10a'] == surface_bytes(mode, [(0, 0, pics[10]), (100, 100, pics[11])])
+    for i in ('11',) + TM_STEPS:
+        assert by[i] == bytes([TRANSP]) * len(by[i])
+    for s in out:
+        if s['id'] in TM_STEPS:
+            s['tm'] = 'tm_%s.bin' % s['id']
     return out
+
+
+def files_nx3():
+    return ['%03d.NX3' % n for n in list(PICS) + [7] if n not in PLAIN]
 
 
 def write_expect(outdir, mode, pics):
@@ -460,7 +553,8 @@ def write_expect(outdir, mode, pics):
     with open(os.path.join(outdir, 'l2pos_tags.txt'), 'w', newline='\n') as f:
         f.write('\n'.join(tags) + '\n')
     with open(os.path.join(outdir, 'l2pos_walk.json'), 'w', newline='\n') as f:
-        json.dump(dict(set_mode=mode, note='step 8 (bank exhaustion) has no composite',
+        json.dump(dict(set_mode=mode, plain=[plain_name(mode, n) for n in PLAIN],
+                       nx3=sorted(n for n in files_nx3()), raw_only=['%03d' % n for n in RAW_ONLY],
                        steps=steps), f, indent=1)
     return steps
 

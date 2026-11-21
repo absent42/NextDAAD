@@ -1,8 +1,8 @@
 ; NextDAAD positioned Layer 2 picture (NX3) fixture.
 ;
 ; Staged by tests\build-tests.ps1 -L2Pos (256x192 set, mode 0) or
-; -L2PosWide (320x256 set, mode 1) into sd\L2POS\: GAME.DDB, 001.NXI or
-; 001.NX2, 002-007.NX3 and NEXTDAAD.NEX. tests\art\mkl2pos.py makes the
+; -L2PosWide (320x256 set, mode 1) into sd\L2POS\: GAME.DDB, the plain
+; pictures 001/008/010 (.NXI or .NX2), the NX3 pictures and NEXTDAAD.NEX. tests\art\mkl2pos.py makes the
 ; art and, per step, the expected Layer 2 front surface.
 ;
 ; One keypress = one step of mkl2pos.py's WALK, in order. Each step
@@ -396,7 +396,6 @@ SOUTH 0
         PICTURE 7
         DISPLAY 0
         MES "RAN "
-        MES "END OF WALK "
         NEWLINE
         PLUS fStep 1
         DONE
@@ -407,5 +406,205 @@ SOUTH 0
         NEWLINE
         INK 15
         PLUS fStep 1
+        DONE
+; step 8: plain full-surface FULL, back in the set mode
+> _ _   EQ fStep 15
+        MES "STEP 8 FULL "
+        PICTURE 8
+        DISPLAY 0
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+> _ _   EQ fStep 15
+        WINDOW 0
+        INK 10
+        MES "PICTURE FAILED "
+        NEWLINE
+        INK 15
+        PLUS fStep 1
+        DONE
+; step 8a: plain LOC1 after a full picture: clear below row 95
+> _ _   EQ fStep 16
+        MES "STEP 8A SHORT "
+        PICTURE 1
+        DISPLAY 0
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+> _ _   EQ fStep 16
+        WINDOW 0
+        INK 10
+        MES "PICTURE FAILED "
+        NEWLINE
+        INK 15
+        PLUS fStep 1
+        DONE
+; step 8b: front copied to back, then swapped: no visible change
+> _ _   EQ fStep 17
+        MES "STEP 8B FRONT TO BACK "
+        GFX 0 1
+        GFX 0 2
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+; step 9: NX3 TALL 100x180 at 40,8
+> _ _   EQ fStep 18
+        MES "STEP 9 TALL "
+        PICTURE 9
+        DISPLAY 0
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+> _ _   EQ fStep 18
+        WINDOW 0
+        INK 10
+        MES "PICTURE FAILED "
+        NEWLINE
+        INK 15
+        PLUS fStep 1
+        DONE
+; step 10: DEBUG GFX n 28 reports the pool dry: plain FB1 streamed from the card
+> _ _   EQ fStep 19
+        MES "STEP 10 FALLBACK "
+        GFX 1 28
+        PICTURE 10
+        GFX 0 28
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+> _ _   EQ fStep 19
+        WINDOW 0
+        INK 10
+        MES "PICTURE FAILED "
+        NEWLINE
+        INK 15
+        PLUS fStep 1
+        DONE
+; step 10a: pool dry: NX3 FB2 streamed to 100,100
+> _ _   EQ fStep 20
+        MES "STEP 10A FALLBACK POS "
+        GFX 1 28
+        PICTURE 11
+        GFX 0 28
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+> _ _   EQ fStep 20
+        WINDOW 0
+        INK 10
+        MES "PICTURE FAILED "
+        NEWLINE
+        INK 15
+        PLUS fStep 1
+        DONE
+; step 11: both surfaces transparent
+> _ _   EQ fStep 21
+        MES "STEP 11 CLEAR "
+        GFX 0 7
+        DISPLAY 1
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+; step 12: rows 0-7 x 80 columns scrolled 3 times
+> _ _   EQ fStep 22
+        MES "STEP 12 SCROLL WIDE "
+        PROCESS 5
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+; step 12a: rows 10-17, columns 30-49 scrolled 3 times
+> _ _   EQ fStep 23
+        MES "STEP 12A SCROLL NARROW "
+        PROCESS 6
+        MES "RAN "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+; step 12b: one-row window at row 20
+> _ _   EQ fStep 24
+        MES "STEP 12B SCROLL ROW "
+        PROCESS 7
+        MES "RAN "
+        MES "END OF WALK "
+        NEWLINE
+        PLUS fStep 1
+        DONE
+/PRO 5
+; Scroll steps: text windows over rows 0-27, clear of window 0. MODE 2 = no pager.
+> _ _   WINDOW 3
+        WINAT 0 0
+        WINSIZE 8 80
+        MODE 2
+        MES "SCROLL WIDE LINE A"
+        NEWLINE
+        MES "SCROLL WIDE LINE B"
+        NEWLINE
+        MES "SCROLL WIDE LINE C"
+        NEWLINE
+        MES "SCROLL WIDE LINE D"
+        NEWLINE
+        MES "SCROLL WIDE LINE E"
+        NEWLINE
+        MES "SCROLL WIDE LINE F"
+        NEWLINE
+        MES "SCROLL WIDE LINE G"
+        NEWLINE
+        MES "SCROLL WIDE LINE H"
+        NEWLINE
+        MES "SCROLL WIDE LINE I"
+        NEWLINE
+        MES "SCROLL WIDE LINE J"
+        NEWLINE
+        MES "SCROLL WIDE LINE K"
+        NEWLINE
+        WINDOW 0
+        DONE
+/PRO 6
+> _ _   WINDOW 4
+        WINAT 10 30
+        WINSIZE 8 20
+        MODE 2
+        MES "NARROW LINE A"
+        NEWLINE
+        MES "NARROW LINE B"
+        NEWLINE
+        MES "NARROW LINE C"
+        NEWLINE
+        MES "NARROW LINE D"
+        NEWLINE
+        MES "NARROW LINE E"
+        NEWLINE
+        MES "NARROW LINE F"
+        NEWLINE
+        MES "NARROW LINE G"
+        NEWLINE
+        MES "NARROW LINE H"
+        NEWLINE
+        MES "NARROW LINE I"
+        NEWLINE
+        MES "NARROW LINE J"
+        NEWLINE
+        MES "NARROW LINE K"
+        NEWLINE
+        WINDOW 0
+        DONE
+/PRO 7
+> _ _   WINDOW 5
+        WINAT 20 0
+        WINSIZE 1 80
+        MODE 2
+        MES "ROW LINE A"
+        NEWLINE
+        MES "ROW LINE B"
+        NEWLINE
+        WINDOW 0
         DONE
 /END

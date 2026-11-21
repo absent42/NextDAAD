@@ -6148,7 +6148,7 @@ if ($L2Pos -or $L2PosWide) {
     # The walk is the authority: every step must compile as MES <its text>
     # followed by its condacts verbatim, contiguous in the DDB, and sit in
     # PRO 1 (step 1) or behind EQ 100 <fstep> in PRO 4.
-    $l2pOps = @{ PICTURE = 84; DISPLAY = 28; WINDOW = 78; WINAT = 82; WINSIZE = 107; GFX = 87 }
+    $l2pOps = @{ PICTURE = 84; DISPLAY = 28; WINDOW = 78; WINAT = 82; WINSIZE = 107; GFX = 87; PROCESS = 75 }
     $l2pJson = Get-Content "$l2posWork\NDL2POS.json" -Raw | ConvertFrom-Json
     $l2pMsg = @{}
     foreach ($m in $l2pJson.messages) { $l2pMsg[[string]$m.Text] = [int]$m.Value }
@@ -6191,13 +6191,16 @@ if ($L2Pos -or $L2PosWide) {
 
     $zx0 = "$root\tools\z88dk\bin\z88dk-zx0.exe"
     $zx0Tmp = "$root\tests\out\l2pos-zx0.tmp"
-    $plain = if ($l2posMode) { '001.NX2' } else { '001.NXI' }
+    # The walk json names the set: plain pictures, NX3 pictures, and the
+    # fallback-stream pictures that stay uncompressed under -GfxZx0.
+    $plains = @($l2posWalk.plain)
     $sw = if ($l2posMode) { 320 } else { 256 }
-    foreach ($name in @($plain) + @(2..7 | ForEach-Object { '{0:D3}.NX3' -f $_ })) {
+    Get-ChildItem $leg -File | Where-Object { $_.Name -match '^\d{3}\.(NXI|NX2|NX3)(\.ZX0)?$' } | Remove-Item -Force
+    foreach ($name in $plains + @($l2posWalk.nx3)) {
         $src = Join-Path $l2posArt $name
         if (-not (Test-Path -LiteralPath $src)) { throw "mkl2pos.py produced no $name" }
         $b = [System.IO.File]::ReadAllBytes($src)
-        if ($name -eq $plain) {
+        if ($plains -contains $name) {
             if ($b.Length -le 512 -or (($b.Length - 512) % $sw) -ne 0) { throw "l2pos: $name is $($b.Length) bytes - not 512 + whole $sw-byte rows" }
             $desc = "$sw x $(($b.Length - 512) / $sw) plain"
         }
@@ -6214,11 +6217,11 @@ if ($L2Pos -or $L2PosWide) {
             if ($b.Length -ne 16 + 512 + $w * $h) { throw "l2pos: $name is $($b.Length) bytes, header says 16 + 512 + $w x $h = $(16 + 512 + $w * $h)" }
             $desc = "mode $($b[4]) $w x $h at $($b[6] + 256 * $b[7]),$($b[8])$(if ($b[5]) { ' floating' })"
         }
-        if ($GfxZx0) {
+        if ($GfxZx0 -and @($l2posWalk.raw_only) -notcontains $name.Substring(0, 3)) {
             # NX3: the interpreter reads 16 raw header bytes, then one ZX0
             # stream (palette + pixels). Plain files are one whole stream.
             $out = "$leg\$name.ZX0"
-            if ($name -eq $plain) {
+            if ($plains -contains $name) {
                 & $zx0 -f -q $src $out | Out-Null
                 if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE on $name" }
             }

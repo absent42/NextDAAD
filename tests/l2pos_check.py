@@ -1,11 +1,12 @@
 r"""Drives tests\l2pos.dsf on CSpect (tests\cspect) and byte-compares the front Layer 2 surface
-after every walk step with tests\art\mkl2pos.py's expect_<id>.bin.
+after every walk step with tests\art\mkl2pos.py's expect_<id>.bin. The scroll steps also compare
+tilemap rows 0-27 with tests\l2pos_tm\tm_<id>.bin; --capture writes those files instead.
 
 Run from the repo root, after
     .\build.ps1                                   (the map must match the NEX)
     pwsh -File tests\build-tests.ps1 -L2Pos       (or -L2PosWide, -GfxZx0)
 
-    python tests\l2pos_check.py [--mode 1] [--port N] [--work DIR]
+    python tests\l2pos_check.py [--mode 1] [--port N] [--work DIR] [--capture]
 
 --port is the harness MCP port (tests\cspect\launcher.py PORT_RANGE, default the first free).
 Exit 0 if every step passes, 1 on any FAIL or timeout. The surface is read with the CPU
@@ -26,6 +27,9 @@ LEG = ROOT / "sd" / "L2POS"
 NEX = ROOT / "build" / "nextdaad.nex"
 MAP = ROOT / "build" / "nextdaad.map"
 ART = {0: ROOT / "tests" / "out" / "l2pos-art", 1: ROOT / "tests" / "out" / "l2pos-art-wide"}
+TM_DIR = ROOT / "tests" / "l2pos_tm"
+TM_ROWS = 28                       # rows above text window 0
+TM_STRIDE = 160                    # 80 columns x (glyph, attribute)
 
 TEXT_ROWS = range(28, 32)          # l2pos.dsf window 0
 FSTEP = 100                        # l2pos.dsf flag fStep
@@ -104,15 +108,37 @@ def wait_step(s, step, want_flag, first):
         time.sleep(POLL_S)
 
 
-def check_step(s, step, artdir):
+def check_tm(step, tm, capture):
+    path = TM_DIR / step["tm"]
+    if capture:
+        TM_DIR.mkdir(exist_ok=True)
+        path.write_bytes(tm)
+        print("step %s tilemap captured to %s" % (step["id"], path))
+        return True
+    want = path.read_bytes()
+    if tm == want:
+        print("step %s tilemap PASS" % step["id"])
+        return True
+    i = next(k for k in range(len(want)) if tm[k] != want[k])
+    print("step %s tilemap FAIL first mismatch at row %d col %d byte %d got %d want %d"
+          % (step["id"], i // TM_STRIDE, (i % TM_STRIDE) // 2, i % 2, tm[i], want[i]))
+    return False
+
+
+def check_step(s, step, artdir, capture=False):
     mode = step["mode"]
     want = (artdir / step["expect"]).read_bytes()
+    tm = None
     s.pause()
     try:
         front = s.read(s.sym("L2FRONTBANK"), 1)[0]
         got = read_surface(s, front, mode)
+        if step.get("tm"):
+            tm = s.read(s.sym("TM_MAP"), TM_ROWS * TM_STRIDE)
     finally:
         s.resume()
+    if tm is not None and not check_tm(step, tm, capture):
+        return False
     if len(got) != len(want):
         print("step %s FAIL read %d bytes, expect file has %d" % (step["id"], len(got), len(want)))
         return False
@@ -137,12 +163,12 @@ def check_leg(mode, artdir, walk):
     staged = LEG / "NEXTDAAD.NEX"
     if staged.read_bytes() != NEX.read_bytes():
         sys.exit("l2pos_check: %s differs from %s - restage after the build" % (staged, NEX))
-    for name in [plain] + ["%03d.NX3" % n for n in range(2, 8)]:
+    for name in walk["plain"] + walk["nx3"]:
         if (LEG / name).exists() and (LEG / name).read_bytes() != (artdir / name).read_bytes():
             sys.exit("l2pos_check: staged %s is not %s's" % (name, artdir))
 
 
-def run(s, walk, artdir):
+def run(s, walk, artdir, capture=False):
     ok = True
     for i, step in enumerate(walk["steps"]):
         want_flag = 0 if step["fstep"] is None else step["fstep"] + 1
@@ -151,7 +177,7 @@ def run(s, walk, artdir):
         n = wait_step(s, step, want_flag, i == 0)
         if n > 1:
             print("  step %s took %d presses" % (step["id"], n))
-        ok &= check_step(s, step, artdir)
+        ok &= check_step(s, step, artdir, capture)
     return ok
 
 
@@ -160,6 +186,7 @@ def main():
     ap.add_argument("--mode", type=int, choices=(0, 1), default=0)
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--work", default=None, help="scratch card directory")
+    ap.add_argument("--capture", action="store_true", help="write the scroll steps' tilemap files")
     a = ap.parse_args()
     if not LEG.is_dir():
         sys.exit("l2pos_check: %s missing - run tests\\build-tests.ps1 -L2Pos" % LEG)
@@ -170,7 +197,7 @@ def main():
     s = None
     try:
         s = launch(work, a.port)
-        ok = run(s, walk, artdir)
+        ok = run(s, walk, artdir, a.capture)
     except (Timeout, TimeoutError, CSpectError, OSError) as e:
         print("l2pos_check: TIMEOUT/ERROR %s" % e)
         ok = False
