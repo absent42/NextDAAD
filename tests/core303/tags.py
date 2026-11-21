@@ -257,7 +257,9 @@ for _s in "XYZ":
 # rows, in the NXB screen grammar (parse.parse_nxb), not in TAGS. The log step then appends
 # "#HIST <tag>" and NXB_HIST_BINS 4-digit words per histogram row (parse.parse_hist): bin k
 # counts the data-token waits whose number of $FF polls has bit length k, a poll being
-# NXB_HIST_POLL_T T at 28 MHz (nxb_rh_sec). ARM1/ARM2/ARMO and DSRM print nothing.
+# NXB_HIST_POLL_T T at 28 MHz (nxb_rh_tok). ARM1/ARM2/ARMO and DSRM print nothing.
+# On the frame and card rows (NXB_RW1_MARKED) O = 01 marks a run walk (CMD12, CMD18,
+# a first token) inside the row: its T is not a figure, re-run.
 NXB_RW1 = {
     "IDEN": "O = delivery (02), R = frames, F = picture width, D = height byte",
     "RFR0": "frame 0: nxb_rw_feed + raw decode, its palette sector included; unarmed, R = 1",
@@ -273,6 +275,8 @@ NXB_RW1 = {
     "ASPN": "SPN0, raw handler armed",
     "OSPN": "SPN0, video_ctc_isr_stereo (IX play pointer) armed",
 }
+NXB_RW1_MARKED = ("RFR0", "RSWP", "ARSW", "RSEC", "RCOL", "RHST", "ARSE", "ARCO", "AHST")
+NXB_RW1_WALK_O = 1
 NXB_HIST_TAGS = ("RHST", "AHST")
 NXB_HIST_BINS = 17
 NXB_HIST_POLL_T = 48

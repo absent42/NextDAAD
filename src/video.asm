@@ -3897,6 +3897,8 @@ nxb_entry:
     ld a, (hl)
     ld (hl), 0
     ld (nxbSessReq), a
+    xor a
+    ld (nxbHistN), a             ; a session that bails before the hook logs none
     ret
 
 ; Blank text rows NXB_ROW0-28 across the tilemap. Corrupts everything.
@@ -5384,8 +5386,8 @@ nxb_rh_body:
     call nxb_rh_sec
     jp VR_SLIDE
 
-; vr_sector_n with the token wait's $FF polls (vid_sd_tok_h's 48 T loop) counted
-; into nxbHistBin by bit length. Preserves HL; C = PORT_SPI_DAT. Faults abort.
+; vr_sector_n with nxb_rh_tok for vid_sd_tok_h (same call, so the first poll
+; is as far from the CRC). Preserves HL; C = PORT_SPI_DAT. Faults abort.
 nxb_rh_sec:
     in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart
     nop
@@ -5397,6 +5399,21 @@ nxb_rh_sec:
 .run:
     dec de
     ld (vidStrmRunBlkH), de
+    call nxb_rh_tok
+    jp c, vr_sector_n.tokf
+    ld c, PORT_SPI_DAT
+    ret
+.walk:
+    push hl
+    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
+    ex de, hl
+    pop hl
+    jr nc, .run
+    jp vid_dec_abort_pos
+
+; vid_sd_tok_h's 48 T wait with its $FF polls counted into nxbHistBin by bit
+; length. CF set = bad or absent token. Preserves HL. Corrupts AF, DE.
+nxb_rh_tok:
     ld de, 0
 .w:
     in a, (PORT_SPI_DAT)
@@ -5406,10 +5423,11 @@ nxb_rh_sec:
     ld a, d
     or e
     jr nz, .w
-    jr .bad                      ; 65536 polls (rubric 6)
+    scf                          ; 65536 polls (rubric 6)
+    ret
 .got:
-    cp $FF                       ; A = byte + 1: the $FE token
-    jr nz, .bad
+    cp $FF                       ; A = byte + 1: CF set unless the $FE token
+    ret nz
     push hl
     ld hl, nxbHistBin
 .bl:
@@ -5428,17 +5446,8 @@ nxb_rh_sec:
     inc (hl)
 .bx:
     pop hl
-    ld c, PORT_SPI_DAT
+    or a
     ret
-.walk:
-    push hl
-    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
-    ex de, hl
-    pop hl
-    jr nc, .run
-    jp vid_dec_abort_pos
-.bad:
-    jp vr_sector_n.tokf
 
 ; SPIN rep: a fixed count loop, no card: the armed handler's cost alone.
 nxb_rw_spin:
@@ -6351,8 +6360,11 @@ nxb_kind_dsblk:
 nxbDsBody:   dw nxb_ds_i, nxb_ds_b, nxb_ds_c, nxb_ds_d
 
 ; RFRAME and RSWEEP (raw): nxbReps frames from the live wire position, each
-; nxb_rw_feed then its raw decode, on one long clock. O = 00.
+; nxb_rw_feed then its raw decode, on one long clock. O = the walk mark.
 nxb_kind_rfr:
+    call nxb_rw_mark0
+    ld hl, nxb_rw_done
+    ld (nxb_lrow.pr), hl
     ld hl, nxb_rw_fbody
     jp nxb_lrow0
 ; SPIN: nxbReps reps of nxb_rw_spin, no card. O = 00.
@@ -6360,13 +6372,15 @@ nxb_kind_spin:
     ld hl, nxb_rw_spin
     jp nxb_lrow0
 ; RBLK (raw card row, param 0 RSEC, 1 RCOL into the hidden surface page at
-; MMU2) and RHIST (bins zeroed, the print saving them): nxb_rw_go. O = 00.
+; MMU2) and RHIST (bins zeroed, the print saving them): nxb_rw_go. O = the walk mark.
 nxb_kind_rblk:
+    call nxb_rw_mark0
     call nxb_rw_charge
     ret c
     ld a, (l2BackBank)
     add a, a
     nextreg NR_MMU2, a           ; untimed, so RSEC and RCOL differ by the split only
+    ld de, nxb_rw_done
     ld hl, nxb_rw_sec
     ld a, (nxbParam)
     or a
@@ -6374,6 +6388,7 @@ nxb_kind_rblk:
     ld hl, nxb_rw_col
     jr nxb_rw_body
 nxb_kind_rhist:
+    call nxb_rw_mark0
     call nxb_rw_charge
     ret c
     ld hl, nxbHistBin
@@ -6382,15 +6397,49 @@ nxb_kind_rhist:
     ld (hl), 0
     inc hl
     djnz .z
-    ld hl, nxb_rh_done
-    ld (nxb_lrow.pr), hl
+    ld de, nxb_rh_done
     ld hl, nxb_rh_body
 nxb_rw_body:
+    ld (nxb_lrow.pr), de
     ld (nxb_body + 1), hl
-    xor a
-    ld (nxbSO), a
     jp nxb_rw_go
     ASSERT 2 * NXB_HIST_BINS < 256
+
+; Walk mark, before a frame or card row: the run count and the remain (the reader
+; charges every block it reads to the remain; only a run walk reloads the count).
+nxb_rw_mark0:
+    ld hl, (vidStrmRunBlkH)
+    ld (nxbRunB), hl
+    ld hl, (vidStrmRemainBlk)
+    ld (nxbRemB), hl
+    ret
+; At the row's print: O = 01 when the run count fell by other than the blocks read
+; (a walk - CMD12, CMD18, first token - inside the row), else 00; exit restored.
+nxb_rw_mark:
+    ld hl, nxb_sprint
+    ld (nxb_lrow.pr), hl
+    ld hl, (nxbRunB)
+    ld de, (vidStrmRunBlkH)
+    or a
+    sbc hl, de
+    ex de, hl                    ; DE = the run count's fall
+    ld hl, (nxbRemB)
+    ld bc, (vidStrmRemainBlk)
+    or a
+    sbc hl, bc                   ; HL = blocks read (charged to the remain)
+    or a
+    sbc hl, de
+    ld a, h
+    or l
+    jr z, .s
+    ld a, 1
+.s:
+    ld (nxbSO), a
+    ret
+; RFRAME/RSWEEP/RBLK print (nxb_lrow.pr): the walk mark, then the row.
+nxb_rw_done:
+    call nxb_rw_mark
+    jp nxb_sprint
 
 ; Card rows: CF = fewer than NXB_RW_MIN blocks remain, TAG NXB SHORT printed and
 ; the row skipped; else the row's sectors and nxb_rw_go's one charged to the remain.
@@ -6422,11 +6471,10 @@ nxb_rw_charge:
     scf
     ret
 
-; RHIST's print (nxb_lrow.pr): the shipping exit back, the tag and bins saved
-; for the log step (at most NXB_HIST_MAX), then the row.
+; RHIST's print (nxb_lrow.pr): the walk mark (exit restored), the tag and bins
+; saved for the log step (at most NXB_HIST_MAX), then the row.
 nxb_rh_done:
-    ld hl, nxb_sprint
-    ld (nxb_lrow.pr), hl
+    call nxb_rw_mark
     ld hl, nxbHistN
     ld a, (hl)
     cp NXB_HIST_MAX
@@ -6510,6 +6558,8 @@ nxb_kind_syn:
 nxbMsgSess:  db "NXB SESSION", 0
 nxbMsgShort: db " NXB SHORT", 0
 nxbSessVec:  dw 0               ; IM2_CTC_STUB+1 at session entry (DISARM)
+nxbRunB:     dw 0               ; walk mark: vidStrmRunBlkH before the row
+nxbRemB:     dw 0               ; walk mark: vidStrmRemainBlk (low word) before it
 nxbHistSav:  ds NXB_HIST_MAX * NXB_HIST_LEN   ; RHIST rows: tag, bins (log step)
 nxbTop:      ds 3 * NXB_SLOT    ; the three longest SCAN frames, longest first
 nxbTopCur:   ds NXB_SLOT        ; the frame just scanned

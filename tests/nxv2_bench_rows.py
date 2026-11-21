@@ -1075,6 +1075,10 @@ SESSION_SYNTH = ("synth", "synth_nocall")
 # loop, the arm that installs the old stereo handler.
 SESSION_RAW = ("rframe", "rsweep", "rarm", "rblk", "rhist", "spin", "armold")
 SESSION_RAW_CARD = ("rblk", "rhist")
+# Their O on silicon: RW1_WALK_O marks a run walk (CMD12, CMD18, first token) inside the
+# row's window (nxb_rw_mark); such a row's T is not a figure and is re-run, never fitted.
+SESSION_RW_MARKED = ("rframe", "rsweep", "rblk", "rhist")
+RW1_WALK_O = 1
 SESSION_DIRECT = ("dsweep", "dsblk", "dskip") + SESSION_RAW   # direct-serve only
 SESSION_ROW_LEN = 10
 SESSION_SYNTH_LEN = 25
@@ -1089,6 +1093,10 @@ NXB_RW_HREPS = 2048                                  # sectors per histogram row
 NXB_RW_SREPS = 512                                   # spin reps
 NXB_RW_SPIN = 2000                                   # count-loop passes per spin rep
 NXB_RW_MIN = 5000                                    # a card row needs this many blocks left
+# T per rep inside an RW1 row's window that playback never runs (unarmed, base T), for
+# the gate fit to subtract; vidraw_contract test_rw_harness pins both to the image.
+RW_CARD_HARNESS_T = 88       # RSEC/RCOL/RHST rep over the schedule's call vr_sector_n / slide
+RW_FRAME_HARNESS_T = 210     # RFR0/RSWP/ARSW rep over vid_run's stage / pump / decode calls
 NOSITE = (0, ())
 
 SESSION_TABLES = {
@@ -1260,6 +1268,13 @@ def direct_frames(name):
         elif row[1] == "dsblk":
             blocks += row[3]
     return pos, swept, blocks
+
+
+def rw_walked(name, rows):
+    """Printed rows (tag, O, R, F, D) of a raw table whose O carries the walk mark:
+    the tags to re-run instead of fitting."""
+    marked = {r[0] for r in SESSION_TABLES[name] if r[1] in SESSION_RW_MARKED}
+    return [row[0] for row in rows if row[0] in marked and row[1] == RW1_WALK_O]
 
 
 def raw_blocks(name, frame_blocks, palettes=1):

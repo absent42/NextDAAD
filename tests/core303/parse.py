@@ -337,13 +337,24 @@ def _hist_line(line):
 
 def parse_hist(path):
     """The log step's wait histograms (RW1 RHST/AHST) of an NXB log, in order:
-    [(tag, [NXB_HIST_BINS counts])]. Bin k: waits whose $FF poll count has bit length k."""
-    out = []
+    [(section, tag, [NXB_HIST_BINS counts])], section numbered as NxbRun.section (the
+    #NXB capture the line follows; 0 before any). Bin k: waits whose $FF poll count has
+    bit length k."""
+    out, section = [], 0
     for line in _read(path).split("\n")[:-1]:
         line = line.rstrip("\r")
-        if line.startswith("#HIST"):
-            out.append(_hist_line(line))
+        if line.startswith("#NXB "):
+            section += 1
+        elif line.startswith("#HIST"):
+            out.append((section,) + _hist_line(line))
     return out
+
+
+def rw1_walked(runs):
+    """RW1 frame and card rows printed with O = 01: a run walk fell inside the row's
+    window, so its T is not a figure (re-run)."""
+    return [r for r in runs if r.kind == "session" and r.tag in tagtab.NXB_RW1_MARKED
+            and r.o == tagtab.NXB_RW1_WALK_O]
 
 
 def parse_nxb(path):
@@ -739,6 +750,11 @@ def _report_nxb(runs, base, lpf, tpl35, ratio_tags, out):
             r.tag, "-" if r.size is None else r.size, r.kind, r.o, r.r, r.f,
             r.d & 0xFFFF, _nxb_t(r, lpf, tpl35), per))
     out.append("")
+    walked = rw1_walked(runs)
+    for r in walked:
+        out.append("WALK %s (section %d): a run walk inside the row (O=01), re-run" % (r.tag, r.section))
+    if walked:
+        out.append("")
     multi = multi_run_tags(runs)
     for tg, n in sorted(multi.items()):
         out.append("MULTI-RUN %s: %d table runs, last used" % (tg, n))

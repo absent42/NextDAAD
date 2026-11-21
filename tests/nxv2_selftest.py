@@ -1963,6 +1963,11 @@ def t10_bench_log():
            == ("NXBW", "RW1", 71, w_rows, bins, [], []),
            f"NXBW capture: {wrun.command} {wrun.rows} {wrun.hist} {wrun.report} {wrun.warnings}")
     expect(len(w_rows) == 13, f"RW1 prints 13 rows (6 silent arm/disarm rows), got {len(w_rows)}")
+    walked = [(t, 1 if t in ("RSEC", "SPN0", "IDEN") else 0, r, f, d) for t, _o, r, f, d in w_rows]
+    expect(bench.rw_walked("RW1", walked) == ["RSEC"], "the walk mark: O = 01 on frame and card rows only")
+    bad_h = blog.parse(w_text + "#HIST RHST 0001 0002\r\n")[0]
+    expect(len(bad_h.warnings) == 1 and "malformed #HIST" in bad_h.warnings[0],
+           f"a malformed #HIST line warns: {bad_h.warnings}")
     import io
     with tempfile.TemporaryDirectory() as td:
         for body, want in ((log2, "4 runs, 3 with a problem"), (_bench_capture(0x0100, s_a), "1 runs, 0 with a problem")):

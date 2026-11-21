@@ -393,18 +393,27 @@ def label_line(relpath, scan, name):
 class TimedSet:
     """Which source lines are timed, plus the source-side verdicts."""
 
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, tolerant=False):
+        """tolerant: a TIMED name with no label in the sources (an older revision
+        copied under --src-root) is dropped with a note instead of failing; the
+        live tree is always strict. A label found twice fails either way."""
         self.scans, self.problems, self.notes = {}, [], []
         self.skip, self.align_ok, self.spans = {}, set(), {}
         self.quiet_skip = {}
+        self.names = {}
         files = set(TIMED) | set(REGIONS) | {f for f, *_ in TIMED_SPANS}
         files |= {f for f, *_ in COLD_PINNED} | {f for f, *_ in COLD}
         files |= {f for f, *_ in QUIET_PINNED}
         for f in sorted(files):
             self.scans[f] = scan_source(f)
         for f, names in TIMED.items():
+            kept = self.names.setdefault(f, [])
             for name in names:
+                if tolerant and not any(lab == name for lab, _n, _c in self.scans[f]["labels"]):
+                    self.notes.append(f"note: {f}: TIMED routine {name} is not in this revision")
+                    continue
                 label_line(f, self.scans[f], name)
+                kept.append(name)
         for f, name, start, stop in TIMED_SPANS:
             scan = self.scans[f]
             label_line(f, scan, name)
@@ -428,7 +437,7 @@ class TimedSet:
         if scan is None or n >= len(scan["owner"]):
             return False
         own = scan["owner"][n]
-        if own in TIMED.get(f, ()):
+        if own in self.names.get(f, ()):
             return True
         return any(own == name and s <= n <= e
                    for name, s, e in self.spans.get(f, ()))
@@ -838,7 +847,7 @@ def run_bench(args, built):
 
 def run(args, built):
     other = "debug" if args.debug else "quiet"
-    ts = TimedSet(debug=args.debug)
+    ts = TimedSet(debug=args.debug, tolerant=bool(args.src_root))
     cold = ts.cold_listing()
     if args.list:
         for f, a, b, name in ts.intervals():

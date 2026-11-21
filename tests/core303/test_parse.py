@@ -142,8 +142,17 @@ def test_parse_rw1(tmp_path):
     assert [r.tag for r in runs] == RW1_PRINTED
     assert all(r.kind == "session" for r in runs)
     assert (runs[0].o, runs[1].r, runs[5].f, runs[12].d) == (2, 17, 15, 12)
-    assert parse.parse_hist(p) == list(hist.items())
-    assert all(len(b) == tags.NXB_HIST_BINS == 17 for _t, b in parse.parse_hist(p))
+    assert parse.parse_hist(p) == [(1, t, b) for t, b in hist.items()]
+    assert all(len(b) == tags.NXB_HIST_BINS == 17 for _s, _t, b in parse.parse_hist(p))
+    assert parse.rw1_walked(runs) == []
+    # a second capture: #HIST lines belong to it; a walked card row (O=01) is flagged
+    second = ["#NXB 0B20", "> nxbw", "RSEC O=01 R=0080 F=0002 D=0010",
+              "SPN0 O=01 R=0200 F=0010 D=0000", "#HIST AHST" + " 0001" * 17]
+    p.write_bytes(("\r\n".join(lines + second) + "\r\n").encode("ascii"))
+    assert [s for s, _t, _b in parse.parse_hist(p)] == [1, 1, 2]
+    runs = parse.parse_nxb(p)
+    assert [(r.tag, r.section) for r in parse.rw1_walked(runs)] == [("RSEC", 2)]
+    assert "WALK RSEC (section 2)" in parse.report([], runs, None, timing=(311, 228))
     for bad in ("#HIST XXXX" + " 0000" * 17, "#HIST RHST" + " 0000" * 16, "#HIST RHST 00G0"):
         p.write_bytes(("\r\n".join(lines[:3] + [bad]) + "\r\n").encode("ascii"))
         with pytest.raises(LogError):

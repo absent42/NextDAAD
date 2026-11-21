@@ -1482,7 +1482,7 @@ def test_rw_shapes():
     code_is(mc, "nxb_rw_spin", b"\x01" + le(n) + b"\x0B\x78\xB1\x20\xFB\xC9")
     # the binned wait polls as vid_sd_tok_h does: in 11, inc a 4, jr nz 7, a 16-bit step 6,
     # ld a,r 4, or r 4, jr nz 12 = 48 T between data-port reads
-    for name, step in (("nxb_rh_sec.w", b"\x13\x7A\xB3"), ("vid_sd_tok_h.wt", b"\x0B\x78\xB1")):
+    for name, step in (("nxb_rh_tok.w", b"\x13\x7A\xB3"), ("vid_sd_tok_h.wt", b"\x0B\x78\xB1")):
         w = S(name)
         b = bytes(mc.mem[w:w + 10])
         if b[:4] != b"\xDB\xEB\x3C\x20" or b[5:8] != step or b[8:] != b"\x20\xF6" or b[4] > 0x7F:
@@ -1683,7 +1683,7 @@ def test_rw_hist():
     if nb != 17:
         raise Fail(f"NXB_HIST_BINS = {nb}")
     mc.mem[hb:hb + 2 * nb] = bytes(2 * nb)
-    allowed = {"crc": {"nxb_rh_sec"}, "wait": {"nxb_rh_sec"}, "token": {"nxb_rh_sec"},
+    allowed = {"crc": {"nxb_rh_sec"}, "wait": {"nxb_rh_tok"}, "token": {"nxb_rh_tok"},
                "data": {"slide"}}
     owner = owner_fn(mc)
     want = [0] * nb
@@ -1807,6 +1807,7 @@ def test_rw_kinds():
         mc.poke("l2BackBank", BACK_BANK)
         mc.poke16("nxbReps", 128)
         mc.poke("nxbSO", 0x77)
+        mc.poke16("vidStrmRunBlkH", 0x5A5A)
         return mc
     seen = {}
 
@@ -1842,14 +1843,17 @@ def test_rw_kinds():
             if "go" in seen or not cpu.fc or msgs != [S("nxbMsgShort")]:
                 raise Fail(f"{what}: refused row ran or printed {msgs} (CF {cpu.fc})")
             continue
-        if seen.get("go", (0, 0))[1] != S(body) or mc.peek("nxbSO") != 0:
+        if seen.get("go", (0, 0))[1] != S(body):
             raise Fail(f"{what}: body ${seen.get('go', (0, 0))[1]:04X}, expected {body}")
         bins = bytes(mc.mem[hb:hb + 2 * nb])
         patched = mc.mem[pr] | mc.mem[pr + 1] << 8
+        if (mc.peek("nxbRunB", 2), mc.peek("nxbRemB", 2)) != (0x5A5A, remain & 0xFFFF):
+            raise Fail(f"{what}: walk mark before the row {mc.peek('nxbRunB', 2):04X} "
+                       f"{mc.peek('nxbRemB', 2):04X}")
         if kind == "nxb_kind_rhist":
             if bins != bytes(2 * nb) or patched != S("nxb_rh_done"):
                 raise Fail(f"{what}: bins not zeroed or nxb_lrow.pr ${patched:04X}")
-        elif mc.mmu[2] != BACK_BANK * 2 or patched != S("nxb_sprint"):
+        elif mc.mmu[2] != BACK_BANK * 2 or patched != S("nxb_rw_done"):
             raise Fail(f"{what}: MMU2 {mc.mmu[2]}, nxb_lrow.pr ${patched:04X}")
     # RHIST's print: slots 0 and 1, then capped
     mc = kmc()
@@ -1874,12 +1878,43 @@ def test_rw_kinds():
             saved.append(tag + binv)
         if bytes(mc.mem[sav:sav + 2 * ln]) != b"".join(saved) + b"\xEE" * ((2 - len(saved)) * ln):
             raise Fail(f"nxb_rh_done at {n}: slots hold {bytes(mc.mem[sav:sav + 2 * ln])[:12]!r}...")
-    for kind, body in (("nxb_kind_rfr", "nxb_rw_fbody"), ("nxb_kind_spin", "nxb_rw_spin")):
+    for kind, body, exit_ in (("nxb_kind_rfr", "nxb_rw_fbody", "nxb_rw_done"),
+                              ("nxb_kind_spin", "nxb_rw_spin", "nxb_sprint")):
         mc = kmc()
+        pr = S("nxb_lrow.pr")
+        mc.mem[pr:pr + 2] = le(S("nxb_sprint"))
         seen.clear()
         mc.run(kind, traps={S("nxb_lrow"): at("lrow")})
-        if seen.get("lrow", (0, 0))[1] != S(body) or mc.peek("nxbSO") != 0:
-            raise Fail(f"{kind}: body ${seen.get('lrow', (0, 0))[1]:04X}, expected {body}")
+        if (seen.get("lrow", (0, 0))[1], mc.peek("nxbSO"), mc.peek("nxb_lrow.pr", 2)) != \
+                (S(body), 0, S(exit_)):
+            raise Fail(f"{kind}: body ${seen.get('lrow', (0, 0))[1]:04X}, expected {body}; "
+                       f"exit ${mc.peek('nxb_lrow.pr', 2):04X}")
+    # the walk mark at the print: O = 01 when the run count fell by other than the blocks read
+    for run0, rem0, run1, rem1, mark in ((1000, 0x2345, 871, 0x22C4, 0),     # 129 read, no walk
+                                         (100, 0x2345, 3971, 0x22C4, 1),     # walked into a run
+                                         (0, 0x0010, 65535, 0x000F, 0),      # wrap-safe words
+                                         (500, 0x8000, 500, 0x7FFF, 1)):     # count stood still
+        mc = kmc()
+        mc.poke16("nxbRunB", run0)
+        mc.poke16("nxbRemB", rem0)
+        mc.poke16("vidStrmRunBlkH", run1)
+        mc.poke("vidStrmRemainBlk", (rem1 | 0x010000).to_bytes(3, "little"))
+        pr = S("nxb_lrow.pr")
+        mc.mem[pr:pr + 2] = le(S("nxb_rw_done"))
+        sp = []
+        mc.run("nxb_rw_done", traps={S("nxb_sprint"): ret_trap(lambda c: sp.append(1))})
+        if (mc.peek("nxbSO"), sp, mc.peek("nxb_lrow.pr", 2)) != (mark, [1], S("nxb_sprint")):
+            raise Fail(f"walk mark run {run0}->{run1} remain {rem0:04X}->{rem1:04X}: O "
+                       f"{mc.peek('nxbSO')}, expected {mark}")
+    # mode 14 (EXTERN 0 12 arm) clears the histograms a bailed session would re-log
+    mc = RawMachine(SYMS)
+    fl = S("flags")
+    mc.mem[fl + 250], mc.mem[fl + 248] = S("NXB_MODE_ARM"), 5
+    mc.poke("nxbHistN", 2)
+    mc.run("nxb_entry")
+    if (mc.peek("nxbSessReq"), mc.peek("nxbHistN"), mc.mem[fl + 248], mc.mem[fl + 250]) != (5, 0, 0, 0):
+        raise Fail(f"nxb_entry mode 14: request {mc.peek('nxbSessReq')}, nxbHistN "
+                   f"{mc.peek('nxbHistN')}")
     # IDEN: F = the surface width, less 2 x x0 for a raw clip
     for raw, pages, page0, h0, want in ((1, 10, 0, 0x40, 320), (1, 10, 0, 0x54, 280),
                                         (1, 10, 1, 0x40, 256), (1, 10, 4, 0x5E, 4),
@@ -1893,6 +1928,182 @@ def test_rw_kinds():
         if mc.peek("nxbLcF", 2) != want:
             raise Fail(f"IDEN raw {raw} pages {pages} x0 {page0 * 32 + h0 - 0x40}: F "
                        f"{mc.peek('nxbLcF', 2)}, expected {want}")
+
+
+# Zilog T-states (no wait states on core 3.03.03) for tcount. T_COND: (taken, not taken,
+# length). ldir/otir/inir are priced from BC/B before the model's one-step loop.
+T_MAIN = {op: (7 if op & 7 == 6 or (op >> 3) & 7 == 6 else 4) for op in range(0x40, 0x80)}
+T_MAIN.update({op: (7 if op & 7 == 6 else 4) for op in range(0x80, 0xC0)})
+del T_MAIN[0x76]
+T_MAIN.update({
+    0x00: 4, 0x01: 10, 0x02: 7, 0x03: 6, 0x04: 4, 0x05: 4, 0x06: 7, 0x07: 4, 0x08: 4, 0x09: 11,
+    0x0A: 7, 0x0B: 6, 0x0C: 4, 0x0D: 4, 0x0E: 7, 0x0F: 4, 0x11: 10, 0x12: 7, 0x13: 6, 0x14: 4,
+    0x15: 4, 0x16: 7, 0x17: 4, 0x18: 12, 0x19: 11, 0x1A: 7, 0x1B: 6, 0x1C: 4, 0x1D: 4, 0x1E: 7,
+    0x1F: 4, 0x21: 10, 0x22: 16, 0x23: 6, 0x24: 4, 0x25: 4, 0x26: 7, 0x27: 4, 0x29: 11,
+    0x2A: 16, 0x2B: 6, 0x2C: 4, 0x2D: 4, 0x2E: 7, 0x2F: 4, 0x31: 10, 0x32: 13, 0x33: 6,
+    0x34: 11, 0x35: 11, 0x36: 10, 0x37: 4, 0x39: 11, 0x3A: 13, 0x3B: 6, 0x3C: 4, 0x3D: 4,
+    0x3E: 7, 0x3F: 4, 0xC1: 10, 0xC3: 10, 0xC5: 11, 0xC6: 7, 0xC9: 10, 0xCD: 17, 0xCE: 7,
+    0xD1: 10, 0xD3: 11, 0xD5: 11, 0xD6: 7, 0xD9: 4, 0xDB: 11, 0xDE: 7, 0xE1: 10, 0xE3: 19,
+    0xE5: 11, 0xE6: 7, 0xE9: 4, 0xEB: 4, 0xEE: 7, 0xF1: 10, 0xF3: 4, 0xF5: 11, 0xF6: 7,
+    0xF9: 6, 0xFB: 4, 0xFE: 7})
+T_MAIN.update({op: 10 for op in range(0xC2, 0x100, 8)})                # jp cc
+T_COND = {0x10: (13, 8, 2), 0x20: (12, 7, 2), 0x28: (12, 7, 2), 0x30: (12, 7, 2), 0x38: (12, 7, 2)}
+T_COND.update({op: (11, 5, 1) for op in range(0xC0, 0x100, 8)})        # ret cc
+T_COND.update({op: (17, 10, 3) for op in range(0xC4, 0x100, 8)})       # call cc
+T_ED = {0x40 | r << 3: 12 for r in range(8)}                           # in r,(c)
+T_ED.update({0x41 | r << 3: 12 for r in range(8)})                     # out (c),r
+T_ED.update({op: 15 for op in (0x42, 0x52, 0x62, 0x72, 0x4A, 0x5A, 0x6A, 0x7A)})
+T_ED.update({op: 20 for op in (0x43, 0x53, 0x63, 0x73, 0x4B, 0x5B, 0x6B, 0x7B)})
+T_ED.update({0x44: 8, 0x45: 14, 0x4D: 14, 0xA0: 16, 0xA1: 16, 0xA2: 16, 0xA3: 16, 0x23: 8,
+             0x24: 8, 0x27: 11, 0x30: 8, 0x31: 8, 0x32: 8, 0x33: 8, 0x34: 16, 0x35: 16,
+             0x36: 16, 0x90: 16, 0x91: 20, 0x92: 17})
+
+
+def tstep(mc):
+    """Execute one instruction and return its Zilog T; an opcode with no T entry fails
+    (no guessed figure)."""
+    cpu, m = mc.cpu, mc.mem
+    pc = cpu.pc
+    op, cond = m[pc], None
+    if op == 0xED:
+        sub = m[(pc + 1) & 0xFFFF]
+        if sub == 0xB0:
+            base = 21 * (cpu.bc or 0x10000) - 5
+        elif sub in (0xB2, 0xB3):
+            base = 21 * (cpu.b or 256) - 5
+        elif sub in T_ED:
+            base = T_ED[sub]
+        else:
+            raise Fail(f"tstep: ED {sub:02X} at ${pc:04X} has no T entry")
+    elif op == 0xCB:
+        sub = m[(pc + 1) & 0xFFFF]
+        base = 8 if sub & 7 != 6 else 12 if 0x40 <= sub < 0x80 else 15
+    elif op in T_COND:
+        cond = T_COND[op]
+    elif op in T_MAIN:
+        base = T_MAIN[op]
+    else:
+        raise Fail(f"tstep: opcode {op:02X} at ${pc:04X} has no T entry")
+    cpu.step()
+    if cond:
+        base = cond[0] if cpu.pc != (pc + cond[2]) & 0xFFFF else cond[1]
+    return base
+
+
+def tcount(mc, stop, budget=2_000_000):
+    """Run from the current PC until stop(cpu), summing Zilog T."""
+    t = 0
+    while not stop(mc.cpu):
+        t += tstep(mc)
+        budget -= 1
+        if budget <= 0:
+            raise Fail("tcount: budget spent")
+    return t
+
+
+STUB = 0xBF00                        # a scratch call site in page 5 (model only)
+
+
+def stub_t(mc, code, **regs):
+    """T of code (ending in ret) called at STUB, less that ret: the caller's own calls."""
+    mc.mem[STUB:STUB + len(code)] = code
+    cpu = mc.cpu
+    for k, v in regs.items():
+        setattr(cpu, k, v)
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = STUB
+    return tcount(mc, lambda c: c.pc == RET) - 10
+
+
+def rep_t(mc, body):
+    """T of one nxb_lrow rep of body, nxb_lrow.rep to the next .rep."""
+    b = S("nxb_body")
+    mc.mem[b + 1:b + 3] = le(S(body))
+    mc.poke16("nxbLeft", 2)
+    cpu, rep = mc.cpu, S("nxb_lrow.rep")
+    cpu.sp, cpu.pc = STACK, rep
+    t = tstep(mc)                                # .rep's own call nxb_body
+    return t + tcount(mc, lambda c: c.pc == rep)
+
+
+def in_gaps(mc, name):
+    """T between the starts of successive in a,(n) in routine name (CRC, CRC, the token
+    polls): [CRC1-CRC2, CRC2-poll1, poll1-poll2, ...]."""
+    cpu, marks, t = mc.cpu, [], 0
+    cpu.sp, cpu.hl = STACK, S("VR_SCRATCH")
+    cpu.push(RET)
+    cpu.pc = S(name)
+    while cpu.pc != RET:
+        if mc.mem[cpu.pc] == 0xDB:
+            marks.append(t)
+        t += tstep(mc)
+    return [b - a for a, b in zip(marks, marks[1:])]
+
+
+def test_rw_harness():
+    """RW_CARD_HARNESS_T and RW_FRAME_HARNESS_T (nxv2_bench_rows, subtracted by the gate fit)
+    pinned to the emitted bytes: an RSEC rep against the schedule's steady-state sector
+    (call vr_sector_n / call VR_SLIDE), RCOL - RSEC = 8 column ends of 38 T, a frame-row rep
+    against vid_run's call vid_aud_stage / ld bc / call vid_aud_pump / call vid_decode_any;
+    and the binned wait's first poll as far from the CRC as vr_sector_n's."""
+    bench_only()
+    import nxv2_bench_rows as bench
+
+    def card_mc(sectors):
+        mc = RawMachine(SYMS)
+        rw_sched(mc)
+        rw_cells(mc, run=1000, crc=1)
+        mapnr(mc, 2, BACK_BANK * 2)
+        mc.set_card(Card([bytes(512)] * sectors, waits=0, crc_first=True))
+        return mc
+    rsec = rep_t(card_mc(1), "nxb_rw_sec")
+    rcol = rep_t(card_mc(1), "nxb_rw_col")
+    flat = RawMachine(SYMS)
+    build_sched(flat, 0, 256, 192)
+    entry = b"\xCD" + le(S("vr_sector_n")) + b"\xCD" + le(S("VR_SLIDE"))
+    if entry not in bytes(flat.mem[S("VR_SCHED"):S("VR_SCHED") + 2000]):
+        raise Fail("no call vr_sector_n / call VR_SLIDE pair in a 256x192 schedule")
+    sched = stub_t(card_mc(1), entry + b"\xC9", hl=S("VR_SCRATCH"))
+    if rsec - sched != bench.RW_CARD_HARNESS_T or rcol - rsec != 8 * 38:
+        raise Fail(f"RSEC rep {rsec} T, schedule sector {sched} T: harness {rsec - sched} "
+                   f"(RW_CARD_HARNESS_T {bench.RW_CARD_HARNESS_T}); RCOL - RSEC {rcol - rsec}")
+
+    def frame_mc():
+        mc = RawMachine(SYMS)
+        patch_session(mc, 1, 1)
+        if build_sched(mc, 0, 256, 192).fc:
+            raise Fail("vid_raw_sched_build set CF")
+        setup_frame(mc, 0, 256, 192)
+        rw_cells(mc, run=1000, crc=0)
+        for n in ("vidRlDiv", "vidRlSpinDiv"):
+            if n in SYMS:
+                mc.poke(n, 250)                  # no PLAY poll inside the trace
+        base = S("vidAudBuf")
+        mc.poke16("vidABytes", 1250)
+        mc.poke16("vidAudWr", (base + 100) ^ (S("NXV_AUD_RING") // 2))
+        set_alt_hl(mc.cpu, base + 100)
+        mc.cpu.iff = 1
+        snd = bytes(1250) + bytes([0x80]) * (1536 - 1251) + b"\x00"
+        mc.set_card(Card(blocks(snd) + blocks(pixels(256 * 192)), waits=1))
+        return mc
+    fbench = rep_t(frame_mc(), "nxb_rw_fbody")
+    play = stub_t(frame_mc(), b"\xCD" + le(S("vid_aud_stage")) + b"\x01\xFF\xFF\xCD"
+                  + le(S("vid_aud_pump")) + b"\xCD" + le(S("vid_decode_any")) + b"\xC9")
+    if fbench - play != bench.RW_FRAME_HARNESS_T:
+        raise Fail(f"frame rep {fbench} T, playback's calls {play} T: harness {fbench - play} "
+                   f"(RW_FRAME_HARNESS_T {bench.RW_FRAME_HARNESS_T})")
+    gaps = {}
+    for name in ("vr_sector_n", "nxb_rh_sec"):
+        mc = card_mc(1)
+        mc.set_card(Card([bytes(512)], waits=2, crc_first=True))
+        gaps[name] = in_gaps(mc, name)
+    divider = 0
+    if "nxbQuietImage" not in SYMS:              # DEBUG: vr_sector_n's PLAY divider
+        divider = stub_t(card_mc(1), b"\x16\x00\xCD" + le(S("vid_dst_norm_flat")) + b"\xC9")
+    v, h = gaps["vr_sector_n"], gaps["nxb_rh_sec"]
+    if not (v[0] == h[0] == 15 and v[1] - divider == h[1] and v[2:4] == h[2:4] == [48, 48]):
+        raise Fail(f"read gaps vr_sector_n {v[:4]}, nxb_rh_sec {h[:4]} (divider {divider} T)")
 
 
 def test_rw_histlog():
@@ -1943,7 +2154,8 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
-         test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog]
+         test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
+         test_rw_harness]
 
 
 def main():

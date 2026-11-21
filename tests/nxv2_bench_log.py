@@ -141,6 +141,9 @@ def _run(lines, stamp):
         if h:
             run.hist[h.group(1)] = [int(x, 16) for x in h.group(2).split()]
             continue
+        if line.startswith("#HIST"):
+            run.warnings.append(f"malformed #HIST line (a tag and 17 words): {line.strip()!r}")
+            continue
         groups = _groups(line, run.warnings)
         for col, g in groups:
             (cols[col] if g[0] in tags else run.dropped).append(g)
