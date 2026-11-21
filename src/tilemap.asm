@@ -149,43 +149,74 @@ tm_clear_blank:
 
 ; B=top, C=left, D=height, E=width. Scrolls the rect up one row and
 ; blanks the freed bottom row (space + tmAttr). Height 1 just blanks.
-; Corrupts all registers.
+; The rows move in one zxnDDMA 2D transfer on MMU addresses (the tilemap
+; is bank 5, block RAM: no physical address reaches it); each row lands
+; below its source, so the overlap is safe. Rules: ddma.inc. Interrupts
+; must be enabled. Corrupts all registers.
 tm_scroll_rect:
     ld a, e
-    ld (tmScrollW), a
-    ld a, d
-    dec a
+    add a, a
+    ld (tmScrollLen), a         ; bytes per row
+    dec d
     jr z, .blank
-    ld (tmScrollH), a           ; rows to move = height-1
-.move:
-    push bc
+    ld a, d
+    ld (tmScrollRows), a        ; rows to move = height-1
     call tm_cell_addr
-    ex de, hl                   ; DE = dest row start (row B)
-    pop bc
-    push bc
+    ld (tmScrollDst), hl        ; row B
     inc b
-    call tm_cell_addr           ; HL = source row start (row B+1)
-    pop bc
-    push bc
-    ld a, (tmScrollW)
-    add a, a                    ; width*2 bytes per row
-    push bc
-    ld c, a
-    ld b, 0
-    ldir
-    pop bc
-    pop bc
-    inc b                       ; move the next row pair
-    ld a, (tmScrollH)
+    call tm_cell_addr
+    ld (tmScrollSrc), hl        ; row B+1
+    ld a, b
+    add a, d
     dec a
-    ld (tmScrollH), a
-    jr nz, .move
-.blank:                         ; B = bottom row of the rect
-    ld a, (tmScrollW)
-    ld e, a
+    ld b, a                     ; B = bottom row of the rect
+    push bc
+    ld a, (tmStride)
+    ld (tmScrollPitchA), a
+    ld (tmScrollPitchB), a
+    ld hl, tmScrollProg
+    ld bc, TM_SCROLL_PROG_LEN*256 + DMA_PORT
+    otir                        ; the enable is the last byte
+    ld a, d                     ; pad (tail rule): rows x TM_PAD_K, before the
+    add a, a                    ; blank below can touch a row still to move
+    add a, d
+    add a, a
+    ld b, a
+    djnz $
+    ld a, DDMA_MODE             ; flags off for the next DMA user
+    out (DMA_PORT), a
+    xor a
+    out (DMA_PORT), a
+    pop bc
+.blank:
     ld d, 1
     ld a, GLYPH_SPACE
     jp tm_fill_rect
+
+; Pad per row moved: a full-width row's worth (DDMA_PAD's formula).
+TM_PAD_K equ (TM_COLS*2*DDMA_T_BYTE_MAX*DDMA_CTC_CHANNELS + DDMA_PAD_DEN - 1)/DDMA_PAD_DEN + 2
+    ASSERT TM_PAD_K == 6                    ; the pad above multiplies by 6
+    ASSERT TM_COLS*2*31 <= DDMA_SCROLL_MAX  ; the largest scroll
+
+tmScrollProg:
+    db DDMA_RESET
+    db DDMA_MODE, DDMA_F_2D
+    db DDMA_ROWLEN
+tmScrollLen:    dw 0
+    db DDMA_ROWS
+tmScrollRows:   dw 0
+    db DDMA_STRIDE_A
+tmScrollPitchA: dw 0
+    db DDMA_STRIDE_B
+tmScrollPitchB: dw 0
+    db DDMA_WR0_ADDR
+tmScrollSrc:    dw 0
+    db DDMA_WR1, DDMA_CYCLE
+    db DDMA_WR2, DDMA_CYCLE
+    db DDMA_WR4
+tmScrollDst:    dw 0
+    db DDMA_WR5, DDMA_LOAD, DDMA_ENABLE
+TM_SCROLL_PROG_LEN equ $ - tmScrollProg
 
 ; The 16 hardware text colours as Next 9-bit palette entries (2 bytes
 ; each: RRRGGGBB, then blue LSB in bit 0). These are the CLASSIC ZX
@@ -217,8 +248,6 @@ dadPalette:
 
 tmAttr:        db TM_ATTR_DEFAULT
 tmFillGlyph:   db 0
-tmScrollW:     db 0
-tmScrollH:     db 0
 
 ; SP14c's Release-only ALIGN pads, here and in print.asm, went 2026-09:
 ; pre-anchor ballast moved in keeps Release clear of the $A100 boundary.

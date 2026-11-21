@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dma_contract import Fail, read_page, read_sld, DMA_PORT    # noqa: E402
 
 PAGE = 8192
+SCROLL_MAX = 4960
 OVL2_BANK = 29
 XFER_MAX = 4096
 T_BYTE_MAX = 8
@@ -579,7 +580,7 @@ def expect(got, want, what):
         raise Fail(f"{what}: first difference at +${i:X} (lengths {len(got)}/{len(want)})")
 
 
-def check_shape(mc, what, prims=1):
+def check_shape(mc, what, cap=XFER_MAX):
     """Every program: reset first, one enable, mode flags cleared after."""
     s = mc.blit.stream
     if not s or s[0] != 0xC3:
@@ -589,8 +590,8 @@ def check_shape(mc, what, prims=1):
     if mc.blit.reg["mode"] != 0:
         raise Fail(f"{what}: mode flags left at {mc.blit.reg['mode']:02X}")
     for t in mc.blit.transfers:
-        if t["n"] > XFER_MAX:
-            raise Fail(f"{what}: a transfer moves {t['n']} bytes, cap {XFER_MAX}")
+        if t["n"] > cap:
+            raise Fail(f"{what}: a transfer moves {t['n']} bytes, cap {cap}")
 
 
 # --------------------------------------------------------------------------- tests: primitives
@@ -919,10 +920,83 @@ def test_reload_shape(syms):
         raise Fail("the draw does not end with $DF $00")
 
 
+# --------------------------------------------------------------------------- tests: scroll
+
+TM_ROWS, TM_BYTES = 32, 160
+
+
+def tm_setup(mc):
+    base = mc.sym("TM_MAP")
+    img = bytes(((i * 11) ^ (i >> 5) ^ 0x40) & 0xFF for i in range(TM_ROWS * TM_BYTES))
+    mc.mem[base:base + len(img)] = img
+    mc.poke("tmAttr", 0x5A)
+    return base, img
+
+
+def scrolled(mc, img, top, left, h, w):
+    want = bytearray(img)
+    for r in range(top, top + h - 1):
+        want[r * TM_BYTES + left * 2:r * TM_BYTES + (left + w) * 2] = \
+            img[(r + 1) * TM_BYTES + left * 2:(r + 1) * TM_BYTES + (left + w) * 2]
+    b = top + h - 1
+    want[b * TM_BYTES + left * 2:b * TM_BYTES + (left + w) * 2] = bytes([mc.syms["GLYPH_SPACE"][1], 0x5A]) * w
+    return bytes(want)
+
+
+def scroll_case(syms, what, top, left, h, w):
+    mc = fresh(syms)
+    base, img = tm_setup(mc)
+    mc.call("tm_scroll_rect", b=top, c=left, d=h, e=w)
+    expect(bytes(mc.mem[base:base + len(img)]), scrolled(mc, img, top, left, h, w), what)
+    return mc
+
+
+def test_scroll_full(syms):
+    mc = scroll_case(syms, "full-screen scroll", 0, 0, 32, 80)
+    check_shape(mc, "tm_scroll_rect", cap=SCROLL_MAX)
+    t = mc.blit.transfers
+    if len(t) != 1 or t[0]["n"] != SCROLL_MAX or t[0]["mode"] != 2:
+        raise Fail(f"full-screen scroll: transfers {[(x['n'], x['mode']) for x in t]}, "
+                   f"expected one MMU-addressed 2D transfer of {SCROLL_MAX}")
+
+
+def test_scroll_narrow(syms):
+    mc = scroll_case(syms, "narrow window scroll", 5, 30, 8, 20)
+    check_shape(mc, "tm_scroll_rect narrow", cap=SCROLL_MAX)
+    scroll_case(syms, "two-row scroll", 30, 0, 2, 40)
+
+
+def test_scroll_h1(syms):
+    mc = scroll_case(syms, "one-row window", 20, 0, 1, 80)
+    if mc.blit.stream:
+        raise Fail("a one-row scroll programmed the blitter")
+
+
+def test_scroll_pad(syms):
+    mc = fresh(syms)
+    isr = mc.syms["CTC_ISR_T_MAX"][1]
+    k = pad_n(TM_BYTES, isr)                            # one full-width row
+    lo, hi = mc.sym("tm_scroll_rect"), mc.sym("tmScrollProg")
+    img = mc.mem
+    arms = [a for a in range(lo, hi - 1) if img[a] == 0xED and img[a + 1] == 0xB3]
+    if len(arms) != 1:
+        raise Fail(f"{len(arms)} otir in tm_scroll_rect, expected 1")
+    a = arms[0] + 2
+    # ld a,d / add a,a / add a,d / add a,a / ld b,a / djnz $: B = rows x 6
+    if bytes(img[a:a + 7]) != bytes([0x7A, 0x87, 0x82, 0x87, 0x47, 0x10, 0xFE]):
+        raise Fail(f"the bytes after the scroll's arm are {bytes(img[a:a + 7]).hex()}, not the rows x 6 pad")
+    if k != 6:
+        raise Fail(f"a full-width row needs a pad of {k} per row; the code multiplies by 6")
+    for rows in range(1, 32):
+        if rows * 6 < pad_n(rows * TM_BYTES, isr):
+            raise Fail(f"{rows} rows: pad {rows * 6} is under {pad_n(rows * TM_BYTES, isr)}")
+
+
 TESTS = [test_bank_addr, test_fill, test_copy_cross_64k, test_rect_256, test_rect_320_row,
          test_rect_split_values, test_stream_shape, test_pad, test_clear_back, test_copy_surface,
          test_blit_full, test_blit_short_clears, test_pos_256_clipped, test_pos_320_clipped,
-         test_fallback_row, test_reload_shape]
+         test_fallback_row, test_reload_shape,
+         test_scroll_full, test_scroll_narrow, test_scroll_h1, test_scroll_pad]
 
 
 def main():
