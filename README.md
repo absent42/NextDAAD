@@ -162,7 +162,7 @@ powershell -File build.ps1            # debug build
 powershell -File build.ps1 -Release   # release build
 powershell -File build.ps1 -Kit       # authoring kit build
 powershell -File build.ps1 -Run       # build, then launch CSpect (CSPECT_DIR, default
-                                      # D:\ZXNextDev\cspect; needs 4.5.6.0 or later)
+                                      # D:\ZXNextDev\cspect; needs 4.5.9.0 or later)
 powershell -File build.ps1 -Clean
 ```
 

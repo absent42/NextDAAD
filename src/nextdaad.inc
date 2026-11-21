@@ -865,52 +865,9 @@ SFXW_DEPTH0   equ SFX_WIN_PAGES+3       ; dw: SMPB_DEPTH as it stood at
                                         ; verbatim (see aud_smp_copy).
 SFXW_SIZE     equ SFX_WIN_PAGES+5
 
-; --- DMA picture copies (SP11 Task 2) ---
-; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work
-; (overlay2.asm: dma_copy, l2_copy_back_front, gfx_row_copy256, gfx_row_fetch),
-; unconditional since SP14a T4's follow-up wave retired the -NoDmaGfx
-; CPU-only A/B lever (owner hardware test, 2026-07-21 - see dma_copy's
-; own header, overlay2.asm). DMA_PORT ($6B, above) is the same physical
-; port the retired SP8 sample engine used - that engine is fully gone
-; (SP10 CTC pivot; see DAC_SILENCE's comment above), so dma_copy is now
-; its only consumer. See dma_copy's own header comment (overlay2.asm)
-; for the frame-ISR MMU6/7 hazard that forces every chunk into its own
-; DI bracket, one-shot CONTINUOUS mode - never burst, auto-restart, or
-; a live status/counter read.
-DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
-                            ; any longer request into pieces this size or
-                            ; smaller. Cut to 128 on 2026-08-03 to shorten
-                            ; the blocking window, then RESTORED to 256 the
-                            ; same day once silicon showed the window's
-                            ; length is not the governing quantity: the DAC
-                            ; feed is admitted INSIDE a running transfer by
-                            ; nextreg $CD bit 0 (im2_init), so a longer
-                            ; chunk simply admits more CTC edges and each is
-                            ; still serviced on time. The row copy and the
-                            ; surface copy hand dma_copy exactly 256 bytes,
-                            ; one chunk each; gfx_row_fetch hands a whole
-                            ; row: 256 bytes for 256-wide art (one chunk,
-                            ; never split), or 320 bytes for 320-wide art
-                            ; (two chunks). A 320-wide row cut at a page
-                            ; edge instead hands the leftover part: 64, 128,
-                            ; 192 or 256 bytes, a multiple of 64 whose
-                            ; shortest equals GFX_DMA_MIN_LEN (one chunk).
-                            ; 256 still cuts the two 256-byte calls from two
-                            ; chunks
-                            ; to one: ~780 T saved per call, about
-                            ; -5.4 ms on a location DISPLAY 0 and -10.7 ms
-                            ; on GFX 0/1 at 256x192. A ONE-CONSTANT KNOB
-                            ; NOW, but it did not use to be one - dma_copy
-                            ; derived the block length as
-                            ; `high DMA_CHUNK_MAX` (zero for any cap under
-                            ; 256), and its 128-era replacement pinned the
-                            ; high byte to a constant 0 (which barred 256).
-                            ; The current 16-bit form is general over
-                            ; 1..256 and ASSERTs both ends; read dma_copy's
-                            ; header before changing it anyway.
-GFX_DMA_MIN_LEN equ 64      ; design threshold: below this LDIR wins on
-                            ; programming overhead; gfx_copy (overlay2.asm)
-                            ; checks it at run time for NX3-width rows
+; --- Picture blits ---
+; Layer 2 clear, surface copy and picture rows go through the zxnDDMA
+; blitter on DMA_PORT (overlay2.asm; constants and rules in ddma.inc).
 
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0

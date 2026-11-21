@@ -4,6 +4,7 @@
     DEVICE ZXSPECTRUMNEXT
     SLDOPT COMMENT WPMEM, LOGPOINT, ASSERTION
     INCLUDE "nextdaad.inc"
+    INCLUDE "ddma.inc"
 
     ORG CODE_ORG
 main:
@@ -1469,6 +1470,7 @@ ctc_isr_pair:
     pop af
     ei
     reti
+    ASSERT $ - ctc_isr_pair == 41       ; a change here needs CTC_ISR_T_MAX recounted (ddma.inc)
 
 ; Channel 2 PAIR-mode feeder: one L,R pair to DACs B/C per CTC tick.
 ; Contract as ctc2_isr: saves AF/HL only, no MMU slot, no $243B/$253B,
@@ -1502,6 +1504,7 @@ ctc2_isr_pair:
     pop af
     ei
     reti
+    ASSERT $ - ctc2_isr_pair == 41       ; a change here needs CTC_ISR_T_MAX recounted (ddma.inc)
 
 ; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
 ; (gfxcache.asm), eng_init_game (engine.asm) and overlay1.asm's two

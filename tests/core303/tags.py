@@ -223,6 +223,36 @@ TAGS["P4HB"] = Tag("P4", "load steps", CPU, None, "step",
 TAGS["P4B5"] = Tag("P4", "bank 5 restore", CPU, None, "byte",
                    "exit restore of the LOAD 6 bank 5 region, 256 B; CK = ck16, OK = the startup checksum")
 
+# BLT303 rows (tests/core303/blit, BLT303.LOG): the transfers src/overlay2.asm sends, per
+# span length. State by first letter: X quiet; Y frame + CTC 0 at 15625 Hz, ISR 150 T (the
+# video session's load); Z frame + CTC 0 and 1 at 1344 T, ISR 250 T each (the load DDMA_PAD
+# is sized for). A state's CPU rows run under its interrupts: BREAK-EVEN is like for like.
+BLT_SIZES = (1, 4, 8, 16, 53, 71, 128, 240)
+_BLT_FAM = (("CP", CPU, "LDI copy, src/video.asm vid_copy_ldi"),
+            ("LN", "BLT linear", "full program, pad for the span"),
+            ("RF", "BLT row", "2D, row length n, 1 row; full program"),
+            ("RR", "BLT row reload", "2D, row length n, 1 row; 14-byte reload"),
+            ("KF", "BLT column", "2D, row length 1, n rows 256 apart; full program"),
+            ("KR", "BLT column reload", "2D, row length 1, n rows 256 apart; 14-byte reload"))
+_BLT_SP = ("row 256, reload, pad 320", "block 256x16, reload, pad 4096",
+           "block 256x16, full program, pad 4096", "column 320, reload, pad 320",
+           "column 320, full program, pad 320", "row 256, full program, pad 320")
+_BLT_PF = ("block 256x16, full program", "block 256x16, reload", "row 256, reload",
+           "column 320, reload", "column 320, full program")
+for _s in "XYZ":
+    for _f, _m, _note in _BLT_FAM:
+        for _k, _n in enumerate(BLT_SIZES):
+            assert "%s%s%d" % (_s, _f, _k) not in TAGS
+            TAGS["%s%s%d" % (_s, _f, _k)] = Tag("3" + _s, "span", _m, _n, "byte", _note)
+    for _k, _op in enumerate(_BLT_SP):
+        TAGS["%sSP%d" % (_s, _k)] = Tag("3" + _s, _op, BLT, None, "byte",
+                                        "as src/overlay2.asm sends it")
+    if _s != "X":
+        for _k, _op in enumerate(_BLT_PF):
+            TAGS["%sPF%d" % (_s, _k)] = Tag(
+                "3" + _s, "pad proof: " + _op, BLT, None, "byte",
+                "CK = reps whose last byte had not landed after the pad; T is not a figure")
+
 # Pi log tags (#PI303 logs, parse.parse_pilog); disjoint from TAGS: neither grammar accepts
 # the other's tags.
 PI_TAGS = ("P0IM P0NR P0RW P0VR P2CV P2JD P2PY P2RD P2SH P2SM P2SP P3CH P3CP "

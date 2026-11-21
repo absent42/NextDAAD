@@ -12,3 +12,4 @@
 | 2026-11-19 | ks3 | legP2 | ingested | 2026-11-19-ks3-legP2 |
 | 2026-11-19 | ks3 | legP3 | ingested | 2026-11-19-ks3-legP3 |
 | 2026-11-19 | ks3 | legP4 | ingested | 2026-11-19-ks3-legP4 |
+| 2026-11-21 | ks3 | legBLT | ingested | 2026-11-21-ks3-legBLT |

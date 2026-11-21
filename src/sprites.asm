@@ -49,9 +49,9 @@ sprApSave:    ds SPR_AP_LEN     ; the tick's shadow of the six cells above
 ; register is shared and only reset or a WR2 write with D5 set changes it
 ; (dma.vhd R2_BYTE_0/R2_BYTE_1); a stale nonzero value would stop this
 ; transfer yielding to the sample ISR mid-block (doc 11 F3). WR2 is
-; programmed I/O-fixed here, where every other non-video descriptor leaves
-; it memory-increment; dma_copy resends WR1 and WR2 on every call, so
-; nothing inherits the mode this leaves behind. Patched fields: .src,
+; programmed I/O-fixed here; every other DMA user sends its own full
+; program (ddma.inc, state rule), so nothing inherits the mode this
+; leaves behind. Patched fields: .src,
 ; .len (exact count, RTL-settled).
 sprDma:
     db $83                       ; WR6: disable
