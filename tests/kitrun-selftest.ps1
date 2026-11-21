@@ -176,7 +176,7 @@ else {
     Assert-Eq ($a -join '|') "-w3|-zxnext|-esc|$mmcWant|RELEASE${s}G1${s}G1.NEX" 'cspect launch arguments'
     # Version unreadable (no assembly metadata on Windows stand-in is 0.0.0.0; the Linux script has none).
     if (-not $OnWindows) {
-        Assert-Like $r.Out '*WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later*' 'cspect unreadable version warns, run continues'
+        Assert-Like $r.Out '*WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.9.0 or later*' 'cspect unreadable version warns, run continues'
     }
     if ($OnWindows) {
         function New-VersionedCSpect([string]$Version) {
@@ -187,8 +187,12 @@ else {
         Remove-Item -LiteralPath $csLog -Force -ErrorAction SilentlyContinue
         $r = Invoke-Kit 'run.ps1' $csLocal
         Assert-Eq $r.Rc 0 'old cspect exit'
-        Assert-Like $r.Out '*WARNING: CSpect 4.4.1.0 is older than 4.5.6.0*' 'old cspect warning names the version'
+        Assert-Like $r.Out '*WARNING: CSpect 4.4.1.0 is older than 4.5.9.0*' 'old cspect warning names the version'
         Assert-Eq (Test-Path -LiteralPath $csLog) $true 'old cspect still launched'
+        New-VersionedCSpect '4.5.6.0'
+        $r = Invoke-Kit 'run.ps1' $csLocal
+        Assert-Eq $r.Rc 0 'cspect 4.5.6 exit'
+        Assert-Like $r.Out '*WARNING: CSpect 4.5.6.0 is older than 4.5.9.0*' 'cspect 4.5.6 warns'
         New-VersionedCSpect '4.5.9.0'
         $r = Invoke-Kit 'run.ps1' $csLocal
         Assert-Eq $r.Rc 0 'new cspect exit'

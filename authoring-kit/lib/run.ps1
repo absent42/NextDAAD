@@ -46,9 +46,10 @@ if ($t.EMULATOR -eq 'jnext') {
     exit 0
 }
 if (-not (Test-KitCSpect $t)) { exit 1 }
-# The interpreter reads Next registers with NEXTREG A,n, which CSpect supports from 4.5.6.0.
+# The interpreter reads Next registers with NEXTREG A,n and draws with the zxnDDMA blitter:
+# CSpect 4.5.9.0 or later.
 $csVer = Get-KitCSpectVersion $t.CSPECT
-if ($null -eq $csVer) { Write-Host 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later' }
-elseif ($csVer -lt [version]'4.5.6.0') { Write-Host "WARNING: CSpect $csVer is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave" }
+if ($null -eq $csVer) { Write-Host 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.9.0 or later' }
+elseif ($csVer -lt [version]'4.5.9.0') { Write-Host "WARNING: CSpect $csVer is older than 4.5.9.0 - NextDAAD needs 4.5.9.0 or later and may misbehave" }
 Start-KitCSpect -Tools $t -Game $g
 exit 0

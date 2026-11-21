@@ -15,7 +15,7 @@ Export-KitConfig $cfg
 $t = Resolve-KitTools $cfg $kitRoot
 function abs([string]$p) { if ([IO.Path]::IsPathRooted($p)) { return $p } else { return Join-Path $kitRoot $p } }
 
-# ---- preflight: CSpect 4.0 or later (4.5.6.0 advised), kit files present ----
+# ---- preflight: CSpect 4.0 or later (4.5.9.0 advised), kit files present ----
 if ($t.EMULATOR -eq 'jnext') {
     $runName = if ($OnWindows) { 'RUN.BAT' } else { 'run.sh' }
     Write-Host "ERROR: the debugger runs in CSpect - set EMULATOR=cspect in CONFIG.local.BAT ($runName still runs jNext)"; exit 1
@@ -32,9 +32,10 @@ if ($null -eq $ver) {
 } elseif ($ver -lt [version]'4.0') {
     Write-Host "ERROR: the debugger needs CSpect 4.0 or later - found $ver in $cspDir"; exit 1
 }
-# The interpreter reads Next registers with NEXTREG A,n, which CSpect supports from 4.5.6.0.
-if ($null -eq $ver) { Write-Host 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.6.0 or later' }
-elseif ($ver -lt [version]'4.5.6.0') { Write-Host "WARNING: CSpect $ver is older than 4.5.6.0 - NextDAAD needs 4.5.6.0 or later and may misbehave" }
+# The interpreter reads Next registers with NEXTREG A,n and draws with the zxnDDMA blitter:
+# CSpect 4.5.9.0 or later.
+if ($null -eq $ver) { Write-Host 'WARNING: could not read the CSpect version - NextDAAD needs CSpect 4.5.9.0 or later' }
+elseif ($ver -lt [version]'4.5.9.0') { Write-Host "WARNING: CSpect $ver is older than 4.5.9.0 - NextDAAD needs 4.5.9.0 or later and may misbehave" }
 $sym = Join-Path $kitRoot 'NEXTDAAD.SYM'
 $dll = Join-Path $PSScriptRoot 'NextDAADDebug.dll'
 foreach ($need in @($sym, $dll)) {
