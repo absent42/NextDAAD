@@ -385,7 +385,8 @@ NXBW  130     verb
 ; like letters - word_next, overlay1.asm - so "pick 23" parses as
 ; verb PICK + noun "23" = 23). Values 2-11/14/20 alias existing
 ; movement/INVEN/ALL nouns - harmless synonymy, only the VALUE is
-; used. Range 1-64 + 99 covers the W5 manifest
+; used. Range 1-128 covers the W5 manifest and the raw video
+; sittings (100 also aliases TORCH, the same harmless synonymy)
 ; (.superpowers/sdd/sp17-corpus/w5-manifest.md holds the number map).
 ; Verb numbers 116-118: 116 is the last of the retired NXBEN block,
 ; 117-118 were never assigned.
@@ -457,7 +458,70 @@ LOOP  118     verb
 62    62      noun
 63    63      noun
 64    64      noun
+65    65      noun
+66    66      noun
+67    67      noun
+68    68      noun
+69    69      noun
+70    70      noun
+71    71      noun
+72    72      noun
+73    73      noun
+74    74      noun
+75    75      noun
+76    76      noun
+77    77      noun
+78    78      noun
+79    79      noun
+80    80      noun
+81    81      noun
+82    82      noun
+83    83      noun
+84    84      noun
+85    85      noun
+86    86      noun
+87    87      noun
+88    88      noun
+89    89      noun
+90    90      noun
+91    91      noun
+92    92      noun
+93    93      noun
+94    94      noun
+95    95      noun
+96    96      noun
+97    97      noun
+98    98      noun
 99    99      noun
+100   100     noun
+101   101     noun
+102   102     noun
+103   103     noun
+104   104     noun
+105   105     noun
+106   106     noun
+107   107     noun
+108   108     noun
+109   109     noun
+110   110     noun
+111   111     noun
+112   112     noun
+113   113     noun
+114   114     noun
+115   115     noun
+116   116     noun
+117   117     noun
+118   118     noun
+119   119     noun
+120   120     noun
+121   121     noun
+122   122     noun
+123   123     noun
+124   124     noun
+125   125     noun
+126   126     noun
+127   127     noun
+128   128     noun
 
 ;                       Verbs
 GET     20      verb

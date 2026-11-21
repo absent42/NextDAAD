@@ -13,6 +13,7 @@
 #   ------------------  ------------  --------------------------------
 #   (none) / -Aud       sd\TEMPLATE\  tests\test.dsf (the template)
 #   -Vid / -VidLong      sd\VID\       template (the VID*/PICK verbs)
+#   -VidRawBench         sd\VIDRAW\    template (PICK/GO/LOOP, NXBW/NXBD)
 #   -NxBench             sd\NXBENCH\   template (the NXB* verbs)
 #   -Suite               sd\SUITE\     tests\condacts.dsf
 #   -Err4                sd\ERR4\      tests\doallnest.dsf
@@ -434,6 +435,16 @@
 #              Shares sd\VID\ with -Vid - give both together for the
 #              full 001-014+099 card. Cached like -Vid. CSpect-lock:
 #              see header.
+#   -VidRawBench  stage the raw direct video sitting 1 card into sd\VIDRAW\:
+#              raw clips 060-079 (tests\mkrawclip.py, ungated), header-fault
+#              copies 080-086 (tests\mkrawbad.py), old-layout direct 010
+#              (tests\videnc_old_direct.py) and the -Vid delta 004. Encodes are
+#              cached in tests\out\vidraw\ by source, shape, rate, channels, cut
+#              and $vidLegSettlementTag. Every staging asserts each raw header,
+#              walks each raw clip's layout and checks its sound stimulus with
+#              tests\rawsound_check.py, and checks each fault copy differs from
+#              its parent only at the offsets mkrawbad printed. CSpect-lock: see
+#              header.
 #   -NxBench   stage the decode-kernel bench payloads into sd\NXBENCH\
 #              NXB0.BIN..NXB9.BIN (nxv2enc.py --bench-fixtures). NXB8
 #              (real classic 256x192@25 segment) is cut from a dedicated
@@ -447,7 +458,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky', [switch]$Full, [switch]$Plan)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$VidRawBench, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky', [switch]$Full, [switch]$Plan)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 # True when a CSpect mounts sd\ (or a folder under it) via -mmc=. No -mmc is false; a relative,
@@ -498,7 +509,7 @@ $sd = Join-Path $root 'sd'
 # combination if one did, rather than guess which leg was wanted.
 if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
     $otherLegSwitches = @(
-        'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
+        'Vid', 'VidLong', 'VidRawBench', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
         'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'SfxSt', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad',
@@ -518,6 +529,7 @@ if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
 # no entry here - they stage into whatever this resolves to.
 $legName = 'TEMPLATE'
 if ($Vid -or $VidLong) { $legName = 'VID' }
+if ($VidRawBench)      { $legName = 'VIDRAW' }
 if ($NxBench)          { $legName = 'NXBENCH' }
 if ($Suite)            { $legName = 'SUITE' }
 if ($Err4)             { $legName = 'ERR4' }
@@ -581,7 +593,7 @@ function Reset-LegDir {
     # recursive delete can never be pointed anywhere else (and never at
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
-    $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
+    $known = @('TEMPLATE', 'VID', 'VIDRAW', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'SFXST', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD',
@@ -812,6 +824,10 @@ $legNarrow = @{
     '-Sprites'   = New-StepSpec -With (Get-FxSpec 'sprites.ddb' 'sprites.dsf'), $aniOut -Files 'tests/art/mkpalcard.py', 'authoring-kit/lib/anipack.ps1' -Tools gfx2next
     '-Txt40'     = New-StepSpec -With (Get-FxSpec 'txt40.ddb' 'txt40.dsf') -Globs $vidCache
     '-KbLog'     = Get-FxSpec 'kblog.ddb' 'kblog.dsf'
+    '-VidRawBench' = New-StepSpec -With (Get-FxSpec ('template.ddb', 'template.xmb') 'test.dsf') -Git 'authoring-kit/lib' `
+                       -Files 'tests/mkrawclip.py', 'tests/mkrawbad.py', 'tests/mktoneclip.py', 'tests/rawsound_check.py',
+                       'tests/videnc_old_direct.py', 'tools/demo-files/1920x1080-25p.mp4', 'tools/demo-files/Sintel_1080_10s_30MB.mp4',
+                       'tools/demo-files/sintel sound.mp4' -Globs 'tests/out/vidraw/*.vid', $vidCache -Tools ffmpeg
 }
 foreach ($k in '', 'All', 'Ticker', 'Trans', 'Fade', 'Hints', 'Clock', 'Tool', 'NoBin', 'Bad') { $legNarrow[('-Xbn ' + $(if ($k) { "-Xbn$k" })).Trim()] = $legXbn }
 foreach ($k in 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad', 'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb',
@@ -4356,7 +4372,7 @@ Copy-Item "$root\tests\out\template.ddb" "$leg\GAME.DDB" -Force
 # call XMES). A self-contained folder should hold that leg's files and
 # nothing else, and the legs with their own XMB (-Suite/-V3/-Part) stage
 # it themselves below.
-if ($templateXmb -and ($legName -in @('TEMPLATE', 'VID', 'NXBENCH'))) {
+if ($templateXmb -and ($legName -in @('TEMPLATE', 'VID', 'VIDRAW', 'NXBENCH'))) {
     Copy-Item "$root\tests\out\template.xmb" "$leg\0.XMB" -Force
     "staged tests\out\template.xmb -> sd\$legName\0.XMB"
 }
@@ -5467,6 +5483,153 @@ if ($VidLong) {
         $vidLongStaged++
     }
     "staged $vidLongStaged long fixture(s) -> sd\$legName\007-014.VID + 099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE + 012-014 direct routes)"
+}
+
+if ($VidRawBench) {
+    Assert-VidEraInSync
+    # Raw direct video sitting 1 card - see the -VidRawBench header comment. CSpect-lock: see header.
+    if (Test-SdCSpect) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
+    }
+    $vrDir = Join-Path $root 'tests\out\vidraw'
+    New-Item -ItemType Directory -Force $vrDir | Out-Null
+    $vrFfmpeg = "$root\tools\ffmpeg\bin\ffmpeg.exe"
+    $vrTone = Join-Path $vrDir 'tone8s.mp4'
+    if (-not (Test-Path -LiteralPath $vrTone)) {
+        & python "$PSScriptRoot\mktoneclip.py" --out $vrTone --ffmpeg $vrFfmpeg
+        if ($LASTEXITCODE -ne 0) { throw "mktoneclip.py failed (exit $LASTEXITCODE)" }
+    }
+    $vrSrc = @{
+        card   = Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'          # 1 kHz beep each second, L/R alternating
+        sintel = Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'   # no audio stream
+        sinsnd = Join-Path $root 'tools\demo-files\sintel sound.mp4'
+        tone   = $vrTone
+    }
+    # real = sound bytes a frame (samples x channels); check = rawsound_check --expect
+    $vrRaw = [ordered]@{
+        '060' = @{ src = 'card';   w = 256; h = 192; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'beeps' }
+        '061' = @{ src = 'card';   w = 320; h = 160; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'beeps' }
+        '062' = @{ src = 'card';   w = 320; h = 192; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'beeps' }
+        '063' = @{ src = 'card';   w = 280; h = 224; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'beeps' }
+        '064' = @{ src = 'card';   w = 320; h = 240; fps = '16.67';         ch = 2; dur = '10.0'; real = 1874; check = 'beeps' }
+        '065' = @{ src = 'card';   w = 256; h = 240; fps = '16.67';         ch = 2; dur = '10.0'; real = 1874; check = 'beeps' }
+        '066' = @{ src = 'card';   w = 256; h = 192; fps = '25';            ch = 1; dur = '10.0'; real = 625;  check = 'monobeeps' }
+        '067' = @{ src = 'card';   w = 320; h = 160; fps = '25';            ch = 1; dur = '10.0'; real = 625;  check = 'monobeeps' }
+        '068' = @{ src = 'card';   w = 320; h = 192; fps = '25';            ch = 1; dur = '10.0'; real = 625;  check = 'monobeeps' }
+        '069' = @{ src = 'card';   w = 280; h = 224; fps = '25';            ch = 1; dur = '10.0'; real = 625;  check = 'monobeeps' }
+        '070' = @{ src = 'card';   w = 320; h = 240; fps = '16.67';         ch = 1; dur = '10.0'; real = 937;  check = 'monobeeps' }
+        '071' = @{ src = 'card';   w = 256; h = 240; fps = '16.67';         ch = 1; dur = '10.0'; real = 937;  check = 'monobeeps' }
+        '072' = @{ src = 'card';   w = 320; h = 256; fps = '12.5';          ch = 2; dur = '10.0'; real = 2500; check = 'beeps' }
+        '073' = @{ src = 'sintel'; w = 256; h = 192; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'silent' }
+        # 15625/1024 fps: 1024 mono bytes a frame, an exact multiple of 512 (section 1536)
+        '074' = @{ src = 'card';   w = 256; h = 192; fps = '15.2587890625'; ch = 1; dur = '10.0'; real = 1024; check = 'monobeeps'; section = 1536 }
+        '075' = @{ src = 'sinsnd'; w = 256; h = 192; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'sound' }
+        '076' = @{ src = 'sinsnd'; w = 256; h = 192; fps = '25';            ch = 1; dur = '10.0'; real = 625;  check = 'sound' }
+        '077' = @{ src = 'tone';   w = 256; h = 192; fps = '25';            ch = 2; dur = '8.0';  real = 1250; check = 'lr' }
+        '078' = @{ src = 'tone';   w = 256; h = 192; fps = '25';            ch = 1; dur = '8.0';  real = 625;  check = 'monotones' }
+        '079' = @{ src = 'card';   w = 320; h = 256; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'beeps' }
+    }
+    $vrCache = @{}
+    foreach ($clip in $vrRaw.Keys) {
+        $e = $vrRaw[$clip]
+        $name = "raw_$($e.src)_$($e.w)x$($e.h)_$($e.fps -replace '\.', 'p')_$(if ($e.ch -eq 2) { 'st' } else { 'mo' })_0-$([int][double]$e.dur)_$vidLegSettlementTag.vid"
+        $cache = Join-Path $vrDir $name
+        if (-not (Test-Path -LiteralPath $cache)) {
+            "encoding $clip ($($e.w)x$($e.h) @ $($e.fps), $($e.ch) ch, $($e.src)) via mkrawclip.py -> tests\out\vidraw\$name"
+            & python "$PSScriptRoot\mkrawclip.py" --src $vrSrc[$e.src] --shape "$($e.w)x$($e.h)" --fps $e.fps --channels $e.ch --start 00:00:00 --duration $e.dur --out "$cache.tmp"
+            if ($LASTEXITCODE -ne 0) { throw "mkrawclip.py failed (exit $LASTEXITCODE) - $clip not staged" }
+            Move-Item -LiteralPath "$cache.tmp" -Destination $cache -Force
+        }
+        # Header, byte level: the fields the player validates at open.
+        $hb = New-Object byte[] 512
+        $fs = [IO.File]::OpenRead($cache)
+        try { [void]$fs.Read($hb, 0, 512) } finally { $fs.Close() }
+        $sw = if ($e.w -eq 256 -and $e.h -le 192) { 256 } else { 320 }
+        $want = [ordered]@{
+            magic = @([Text.Encoding]::ASCII.GetString($hb, 0, 5), 'NXVID'); version = @($hb[5], 2)
+            'width code' = @($hb[6], [int]($sw -eq 320)); 'height byte' = @($hb[7], ($e.h % 256))
+            channels = @($hb[9], $e.ch); rate = @(($hb[10] + 256 * $hb[11]), 15625); flags = @($hb[12], 0x13)
+            'sound bytes' = @(($hb[17] + 256 * $hb[18]), $e.real)
+            cap = @(($hb[21] + 256 * $hb[22]), ([math]::Ceiling($e.w * $e.h / 512) + 1))
+            'width word' = @(($hb[23] + 256 * $hb[24]), $(if ($sw -eq 256) { 256 } else { $e.w }))
+        }
+        foreach ($k in $want.Keys) {
+            if ("$($want[$k][0])" -ne "$($want[$k][1])") { throw "-VidRawBench ${clip}: header $k = $($want[$k][0]), expected $($want[$k][1]) ($cache)" }
+        }
+        $frames = $hb[14] + 256 * $hb[15] + 65536 * $hb[16]
+        $nominal = [math]::Round([double]$e.fps * [double]$e.dur)
+        if ($frames -lt 33 -or [math]::Abs($frames - $nominal) -gt 2) { throw "-VidRawBench ${clip}: $frames frames, expected $nominal +- 2 (and at least 33 for NXBW)" }
+        # Layout walk to EOF and the sound stimulus (pad and tag excluded).
+        $section = ([math]::Floor($e.real / 512) + 1) * 512
+        if ($e.section -and $e.section -ne $section) { throw "-VidRawBench ${clip}: table section $($e.section) disagrees with $section" }
+        $chk = & python "$PSScriptRoot\rawsound_check.py" $cache --expect $e.check 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { throw "-VidRawBench ${clip}: rawsound_check --expect $($e.check) failed: $($chk -join ' | ')" }
+        $m = [regex]::Match(($chk -join "`n"), 'frames=(\d+) channels=(\d+) sound=(\d+) section=(\d+)')
+        if (-not $m.Success -or [int]$m.Groups[1].Value -ne $frames -or [int]$m.Groups[4].Value -ne $section) {
+            throw "-VidRawBench ${clip}: walk disagrees with the header (frames $frames, section $section): $($chk -join ' | ')"
+        }
+        "VIDRAW $clip $($e.w)x$($e.h) @ $($e.fps) ch $($e.ch): header ok, frames $frames, section $section, $($e.check): $(($chk | Select-Object -Skip 1 | Select-Object -First 2) -join ' ')"
+        $vrCache[$clip] = $cache
+    }
+    # Header-fault copies: each must differ from its parent only at the offsets mkrawbad printed,
+    # and those must be exactly the fault's (offset=new byte).
+    $vrBad = [ordered]@{
+        '080' = @{ parent = '060'; fault = 'flags11';     want = '12=11' }
+        '081' = @{ parent = '060'; fault = 'flags03mono'; want = '9=01 12=03' }
+        '082' = @{ parent = '061'; fault = 'width322';    want = '23=42' }
+        '083' = @{ parent = '061'; fault = 'width0';      want = '23=00 24=00' }
+        '084' = @{ parent = '061'; fault = 'width6';      want = '23=06 24=00' }
+        '085' = @{ parent = '060'; fault = 'capplus1';    want = '21=62' }
+        '086' = @{ parent = '060'; fault = 'flags1b';     want = '12=1b' }
+    }
+    foreach ($clip in $vrBad.Keys) {
+        $b = $vrBad[$clip]
+        $par = $vrCache[$b.parent]
+        # outside the leg stamp's cache glob: rewritten on every staging
+        New-Item -ItemType Directory -Force (Join-Path $vrDir 'bad') | Out-Null
+        $out = Join-Path $vrDir "bad\${clip}_$($b.fault).vid"
+        $p = & python "$PSScriptRoot\mkrawbad.py" --in $par --out $out --fault $b.fault 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { throw "mkrawbad.py --fault $($b.fault) failed: $($p -join ' | ')" }
+        $printed = @($p | ForEach-Object { if ($_ -match '^offset (\d+): [0-9a-f]{2} -> ([0-9a-f]{2})$') { "$($Matches[1])=$($Matches[2])" } })
+        if (($printed -join ' ') -ne $b.want) { throw "-VidRawBench ${clip}: mkrawbad printed '$($printed -join ' ')', expected '$($b.want)'" }
+        $d = & python "$PSScriptRoot\mkrawbad.py" --diff $par $out 2>&1 | ForEach-Object { "$_" }
+        $offs = @($printed | ForEach-Object { $_.Split('=')[0] }) -join ' '
+        $sizes = (Get-Item -LiteralPath $par).Length
+        if ($LASTEXITCODE -ne 0 -or ($d -join "`n") -ne "differs at: $offs`nsizes: $sizes $sizes") {
+            throw "-VidRawBench ${clip}: $out differs from $($b.parent) beyond offsets $offs`: $($d -join ' | ')"
+        }
+        "VIDRAW $clip = $($b.parent) with $($b.fault): differs only at $offs ($($printed -join ' '))"
+        $vrCache[$clip] = $out
+    }
+    # 010: old-layout direct regression control (Sintel, 256x167 @ 25, as -VidLong 010).
+    $old = Join-Path $vrDir "old_sintel_256x167_25_direct_$vidLegSettlementTag.vid"
+    if (-not (Test-Path -LiteralPath $old)) {
+        "encoding 010 (old-layout direct 256x167 @ 25, Sintel) via videnc_old_direct.py - slow"
+        & python "$PSScriptRoot\videnc_old_direct.py" $vrSrc.sintel "$old.tmp" --shape 256x167 --fps 25 --direct --ffmpeg $vrFfmpeg
+        if ($LASTEXITCODE -ne 0) { throw "videnc_old_direct.py failed (exit $LASTEXITCODE) - 010 not staged" }
+        Move-Item -LiteralPath "$old.tmp" -Destination $old -Force
+    }
+    # 004: the -Vid delta clip (scope 320x144, Sintel 1.7 s, resident).
+    $delta = Join-Path $root "tests\out\004_scope_${vidLegSettlementTag}_leg_cache.vid"
+    if (-not (Test-Path -LiteralPath $delta)) {
+        "encoding 004 (-Vid scope leg clip) via videnc.py"
+        & python "$root\authoring-kit\lib\videnc.py" $vrSrc.sintel $delta --shape scope --fps 25 --start 00:00:00 --duration 1.7 --ffmpeg $vrFfmpeg
+        if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - 004 not staged" }
+    }
+    foreach ($ctl in @(@('010', $old, 0x03, 0, 167), @('004', $delta, 0x01, 1, 144))) {
+        $hb = New-Object byte[] 512
+        $fs = [IO.File]::OpenRead($ctl[1])
+        try { [void]$fs.Read($hb, 0, 512) } finally { $fs.Close() }
+        if ([Text.Encoding]::ASCII.GetString($hb, 0, 5) -ne 'NXVID' -or $hb[12] -ne $ctl[2] -or $hb[6] -ne $ctl[3] -or $hb[7] -ne $ctl[4] -or $hb[9] -ne 2) {
+            throw "-VidRawBench $($ctl[0]): header flags $($hb[12]) width code $($hb[6]) height $($hb[7]) channels $($hb[9]), expected flags $($ctl[2]) code $($ctl[3]) height $($ctl[4]) stereo ($($ctl[1]))"
+        }
+        "VIDRAW $($ctl[0]): header ok (flags $('{0:X2}' -f $hb[12]), frames $($hb[14] + 256 * $hb[15]))"
+        $vrCache[$ctl[0]] = $ctl[1]
+    }
+    foreach ($clip in ($vrCache.Keys | Sort-Object)) {
+        Copy-Item -LiteralPath $vrCache[$clip] -Destination "$leg\$clip.VID" -Force
+    }
+    "staged $($vrCache.Count) clip(s) -> sd\$legName\ (raw 060-079, header faults 080-086, old direct 010, delta 004)"
 }
 
 if ($NxBench) {
