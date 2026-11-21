@@ -164,15 +164,6 @@ def probe_has_audio(ffmpeg, input_path, stderr=None):
     return re.search(r"Stream #\d+:\d+.*:\s*Audio:", stderr) is not None
 
 
-def _source_is_stereo(ffmpeg, input_path):
-    """False when the banner's audio stream line says mono, else True."""
-    banner = _probe_stderr(ffmpeg, input_path)
-    for line in banner.splitlines():
-        if re.search(r"Stream #\d+:\d+.*:\s*Audio:", line):
-            return not re.search(r",\s*mono\b", line)
-    return True
-
-
 def probe_source_fps(ffmpeg, input_path, stderr=None):
     """Returns the source's own nominal frame rate as a float, read from
     the SAME ffmpeg stderr banner probe_dimensions() already parses (the
@@ -315,14 +306,11 @@ def extract_video(ffmpeg, input_path, start, duration, width, height, fps,
 def extract_audio(ffmpeg, input_path, start, duration, channels, rate):
     """Decode the source audio to 8-bit unsigned PCM at `rate`.
 
-    -ac is pinned to 2, NOT to `channels`: stereo is the only layout
-    the NXV format carries, and ffmpeg's channel-count filter upmixes
-    a MONO source transparently (it duplicates the single channel into
-    both), so a mono source needs no author action and produces the
-    same wire bytes a stereo source of the same material would. The
-    `channels` argument is kept - and asserted - so a caller that ever
-    drifted from 2 fails here rather than writing a file the player
-    refuses at open."""
+    channels 2 (every layout but raw): -ac 2, so a MONO source is
+    upmixed transparently (duplicated into both channels). channels 1
+    (raw layout only): -ac 1 for every source, ffmpeg's own downmix.
+    Anything else is asserted, so a caller that drifted fails here
+    rather than writing a file the player refuses at open."""
     assert channels in (1, 2), f"NXV audio is 1 (raw only) or 2 channels, got {channels}"
     args = []
     if start:
@@ -330,15 +318,8 @@ def extract_audio(ffmpeg, input_path, start, duration, channels, rate):
     args += ["-i", str(input_path)]
     if duration:
         args += ["-t", str(duration)]
-    if channels == 1:
-        # raw mono: -ac 1 downmixes a stereo source at -3 dB per channel
-        # (pan keeps it explicit) and is the identity on a mono source
-        af = ["-af", "pan=mono|c0=0.707107*c0+0.707107*c1"] \
-            if _source_is_stereo(ffmpeg, input_path) else ["-ac", "1"]
-        args += ["-vn"] + af + ["-ar", str(rate), "-f", "u8", "pipe:1"]
-    else:
-        args += ["-vn", "-ac", "2", "-ar", str(rate),
-                  "-f", "u8", "pipe:1"]
+    args += ["-vn", "-ac", str(channels), "-ar", str(rate),
+              "-f", "u8", "pipe:1"]
     return run_ffmpeg(ffmpeg, args, "audio")
 
 

@@ -172,7 +172,7 @@ def total_size_check(total_bytes, frames, mode, width, height, fps,
     total_bytes is the projected size (the writer's own arithmetic,
     computed ahead of the write)."""
     seconds = frames / float(fps) if fps else 0.0
-    chan = "stereo"                 # the only channel count v2 carries
+    chan = "mono" if channels == 1 else "stereo"
     if frames > PLAYER_MAX_FRAMES:
         max_seconds = PLAYER_MAX_FRAMES / float(fps)
         raise SystemExit(
@@ -213,7 +213,11 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
     """Build the 512-byte NXV v2 header. width must be 256 or 320
     (the only two Layer 2 shapes); height is 1-192 for width 256
     (mode-0, 192 lines) or 1-256 for width 320 (mode-1, 256 lines) -
-    256 encodes as the sentinel byte 0, see HDR_OFF_HEIGHT."""
+    256 encodes as the sentinel byte 0, see HDR_OFF_HEIGHT.
+
+    raw_width (bytes 23-24, picture width in columns) is required with
+    FLAG_RAW, which needs flags exactly $13 and allows 1 or 2 channels,
+    and refused without it."""
     if width not in CODE_BY_WIDTH:
         raise ValueError(f"width must be 256 or 320, got {width}")
     max_height = MAX_HEIGHT_BY_WIDTH[width]
@@ -224,9 +228,8 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
     if raw:
         # raw layout: mono allowed; needs the delta + direct-serve bits
         # (flags $13) and the picture width in columns
-        if (flags & (FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE)) != (
-                FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE):
-            raise ValueError("FLAG_RAW requires FLAG_DELTA_STREAM and FLAG_DIRECT_SERVE")
+        if flags != (FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE | FLAG_RAW):
+            raise ValueError(f"a raw clip's flags must be exactly $13, got {flags:#x}")
         if channels not in (1, 2):
             raise ValueError(f"channels must be 1 or 2, got {channels}")
         if raw_width is None:
@@ -237,6 +240,8 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
                                  f"{RAW_W_STEP} on the 320 surface, got {raw_width}")
         elif raw_width != 256:
             raise ValueError(f"raw_width must be 256 on the 256 surface, got {raw_width}")
+    elif raw_width is not None:
+        raise ValueError("raw_width is only valid with FLAG_RAW")
     elif channels != 2:
         # Mono withdrawn 2026-08-03 (owner ruling). The FIELD stays -
         # it is frozen wire format at offset 9 - and the player still
@@ -3991,8 +3996,8 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     crop = _videnc.compute_center_crop(src_w, src_h, width, height)
     from fractions import Fraction
     fps_frac = fps if isinstance(fps, Fraction) else Fraction(fps).limit_denominator(1000)
-    # channels is 2 except a raw clip, which may carry 1 (a mono SOURCE
-    # is upmixed by ffmpeg's -ac 2 in videnc.extract_audio)
+    # channels is 2 except a raw clip, which may carry 1; at 2 a mono
+    # SOURCE is upmixed by ffmpeg's -ac 2 in videnc.extract_audio
     # Lay out the audio FIRST: the player-bound guard (real
     # bytes/frame <= AUD_FRAME_MAX) rejects a doomed fps
     # before the slow ffmpeg extraction, not after.

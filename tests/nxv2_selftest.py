@@ -7980,6 +7980,10 @@ def t16_raw_header():
     _raises(ValueError, enc.pack_header, **_hdr_args(
         flags=enc.FLAG_DELTA_STREAM | enc.FLAG_RAW, raw_width=256))
     _raises(ValueError, enc.pack_header, **_hdr_args(width=320, flags=raw, raw_width=322))
+    # flags must be exactly $13 with the raw bit; raw_width needs the raw bit
+    for extra in (enc.FLAG_BAND_PALETTE, enc.FLAG_OCOPY, 0x20):
+        _raises(ValueError, enc.pack_header, **_hdr_args(flags=raw | extra, raw_width=256))
+    _raises(ValueError, enc.pack_header, **_hdr_args(raw_width=256))
     g = enc.pack_header(**_hdr_args(flags=raw, raw_width=256))
     assert int.from_bytes(g[23:25], "little") == 256
     assert not any(enc.pack_header(**_hdr_args())[23:])
@@ -8083,11 +8087,11 @@ def t16_raw_clip_file():
     end0 = (cuts + [50])[0]
     pal = enc.scene_palette(ex["orig"], 0, end0)
     idx, _dec = enc.dither_quantize(ex["orig"][0], pal)
-    flat = enc.flatten_frame(idx, True).tobytes()
+    flat = np.ascontiguousarray(idx.T).tobytes()      # column-major, built independently
     expect(data[512:512 + 1250] == ex["audio_bytes"][:1250], "frame 0 sound bytes")
     expect(data[512 + 1536:512 + 2048] == enc.build_palette_block(pal), "frame 0 palette sector")
     px0 = 512 + 2048
-    expect(data[px0:px0 + 224] == flat[:224], "pixel bytes [0:224] are quantised column 0")
+    expect(data[px0:px0 + 224] == idx[:, 0].tobytes(), "pixel bytes [0:224] are quantised column 0")
     expect(data[px0:px0 + len(flat)] == flat, "frame 0 pixels are column-major")
     expect(not any(data[px0 + len(flat):px0 + 123 * 512]), "pixel pad is zero")
 
@@ -8111,6 +8115,36 @@ def t16_old_layout_writer():
     expect(not any(data[23:25]), "bytes 23-24 are zero")
     expect(data[512 + 1536] == enc.OP_KSTART, "first payload byte is OP_KSTART")
     expect(hashlib.sha1(data).hexdigest() == want, "sha1 differs from the pre-change capture")
+
+
+@case(16, "raw layout - mono audio extraction keeps a centre-only 5.1 tone and does not clip a hot stereo tone")
+def t16_raw_mono_audio():
+    import subprocess
+    import videnc
+    if not FFMPEG.exists():
+        skip("ffmpeg not available")
+
+    def make(path, layout):
+        # sine is -18 dBFS; +16.8 dB lifts it to about -1.2 dBFS
+        pan = {"5.1": "pan=5.1|FC=c0", "stereo": "pan=stereo|FL=c0|FR=c0"}[layout]
+        r = subprocess.run(
+            [str(FFMPEG), "-y", "-v", "error", "-f", "lavfi", "-i",
+             "sine=frequency=440:sample_rate=15625:duration=0.5",
+             "-af", f"{pan},volume=16.8dB", str(path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        expect(r.returncode == 0, r.stderr.decode("utf-8", "replace"))
+
+    with tempfile.TemporaryDirectory() as td:
+        c51, st = Path(td) / "c51.wav", Path(td) / "st.wav"
+        make(c51, "5.1")
+        make(st, "stereo")
+        m51 = videnc.extract_audio(str(FFMPEG), c51, None, None, 1, 15625)
+        mst = videnc.extract_audio(str(FFMPEG), st, None, None, 1, 15625)
+    dev = max(abs(b - 128) for b in m51)
+    expect(dev > 16, f"centre-only 5.1 tone lost in mono: max deviation {dev}")
+    expect(len(mst) > 1000, "stereo mono extraction produced no samples")
+    expect(min(mst) > 0 and max(mst) < 255,
+           f"hot stereo tone clipped in mono: min {min(mst)} max {max(mst)}")
 
 
 def main():
