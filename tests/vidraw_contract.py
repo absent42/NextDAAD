@@ -2551,16 +2551,30 @@ def test_rw_harness():
 CHAIN_ENTRY6 = 12                   # MMU6 at the walk's call: a page in no other slot
 
 
+def chain_ctl(m, pc):
+    """(kind, fall-through address) of a control transfer opcode at pc, else None."""
+    op = m[pc]
+    if op == 0xCD or op & 0xC7 == 0xC4:
+        return "call", (pc + 3) & 0xFFFF
+    if op & 0xC7 == 0xC7:
+        return "call", (pc + 1) & 0xFFFF                 # rst
+    if op == 0xC3 or op & 0xC7 == 0xC2:
+        return "jump", (pc + 3) & 0xFFFF
+    if op in (0x10, 0x18, 0x20, 0x28, 0x30, 0x38):
+        return "jump", (pc + 2) & 0xFFFF
+    if op == 0xE9:
+        return "jump", (pc + 1) & 0xFFFF
+    if op == 0xC9 or op & 0xC7 == 0xC0:
+        return "ret", (pc + 1) & 0xFFFF
+    if op == 0xED and m[(pc + 1) & 0xFFFF] in (0x45, 0x4D):
+        return "ret", (pc + 2) & 0xFFFF
+    return None
+
+
 def test_rw_chain():
-    """An RFRAME row's whole chain as nxb_sess_walk runs it: nxb_hop6 with HL = nxb_srow_go,
-    MMU6 = page 12, two reps of the real code (nxb_kind_rfr, nxb_lrow, nxb_rw_fbody: feed,
-    pump, vid_raw_apad mapping the schedule page, the frame decode; the print's jp nxb_hop6
-    to nxb_rw_done) over two frames, tag 1 with its palette sector then tag 0. Only the
-    raster clocks, nxb_sprint and vid_rl_poll are trapped. Every instruction fetched at
-    $C000-$DFFF is on the page MMU6 maps then (NXB_PAGE; or the schedule page's slide, built
-    schedule or train); nxb_sprint entered once, with NXB_PAGE mapped; vid_raw_apad entered
-    with NXB_PAGE then the schedule page; at the end MMU6 = NR $56 = page 12, SP balanced,
-    nxb_lrow.pr back to nxb_sprint, the card read to its end by the expected readers."""
+    """An RFRAME row's chain from nxb_hop6 (HL = nxb_srow_go, MMU6 = page 12) over two frames:
+    each $C000-$DFFF fetch on the page MMU6 maps, each entry there named (a label of that page
+    or a call's return), the MMU6 swaps, the print, the card read to its end."""
     bench_only()
     mc = nxb_machine()
     patch_session(mc, 1, 1)
@@ -2598,23 +2612,46 @@ def test_rw_chain():
     traps = {S(n): noop(n) for n in ("nxb_lc_start", "nxb_lc_end", "nxb_sprint", "vid_rl_poll")
              if n in SYMS}
     traps.update(aborts())
+    # Named entries: the schedule page's VR_SCHED, VR_PALTRAIN and even slide entries; any
+    # NXB_PAGE label; else only a ret to the return address a call pushed with the same page.
+    labels6 = {v for p, v in SYMS.values() if p == nxb and 0xC000 <= v < 0xE000}
+    fixed, lo, end = {S("VR_SCHED"), S("VR_PALTRAIN")}, S("VR_SLIDE"), S("VR_SLIDE_END")
+    shadow, how, popped, prev_in = {}, "jump", None, False
     apad, steps = S("vid_raw_apad"), 0
     cpu.sp = STACK
     cpu.push(RET)
     cpu.hl, cpu.pc = S("nxb_srow_go"), S("nxb_hop6")
     while cpu.pc != RET:
         pc, p = cpu.pc, mc.mmu[6]
-        if 0xC000 <= pc < 0xE000 and not (p == nxb or p == sched and any(
-                a <= pc < b for a, b in code)):
+        win = 0xC000 <= pc < 0xE000
+        if win and not (p == nxb or p == sched and any(a <= pc < b for a, b in code)):
             raise Fail(f"fetch at ${pc:04X} with page {p} at MMU6 (step {steps})")
+        if win and (how != "seq" or not prev_in):
+            named = (p == sched and (pc in fixed or lo <= pc <= end and (end - pc) % 2 == 0)
+                     or p == nxb and pc in labels6)
+            if not named and (how != "ret" or popped != (pc, p)):
+                raise Fail(f"entry at ${pc:04X} with page {p} at MMU6 is not a named entry "
+                           f"({how}, step {steps})")
         if pc == apad:
             seen.setdefault("vid_raw_apad", []).append(p)
         t = traps.get(pc)
         if t is not None and (pc < 0xC000 or pc >= 0xE000 or p == nxb):
+            slot = cpu.sp
             t(cpu)
+            how, popped, prev_in = "ret", shadow.pop(slot, None), False
             continue
+        ctl, op, sp0 = chain_ctl(mc.mem, pc), mc.mem[pc], cpu.sp
         cpu.step()
         steps += 1
+        prev_in, how = win, "seq"
+        if ctl is not None and cpu.pc != ctl[1]:
+            how = ctl[0]
+            if how == "call":
+                shadow[cpu.sp] = (ctl[1], p)
+            elif how == "ret":
+                popped = shadow.pop(sp0, None)
+        elif op in (0xC5, 0xD5, 0xE5, 0xF5, 0xE3):       # push / ex (sp),hl: not a return
+            shadow.pop(cpu.sp, None)
         if steps > 2_000_000:
             raise Fail("the chain did not return")
     mc.sync()
