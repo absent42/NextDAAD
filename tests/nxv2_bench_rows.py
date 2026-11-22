@@ -1093,6 +1093,7 @@ NXB_RW_HREPS = 2048                                  # sectors per histogram row
 NXB_RW_SREPS = 512                                   # spin reps
 NXB_RW_SPIN = 2000                                   # count-loop passes per spin rep
 NXB_RW_MIN = 5000                                    # a card row needs this many blocks left
+NXB_HIST_MAX = 4                                     # #HIST rows the log step carries
 # T per rep inside an RW1 row's window that playback never runs (unarmed, base T), for
 # the gate fit to subtract; vidraw_contract test_rw_harness pins both to the image.
 RW_CARD_HARNESS_T = 88       # RSEC/RCOL/RHST rep over the schedule's call vr_sector_n / slide
@@ -1199,11 +1200,13 @@ SESSION_TABLES = {
         ("RSEC", "rblk", 0, NXB_RW_REPS, 0, False),
         ("RCOL", "rblk", 1, NXB_RW_REPS, 0, False),
         ("RHST", "rhist", 0, NXB_RW_HREPS, 0, False),
+        ("RH39", "rhist", 1, NXB_RW_HREPS, 0, False),     # poll 1 39 T after CRC 2
         ("SPN0", "spin", 0, NXB_RW_SREPS, 0, False),
         ("ARM2", "rarm", 0, 0, 0, False),
         ("ARSE", "rblk", 0, NXB_RW_REPS, 0, False),
         ("ARCO", "rblk", 1, NXB_RW_REPS, 0, False),
         ("AHST", "rhist", 0, NXB_RW_HREPS, 0, False),
+        ("AH39", "rhist", 1, NXB_RW_HREPS, 0, False),
         ("ASPN", "spin", 0, NXB_RW_SREPS, 0, False),
         ("DSRM", "disarm", 0, 0, 0, False),
         ("ARMO", "armold", 0, 0, 0, False),
@@ -1222,7 +1225,7 @@ SESSION_ARMED_PAIRS = {
     "SYN": (("K43K", "AK43"), ("FE00", "AFE0"), ("C4K0", "AC4K")),
     "SYS": (("K24K", "AK24"), ("FE00", "AFE0")),
     "RW1": (("RSWP", "ARSW"), ("RSEC", "ARSE"), ("RCOL", "ARCO"), ("RHST", "AHST"),
-            ("SPN0", "ASPN"), ("SPN0", "OSPN")),
+            ("RH39", "AH39"), ("SPN0", "ASPN"), ("SPN0", "OSPN")),
 }
 
 

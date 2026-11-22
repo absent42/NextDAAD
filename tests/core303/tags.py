@@ -259,9 +259,11 @@ for _s in "XYZ":
 # counts the data-token waits whose number n of $FF polls has bit length k (bin 9: n = 256,
 # the djnz loop's last poll, or longer: the mirror counts a wait through vid_sd_tok_h, 257
 # polls and up, as 256); n >= 1 polls wait NXB_HIST_POLL1_T + NXB_HIST_POLL_T x (n - 1) T at
-# 28 MHz (nxb_rh_sec, vr_sector_n's inline wait). ARM1/ARM2/ARMO and DSRM print nothing.
-# On the frame and card rows (NXB_RW1_MARKED) O = 01 marks a run walk (CMD12, CMD18,
-# a first token) inside the row: its T is not a figure, re-run.
+# 28 MHz (nxb_rh_sec, vr_sector_n's inline wait). RHST/AHST read poll 1 at the production
+# spacing after CRC 2 (11 + 7 x VR_POLL_PAD_N T, 18), RH39/AH39 at the prototype's 39 T
+# (nxb_rh_sec39); from poll 1 on the two share the code. ARM1/ARM2/ARMO and DSRM print
+# nothing. On the frame and card rows (NXB_RW1_MARKED) O = 01 marks a run walk (CMD12,
+# CMD18, a first token) inside the row: its T is not a figure, re-run.
 NXB_RW1 = {
     "IDEN": "O = delivery (02), R = frames, F = picture width, D = height byte",
     "RFR0": "frame 0: nxb_rw_feed + raw decode, its palette sector included; unarmed, R = 1",
@@ -270,16 +272,19 @@ NXB_RW1 = {
     "RSEC": "vr_sector_n + one 512-byte slide read into VR_SCRATCH; a sector a rep",
     "RCOL": "RSEC's sector as 8 reads of 64, each followed by ld l,0 / inc h",
     "RHST": "RSEC with the token wait binned; T is not a figure, see #HIST",
+    "RH39": "RHST with poll 1 39 T after CRC 2; T is not a figure, see #HIST",
     "SPN0": "a 2000-pass count loop, no card",
     "ARSE": "RSEC, raw handler armed",
     "ARCO": "RCOL, raw handler armed",
     "AHST": "RHST, raw handler armed",
+    "AH39": "RH39, raw handler armed",
     "ASPN": "SPN0, raw handler armed",
     "OSPN": "SPN0, video_ctc_isr_stereo (IX play pointer) armed",
 }
-NXB_RW1_MARKED = ("RFR0", "RSWP", "ARSW", "RSEC", "RCOL", "RHST", "ARSE", "ARCO", "AHST")
+NXB_RW1_MARKED = ("RFR0", "RSWP", "ARSW", "RSEC", "RCOL", "RHST", "RH39", "ARSE", "ARCO",
+                  "AHST", "AH39")
 NXB_RW1_WALK_O = 1
-NXB_HIST_TAGS = ("RHST", "AHST")
+NXB_HIST_TAGS = ("RHST", "RH39", "AHST", "AH39")
 NXB_HIST_BINS = 17
 NXB_HIST_POLL1_T = 22
 NXB_HIST_POLL_T = 47

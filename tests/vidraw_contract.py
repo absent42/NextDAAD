@@ -416,7 +416,7 @@ def hot_cells():
                     ("vidDstEnd", 1), ("vidDsCrcDue", 1), ("vidStrmRunBlkH", 2),
                     ("vidPalPending", 1), ("vidRawTag", 1), ("vidRlDiv", 1),
                     ("vidRlSpinDiv", 1), ("vidRlLast", 2), ("vidRlFields", 2),
-                    ("vidTokPolls", 2), ("vidTokCalls", 2)):
+                    ("vidTokPolls", 2), ("vidTokCalls", 2), ("vr_sector_n", 2)):
         if name in SYMS:
             a = SYMS[name][1]
             out |= {(a & 0x1FFF) + k for k in range(n)}
@@ -533,7 +533,8 @@ def owner_fn(mc):
     return owner
 
 
-ALLOWED = {"crc": {"vr_sector", "vr_sector_n"}, "wait": {"vr_sector_n", "vid_sd_tok_h"},
+ALLOWED = {"crc": {"vr_sector", "vr_sector_n", "vr_sector_c"},
+           "wait": {"vr_sector_n", "vid_sd_tok_h"},
            "token": {"vr_sector_n", "vid_sd_tok_h"},
            "data": {"slide", "paltrain"}}
 
@@ -677,46 +678,78 @@ def test_sched_limit():
     stray_writes(before, after, gen_allow(lambda k: k < off or page[k] == TRAIN[k - off]))
 
 
+def set_entry(mc, name):
+    """vr_sector_n's first two bytes = VR_ENT_FAST or VR_ENT_CROSS, as vid_raw_frame writes."""
+    a = S("vr_sector_n")
+    mc.mem[a:a + 2] = le(S(name))
+
+
+def entry_of(mc):
+    """'VR_ENT_FAST', 'VR_ENT_CROSS', or the two bytes at vr_sector_n in hex."""
+    a = S("vr_sector_n")
+    got = bytes(mc.mem[a:a + 2])
+    for name in ("VR_ENT_FAST", "VR_ENT_CROSS"):
+        if got == le(S(name)):
+            return name
+    return got.hex()
+
+
+def poll1_t():
+    """CRC 2 to poll 1 on Release and -BenchQuiet: in tail 4 + VR_POLL_PAD_N x cp (hl) 7 +
+    in head 7."""
+    return 11 + 7 * S("VR_POLL_PAD_N")
+
+
 def test_sector_runwalk():
-    mc = RawMachine(SYMS)
-    mc.map(7, S("VID_PAGE"))
-    mc.poke16("vidStrmRunBlkH", 1)
-    mc.poke("vidDsCrcDue", 0)
-    card = Card(blocks(bytes(1024)), waits=1)
-    mc.set_card(card)
-    fired = []
+    """Two opens from a run of 1 (the first with no CRC due): under VR_ENT_CROSS the count
+    falls to 0, then the second open walks once, after its CRC, into a run of 5 and counts
+    it (4 left); under VR_ENT_FAST neither open counts and the walk never fires."""
+    for entry in ("VR_ENT_CROSS", "VR_ENT_FAST"):
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE"))
+        mc.poke16("vidStrmRunBlkH", 1)
+        mc.poke("vidDsCrcDue", 0)
+        set_entry(mc, entry)
+        card = Card(blocks(bytes(1024)), waits=1)
+        mc.set_card(card)
+        fired = []
 
-    def walk(cpu):
-        fired.append(card.pos)
-        cpu.hl, cpu.fc = 5, 0
-        cpu.a = cpu.b = cpu.c = cpu.d = cpu.e = 0xA5     # BC, DE corrupt
-    traps = {S("vid_run_walk_h"): ret_trap(walk), **aborts()}
-    for k in range(2):
-        cpu = mc.run("vr_sector", traps=traps, hl=0x1234)
-        if cpu.hl != 0x1234 or cpu.c != PORT_SPI:
-            raise Fail(f"call {k + 1}: HL=${cpu.hl:04X} C=${cpu.c:02X}")
-        if mc.peek("vidDsCrcDue") != 1:
-            raise Fail(f"call {k + 1}: vidDsCrcDue not 1")
-        if k == 0:
-            if fired or mc.peek("vidStrmRunBlkH", 2) != 0:
-                raise Fail(f"call 1: walk fired {len(fired)}, cell "
-                           f"{mc.peek('vidStrmRunBlkH', 2)}")
-            for _ in range(512):
-                card.read()
-    if len(fired) != 1 or mc.peek("vidStrmRunBlkH", 2) != 4:
-        raise Fail(f"walk fired {len(fired)} times, cell {mc.peek('vidStrmRunBlkH', 2)}")
-    if fired[0] != 512 + 1 + 1 + 2:
-        raise Fail(f"the walk ran after {fired[0]} reads: the CRC must come first")
-    if card.pos != len(card.stream) - 512:
-        raise Fail(f"{card.pos} card reads after two sector opens")
+        def walk(cpu):
+            fired.append(card.pos)
+            cpu.hl, cpu.fc = 5, 0
+            cpu.a = cpu.b = cpu.c = cpu.d = cpu.e = 0xA5     # BC, DE corrupt
+        traps = {S("vid_run_walk_h"): ret_trap(walk), **aborts()}
+        cross = entry == "VR_ENT_CROSS"
+        for k in range(2):
+            cpu = mc.run("vr_sector", traps=traps, hl=0x1234)
+            if cpu.hl != 0x1234 or cpu.c != PORT_SPI or cpu.sp != STACK:
+                raise Fail(f"{entry} call {k + 1}: HL=${cpu.hl:04X} C=${cpu.c:02X} "
+                           f"SP=${cpu.sp:04X}")
+            if mc.peek("vidDsCrcDue") != 1:
+                raise Fail(f"{entry} call {k + 1}: vidDsCrcDue not 1")
+            if k == 0:
+                if fired or mc.peek("vidStrmRunBlkH", 2) != (0 if cross else 1):
+                    raise Fail(f"{entry} call 1: walk fired {len(fired)}, cell "
+                               f"{mc.peek('vidStrmRunBlkH', 2)}")
+                for _ in range(512):
+                    card.read()
+        want = ([512 + 1 + 1 + 2], 4) if cross else ([], 1)
+        if (fired, mc.peek("vidStrmRunBlkH", 2)) != want:
+            raise Fail(f"{entry}: walk at reads {fired}, cell {mc.peek('vidStrmRunBlkH', 2)}; "
+                       f"expected {want} (the CRC comes before the walk)")
+        if card.pos != len(card.stream) - 512 or entry_of(mc) != entry:
+            raise Fail(f"{entry}: {card.pos} card reads after two sector opens, entry "
+                       f"{entry_of(mc)}")
 
 
-def sector_mc(run=100, crc=1):
-    """VID_PAGE at MMU7, the run count, vidDsCrcDue, the PLAY divider far from its poll."""
+def sector_mc(run=100, crc=1, entry="VR_ENT_FAST"):
+    """VID_PAGE at MMU7, the run count, vidDsCrcDue, the open's entry, the PLAY divider far
+    from its poll."""
     mc = RawMachine(SYMS)
     mc.map(7, S("VID_PAGE"))
     mc.poke16("vidStrmRunBlkH", run)
     mc.poke("vidDsCrcDue", crc)
+    set_entry(mc, entry)
     for n in ("vidRlDiv", "vidRlSpinDiv"):
         if n in SYMS:
             mc.poke(n, 250)
@@ -735,13 +768,14 @@ def plain_debug():
 
 def test_sector_badtoken():
     """A byte neither $FF nor $FE at poll 1, poll 2, a later loop poll or in vid_sd_tok_h, both
-    entries: VID_ERR_TOKEN at vid_dec_abort_pos, every read up to it made, the caller's return
-    address the only word stacked."""
-    for entry, crc in (("vr_sector", False), ("vr_sector_n", True)):
+    entries under each entry patch: VID_ERR_TOKEN at vid_dec_abort_pos, every read up to it
+    made, the caller's return address the only word stacked."""
+    for (entry, crc), ent in [(e, p) for e in (("vr_sector", False), ("vr_sector_n", True))
+                              for p in ("VR_ENT_FAST", "VR_ENT_CROSS")]:
         for k, b in ((0, 0), (1, 0), (2, 0), (3, 1)):
             for bad in (0x00, 0x7F, 0xFC, 0xFD):
-                what = f"{entry} ${bad:02X} after {k} $FF, B {b}"
-                mc = sector_mc(crc=int(crc))
+                what = f"{entry} {ent} ${bad:02X} after {k} $FF, B {b}"
+                mc = sector_mc(crc=int(crc), entry=ent)
                 card = Card(blocks(bytes(512)), waits=k, token=bad, crc_first=crc)
                 mc.set_card(card)
                 try:
@@ -756,26 +790,62 @@ def test_sector_badtoken():
 
 def test_sector_n():
     """vr_sector_n reads the CRC pair whatever vidDsCrcDue holds and leaves the cell alone; C
-    is neither read nor written on the fast path (entered as $5A, kept)."""
-    mc = sector_mc(crc=0)
-    card = Card(blocks(bytes(512)), waits=2, crc_first=True)
-    mc.set_card(card)
-    cpu = mc.run("vr_sector_n", traps={**aborts(), **forbid("vid_run_walk_h")}, hl=0x2345,
-                 b=0, c=0x5A)
-    phases = [p for p, _ in card.log]
-    if phases != ["crc", "crc", "wait", "wait", "token"]:
-        raise Fail(f"vr_sector_n reads {phases}")
-    if mc.peek("vidDsCrcDue") != 0:
-        raise Fail(f"vr_sector_n wrote vidDsCrcDue = {mc.peek('vidDsCrcDue')}")
-    if cpu.hl != 0x2345 or cpu.c != 0x5A or mc.peek("vidStrmRunBlkH", 2) != 99:
-        raise Fail(f"vr_sector_n: HL ${cpu.hl:04X} C ${cpu.c:02X} run "
-                   f"{mc.peek('vidStrmRunBlkH', 2)}")
-    check_log(mc, card, "vr_sector_n")
+    is neither read nor written (entered as $5A, kept); VR_ENT_FAST leaves the run count,
+    VR_ENT_CROSS (CRC by vr_sector_c) counts one; the entry bytes are not written."""
+    for entry, run, crc_by in (("VR_ENT_FAST", 100, "vr_sector_n"),
+                               ("VR_ENT_CROSS", 99, "vr_sector_c")):
+        mc = sector_mc(crc=0, entry=entry)
+        card = Card(blocks(bytes(512)), waits=2, crc_first=True)
+        mc.set_card(card)
+        cpu = mc.run("vr_sector_n", traps={**aborts(), **forbid("vid_run_walk_h")}, hl=0x2345,
+                     b=0, c=0x5A)
+        phases = [p for p, _ in card.log]
+        owner = owner_fn(mc)
+        if phases != ["crc", "crc", "wait", "wait", "token"] \
+                or [owner(pc) for _, pc in card.log[:2]] != [crc_by] * 2:
+            raise Fail(f"{entry}: vr_sector_n reads {phases} (CRC by "
+                       f"{[owner(pc) for _, pc in card.log[:2]]})")
+        if mc.peek("vidDsCrcDue") != 0:
+            raise Fail(f"{entry}: vr_sector_n wrote vidDsCrcDue = {mc.peek('vidDsCrcDue')}")
+        if (cpu.hl, cpu.c, cpu.sp, mc.peek("vidStrmRunBlkH", 2), entry_of(mc)) != \
+                (0x2345, 0x5A, STACK, run, entry):
+            raise Fail(f"{entry}: HL ${cpu.hl:04X} C ${cpu.c:02X} SP ${cpu.sp:04X} run "
+                       f"{mc.peek('vidStrmRunBlkH', 2)} (expected {run}), entry {entry_of(mc)}")
+        check_log(mc, card, f"vr_sector_n {entry}")
+
+
+def test_sector_fresh():
+    """vr_sector with vidDsCrcDue = 0 (vr_sector_n.fresh) under each entry: no CRC read, the
+    mode from the entry byte (VR_ENT_FAST leaves the run count, VR_ENT_CROSS counts one, a run
+    of 0 walks before the first read); vidDsCrcDue = 1, HL kept, C = PORT_SPI_DAT, SP back at
+    the caller's (nothing left stacked on the no-CRC entry into vr_sector_c)."""
+    for entry, run, walk_at, left in (("VR_ENT_FAST", 100, [], 100), ("VR_ENT_CROSS", 100, [], 99),
+                                      ("VR_ENT_FAST", 0, [], 0), ("VR_ENT_CROSS", 0, [0], 6)):
+        what = f"{entry} run {run}"
+        mc = sector_mc(run=run, crc=0, entry=entry)
+        card = Card(blocks(bytes(512)), waits=1)
+        mc.set_card(card)
+        fired = []
+
+        def walk(cpu):
+            fired.append(card.pos)
+            cpu.hl, cpu.fc = 7, 0
+            cpu.a = cpu.b = cpu.c = cpu.d = cpu.e = 0xA5
+        cpu = mc.run("vr_sector", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()},
+                     hl=0x3456, b=0, c=0x77, de=0x1357)
+        phases = [p for p, _ in card.log]
+        got = (phases, fired, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidDsCrcDue"), cpu.hl,
+               cpu.c, cpu.sp, entry_of(mc))
+        want = (["wait", "token"], walk_at, left, 1, 0x3456, PORT_SPI, STACK, entry)
+        if got != want:
+            raise Fail(f"{what}: (reads, walk at, run, crcDue, HL, C, SP, entry) = {got}, "
+                       f"expected {want}")
 
 
 def test_sector_polls():
     """vr_sector_n for k $FF bytes and B on entry: poll 1, then B (0: 256) djnz polls, then
-    vid_sd_tok_h. HL kept, the run count down by 1, the reads in order, each by its routine; C
+    vid_sd_tok_h. HL kept, the run count kept (VR_ENT_FAST), the reads in order, each by its
+    routine; C
     entered as $5A is kept on the fast path and PORT_SPI_DAT after vid_sd_tok_h."""
     tok = S("vid_sd_tok_h")
     for b in (0, 1, 255):
@@ -800,7 +870,7 @@ def test_sector_polls():
             mine = 2 + (1 + n if slow else k + 1)
             want = (["crc", "crc"] + ["wait"] * k + ["token"],
                     ["vr_sector_n"] * mine + ["vid_sd_tok_h"] * (k + 3 - mine),
-                    [mine] if slow else [], 0x2345, PORT_SPI if slow else 0x5A, STACK, 99)
+                    [mine] if slow else [], 0x2345, PORT_SPI if slow else 0x5A, STACK, 100)
             if got != want:
                 raise Fail(f"{what}: phases ok {got[0] == want[0]}, readers ok "
                            f"{got[1] == want[1]} ({mine} by vr_sector_n expected), "
@@ -841,21 +911,23 @@ def sector_divider(mc):
     return stub_t(mc, b"\x16\x00\xCD" + le(S("vid_dst_norm_flat")) + b"\xC9")
 
 
-SECTOR_POLL1_T = 72                 # CRC 2 to poll 1 on Release and -BenchQuiet (O5)
 TOKCNT_T = 177                      # vid_sd_tok_h's DEBUG token counter, after the token read
 
 
 def test_sector_gaps():
-    """The schedule's sector (call vr_sector_n / call VR_SLIDE) by k $FF bytes and B: CRC 15;
-    CRC 2 to poll 1 72 T (+ the PLAY divider in DEBUG); poll 1 to 2 22 T; loop 47; loop to
-    vid_sd_tok_h 69, its polls 48; token to the slide 48 T (64 on poll 1, 92 through
+    """The schedule's sector (call vr_sector_n / call VR_SLIDE, VR_ENT_FAST) by k $FF bytes and
+    B: CRC 15; CRC 2 to poll 1 18 T (+ the PLAY divider in DEBUG); poll 1 to 2 22 T; loop 47;
+    loop to vid_sd_tok_h 69, its polls 48; token to the slide 48 T (64 on poll 1, 92 through
     vid_sd_tok_h + its DEBUG counter); the slide 16; its last read to the next CRC 1 41 T."""
     pair = b"\xCD" + le(S("vr_sector_n")) + b"\xCD" + le(S("VR_SLIDE"))
     ctr = TOKCNT_T if plain_debug() else 0
+    if poll1_t() != 18:
+        raise Fail(f"CRC 2 to poll 1 is {poll1_t()} T (VR_POLL_PAD_N {S('VR_POLL_PAD_N')}), "
+                   f"not 18")
     for k, b, nsec in ((0, 0, 1), (1, 0, 2), (3, 0, 1), (2, 1, 1), (3, 1, 1), (300, 1, 1)):
         mc = sector_mc(run=1000)
         rw_sched(mc)
-        x = SECTOR_POLL1_T + sector_divider(mc)
+        x = poll1_t() + sector_divider(mc)
         n = loop_polls(b)
         mc.set_card(Card([bytes(512)] * nsec, waits=k, crc_first=True))
         mc.mem[STUB:STUB + 6 * nsec + 1] = pair * nsec + b"\xC9"
@@ -881,29 +953,93 @@ def test_sector_gaps():
           f"to vid_sd_tok_h 69, token to slide 48 / 64 / {92 + ctr}, slide to CRC 41 T")
 
 
+def open_gaps(mc, code, waits):
+    """io_gaps of code called at STUB (ending in ret), the card a CRC pair, waits $FF and the
+    token of one sector, then its 512 data bytes (left unread by a bare open)."""
+    mc.set_card(Card([bytes(512)], waits=waits, crc_first=True))
+    mc.mem[STUB:STUB + len(code)] = code
+    cpu = mc.cpu
+    cpu.sp, cpu.hl, cpu.b, cpu.c = STACK, S("VR_SCRATCH"), 0, PORT_SPI
+    cpu.push(RET)
+    return io_gaps(mc, STUB, RET)
+
+
+def test_poll_pad():
+    """CRC 2 to poll 1 is set by VR_POLL_PAD_N alone: 11 + 7 x VR_POLL_PAD_N (18 T) in
+    vr_sector_n and its bench mirror nxb_rh_sec, 39 in nxb_rh_sec39; the whole open's gaps
+    [15, 18, 22, 47] on Release and -BenchQuiet ([15, 89, 22, 47] crossing, vr_sector_c), plain
+    DEBUG's PLAY divider lengthening only CRC 2 to poll 1 and never in the mirrors; every read
+    whose value is used (poll 1 on) at least 16 T after the one before. A scratch copy with 4
+    cp (hl) (the fallback VR_POLL_PAD_N) puts poll 1 39 T after CRC 2, the rest unchanged."""
+    n = S("VR_POLL_PAD_N")
+    if n < 1 or poll1_t() != 18:
+        raise Fail(f"VR_POLL_PAD_N {n}: CRC 2 to poll 1 {poll1_t()} T, expected 18")
+    call = lambda name: b"\xCD" + le(S(name)) + b"\xC9"          # noqa: E731
+    mc = sector_mc(run=1000)
+    div = sector_divider(mc)
+    rows = [("vr_sector_n", "VR_ENT_FAST", poll1_t() + div),
+            ("vr_sector_n", "VR_ENT_CROSS", 89 + div)]
+    if "dbgNoBank" in SYMS:
+        rows += [("nxb_rh_sec", None, poll1_t()), ("nxb_rh_sec39", None, 39)]
+    got = {}
+    for name, ent, x in rows:
+        for waits in (2, 3, 0):
+            mc = sector_mc(run=1000, entry=ent or "VR_ENT_FAST")
+            g = open_gaps(mc, call(name), waits)
+            want = [15, x] + ([22] + [47] * (waits - 1) if waits else [])
+            if g != want or min(g[1:]) < 16:
+                raise Fail(f"{name} {ent or ''} {waits} $FF: gaps {g}, expected {want}")
+            if waits == 2:
+                got[(name, ent)] = g
+    if (div == 0) != (not plain_debug()) or div and got[("vr_sector_n", "VR_ENT_FAST")][1] - div \
+            != 18:
+        raise Fail(f"PLAY divider {div} T on this image (plain DEBUG {plain_debug()})")
+    # the fallback: 4 cp (hl) in a scratch copy (no relative jump crosses the pad)
+    for name, end, poll, x in (("vr_sector_n", "vr_sector_n.fresh", "vr_sector_n.poll", 39 + div),
+                               ("nxb_rh_sec", "nxb_rh_bin", "nxb_rh_sec.poll", 39)):
+        if name not in SYMS or end not in SYMS:
+            continue
+        mc = sector_mc(run=1000)
+        a, k = S(name), S(poll) - S(name)
+        code = bytes(mc.mem[a:S(end)])
+        if code[k - n:k] != b"\xBE" * n:
+            raise Fail(f"{name}: the {n} bytes before .poll are not cp (hl)")
+        g = open_gaps(mc, code[:k] + b"\xBE" * (4 - n) + code[k:], 3)
+        if g != [15, x, 22, 47, 47]:
+            raise Fail(f"{name} with 4 cp (hl): gaps {g}, expected [15, {x}, 22, 47, 47]")
+    print("  test_poll_pad: " + "; ".join(f"{k[0]}{' ' + k[1] if k[1] else ''} {v}"
+                                          for k, v in got.items()))
+
+
 def test_sector_t():
-    """T from call vr_sector_n to its return (DEBUG less the PLAY divider): 155 at one $FF
-    (252 before the inline wait), 149 with the token on poll 1, 47 a further $FF; call
-    vr_sector with a CRC due 206, with none 185."""
+    """T from call vr_sector_n to its return (DEBUG less the PLAY divider), VR_ENT_FAST: 101 at
+    one $FF (155 with the run count, 252 before the inline wait), 95 with the token on poll
+    1, 47 a further $FF; call vr_sector with a CRC due 152, with none 163. VR_ENT_CROSS
+    (vr_sector_c): vr_sector_n 184 at one $FF, vr_sector with none due 241."""
     got, want = [], []
-    for entry, crc, k, t in (("vr_sector_n", 1, 1, 155), ("vr_sector_n", 1, 0, 149),
-                             ("vr_sector_n", 1, 2, 202), ("vr_sector_n", 1, 3, 249),
-                             ("vr_sector", 1, 1, 206), ("vr_sector", 0, 1, 185)):
-        mc = sector_mc(crc=crc)
+    for entry, crc, k, t, ent in (("vr_sector_n", 1, 1, 101, "VR_ENT_FAST"),
+                                  ("vr_sector_n", 1, 0, 95, "VR_ENT_FAST"),
+                                  ("vr_sector_n", 1, 2, 148, "VR_ENT_FAST"),
+                                  ("vr_sector_n", 1, 3, 195, "VR_ENT_FAST"),
+                                  ("vr_sector", 1, 1, 152, "VR_ENT_FAST"),
+                                  ("vr_sector", 0, 1, 163, "VR_ENT_FAST"),
+                                  ("vr_sector_n", 1, 1, 184, "VR_ENT_CROSS"),
+                                  ("vr_sector", 0, 1, 241, "VR_ENT_CROSS")):
+        mc = sector_mc(crc=crc, entry=ent)
         div = sector_divider(mc)
         mc.set_card(Card(blocks(bytes(512)), waits=k, crc_first=bool(crc)))
         got.append(stub_t(mc, b"\xCD" + le(S(entry)) + b"\xC9", hl=0x2345, b=0, c=PORT_SPI)
                    - div)
         want.append(t)
     if got != want:
-        raise Fail(f"T (vr_sector_n 1, 0, 2, 3 $FF; vr_sector CRC due, none) = {got}, "
-                   f"expected {want}")
+        raise Fail(f"T (vr_sector_n 1, 0, 2, 3 $FF; vr_sector CRC due, none; crossing "
+                   f"vr_sector_n, vr_sector none due) = {got}, expected {want}")
 
 
 def test_sector_joins():
     """A 320x192 palette frame, CRC due, one $FF a wait: the gap into each open's CRC 1 by what
     the schedule runs before it (a slide read 41 T, a column end 52, vr_page, the train), each
-    open's CRC 15, CRC 2 to poll 1 72 (+ divider), poll 1 to the token 22, token on 48+."""
+    open's CRC 15, CRC 2 to poll 1 18 (+ divider), poll 1 to the token 22, token on 48+."""
     code, w, h = 1, 320, 192
     mc = RawMachine(SYMS)
     if build_sched(mc, code, w, h).fc:
@@ -913,7 +1049,7 @@ def test_sector_joins():
     for n in ("vidRlDiv", "vidRlSpinDiv"):
         if n in SYMS:
             mc.poke(n, 250)
-    x = SECTOR_POLL1_T + sector_divider(mc)
+    x = poll1_t() + sector_divider(mc)
     pal = bytes((i * 29 + 11) & 255 for i in range(512))
     card = Card([pal] + blocks(pixels(w * h)), waits=1, crc_first=True)
     mc.set_card(card)
@@ -945,60 +1081,363 @@ def test_sector_joins():
 
 
 def test_sector_walkfault():
-    """A run walk fault aborts with the walk's A after exactly the two CRC reads."""
+    """VR_ENT_CROSS, a run of 0: a walk fault aborts with the walk's A after exactly the two
+    CRC reads, both entries. VR_ENT_FAST: the walk is never entered (the frame charged the
+    run) and the open completes, the count left at 0."""
     for entry in ("vr_sector", "vr_sector_n"):
-        mc = RawMachine(SYMS)
-        mc.map(7, S("VID_PAGE"))
-        mc.poke16("vidStrmRunBlkH", 0)
-        mc.poke("vidDsCrcDue", 1)
-        card = Card(blocks(bytes(512)), crc_first=True)
-        mc.set_card(card)
+        for ent in ("VR_ENT_CROSS", "VR_ENT_FAST"):
+            what = f"{entry} {ent}"
+            mc = sector_mc(run=0, crc=1, entry=ent)
+            card = Card(blocks(bytes(512)), crc_first=True)
+            mc.set_card(card)
+            fired = []
 
-        def walk(cpu):
+            def walk(cpu):
+                fired.append(card.pos)
+                cpu.fc, cpu.a, cpu.hl = 1, S("VID_ERR_SHORT"), 0x7777
+            try:
+                cpu = mc.run(entry, traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()},
+                             hl=0x1234, b=0, c=PORT_SPI)
+            except Stop as e:
+                if ent != "VR_ENT_CROSS" or not reached(e, "vid_dec_abort_pos") \
+                        or e.a != S("VID_ERR_SHORT") or card.pos != 2 or fired != [2]:
+                    raise Fail(f"{what} walk fault: {e}, {card.pos} card reads, walks {fired}")
+                continue
+            if ent == "VR_ENT_CROSS" or fired or card.pos != len(card.stream) - 512 \
+                    or mc.peek("vidStrmRunBlkH", 2) != 0 or cpu.hl != 0x1234:
+                raise Fail(f"{what}: returned after {card.pos} reads, walks {fired}, run "
+                           f"{mc.peek('vidStrmRunBlkH', 2)}")
+
+
+PAL = bytes((i * 29 + 11) & 255 for i in range(512))
+
+
+def counted_run(run0, n, fresh):
+    """The per-open count over n opens from run0: (run left, the opens that walk). A walk at 0
+    takes the next fresh run, then the open counts one."""
+    run, walks = run0, []
+    for j in range(n):
+        if run == 0:
+            run = fresh[len(walks)]
+            walks.append(j)
+        run -= 1
+    return run, walks
+
+
+def frame_walk(code, w, h, tag, run0, fresh=(), waits=2, entry="VR_ENT_FAST", crc_due=1,
+               remain=0x020000, bad_token=None):
+    """vid_raw_frame from run count run0, `entry` left at vr_sector_n (a previous frame's), the
+    walk trap handing out `fresh` in order (None: a walk fault, A = VID_ERR_SHORT; BC, DE
+    corrupted either way) and recording (read, entry seen); bad_token = an open whose token is
+    $FD. -> (machine, card, walks, stop or None, x0, sectors, pixels)."""
+    mc = RawMachine(SYMS)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    x0, sectors = setup_frame(mc, code, w, h, tag=tag, remain=remain, crc_due=crc_due)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 250)
+    mc.poke16("vidStrmRunBlkH", run0)
+    set_entry(mc, entry)
+    px = pixels(w * h)
+    card = Card(([PAL] if tag else []) + blocks(px), waits=waits, crc_first=bool(crc_due))
+    if bad_token is not None:
+        card.stream[[i for i, p in enumerate(card.phase) if p == "token"][bad_token]] = 0xFD
+    mc.set_card(card)
+    walks = []
+
+    def walk(cpu):
+        walks.append((card.pos, entry_of(mc)))
+        if len(walks) > len(fresh):
+            raise Fail(f"walk {len(walks)} at read {card.pos}: none expected")
+        cpu.b = cpu.c = cpu.d = cpu.e = 0x5A
+        if fresh[len(walks) - 1] is None:
             cpu.fc, cpu.a, cpu.hl = 1, S("VID_ERR_SHORT"), 0x7777
-        try:
-            mc.run(entry, traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()}, hl=0x1234)
-        except Stop as e:
-            if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_SHORT") or card.pos != 2:
-                raise Fail(f"{entry} walk fault: {e}, {card.pos} card reads")
-            continue
-        raise Fail(f"{entry} walk fault: returned")
+        else:
+            cpu.fc, cpu.a, cpu.hl = 0, 0x5A, fresh[len(walks) - 1]
+    stop = None
+    try:
+        mc.run("vid_raw_frame", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()})
+    except Stop as e:
+        stop = e
+    return mc, card, walks, stop, x0, sectors, px
+
+
+def walk_reads(opens, waits, crc_due):
+    """The read after which open j's walk runs: its CRC first (none on open 0 if no CRC due)."""
+    per = 2 + waits + 1 + 512
+    return [j * per + 2 if crc_due else j * per for j in opens]
+
+
+def frame_case(what, code, w, h, tag, run0, fresh=(), waits=2, entry="VR_ENT_FAST",
+               crc_due=1, remain=0x020000):
+    """frame_walk, then: the surface exact, every read made by its owner, the walks at the
+    per-open count's reads with VR_ENT_CROSS in place (none, VR_ENT_FAST, when the frame fits
+    the run), and the four cells: run left, remain - frame sectors, vidDsFrmBlk = vidRawCap,
+    vidDsCrcDue = 1. Returns the machine."""
+    mc, card, walks, stop, x0, sectors, px = frame_walk(code, w, h, tag, run0, fresh, waits,
+                                                        entry, crc_due, remain)
+    if stop is not None:
+        raise Fail(f"{what}: {stop}")
+    n = sectors + tag
+    run, opens = (run0 - n, []) if run0 >= n else counted_run(run0, n, fresh)
+    ent = "VR_ENT_FAST" if run0 >= n else "VR_ENT_CROSS"
+    base = BACK_BANK * 0x4000
+    expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px), f"{what} surface")
+    got = (walks, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3),
+           mc.peek("vidDsFrmBlk"), mc.peek("vidDsCrcDue"), entry_of(mc),
+           len(card.stream) - card.pos)
+    want = ([(r, ent) for r in walk_reads(opens, waits, crc_due)], run, remain - n,
+            sectors + 1, 1, ent, 0)
+    if got != want:
+        raise Fail(f"{what}: (walks (read, entry), run, remain, FrmBlk, crcDue, entry, "
+                   f"unread) = {got}, expected {want}")
+    check_log(mc, card, what)
+    return mc
+
+
+def test_frame_fit():
+    """A frame inside the run is charged once at its start (no per-open count, no walk) and
+    writes VR_ENT_FAST: 320x192 from 1000 (880 left), from 120 (0 left), with the palette
+    sector from 121 (0 left)."""
+    for tag, run0 in ((0, 1000), (0, 120), (1, 121)):
+        frame_case(f"320x192 tag {tag} run {run0}", 1, 320, 192, tag, run0)
 
 
 def test_frame_runwalk():
-    """A fragment run ends at sector 50 inside a frame: the walk fires once, after that
-    sector's CRC, and the frame completes exactly."""
+    """A fragment run ends at sector 50 inside a frame (palette 320x192, 280x224): VR_ENT_CROSS
+    during the frame, the walk once at read 50 x 517 + 2 (after that sector's CRC), the run
+    left fresh - (N - 50), surface and reads exact; the next frame with a long run writes
+    VR_ENT_FAST and plays exactly."""
     for code, w, h, tag in ((1, 320, 192, 1), (1, 280, 224, 0)):
-        mc = RawMachine(SYMS)
-        build_sched(mc, code, w, h)
-        x0, sectors = setup_frame(mc, code, w, h, tag=tag, remain=0x020000, crc_due=1)
-        mc.poke16("vidStrmRunBlkH", 50)
-        px = pixels(w * h)
-        data = blocks(px)
-        if tag:
-            data = [bytes(range(256)) * 2] + data
-        card = Card(data, waits=2, crc_first=True)
-        mc.set_card(card)
-        fired = []
-
-        def walk(cpu):
-            fired.append(card.pos)
-            cpu.hl, cpu.fc = 1000, 0
-            cpu.a = cpu.b = cpu.c = cpu.d = cpu.e = 0x5A
-        cpu = mc.run("vid_raw_frame", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()})
         what = f"{code},{w}x{h} tag {tag}"
-        per = 2 + 2 + 1 + 512
+        mc = frame_case(what, code, w, h, tag, 50, fresh=(1000,))
+        _, sectors = setup_frame(mc, code, w, h, tag=tag, remain=0x010000, crc_due=1)
+        if entry_of(mc) != "VR_ENT_CROSS":
+            raise Fail(f"{what}: the crossing frame left {entry_of(mc)}")
+        mc.poke16("vidStrmRunBlkH", 5000)
+        px = pixels(w * h)
+        card = Card(([PAL] if tag else []) + blocks(px), waits=1, crc_first=True)
+        mc.set_card(card)
+        mc.run("vid_raw_frame", traps={**aborts(), **forbid("vid_run_walk_h")})
+        x0, _ = geom(code, w, h)
         base = BACK_BANK * 0x4000
         expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px),
-               f"{what} back surface")
-        got = (cpu.a, fired, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3),
-               len(card.stream) - card.pos, mc.peek("vidDsFrmBlk"))
-        want = (S("VOP_KFLIP"), [50 * per + 2], 1000 - (sectors + tag - 50),
-                0x020000 - sectors - tag, 0, sectors + 1)
+               f"{what} next frame surface")
+        if (entry_of(mc), mc.peek("vidStrmRunBlkH", 2), card.pos) != \
+                ("VR_ENT_FAST", 5000 - sectors - tag, len(card.stream)):
+            raise Fail(f"{what} next frame: entry {entry_of(mc)}, run "
+                       f"{mc.peek('vidStrmRunBlkH', 2)}, {card.pos} reads")
+
+
+def test_frame_zero():
+    """A run count of 0 at the frame's start (the sound section ended the run): the walk at the
+    first open, after its CRC - the first pixel sector (280x224) or the palette sector
+    (320x192, vid_raw_pal's open); with no CRC due, before the first read."""
+    frame_case("280x224 run 0", 1, 280, 224, 0, 0, fresh=(900,))
+    frame_case("320x192 palette run 0", 1, 320, 192, 1, 0, fresh=(900,))
+    frame_case("320x192 palette run 0, no CRC due", 1, 320, 192, 1, 0, fresh=(900,), crc_due=0)
+
+
+def test_entry_stale():
+    """The entry a previous frame left never decides: VR_ENT_CROSS left and a run of 1000 - the
+    frame runs fast and leaves VR_ENT_FAST; VR_ENT_FAST left and a run of 10 - the frame
+    crosses and walks at sector 10."""
+    for code, w, h, tag in ((1, 320, 192, 1), (0, 256, 192, 0)):
+        frame_case(f"{w}x{h} stale CROSS", code, w, h, tag, 1000, entry="VR_ENT_CROSS")
+        frame_case(f"{w}x{h} stale FAST", code, w, h, tag, 10, fresh=(1000,),
+                   entry="VR_ENT_FAST")
+
+
+def test_frame_boundaries():
+    """A run boundary at each position a frame can hold it (palette 320x192, 121 opens): the
+    first pixel sector (run 1), the middle (60), the last pixel sector (120), the palette
+    sector (0); 280x224: the last sector (run N - 1); a frame needing two walks (10, then a
+    run of 20: walks at opens 10 and 30), with the token on poll 1 and after 3 $FF."""
+    for run0 in (1, 60, 120, 0):
+        frame_case(f"320x192 palette run {run0}", 1, 320, 192, 1, run0, fresh=(777,))
+    _, n = geom(1, 280, 224)
+    frame_case(f"280x224 run {n - 1}", 1, 280, 224, 0, n - 1, fresh=(777,))
+    for waits in (0, 3):
+        frame_case(f"320x192 palette two walks, waits {waits}", 1, 320, 192, 1, 10,
+                   fresh=(20, 1000), waits=waits)
+
+
+def test_frame_cross_gaps():
+    """Read spacing of a crossing frame (palette 320x192 from a run of 60, CRC due, one $FF a
+    wait), traced in T: every open through vr_sector_c - CRC 15, CRC 2 to poll 1 89 (+ the
+    PLAY divider in DEBUG; the walked open's gap spans the walk and is left out), poll 1 to
+    the token 22; into CRC 1 after a slide read 53 T (the jr vr_sector_c); nothing else
+    under 16."""
+    code, w, h = 1, 320, 192
+    mc = RawMachine(SYMS)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    setup_frame(mc, code, w, h, tag=1, crc_due=1)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 250)
+    mc.poke16("vidStrmRunBlkH", 60)
+    set_entry(mc, "VR_ENT_FAST")
+    card = Card([PAL] + blocks(pixels(w * h)), waits=1, crc_first=True)
+    mc.set_card(card)
+    cpu, wa = mc.cpu, S("vid_run_walk_h")
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = S("vid_raw_frame")
+    t, marks = 0, []
+    while cpu.pc != RET:
+        if cpu.pc == wa:
+            cpu.hl, cpu.fc, cpu.b, cpu.c = 1000, 0, 0x5A, 0x5A
+            cpu.pc = cpu.pop()
+            marks.append(None)                  # the walk's card commands are not modelled
+            continue
+        pc, n = cpu.pc, len(card.log)
+        op = mc.mem[pc]
+        dt = tstep(mc)
+        if len(card.log) != n:
+            marks.append(t + (IO_START["in a,(n)"] if op == 0xDB else IO_START["ini"]))
+        t += dt
+    if card.pos != len(card.stream) or entry_of(mc) != "VR_ENT_CROSS" or marks.count(None) != 1:
+        raise Fail(f"{card.pos} of {len(card.stream)} reads, entry {entry_of(mc)}, "
+                   f"{marks.count(None)} walks")
+    ph = [p for p, _ in card.log]
+    reads = [m for m in marks if m is not None]
+    walk_after = marks.index(None)              # reads made before the walk
+    x = 89 + sector_divider(mc)
+    pairs = []
+    for i in range(1, len(reads)):
+        if i == walk_after:
+            continue
+        pairs.append((ph[i - 1], ph[i], reads[i] - reads[i - 1]))
+    crc2 = {g for a, b, g in pairs if a == "crc" and b == "wait"}
+    into = {g for a, b, g in pairs if a == "data" and b == "crc"}
+    low = [(a, b, g) for a, b, g in pairs if g < 16 and not (a == b == "crc" and g == 15)]
+    if crc2 != {x} or min(into) != 53 or low:
+        raise Fail(f"CRC 2 to poll 1 {sorted(crc2)} (expected {x}), into CRC 1 {sorted(into)}, "
+                   f"short gaps {low[:4]}")
+    print(f"  test_frame_cross_gaps: CRC 2 to poll 1 {x} T, into CRC 1 {min(into)}-{max(into)} T")
+
+
+def test_frame_end_walk():
+    """A frame that ends exactly at the run's end (palette 320x192 from 121) is charged to 0
+    with no walk; the next sector, the following frame's first sound sector, is opened by
+    vid_ds_blkopen (protected), which walks once after its CRC and counts the fresh run."""
+    mc = frame_case("320x192 palette run 121", 1, 320, 192, 1, 121)
+    mc.poke("vidDsBound", 255)
+    remain = mc.peek("vidStrmRemainBlk", 3)
+    card = Card([bytes(512)], waits=1, crc_first=True)
+    mc.set_card(card)
+    fired = []
+
+    def walk(cpu):
+        fired.append(card.pos)
+        cpu.hl, cpu.fc = 640, 0
+    cpu = mc.run("vid_ds_blkopen", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()},
+                 hl=0, bc=0x1111, de=0x2222)
+    got = (fired, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3), cpu.hl,
+           card.pos, entry_of(mc))
+    if got != ([2], 639, remain - 1, 512, 4, "VR_ENT_FAST"):
+        raise Fail(f"next sound open: (walk at, run, remain, HL, reads, entry) = {got}")
+
+
+def test_frame_rewind():
+    """The first frame after a loop rewind: vid_loop_rewind (direct) walks inside
+    vid_ds_blkopen into run 0 (R blocks) and discards the header; two sound sectors through
+    vid_ds_blkopen; then the palette frame: from R = 2000 it fits (VR_ENT_FAST, R - 3 - 121
+    left); from R = 8 it crosses at open 5 (VR_ENT_CROSS)."""
+    code, w, h = 1, 320, 192
+    for r, fresh2 in ((2000, None), (8, 1500)):
+        what = f"rewind into a run of {r}"
+        mc = RawMachine(SYMS)
+        if build_sched(mc, code, w, h).fc:
+            raise Fail("vid_raw_sched_build set CF")
+        x0, sectors = setup_frame(mc, code, w, h, tag=1)
+        for n, v in (("vidDirect", 1), ("vidStreaming", 0), ("vidDsBound", 255),
+                     ("vidRlDiv", 250), ("vidRlSpinDiv", 250)):
+            if n in SYMS:
+                mc.poke(n, v)
+        mc.poke("vidTotalBlk", (0x3000).to_bytes(3, "little"))
+        set_entry(mc, "VR_ENT_CROSS")                    # the pass's last frame crossed
+        px = pixels(w * h)
+        hdr = [bytes([0xAA]) * 512]
+        snd = [bytes([0x11]) * 512, bytes([0x22]) * 512]
+        card = Card(hdr + snd + [PAL] + blocks(px), waits=1)
+        mc.set_card(card)
+        walks = []
+
+        def walk(cpu):
+            walks.append(card.pos)
+            cpu.b = cpu.c = cpu.d = cpu.e = 0x5A
+            cpu.hl, cpu.fc = (r if len(walks) == 1 else fresh2), 0
+        traps = {S("vid_run_walk_h"): ret_trap(walk), S("vid_win_close_h"): ret_trap(lambda c: 0),
+                 **aborts()}
+        mc.run("vid_loop_rewind", traps=traps)
+        for _ in snd:
+            mc.run("vid_ds_blkopen", traps=traps, hl=0)
+            mc.run("vid_ds_pad", hl=512)
+        start = card.pos
+        mc.run("vid_raw_frame", traps=traps)
+        n = sectors + 1
+        run0 = r - 1 - len(snd)
+        run, opens = (run0 - n, []) if run0 >= n else counted_run(run0, n, (fresh2,))
+        base = BACK_BANK * 0x4000
+        expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px), f"{what} surface")
+        got = (walks, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3),
+               mc.peek("vidDsCrcDue"), entry_of(mc), card.pos)
+        want = ([0] + [start + p for p in walk_reads(opens, 1, 1)], run, 0x3000 - 1 - 2 - n, 1,
+                "VR_ENT_FAST" if run0 >= n else "VR_ENT_CROSS", len(card.stream))
         if got != want:
-            raise Fail(f"{what}: (A, walk at, run left, remain, unread, FrmBlk) = {got}, "
+            raise Fail(f"{what}: (walks, run, remain, crcDue, entry, reads) = {got}, "
                        f"expected {want}")
-        check_log(mc, card, what)
+        owner = owner_fn(mc)
+        for i, (ph, pc) in enumerate(card.log[start:], start):
+            if owner(pc) not in ALLOWED[ph]:
+                raise Fail(f"{what}: frame read {i} ({ph}) by {owner(pc)}")
+
+
+def test_frame_abort():
+    """An abort in mid-frame on each entry: VR_ENT_FAST, a bad token at open 40 (run and remain
+    already charged for the frame); VR_ENT_CROSS (run 30), a bad token at open 40 after the
+    walk at 30, and a walk fault at 30. Each stops at vid_dec_abort_pos with the reads up to
+    the fault made and the cells as the per-open count leaves them; then the next session's
+    open (vid_stage_common.vec) writes VR_ENT_FAST and that session's first frame (cells as
+    its open stages them, no CRC due) plays exactly with no walk."""
+    code, w, h = 1, 320, 192
+    per = 2 + 2 + 1 + 512
+    for what, run0, fresh, bad, err, reads, run_left, ent in (
+            ("fast, token fault at 40", 1000, (), 40, "VID_ERR_TOKEN", 40 * per + 5,
+             1000 - 121, "VR_ENT_FAST"),
+            ("crossing, token fault at 40", 30, (1000,), 40, "VID_ERR_TOKEN", 40 * per + 5,
+             1000 - 11, "VR_ENT_CROSS"),
+            ("crossing, walk fault at 30", 30, (None,), None, "VID_ERR_SHORT", 30 * per + 2,
+             0, "VR_ENT_CROSS")):
+        mc, card, walks, stop, x0, sectors, _ = frame_walk(code, w, h, 1, run0, fresh,
+                                                           bad_token=bad)
+        if stop is None or not reached(stop, "vid_dec_abort_pos") or stop.a != S(err):
+            raise Fail(f"{what}: {stop or 'returned'}, expected vid_dec_abort_pos, {err}")
+        got = (card.pos, mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3),
+               mc.peek("vidDsCrcDue"), mc.peek("vidDsFrmBlk"), entry_of(mc))
+        want = (reads, run_left, 0x020000 - 121, 1, sectors + 1, ent)
+        if got != want:
+            raise Fail(f"{what}: (reads, run, remain, crcDue, FrmBlk, entry) = {got}, "
+                       f"expected {want}")
+        patch_session(mc, 1, 1)
+        if entry_of(mc) != "VR_ENT_FAST":
+            raise Fail(f"{what}: the next open left {entry_of(mc)}")
+        setup_frame(mc, code, w, h, tag=1, remain=0x000400, crc_due=0)
+        mc.poke16("vidStrmRunBlkH", 0x0400)
+        px = pixels(w * h)
+        card = Card([PAL] + blocks(px), waits=1)
+        mc.set_card(card)
+        mc.run("vid_raw_frame", traps={**aborts(), **forbid("vid_run_walk_h")})
+        base = BACK_BANK * 0x4000
+        expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px),
+               f"{what}: next session's frame surface")
+        if (card.pos, mc.peek("vidStrmRunBlkH", 2), entry_of(mc)) != \
+                (len(card.stream), 0x0400 - 121, "VR_ENT_FAST"):
+            raise Fail(f"{what}: next session's frame read {card.pos}, run "
+                       f"{mc.peek('vidStrmRunBlkH', 2)}, entry {entry_of(mc)}")
 
 
 def test_frame_remain():
@@ -1728,7 +2167,8 @@ def vec_writes(direct, raw):
     out += [(S(k + ".next") + 1, le(S(nxt)))
             for k in ("vid_skip_body", "vid_run_body", "vid_op_kstart")]
     out += [(S("vid_decode_any.raw") + 1, le(S("vid_raw_frame" if raw else "vid_decode_frame_ds"))),
-            (S("vid_aud_pump.apad") + 1, le(S("vid_raw_apad" if raw else "vid_ds_pad")))]
+            (S("vid_aud_pump.apad") + 1, le(S("vid_raw_apad" if raw else "vid_ds_pad"))),
+            (S("vr_sector_n"), le(S("VR_ENT_FAST")))]
     if raw:
         prime = b"\xCD" + le(S("vid_raw_prime")) + b"\x00"
         out += [(S("vid_pace_poll.rd"), b"\xCD" + le(S("vid_raw_rd_hl"))),
@@ -1777,12 +2217,15 @@ def test_patch_roundtrip():
     mc = RawMachine(SYMS)
     snap = hot_page(mc)
     for direct, raw in ((1, 1), (1, 0), (0, 0)):
+        set_entry(mc, "VR_ENT_CROSS")            # a previous session ended on a crossing frame
         patch_session(mc, direct, raw)
         got, want = hot_page(mc), with_writes(snap, vec_writes(direct, raw))
         if got != want:
             raise Fail(f"patch_session({direct}, {raw}): " + describe(want, got))
     if hot_page(mc) != snap:
         raise Fail("after (1, 1), (1, 0), (0, 0) the hot page is not the assembled image")
+    if entry_of(RawMachine(SYMS)) != "VR_ENT_FAST":
+        raise Fail("vr_sector_n's assembled entry is not VR_ENT_FAST")
 
 
 def run_to(mc, start, stop, budget=10_000):
@@ -2069,16 +2512,26 @@ def test_rw_shapes():
     if b[:4] != b"\xDB\xEB\x3C\x20" or b[5:8] != b"\x0B\x78\xB1" or b[8:] != b"\x20\xF6" \
             or b[4] > 0x7F:
         raise Fail(f"vid_sd_tok_h.wt: {b.hex(' ').upper()} is not the 48 T poll loop")
-    # the mirror: ld b,0, then vr_sector_n's quiet sequence from CRC 1 through djnz .p, its
-    # three forward jr offsets aside (the targets lie at other distances)
-    run = b"\xED\x5B" + le(S("vidStrmRunBlkH"))
+    # the mirror: ld b,0, then vr_sector_n's fast sequence from CRC 1, the pad (VR_POLL_PAD_N
+    # x cp (hl), after the DEBUG divider in production) and the polls through djnz .p, its two
+    # forward jr offsets aside (the targets lie at other distances)
+    n = S("VR_POLL_PAD_N")
     p, m = S("vr_sector_n"), S("nxb_rh_sec")
-    prod = bytes(mc.mem[p:p + 5]) + bytes(mc.mem[find_code(mc, p, p + 16, run):][:28])
-    mirr = bytes(mc.mem[m + 2:m + 7]) + bytes(mc.mem[m + 7:m + 35])
-    mask = lambda s: bytes(0 if i in (12, 22, 30) else v for i, v in enumerate(s))  # noqa: E731
-    if mc.mem[m:m + 2] != b"\x06\x00" or mask(prod) != mask(mirr) or prod[-2:] != b"\x10\xF6":
-        raise Fail(f"nxb_rh_sec {bytes(mc.mem[m:m + 35]).hex(' ').upper()} is not ld b,0 + "
+    pp, mp = S("vr_sector_n.poll"), S("nxb_rh_sec.poll")
+    prod = bytes(mc.mem[p:p + 5]) + bytes(mc.mem[pp - n:pp + 15])
+    mirr = bytes(mc.mem[m + 2:m + 7]) + bytes(mc.mem[mp - n:mp + 15])
+    k = 5 + n
+    mask = lambda s: bytes(0 if i in (k + 4, k + 12) else v for i, v in enumerate(s))  # noqa: E731
+    if mc.mem[m:m + 2] != b"\x06\x00" or mp != m + 7 + n or mask(prod) != mask(mirr) \
+            or prod[-2:] != b"\x10\xF6" or prod[5:k] != b"\xBE" * n:
+        raise Fail(f"nxb_rh_sec {bytes(mc.mem[m:mp + 15]).hex(' ').upper()} is not ld b,0 + "
                    f"vr_sector_n's {prod.hex(' ').upper()}")
+    # the 39 T head: ld b,0, the CRC pair, inc hl / dec hl / nop (16 T), jr nxb_rh_sec.poll
+    h = S("nxb_rh_sec39")
+    code_is(mc, "nxb_rh_sec39", b"\x06\x00\xDB\xEB\x00\xDB\xEB\x23\x2B\x00\x18"
+            + bytes([(mp - (h + 12)) & 0xFF]))
+    if not -128 <= mp - (h + 12) <= 127:
+        raise Fail("nxb_rh_sec39's jr does not reach nxb_rh_sec.poll")
     if SYMS["nxbHistBin"][0] != S("VID_PAGE") or SYMS["nxbHistN"][0] != S("VID_PAGE"):
         raise Fail("nxbHistBin / nxbHistN are not on VID_PAGE (written with MMU6 = schedule)")
 
@@ -2219,12 +2672,17 @@ def test_rw_route():
 
 
 def test_rw_card():
-    """nxb_rw_go's untimed sector, then one rep of RSEC and of RCOL: 2 CRC + waits + token +
-    512 data reads each; RSEC into VR_SCRATCH, RCOL as 8 columns of 64 on the surface page."""
+    """nxb_rw_go's untimed sector, then one rep of RSEC and of RCOL under VR_ENT_FAST (the run
+    charged by nxb_rw_charge, so no open counts it): 2 CRC + waits + token + 512 data reads
+    each; RSEC into VR_SCRATCH, RCOL as 8 columns of 64 on the surface page. A whole RSEC row
+    from nxb_kind_rblk (a crossing frame's VR_ENT_CROSS left): the run and remain down by reps
+    + 1 before the first rep, VR_ENT_FAST written, every sector read, the walk mark O = 00. A
+    row whose run is shorter than reps + 1: NXB SHORT, no read, nothing charged."""
     bench_only()
     mc = RawMachine(SYMS)
     rw_sched(mc)
     rw_cells(mc, run=1000, crc=1)
+    set_entry(mc, "VR_ENT_FAST")
     mc.poke("vidRawSchedPage", SCHED_PAGE)
     mapnr(mc, 6, 12)
     scr = S("VR_SCRATCH")
@@ -2234,7 +2692,7 @@ def test_rw_card():
     mc.set_card(card)
     mc.run("nxb_rw_go", traps={S("nxb_lrow"): ret_trap(lambda c: fired.append(c.pc)), **aborts()})
     got = (len(fired), mc.mmu[6], card.pos, mc.peek("vidDsCrcDue"), mc.peek("vidStrmRunBlkH", 2))
-    if got != (1, SCHED_PAGE, len(card.stream), 1, 999) or bytes(mc.mem[scr:scr + 512]) != data[0]:
+    if got != (1, SCHED_PAGE, len(card.stream), 1, 1000) or bytes(mc.mem[scr:scr + 512]) != data[0]:
         raise Fail(f"nxb_rw_go: (lrow entries, MMU6, reads, crcDue, run) = {got}")
     check_log(mc, card, "nxb_rw_go")
     mc.poke("vidDsCrcDue", 0)                 # no CRC pends: vr_sector reads none
@@ -2242,7 +2700,7 @@ def test_rw_card():
     card = Card([data[2]], waits=1)
     mc.set_card(card)
     mc.run("nxb_rw_go", traps={S("nxb_lrow"): ret_trap(lambda c: fired.append(c.pc)), **aborts()})
-    if (card.pos, mc.peek("vidDsCrcDue"), mc.peek("vidStrmRunBlkH", 2)) != (len(card.stream), 1, 998):
+    if (card.pos, mc.peek("vidDsCrcDue"), mc.peek("vidStrmRunBlkH", 2)) != (len(card.stream), 1, 1000):
         raise Fail(f"nxb_rw_go, no CRC due: {card.pos} reads, crcDue {mc.peek('vidDsCrcDue')}")
     mc.poke16("vidStrmRunBlkH", 999)
     logs = []
@@ -2259,8 +2717,9 @@ def test_rw_card():
         if phases != ["crc"] * 2 + ["wait"] * 3 + ["token"] + ["data"] * 512:
             raise Fail(f"{name}: reads {phases[:8]}... ({len(phases)})")
         check_log(mc, card, name)
-        if mc.peek("vidStrmRunBlkH", 2) != run0 - 1 or cpu.c != PORT_SPI:
-            raise Fail(f"{name}: run {mc.peek('vidStrmRunBlkH', 2)}, C ${cpu.c:02X}")
+        if mc.peek("vidStrmRunBlkH", 2) != run0 or cpu.c != PORT_SPI:
+            raise Fail(f"{name}: run {mc.peek('vidStrmRunBlkH', 2)} (counted by the open), "
+                       f"C ${cpu.c:02X}")
         surf = BACK_BANK * 2 * SLOT
         if name == "nxb_rw_sec":
             if bytes(mc.mem[scr:scr + 512]) != data[k]:
@@ -2279,72 +2738,151 @@ def test_rw_card():
         logs.append(phases)
     if logs[0] != logs[1]:
         raise Fail("RSEC and RCOL reps read different sequences")
+    # whole rows from the kind
+    for run0, reps, runs in ((1000, 2, True), (3, 2, True), (2, 2, False)):
+        what = f"RSEC row, {reps} reps, run {run0}"
+        mc = nxb_machine()
+        rw_sched(mc)
+        rw_cells(mc, run=run0, crc=1)
+        set_entry(mc, "VR_ENT_CROSS")
+        mapnr(mc, 6, S("NXB_PAGE"))
+        for n, v in (("vidRawSchedPage", SCHED_PAGE), ("l2BackBank", BACK_BANK),
+                     ("nxbSO", 0x77)):
+            mc.poke(n, v)
+        mc.poke16("nxbParam", 0)
+        mc.poke16("nxbReps", reps)
+        remain0 = mc.peek("vidStrmRemainBlk", 3)
+        card = Card([data[k % 3] for k in range(reps + 1)] if runs else [], waits=1,
+                    crc_first=True)
+        mc.set_card(card)
+        seen, msgs, so = [], [], []
+
+        def rep(c):
+            seen.append((mc.peek("vidStrmRunBlkH", 2), mc.peek("vidStrmRemainBlk", 3),
+                         entry_of(mc), card.pos))
+            c.step()
+        def nxb6(fn):
+            """A trap for an NXB_PAGE label: only with NXB_PAGE at MMU6 (the slide shares
+            the addresses)."""
+            def t(c):
+                if mc.mmu[6] == S("NXB_PAGE"):
+                    fn(c)
+                else:
+                    c.step()
+            return t
+        noop = ret_trap(lambda c: None)
+        traps = {S("nxb_lc_start"): noop, S("nxb_lc_end"): noop, S("nxb_sat"): nxb6(noop),
+                 S("nxb_tm_out"): noop, S("nxb_rw_sec"): rep,
+                 S("nxb_sprint"): nxb6(ret_trap(lambda c: so.append(mc.peek("nxbSO")))),
+                 S("dbg_puts"): ret_trap(lambda c: msgs.append(c.hl)), **aborts()}
+        cpu = mc.run("nxb_kind_rblk", traps=traps)
+        got = (card.pos, len(card.stream), mc.peek("vidStrmRunBlkH", 2),
+               mc.peek("vidStrmRemainBlk", 3), entry_of(mc), so, msgs, cpu.fc)
+        if runs:
+            want = (len(card.stream), len(card.stream), run0 - reps - 1, remain0 - reps - 1,
+                    "VR_ENT_FAST", [0], [], 0)
+            first = (run0 - reps - 1, remain0 - reps - 1, "VR_ENT_FAST", 516)
+            if not seen or seen[0] != first or len(seen) != reps:
+                raise Fail(f"{what}: at the reps (run, remain, entry, reads) {seen}, the "
+                           f"first expected {first}")
+            check_log(mc, card, what)
+        else:
+            want = (0, 0, run0, remain0, "VR_ENT_CROSS", [], [S("nxbMsgShort")], 1)
+        if got != want:
+            raise Fail(f"{what}: (reads, of, run, remain, entry, O at the print, messages, CF) "
+                       f"= {got}, expected {want}")
 
 
 def test_rw_hist():
-    """nxb_rh_body: RSEC with the wait of k $FF polls binned by the bit length of min(k, 256)
-    (bin 0: the token on poll 1; past 256 polls vid_sd_tok_h, C reloaded for the slide's 512
-    reads from $EB); a walk's wait binned too (B, C reloaded); 1 + 256 + 65536 $FF polls or a
-    bad token abort with VID_ERR_TOKEN and leave the bins."""
+    """nxb_rh_body with each head (param 0: nxb_rh_sec, CRC 2 to poll 1 at the production
+    18 T; param 1: nxb_rh_sec39, 39 T): RSEC with the wait of k $FF polls binned by the bit
+    length of min(k, 256), the two heads binning the same waits identically (bin 0: the token
+    on poll 1; past 256 polls vid_sd_tok_h, C reloaded for the slide's 512 reads from $EB);
+    the run count never read or counted (the card row charged it), a count of 0 included;
+    gaps [15, 18, 22, 47] and [15, 39, 22, 47]; 1 + 256 + 65536 $FF polls or a bad token
+    abort with VID_ERR_TOKEN and leave the bins. nxb_kind_rhist writes the head from nxbParam
+    before each row: param 1 then param 0."""
     bench_only()
-    mc = RawMachine(SYMS)
-    rw_sched(mc)
-    rw_cells(mc, run=1000, crc=1)
     nb, hb, scr = S("NXB_HIST_BINS"), S("nxbHistBin"), S("VR_SCRATCH")
     if nb != 17:
         raise Fail(f"NXB_HIST_BINS = {nb}")
-    mc.mem[hb:hb + 2 * nb] = bytes(2 * nb)
-    owner = owner_fn(mc)
-    want = [0] * nb
-    fired = []
-
-    def walk(c):
-        fired.append(card.pos)
-        c.hl, c.fc, c.b, c.c = 50, 0, 0xA5, 0xA5         # the walk corrupts BC
+    sec_at = S("nxb_rh_body.sec")
     last = 256 + 65536
-    for i, k in enumerate((0, 1, 2, 3, 4, 7, 8, 255, 256, 257, 300, 1000, 65535, last, 5)):
-        sec = bytes((j * 5 + i) & 0xFF for j in range(512))
-        card = Card([sec], waits=k, crc_first=True)
-        mc.set_card(card)
-        if k == 5:
-            mc.poke16("vidStrmRunBlkH", 0)
-        run0 = mc.peek("vidStrmRunBlkH", 2)
-        cpu = mc.run("nxb_rh_body", traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()},
-                     budget=5_000_000, c=PORT_SPI)
-        want[min(k, 256).bit_length()] += 1
+    binned = {}
+    for head, poll1 in (("nxb_rh_sec", poll1_t()), ("nxb_rh_sec39", 39)):
+        mc = RawMachine(SYMS)
+        rw_sched(mc)
+        rw_cells(mc, run=1000, crc=1)
+        mc.mem[sec_at:sec_at + 2] = le(S(head))
+        mc.mem[hb:hb + 2 * nb] = bytes(2 * nb)
+        owner = owner_fn(mc)
+        want = [0] * nb
+        for i, k in enumerate((0, 1, 2, 3, 4, 7, 8, 255, 256, 257, 300, 1000, 65535, last, 5)):
+            sec = bytes((j * 5 + i) & 0xFF for j in range(512))
+            card = Card([sec], waits=k, crc_first=True)
+            mc.set_card(card)
+            if k == 5:
+                mc.poke16("vidStrmRunBlkH", 0)
+            run0 = mc.peek("vidStrmRunBlkH", 2)
+            cpu = mc.run("nxb_rh_body", traps={**forbid("vid_run_walk_h"), **aborts()},
+                         budget=5_000_000, c=PORT_SPI)
+            want[min(k, 256).bit_length()] += 1
+            bins = [mc.mem[hb + 2 * j] | mc.mem[hb + 2 * j + 1] << 8 for j in range(nb)]
+            run1 = mc.peek("vidStrmRunBlkH", 2)
+            if bins != want or card.pos != len(card.stream) or bytes(mc.mem[scr:scr + 512]) != sec:
+                raise Fail(f"{head} {k} polls: bins {bins}, expected {want}; {card.pos} of "
+                           f"{len(card.stream)} reads")
+            if run1 != run0 or cpu.c != PORT_SPI or cpu.hl != scr + 512:
+                raise Fail(f"{head} {k} polls: run {run0} -> {run1}, C ${cpu.c:02X}, "
+                           f"HL ${cpu.hl:04X}")
+            mine = min(k + 1, 257)
+            who = [owner(pc) for _, pc in card.log]
+            if who != [head] * 2 + ["nxb_rh_sec"] * mine + ["vid_sd_tok_h"] * (k + 1 - mine) \
+                    + ["slide"] * 512:
+                raise Fail(f"{head} {k} polls: readers {sorted(set(who[:mine + 2]))} then "
+                           f"{sorted(set(who[mine + 2:k + 3]))} then "
+                           f"{sorted(set(who[k + 3:]))}, expected CRC by {head}, {mine} polls "
+                           f"by nxb_rh_sec")
+        binned[head] = want
+        for what, card, unread in (
+                ("1 + 256 + 65536 polls", Card([bytes(512)], waits=last + 1, crc_first=True),
+                 513),
+                ("token $FD on poll 1", Card([bytes(512)], crc_first=True, token=0xFD), 512),
+                ("token $FD on poll 4", Card([bytes(512)], waits=3, crc_first=True, token=0xFD),
+                 512),
+                ("token $00 in vid_sd_tok_h", Card([bytes(512)], waits=300, crc_first=True,
+                                                   token=0x00), 512)):
+            mc.set_card(card)
+            try:
+                mc.run("nxb_rh_body", traps=aborts(), budget=5_000_000, c=PORT_SPI)
+            except Stop as e:
+                if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_TOKEN") \
+                        or card.pos != len(card.stream) - unread:
+                    raise Fail(f"{head} {what}: {e}, {card.pos} reads")
+            else:
+                raise Fail(f"{head} {what}: no VID_ERR_TOKEN abort")
         bins = [mc.mem[hb + 2 * j] | mc.mem[hb + 2 * j + 1] << 8 for j in range(nb)]
-        run1 = mc.peek("vidStrmRunBlkH", 2)
-        if bins != want or card.pos != len(card.stream) or bytes(mc.mem[scr:scr + 512]) != sec:
-            raise Fail(f"{k} polls: bins {bins}, expected {want}; {card.pos} of "
-                       f"{len(card.stream)} reads")
-        if run1 != (49 if k == 5 else run0 - 1) or cpu.c != PORT_SPI or cpu.hl != scr + 512:
-            raise Fail(f"{k} polls: run {run0} -> {run1}, C ${cpu.c:02X}, HL ${cpu.hl:04X}")
-        mine = 2 + min(k + 1, 257)
-        who = [owner(pc) for _, pc in card.log]
-        if who != ["nxb_rh_sec"] * mine + ["vid_sd_tok_h"] * (k + 3 - mine) + ["slide"] * 512:
-            raise Fail(f"{k} polls: readers {sorted(set(who[:mine]))} then "
-                       f"{sorted(set(who[mine:k + 3]))} then {sorted(set(who[k + 3:]))}, "
-                       f"expected {mine} by nxb_rh_sec")
-    if fired != [2]:
-        raise Fail(f"vid_run_walk_h entries at reads {fired}, expected one after the 2 CRC reads")
-    for what, card, unread in (
-            ("1 + 256 + 65536 polls", Card([bytes(512)], waits=last + 1, crc_first=True), 513),
-            ("token $FD on poll 1", Card([bytes(512)], crc_first=True, token=0xFD), 512),
-            ("token $FD on poll 4", Card([bytes(512)], waits=3, crc_first=True, token=0xFD), 512),
-            ("token $00 in vid_sd_tok_h", Card([bytes(512)], waits=300, crc_first=True,
-                                               token=0x00), 512)):
-        mc.set_card(card)
-        try:
-            mc.run("nxb_rh_body", traps=aborts(), budget=5_000_000, c=PORT_SPI)
-        except Stop as e:
-            if not reached(e, "vid_dec_abort_pos") or e.a != S("VID_ERR_TOKEN") \
-                    or card.pos != len(card.stream) - unread:
-                raise Fail(f"{what}: {e}, {card.pos} reads")
-        else:
-            raise Fail(f"{what}: no VID_ERR_TOKEN abort")
-    bins = [mc.mem[hb + 2 * j] | mc.mem[hb + 2 * j + 1] << 8 for j in range(nb)]
-    if bins != want:
-        raise Fail(f"a timed-out wait changed the bins: {bins}")
+        if bins != want:
+            raise Fail(f"{head}: a timed-out wait changed the bins: {bins}")
+        mc.cpu.b = 0
+        g = open_gaps(mc, b"\xCD" + le(S("nxb_rh_body")) + b"\xC9", 2)[:4]
+        if g != [15, poll1, 22, 47]:
+            raise Fail(f"{head}: gaps {g}, expected [15, {poll1}, 22, 47]")
+    if binned["nxb_rh_sec"] != binned["nxb_rh_sec39"]:
+        raise Fail(f"the heads bin the same waits differently: {binned}")
+    # nxb_kind_rhist sets the head from nxbParam before every row
+    mc = nxb_machine()
+    mapnr(mc, 6, S("NXB_PAGE"))
+    rw_cells(mc, run=5000, crc=1)
+    heads = []
+    for param, head in ((1, "nxb_rh_sec39"), (0, "nxb_rh_sec")):
+        mc.poke16("nxbParam", param)
+        mc.poke16("nxbReps", 16)
+        mc.run("nxb_kind_rhist", traps={S("nxb_rw_go"): ret_trap(
+            lambda c: heads.append(mc.mem[sec_at] | mc.mem[sec_at + 1] << 8))})
+        if heads[-1] != S(head):
+            raise Fail(f"nxb_kind_rhist param {param}: nxb_rh_body.sec ${heads[-1]:04X}, "
+                       f"expected {head}")
 
 
 class PortMachine(RawMachine):
@@ -2411,21 +2949,25 @@ def test_rw_arms():
 
 
 def test_rw_kinds():
-    """The NXB kinds' untimed setup: RBLK/RHIST charge reps + 1 to the 24-bit remain and pick
-    the body (RBLK maps the hidden surface page at MMU2, RHIST zeroes the bins and patches the
-    print), fewer than NXB_RW_MIN blocks print NXB SHORT and run nothing; RHIST's print saves
-    tag and bins (at most NXB_HIST_MAX) and restores the exit; RFRAME/SPIN bodies; IDEN's
-    raw picture width."""
+    """The NXB kinds' untimed setup: RBLK/RHIST charge reps + 1 to the 24-bit remain and to
+    the run count, write VR_ENT_FAST and pick the body (RBLK maps the hidden surface page at
+    MMU2, RHIST zeroes the bins and patches the print); fewer than NXB_RW_MIN blocks left, or
+    a run shorter than reps + 1, print NXB SHORT and run and charge nothing; RHIST's print
+    saves tag and bins (NXB_HIST_MAX = 4 slots) and restores the exit; RFRAME/SPIN bodies;
+    IDEN's raw picture width."""
     bench_only()
     hb, nb = S("nxbHistBin"), S("NXB_HIST_BINS")
+    if S("NXB_HIST_MAX") != 4:
+        raise Fail(f"NXB_HIST_MAX = {S('NXB_HIST_MAX')}, expected 4 (RHST, RH39, AHST, AH39)")
 
-    def kmc():
+    def kmc(run=0x5A5A):
         mc = nxb_machine()
         mapnr(mc, 6, S("NXB_PAGE"))
         mc.poke("l2BackBank", BACK_BANK)
         mc.poke16("nxbReps", 128)
         mc.poke("nxbSO", 0x77)
-        mc.poke16("vidStrmRunBlkH", 0x5A5A)
+        mc.poke16("vidStrmRunBlkH", run)
+        set_entry(mc, "VR_ENT_CROSS")
         return mc
     seen = {}
 
@@ -2434,14 +2976,17 @@ def test_rw_kinds():
             seen[name] = (c.pc, mc.mem[S("nxb_body") + 1] | mc.mem[S("nxb_body") + 2] << 8)
             c.pc = c.pop()
         return t
-    for kind, param, reps, remain, body, left in (
-            ("nxb_kind_rblk", 0, 128, 0x012345, "nxb_rw_sec", 0x012345 - 129),
-            ("nxb_kind_rblk", 1, 128, 0x010000, "nxb_rw_col", 0x010000 - 129),
-            ("nxb_kind_rblk", 1, 128, 5000, "nxb_rw_col", 5000 - 129),
-            ("nxb_kind_rhist", 0, 2048, 0x020000, "nxb_rh_body", 0x020000 - 2049),
-            ("nxb_kind_rblk", 0, 128, 4999, None, 4999),
-            ("nxb_kind_rhist", 0, 2048, 0, None, 0)):
-        mc = kmc()
+    for kind, param, reps, remain, body, left, run in (
+            ("nxb_kind_rblk", 0, 128, 0x012345, "nxb_rw_sec", 0x012345 - 129, 0x5A5A),
+            ("nxb_kind_rblk", 1, 128, 0x010000, "nxb_rw_col", 0x010000 - 129, 0x5A5A),
+            ("nxb_kind_rblk", 1, 128, 5000, "nxb_rw_col", 5000 - 129, 0x5A5A),
+            ("nxb_kind_rhist", 0, 2048, 0x020000, "nxb_rh_body", 0x020000 - 2049, 0x5A5A),
+            ("nxb_kind_rhist", 1, 2048, 0x020000, "nxb_rh_body", 0x020000 - 2049, 2049),
+            ("nxb_kind_rblk", 0, 128, 4999, None, 4999, 0x5A5A),
+            ("nxb_kind_rhist", 0, 2048, 0, None, 0, 0x5A5A),
+            ("nxb_kind_rblk", 0, 128, 0x012345, None, 0x012345, 128),
+            ("nxb_kind_rhist", 1, 2048, 0x020000, None, 0x020000, 0)):
+        mc = kmc(run)
         mc.poke16("nxbParam", param)
         mc.poke16("nxbReps", reps)
         mc.poke("vidStrmRemainBlk", remain.to_bytes(3, "little"))
@@ -2454,9 +2999,14 @@ def test_rw_kinds():
         traps = {S("nxb_rw_go"): at("go"), S("nxb_sat"): noop, S("nxb_tm_out"): noop,
                  S("dbg_puts"): ret_trap(lambda c: msgs.append(c.hl))}
         cpu = mc.run(kind, traps=traps)
-        what = f"{kind} param {param} remain ${remain:06X}"
+        what = f"{kind} param {param} remain ${remain:06X} run {run}"
         if mc.peek("vidStrmRemainBlk", 3) != left:
             raise Fail(f"{what}: remain ${mc.peek('vidStrmRemainBlk', 3):06X}, expected ${left:06X}")
+        run_left = run if body is None else run - reps - 1
+        ent = "VR_ENT_CROSS" if body is None else "VR_ENT_FAST"
+        if (mc.peek("vidStrmRunBlkH", 2), entry_of(mc)) != (run_left, ent):
+            raise Fail(f"{what}: run {mc.peek('vidStrmRunBlkH', 2)}, entry {entry_of(mc)}; "
+                       f"expected {run_left}, {ent}")
         if body is None:
             if "go" in seen or not cpu.fc or msgs != [S("nxbMsgShort")]:
                 raise Fail(f"{what}: refused row ran or printed {msgs} (CF {cpu.fc})")
@@ -2465,7 +3015,7 @@ def test_rw_kinds():
             raise Fail(f"{what}: body ${seen.get('go', (0, 0))[1]:04X}, expected {body}")
         bins = bytes(mc.mem[hb:hb + 2 * nb])
         patched = mc.mem[pr] | mc.mem[pr + 1] << 8
-        if (mc.peek("nxbRunB", 2), mc.peek("nxbRemB", 2)) != (0x5A5A, remain & 0xFFFF):
+        if (mc.peek("nxbRunB", 2), mc.peek("nxbRemB", 2)) != (run, remain & 0xFFFF):
             raise Fail(f"{what}: walk mark before the row {mc.peek('nxbRunB', 2):04X} "
                        f"{mc.peek('nxbRemB', 2):04X}")
         if kind == "nxb_kind_rhist":
@@ -2473,13 +3023,13 @@ def test_rw_kinds():
                 raise Fail(f"{what}: bins not zeroed or nxb_lrow.pr ${patched:04X}")
         elif mc.mmu[2] != BACK_BANK * 2 or patched != S("nxb_rw_done"):
             raise Fail(f"{what}: MMU2 {mc.mmu[2]}, nxb_lrow.pr ${patched:04X}")
-    # RHIST's print: slots 0 and 1, then capped
+    # RHIST's print: slots 0 to 3, then capped
     mc = kmc()
     tab = S("nxbTabBuf")
     sav, ln = S("nxbHistSav"), S("NXB_HIST_LEN")
-    mc.mem[sav:sav + 2 * ln] = b"\xEE" * (2 * ln)
+    mc.mem[sav:sav + 4 * ln] = b"\xEE" * (4 * ln)
     saved = []
-    for n, tag in ((0, b"RHST"), (1, b"AHST"), (2, b"XHST")):
+    for n, tag in ((0, b"RHST"), (1, b"RH39"), (2, b"AHST"), (3, b"AH39"), (4, b"XHST")):
         mc.poke("nxbHistN", n)
         mc.mem[tab:tab + 4] = tag
         mc.poke16("nxbTag", tab)
@@ -2492,10 +3042,10 @@ def test_rw_kinds():
         want_n = min(n + 1, S("NXB_HIST_MAX"))
         if mc.peek("nxbHistN") != want_n or sp != [1] or mc.peek("nxb_lrow.pr", 2) != S("nxb_sprint"):
             raise Fail(f"nxb_rh_done at {n}: nxbHistN {mc.peek('nxbHistN')}, prints {len(sp)}")
-        if n < 2:
+        if n < 4:
             saved.append(tag + binv)
-        if bytes(mc.mem[sav:sav + 2 * ln]) != b"".join(saved) + b"\xEE" * ((2 - len(saved)) * ln):
-            raise Fail(f"nxb_rh_done at {n}: slots hold {bytes(mc.mem[sav:sav + 2 * ln])[:12]!r}...")
+        if bytes(mc.mem[sav:sav + 4 * ln]) != b"".join(saved) + b"\xEE" * ((4 - len(saved)) * ln):
+            raise Fail(f"nxb_rh_done at {n}: slots hold {bytes(mc.mem[sav:sav + 4 * ln])[:12]!r}...")
     for kind, body, exit_ in (("nxb_kind_rfr", "nxb_rw_fbody", "nxb_rw_done"),
                               ("nxb_kind_spin", "nxb_rw_spin", "nxb_sprint")):
         mc = kmc()
@@ -2705,7 +3255,9 @@ def test_rw_harness():
     pinned to the emitted bytes: an RSEC rep against the schedule's steady-state sector
     (call vr_sector_n / call VR_SLIDE), RCOL - RSEC = 8 column ends of 38 T, a frame-row rep
     against vid_run's call vid_aud_stage / ld bc / call vid_aud_pump / call vid_decode_any;
-    the binned wait's polls as far apart as vr_sector_n's (tags' wait shape); the reps' reads."""
+    the binned wait's polls as far apart as vr_sector_n's (tags' wait shape), [15, 18, 22, 47]
+    in both and [15, 39, 22, 47] in nxb_rh_sec39; the reps' reads. VR_ENT_FAST throughout, as
+    nxb_rw_charge and a frame inside its run leave it."""
     bench_only()
     import nxv2_bench_rows as bench
     sys.path.insert(0, str(Path(__file__).resolve().parent / "core303"))
@@ -2715,6 +3267,7 @@ def test_rw_harness():
         mc = RawMachine(SYMS)
         rw_sched(mc)
         rw_cells(mc, run=1000, crc=1)
+        set_entry(mc, "VR_ENT_FAST")
         mapnr(mc, 2, BACK_BANK * 2)
         mc.set_card(Card([bytes(512)] * sectors, waits=0, crc_first=True))
         mc.cpu.b, mc.cpu.c = 0, PORT_SPI             # the open keeps C: the schedule's contract
@@ -2756,19 +3309,19 @@ def test_rw_harness():
         raise Fail(f"frame rep {fbench} T, playback's calls {play} T: harness {fbench - play} "
                    f"(RW_FRAME_HARNESS_T {bench.RW_FRAME_HARNESS_T})")
     gaps = {}
-    for name in ("vr_sector_n", "nxb_rh_sec"):
+    for name in ("vr_sector_n", "nxb_rh_sec", "nxb_rh_sec39"):
         mc = card_mc(1)
         mc.set_card(Card([bytes(512)], waits=2, crc_first=True))
         gaps[name] = in_gaps(mc, name)
     divider = 0
     if "nxbQuietImage" not in SYMS:              # DEBUG: vr_sector_n's PLAY divider
         divider = stub_t(card_mc(1), b"\x16\x00\xCD" + le(S("vid_dst_norm_flat")) + b"\xC9")
-    v, h = gaps["vr_sector_n"], gaps["nxb_rh_sec"]
+    v, h, h39 = gaps["vr_sector_n"], gaps["nxb_rh_sec"], gaps["nxb_rh_sec39"]
     poll = [tags.NXB_HIST_POLL1_T, tags.NXB_HIST_POLL_T]
-    if not (v[:4] == [15, SECTOR_POLL1_T + divider] + poll and h[:4] == [15, SECTOR_POLL1_T]
-            + poll == [15, 72, 22, 47]):
-        raise Fail(f"read gaps vr_sector_n {v[:4]}, nxb_rh_sec {h[:4]} (divider {divider} T), "
-                   f"tags poll T {poll}")
+    if not (v[:4] == [15, poll1_t() + divider] + poll and h[:4] == [15, poll1_t()]
+            + poll == [15, 18, 22, 47] and h39[:4] == [15, 39] + poll):
+        raise Fail(f"read gaps vr_sector_n {v[:4]}, nxb_rh_sec {h[:4]}, nxb_rh_sec39 "
+                   f"{h39[:4]} (divider {divider} T), tags poll T {poll}")
     # a rep's reads: the token to the first slide read 41 T (RSEC's jp), 48 (RCOL's call)
     for name, want in (("nxb_rw_sec", [41] + [16] * 511),
                        ("nxb_rw_col", [48] + ([16] * 63 + [54]) * 7 + [16] * 63)):
@@ -2777,7 +3330,7 @@ def test_rw_harness():
         mc.cpu.sp = STACK
         mc.cpu.push(RET)
         g = io_gaps(mc, S(name), RET)
-        if g != [15, SECTOR_POLL1_T + divider, 22] + want:
+        if g != [15, poll1_t() + divider, 22] + want:
             raise Fail(f"{name} rep read gaps {g[:6]}.., {sorted(set(g[4:]))} after the token")
 
 
@@ -2963,11 +3516,14 @@ def test_rw_histlog():
     def cell(c):
         c.hl = 0x4000
     traps = {io: ret_trap(put), S("tm_cell_addr"): ret_trap(cell)}
-    bins = {"RHST": [0x07F8, 5, 2] + [0] * 13 + [0xABCD], "AHST": [0] * 16 + [1]}
+    bins = {"RHST": [0x07F8, 5, 2] + [0] * 13 + [0xABCD], "RH39": [0x0700, 0xF0] + [0] * 15,
+            "AHST": [0] * 16 + [1], "AH39": [1] * 17}
     sav, ln = S("nxbHistSav"), S("NXB_HIST_LEN")
+    if S("NXB_HIST_MAX") != len(bins):
+        raise Fail(f"NXB_HIST_MAX {S('NXB_HIST_MAX')}, expected {len(bins)}")
     for i, (t, b) in enumerate(bins.items()):
         mc.mem[sav + i * ln:sav + (i + 1) * ln] = t.encode() + b"".join(le(n) for n in b)
-    for n in (2, 1, 0):
+    for n in (4, 3, 2, 1, 0):
         mc.poke("nxbHistN", n)
         lines.clear()
         mc.run("nxb_log_pass", traps=traps, hl=io)
@@ -3135,9 +3691,11 @@ def test_loop_sound_boundary():
 
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
-         test_sector_walkfault, test_sector_polls, test_sector_timeout, test_sector_gaps,
-         test_sector_t, test_sector_joins, test_frame_remain, test_frame_palette, test_paltrain,
-         test_pal_t, test_frame_runwalk,
+         test_sector_fresh, test_sector_walkfault, test_sector_polls, test_sector_timeout,
+         test_sector_gaps, test_poll_pad, test_sector_t, test_sector_joins, test_frame_remain,
+         test_frame_palette, test_paltrain, test_pal_t, test_frame_fit, test_frame_runwalk,
+         test_frame_zero, test_entry_stale, test_frame_boundaries, test_frame_cross_gaps,
+         test_frame_end_walk, test_frame_rewind, test_frame_abort,
          test_apad, test_apad_boundary, test_apad_map, test_apad_t, test_vr_page,
          test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_t, test_isr_static, test_rd_bytes,

@@ -3843,7 +3843,7 @@ NXB_RW_SPIN      equ 2000    ; count-loop passes per spin rep
 NXB_RW_MIN       equ 5000    ; a card row needs this many blocks left
     ASSERT NXB_RW_MIN > NXB_RW_HREPS + 1 && NXB_RW_MIN > NXB_RW_REPS + 1
 NXB_HIST_BINS    equ 17      ; bin k: waits whose $FF poll count has bit length k (9: 256+)
-NXB_HIST_MAX     equ 2       ; histogram rows the log step carries
+NXB_HIST_MAX     equ 4       ; histogram rows the log step carries
 NXB_HIST_LEN     equ 4 + 2 * NXB_HIST_BINS   ; nxbHistSav entry: tag, bins
 NXB_HIST_TXT     equ 6 + 4 + 5 * NXB_HIST_BINS   ; "#HIST tttt" and " hhhh" per bin
     ; nxb_aud_body/nxb_lp_pace put the writer half a ring ahead of IX with xor
@@ -5088,9 +5088,9 @@ vidRawH0:        db 0            ; $40 + (vidP_RawX0 & 31): MMU2 dest high
 ; RAW DIRECT READER: the schedule (vid_raw_sched_build) runs at MMU6 with
 ; HL = destination, C = PORT_SPI_DAT, B scrap (ini counts it).
 
-; Raw frame decode (vid_decode_any.raw). The whole-pass remain and the
-; section bound are charged once, before any read. Out: A = VOP_KFLIP.
-; Faults abort via vid_dec_abort_pos. Corrupts all but IX.
+; Raw frame decode (vid_decode_any.raw). Remain, section bound and (frame inside
+; its run) run count charged once before any read; vr_sector_n's entry set every
+; frame. Out: A = VOP_KFLIP. Faults abort via vid_dec_abort_pos. Corrupts all but IX.
 vid_raw_frame:
     ld a, (vidRawSchedPage)
     nextreg NR_MMU6, a
@@ -5106,6 +5106,13 @@ vid_raw_frame:
     jr c, .ovr                   ; past the file: no read made
     ld (vidStrmRemainBlk), hl
     ld (vidStrmRemainBlk+2), a
+    ld hl, (vidStrmRunBlkH)      ; CF clear: no borrow above
+    sbc hl, de
+    jr c, .cross                 ; the frame crosses the run's end
+    ld (vidStrmRunBlkH), hl      ; the whole frame charged once
+    ld hl, VR_ENT_FAST
+.ent:
+    ld (vr_sector_n), hl         ; the open's entry, before its first sector
     ld a, (vidRawCap)            ; the next sound blocks and a loop
     ld (vidDsFrmBlk), a          ; header block stay inside vidDsBound
     ld a, (vidRawTag)
@@ -5124,9 +5131,27 @@ vid_raw_frame:
     call VR_SCHED
     ld a, VOP_KFLIP
     ret
+.cross:
+    ld hl, VR_ENT_CROSS          ; per-sector count (vr_sector_c), run left
+    jr .ent
 .ovr:
     ld a, VID_ERR_SRCOVR
     jp vid_dec_abort_pos
+
+; CRC 2 to poll 1 = 11 + 7 x VR_POLL_PAD_N T (n = 1: 18; n = 4: 39, the
+; prototype's) in vr_sector_n and its bench mirror. Poll 1's value is used:
+; keep it 16 T or more after CRC 2. cp (hl): flags only, 1 byte, 7 T.
+VR_POLL_PAD_N equ 1
+    ASSERT VR_POLL_PAD_N >= 1
+    MACRO VR_POLL_PAD
+      DUP VR_POLL_PAD_N
+        cp (hl)
+      EDUP
+    ENDM
+; vr_sector_n's first two bytes, written by vid_raw_frame (every frame) and
+; nxb_rw_charge: the CRC read, or jr vr_sector_c (the counted open).
+VR_ENT_FAST equ (PORT_SPI_DAT << 8) | $DB
+VR_ENT_CROSS equ ((vr_sector_c - vr_sector_n - 2) << 8) | $18
 
 ; Open a frame's first sector (CRC if due). Preserves HL. Out: C =
 ; PORT_SPI_DAT, vidDsCrcDue = 1. Corrupts AF, B, DE. Faults abort.
@@ -5136,10 +5161,10 @@ vr_sector:
     or a
     ld a, 1
     ld (vidDsCrcDue), a          ; flags kept: Z = no CRC pends
-    jr z, vr_sector_n.nocrc
-; Open sectors 2..n (a CRC always pends; vidDsCrcDue untouched). In: C =
-; PORT_SPI_DAT (kept; reloaded after a walk or vid_sd_tok_h). Preserves HL.
-; Corrupts AF, B, DE. Faults (run walk, token) abort via vid_dec_abort_pos.
+    jr z, vr_sector_n.fresh
+; Open sectors 2..n (CRC pends; vidDsCrcDue untouched). In: C = PORT_SPI_DAT (kept;
+; reloaded after a walk or vid_sd_tok_h). Preserves HL. Corrupts AF, B, DE. Faults abort.
+; VR_ENT_FAST: the frame charged the run; VR_ENT_CROSS: vr_sector_c counts, walks.
 vr_sector_n:
     in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart, as blkopen
     nop
@@ -5151,14 +5176,9 @@ vr_sector_n:
     call vid_dst_norm_flat       ; (D < $60: no page step, AF only)
   ENDIF
  ENDIF
-    ld de, (vidStrmRunBlkH)
-    ld a, d
-    or e
-    jr z, .walk
-.run:
-    dec de
-    ld (vidStrmRunBlkH), de
-    in a, (PORT_SPI_DAT)         ; poll 1 (the card's $FF), 72 T after CRC 2 in Release
+    VR_POLL_PAD
+.poll:
+    in a, (PORT_SPI_DAT)         ; poll 1 (the card's $FF), 18 T after CRC 2 in Release
     inc a
     jr nz, .p1
 .p:
@@ -5178,6 +5198,26 @@ vr_sector_n:
 .tokf:
     ld a, VID_ERR_TOKEN
     jp vid_dec_abort_pos
+.fresh:                          ; no CRC pends (vr_sector): the mode from the entry
+    ld a, (vr_sector_n)
+    cp $DB
+    jr z, .nocrc
+    jr vr_sector_c.nocrc
+; Counted open for a frame that crosses its run's end (VR_ENT_CROSS): the CRC
+; pair, the run count (walk at 0), then vr_sector_n's wait. As vr_sector_n.
+vr_sector_c:
+    in a, (PORT_SPI_DAT)
+    nop
+    in a, (PORT_SPI_DAT)
+.nocrc:
+    ld de, (vidStrmRunBlkH)
+    ld a, d
+    or e
+    jr z, .walk
+.run:
+    dec de
+    ld (vidStrmRunBlkH), de
+    jp vr_sector_n.nocrc
 .walk:
     push hl
     call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
@@ -5186,6 +5226,9 @@ vr_sector_n:
     ld c, PORT_SPI_DAT           ; the walk corrupts BC
     jr nc, .run
     jp vid_dec_abort_pos
+    ; on VID_PAGE (slot 7) here: {b} reads the assembled entry
+    ASSERT {b vr_sector_n} == $DB && {b vr_sector_n + 1} == PORT_SPI_DAT
+    ASSERT vr_sector_c - vr_sector_n - 2 <= 127
 
 ; Schedule page end: map the next back-surface page at MMU2.
 ; Out: HL = VID_DST_WIN. Corrupts AF.
@@ -5410,25 +5453,32 @@ nxb_rw_col:
 ; RHIST rep: RSEC with the token wait binned.
 nxb_rh_body:
     ld hl, VR_SCRATCH
+.sec equ $+1                     ; nxb_kind_rhist: nxb_rh_sec or nxb_rh_sec39
     call nxb_rh_sec
     call nxb_rh_bin
     jp VR_SLIDE
 
-; vr_sector_n's quiet open, CRC 1 through djnz .p, B counting the loop polls.
-; Out: A = $FF (token on poll 1) or $FE, B. Preserves C (reloaded after a walk
-; or vid_sd_tok_h), HL. Corrupts DE. Faults abort.
+; RHIST param 1: nxb_rh_sec with CRC 2 to poll 1 fixed at the prototype's 39 T.
+nxb_rh_sec39:
+    ld b, 0
+    in a, (PORT_SPI_DAT)
+    nop
+    in a, (PORT_SPI_DAT)
+    inc hl                       ; 16 T, HL and flags kept
+    dec hl
+    nop
+    jr nxb_rh_sec.poll
+
+; vr_sector_n's quiet fast open (run charged by nxb_rw_charge), CRC 1 through
+; djnz .p, B counting the loop polls. Out: A = $FF (token on poll 1) or $FE,
+; B. Preserves C (reloaded after vid_sd_tok_h), HL. Faults abort.
 nxb_rh_sec:
     ld b, 0                      ; before CRC 1: outside every gap
     in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart
     nop
     in a, (PORT_SPI_DAT)
-    ld de, (vidStrmRunBlkH)
-    ld a, d
-    or e
-    jr z, .walk
-.run:
-    dec de
-    ld (vidStrmRunBlkH), de
+    VR_POLL_PAD
+.poll:
     in a, (PORT_SPI_DAT)
     inc a
     jr nz, .p1
@@ -5448,14 +5498,6 @@ nxb_rh_sec:
     ret z
 .tokf:
     jp vr_sector_n.tokf          ; out of jr range: a local target keeps the loop's T
-.walk:
-    push hl
-    call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
-    ex de, hl
-    pop hl
-    ld bc, PORT_SPI_DAT          ; the walk corrupts BC; B = 0 restarts the count
-    jr nc, .run
-    jp vid_dec_abort_pos
 
 ; Count one wait into nxbHistBin: A = $FF bin 0, else bin bitlength(n), n =
 ; (0 - B) mod 256 + 1 polls ($FF bytes). Preserves BC, HL. Corrupts AF, DE.
@@ -6409,7 +6451,8 @@ nxb_kind_spin:
     ld hl, nxb_rw_spin
     jp nxb_lrow0
 ; RBLK (raw card row, param 0 RSEC, 1 RCOL into the hidden surface page at
-; MMU2) and RHIST (bins zeroed, the print saving them): nxb_rw_go. O = the walk mark.
+; MMU2) and RHIST (param 0 the production wait head, 1 the 39 T one; bins
+; zeroed, the print saving them): nxb_rw_go. O = the walk mark.
 nxb_kind_rblk:
     call nxb_rw_mark0
     call nxb_rw_charge
@@ -6428,6 +6471,13 @@ nxb_kind_rhist:
     call nxb_rw_mark0
     call nxb_rw_charge
     ret c
+    ld hl, nxb_rh_sec            ; the wait's head by param, every row
+    ld a, (nxbParam)
+    or a
+    jr z, .h
+    ld hl, nxb_rh_sec39
+.h:
+    ld (nxb_rh_body.sec), hl
     ld hl, nxbHistBin
     ld b, 2 * NXB_HIST_BINS
 .z:
@@ -6478,8 +6528,9 @@ nxb_rw_done:
     call nxb_rw_mark
     jp nxb_sprint
 
-; Card rows: CF = fewer than NXB_RW_MIN blocks remain, TAG NXB SHORT printed and
-; the row skipped; else the row's sectors and nxb_rw_go's one charged to the remain.
+; Card rows: CF = fewer than NXB_RW_MIN blocks remain, or fewer than the row's
+; in the run, TAG NXB SHORT printed and the row skipped; else the row's sectors
+; and nxb_rw_go's one charged to the run and the remain, VR_ENT_FAST written.
 nxb_rw_charge:
     ld a, (vidStrmRemainBlk+2)
     or a
@@ -6489,9 +6540,16 @@ nxb_rw_charge:
     sbc hl, de                   ; CF clear from or a
     jr c, .short
 .ok:
-    ld hl, (vidStrmRemainBlk)
+    ld hl, (vidStrmRunBlkH)
     ld de, (nxbReps)
     scf                          ; + nxb_rw_go's untimed sector
+    sbc hl, de
+    jr c, .short                 ; the row would cross its run's end
+    ld (vidStrmRunBlkH), hl
+    ld hl, VR_ENT_FAST           ; VID_PAGE at MMU7
+    ld (vr_sector_n), hl
+    ld hl, (vidStrmRemainBlk)
+    scf
     sbc hl, de
     ld (vidStrmRemainBlk), hl
     ld hl, vidStrmRemainBlk+2
@@ -6640,6 +6698,7 @@ NXB_ROW_AT defl $
       ASSERT (kind & ~NXB_K_STRM) < NXB_K_SYNTH
       ASSERT kind != NXB_K_DSBLK || param < 4
       ASSERT kind != NXB_K_RBLK || param < 2
+      ASSERT kind != NXB_K_RHIST || param < 2
 NXB_STAB_B defl NXB_STAB_B + NXB_SROW_LEN
     ENDM
 
@@ -6688,9 +6747,9 @@ nxbSesDs1:
 nxbSesDs1End:
     ASSERT nxbSesDs1End - nxbSesDs1 == NXB_STAB_B + 1
 
-; RW1: raw direct. RFR0 frame 0 with its palette sector, RSWP/ARSW frames 1-16
-; and 17-32; card rows RSEC (sector), RCOL (8 column ends), RHST (#HIST bins);
-; SPN0/ASPN/OSPN the same spin under no, the raw and the old stereo handler.
+; RW1: raw direct. RFR0 frame 0 (palette sector), RSWP/ARSW frames 1-16 and 17-32; card
+; rows RSEC, RCOL (8 column ends), RHST (#HIST bins), RH39 (RHST, poll 1 39 T after CRC
+; 2); SPN0/ASPN/OSPN the same spin under no, the raw and the old stereo handler.
 nxbSesRw1:
     NXBSTAB 0
     NXBSROW "IDEN", NXB_K_ID, 0, 0, 0
@@ -6702,11 +6761,13 @@ nxbSesRw1:
     NXBSROW "RSEC", NXB_K_RBLK, 0, NXB_RW_REPS, 0
     NXBSROW "RCOL", NXB_K_RBLK, 1, NXB_RW_REPS, 0
     NXBSROW "RHST", NXB_K_RHIST, 0, NXB_RW_HREPS, 0
+    NXBSROW "RH39", NXB_K_RHIST, 1, NXB_RW_HREPS, 0
     NXBSROW "SPN0", NXB_K_SPIN, 0, NXB_RW_SREPS, 0
     NXBSROW "ARM2", NXB_K_RARM, 0, 0, 0
     NXBSROW "ARSE", NXB_K_RBLK, 0, NXB_RW_REPS, 0
     NXBSROW "ARCO", NXB_K_RBLK, 1, NXB_RW_REPS, 0
     NXBSROW "AHST", NXB_K_RHIST, 0, NXB_RW_HREPS, 0
+    NXBSROW "AH39", NXB_K_RHIST, 1, NXB_RW_HREPS, 0
     NXBSROW "ASPN", NXB_K_SPIN, 0, NXB_RW_SREPS, 0
     NXBSROW "DSRM", NXB_K_DISARM, 0, 0, 0
     NXBSROW "ARMO", NXB_K_ARMOLD, 0, 0, 0
@@ -8389,6 +8450,8 @@ vid_stage_common:
 .rawv:
     ld (vid_decode_any.raw + 1 + DATA_WINDOW - OVL_ORG), hl
     ld (vid_aud_pump.apad + 1 + DATA_WINDOW - OVL_ORG), de
+    ld hl, VR_ENT_FAST           ; reset: a session ended mid-crossing left VR_ENT_CROSS
+    ld (vr_sector_n + DATA_WINDOW - OVL_ORG), hl
     ld h, b
     ld l, c
     ld de, vid_pace_poll.rd + DATA_WINDOW - OVL_ORG

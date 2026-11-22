@@ -156,6 +156,21 @@ def infer_wait_shape(sections):
     return "sitting1"
 
 
+def shape_tags(res, tags):
+    """The tags a log of res's wait shape carries: sitting 1's bench had no INLINE_TAGS."""
+    return [t for t in tags if res.wait_shape == "inline" or t not in INLINE_TAGS]
+
+
+def poll1_t():
+    """CRC 2 to poll 1 T of vr_sector_n and the RHST/AHST mirror: 11 + 7 x VR_POLL_PAD_N
+    (src/video.asm); RH39/AH39 read poll 1 at 39 T."""
+    for line in (REPO / "src" / "video.asm").read_text(encoding="latin-1").splitlines():
+        p = line.split()
+        if p[:2] == ["VR_POLL_PAD_N", "equ"]:
+            return 11 + 7 * int(p[2])
+    raise FitError("VR_POLL_PAD_N is not in src/video.asm")
+
+
 def debug_work(res, g, form):
     """Plain DEBUG T on a late frame's path, armed (1 / (1 - handler / CTC period)).
     Pump passes a frame are estimated: one chunk, one more on a ring-tail wrap, the last.
@@ -247,7 +262,8 @@ SYNTH = dict(
 )
 # Large reps keep the line quantisation far below 0.1 percent of every constant.
 SYNTH_REPS = dict(RFR0=4096, RSWP=4096, ARSW=4096, RSEC=65535, RCOL=65535, RHST=2048,
-                  SPN0=8192, ARSE=65535, ARCO=65535, AHST=2048, ASPN=8192, OSPN=8192)
+                  RH39=2048, SPN0=8192, ARSE=65535, ARCO=65535, AHST=2048, AH39=2048,
+                  ASPN=8192, OSPN=8192)
 
 
 def synth_t(clip, P=SYNTH):
@@ -269,10 +285,11 @@ def synth_t(clip, P=SYNTH):
         RFR0=rswp_p + k["tp"] * rswp_p / arsw_p + G_FRAME,
         RSWP=rswp_p + G_FRAME,
         ARSW=arsw_p * (rswp_p + G_FRAME) / rswp_p,
-        RSEC=rsec, RCOL=rcol, RHST=rsec + 150.0, SPN0=s0,
+        RSEC=rsec, RCOL=rcol, RHST=rsec + 150.0, RH39=rsec + 171.0, SPN0=s0,
         ARSE=arse_p * rsec / (rsec - H_CARD),
         ARCO=arco_p * rcol / (rcol - H_CARD),
         AHST=arse_p * rsec / (rsec - H_CARD) + 160.0,
+        AH39=arse_p * rsec / (rsec - H_CARD) + 182.0,
         ASPN=s0 / (1 - P["handler"][form] / per),
         OSPN=s0 / (1 - P["old_handler"] / per))
 
@@ -452,6 +469,7 @@ class Result:
     handler_spread: dict = field(default_factory=dict)
     col_unarmed: float = 0.0
     hsum: dict = field(default_factory=dict)
+    cmp39: dict = field(default_factory=dict)   # RH39/AH39 key -> (base polls, 39 T polls, clips)
     duty: dict = field(default_factory=dict)
     residuals: list = field(default_factory=list)
     accepted: bool = False
@@ -589,7 +607,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
                  s.rows, {}, hist=dict(s.hist))
         runs = [nxbparse.NxbRun(tg, None, *row, s.index, "session") for tg, row in s.rows.items()]
         walked = {r.tag for r in nxbparse.rw1_walked(runs)}
-        for tg in RW1_TAGS[1:]:
+        for tg in shape_tags(res, RW1_TAGS[1:]):
             row = s.rows.get(tg)
             if row is None:
                 res.anomalies.append("clip %03d: row %s missing (RE-RUN)" % (s.clip, tg))
@@ -610,7 +628,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
 
     # Histograms: bins sum to the row's reps; a walk-marked row's histogram is dropped.
     for c in clips:
-        for tg in nxbtags.NXB_HIST_TAGS:
+        for tg in shape_tags(res, nxbtags.NXB_HIST_TAGS):
             bins = c.hist.get(tg)
             if (c.clip, tg) in marked:
                 c.hist.pop(tg, None)
@@ -759,6 +777,23 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     n = sum(sum(b) for b in rh)
     res.wait["unarmed"] = wait_sum(rh) / n if n else None
     res.hsum["RHST"] = [sum(b[k] for b in rh) for k in range(nxbtags.NXB_HIST_BINS)]
+
+    # First poll at the production spacing against the prototype's 39 T: the same clips'
+    # RHST/RH39 and AHST/AH39 bins, mean $FF polls a wait. Printed only, in no constant.
+    def mean_polls(hists):
+        n = sum(sum(b) for b in hists)
+        return sum(sum(cnt * _bin_polls(k)[2] for k, cnt in enumerate(b)) for b in hists) / n
+    for base, alt, forms in (("RHST", "RH39", (None,)), ("AHST", "AH39", FORMS)):
+        for form in forms:
+            fc = [c for c in clips if base in c.hist and alt in c.hist
+                  and form in (None, c.form)]
+            if not fc:
+                continue
+            key = alt if form is None else "%s %s" % (alt, form)
+            res.hsum[key] = [sum(c.hist[alt][k] for c in fc)
+                             for k in range(nxbtags.NXB_HIST_BINS)]
+            res.cmp39[key] = (mean_polls([c.hist[base] for c in fc]),
+                              mean_polls([c.hist[alt] for c in fc]), len(fc))
 
     # Handler cost per interrupt: (armed - SPN0) / (armed rep T / CTC period).
     groups = {"stereo": ("ASPN", "stereo"), "mono": ("ASPN", "mono"), "old": ("OSPN", None)}
@@ -918,7 +953,7 @@ def report(res, readouts=None):
         add("")
         add("| tag | O | R | F | D | lines | T | T/rep | primed |")
         add("|---|---|---|---|---|---|---|---|---|")
-        for tg in RW1_TAGS:
+        for tg in shape_tags(res, RW1_TAGS):
             row = c.rows.get(tg)
             if row is None:
                 add("| %s | missing | | | | | | | |" % tg)
@@ -1222,7 +1257,7 @@ def report(res, readouts=None):
     add("| histogram | bin | polls | wait T | count |")
     add("|---|---|---|---|---|")
     for name, bins in res.hsum.items():
-        scale = 1.0 if name == "RHST" else res.duty[name.split()[1]]
+        scale = 1.0 if name in ("RHST", "RH39") else res.duty[name.split()[1]]
         for k, cnt in enumerate(bins):
             if cnt:
                 lo, hi, _ = _bin_polls(k)
@@ -1231,6 +1266,15 @@ def report(res, readouts=None):
                     _wait_t(res.wait_shape, hi) * scale, cnt))
         add("| %s | all | | | %d |" % (name, sum(bins)))
     add("")
+    if res.cmp39:
+        add("First poll %d T after CRC 2 (RHST/AHST, VR_POLL_PAD_N) against 39 T (RH39/AH39, "
+            "the prototype's spacing), the same clips, mean $FF polls a wait (bins at their "
+            "mean): %s. Used in no constant; the wait T columns above count from poll 1 for "
+            "both." % (poll1_t(), "; ".join(
+                "%s %.3f against %.3f (%d clips)" % (
+                    "unarmed" if k == "RH39" else "armed " + k.split()[1], a, b, n)
+                for k, (a, b, n) in res.cmp39.items())))
+        add("")
     add("## Old layout vs raw")
     add("")
     if res.old is None:
@@ -1429,6 +1473,13 @@ def selftest():
         report(res)
         res_inf = fit(read_sections(log), reps=SYNTH_REPS)
         res_s1 = fit(read_sections(log), reps=SYNTH_REPS, wait_shape="sitting1")
+        # the same log as sitting 1's bench printed it: no RH39/AH39 rows or histograms
+        s1log = Path(tmp) / "S1.TXT"
+        s1log.write_bytes("".join(
+            ln for ln in synth_log(marks=marks, stale_after=68).splitlines(keepends=True)
+            if not ln.startswith(("RH39", "AH39", "#HIST RH39", "#HIST AH39"))).encode("ascii"))
+        res_s1inf = fit(read_sections(s1log), reps=SYNTH_REPS)
+        text_s1inf = report(res_s1inf)
         b9 = Path(tmp) / "BIN9.TXT"
         b9.write_bytes(synth_log(P=dict(SYNTH, stall_bin={63: 9})).encode("ascii"))
         res_b9 = fit(read_sections(b9), reps=SYNTH_REPS)
@@ -1475,8 +1526,19 @@ def selftest():
           and infer_wait_shape([ns(rows={}, hist={}), ns(rows={}, hist={"AH39": []})]) == "inline"
           and infer_wait_shape([ns(rows={"RH39": 0}, hist={})]) == "inline",
           "infer_wait_shape")
-    check(res_inf.wait_shape == "sitting1" and res_inf.stall == res_s1.stall,
-          "a log with no RH39/AH39 rows is priced as sitting 1's: %s" % res_inf.wait_shape)
+    check(res_inf.wait_shape == "inline" and res_inf.stall == res.stall,
+          "a log with RH39/AH39 rows is priced inline: %s" % res_inf.wait_shape)
+    check(res_s1inf.wait_shape == "sitting1" and res_s1inf.stall == res_s1.stall
+          and res_s1inf.anomalies == [] and "RH39" not in text_s1inf,
+          "a log with no RH39/AH39 rows is sitting 1's, none expected: %s %r" % (
+              res_s1inf.wait_shape, res_s1inf.anomalies))
+    # the 39 T comparison: printed beside RHST/AHST, in no constant
+    check(set(res.cmp39) == {"RH39", "AH39 stereo", "AH39 mono"}
+          and all(abs(a - 1.0) < 1e-9 and abs(b - 1.0) < 1e-9 for a, b, _ in
+                  [res.cmp39["RH39"]])
+          and "First poll 18 T after CRC 2 (RHST/AHST, VR_POLL_PAD_N) against 39 T" in text
+          and "| RH39 | 1 |" in text and "| AH39 mono | 1 |" in text,
+          "RH39/AH39 bins and the comparison line: %r" % res.cmp39)
     # DEBUG pixel sector work by wait shape: the token counter only in sitting 1's
     g320 = geometry(320, 192, 25, 2)
     rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")

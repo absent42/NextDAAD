@@ -336,7 +336,7 @@ def _hist_line(line):
 
 
 def parse_hist(path):
-    """The log step's wait histograms (RW1 RHST/AHST) of an NXB log, in order:
+    """The log step's wait histograms (RW1 RHST, RH39, AHST, AH39) of an NXB log, in order:
     [(section, tag, [NXB_HIST_BINS counts])], section numbered as NxbRun.section (the
     #NXB capture the line follows; 0 before any). Bin k: waits whose $FF poll count has
     bit length k."""

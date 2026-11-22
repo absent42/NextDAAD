@@ -1533,7 +1533,7 @@ def _session_asm_parity(asm):
     if equ.get("NXB_K_COUNT") != len(bench.SESSION_KINDS):
         bad.append(f"NXB_K_COUNT {equ.get('NXB_K_COUNT')} against {len(bench.SESSION_KINDS)} kinds")
     for name in ("NXB_DS_REPS", "NXB_RW_REPS", "NXB_RW_HREPS", "NXB_RW_SREPS", "NXB_RW_SPIN",
-                 "NXB_RW_MIN"):
+                 "NXB_RW_MIN", "NXB_HIST_MAX"):
         if equ.get(name) != getattr(bench, name):
             bad.append(f"{name}: video.asm {equ.get(name)}, nxv2_bench_rows {getattr(bench, name)}")
     kind_of = {f"NXB_K_{k.upper()}": k for k in bench.SESSION_KINDS}
@@ -1596,6 +1596,16 @@ def t10_session_tables():
     expect(sorted(bench.SESSION_MODES.values()) == list(range(1, int(last.group(1)) + 1)),
            "session modes are 1..NXB_SESS_LAST, each once")
     bad = _session_asm_parity(asm)
+    # RW1: 21 rows, the four histogram rows (production head, the 39 T head) the log step
+    # carries, and the card rows' blocks after the frames: (reps + 1) per card row
+    rw1 = bench.SESSION_TABLES["RW1"]
+    hist = [(r[0], r[2]) for r in rw1 if r[1] == "rhist"]
+    if len(rw1) != 21 or bench.NXB_HIST_MAX != len(hist) or hist != [
+            ("RHST", 0), ("RH39", 1), ("AHST", 0), ("AH39", 1)]:
+        bad.append(f"RW1: {len(rw1)} rows, histogram rows {hist}, NXB_HIST_MAX {bench.NXB_HIST_MAX}")
+    if bench.raw_blocks("RW1", 99)[2:] != (8712, 2049):
+        bad.append(f"RW1 card blocks and largest row {bench.raw_blocks('RW1', 99)[2:]}, "
+                   f"expected (8712, 2049)")
     for name, rows in sorted(bench.SESSION_TABLES.items()):
         deliveries = bench.SESSION_DELIVERY[name]
         if not deliveries or not set(deliveries) <= {"resident", "streaming", "direct"}:
@@ -1699,11 +1709,13 @@ def t10_session_tables():
                 bad.append(f"{name} {tag}: DSBLK body {param} must be 0-3")
             if kind == "rblk" and param > 1:
                 bad.append(f"{name} {tag}: RBLK body {param} must be 0 (sector) or 1 (columns)")
+            if kind == "rhist" and param > 1:
+                bad.append(f"{name} {tag}: RHIST head {param} must be 0 (production) or 1 (39 T)")
             if kind in ("rframe", "rsweep") and card_rows:
                 bad.append(f"{name} {tag}: {kind.upper()} after a card row (the frames are off the wire)")
             if kind in bench.SESSION_RAW_CARD and reps + 1 >= bench.NXB_RW_MIN:
                 bad.append(f"{name} {tag}: {reps} reps and the untimed sector reach NXB_RW_MIN")
-            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk", "rblk") and param:
+            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk", "rblk", "rhist") and param:
                 bad.append(f"{name} {tag}: {kind} rows carry param 0")
             scanned |= kind == "scan"
             blocks_direct |= kind == "dsblk"
@@ -1953,7 +1965,8 @@ def t10_bench_log():
     expect(fmt.report == ["VID NOBANK2"] and len(fmt.warnings) == 1, f"VID NOBANK2 alone: {fmt.warnings}")
     # NXBW: the RW1 rows (one column), then the log step's #HIST lines after the screen
     w_rows = vals(bench.session_printed("RW1", "direct"), 0x00)
-    bins = {"RHST": [2040, 7, 1] + [0] * 14, "AHST": [0] * 16 + [1]}
+    bins = {"RHST": [2040, 7, 1] + [0] * 14, "RH39": [2041, 6, 1] + [0] * 14,
+            "AHST": [0] * 16 + [1], "AH39": [0] * 15 + [2, 1]}
     w_text = _bench_capture(0x0700, _bench_screen({0: {0: "> pick 71"}, 1: {0: "> nxbw"},
                                                    **{8 + i: {0: _bench_group(*g)}
                                                       for i, g in enumerate(w_rows)}}))
@@ -1962,7 +1975,7 @@ def t10_bench_log():
     expect((wrun.command, wrun.table, wrun.clip, wrun.rows, wrun.hist, wrun.report, wrun.warnings)
            == ("NXBW", "RW1", 71, w_rows, bins, [], []),
            f"NXBW capture: {wrun.command} {wrun.rows} {wrun.hist} {wrun.report} {wrun.warnings}")
-    expect(len(w_rows) == 13, f"RW1 prints 13 rows (6 silent arm/disarm rows), got {len(w_rows)}")
+    expect(len(w_rows) == 15, f"RW1 prints 15 rows (6 silent arm/disarm rows), got {len(w_rows)}")
     walked = [(t, 1 if t in ("RSEC", "SPN0", "IDEN") else 0, r, f, d) for t, _o, r, f, d in w_rows]
     expect(bench.rw_walked("RW1", walked) == ["RSEC"], "the walk mark: O = 01 on frame and card rows only")
     bad_h = blog.parse(w_text + "#HIST RHST 0001 0002\r\n")[0]

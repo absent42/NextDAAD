@@ -124,16 +124,19 @@ def test_nxb_baseline_files():
         assert (k[0], k[1], k[2], k[3], k[4], k[5] - 1) not in keys
 
 
-RW1_PRINTED = ("IDEN RFR0 RSWP ARSW RSEC RCOL RHST SPN0 ARSE ARCO AHST ASPN OSPN").split()
+RW1_PRINTED = ("IDEN RFR0 RSWP ARSW RSEC RCOL RHST RH39 SPN0 ARSE ARCO AHST AH39 ASPN "
+               "OSPN").split()
 
 
 def test_parse_rw1(tmp_path):
-    # the RW1 table's 19 rows print 13 (ARM1/ARM2/ARMO and three DSRM are silent)
+    # the RW1 table's 21 rows print 15 (ARM1/ARM2/ARMO and three DSRM are silent)
     import tags
     assert tuple(tags.NXB_RW1) == tuple(RW1_PRINTED)
+    assert tags.NXB_HIST_TAGS == ("RHST", "RH39", "AHST", "AH39")
     rows = ["%s O=%02X R=%04X F=%04X D=%04X" % (t, 2 if t == "IDEN" else 0, 16 + i, 3 * i, i)
             for i, t in enumerate(RW1_PRINTED)]
-    hist = {"RHST": [2041, 5, 2] + [0] * 13 + [0], "AHST": [0] * 16 + [7]}
+    hist = {"RHST": [2041, 5, 2] + [0] * 13 + [0], "RH39": [2040, 6, 2] + [0] * 14,
+            "AHST": [0] * 16 + [7], "AH39": [0] * 15 + [3, 4]}
     lines = ["#NXB 0A10", "> pick 71", "> nxbw"] + rows
     lines += ["#HIST %s%s" % (t, "".join(" %04X" % n for n in b)) for t, b in hist.items()]
     p = tmp_path / "w.TXT"
@@ -141,17 +144,18 @@ def test_parse_rw1(tmp_path):
     runs = parse.parse_nxb(p)
     assert [r.tag for r in runs] == RW1_PRINTED
     assert all(r.kind == "session" for r in runs)
-    assert (runs[0].o, runs[1].r, runs[5].f, runs[12].d) == (2, 17, 15, 12)
+    assert (runs[0].o, runs[1].r, runs[5].f, runs[14].d) == (2, 17, 15, 14)
     assert parse.parse_hist(p) == [(1, t, b) for t, b in hist.items()]
     assert all(len(b) == tags.NXB_HIST_BINS == 17 for _s, _t, b in parse.parse_hist(p))
     assert parse.rw1_walked(runs) == []
     # a second capture: #HIST lines belong to it; a walked card row (O=01) is flagged
     second = ["#NXB 0B20", "> nxbw", "RSEC O=01 R=0080 F=0002 D=0010",
-              "SPN0 O=01 R=0200 F=0010 D=0000", "#HIST AHST" + " 0001" * 17]
+              "SPN0 O=01 R=0200 F=0010 D=0000", "AH39 O=01 R=0800 F=0002 D=0011",
+              "#HIST AHST" + " 0001" * 17]
     p.write_bytes(("\r\n".join(lines + second) + "\r\n").encode("ascii"))
-    assert [s for s, _t, _b in parse.parse_hist(p)] == [1, 1, 2]
+    assert [s for s, _t, _b in parse.parse_hist(p)] == [1, 1, 1, 1, 2]
     runs = parse.parse_nxb(p)
-    assert [(r.tag, r.section) for r in parse.rw1_walked(runs)] == [("RSEC", 2)]
+    assert [(r.tag, r.section) for r in parse.rw1_walked(runs)] == [("RSEC", 2), ("AH39", 2)]
     assert "WALK RSEC (section 2)" in parse.report([], runs, None, timing=(311, 228))
     for bad in ("#HIST XXXX" + " 0000" * 17, "#HIST RHST" + " 0000" * 16, "#HIST RHST 00G0"):
         p.write_bytes(("\r\n".join(lines[:3] + [bad]) + "\r\n").encode("ascii"))
