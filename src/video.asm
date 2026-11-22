@@ -5198,21 +5198,34 @@ vid_raw_pal:
     ld b, high TBBLUE_REG_ACC    ; C stays $3B
     jp VR_PALTRAIN               ; 23 T a byte; its ret returns to our caller
 
-; Raw pump section end (vid_aud_pump.apad). In: HL = bytes left in the
-; open sound sector, 0..511 (0: the tag is alone in the next). Out: HL =
-; 0, vidRawTag = the last byte; above 1 aborts (VID_ERR_OP). Corrupts AF.
+; Raw pump section end (vid_aud_pump.apad): HL = bytes left in the open sound
+; sector, 0..511 (0: the tag is alone in the next), read by the slide; corrupts
+; AF, BC, DE. Out: HL = 0, vidRawTag = the last byte, MMU6 = the schedule page.
 vid_raw_apad:
+    ld a, (vidRawSchedPage)
+    nextreg NR_MMU6, a           ; the slide (unmapped at the preload, RW1 rows)
     ld a, h
     or l
-    call z, vid_ds_blkopen       ; HL = 512
+    call z, vid_ds_blkopen       ; the tag alone in the next sector: HL = 512
+    add hl, hl                   ; 2n, n <= 512: CF clear
+    ex de, hl
+    ld hl, VR_SLIDE_END
+    sbc hl, de
+    ex de, hl                    ; DE = the slide entry for n bytes
+    ld hl, VR_SCRATCH
+    ld c, PORT_SPI_DAT
+    call .rd                     ; n ini 16 T apart; B scrap (ini counts it)
     dec hl
-    call vid_ds_pad              ; HL - 1 pad bytes, HL = 0
-    in a, (PORT_SPI_DAT)
+    ld a, (hl)                   ; the tag: the last byte read
     ld (vidRawTag), a
-    cp 2
+    ld hl, 0
+    cp 2                         ; above 1: not a tag
     ret c
     ld a, VID_ERR_OP
     jp vid_dec_abort
+.rd:
+    push de
+    ret                          ; into the slide; its ret returns above
 
 ; Raw session CTC handlers: play pointer HL' (the alternate set is free in
 ; the armed window). MMU-free, no port $6B, exit by RETI (the stereo
@@ -8012,10 +8025,9 @@ vid_strm_validate:
     scf
     ret
 
-; Build the slide, the palette train and the frame read schedule in the bank
-; at DATA_WINDOW. In: vidP_Shape, vidP_HeightB, vidP_RawW, vidP_RawX0. Out:
-; CF set = the schedule would pass VR_SCHED_LIMIT (it writes nothing there).
-; Corrupts all.
+; Build the slide, the palette train and the frame read schedule at DATA_WINDOW.
+; In: vidP_Shape, vidP_HeightB, vidP_RawW, vidP_RawX0. Out: CF set = the schedule
+; would pass VR_SCHED_LIMIT (it writes nothing there). Corrupts all.
 vid_raw_sched_build:
     ld hl, $A2ED                 ; ini
     ld (VR_SLIDE), hl
@@ -8034,8 +8046,7 @@ vid_raw_sched_build:
     ld de, VR_PALTRAIN + 4
     ld bc, VR_PAL_LEN - 5
     ldir                         ; repeats the 4 bytes to 512 pairs
-    ld a, $C9
-    ld (de), a                   ; ret at the page top
+    ld (de), a                   ; ret at the page top (A = $C9 still)
     ; pixel bytes w*h: w = 4k, so A:HL = 4 * k*h (k*h <= 80*256)
     ld hl, (vidP_RawW)
     srl h

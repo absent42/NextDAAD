@@ -534,7 +534,7 @@ def owner_fn(mc):
 
 ALLOWED = {"crc": {"vr_sector", "vr_sector_n"}, "wait": {"vid_sd_tok_h"},
            "token": {"vid_sd_tok_h"},
-           "data": {"slide", "paltrain", "vid_ds_pad", "vid_raw_apad"}}
+           "data": {"slide", "paltrain"}}
 
 # The palette train vid_raw_sched_build writes at VR_PALTRAIN: 512 x in a,(PORT_SPI_DAT) /
 # out (c),a, then ret.
@@ -946,44 +946,214 @@ def test_pal_t():
           f"frame minimum {min(gaps)} T")
 
 
+APAD_PAGE = 40              # MMU6 at vid_raw_apad's entry: a page in no other slot
+
+
+def apad_mc(nxb=False):
+    """vid_raw_apad's entry state: the slide built in the schedule page with VR_SCRATCH set to
+    $A5, vidRawSchedPage = it, MMU7 = VID_PAGE, MMU6 = another page (page 40, or NXB_PAGE as
+    the bench frame kinds leave it): the routine maps the slide itself."""
+    mc = nxb_machine() if nxb else RawMachine(SYMS)
+    if build_sched(mc, 1, 320, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    scr = S("VR_SCRATCH")
+    mc.mem[scr:scr + 512] = bytes([0xA5]) * 512
+    mapnr(mc, 7, S("VID_PAGE"))
+    mapnr(mc, 6, S("NXB_PAGE") if nxb else APAD_PAGE)
+    mc.poke("vidRawSchedPage", SCHED_PAGE)
+    mc.poke("vidRawTag", 0x77)
+    return mc
+
+
+def pad_bytes(n, tag):
+    """n - 1 pad bytes, none of them a legal tag, then the tag."""
+    return bytes(0x80 | (i * 5) & 0x7F for i in range(n - 1)) + bytes([tag])
+
+
+def apad_reads(mc, card, first, what):
+    """Reads first.. of card.log each by an ini of the slide, landing in order at VR_SCRATCH;
+    the rest of VR_SCRATCH still $A5."""
+    mc.sync()
+    sp = SCHED_PAGE * SLOT - S("VR_SLIDE")
+    owner = owner_fn(mc)
+    for i, (ph, pc) in enumerate(card.log[first:], first):
+        if owner(pc) != "slide" or bytes(mc.phys[sp + pc:sp + pc + 2]) != b"\xED\xA2":
+            raise Fail(f"{what}: read {i} ({ph}) at ${pc:04X} is not an ini of the slide")
+    n = len(card.log) - first
+    data = [v for v, (ph, _) in zip(card.stream, card.log) if ph == "data"][-n:]
+    scr = sp + S("VR_SCRATCH")
+    got = bytes(mc.phys[scr:scr + 512])
+    if got != bytes(data) + bytes([0xA5]) * (512 - n):
+        bad = next(i for i in range(512) if got[i] != (data + [0xA5] * 512)[i])
+        raise Fail(f"{what}: VR_SCRATCH differs first at +{bad} ({n} bytes read)")
+
+
 def test_apad():
-    for n, tag in ((286, 1), (1, 0), (511, 1), (286, 2)):
-        mc = RawMachine(SYMS)
-        mc.map(7, S("VID_PAGE"))
-        mc.poke("vidRawTag", 0x77)
-        card = Card(open_data=bytes([0x80] * (n - 1) + [tag]))
+    """vid_raw_apad, HL = n bytes left in the open sector (the pad, then the tag): MMU6 = the
+    schedule page, n reads, each by an ini of the slide into VR_SCRATCH (the rest untouched),
+    none by vid_ds_pad; vidRawTag = the last byte, HL = 0; a tag above 1 is stored and reaches
+    vid_dec_abort with A = VID_ERR_OP."""
+    for n, tag in ((286, 1), (1, 0), (2, 1), (511, 1), (286, 2), (1, 2)):
+        what = f"HL={n} tag {tag}"
+        mc = apad_mc()
+        card = Card(open_data=pad_bytes(n, tag))
         mc.set_card(card)
-        traps = {**aborts(), **forbid("vid_ds_blkopen")}
+        traps = {**aborts(), **forbid("vid_ds_blkopen"), **forbid("vid_ds_pad")}
+        stop = cpu = None
         try:
             cpu = mc.run("vid_raw_apad", traps=traps, hl=n)
         except Stop as e:
-            if tag < 2 or not reached(e, "vid_dec_abort") or e.a != S("VID_ERR_OP"):
-                raise Fail(f"HL={n} tag {tag}: {e}")
-            continue
+            stop = e
         if tag >= 2:
-            raise Fail(f"HL={n} tag {tag}: no VID_ERR_OP abort")
-        if card.pos != n or mc.peek("vidRawTag") != tag or cpu.hl != 0:
-            raise Fail(f"HL={n}: {card.pos} reads, vidRawTag {mc.peek('vidRawTag')}, "
-                       f"HL ${cpu.hl:04X}")
-        check_log(mc, card, f"apad HL={n}")
+            if stop is None or not reached(stop, "vid_dec_abort") or stop.a != S("VID_ERR_OP"):
+                raise Fail(f"{what}: {stop or 'returned'}, expected vid_dec_abort, VID_ERR_OP")
+        elif stop is not None:
+            raise Fail(f"{what}: {stop}")
+        elif cpu.hl != 0:
+            raise Fail(f"{what}: HL ${cpu.hl:04X} on return")
+        if (card.pos, mc.peek("vidRawTag"), mc.mmu[6]) != (n, tag, SCHED_PAGE):
+            raise Fail(f"{what}: (reads, vidRawTag, MMU6 page) = "
+                       f"{(card.pos, mc.peek('vidRawTag'), mc.mmu[6])}")
+        apad_reads(mc, card, 0, what)
 
 
 def test_apad_boundary():
-    mc = RawMachine(SYMS)
-    mc.map(7, S("VID_PAGE"))
-    card = Card(open_data=bytes([0x80] * 511 + [1]))
-    mc.set_card(card)
-    fired = []
+    """HL = 0 (the real sound bytes ended on a sector boundary): vid_ds_blkopen (trapped:
+    HL = 512) entered once before any read, then 512 reads by the slide into VR_SCRATCH, the
+    tag the 512th byte."""
+    for tag in (1, 0):
+        mc = apad_mc()
+        card = Card(open_data=pad_bytes(512, tag))
+        mc.set_card(card)
+        fired = []
 
-    def blkopen(cpu):
-        fired.append(card.pos)
-        cpu.hl = 512
-    traps = {S("vid_ds_blkopen"): ret_trap(blkopen), **aborts()}
-    cpu = mc.run("vid_raw_apad", traps=traps, hl=0)
-    if fired != [0]:
-        raise Fail(f"vid_ds_blkopen entries at reads {fired}, expected one before any read")
-    if card.pos != 512 or mc.peek("vidRawTag") != 1 or cpu.hl != 0:
-        raise Fail(f"{card.pos} reads, vidRawTag {mc.peek('vidRawTag')}, HL ${cpu.hl:04X}")
+        def blkopen(cpu):
+            fired.append(card.pos)
+            cpu.hl = 512
+        traps = {S("vid_ds_blkopen"): ret_trap(blkopen), **aborts()}
+        cpu = mc.run("vid_raw_apad", traps=traps, hl=0)
+        if fired != [0]:
+            raise Fail(f"vid_ds_blkopen entries at reads {fired}, expected one before any read")
+        if (card.pos, mc.peek("vidRawTag"), cpu.hl) != (512, tag, 0):
+            raise Fail(f"tag {tag}: {card.pos} reads, vidRawTag {mc.peek('vidRawTag')}, "
+                       f"HL ${cpu.hl:04X}")
+        apad_reads(mc, card, 0, f"HL=0 tag {tag}")
+
+
+def test_apad_map():
+    """MMU6 at entry a page in no other slot (page 40; on a DEBUG image also NXB_PAGE, as the
+    bench frame kinds leave it): on return NR $56 = MMU6 = vidRawSchedPage, the entry page
+    unchanged, the schedule page changed only in VR_SCRATCH, VID_PAGE only at vidRawTag."""
+    scr, tag = S("VR_SCRATCH") - S("VR_SLIDE"), S("vidRawTag") & 0x1FFF
+    for nxb in (False, True) if "dbgNoBank" in SYMS else (False,):
+        mc = apad_mc(nxb)
+        entry = mc.mmu[6]
+        mc.set_card(Card(open_data=pad_bytes(286, 1)))
+        mc.sync()
+        before = bytes(mc.phys)
+        mc.run("vid_raw_apad", traps={**aborts(), **forbid("vid_ds_blkopen")}, hl=286)
+        got = (mc.nr.get(0x56), mc.mmu[6], entry in mc.mmu)
+        if got != (SCHED_PAGE, SCHED_PAGE, False):
+            raise Fail(f"MMU6 entry page {entry}: (NR $56, MMU6, entry page still mapped) = "
+                       f"{got}, expected ({SCHED_PAGE}, {SCHED_PAGE}, False)")
+        stray_writes(before, bytes(mc.phys),
+                     {S("VID_PAGE"): lambda k: k == tag,
+                      5: lambda k: (STACK - 0x100) - 0xA000 <= k < STACK - 0xA000,
+                      SCHED_PAGE: lambda k: scr <= k < scr + 512})
+
+
+def play_mc(real, nsec, tag):
+    """Playback after a present: a patched raw direct 256x192 session, the schedule built,
+    MMU6 = page 40, the card at a sound section of nsec sectors (real sound bytes, the pad, the
+    tag), then the frame (with its palette sector when tag = 1)."""
+    mc = RawMachine(SYMS)
+    patch_session(mc, 1, 1)
+    if build_sched(mc, 0, 256, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    setup_frame(mc, 0, 256, 192)
+    mapnr(mc, 6, APAD_PAGE)
+    rw_cells(mc, run=1000, crc=0)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 250)                      # no PLAY poll inside the trace
+    base = S("vidAudBuf")
+    mc.poke16("vidABytes", real)
+    mc.poke16("vidAudWr", (base + 100) ^ (S("NXV_AUD_RING") // 2))
+    set_alt_hl(mc.cpu, base + 100)
+    mc.cpu.iff = 1
+    snd = bytes((i * 11 + 5) & 0xFF for i in range(real)) + pad_bytes(nsec * 512 - real, tag)
+    pal = [bytes((i * 29 + 11) & 255 for i in range(512))] if tag else []
+    mc.set_card(Card(blocks(snd) + pal + blocks(pixels(256 * 192)), waits=1))
+    return mc
+
+
+def test_apad_t():
+    """vid_raw_apad entry to return: 211 + 16n T for n = 2, 286, 399, 511 (it replaced
+    64 + 37n), its n reads 16 T apart. HL = 0 with the real vid_ds_blkopen: the token to the
+    first slide read at least 16 T. Playback's calls (stage, pump, decode) over raw sections
+    ending mid-sector, one byte short of a sector and on a sector boundary: the last sound byte
+    (or the tag sector's token) to the first pad read and the tag to the next sector's CRC at
+    least 16 T, the pad 16 T, no gap under 16 but a CRC pair's 15."""
+    for n in (2, 286, 399, 511):
+        mc = apad_mc()
+        mc.set_card(Card(open_data=pad_bytes(n, 1)))
+        cpu = mc.cpu
+        cpu.sp, cpu.hl, cpu.pc = STACK, n, S("vid_raw_apad")
+        cpu.push(RET)
+        t, marks = io_trace(mc, RET)
+        got = (t, sorted({b - a for a, b in zip(marks, marks[1:])}), len(marks))
+        if got != (211 + 16 * n, [16] if n > 1 else [], n):
+            raise Fail(f"HL={n}: (T, gaps, reads) = {got}, expected ({211 + 16 * n}, [16], {n})")
+    mc = apad_mc()
+    rw_cells(mc, run=1000, crc=1)
+    card = Card([pad_bytes(512, 1)], waits=1, crc_first=True)
+    mc.set_card(card)
+    cpu = mc.cpu
+    cpu.sp, cpu.hl, cpu.pc = STACK, 0, S("vid_raw_apad")
+    cpu.push(RET)
+    _, marks = io_trace(mc, RET)
+    gaps = [b - a for a, b in zip(marks, marks[1:])]
+    ph = [p for p, _ in card.log]
+    if ph != ["crc", "crc", "wait", "token"] + ["data"] * 512 or gaps[0] != 15 \
+            or gaps[3] < 16 or set(gaps[4:]) != {16} or mc.peek("vidRawTag") != 1:
+        raise Fail(f"HL=0, real vid_ds_blkopen: reads {ph[:6]}.. ({len(ph)}), gaps {gaps[:6]}.., "
+                   f"pad gaps {sorted(set(gaps[4:]))}, vidRawTag {mc.peek('vidRawTag')}")
+    apad_reads(mc, card, 4, "HL=0, real vid_ds_blkopen")
+    tok = gaps[3]
+    stub = (b"\xCD" + le(S("vid_aud_stage")) + b"\x01\xFF\xFF\xCD" + le(S("vid_aud_pump"))
+            + b"\xCD" + le(S("vid_decode_any")) + b"\xC9")
+    joins = []
+    for real, nsec, tag in ((1250, 3, 1), (1023, 2, 0), (1024, 3, 0)):
+        what = f"{real} sound bytes, tag {tag}"
+        mc = play_mc(real, nsec, tag)
+        card = mc.card
+        mc.mem[STUB:STUB + len(stub)] = stub
+        cpu = mc.cpu
+        cpu.sp, cpu.pc = STACK, STUB
+        cpu.push(RET)
+        _, marks = io_trace(mc, RET)
+        if cpu.a != S("VOP_KFLIP") or card.pos != len(card.stream):
+            raise Fail(f"{what}: A ${cpu.a:02X}, {len(card.stream) - card.pos} reads left")
+        gaps = [b - a for a, b in zip(marks, marks[1:])]
+        ph = [p for p, _ in card.log]
+        data = [i for i, p in enumerate(ph) if p == "data"]
+        pad0, tag_i = data[real], data[nsec * 512 - 1]
+        lead = "token" if real % 512 == 0 else "data"
+        owner = owner_fn(mc)
+        if ph[pad0 - 1] != lead or ph[tag_i + 1] != "crc" or mc.peek("vidRawTag") != tag \
+                or any(owner(pc) != "slide" for _, pc in card.log[pad0:tag_i + 1]) \
+                or set(gaps[pad0:tag_i]) != ({16} if tag_i > pad0 else set()):
+            raise Fail(f"{what}: before the pad {ph[pad0 - 1]}, after the tag {ph[tag_i + 1]}, "
+                       f"vidRawTag {mc.peek('vidRawTag')}, pad readers "
+                       f"{sorted({owner(pc) for _, pc in card.log[pad0:tag_i + 1]})}, "
+                       f"pad gaps {sorted(set(gaps[pad0:tag_i]))}")
+        tin, tout = gaps[pad0 - 1], gaps[tag_i]
+        low = [(i, ph[i], ph[i + 1], g) for i, g in enumerate(gaps)
+               if g < 16 and not (g == 15 and ph[i] == ph[i + 1] == "crc")]
+        if min(tin, tout) < 16 or low:
+            raise Fail(f"{what}: into the pad {tin} T, tag to CRC {tout} T, short gaps {low[:4]}")
+        joins.append(f"{real}: {lead} to pad {tin}, tag to CRC {tout}")
+    print(f"  test_apad_t: HL=0 token to slide {tok} T; " + "; ".join(joins) + " T")
 
 
 def test_vr_page():
@@ -1623,11 +1793,20 @@ def test_rw_shapes():
 
 
 def test_rw_feed():
-    """nxb_rw_feed after a raw open's patches: the pointer from HL' (IX is garbage and never
-    read), the writer half a ring ahead, one frame's sound off the wire, the tag stored."""
+    """nxb_rw_feed after a raw open's patches, NXB_PAGE at MMU6 as the frame kinds enter
+    nxb_lrow: the pointer from HL' (IX is garbage and never read), the writer half a ring
+    ahead, one frame's sound off the wire, the pad and tag by the slide, the tag stored, MMU6
+    left at the schedule page and NXB_PAGE unchanged."""
     bench_only()
-    mc = RawMachine(SYMS)
+    mc = nxb_machine()
     patch_session(mc, 1, 1)
+    if build_sched(mc, 1, 320, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    nxb = S("NXB_PAGE")
+    mapnr(mc, 7, S("VID_PAGE"))
+    mapnr(mc, 6, nxb)
+    mc.poke("vidRawSchedPage", SCHED_PAGE)
+    nxb_before = bytes(mc.phys[nxb * SLOT:(nxb + 1) * SLOT])
     cpu = mc.cpu
     base, ring = S("vidAudBuf"), S("NXV_AUD_RING")
     snd = bytes((i * 11 + 5) & 0xFF for i in range(1250))
@@ -1652,10 +1831,18 @@ def test_rw_feed():
         raise Fail(f"(feedRem, tag, reads, IX, HL', IFF, wr) = {got}")
     owner = owner_fn(mc)
     allowed = {"crc": {"vid_ds_blkopen"}, "wait": {"vid_sd_tok_h"}, "token": {"vid_sd_tok_h"},
-               "data": {"vid_ds_iblk", "vid_ds_pad", "vid_raw_apad"}}
+               "data": {"vid_ds_iblk", "slide"}}
+    ndata = 0
     for i, (ph, pc) in enumerate(card.log):
-        if owner(pc) not in allowed[ph]:
+        want = allowed[ph] if ph != "data" else \
+            {"vid_ds_iblk"} if ndata < 1250 else {"slide"}
+        ndata += ph == "data"
+        if owner(pc) not in want:
             raise Fail(f"card read {i} ({ph}) by {owner(pc)}")
+    mc.sync()
+    got = (mc.mmu[6], mc.nr.get(0x56), bytes(mc.phys[nxb * SLOT:(nxb + 1) * SLOT]) == nxb_before)
+    if got != (SCHED_PAGE, SCHED_PAGE, True):
+        raise Fail(f"(MMU6, NR $56, NXB_PAGE unchanged) = {got}")
 
 
 def route(req, direct, raw, streaming=0, hlp=0x1234):
@@ -2472,7 +2659,8 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_walkfault, test_frame_remain, test_frame_palette, test_paltrain,
          test_pal_t, test_frame_runwalk,
-         test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage,
+         test_apad, test_apad_boundary, test_apad_map, test_apad_t, test_vr_page,
+         test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
