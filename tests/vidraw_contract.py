@@ -2147,6 +2147,155 @@ def test_rw_histlog():
             raise Fail(f"a #HIST line ({len(text)} B) overruns nxbLogLine")
 
 
+# --------------------------------------------------------------------------- frame loop
+
+class LoopMachine(RawMachine):
+    """Ports the frame loop touches beyond the reader: $FE (no key down), CTC 0 (logged; the
+    time constant after the control word arms the modelled handler), the DAC parks."""
+
+    def __init__(self, syms):
+        super().__init__(syms)
+        self.ctc, self.armed = [], False
+
+    def port_in(self, port):
+        if port & 0xFF == 0xFE:
+            return 0xFF
+        return super().port_in(port)
+
+    def port_out(self, port, v):
+        if port == S("AUD_CTC_PORT"):
+            self.armed = v != S("AUD_CTC_RESET") and self.ctc[-1:] == [S("AUD_CTC_CW16")]
+            self.ctc.append(v)
+        elif port & 0xFF in (DAC_L, DAC_R, DAC_M, S("DAC_PORT") & 0xFF):
+            pass
+        else:
+            super().port_out(port, v)
+
+
+def loop_session(real, frames=2, waits=1):
+    """vid_run from the audio-0 preload (ld (vidDecSp),sp before .ixp1) through `frames`
+    frame loop iterations, 256x192 mono raw, cells as a raw direct open stages them, the
+    card serving frame sections laid out as the encoder writes them (frame 0 carries the
+    palette sector). The mono handler is modelled as HL' += 1 per 1792 T (15625 Hz at
+    28 MHz) while interrupts are on. Returns (machine, card, events, stop reason)."""
+    code, w, h = 0, 256, 192
+    x0, sec = geom(code, w, h)
+    pad = (real // 512 + 1) * 512
+    mc = LoopMachine(SYMS)
+    patch_session(mc, 1, 1)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    mc.map(7, S("VID_PAGE"))
+    mc.map(6, 12)
+    snd = [bytes((f * 41 + i * 7 + 1) & 0x7F for i in range(real)) for f in range(frames + 1)]
+    pal = bytes((i * 13 + 5) & 255 for i in range(512))
+    data = []
+    for f in range(frames + 1):
+        tag = 1 if f == 0 else 0
+        data += blocks(snd[f] + b"\x80" * (pad - real - 1) + bytes([tag]))
+        if f < frames:
+            data += ([pal] if tag else []) + blocks(pixels(w * h))
+    total = 1 + len(data) + 1000
+    need = sec + 1 + pad // 512 + 1                       # vid_strm_validate: cap + apad + 1
+    for name, v in (("vidRawSchedPage", SCHED_PAGE), ("vidRawSec", sec), ("vidRawCap", sec + 1),
+                    ("vidRawTag", 0), ("vidRawPage0", x0 >> 5), ("vidRawH0", 0x40 + (x0 & 31)),
+                    ("l2BackBank", BACK_BANK), ("l2FrontBank", 33), ("vidStreaming", 0),
+                    ("vidDsCrcDue", 0), ("vidDsFrmBlk", 0), ("vidDsBound", need),
+                    ("vidApadBlk", pad // 512), ("vidLoopMode", 0), ("vidStrmEntryCnt", 1),
+                    ("vidStrmEntryIdx", 1), ("vidWinOpenH", 1), ("vidPalCtrl", 0),
+                    ("vidPalPending", 0), ("vidInSpan", 0), ("vidCtcTc", 112), ("vidDstPages", 6)):
+        mc.poke(name, v)
+    for name, v in (("vidABytes", real), ("vidABytesPad", pad), ("vidFrames", 153),
+                    ("vidFramesLeft", 153), ("vidAudFeedRem", 0), ("vidDsAudBlkRem", 0),
+                    ("vidStrmRunBlkH", total - 1)):
+        mc.poke16(name, v)
+    mc.poke("vidStrmRemainBlk", (total - 1).to_bytes(3, "little"))
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 1)
+    base, ring = S("vidAudBuf"), S("NXV_AUD_RING")
+    mc.mem[base:base + ring] = bytes([0xEE]) * ring
+    card = Card(data, waits=waits)
+    mc.set_card(card)
+    cpu = mc.cpu
+    start = S("vid_run.ixp1") - 4
+    if bytes(mc.mem[start:start + 2]) != b"\xED\x73":
+        raise Fail("the instruction before vid_run.ixp1 is not ld (vidDecSp),sp")
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc, cpu.iff = start, 1
+    ev, why = [], None
+    loop, phase = S("vid_run.frameloop"), S("vid_run.phase")
+    watch = {S("vid_ds_blkopen"): "blkopen", S("vid_raw_apad"): "apad",
+             S("vid_raw_frame"): "frame", loop: "loop"}
+    stops = {S("vid_dec_abort"): "vid_dec_abort", S("vid_dec_abort_pos"): "vid_dec_abort_pos",
+             S("vid_run.restore"): "vid_run.restore"}
+    acc, loops, budget = 0, 0, 20_000_000
+    while True:
+        pc = cpu.pc
+        if pc in stops:
+            why = (stops[pc], cpu.a)
+            break
+        if pc in watch:
+            ev.append((watch[pc], card.pos, mc.peek("vidDsFrmBlk")))
+            if pc == loop:
+                loops += 1
+                if loops > frames:
+                    break
+        if pc == phase:                                   # the field tick the arm waits for
+            fc = S("frameCounter")
+            mc.mem[fc] = (mc.mem[fc] + 1) & 0xFF
+        try:
+            t = tstep(mc)
+        except Fail as e:
+            if "no T entry" not in str(e):
+                raise
+            cpu.step()                                    # NRGET (ED C7): timing not asserted
+            t = 8
+        if mc.armed:
+            acc += t
+            while acc >= 1792 and cpu.iff:
+                acc -= 1792
+                set_alt_hl(cpu, base if alt_hl(cpu) + 1 == base + ring else alt_hl(cpu) + 1)
+        budget -= 1
+        if budget <= 0:
+            why = ("budget", 0)
+            break
+    return mc, card, ev, why, snd
+
+
+def test_loop_sound_boundary():
+    """The preload and two frame loop iterations of a 256x192 mono raw clip, run on the
+    emitted vid_run: 1024 sound bytes (clip 074: the tag alone in a third sector, opened by
+    vid_raw_apad) against 625 (two sectors). No abort, every card byte read in order, each
+    frame's sound in the ring, the tag of the frame staged last kept."""
+    for real in (1024, 625):
+        mc, card, ev, why, snd = loop_session(real)
+        what = f"{real} sound bytes"
+        if why is not None:
+            trail = [e for e in ev if e[0] != "loop"][-4:]
+            raise Fail(f"{what}: {why[0]} reached with A=${why[1]:02X} at card read "
+                       f"{card.pos}; last events {trail}")
+        pad = (real // 512 + 1) * 512
+        n = 3 * pad // 512 + 1 + 2 * 96                   # sound x3, palette, pixels x2
+        want_pos = n * 516 - 2                             # CRC 2 (not before the first), $FF, token, 512
+        got = (card.pos, mc.peek("vidRawTag"), mc.peek("vidAudFeedRem", 2),
+               [e[0] for e in ev].count("apad"))
+        if got != (want_pos, 0, 0, 3):
+            raise Fail(f"{what}: (card reads, tag, feedRem, apad calls) = {got}, expected "
+                       f"({want_pos}, 0, 0, 3)")
+        opens = [e for e in ev if e[0] == "blkopen"]
+        if real % 512 == 0 and len(opens) != 9:
+            raise Fail(f"{what}: {len(opens)} vid_ds_blkopen entries, expected 9 (3 a frame)")
+        if max(e[2] for e in ev) > mc.peek("vidDsBound"):
+            raise Fail(f"{what}: vidDsFrmBlk passed vidDsBound {mc.peek('vidDsBound')}")
+        base = S("vidAudBuf")
+        for f in range(3):
+            got = bytes(mc.mem[base + f * real:base + (f + 1) * real])
+            if got != snd[f]:
+                raise Fail(f"{what}: frame {f} sound not at ring +${f * real:04X}")
+
+
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_walkfault, test_frame_remain, test_frame_palette, test_frame_runwalk,
@@ -2155,7 +2304,7 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
-         test_rw_harness]
+         test_rw_harness, test_loop_sound_boundary]
 
 
 def main():
