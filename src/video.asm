@@ -5227,9 +5227,9 @@ vid_raw_apad:
     push de
     ret                          ; into the slide; its ret returns above
 
-; Raw session CTC handlers: play pointer HL' (the alternate set is free in
-; the armed window). MMU-free, no port $6B, exit by RETI (the stereo
-; handler's DMA pre-emption contract). Base T with IM2 ack + stub: 124 / 102.
+; Raw session CTC handlers: play pointer HL' (the alternate set is free in the
+; armed window). MMU-free, no port $6B, exit by RETI (the stereo handler's DMA
+; pre-emption contract). T with IM2 ack + stub: 114 / 92, page step +29.
     ASSERT vidAudBuf + NXV_AUD_RING == $8000 && low vidAudBuf == 0
 video_ctc_isr_raw_st:
     ex af, af'
@@ -5239,14 +5239,17 @@ video_ctc_isr_raw_st:
     inc l                        ; HL' even: a pair never crosses a page
     ld a, (hl)
     out (VID_DAC_RIGHT), a
-    inc hl
-    bit 7, h                     ; HL' = $8000: the ring end
-    jr nz, .wrap
+    inc l
+    jr z, .page                  ; 1 tick in 128
 .r:
     exx
     ex af, af'
     ei
     reti
+.page:
+    inc h
+    bit 7, h                     ; H = $80: the ring end
+    jr z, .r
 .wrap:
     ld h, high vidAudBuf         ; L = 0
     jr .r
@@ -5256,14 +5259,17 @@ video_ctc_isr_raw_mono:
     exx
     ld a, (hl)
     out (VID_DAC_MONO), a        ; DAC B and C: both sides
-    inc hl
-    bit 7, h
-    jr nz, .wrap
+    inc l
+    jr z, .page                  ; 1 tick in 256
 .r:
     exx
     ex af, af'
     ei
     reti
+.page:
+    inc h
+    bit 7, h
+    jr z, .r
 .wrap:
     ld h, high vidAudBuf
     jr .r

@@ -8,12 +8,13 @@ generator (vid_raw_sched_build: slide, schedule, palette train) and hot-cell sta
 step, palette sector and frame tag (vr_sector, vr_sector_n, vr_page, vid_raw_pal and the
 train, vid_raw_apad), with read spacing from a T trace (io_gaps), the per-session operand patches
 (vid_stage_common.vec), the raw sound handlers on the alternate set (video_ctc_isr_raw_st,
-video_ctc_isr_raw_mono), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime)
-and the handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and
-URUN counters (vid_dbg_late, vid_dbg_urun) and their call sites, and the RW1 bench session
-(the mode 5 route through nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the
-binned token wait, the arm kinds and DISARM, the log step's #HIST lines); each is skipped
-with a note where it is not assembled.
+video_ctc_isr_raw_mono: every ring start against a reference, T per path), the play pointer
+helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime) and the handler choice in
+vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and URUN counters (vid_dbg_late,
+vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
+nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
+kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain); each is
+skipped with a note where it is not assembled.
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
 
@@ -1255,10 +1256,11 @@ def isr_machine():
     return mc, ring
 
 
-def isr_tick(mc, name, hlp):
-    """One interrupt into handler name: IFF clear (the acknowledge), HL' = hlp, run to RETI.
-    Asserts the main set, IX, IY, BC', DE' and SP are kept, no memory or NR write, IFF set,
-    and the last three bytes executed are FB ED 4D. Returns HL'."""
+def isr_tick(mc, name, hlp, at=None):
+    """One interrupt into handler name (or the code at address at): IFF clear (the
+    acknowledge), HL' = hlp, run to RETI. Asserts the main set, IX, IY, BC', DE' and SP are
+    kept, no memory or NR write, IFF set, one ei, HL' at it a ring address, and the last three
+    bytes executed FB ED 4D. Returns (HL', Zilog T entry to RETI inclusive)."""
     cpu = mc.cpu
     set_main(cpu)
     cpu.alt.update(ALT_BCDE)
@@ -1267,13 +1269,15 @@ def isr_tick(mc, name, hlp):
     cpu.sp = STACK
     cpu.push(RET)
     before, nr0 = bytes(mc.mem), len(mc.nrlog)
-    pcs = []
-    cpu.pc = S(name)
+    pcs, eis, t = [], [], 0
+    cpu.pc = S(name) if at is None else at
     while cpu.pc != RET:
         if len(pcs) > 64:
             raise Fail(f"{name}: no RETI after 64 instructions")
         pcs.append(cpu.pc)
-        cpu.step()
+        if mc.mem[cpu.pc] == 0xFB:
+            eis.append(alt_hl(cpu))
+        t += tstep(mc)
     main_kept(cpu, name)
     if cpu.sp != STACK or {k: cpu.alt[k] for k in ALT_BCDE} != ALT_BCDE:
         raise Fail(f"{name}: SP ${cpu.sp:04X} or BC'/DE' changed")
@@ -1285,24 +1289,62 @@ def isr_tick(mc, name, hlp):
     if (mc.mem[p], bytes(mc.mem[q:q + 2]), q - p) != (0xFB, b"\xED\x4D", 1):
         raise Fail(f"{name}: last bytes executed {mc.mem[p]:02X} {bytes(mc.mem[q:q + 2]).hex()}"
                    f" at ${p:04X}/${q:04X}, expected FB ED 4D")
-    return alt_hl(cpu)
+    base, n = S("vidAudBuf"), S("NXV_AUD_RING")
+    if len(eis) != 1 or not base <= eis[0] < base + n:
+        raise Fail(f"{name}: ei executed {len(eis)} times, HL' at it "
+                   f"{[f'${v:04X}' for v in eis]}")
+    return alt_hl(cpu), t
+
+
+# The handlers' earlier form (inc hl / bit 7,h / jr nz on every tick; relative jumps only, so
+# it runs at STUB): the reference pointer and port sequence.
+ISR_REF = {
+    "video_ctc_isr_raw_st": bytes.fromhex("08D97ED3F32C7ED3F923CB7C2005D908FBED4D266018F7"),
+    "video_ctc_isr_raw_mono": bytes.fromhex("08D97ED3B323CB7C2005D908FBED4D266018F7")}
+ISR_STEP = {"video_ctc_isr_raw_st": 2, "video_ctc_isr_raw_mono": 1}
+
+
+def isr_ring(mc, ring, name):
+    """From every legal start (stereo: each even offset, mono: each offset) one tick of name
+    and one of the reference, each under isr_tick's checks: the same port writes, ring[off]
+    (and ring[off + 1]) to the handler's DAC ports, HL' = base + (off + step) mod the ring.
+    Returns ({offset: T}, {offset: reference T})."""
+    base, n, step = S("vidAudBuf"), S("NXV_AUD_RING"), ISR_STEP[name]
+    ports = (DAC_L, DAC_R) if step == 2 else (DAC_M,)
+    ref = ISR_REF[name]
+    mc.mem[STUB:STUB + len(ref)] = ref
+    ts, rts = {}, {}
+    for off in range(0, n, step):
+        mc.dac = []
+        rhl, rts[off] = isr_tick(mc, f"reference from base+${off:X}", base + off, at=STUB)
+        rdac, mc.dac = mc.dac, []
+        hl, ts[off] = isr_tick(mc, name, base + off)
+        want, nxt = [(p, ring[off + i]) for i, p in enumerate(ports)], base + (off + step) % n
+        if (mc.dac, hl) != (want, nxt) or (rdac, rhl) != (want, nxt):
+            raise Fail(f"{name} from base+${off:X}: ports {mc.dac}, HL' ${hl:04X}; reference "
+                       f"{rdac}, ${rhl:04X}; expected {want}, ${nxt:04X}")
+    mc.mem[STUB:STUB + len(ref)] = bytes(len(ref))
+    return ts, rts
 
 
 def test_isr_stereo():
+    """Common tick, page step and ring end; then every even start against the reference, and
+    a whole lap from the base: every pair in order, back to the base."""
     if (S("VID_DAC_LEFT"), S("VID_DAC_RIGHT")) != (DAC_L, DAC_R):
         raise Fail("VID_DAC_LEFT / VID_DAC_RIGHT are not $F3 / $F9")
     mc, ring = isr_machine()
     base, n = S("vidAudBuf"), S("NXV_AUD_RING")
-    for off, nxt in ((10, 12), (0xFE, 0x100), (n - 2, 0)):
+    for off, nxt in ((10, 12), (0xFE, 0x100), (0x1FE, 0x200), (n - 2, 0)):
         mc.dac = []
-        hl = isr_tick(mc, "video_ctc_isr_raw_st", base + off)
+        hl, _ = isr_tick(mc, "video_ctc_isr_raw_st", base + off)
         want = [(DAC_L, ring[off]), (DAC_R, ring[off + 1])]
         if mc.dac != want or hl != base + nxt:
             raise Fail(f"HL' = base+${off:X}: ports {mc.dac}, HL' ${hl:04X}; expected {want}, "
                        f"${base + nxt:04X}")
-    mc.dac, hl = [], base                    # a whole lap: every pair in order, back to base
+    isr_ring(mc, ring, "video_ctc_isr_raw_st")
+    mc.dac, hl = [], base
     for _ in range(n // 2):
-        hl = isr_tick(mc, "video_ctc_isr_raw_st", hl)
+        hl, _ = isr_tick(mc, "video_ctc_isr_raw_st", hl)
     want = [(DAC_R if i & 1 else DAC_L, ring[i]) for i in range(n)]
     if mc.dac != want or hl != base:
         bad = next((i for i, (x, y) in enumerate(zip(mc.dac, want)) if x != y), len(mc.dac))
@@ -1310,21 +1352,62 @@ def test_isr_stereo():
 
 
 def test_isr_mono():
+    """As test_isr_stereo, one byte a tick: every start against the reference, then a lap."""
     if S("VID_DAC_MONO") != DAC_M:
         raise Fail("VID_DAC_MONO is not $B3")
     mc, ring = isr_machine()
     base, n = S("vidAudBuf"), S("NXV_AUD_RING")
-    for off, nxt in ((10, 11), (0xFF, 0x100), (n - 1, 0)):
+    for off, nxt in ((10, 11), (0xFF, 0x100), (0x1FF, 0x200), (n - 1, 0)):
         mc.dac = []
-        hl = isr_tick(mc, "video_ctc_isr_raw_mono", base + off)
+        hl, _ = isr_tick(mc, "video_ctc_isr_raw_mono", base + off)
         if mc.dac != [(DAC_M, ring[off])] or hl != base + nxt:
             raise Fail(f"HL' = base+${off:X}: ports {mc.dac}, HL' ${hl:04X}; expected "
                        f"[($B3, {ring[off]})], ${base + nxt:04X}")
+    isr_ring(mc, ring, "video_ctc_isr_raw_mono")
     mc.dac, hl = [], base
     for _ in range(n):
-        hl = isr_tick(mc, "video_ctc_isr_raw_mono", hl)
+        hl, _ = isr_tick(mc, "video_ctc_isr_raw_mono", hl)
     if mc.dac != [(DAC_M, v) for v in ring] or hl != base:
         raise Fail(f"lap: {len(mc.dac)} writes, HL' ${hl:04X}")
+
+
+# T entry to RETI inclusive: a tick, a page step (HL' + step crosses a page), the ring end
+# (HL' back to vidAudBuf). IM2_ACK_T: the IM2 acknowledge (Zilog), before the stub's jp.
+ISR_T = {"video_ctc_isr_raw_st": (85, 114, 128), "video_ctc_isr_raw_mono": (63, 92, 106)}
+IM2_ACK_T = 19
+
+
+def test_isr_t():
+    """Each handler's T from every legal start: the common tick, the page step and the ring
+    end at their ISR_T figures, HL' as test_isr_stereo/_mono; from IM2_CTC_STUB (jp handler,
+    as the session writes it) 10 T more. Prints the per-interrupt averages over a ring lap
+    with the acknowledge and the stub, and the reference's."""
+    mc, ring = isr_machine()
+    base, n = S("vidAudBuf"), S("NXV_AUD_RING")
+    stub = S("IM2_CTC_STUB")
+    notes = []
+    for name, (common, page, wrap) in ISR_T.items():
+        step = ISR_STEP[name]
+        for off, want, nxt in ((10, common, 10 + step), (0x100 - step, page, 0x100),
+                               (n - step, wrap, 0)):
+            hl, t = isr_tick(mc, name, base + off)
+            if (t, hl) != (want, base + nxt):
+                raise Fail(f"{name} from base+${off:X}: {t} T, HL' ${hl:04X}; expected {want} T, "
+                           f"${base + nxt:04X}")
+        ts, rts = isr_ring(mc, ring, name)
+        for off, t in ts.items():
+            want = wrap if off + step == n else page if (off + step) & 0xFF == 0 else common
+            if t != want:
+                raise Fail(f"{name} from base+${off:X}: {t} T, expected {want}")
+        mc.mem[stub:stub + 3] = b"\xC3" + le(S(name))
+        _, t = isr_tick(mc, name, base + 10, at=stub)
+        if t != common + 10:
+            raise Fail(f"{name} through IM2_CTC_STUB: {t} T, expected {common + 10}")
+        avg, ravg = sum(ts.values()) / len(ts), sum(rts.values()) / len(rts)
+        notes.append(f"{'stereo' if step == 2 else 'mono'} {common}/{page}/{wrap} T, lap average "
+                     f"{avg + 10 + IM2_ACK_T:.2f} with ack + stub (reference "
+                     f"{ravg + 10 + IM2_ACK_T:.2f}, {ravg - avg:.2f} less)")
+    print("  test_isr_t: " + "; ".join(notes))
 
 
 def span(name):
@@ -2465,6 +2548,94 @@ def test_rw_harness():
         raise Fail(f"read gaps vr_sector_n {v[:4]}, nxb_rh_sec {h[:4]} (divider {divider} T)")
 
 
+CHAIN_ENTRY6 = 12                   # MMU6 at the walk's call: a page in no other slot
+
+
+def test_rw_chain():
+    """An RFRAME row's whole chain as nxb_sess_walk runs it: nxb_hop6 with HL = nxb_srow_go,
+    MMU6 = page 12, two reps of the real code (nxb_kind_rfr, nxb_lrow, nxb_rw_fbody: feed,
+    pump, vid_raw_apad mapping the schedule page, the frame decode; the print's jp nxb_hop6
+    to nxb_rw_done) over two frames, tag 1 with its palette sector then tag 0. Only the
+    raster clocks, nxb_sprint and vid_rl_poll are trapped. Every instruction fetched at
+    $C000-$DFFF is on the page MMU6 maps then (NXB_PAGE; or the schedule page's slide, built
+    schedule or train); nxb_sprint entered once, with NXB_PAGE mapped; vid_raw_apad entered
+    with NXB_PAGE then the schedule page; at the end MMU6 = NR $56 = page 12, SP balanced,
+    nxb_lrow.pr back to nxb_sprint, the card read to its end by the expected readers."""
+    bench_only()
+    mc = nxb_machine()
+    patch_session(mc, 1, 1)
+    if build_sched(mc, 0, 256, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    _, send = parse_sched(mc)
+    setup_frame(mc, 0, 256, 192)
+    mapnr(mc, 7, S("VID_PAGE"))
+    mapnr(mc, 6, CHAIN_ENTRY6)
+    rw_cells(mc, run=1000, crc=0)
+    mc.poke16("vidABytes", 1250)
+    mc.poke16("nxbReps", 2)
+    mc.poke("nxbKind", S("NXB_K_RFRAME"))
+    mc.poke("nxbGeo", 0)
+    cpu = mc.cpu
+    set_alt_hl(cpu, S("vidAudBuf") + 100)
+    cpu.iff = 1
+    sectors = []
+    for f, tag in enumerate((1, 0)):
+        snd = bytes((i * 11 + 5 + f) & 0xFF for i in range(1250)) + pad_bytes(3 * 512 - 1250, tag)
+        pal = [bytes((i * 29 + 11) & 255 for i in range(512))] if tag else []
+        sectors += blocks(snd) + pal + blocks(pixels(256 * 192))
+    card = Card(sectors, waits=1)
+    mc.set_card(card)
+    nxb, sched = S("NXB_PAGE"), SCHED_PAGE
+    code = ((S("VR_SLIDE"), S("VR_SLIDE_END") + 1), (S("VR_SCHED"), send),
+            (S("VR_PALTRAIN"), S("VR_PALTRAIN") + S("VR_PAL_LEN")))
+    seen = {}
+
+    def noop(name):
+        def t(c):
+            seen.setdefault(name, []).append(mc.mmu[6])
+            c.pc = c.pop()
+        return t
+    traps = {S(n): noop(n) for n in ("nxb_lc_start", "nxb_lc_end", "nxb_sprint", "vid_rl_poll")
+             if n in SYMS}
+    traps.update(aborts())
+    apad, steps = S("vid_raw_apad"), 0
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.hl, cpu.pc = S("nxb_srow_go"), S("nxb_hop6")
+    while cpu.pc != RET:
+        pc, p = cpu.pc, mc.mmu[6]
+        if 0xC000 <= pc < 0xE000 and not (p == nxb or p == sched and any(
+                a <= pc < b for a, b in code)):
+            raise Fail(f"fetch at ${pc:04X} with page {p} at MMU6 (step {steps})")
+        if pc == apad:
+            seen.setdefault("vid_raw_apad", []).append(p)
+        t = traps.get(pc)
+        if t is not None and (pc < 0xC000 or pc >= 0xE000 or p == nxb):
+            t(cpu)
+            continue
+        cpu.step()
+        steps += 1
+        if steps > 2_000_000:
+            raise Fail("the chain did not return")
+    mc.sync()
+    own = owner_fn(mc)
+    readers = {(ph, own(pc)) for ph, pc in card.log}
+    want = {("crc", "vid_ds_blkopen"), ("wait", "vid_sd_tok_h"), ("token", "vid_sd_tok_h"),
+            ("data", "vid_ds_iblk"), ("crc", "vr_sector_n"), ("data", "slide"),
+            ("data", "paltrain")}
+    got = (seen.get("nxb_sprint"), seen.get("vid_raw_apad"), seen.get("nxb_lc_start"),
+           seen.get("nxb_lc_end"), mc.mmu[6], mc.nr.get(0x56), cpu.sp,
+           mc.peek("nxb_lrow.pr", 2), mc.peek("nxbLeft", 2))
+    if got != ([nxb], [nxb, sched], [nxb], [sched], CHAIN_ENTRY6, CHAIN_ENTRY6, STACK,
+               S("nxb_sprint"), 0):
+        raise Fail(f"(nxb_sprint, vid_raw_apad, clock start, clock end: MMU6 at each entry; "
+                   f"MMU6, NR $56, SP, nxb_lrow.pr, nxbLeft) = {got}")
+    npal = sum(1 for ph, pc in card.log if own(pc) == "paltrain")
+    if card.pos != len(card.stream) or readers != want or npal != 512:
+        raise Fail(f"{len(card.stream) - card.pos} card bytes unread, readers "
+                   f"{sorted(readers ^ want)} differ, {npal} palette reads")
+
+
 def test_rw_histlog():
     """The log step's pass: after the header and the (here empty) rows, one line per saved
     histogram, "#HIST <tag>" and 17 words, as hist.py and parse.parse_hist read it."""
@@ -2661,11 +2832,11 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_pal_t, test_frame_runwalk,
          test_apad, test_apad_boundary, test_apad_map, test_apad_t, test_vr_page,
          test_vec_patch, test_raw_stage,
-         test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
+         test_isr_stereo, test_isr_mono, test_isr_t, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
-         test_rw_harness, test_loop_sound_boundary]
+         test_rw_harness, test_rw_chain, test_loop_sound_boundary]
 
 
 def main():
