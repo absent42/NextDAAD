@@ -161,14 +161,8 @@ def shape_tags(res, tags):
     return [t for t in tags if res.wait_shape == "inline" or t not in INLINE_TAGS]
 
 
-def poll1_t():
-    """CRC 2 to poll 1 T of vr_sector_n and the RHST/AHST mirror: 11 + 7 x VR_POLL_PAD_N
-    (src/video.asm); RH39/AH39 read poll 1 at 39 T."""
-    for line in (REPO / "src" / "video.asm").read_text(encoding="latin-1").splitlines():
-        p = line.split()
-        if p[:2] == ["VR_POLL_PAD_N", "equ"]:
-            return 11 + 7 * int(p[2])
-    raise FitError("VR_POLL_PAD_N is not in src/video.asm")
+# Card-row refusals printed as "TAG <marker>" in place of the row, by cause.
+REFUSALS = nxbtags.NXB_RW1_REFUSALS
 
 
 def debug_work(res, g, form):
@@ -313,8 +307,8 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
     clip 10. marks: (clip, tag) rows printed with O = 01 and T x 1.05; stale_after:
     a clip followed by a PICK 59 capture that prints VID FILE? over the old rows;
     distort: (clip, tag, factor) applied to an unmarked row; short: (clip, tag) printed
-    as the NXB SHORT marker in place of the row; swap: a clip whose ASPN carries the
-    other form's handler."""
+    as the NXB SHORT marker in place of the row, or (clip, tag, marker) with that refusal;
+    swap: a clip whose ASPN carries the other form's handler."""
     out, stamp = [], 0x0600
 
     def cap(lines):
@@ -339,8 +333,8 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
                 o, tt = nxbtags.NXB_RW1_WALK_O, tt * 1.05
             if distort and distort[:2] == (clip, tag):
                 tt *= distort[2]
-            if short == (clip, tag):
-                body.append(tag + " NXB SHORT")
+            if short and tuple(short[:2]) == (clip, tag):
+                body.append(tag + " " + (short[2] if len(short) > 2 else "NXB SHORT"))
                 continue
             body.append(_row_line(tag, o, reps, *_fd(tt * reps, (clip + i) % 2)))
         rows = body[5:]
@@ -374,7 +368,7 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
 
 # An open or session failure: the bench hook never ran, the rows are a previous screen.
 FAIL_RE = re.compile(r"^(VID (FILE\?|FMT\?|NOBANK2|SIZE\?|FRAG\?)|NXB SESSION|NXB NO BANK)")
-MARKER_RE = re.compile(r"NXB (SHORT|GEO)|\bBAD\b")
+MARKER_RE = re.compile(r"NXB (SHORT|RUN|GEO)\b|\bBAD\b")
 
 
 @dataclass
@@ -620,7 +614,9 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
             else:
                 c.t[tg] = row_t(row) / row[1]
         for m in s.markers:
-            res.anomalies.append("clip %03d: marker line %r (RE-RUN)" % (s.clip, m))
+            why = next((v for k, v in REFUSALS.items() if re.search(k + r"\b", m)), None)
+            res.anomalies.append("clip %03d: marker line %r%s (RE-RUN)" % (
+                s.clip, m, ": " + why if why else ""))
         res.clips[s.clip] = c
     if not res.clips:
         raise FitError("no usable NXBW capture")
@@ -1267,10 +1263,11 @@ def report(res, readouts=None):
         add("| %s | all | | | %d |" % (name, sum(bins)))
     add("")
     if res.cmp39:
-        add("First poll %d T after CRC 2 (RHST/AHST, VR_POLL_PAD_N) against 39 T (RH39/AH39, "
-            "the prototype's spacing), the same clips, mean $FF polls a wait (bins at their "
-            "mean): %s. Used in no constant; the wait T columns above count from poll 1 for "
-            "both." % (poll1_t(), "; ".join(
+        add("First poll at the benched image's production spacing (RHST/AHST: 11 + 7 x "
+            "VR_POLL_PAD_N T after CRC 2; the log does not record VR_POLL_PAD_N) against the "
+            "prototype's 39 T (RH39/AH39), the same clips, mean $FF polls a wait (bins at "
+            "their mean): %s. Used in no constant; the wait T columns above count from poll 1 "
+            "for both." % ("; ".join(
                 "%s %.3f against %.3f (%d clips)" % (
                     "unarmed" if k == "RH39" else "armed " + k.split()[1], a, b, n)
                 for k, (a, b, n) in res.cmp39.items())))
@@ -1489,6 +1486,9 @@ def selftest():
         shortlog = Path(tmp) / "SHORT.TXT"
         shortlog.write_bytes(synth_log(short=(65, "RCOL")).encode("ascii"))
         res_short = fit(read_sections(shortlog), reps=SYNTH_REPS)
+        runlog = Path(tmp) / "RUN.TXT"
+        runlog.write_bytes(synth_log(short=(66, "RSEC", "NXB RUN")).encode("ascii"))
+        res_run = fit(read_sections(runlog), reps=SYNTH_REPS)
         # A fixture clip on disk: 066's layout, palette sectors on frames 0 and 20.
         g = geometry(256, 192, 25, 1)
         clipdir = Path(tmp) / "clips"
@@ -1536,7 +1536,8 @@ def selftest():
     check(set(res.cmp39) == {"RH39", "AH39 stereo", "AH39 mono"}
           and all(abs(a - 1.0) < 1e-9 and abs(b - 1.0) < 1e-9 for a, b, _ in
                   [res.cmp39["RH39"]])
-          and "First poll 18 T after CRC 2 (RHST/AHST, VR_POLL_PAD_N) against 39 T" in text
+          and "First poll at the benched image's production spacing" in text
+          and "First poll 18 T" not in text
           and "| RH39 | 1 |" in text and "| AH39 mono | 1 |" in text,
           "RH39/AH39 bins and the comparison line: %r" % res.cmp39)
     # DEBUG pixel sector work by wait shape: the token counter only in sitting 1's
@@ -1582,6 +1583,11 @@ def selftest():
     check(any("row RCOL missing" in a for a in res_short.anomalies)
           and any("NXB SHORT" in a for a in res_short.anomalies),
           "NXB SHORT row is listed as missing and as a marker: %r" % res_short.anomalies)
+    check(any("066" in a and "RSEC NXB RUN" in a and "fragmented" in a for a in res_run.anomalies)
+          and any("row RSEC missing" in a for a in res_run.anomalies)
+          and not any("fragmented" in a for a in res_short.anomalies)
+          and any("NXB_RW_MIN" in a for a in res_short.anomalies) and exit_status(res_run) == 1,
+          "NXB RUN names the fragmented file, NXB SHORT the clip length: %r" % res_run.anomalies)
     check(_near(res_short.k["stereo"]["tc"], SYNTH["k"]["stereo"]["tc"]),
           "fit still runs around a missing RCOL")
     P = SYNTH

@@ -156,6 +156,11 @@ def test_parse_rw1(tmp_path):
     assert [s for s, _t, _b in parse.parse_hist(p)] == [1, 1, 1, 1, 2]
     runs = parse.parse_nxb(p)
     assert [(r.tag, r.section) for r in parse.rw1_walked(runs)] == [("RSEC", 2), ("AH39", 2)]
+    # a refused card row prints its tag and a marker, not a row: never parsed as one
+    assert sorted(tags.NXB_RW1_REFUSALS) == ["NXB RUN", "NXB SHORT"]
+    refused = ["#NXB 0C30", "> nxbw"] + ["RCOL " + m for m in sorted(tags.NXB_RW1_REFUSALS)]
+    p.write_bytes(("\r\n".join(lines + refused) + "\r\n").encode("ascii"))
+    assert [r.tag for r in parse.parse_nxb(p)] == RW1_PRINTED
     assert "WALK RSEC (section 2)" in parse.report([], runs, None, timing=(311, 228))
     for bad in ("#HIST XXXX" + " 0000" * 17, "#HIST RHST" + " 0000" * 16, "#HIST RHST 00G0"):
         p.write_bytes(("\r\n".join(lines[:3] + [bad]) + "\r\n").encode("ascii"))

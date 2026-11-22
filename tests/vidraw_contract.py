@@ -1253,7 +1253,10 @@ def test_frame_boundaries():
     """A run boundary at each position a frame can hold it (palette 320x192, 121 opens): the
     first pixel sector (run 1), the middle (60), the last pixel sector (120), the palette
     sector (0); 280x224: the last sector (run N - 1); a frame needing two walks (10, then a
-    run of 20: walks at opens 10 and 30), with the token on poll 1 and after 3 $FF."""
+    run of 20: walks at opens 10 and 30), with the token on poll 1 and after 3 $FF. The clip's
+    last frame (remain = its 121 sectors, 0 after): inside the run (run 121) and crossing at
+    its last open (run 120). Crossing with no CRC due (vr_sector_n.fresh into vr_sector_c): a
+    walk mid-frame (run 50), and two (run 1, then a run of 3)."""
     for run0 in (1, 60, 120, 0):
         frame_case(f"320x192 palette run {run0}", 1, 320, 192, 1, run0, fresh=(777,))
     _, n = geom(1, 280, 224)
@@ -1261,6 +1264,13 @@ def test_frame_boundaries():
     for waits in (0, 3):
         frame_case(f"320x192 palette two walks, waits {waits}", 1, 320, 192, 1, 10,
                    fresh=(20, 1000), waits=waits)
+    for run0 in (121, 120):
+        frame_case(f"320x192 palette last frame, run {run0}", 1, 320, 192, 1, run0,
+                   fresh=(500,), remain=121)
+    frame_case("320x192 palette no CRC due, run 50", 1, 320, 192, 1, 50, fresh=(900,),
+               crc_due=0)
+    frame_case("320x192 palette no CRC due, run 1 then 3", 1, 320, 192, 1, 1,
+               fresh=(3, 900), crc_due=0)
 
 
 def test_frame_cross_gaps():
@@ -2677,7 +2687,8 @@ def test_rw_card():
     each; RSEC into VR_SCRATCH, RCOL as 8 columns of 64 on the surface page. A whole RSEC row
     from nxb_kind_rblk (a crossing frame's VR_ENT_CROSS left): the run and remain down by reps
     + 1 before the first rep, VR_ENT_FAST written, every sector read, the walk mark O = 00. A
-    row whose run is shorter than reps + 1: NXB SHORT, no read, nothing charged."""
+    row whose run is shorter than reps + 1: NXB RUN (not the remain's NXB SHORT), no read,
+    nothing charged."""
     bench_only()
     mc = RawMachine(SYMS)
     rw_sched(mc)
@@ -2787,7 +2798,7 @@ def test_rw_card():
                            f"first expected {first}")
             check_log(mc, card, what)
         else:
-            want = (0, 0, run0, remain0, "VR_ENT_CROSS", [], [S("nxbMsgShort")], 1)
+            want = (0, 0, run0, remain0, "VR_ENT_CROSS", [], [S("nxbMsgRun")], 1)
         if got != want:
             raise Fail(f"{what}: (reads, of, run, remain, entry, O at the print, messages, CF) "
                        f"= {got}, expected {want}")
@@ -2951,14 +2962,19 @@ def test_rw_arms():
 def test_rw_kinds():
     """The NXB kinds' untimed setup: RBLK/RHIST charge reps + 1 to the 24-bit remain and to
     the run count, write VR_ENT_FAST and pick the body (RBLK maps the hidden surface page at
-    MMU2, RHIST zeroes the bins and patches the print); fewer than NXB_RW_MIN blocks left, or
-    a run shorter than reps + 1, print NXB SHORT and run and charge nothing; RHIST's print
-    saves tag and bins (NXB_HIST_MAX = 4 slots) and restores the exit; RFRAME/SPIN bodies;
-    IDEN's raw picture width."""
+    MMU2, RHIST zeroes the bins and patches the print); fewer than NXB_RW_MIN blocks left
+    (NXB SHORT) or a run shorter than reps + 1 (NXB RUN) print that marker and run and charge
+    nothing; RHIST's print saves tag and bins (NXB_HIST_MAX = 4 slots) and restores the exit;
+    RFRAME/SPIN bodies; IDEN's raw picture width."""
     bench_only()
     hb, nb = S("nxbHistBin"), S("NXB_HIST_BINS")
     if S("NXB_HIST_MAX") != 4:
         raise Fail(f"NXB_HIST_MAX = {S('NXB_HIST_MAX')}, expected 4 (RHST, RH39, AHST, AH39)")
+    msg = nxb_machine()
+    mapnr(msg, 6, S("NXB_PAGE"))
+    for name, text in (("nxbMsgShort", b" NXB SHORT\0"), ("nxbMsgRun", b" NXB RUN\0")):
+        if bytes(msg.mem[S(name):S(name) + len(text)]) != text:
+            raise Fail(f"{name}: {bytes(msg.mem[S(name):S(name) + len(text)])!r}, expected {text!r}")
 
     def kmc(run=0x5A5A):
         mc = nxb_machine()
@@ -3008,8 +3024,10 @@ def test_rw_kinds():
             raise Fail(f"{what}: run {mc.peek('vidStrmRunBlkH', 2)}, entry {entry_of(mc)}; "
                        f"expected {run_left}, {ent}")
         if body is None:
-            if "go" in seen or not cpu.fc or msgs != [S("nxbMsgShort")]:
-                raise Fail(f"{what}: refused row ran or printed {msgs} (CF {cpu.fc})")
+            why = "nxbMsgShort" if remain < S("NXB_RW_MIN") else "nxbMsgRun"
+            if "go" in seen or not cpu.fc or msgs != [S(why)]:
+                raise Fail(f"{what}: refused row ran or printed {msgs} (CF {cpu.fc}), "
+                           f"expected {why}")
             continue
         if seen.get("go", (0, 0))[1] != S(body):
             raise Fail(f"{what}: body ${seen.get('go', (0, 0))[1]:04X}, expected {body}")

@@ -284,6 +284,12 @@ NXB_RW1 = {
 NXB_RW1_MARKED = ("RFR0", "RSWP", "ARSW", "RSEC", "RCOL", "RHST", "RH39", "ARSE", "ARCO",
                   "AHST", "AH39")
 NXB_RW1_WALK_O = 1
+# A refused card row prints "TAG <marker>" in place of its row (nxb_rw_charge), by cause.
+NXB_RW1_REFUSALS = {
+    "NXB SHORT": "fewer than NXB_RW_MIN blocks left in the clip at this row",
+    "NXB RUN": "the row would cross the end of a filemap run: the clip file is fragmented "
+               "on the card (re-stage it contiguous)",
+}
 NXB_HIST_TAGS = ("RHST", "RH39", "AHST", "AH39")
 NXB_HIST_BINS = 17
 NXB_HIST_POLL1_T = 22

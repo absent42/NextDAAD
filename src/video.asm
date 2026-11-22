@@ -6528,9 +6528,9 @@ nxb_rw_done:
     call nxb_rw_mark
     jp nxb_sprint
 
-; Card rows: CF = fewer than NXB_RW_MIN blocks remain, or fewer than the row's
-; in the run, TAG NXB SHORT printed and the row skipped; else the row's sectors
-; and nxb_rw_go's one charged to the run and the remain, VR_ENT_FAST written.
+; Card rows: CF = fewer than NXB_RW_MIN blocks remain (TAG NXB SHORT) or fewer than
+; the row's in the run (TAG NXB RUN: a fragmented file), the row skipped; else its
+; sectors and nxb_rw_go's one charged to the run and the remain, VR_ENT_FAST written.
 nxb_rw_charge:
     ld a, (vidStrmRemainBlk+2)
     or a
@@ -6544,7 +6544,7 @@ nxb_rw_charge:
     ld de, (nxbReps)
     scf                          ; + nxb_rw_go's untimed sector
     sbc hl, de
-    jr c, .short                 ; the row would cross its run's end
+    jr c, .run                   ; the row would cross its run's end
     ld (vidStrmRunBlkH), hl
     ld hl, VR_ENT_FAST           ; VID_PAGE at MMU7
     ld (vr_sector_n), hl
@@ -6559,8 +6559,14 @@ nxb_rw_charge:
     or a                         ; NC: remain >= NXB_RW_MIN > reps + 1
     ret
 .short:
-    call nxb_sat
     ld hl, nxbMsgShort
+    jr .msg
+.run:
+    ld hl, nxbMsgRun
+.msg:
+    push hl
+    call nxb_sat
+    pop hl
     call dbg_puts
     call nxb_tm_out
     scf
@@ -6652,6 +6658,7 @@ nxb_kind_syn:
 
 nxbMsgSess:  db "NXB SESSION", 0
 nxbMsgShort: db " NXB SHORT", 0
+nxbMsgRun:   db " NXB RUN", 0
 nxbSessVec:  dw 0               ; IM2_CTC_STUB+1 at session entry (DISARM)
 nxbRunB:     dw 0               ; walk mark: vidStrmRunBlkH before the row
 nxbRemB:     dw 0               ; walk mark: vidStrmRemainBlk (low word) before it

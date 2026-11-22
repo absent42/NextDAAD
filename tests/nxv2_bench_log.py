@@ -61,7 +61,7 @@ VERB_RE = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(VERBS) + r")(?![A-Za-z0-9])
 PICK_RE = re.compile(r"(?<![A-Za-z0-9])PICK\s+(\d+)", re.IGNORECASE)
 ERR_RE = re.compile(r"(?<![A-Za-z])ERR=([0-9A-F]{2})")
 VIDFAIL_RE = re.compile(r"^VID (FILE\?|FMT\?|NOBANK2|SIZE\?|FRAG\?)")   # vid_fail_puts, row 23
-# The log step's histogram line (RW1 RHST/AHST): the tag, then 17 bin counts.
+# The log step's histogram line (RW1 RHST, RH39, AHST, AH39): the tag, then 17 bin counts.
 HIST_RE = re.compile(r"^#HIST ([A-Z0-9]{4})((?: [0-9A-F]{4}){17})$")
 
 
