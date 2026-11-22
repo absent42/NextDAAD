@@ -1345,12 +1345,15 @@ VID_DAC_RIGHT   equ $F9
 VID_DAC_MONO    equ DAC2_PORT  ; $B3 writes DAC B and C at once: mono to both sides
 
 ; Raw session schedule bank (ring bank 0, mapped at MMU6 for the decode):
-; a 512 x ini slide ending in ret, a 512-byte pad scratch, the schedule.
+; a 512 x ini slide ending in ret, a 512-byte pad scratch, the schedule, and
+; at the page top the palette train (512 x in a,(n) / out (c),a, then ret).
 VR_SLIDE        equ DATA_WINDOW
 VR_SLIDE_END    equ VR_SLIDE + 1024
 VR_SCRATCH      equ VR_SLIDE_END + 1    ; 512 bytes
 VR_SCHED        equ VR_SCRATCH + 512
-VR_SCHED_LIMIT  equ DATA_WINDOW + $2000
+VR_PAL_LEN      equ NXV_PAL_BYTES * 4 + 1
+VR_PALTRAIN     equ DATA_WINDOW + $2000 - VR_PAL_LEN
+VR_SCHED_LIMIT  equ VR_PALTRAIN
 
 ; Layer 2 mode select (NR $70), matching l2_mode_set's own literals
 ; (overlay2.asm).

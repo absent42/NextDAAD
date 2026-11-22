@@ -5182,8 +5182,8 @@ vr_page:
     ret
 
 ; One palette sector to the hidden Layer 2 palette, vid_ds_pal's
-; choreography (edit the other bank, flip at present). Corrupts AF, BC,
-; DE.
+; choreography (edit the other bank, flip at present). MMU6 = the schedule
+; page. Corrupts AF, BC, DE.
 vid_raw_pal:
     call vr_sector
     ld a, 1
@@ -5196,15 +5196,7 @@ vid_raw_pal:
     ld bc, TBBLUE_REG_SEL
     out (c), a
     ld b, high TBBLUE_REG_ACC    ; C stays $3B
-    ld de, NXV_PAL_BYTES
-.pl:
-    in a, (PORT_SPI_DAT)         ; 49 T a byte
-    out (c), a
-    dec de
-    ld a, d
-    or e
-    jr nz, .pl
-    ret
+    jp VR_PALTRAIN               ; 23 T a byte; its ret returns to our caller
 
 ; Raw pump section end (vid_aud_pump.apad). In: HL = bytes left in the
 ; open sound sector, 0..511 (0: the tag is alone in the next). Out: HL =
@@ -8020,9 +8012,10 @@ vid_strm_validate:
     scf
     ret
 
-; Build the slide and the frame read schedule in the bank at DATA_WINDOW.
-; In: vidP_Shape, vidP_HeightB, vidP_RawW, vidP_RawX0. Out: CF set = it
-; would pass VR_SCHED_LIMIT (nothing written there). Corrupts all.
+; Build the slide, the palette train and the frame read schedule in the bank
+; at DATA_WINDOW. In: vidP_Shape, vidP_HeightB, vidP_RawW, vidP_RawX0. Out:
+; CF set = the schedule would pass VR_SCHED_LIMIT (it writes nothing there).
+; Corrupts all.
 vid_raw_sched_build:
     ld hl, $A2ED                 ; ini
     ld (VR_SLIDE), hl
@@ -8032,6 +8025,17 @@ vid_raw_sched_build:
     ldir                         ; the overlapping copy repeats the pair
     ld a, $C9
     ld (de), a                   ; ret at VR_SLIDE_END
+    ASSERT PORT_SPI_DAT == $EB
+    ld hl, $EBDB                 ; in a, (PORT_SPI_DAT)
+    ld (VR_PALTRAIN), hl
+    ld hl, $79ED                 ; out (c), a
+    ld (VR_PALTRAIN + 2), hl
+    ld hl, VR_PALTRAIN
+    ld de, VR_PALTRAIN + 4
+    ld bc, VR_PAL_LEN - 5
+    ldir                         ; repeats the 4 bytes to 512 pairs
+    ld a, $C9
+    ld (de), a                   ; ret at the page top
     ; pixel bytes w*h: w = 4k, so A:HL = 4 * k*h (k*h <= 80*256)
     ld hl, (vidP_RawW)
     srl h

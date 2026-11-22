@@ -3,9 +3,10 @@
 
 Runs the EMITTED bytes of build\\nextdaad.nex on the tests\\ddma_contract.py Z80 model, with
 the MMU applied and port $EB fed by a model of the SD card's CMD18 stream: the cold schedule
-generator (vid_raw_sched_build) and hot-cell staging (vid_raw_stage), the raw frame decode
-(vid_raw_frame) with its sector opens, surface page step, palette sector and frame tag
-(vr_sector, vr_sector_n, vr_page, vid_raw_pal, vid_raw_apad), the per-session operand patches
+generator (vid_raw_sched_build: slide, schedule, palette train) and hot-cell staging
+(vid_raw_stage), the raw frame decode (vid_raw_frame) with its sector opens, surface page
+step, palette sector and frame tag (vr_sector, vr_sector_n, vr_page, vid_raw_pal and the
+train, vid_raw_apad), with read spacing from a T trace (io_gaps), the per-session operand patches
 (vid_stage_common.vec), the raw sound handlers on the alternate set (video_ctc_isr_raw_st,
 video_ctc_isr_raw_mono), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime)
 and the handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and
@@ -510,16 +511,22 @@ def parse_sched(mc):
 
 
 def owner_fn(mc):
-    """Map an instruction address to the routine holding it (or 'slide')."""
+    """Map an instruction address to the routine holding it, 'slide' or 'paltrain' (the
+    schedule page's VR_PALTRAIN .. VR_PALTRAIN + VR_PAL_LEN - 1)."""
     hot = S("VID_PAGE")
     labels = sorted((v, n) for n, (p, v) in SYMS.items()
                     if p == hot and "." not in n and 0xE000 <= v < 0x10000)
     addrs = [v for v, _ in labels]
     lo, hi = S("VR_SLIDE"), S("VR_SLIDE_END")
+    train = []
 
     def owner(pc):
         if lo <= pc < hi:
             return "slide"
+        if pc < 0xE000:
+            if not train:
+                train.extend((S("VR_PALTRAIN"), S("VR_PALTRAIN") + S("VR_PAL_LEN")))
+            return "paltrain" if train[0] <= pc < train[1] else "?"
         i = bisect.bisect_right(addrs, pc) - 1
         return labels[i][1] if i >= 0 else "?"
     return owner
@@ -527,7 +534,11 @@ def owner_fn(mc):
 
 ALLOWED = {"crc": {"vr_sector", "vr_sector_n"}, "wait": {"vid_sd_tok_h"},
            "token": {"vid_sd_tok_h"},
-           "data": {"slide", "vid_raw_pal", "vid_ds_pad", "vid_raw_apad"}}
+           "data": {"slide", "paltrain", "vid_ds_pad", "vid_raw_apad"}}
+
+# The palette train vid_raw_sched_build writes at VR_PALTRAIN: 512 x in a,(PORT_SPI_DAT) /
+# out (c),a, then ret.
+TRAIN = b"\xDB\xEB\xED\x79" * 512 + b"\xC9"
 
 
 def check_log(mc, card, what):
@@ -608,7 +619,31 @@ def test_sched_pad():
     expect(mc.phys[o:o + 256], b"\xAA" * 256, "280x224 pad in VR_SCRATCH")
 
 
+def train_at(mc):
+    """The VR_PAL_LEN bytes at VR_PALTRAIN in the schedule page (physical)."""
+    o = SCHED_PAGE * SLOT + S("VR_PALTRAIN") - S("VR_SLIDE")
+    return bytes(mc.phys[o:o + S("VR_PAL_LEN")])
+
+
+def gen_allow(sched):
+    """stray_writes allowance for a vid_raw_sched_build run: the generator's cells on
+    VID_PAGE2, the stack, and sched (a predicate) on the schedule page."""
+    gen = set()
+    for name in SYMS:
+        if name.startswith("vrg") or name.startswith("vidP_"):
+            gen |= {(SYMS[name][1] & 0x1FFF) + k for k in range(3)}
+    return {S("VID_PAGE2"): lambda k: k in gen,
+            5: lambda k: (STACK - 0x100) - 0xA000 <= k < STACK - 0xA000,
+            SCHED_PAGE: sched}
+
+
 def test_sched_limit():
+    """VR_SCHED_LIMIT is VR_PALTRAIN: no legal geometry's schedule reaches it (the train stays
+    intact after every build); an oversize geometry sets CF and writes nothing at or above it
+    but the train, nothing on VID_PAGE2 but the generator's cells."""
+    lim = S("VR_PALTRAIN")
+    if S("VR_SCHED_LIMIT") != lim:
+        raise Fail(f"VR_SCHED_LIMIT ${S('VR_SCHED_LIMIT'):04X} is not VR_PALTRAIN ${lim:04X}")
     mc = RawMachine(SYMS)
     top, at = 0, None
     for h in (1, 2, 191, 255):
@@ -619,11 +654,14 @@ def test_sched_limit():
             items, end = parse_sched(mc)
             if sum(v for k, v, _ in items if k == "read") != w * h + (-w * h) % 512:
                 raise Fail(f"1,{w}x{h}: the reads do not add up to the sectors")
+            if end > lim or train_at(mc) != TRAIN:
+                raise Fail(f"1,{w}x{h}: schedule end ${end:04X}, train intact "
+                           f"{train_at(mc) == TRAIN} (VR_PALTRAIN ${lim:04X})")
             if end > top:
                 top, at = end, (w, h)
     print(f"  test_sched_limit: largest schedule end ${top:04X} ({at[0]}x{at[1]}), "
-          f"limit ${S('VR_SCHED_LIMIT'):04X}")
-    # oversize synthetic geometry: CF set and nothing written at or past the limit
+          f"limit VR_PALTRAIN ${lim:04X}")
+    # oversize synthetic geometry: CF set and nothing at or past the limit but the train
     mc = RawMachine(SYMS)
     mc.map(7, S("VID_PAGE2"))
     mc.sync()
@@ -631,14 +669,11 @@ def test_sched_limit():
     cpu = build_sched(mc, 1, 1020, 255, x0=0)
     if not cpu.fc:
         raise Fail("1,1020x255: CF clear for an oversize schedule")
-    gen = set()
-    for name in SYMS:
-        if name.startswith("vrg") or name.startswith("vidP_"):
-            gen |= {(SYMS[name][1] & 0x1FFF) + k for k in range(3)}
-    allow = {S("VID_PAGE2"): lambda k: k in gen,
-             5: lambda k: (STACK - 0x100) - 0xA000 <= k < STACK - 0xA000,
-             SCHED_PAGE: True}
-    stray_writes(before, bytes(mc.phys), allow)
+    off, after = lim - S("VR_SLIDE"), bytes(mc.phys)
+    page = after[SCHED_PAGE * SLOT:(SCHED_PAGE + 1) * SLOT]
+    if page[off:] != TRAIN:
+        raise Fail("1,1020x255: the bytes from VR_PALTRAIN up are not the train")
+    stray_writes(before, after, gen_allow(lambda k: k < off or page[k] == TRAIN[k - off]))
 
 
 def test_sector_runwalk():
@@ -813,6 +848,102 @@ def test_frame_palette():
     if (S("NR_PAL_CTRL"), 0x40) not in head or (S("NR_PAL_INDEX"), 0) not in head:
         raise Fail(f"palette edit select missing before the burst: {head}")
     check_log(mc, card, "palette frame")
+
+
+def test_paltrain():
+    """vid_raw_sched_build writes the 2049-byte train at VR_PALTRAIN (the page's last bytes)
+    for every geometry, over any prior contents and nothing below it; a second build leaves
+    the page byte-identical; the schedule's last byte is below VR_PALTRAIN."""
+    lim, n = S("VR_PALTRAIN"), S("VR_PAL_LEN")
+    if (n, lim + n) != (len(TRAIN), S("DATA_WINDOW") + SLOT):
+        raise Fail(f"VR_PAL_LEN {n}, VR_PALTRAIN ${lim:04X}: not the page's last {len(TRAIN)} bytes")
+    o = SCHED_PAGE * SLOT + lim - S("VR_SLIDE")
+    for code, w, h in SHAPES + EXTRA:
+        what = f"{code},{w}x{h}"
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE2"))
+        mc.load_phys(o - 16, bytes([0xA5]) * (16 + n))     # a guard below, junk in the train
+        before = bytes(mc.phys)
+        if build_sched(mc, code, w, h).fc:
+            raise Fail(f"{what}: vid_raw_sched_build set CF")
+        _, end = parse_sched(mc)
+        after = bytes(mc.phys)
+        if train_at(mc) != TRAIN or after[o - 16:o] != bytes([0xA5]) * 16 or end > lim:
+            raise Fail(f"{what}: train {'ok' if train_at(mc) == TRAIN else 'wrong'}, guard "
+                       f"{after[o - 16:o].hex()}, schedule end ${end:04X}")
+        stray_writes(before, after, gen_allow(lambda k: k < lim - 16 - S("VR_SLIDE")
+                                              or k >= lim - S("VR_SLIDE")))
+        page = after[SCHED_PAGE * SLOT:(SCHED_PAGE + 1) * SLOT]
+        build_sched(mc, code, w, h)
+        if bytes(mc.phys[SCHED_PAGE * SLOT:(SCHED_PAGE + 1) * SLOT]) != page:
+            raise Fail(f"{what}: a second build changed the schedule page")
+
+
+def test_pal_t():
+    """vid_raw_pal after its call vr_sector, the card at the palette sector's first data byte:
+    11,909 T to the return into its caller (123 - 10 + 10 + 512 x 23 + 10; the 49 T loop it
+    replaced took 25,216); NR $43 = vidPalCtrl xor $40, NR $40 = 0, then NR $44 selected at
+    $243B and given the 512 stream bytes in order, each read by the train 23 T after the last.
+    Then a whole palette frame (vid_raw_frame, tag 1, CRC due): token to the first train read
+    and the last train read to the next sector's CRC both at least 16 T, no gap under 15."""
+    pal = bytes((i * 29 + 11) & 255 for i in range(512))
+    mc = RawMachine(SYMS)
+    if build_sched(mc, 0, 256, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    mc.map(7, S("VID_PAGE"))
+    mc.poke("vidPalCtrl", 0x10)
+    mc.poke("vidPalPending", 0)
+    card = Card(open_data=pal)
+    mc.set_card(card)
+    at = S("vid_raw_pal")
+    if bytes(mc.mem[at:at + 3]) != b"\xCD" + le(S("vr_sector")):
+        raise Fail("vid_raw_pal does not open with call vr_sector")
+    cpu = mc.cpu
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc, cpu.b, cpu.c, cpu.de, cpu.hl = at + 3, 0x5A, PORT_SPI, 0x1234, 0x4000
+    t, marks = io_trace(mc, RET)
+    gaps = [b - a for a, b in zip(marks, marks[1:])]
+    nr = S("NR_PAL_VALUE9")
+    vals = [v for r, v in mc.nrlog if r == nr]
+    head = [e for e in mc.nrlog if e[0] != nr]
+    got = (t, sorted(set(gaps)), len(gaps), bytes(vals) == pal, len(vals), head, mc.sel,
+           mc.peek("vidPalPending"), card.pos, cpu.sp)
+    want = (11909, [23], 511, True, 512, [(S("NR_PAL_CTRL"), 0x50), (S("NR_PAL_INDEX"), 0)],
+            nr, 1, 512, STACK)
+    if got != want:
+        raise Fail(f"(T, gaps, n gaps, NR $44 in order, NR $44 writes, other NR, $243B, "
+                   f"vidPalPending, reads, SP) = {got}, expected {want}")
+    lo, hi = S("VR_PALTRAIN"), S("VR_PALTRAIN") + S("VR_PAL_LEN")
+    if any(not lo <= pc < hi for _, pc in card.log):
+        raise Fail("a palette byte was read outside the train")
+    # a whole palette frame: the joins
+    mc = RawMachine(SYMS)
+    if build_sched(mc, 0, 256, 192).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    _, sectors = setup_frame(mc, 0, 256, 192, tag=1, crc_due=1)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 250)                      # no PLAY poll inside the trace
+    card = Card([pal] + blocks(pixels(256 * 192)), waits=1, crc_first=True)
+    mc.set_card(card)
+    cpu = mc.cpu
+    cpu.sp = STACK
+    cpu.push(RET)
+    gaps = io_gaps(mc, S("vid_raw_frame"), RET)
+    if cpu.a != S("VOP_KFLIP") or card.pos != len(card.stream):
+        raise Fail(f"palette frame: A ${cpu.a:02X}, {len(card.stream) - card.pos} reads left")
+    ph = [p for p, _ in card.log]
+    i = ph.index("data")
+    tin, tout = gaps[i - 1], gaps[i + 511]
+    if (ph[i - 1], ph[i + 512], set(gaps[i:i + 511])) != ("token", "crc", {23}):
+        raise Fail(f"palette frame: read {i - 1} {ph[i - 1]}, read {i + 512} {ph[i + 512]}, "
+                   f"train gaps {sorted(set(gaps[i:i + 511]))}")
+    if min(tin, tout) < 16 or min(gaps) < 15:
+        raise Fail(f"palette frame: token to train {tin} T, train to CRC {tout} T, "
+                   f"minimum gap {min(gaps)} T")
+    print(f"  test_pal_t: token to train {tin} T, train 23 T, train to CRC {tout} T, "
+          f"frame minimum {min(gaps)} T")
 
 
 def test_apad():
@@ -2001,7 +2132,48 @@ def tcount(mc, stop, budget=2_000_000):
     return t
 
 
-STUB = 0xBF00                        # a scratch call site in page 5 (model only)
+IO_START = {"in a,(n)": 7, "in r,(c)": 8, "ini": 9}     # T from an instruction's start to its I/O
+
+
+def io_trace(mc, stop, budget=2_000_000):
+    """Run from the current PC until stop (an address, or a predicate on the CPU), summing
+    Zilog T. Returns (T, marks): the T of each port $EB read's I/O start (IO_START). A card
+    read by any other instruction, or two in one instruction, fails."""
+    cpu, card = mc.cpu, mc.card
+    done = stop if callable(stop) else (lambda c: c.pc == stop)
+    t, marks = 0, []
+    while not done(cpu):
+        pc, n = cpu.pc, len(card.log)
+        op, sub = mc.mem[pc], mc.mem[(pc + 1) & 0xFFFF]
+        dt = tstep(mc)
+        if len(card.log) != n:
+            if len(card.log) - n == 1 and op == 0xDB:
+                off = IO_START["in a,(n)"]
+            elif len(card.log) - n == 1 and op == 0xED and sub & 0xC7 == 0x40:
+                off = IO_START["in r,(c)"]
+            elif len(card.log) - n == 1 and op == 0xED and sub == 0xA2:
+                off = IO_START["ini"]
+            else:
+                raise Fail(f"io_trace: {len(card.log) - n} card read(s) by {op:02X} {sub:02X} "
+                           f"at ${pc:04X}: no I/O start for it")
+            marks.append(t + off)
+        t += dt
+        budget -= 1
+        if budget <= 0:
+            raise Fail("io_trace: budget spent")
+    return t, marks
+
+
+def io_gaps(mc, start, stop):
+    """T between successive port $EB reads, I/O start to I/O start, from start (an address;
+    None = the current PC) until stop (as io_trace). The caller sets SP and the card."""
+    if start is not None:
+        mc.cpu.pc = start
+    _, marks = io_trace(mc, stop)
+    return [b - a for a, b in zip(marks, marks[1:])]
+
+
+STUB = 0xBF00                       # a scratch call site in page 5 (model only)
 
 
 def stub_t(mc, code, **regs):
@@ -2298,7 +2470,8 @@ def test_loop_sound_boundary():
 
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
-         test_sector_walkfault, test_frame_remain, test_frame_palette, test_frame_runwalk,
+         test_sector_walkfault, test_frame_remain, test_frame_palette, test_paltrain,
+         test_pal_t, test_frame_runwalk,
          test_apad, test_apad_boundary, test_vr_page, test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
