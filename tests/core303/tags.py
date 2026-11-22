@@ -256,8 +256,9 @@ for _s in "XYZ":
 # NXB session RW1 (src/video.asm nxbSesRw1, verb NXBW) on a raw direct clip: the printed
 # rows, in the NXB screen grammar (parse.parse_nxb), not in TAGS. The log step then appends
 # "#HIST <tag>" and NXB_HIST_BINS 4-digit words per histogram row (parse.parse_hist): bin k
-# counts the data-token waits whose number n of $FF polls has bit length k (bin 9: n >= 256,
-# past the djnz loop); n >= 1 polls wait NXB_HIST_POLL1_T + NXB_HIST_POLL_T x (n - 1) T at
+# counts the data-token waits whose number n of $FF polls has bit length k (bin 9: n = 256,
+# the djnz loop's last poll, or longer: the mirror counts a wait through vid_sd_tok_h, 257
+# polls and up, as 256); n >= 1 polls wait NXB_HIST_POLL1_T + NXB_HIST_POLL_T x (n - 1) T at
 # 28 MHz (nxb_rh_sec, vr_sector_n's inline wait). ARM1/ARM2/ARMO and DSRM print nothing.
 # On the frame and card rows (NXB_RW1_MARKED) O = 01 marks a run walk (CMD12, CMD18,
 # a first token) inside the row: its T is not a figure, re-run.

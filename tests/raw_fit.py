@@ -8,7 +8,9 @@ RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T).
 Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback FILE]
                                             [--wait-shape inline|sitting1]
        python tests/raw_fit.py --selftest
---wait-shape sitting1 prices the histograms with sitting 1's 48 T token poll (its log).
+The token wait shape is read from the log: a capture with an RH39 or AH39 row or histogram
+is the inline wait (22 T, then 47 T a poll), a log with neither is sitting 1's (48 T a poll,
+vid_sd_tok_h); --wait-shape overrides it.
 Exit 0 when every residual is within ACCEPT_PCT and no row is listed for a RE-RUN, 1 when
 not, 2 on a log or fit error.
 """
@@ -16,7 +18,7 @@ import argparse
 import re
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,8 +51,12 @@ assert PERIOD_NUM == 28_363_200
 # 48 T loop (sitting 1's bench); inline: vr_sector_n's wait and its nxb_rh_sec mirror.
 WAIT_SHAPES = {"sitting1": (48, 48),
                "inline": (nxbtags.NXB_HIST_POLL1_T, nxbtags.NXB_HIST_POLL_T)}
-HIST_BIN_LONG = 9            # 256 or more polls: past the djnz loop, a RE-RUN
-GLUE_T =nxv2enc.TMODEL_COEFFS["glue_t"] / nxv2enc.TMODEL_COEFFS["audio_factor"]
+# Rows only the inline-wait bench prints (the 39 T first-poll comparison); sitting 1 has none.
+INLINE_TAGS = ("RH39", "AH39")
+# 256 or more polls, a RE-RUN: 256 is the djnz loop's last poll; the mirror counts every
+# longer wait (vid_sd_tok_h, 257 and up) as 256.
+HIST_BIN_LONG = 9
+GLUE_T = nxv2enc.TMODEL_COEFFS["glue_t"] / nxv2enc.TMODEL_COEFFS["audio_factor"]
 
 # tests/build-tests.ps1 -VidRawBench clips: clip -> (width, height, fps, channels, frames)
 FIXTURES = {
@@ -128,19 +134,35 @@ DBG = dict(
     arm=40,          # divider arm: ld a,(nn) / dec a / ld (nn),a / call z, not taken
     rl_poll=231,     # vid_rl_poll body, plus 7 T for the call z taken
     sector=86,       # vr_sector_n: ld d,0 / call vid_dst_norm_flat / its arm / ld a,d, cp, ret c
-    token=177,       # vid_sd_tok_h .got poll counter
+    token=177,       # vid_sd_tok_h .got poll counter: every sound sector; a pixel sector only
+                     # in the sitting1 shape (inline: the slow tail, 257 or more polls)
     play_frame=179,  # call vid_play_frame, the armed path
     late=174,        # call vid_dbg_late, a late frame, MAXL not raised
     urun=402,        # call vid_dbg_urun and its vid_pace_poll (raw .rd), a late frame
 )
 
 
+def pix_token(res):
+    """DEBUG token counter T a pixel sector: vid_sd_tok_h ran every pixel open in sitting 1's
+    shape; the inline open (vr_sector_n) calls it only past its djnz loop."""
+    return DBG["token"] if res.wait_shape == "sitting1" else 0
+
+
+def infer_wait_shape(sections):
+    """inline when any capture carries an INLINE_TAGS row or histogram, else sitting1."""
+    for s in sections:
+        if any(t in s.rows or t in s.hist for t in INLINE_TAGS):
+            return "inline"
+    return "sitting1"
+
+
 def debug_work(res, g, form):
     """Plain DEBUG T on a late frame's path, armed (1 / (1 - handler / CTC period)).
-    Pump passes a frame are estimated: one chunk, one more on a ring-tail wrap, the last."""
+    Pump passes a frame are estimated: one chunk, one more on a ring-tail wrap, the last.
+    A pixel sector carries the token counter only in the sitting1 shape (pix_token)."""
     am = res.period / (res.period - res.handler[form])
     rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
-    pix = DBG["sector"] + DBG["token"] + rl
+    pix = DBG["sector"] + pix_token(res) + rl
     snd = DBG["arm"] + DBG["token"] + rl
     passes = 2 + g.real / inc_equ("NXV_AUD_RING")
     frame = (DBG["play_frame"] + DBG["arm"] + rl + DBG["late"] + DBG["urun"] + rl
@@ -527,8 +549,11 @@ def _peer(res, group, values):
                                                                         worst))
 
 
-def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape="inline"):
+def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
+    """wait_shape None: infer_wait_shape(sections)."""
     pre, tcs = ctc_period()
+    if wait_shape is None:
+        wait_shape = infer_wait_shape(sections)
     res = Result(period=pre * tcs[nr11 & 7], ctc=(pre, tcs[nr11 & 7], nr11),
                  wait_shape=wait_shape)
     marked = set()
@@ -971,7 +996,12 @@ def report(res, readouts=None):
     top, sclip = res.stall_top
     lo, hi, _ = _bin_polls(top)
     p1, p = WAIT_SHAPES[res.wait_shape]
-    edge = "%d x %d T" % (hi, p) if p1 == p else "%d polls (%d + %d x %d T)" % (hi, p1, p, hi - 1)
+    if hi == 0:
+        edge = "0 T (the token on poll 1)"
+    elif p1 == p:
+        edge = "%d x %d T" % (hi, p)
+    else:
+        edge = "%d polls (%d + %d x %d T)" % (hi, p1, p, hi - 1)
     add("")
     add("RAW_STALL_T = %.2f T: highest occupied AHST bin %d (%d-%d polls), upper edge %s "
         "x ARSE/RSEC (clip %03d) [AHST, ARSE, RSEC]" % (res.stall, top, lo, hi, edge, sclip))
@@ -1311,12 +1341,21 @@ def report(res, readouts=None):
         "frame's path, base T x the armed factor 1 / (1 - handler / %d) (stereo %.4f, mono "
         "%.4f). Frame 0 adds the palette sector and its DEBUG sector work." % (
             res.period, am["stereo"], am["mono"]))
-    add("- per pixel sector %.1f T: vr_sector_n's PLAY divider %d T (.nocrc, video.asm:%d), "
-        "vid_sd_tok_h's poll counter %d T (.got, video.asm:%d), and vid_rl_poll "
-        "(video.asm:%d) %d T once per %d arms = %.1f T" % (
-            DBG["sector"] + DBG["token"] + rl, DBG["sector"], asm_line("vr_sector_n.nocrc"),
-            DBG["token"], asm_line("vid_sd_tok_h.got"), asm_line("vid_rl_poll"),
-            DBG["rl_poll"], inc_equ("VID_RL_DIV"), rl))
+    if pix_token(res):
+        add("- per pixel sector %.1f T: vr_sector_n's PLAY divider %d T (.nocrc, video.asm:%d), "
+            "vid_sd_tok_h's poll counter %d T (.got, video.asm:%d), and vid_rl_poll "
+            "(video.asm:%d) %d T once per %d arms = %.1f T" % (
+                DBG["sector"] + DBG["token"] + rl, DBG["sector"], asm_line("vr_sector_n.nocrc"),
+                DBG["token"], asm_line("vid_sd_tok_h.got"), asm_line("vid_rl_poll"),
+                DBG["rl_poll"], inc_equ("VID_RL_DIV"), rl))
+    else:
+        add("- per pixel sector %.1f T: vr_sector_n's PLAY divider %d T (.nocrc, video.asm:%d) "
+            "and vid_rl_poll (video.asm:%d) %d T once per %d arms = %.1f T; vid_sd_tok_h's poll "
+            "counter (%d T, .got, video.asm:%d) runs only on a wait past the open's djnz loop "
+            "(257 or more polls, a RE-RUN), so it is not priced (wait shape %s)" % (
+                DBG["sector"] + rl, DBG["sector"], asm_line("vr_sector_n.nocrc"),
+                asm_line("vid_rl_poll"), DBG["rl_poll"], inc_equ("VID_RL_DIV"), rl,
+                DBG["token"], asm_line("vid_sd_tok_h.got"), res.wait_shape))
     add("- per sound sector %.1f T: vid_ds_blkopen's arm %d T (video.asm:%d), the poll "
         "counter %d T, %.1f T of vid_rl_poll" % (DBG["arm"] + DBG["token"] + rl, DBG["arm"],
                                                  asm_line("vid_ds_blkopen"), DBG["token"], rl))
@@ -1386,10 +1425,10 @@ def selftest():
     with tempfile.TemporaryDirectory() as tmp:
         log = Path(tmp) / "NXBENCH.TXT"
         log.write_bytes(synth_log(marks=marks, stale_after=68).encode("ascii"))
-        res = fit(read_sections(log), reps=SYNTH_REPS)
+        res = fit(read_sections(log), reps=SYNTH_REPS, wait_shape="inline")
         report(res)
+        res_inf = fit(read_sections(log), reps=SYNTH_REPS)
         res_s1 = fit(read_sections(log), reps=SYNTH_REPS, wait_shape="sitting1")
-        text_s1 = report(res_s1)
         b9 = Path(tmp) / "BIN9.TXT"
         b9.write_bytes(synth_log(P=dict(SYNTH, stall_bin={63: 9})).encode("ascii"))
         res_b9 = fit(read_sections(b9), reps=SYNTH_REPS)
@@ -1427,7 +1466,30 @@ def selftest():
                       "| X | 061 | 01EE |\n", encoding="utf-8")
         readouts = read_playback(pb)
         text = report(res, readouts)
+        text_s1 = report(res_s1, readouts)
+        text_b0 = report(replace(res, stall=0.0, stall_top=(0, 63)))
     check([r["Clip"] for r in readouts] == ["060"], "playback rows: %r" % readouts)
+    # the wait shape from the log: RH39/AH39 rows or histograms only on the inline bench
+    ns = SimpleNamespace
+    check(infer_wait_shape([ns(rows={"RHST": 0}, hist={"AHST": []})]) == "sitting1"
+          and infer_wait_shape([ns(rows={}, hist={}), ns(rows={}, hist={"AH39": []})]) == "inline"
+          and infer_wait_shape([ns(rows={"RH39": 0}, hist={})]) == "inline",
+          "infer_wait_shape")
+    check(res_inf.wait_shape == "sitting1" and res_inf.stall == res_s1.stall,
+          "a log with no RH39/AH39 rows is priced as sitting 1's: %s" % res_inf.wait_shape)
+    # DEBUG pixel sector work by wait shape: the token counter only in sitting 1's
+    g320 = geometry(320, 192, 25, 2)
+    rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
+    d_in, d_s1 = debug_work(res, g320, "stereo"), debug_work(res_s1, g320, "stereo")
+    check(abs(d_in.pix - (86 + rl)) < 1e-9 and abs(d_s1.pix - (86 + 177 + rl)) < 1e-9
+          and d_in.snd == d_s1.snd == 40 + 177 + rl and d_s1.total > d_in.total,
+          "debug_work pixel sector: inline %.1f, sitting1 %.1f" % (d_in.pix, d_s1.pix))
+    check("- per pixel sector %.1f T: vr_sector_n's PLAY divider 86 T" % (86 + rl) in text
+          and "so it is not priced (wait shape inline)" in text
+          and "- per pixel sector %.1f T" % (86 + 177 + rl) in text_s1
+          and "poll counter 177 T (.got" in text_s1, "the DEBUG pixel sector line by shape")
+    check("upper edge 0 T (the token on poll 1)" in text_b0 and "x -1" not in text_b0,
+          "the bin 0 stall edge text")
     check("admitted clips that showed LATE or URUN: none" in text, "Step 6 lines printed")
     check(exit_status(res) == 0 and exit_status(res_short) == 1,
           "a RE-RUN anomaly makes the exit status 1")
@@ -1514,9 +1576,9 @@ def main(argv=None):
     ap.add_argument("--clips", help="folder holding the NNN.VID fixtures (read only)")
     ap.add_argument("--nr11", type=int, default=0, help="NR $11 of the sitting (default 0)")
     ap.add_argument("--playback", help="playback.md with the leg B readout table")
-    ap.add_argument("--wait-shape", choices=sorted(WAIT_SHAPES), default="inline",
-                    help="token wait T per $FF poll: inline (first 22, then 47) or sitting1 "
-                         "(48 each, the sitting-1 bench)")
+    ap.add_argument("--wait-shape", choices=sorted(WAIT_SHAPES), default=None,
+                    help="override the token wait shape read from the log: inline (first 22, "
+                         "then 47 T a poll) or sitting1 (48 each, the sitting-1 bench)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
@@ -1531,6 +1593,10 @@ def main(argv=None):
         sys.stderr.write("error: %s\n" % e)
         return 2
     res.log = Path(a.log).name
+    sys.stderr.write("wait shape: %s (%s)\n" % (
+        res.wait_shape, "--wait-shape" if a.wait_shape else
+        "inferred: RH39/AH39 rows present" if res.wait_shape == "inline" else
+        "inferred: no RH39/AH39 rows"))
     sys.stdout.write(report(res, readouts))
     return exit_status(res)
 
