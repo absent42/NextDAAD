@@ -256,8 +256,9 @@ for _s in "XYZ":
 # NXB session RW1 (src/video.asm nxbSesRw1, verb NXBW) on a raw direct clip: the printed
 # rows, in the NXB screen grammar (parse.parse_nxb), not in TAGS. The log step then appends
 # "#HIST <tag>" and NXB_HIST_BINS 4-digit words per histogram row (parse.parse_hist): bin k
-# counts the data-token waits whose number of $FF polls has bit length k, a poll being
-# NXB_HIST_POLL_T T at 28 MHz (nxb_rh_tok). ARM1/ARM2/ARMO and DSRM print nothing.
+# counts the data-token waits whose number n of $FF polls has bit length k (bin 9: n >= 256,
+# past the djnz loop); n >= 1 polls wait NXB_HIST_POLL1_T + NXB_HIST_POLL_T x (n - 1) T at
+# 28 MHz (nxb_rh_sec, vr_sector_n's inline wait). ARM1/ARM2/ARMO and DSRM print nothing.
 # On the frame and card rows (NXB_RW1_MARKED) O = 01 marks a run walk (CMD12, CMD18,
 # a first token) inside the row: its T is not a figure, re-run.
 NXB_RW1 = {
@@ -279,7 +280,8 @@ NXB_RW1_MARKED = ("RFR0", "RSWP", "ARSW", "RSEC", "RCOL", "RHST", "ARSE", "ARCO"
 NXB_RW1_WALK_O = 1
 NXB_HIST_TAGS = ("RHST", "AHST")
 NXB_HIST_BINS = 17
-NXB_HIST_POLL_T = 48
+NXB_HIST_POLL1_T = 22
+NXB_HIST_POLL_T = 47
 
 # Pi log tags (#PI303 logs, parse.parse_pilog); disjoint from TAGS: neither grammar accepts
 # the other's tags.

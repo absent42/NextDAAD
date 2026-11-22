@@ -6,7 +6,9 @@ after taking the tracked bench harness out of every row (nxv2_bench_rows
 RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T).
 
 Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback FILE]
+                                            [--wait-shape inline|sitting1]
        python tests/raw_fit.py --selftest
+--wait-shape sitting1 prices the histograms with sitting 1's 48 T token poll (its log).
 Exit 0 when every residual is within ACCEPT_PCT and no row is listed for a RE-RUN, 1 when
 not, 2 on a log or fit error.
 """
@@ -43,8 +45,12 @@ LPF, TPL35 = nxbparse.timing(BENCH_NR)
 T_LINE = TPL35 * 8
 PERIOD_NUM = 2 * LPF * T_LINE * 25     # T per frame x fps: two fields at 25 fps
 assert PERIOD_NUM == 28_363_200
-POLL_T = nxbtags.NXB_HIST_POLL_T
-GLUE_T = nxv2enc.TMODEL_COEFFS["glue_t"] / nxv2enc.TMODEL_COEFFS["audio_factor"]
+# Token wait shape: T of the first $FF poll and of each later one. sitting1: vid_sd_tok_h's
+# 48 T loop (sitting 1's bench); inline: vr_sector_n's wait and its nxb_rh_sec mirror.
+WAIT_SHAPES = {"sitting1": (48, 48),
+               "inline": (nxbtags.NXB_HIST_POLL1_T, nxbtags.NXB_HIST_POLL_T)}
+HIST_BIN_LONG = 9            # 256 or more polls: past the djnz loop, a RE-RUN
+GLUE_T =nxv2enc.TMODEL_COEFFS["glue_t"] / nxv2enc.TMODEL_COEFFS["audio_factor"]
 
 # tests/build-tests.ps1 -VidRawBench clips: clip -> (width, height, fps, channels, frames)
 FIXTURES = {
@@ -429,6 +435,7 @@ class Result:
     accepted: bool = False
     max_resid: float = 0.0
     clipfiles: object = None
+    wait_shape: str = "inline"
 
 
 def _mean(xs):
@@ -464,6 +471,12 @@ def _bin_polls(k):
         return 0, 0, 0.0
     lo, hi = 2 ** (k - 1), 2 ** k - 1
     return lo, hi, (lo + hi) / 2.0
+
+
+def _wait_t(shape, polls):
+    """T a wait of polls $FF polls (a bin's edge or mean) adds to the token on poll 1."""
+    p1, p = WAIT_SHAPES[shape]
+    return p1 + p * (polls - 1) if polls >= 1 else 0
 
 
 def check_clip_file(path, clip):
@@ -514,9 +527,10 @@ def _peer(res, group, values):
                                                                         worst))
 
 
-def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None):
+def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape="inline"):
     pre, tcs = ctc_period()
-    res = Result(period=pre * tcs[nr11 & 7], ctc=(pre, tcs[nr11 & 7], nr11))
+    res = Result(period=pre * tcs[nr11 & 7], ctc=(pre, tcs[nr11 & 7], nr11),
+                 wait_shape=wait_shape)
     marked = set()
     for s in sections:
         if s.verb not in ("NXBW", "NXBD"):
@@ -580,6 +594,10 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None):
             elif tg in c.rows and sum(bins) != c.rows[tg][1]:
                 res.anomalies.append("clip %03d: #HIST %s bins sum to %d, the row ran %d (RE-RUN)"
                                      % (c.clip, tg, sum(bins), c.rows[tg][1]))
+            if bins is not None and (c.clip, tg) not in marked and any(bins[HIST_BIN_LONG:]):
+                res.anomalies.append("clip %03d: #HIST %s has %d waits in bin %d or above (256 "
+                                     "or more $FF polls) (RE-RUN)" % (
+                                         c.clip, tg, sum(bins[HIST_BIN_LONG:]), HIST_BIN_LONG))
     nh = sum(1 for c in clips for tg in nxbtags.NXB_HIST_TAGS if tg in c.hist)
     res.checks.append("histograms: %d, every one sums to its row's reps unless listed" % nh)
 
@@ -697,22 +715,24 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None):
             continue
         kmax = max(i for i, b in enumerate(bins) if b)
         ratio = c.t["ARSE"] / c.t.get("RSEC", rsec_m)
-        tops.append((kmax, _bin_polls(kmax)[1] * POLL_T * ratio, c.clip))
+        tops.append((kmax, _wait_t(wait_shape, _bin_polls(kmax)[1]) * ratio, c.clip))
     if not tops:
         raise FitError("no AHST histogram")
     top = max(k for k, _, _ in tops)
     res.stall, res.stall_top = max((v, (top, clip)) for k, v, clip in tops if k == top)
+
+    def wait_sum(hists):
+        return sum(sum(cnt * _wait_t(wait_shape, _bin_polls(k)[2]) for k, cnt in enumerate(b))
+                   for b in hists)
     for form in FORMS:
         fc = [c for c in clips if c.form == form]
         ah = [c.hist["AHST"] for c in fc if "AHST" in c.hist]
         n = sum(sum(b) for b in ah)
-        polls = sum(sum(cnt * _bin_polls(k)[2] for k, cnt in enumerate(b)) for b in ah)
-        res.wait[form] = polls / n * POLL_T * res.duty[form] if n else None
+        res.wait[form] = wait_sum(ah) / n * res.duty[form] if n else None
         res.hsum["AHST " + form] = [sum(b[k] for b in ah) for k in range(nxbtags.NXB_HIST_BINS)]
     rh = [c.hist["RHST"] for c in clips if "RHST" in c.hist]
     n = sum(sum(b) for b in rh)
-    res.wait["unarmed"] = (sum(sum(cnt * _bin_polls(k)[2] for k, cnt in enumerate(b))
-                               for b in rh) / n * POLL_T) if n else None
+    res.wait["unarmed"] = wait_sum(rh) / n if n else None
     res.hsum["RHST"] = [sum(b[k] for b in rh) for k in range(nxbtags.NXB_HIST_BINS)]
 
     # Handler cost per interrupt: (armed - SPN0) / (armed rep T / CTC period).
@@ -950,10 +970,11 @@ def report(res, readouts=None):
         add(sound_note(res, form))
     top, sclip = res.stall_top
     lo, hi, _ = _bin_polls(top)
+    p1, p = WAIT_SHAPES[res.wait_shape]
+    edge = "%d x %d T" % (hi, p) if p1 == p else "%d polls (%d + %d x %d T)" % (hi, p1, p, hi - 1)
     add("")
-    add("RAW_STALL_T = %.2f T: highest occupied AHST bin %d (%d-%d polls), upper edge %d x "
-        "%d T x ARSE/RSEC (clip %03d) [AHST, ARSE, RSEC]" % (res.stall, top, lo, hi, hi,
-                                                            POLL_T, sclip))
+    add("RAW_STALL_T = %.2f T: highest occupied AHST bin %d (%d-%d polls), upper edge %s "
+        "x ARSE/RSEC (clip %03d) [AHST, ARSE, RSEC]" % (res.stall, top, lo, hi, edge, sclip))
     add("mean token wait (bins at their mean poll count): unarmed %.2f T [RHST]; armed "
         "stereo %.2f T, mono %.2f T [AHST x ARSE/RSEC]" % (
             res.wait["unarmed"], res.wait["stereo"], res.wait["mono"]))
@@ -1160,8 +1181,13 @@ def report(res, readouts=None):
     add("")
     add("## Histograms (summed over clips)")
     add("")
-    add("bin k counts token waits of 2^(k-1) to 2^k - 1 $FF polls (bin 0: the token on the "
-        "first read); a poll is %d T unarmed, %d x ARSE/RSEC armed." % (POLL_T, POLL_T))
+    if p1 == p:
+        add("bin k counts token waits of 2^(k-1) to 2^k - 1 $FF polls (bin 0: the token on the "
+            "first read); a poll is %d T unarmed, %d x ARSE/RSEC armed." % (p, p))
+    else:
+        add("bin k counts token waits of 2^(k-1) to 2^k - 1 $FF polls (bin 0: the token on the "
+            "first read; bin %d: 256 or more); n polls wait %d + %d x (n - 1) T unarmed, that x "
+            "ARSE/RSEC armed (wait shape %s)." % (HIST_BIN_LONG, p1, p, res.wait_shape))
     add("")
     add("| histogram | bin | polls | wait T | count |")
     add("|---|---|---|---|---|")
@@ -1171,7 +1197,8 @@ def report(res, readouts=None):
             if cnt:
                 lo, hi, _ = _bin_polls(k)
                 add("| %s | %d | %d-%d | %.1f-%.1f | %d |" % (
-                    name, k, lo, hi, lo * POLL_T * scale, hi * POLL_T * scale, cnt))
+                    name, k, lo, hi, _wait_t(res.wait_shape, lo) * scale,
+                    _wait_t(res.wait_shape, hi) * scale, cnt))
         add("| %s | all | | | %d |" % (name, sum(bins)))
     add("")
     add("## Old layout vs raw")
@@ -1361,6 +1388,11 @@ def selftest():
         log.write_bytes(synth_log(marks=marks, stale_after=68).encode("ascii"))
         res = fit(read_sections(log), reps=SYNTH_REPS)
         report(res)
+        res_s1 = fit(read_sections(log), reps=SYNTH_REPS, wait_shape="sitting1")
+        text_s1 = report(res_s1)
+        b9 = Path(tmp) / "BIN9.TXT"
+        b9.write_bytes(synth_log(P=dict(SYNTH, stall_bin={63: 9})).encode("ascii"))
+        res_b9 = fit(read_sections(b9), reps=SYNTH_REPS)
         bad = Path(tmp) / "BAD.TXT"
         bad.write_bytes(synth_log(distort=(62, "ARSW", 1.03)).encode("ascii"))
         res_bad = fit(read_sections(bad), reps=SYNTH_REPS)
@@ -1441,8 +1473,21 @@ def selftest():
     check(_near(res.handler["old"], P["old_handler"]), "old handler %.3f" % res.handler["old"])
     rsec = SECTOR_INI_T + P["ts"] + H_CARD
     arse = (P["ts"] + 512 * P["k"]["stereo"]["tb"]) * rsec / (rsec - H_CARD)
-    want_stall = (2 ** 3 - 1) * POLL_T * arse / rsec
-    check(_near(res.stall, want_stall), "RAW_STALL_T %.3f vs %.3f" % (res.stall, want_stall))
+    # bin to T by wait shape: inline 22 + 47 (n - 1), sitting 1 48 n; bin 3's upper edge 7
+    check([_wait_t("inline", n) for n in (0, 1, 3, 7)] == [0, 22, 116, 304]
+          and [_wait_t("sitting1", n) for n in (0, 1, 3, 7)] == [0, 48, 144, 336],
+          "wait T by shape")
+    for shape, r in (("inline", res), ("sitting1", res_s1)):
+        p1 = WAIT_SHAPES[shape][0]
+        want_stall = _wait_t(shape, 2 ** 3 - 1) * arse / rsec
+        check(_near(r.stall, want_stall), "%s RAW_STALL_T %.3f vs %.3f" % (shape, r.stall,
+                                                                           want_stall))
+        check(_near(r.wait["unarmed"], p1), "%s unarmed mean wait %.3f vs %d (bin 1 only)" % (
+            shape, r.wait["unarmed"], p1))
+    check("22 + 47 x (n - 1)" in text and "a poll is 48 T" in text_s1,
+          "the histogram header gives the shape")
+    check(any("063" in a and "bin 9" in a for a in res_b9.anomalies) and exit_status(res_b9) == 1,
+          "a wait in bin 9 is a RE-RUN anomaly: %r" % res_b9.anomalies)
     check(_near(res.col_unarmed, P["tc_unarmed"]), "unarmed column end %.3f" % res.col_unarmed)
     check(res.period == per, "CTC period %d" % res.period)
     check([(s.clip, s.failure) for s in res.excluded] == [(59, "VID FILE?")],
@@ -1469,6 +1514,9 @@ def main(argv=None):
     ap.add_argument("--clips", help="folder holding the NNN.VID fixtures (read only)")
     ap.add_argument("--nr11", type=int, default=0, help="NR $11 of the sitting (default 0)")
     ap.add_argument("--playback", help="playback.md with the leg B readout table")
+    ap.add_argument("--wait-shape", choices=sorted(WAIT_SHAPES), default="inline",
+                    help="token wait T per $FF poll: inline (first 22, then 47) or sitting1 "
+                         "(48 each, the sitting-1 bench)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
@@ -1476,7 +1524,8 @@ def main(argv=None):
     if not a.log:
         ap.error("a log path or --selftest")
     try:
-        res = fit(read_sections(a.log), nr11=a.nr11, clips_dir=a.clips and Path(a.clips))
+        res = fit(read_sections(a.log), nr11=a.nr11, clips_dir=a.clips and Path(a.clips),
+                  wait_shape=a.wait_shape)
         readouts = read_playback(a.playback) if a.playback else None
     except (nxbparse.LogError, FitError) as e:
         sys.stderr.write("error: %s\n" % e)

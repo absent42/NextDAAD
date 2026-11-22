@@ -3842,7 +3842,7 @@ NXB_RW_SREPS     equ 512     ; spin reps
 NXB_RW_SPIN      equ 2000    ; count-loop passes per spin rep
 NXB_RW_MIN       equ 5000    ; a card row needs this many blocks left
     ASSERT NXB_RW_MIN > NXB_RW_HREPS + 1 && NXB_RW_MIN > NXB_RW_REPS + 1
-NXB_HIST_BINS    equ 17      ; bin k: waits whose $FF poll count has bit length k
+NXB_HIST_BINS    equ 17      ; bin k: waits whose $FF poll count has bit length k (9: 256+)
 NXB_HIST_MAX     equ 2       ; histogram rows the log step carries
 NXB_HIST_LEN     equ 4 + 2 * NXB_HIST_BINS   ; nxbHistSav entry: tag, bins
 NXB_HIST_TXT     equ 6 + 4 + 5 * NXB_HIST_BINS   ; "#HIST tttt" and " hhhh" per bin
@@ -4397,8 +4397,8 @@ nxb_ofrd:
     jp dbg_hex16
 
 ; Long clock (+3 timing, NR $64 = 0): line 0 is vc 64, stepping at hc 124;
-; frameCounter ticks at vc 1 hc 126, 8 T into line 248. Start: wait for
-; lines 8-239, then fc0, then line0 (nxbL0, HL). Corrupts AF, BC, DE, HL.
+; frameCounter ticks at vc 1 hc 126, 8 T into line 248. Start: lines 8-239,
+; fc0, line0 (nxbL0, HL). Corrupts AF, DE, HL; keeps BC (RW1 card rows rely on C).
 nxb_lc_start:
     xor a
     ld (nxbLcBad), a
@@ -4443,7 +4443,7 @@ nxb_lc_end:
 
 ; Poll the raster until lines NXB_LC_LO-NXB_LC_HI, at most 65536 polls
 ; (about 30 fields): a timeout sets nxbLcBad instead of hanging. Corrupts
-; AF, BC, DE, HL.
+; AF, DE, HL; keeps BC (RW1 card rows rely on C).
 nxb_lc_wait:
     ld de, 0
 .poll:
@@ -5129,15 +5129,17 @@ vid_raw_frame:
     jp vid_dec_abort_pos
 
 ; Open a frame's first sector (CRC if due). Preserves HL. Out: C =
-; PORT_SPI_DAT, vidDsCrcDue = 1. Corrupts AF, DE, B. Faults abort.
+; PORT_SPI_DAT, vidDsCrcDue = 1. Corrupts AF, B, DE. Faults abort.
 vr_sector:
+    ld c, PORT_SPI_DAT           ; the schedule's C from here on
     ld a, (vidDsCrcDue)
     or a
     ld a, 1
     ld (vidDsCrcDue), a          ; flags kept: Z = no CRC pends
     jr z, vr_sector_n.nocrc
-; Open sectors 2..n (a CRC always pends; vidDsCrcDue untouched). Same
-; contract. Faults (run walk, token) abort via vid_dec_abort_pos.
+; Open sectors 2..n (a CRC always pends; vidDsCrcDue untouched). In: C =
+; PORT_SPI_DAT (kept; reloaded after a walk or vid_sd_tok_h). Preserves HL.
+; Corrupts AF, B, DE. Faults (run walk, token) abort via vid_dec_abort_pos.
 vr_sector_n:
     in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart, as blkopen
     nop
@@ -5156,19 +5158,33 @@ vr_sector_n:
 .run:
     dec de
     ld (vidStrmRunBlkH), de
-    call vid_sd_tok_h            ; corrupts AF, BC
+    in a, (PORT_SPI_DAT)         ; poll 1 (the card's $FF), 72 T after CRC 2 in Release
+    inc a
+    jr nz, .p1
+.p:
+    in a, (PORT_SPI_DAT)         ; 22 T after poll 1, then 47 T apart
+    cp $FE
+    ret z
+    inc a
+    jr nz, .tokf
+    djnz .p                      ; B scrap: B (0: 256) polls, then the long wait
+    call vid_sd_tok_h            ; 65536 polls more (rubric 6); corrupts BC
     jr c, .tokf
     ld c, PORT_SPI_DAT
     ret
+.p1:
+    cp $FF                       ; A = byte + 1: the token on poll 1
+    ret z
+.tokf:
+    ld a, VID_ERR_TOKEN
+    jp vid_dec_abort_pos
 .walk:
     push hl
     call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
     ex de, hl                    ; DE = the fresh run's blocks
     pop hl
+    ld c, PORT_SPI_DAT           ; the walk corrupts BC
     jr nc, .run
-    jp vid_dec_abort_pos
-.tokf:
-    ld a, VID_ERR_TOKEN
     jp vid_dec_abort_pos
 
 ; Schedule page end: map the next back-surface page at MMU2.
@@ -5395,11 +5411,14 @@ nxb_rw_col:
 nxb_rh_body:
     ld hl, VR_SCRATCH
     call nxb_rh_sec
+    call nxb_rh_bin
     jp VR_SLIDE
 
-; vr_sector_n with nxb_rh_tok for vid_sd_tok_h (same call, so the first poll
-; is as far from the CRC). Preserves HL; C = PORT_SPI_DAT. Faults abort.
+; vr_sector_n's quiet open, CRC 1 through djnz .p, B counting the loop polls.
+; Out: A = $FF (token on poll 1) or $FE, B. Preserves C (reloaded after a walk
+; or vid_sd_tok_h), HL. Corrupts DE. Faults abort.
 nxb_rh_sec:
+    ld b, 0                      ; before CRC 1: outside every gap
     in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart
     nop
     in a, (PORT_SPI_DAT)
@@ -5410,46 +5429,54 @@ nxb_rh_sec:
 .run:
     dec de
     ld (vidStrmRunBlkH), de
-    call nxb_rh_tok
-    jp c, vr_sector_n.tokf
-    ld c, PORT_SPI_DAT
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr nz, .p1
+.p:
+    in a, (PORT_SPI_DAT)
+    cp $FE
+    ret z
+    inc a
+    jr nz, .tokf
+    djnz .p
+    call vid_sd_tok_h            ; corrupts BC; A = $FE on success
+    jr c, .tokf
+    ld bc, $100 + PORT_SPI_DAT   ; B = 1: counted as 256 polls
     ret
+.p1:
+    cp $FF
+    ret z
+.tokf:
+    jp vr_sector_n.tokf          ; out of jr range: a local target keeps the loop's T
 .walk:
     push hl
     call vid_run_walk_h          ; CF: A = VID_ERR_SHORT / VID_ERR_CMD
     ex de, hl
     pop hl
+    ld bc, PORT_SPI_DAT          ; the walk corrupts BC; B = 0 restarts the count
     jr nc, .run
     jp vid_dec_abort_pos
 
-; vid_sd_tok_h's 48 T wait with its $FF polls counted into nxbHistBin by bit
-; length. CF set = bad or absent token. Preserves HL. Corrupts AF, DE.
-nxb_rh_tok:
-    ld de, 0
-.w:
-    in a, (PORT_SPI_DAT)
-    inc a
-    jr nz, .got
-    inc de
-    ld a, d
-    or e
-    jr nz, .w
-    scf                          ; 65536 polls (rubric 6)
-    ret
-.got:
-    cp $FF                       ; A = byte + 1: CF set unless the $FE token
-    ret nz
+; Count one wait into nxbHistBin: A = $FF bin 0, else bin bitlength(n), n =
+; (0 - B) mod 256 + 1 polls ($FF bytes). Preserves BC, HL. Corrupts AF, DE.
+nxb_rh_bin:
     push hl
     ld hl, nxbHistBin
+    inc a
+    jr z, .bd                    ; the token on poll 1
+    xor a
+    sub b
+    ld e, a
+    ld d, 0
+    inc de                       ; DE = n, 1..256
 .bl:
-    ld a, d
-    or e
-    jr z, .bd
+    inc hl
+    inc hl
     srl d
     rr e
-    inc hl
-    inc hl
-    jr .bl
+    ld a, d
+    or e
+    jr nz, .bl
 .bd:
     inc (hl)
     jr nz, .bx
@@ -5457,7 +5484,6 @@ nxb_rh_tok:
     inc (hl)
 .bx:
     pop hl
-    or a
     ret
 
 ; SPIN rep: a fixed count loop, no card: the armed handler's cost alone.
