@@ -5,9 +5,10 @@ Fits T = Spix (512 tb F + ts) + Ssnd tsnd + C tc + tf + P tp + stall per sound f
 after taking the tracked bench harness out of every row (nxv2_bench_rows
 RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T).
 
-Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N]
+Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback FILE]
        python tests/raw_fit.py --selftest
-Exit 0 when every residual is within ACCEPT_PCT, 1 when not, 2 on a log or fit error.
+Exit 0 when every residual is within ACCEPT_PCT and no row is listed for a RE-RUN, 1 when
+not, 2 on a log or fit error.
 """
 import argparse
 import re
@@ -62,8 +63,29 @@ TARGETS = ((256, 192, 25), (320, 160, 25), (320, 192, 25), (280, 224, 25),
 RW1_TAGS = benchlog.table_tags("NXBW")
 DS1_TAGS = benchlog.table_tags("NXBD")
 RW1_REPS = {r[0]: r[3] for r in benchrows.SESSION_TABLES["RW1"] if r[0] in RW1_TAGS}
-MONO_NOTE = ("note: mono RAW_SND_SECTOR_T rests on clip 074 alone (its third sector is "
-             "nearly all pad); valid for 2-sector shapes, not general")
+OTHER_LAYOUT_PCT = 0.5       # allowance for sound layouts outside the fitted pairs
+
+
+def sound_note(res, form):
+    """The note printed with a form's sound constants: what fixes them, where they hold."""
+    groups = {}
+    for c, s, _ in res.lsq[form]:
+        groups.setdefault(s, []).append(c)
+    desc = ", ".join("Ssnd %d: %s" % (s, " ".join("%03d" % c for c in v))
+                     for s, v in sorted(groups.items()))
+    lone = [(s, v[0]) for s, v in sorted(groups.items()) if len(v) == 1]
+    if len(groups) == 2:
+        how = "are fixed exactly by the two groups' means (%s)" % desc
+        if lone:
+            how += "; %03d's residual is 0 by construction" % lone[0][1]
+    else:
+        how = "rest on %d groups for two constants, %d degree(s) of freedom (%s)" % (
+            len(groups), len(groups) - 2, desc)
+    fps = sorted({res.clips[c].shape[2] for c, _, _ in res.lsq[form]}, reverse=True)
+    return ("note: %s sound constants %s; valid for the fitted pairs only (%s at %s fps); "
+            "elsewhere allow about %.1f percent" % (form, how, form,
+                                                    ", ".join("%g" % f for f in fps),
+                                                    OTHER_LAYOUT_PCT))
 
 
 class FitError(Exception):
@@ -74,16 +96,99 @@ def form_of(channels):
     return "stereo" if channels == 2 else "mono"
 
 
+def inc_equ(name):
+    """An equ value from src/nextdaad.inc (decimal or $hex)."""
+    for line in (REPO / "src" / "nextdaad.inc").read_text(encoding="latin-1").splitlines():
+        p = line.split()
+        if p[:2] == [name, "equ"]:
+            return int(p[2][1:], 16) if p[2].startswith("$") else int(p[2])
+    raise FitError("%s is not in src/nextdaad.inc" % name)
+
+
 def ctc_period():
     """(prescaler, time constants by NR $11 & 7) as the player sets CTC 0: AUD_CTC_CW16
     bit 5 picks /16 or /256; vidCtcTcNxvStereo holds the time constants."""
-    inc = (REPO / "src" / "nextdaad.inc").read_text(encoding="latin-1")
-    cw = next(l for l in inc.splitlines() if l.split()[:2] == ["AUD_CTC_CW16", "equ"])
-    pre = 256 if int(cw.split()[2].lstrip("$"), 16) & 0x20 else 16
+    pre = 256 if inc_equ("AUD_CTC_CW16") & 0x20 else 16
     asm = (REPO / "src" / "video.asm").read_text(encoding="latin-1").splitlines()
     at = next(i for i, l in enumerate(asm) if l.startswith("vidCtcTcNxvStereo:"))
     tcs = [int(x) for x in asm[at + 1].split(None, 1)[1].split(",")]
     return pre, tcs
+
+
+FIELD_T = LPF * T_LINE
+# Plain DEBUG (IFNDEF NXB_QUIET) base T absent from the -BenchQuiet rows, Zilog T counted
+# from src/video.asm (NEXTREG A,n read 13 T); vid_rl_poll runs once per VID_RL_DIV arms.
+DBG = dict(
+    arm=40,          # divider arm: ld a,(nn) / dec a / ld (nn),a / call z, not taken
+    rl_poll=231,     # vid_rl_poll body, plus 7 T for the call z taken
+    sector=86,       # vr_sector_n: ld d,0 / call vid_dst_norm_flat / its arm / ld a,d, cp, ret c
+    token=177,       # vid_sd_tok_h .got poll counter
+    play_frame=179,  # call vid_play_frame, the armed path
+    late=174,        # call vid_dbg_late, a late frame, MAXL not raised
+    urun=402,        # call vid_dbg_urun and its vid_pace_poll (raw .rd), a late frame
+)
+
+
+def debug_work(res, g, form):
+    """Plain DEBUG T on a late frame's path, armed (1 / (1 - handler / CTC period)).
+    Pump passes a frame are estimated: one chunk, one more on a ring-tail wrap, the last."""
+    am = res.period / (res.period - res.handler[form])
+    rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
+    pix = DBG["sector"] + DBG["token"] + rl
+    snd = DBG["arm"] + DBG["token"] + rl
+    passes = 2 + g.real / inc_equ("NXV_AUD_RING")
+    frame = (DBG["play_frame"] + DBG["arm"] + rl + DBG["late"] + DBG["urun"] + rl
+             + passes * (DBG["arm"] + rl))
+    return SimpleNamespace(pix=pix, snd=snd, frame=frame, passes=passes, armed=am,
+                           total=am * (g.spix * pix + g.ssnd * snd + frame), pal=am * pix)
+
+
+def ring_play(frames, work, work0, real, channels, tick, ring, guard, chunk):
+    """vid_run's frame loop against the CTC 0 reader: release on consumption with the deficit
+    clamp (.pace/.paced), .ffin waits for ring room, .qnext pumps what vid_aud_pump's room
+    test and chunk floor allow. -> (T from frame 0's loop top to the drain release, waits)."""
+    def rd(t):
+        return channels * int(t // tick)
+
+    def until(target):
+        return tick * -(-target // channels)
+
+    t, wr, seen, rem, feed, laps = 0.0, real, 0, 0, 0, 0
+    for f in range(frames):
+        now = rd(t)
+        rem -= now - seen
+        seen = now
+        if rem > 0:
+            t = max(t, until(seen + rem))
+            now = rd(t)
+            rem -= now - seen
+            seen = now
+        rem += real
+        if rem <= 0:
+            rem = real
+        if feed:
+            short = (wr - rd(t)) % ring - (ring - guard - feed)
+            if short > 0:
+                t = max(t, until(rd(t) + short))
+                laps += 1
+            wr += feed
+            feed = 0
+        t += work0 if f == 0 else work
+        if f == frames - 1:
+            break
+        room = ring - guard - (wr - rd(t)) % ring
+        if room >= real:
+            wr += real
+        elif room >= chunk or 0 < room and real < chunk:
+            wr += room
+            feed = real - room
+        else:
+            feed = real
+    now = rd(t)
+    rem -= now - seen
+    if rem > 0:
+        t = max(t, until(now + rem))
+    return t, laps
 
 
 def geometry(width, height, fps, channels):
@@ -158,12 +263,13 @@ def _row_line(tag, o, r, f, d):
     return "%s O=%02X R=%04X F=%04X D=%04X" % (tag, o, r, f, d & 0xFFFF)
 
 
-def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None):
+def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swap=None):
     """NXBENCH.TXT text: one NXBW capture per fixture clip, then an NXBD capture on
     clip 10. marks: (clip, tag) rows printed with O = 01 and T x 1.05; stale_after:
     a clip followed by a PICK 59 capture that prints VID FILE? over the old rows;
     distort: (clip, tag, factor) applied to an unmarked row; short: (clip, tag) printed
-    as the NXB SHORT marker in place of the row."""
+    as the NXB SHORT marker in place of the row; swap: a clip whose ASPN carries the
+    other form's handler."""
     out, stamp = [], 0x0600
 
     def cap(lines):
@@ -175,6 +281,9 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None):
     for n, clip in enumerate(sorted(FIXTURES)):
         w, h, fps, ch, frames = FIXTURES[clip]
         t = synth_t(clip, P)
+        if clip == swap:
+            pre, tcs = ctc_period()
+            t["ASPN"] = P["spn0"] / (1 - P["handler"][form_of(3 - ch)] / (pre * tcs[0]))
         body = ["What now?", ">pick %d" % clip,
                 "Clip %d armed - GO plays once, LOOP loops." % clip, "What next?", ">nxbw",
                 _row_line("IDEN", 2, frames, w, h & 0xFF)]
@@ -614,30 +723,108 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None):
         res.handler[name] = _mean(vals)
         res.handler_spread[name] = (min(vals), max(vals), len(vals))
         res.handler_n[name] = _mean(c.t[tg] / res.period for c in hc)
+    # Per clip: a stereo/mono twin with the wrong channel label shows the other handler.
+    hcs = {c.clip: (c.t["ASPN"] - c.t["SPN0"]) * res.period / c.t["ASPN"]
+           for c in clips if "ASPN" in c.t and "SPN0" in c.t}
+    res.handler_clip = hcs
+    for form in FORMS:
+        _peer(res, "handler (%s)" % form, {k: v for k, v in hcs.items()
+                                           if res.clips[k].form == form})
+    for k, v in sorted(hcs.items()):
+        own, other = res.clips[k].form, FORMS[1 - FORMS.index(res.clips[k].form)]
+        if abs(v - res.handler[other]) < abs(v - res.handler[own]):
+            res.anomalies.append("clip %03d: handler %.1f T is nearer the %s figure %.1f T "
+                                 "than the %s %.1f T: channel label? (RE-RUN)" % (
+                                     k, v, other, res.handler[other], own, res.handler[own]))
     res.col_unarmed = _mean((c.t["RCOL"] - c.t["RSEC"]) / COL_ENDS
                             for c in clips if "RCOL" in c.t and "RSEC" in c.t)
     return res
 
 
-def utilisation(res, w, h, fps, form, stall=0.0):
-    """Worst frame (palette sector included) plus glue over the plan's period."""
+def exit_status(res):
+    """0 when acceptance passes and no row is listed for a RE-RUN, else 1."""
+    return 0 if res.accepted and not res.anomalies else 1
+
+
+def asm_line(label):
+    """1-based line of a label in src/video.asm; parent.local for a local label."""
+    lines = (REPO / "src" / "video.asm").read_text(encoding="latin-1").splitlines()
+    parent, _, local = label.partition(".")
+    i = next(n for n, l in enumerate(lines) if l.startswith(parent + ":"))
+    if local:
+        i = next(n for n in range(i + 1, len(lines)) if lines[n].startswith("." + local + ":"))
+    return i + 1
+
+
+def utilisation(res, w, h, fps, form, stall=0.0, palette=True):
+    """Worst frame (palette sector unless palette=False) plus glue over the sound period,
+    samples x CTC period: the frame loop releases on sound consumption (vid_pace_poll)."""
     g = geometry(w, h, fps, 2 if form == "stereo" else 1)
-    m = nxv2enc.raw_model_t(g.spix, g.ssnd, g.cols, True, res.k[form], 1.0, stall)
-    period = PERIOD_NUM / fps
-    return SimpleNamespace(geo=g, model=m["total_t"], total=m["total_t"] + GLUE_T,
-                           period=period, util=(m["total_t"] + GLUE_T) / period,
-                           snd_period=g.samples * res.period,
-                           snd_util=(m["total_t"] + GLUE_T) / (g.samples * res.period))
+    m = nxv2enc.raw_model_t(g.spix, g.ssnd, g.cols, palette, res.k[form], 1.0, stall)
+    total = m["total_t"] + GLUE_T
+    period = g.samples * res.period
+    return SimpleNamespace(geo=g, terms=m, model=m["total_t"], total=total, period=period,
+                           util=total / period, ref_period=PERIOD_NUM / fps,
+                           ref_util=total * fps / PERIOD_NUM)
+
+
+def largest_height(res, w, fps, form, palette=True):
+    """(height, util) of the tallest admitted picture of width w, heights 256 down to 1."""
+    for h in range(256, 0, -1):
+        try:
+            u = utilisation(res, w, h, fps, form, palette=palette)
+        except SystemExit:
+            continue
+        if u.util <= 1.0:
+            return h, u.util
+    return 0, None
+
+
+def pad_aware(res):
+    """Diagnostic only: y = A + S x Ssnd + d x real bytes on the gate fit's points. Mono
+    fits all three; stereo also with d = mono d x armed ratio (its bytes track Ssnd)."""
+    import numpy as np
+    out = {}
+    for form in FORMS:
+        pts = [(s, y, res.clips[c].geo.real) for c, s, y in res.lsq[form]]
+        a = np.array([[1, s, r] for s, _, r in pts], float)
+        b = np.array([y for _, y, _ in pts])
+        x = np.linalg.lstsq(a, b, rcond=None)[0]
+        out[form] = dict(A=x[0], S=x[1], d=x[2], cond=np.linalg.cond(a), resid=a @ x - b)
+    am = {f: res.period / (res.period - res.handler[f]) for f in FORMS}
+    d = out["mono"]["d"] * am["stereo"] / am["mono"]
+    pts = [(s, y - d * res.clips[c].geo.real) for c, s, y in res.lsq["stereo"]]
+    a0, s0 = _lsq(pts)
+    out["stereo_d"] = dict(A=a0, S=s0, d=d, resid=[a0 + s0 * s - y for s, y in pts])
+    return out
+
+
+def read_playback(path):
+    """Leg B readouts: the first table with Step, Clip and PLAY columns; rows whose Clip is
+    a 3-digit number and PLAY 4 hex digits -> [{column: cell}]."""
+    head, out = None, []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            if head is not None:
+                break
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if head is None:
+            if {"Step", "Clip", "PLAY"} <= set(cells):
+                head = cells
+            continue
+        row = dict(zip(head, cells))
+        if re.fullmatch(r"\d{3}", row.get("Clip", "")) and \
+                re.fullmatch(r"[0-9A-F]{4}", row.get("PLAY", "")):
+            out.append(row)
+    return out
 
 
 def _fmt_shape(w, h, fps):
     return "%dx%d@%g" % (w, h, fps)
 
 
-DEBUG_SECTOR_T = 86   # plain DEBUG vr_sector_n: ld d,0 / call vid_dst_norm_flat (PLAY divider)
-
-
-def report(res):
+def report(res, readouts=None):
     o = []
     add = o.append
     pre, tc, nr11 = res.ctc
@@ -760,8 +947,7 @@ def report(res):
             + "; ".join("%03d %d %.1f" % p for p in res.lsq[form]))
         add("  tp per clip: " + "; ".join("%03d %.1f" % kv for kv in sorted(
             res.tps[form].items())))
-        if form == "mono":
-            add(MONO_NOTE)
+        add(sound_note(res, form))
     top, sclip = res.stall_top
     lo, hi, _ = _bin_polls(top)
     add("")
@@ -823,23 +1009,78 @@ def report(res):
     add("acceptance: %s (largest |residual| %.3f%%)" % (
         "PASS" if res.accepted else "FAIL", res.max_resid))
     add("")
+    add("## Sound term (diagnostic; the gate is unchanged)")
+    add("")
+    for form in FORMS:
+        add("- " + sound_note(res, form)[len("note: "):])
+    pa = pad_aware(res)
+    m, s, s2 = pa["mono"], pa["stereo"], pa["stereo_d"]
+    add("- pad-aware fit y = A + S x Ssnd + d x real bytes, on the gate fit's points:")
+    add("  - mono: A %.1f, S %.1f, d %.2f T a sound byte (a pad byte costs %.2f T more than a "
+        "sound byte); residuals %s T" % (m["A"], m["S"], m["d"], -m["d"],
+                                         " ".join("%+.0f" % v for v in m["resid"])))
+    add("  - stereo, all three free: A %.1f, S %.1f, d %.2f (condition number %.0f: the "
+        "clips' sound bytes, %s, track Ssnd)" % (s["A"], s["S"], s["d"], s["cond"], ", ".join(
+            sorted({"%d" % res.clips[c].geo.real for c, _, _ in res.lsq["stereo"]}))))
+    add("  - stereo with d = mono d x armed ratio = %.2f: A %.1f, S %.1f; residuals %s T" % (
+        s2["d"], s2["A"], s2["S"], " ".join("%+.0f" % v for v in s2["resid"])))
+    add("  - code: vid_ds_pad .d (video.asm:%d) discards a pad byte in 37 T (in 11, dec hl 6, "
+        "ld a,h 4, or l 4, jr nz 12); vid_ds_xfer (video.asm:%d) moves a sound byte by ini, "
+        "16 T plus 14 T a 32-byte pass, about 16.4 T: about 20.6 T more a pad byte, unarmed"
+        % (asm_line("vid_ds_pad.d"), asm_line("vid_ds_xfer")))
+    add("- mono RAW_FRAME_T %.2f T and mono RAW_SND_SECTOR_T %.2f T (%.2f x stereo's %.2f T) "
+        "come from one term a sector fitted to costs that follow sound against pad bytes: they "
+        "are not physical costs." % (res.k["mono"]["tf"], res.k["mono"]["tsnd"],
+                                     res.k["mono"]["tsnd"] / res.k["stereo"]["tsnd"],
+                                     res.k["stereo"]["tsnd"]))
+    add("")
+    add("gate sound term (Ssnd x tsnd + tf) against the pad-aware fit for other sound layouts "
+        "(mono: its fit; stereo: d scaled); err = gate - fit, negative = the gate under-prices:")
+    add("")
+    add("| form | fps | sound B | Ssnd | pad B | gate T | fit T | err T | err % of period | "
+        "fitted pair |")
+    add("|---|---|---|---|---|---|---|---|---|---|")
+    fitted = {f: {res.clips[c].shape[2] for c, _, _ in res.lsq[f]} for f in FORMS}
+    worst = 0.0
+    for form, ch, fa in (("mono", 1, m), ("stereo", 2, s2)):
+        for fps in (30, 25, 20, 16.67, 15.2587890625, 12.5, 10.5):
+            try:
+                g = geometry(256, 192, fps, ch)
+            except SystemExit:
+                continue
+            gate = g.ssnd * res.k[form]["tsnd"] + res.k[form]["tf"]
+            fit_t = fa["A"] + fa["S"] * g.ssnd + fa["d"] * g.real
+            pct = 100.0 * (gate - fit_t) / (g.samples * res.period)
+            if fps not in fitted[form]:
+                worst = max(worst, abs(pct))
+            add("| %s | %g | %d | %d | %d | %.0f | %.0f | %+.0f | %+.2f | %s |" % (
+                form, fps, g.real, g.ssnd, g.padded - g.real, gate, fit_t, gate - fit_t, pct,
+                "yes" if fps in fitted[form] else "no"))
+    add("")
+    add("largest |err| outside the fitted pairs: %.2f percent of the period" % worst)
+    add("")
     add("## Utilisation of the target shapes")
     add("")
-    add("worst frame (palette sector included) + glue %.1f T (glue_t / audio_factor), over "
-        "the plan's period %d / fps T; F = 1.0." % (GLUE_T, PERIOD_NUM))
+    add("period = samples a frame x %d T: vid_run releases a frame when the CTC reader has "
+        "consumed the previous frame's sound (vid_pace_poll at .pace, video.asm:%d; the "
+        "deficit clamp at .paced, video.asm:%d), not on fields. Worst frame (palette sector) "
+        "+ glue %.1f T (glue_t / audio_factor); F = 1.0. The last column is the two-field "
+        "period %d / fps, for reference only." % (
+            res.period, asm_line("vid_run.pace"), asm_line("vid_run.paced"), GLUE_T,
+            PERIOD_NUM))
     add("")
     add("| shape | form | Spix | Ssnd | C | model T | period T | util | util with stall | "
-        "ref: util, no palette sector |")
-    add("|---|---|---|---|---|---|---|---|---|---|")
+        "util, pixels-only frame | ref: util at two fields |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|")
     over, near = {f: [] for f in FORMS}, {f: [] for f in FORMS}
     for w, h, fps in TARGETS:
         for form in FORMS:
             u0 = utilisation(res, w, h, fps, form)
             u1 = utilisation(res, w, h, fps, form, res.stall)
-            nopal = (u0.total - res.k[form]["tp"]) / u0.period
-            add("| %s | %s | %d | %d | %d | %.0f | %.0f | %.4f | %.4f | %.4f |" % (
+            up = utilisation(res, w, h, fps, form, palette=False)
+            add("| %s | %s | %d | %d | %d | %.0f | %.0f | %.4f | %.4f | %.4f | %.4f |" % (
                 _fmt_shape(w, h, fps), form, u0.geo.spix, u0.geo.ssnd, u0.geo.cols, u0.model,
-                u0.period, u0.util, u1.util, nopal))
+                u0.period, u0.util, u1.util, up.util, u0.ref_util))
             for u, tag in ((u0, ""), (u1, " (with stall)")):
                 if u.util > 1.0:
                     over[form].append(_fmt_shape(w, h, fps) + tag)
@@ -851,16 +1092,47 @@ def report(res):
         add("%s within 10 percent of the limit (0.90 < util <= 1.00): %s" % (
             form, ", ".join(near[form]) or "none"))
     add("")
-    add("For reference, not the plan's figure: the frame loop releases a frame on its "
-        "sound (samples x CTC period):")
+    add("## Largest admitted height at 25 fps")
     add("")
-    add("| shape | form | samples | sound period T | util at the sound period |")
-    add("|---|---|---|---|---|")
-    for w, h, fps in TARGETS:
+    add("Heights 256 down to 1, util <= 1.00 at the sound period, glue added, F = 1.0.")
+    add("")
+    add("| width | form | palette frame: height | util | pixels-only frame: height | util |")
+    add("|---|---|---|---|---|---|")
+    for w in (320, 280, 256):
         for form in FORMS:
-            u0 = utilisation(res, w, h, fps, form)
-            add("| %s | %s | %d | %d | %.4f |" % (_fmt_shape(w, h, fps), form, u0.geo.samples,
-                                                 u0.snd_period, u0.snd_util))
+            h0, u0 = largest_height(res, w, 25, form)
+            h1, u1 = largest_height(res, w, 25, form, palette=False)
+            add("| %d | %s | %d | %.4f | %d | %.4f |" % (w, form, h0, u0, h1, u1))
+    add("")
+    add("## Budget of a 320x192@25 frame")
+    add("")
+    period = 625 * res.period
+    add("Period %d T (625 samples x %d T). Palette frame, F = 1.0." % (period, res.period))
+    add("")
+    add("| term | stereo T | stereo % | mono T | mono % |")
+    add("|---|---|---|---|---|")
+    us = {f: utilisation(res, 320, 192, 25, f) for f in FORMS}
+    hand = {f: us[f].terms["byte_t"] / res.period * res.handler[f] for f in FORMS}
+    rows = (("pixel bytes, Spix x 512 x tb", "byte_t"),
+            ("  of which the sound handler: (byte T / %d) interrupts x handler T" % res.period,
+             None),
+            ("per-sector overhead, Spix x ts", "sector_t"), ("column ends, C x tc", "col_t"),
+            ("sound sectors, Ssnd x tsnd", "snd_t"), ("frame remainder, tf", "frame_t"),
+            ("palette sector, tp", "pal_t"), ("glue", "glue"), ("total", "total"))
+    for name, key in rows:
+        cells = []
+        for f in FORMS:
+            u = us[f]
+            v = (hand[f] if key is None else GLUE_T if key == "glue" else
+                 u.total if key == "total" else u.terms[key])
+            cells += ["%.0f" % v, "%.2f" % (100.0 * v / period)]
+        add("| %s | %s |" % (name, " | ".join(cells)))
+    add("")
+    for f in FORMS:
+        add("- %s handler: one interrupt a sample, 625 a frame, %.2f T each = %.0f T a frame "
+            "(%.2f percent of the period, all terms together)" % (
+                f, res.handler[f], 625 * res.handler[f], 100.0 * res.handler[f] / res.period))
+    add("- 1.0 percent of a 25 fps period is %.0f T a frame." % (period / 100.0))
     add("")
     add("## Handlers, sectors, column ends")
     add("")
@@ -942,25 +1214,125 @@ def report(res):
             "stereo / mono | %.4f / %.4f |" % (nxv2enc.DIRECT_T_PER_B, res.k["stereo"]["tb"],
                                                 res.k["mono"]["tb"]))
     add("")
-    add("## Playback prediction (leg B clips)")
+    add("## Playback (leg B)")
     add("")
-    add("model: worst frame + glue over the plan's period; DEBUG column adds %d T a pixel "
-        "sector (plain DEBUG vr_sector_n PLAY divider; the DEBUG token-wait accumulator is "
-        "not priced). Admitted = util <= 1.00." % DEBUG_SECTOR_T)
+    shapes = {k: v[:4] for k, v in FIXTURES.items()}
+    shapes.update(PLAYBACK_ONLY)
+    if not readouts:
+        add("no leg B readouts given (--playback); the model's verdict per clip:")
+        add("")
+        add("| clip | shape | form | util | model |")
+        add("|---|---|---|---|---|")
+        for clip in sorted(shapes):
+            w, h, fps, ch = shapes[clip]
+            u = utilisation(res, w, h, fps, form_of(ch), res.stall)
+            add("| %03d | %s | %s | %.4f | %s |" % (clip, _fmt_shape(w, h, fps), form_of(ch),
+                                                  u.util, "admitted" if u.util <= 1 else
+                                                  "refused"))
+        return "\n".join(o) + "\n"
+    raw = [r for r in readouts if int(r["Clip"]) in shapes]
+    add("### Step 6: the model's verdict against LATE and URUN")
     add("")
-    add("| clip | shape | form | util | util with stall | DEBUG util | model | readout |")
-    add("|---|---|---|---|---|---|---|---|")
-    allc = {k: v[:4] for k, v in FIXTURES.items()}
-    allc.update(PLAYBACK_ONLY)
-    for clip in sorted(allc):
-        w, h, fps, ch = allc[clip]
+    add("model: the gate (Release instructions, palette frame, stall term) at the sound period; "
+        "admitted = util <= 1.00. On time = LATE 0000 and URUN 0000.")
+    add("")
+    add("| step | clip | shape | form | util | model | LATE | URUN | on time |")
+    add("|---|---|---|---|---|---|---|---|---|")
+    bad_adm, bad_ref = [], []
+    for r in raw:
+        clip = int(r["Clip"])
+        w, h, fps, ch = shapes[clip]
+        u = utilisation(res, w, h, fps, form_of(ch), res.stall)
+        ontime = int(r["LATE"], 16) == 0 and int(r["URUN"], 16) == 0
+        adm = u.util <= 1.0
+        if adm and not ontime:
+            bad_adm.append("%s %03d" % (r["Step"], clip))
+        if not adm and ontime:
+            bad_ref.append("%s %03d" % (r["Step"], clip))
+        add("| %s | %03d | %s | %s | %.4f | %s | %s | %s | %s |" % (
+            r["Step"], clip, _fmt_shape(w, h, fps), form_of(ch), u.util,
+            "admitted" if adm else "refused", r["LATE"], r["URUN"], "yes" if ontime else "no"))
+    add("")
+    add("admitted clips that showed LATE or URUN: %s" % (", ".join(bad_adm) or "none"))
+    add("refused clips that played on time: %s" % (", ".join(bad_ref) or "none"))
+    add("fixture clips with no readout row: %s" % (", ".join(
+        "%03d" % c for c in sorted(set(shapes) - {int(r["Clip"]) for r in raw})) or "none"))
+    add("readout rows outside the raw model: %s" % (", ".join(sorted(
+        {r["Clip"] for r in readouts if int(r["Clip"]) not in shapes})) or "none"))
+    add("")
+    add("### Late clips: waits for ring room")
+    add("")
+    add("A frame is released when the CTC reader has consumed the previous frame's sound "
+        "(vid_pace_poll at .pace, video.asm:%d); .paced (video.asm:%d) adds one frame's bytes "
+        "and drops a deficit of a whole frame. The reader never stops: when the frame loop "
+        "runs late it plays on into stale ring bytes and passes the writer. vid_aud_pump's "
+        "room test (video.asm:%d: room = ring - guard - (writer - reader) mod ring, with a "
+        "%d-byte floor) then sees a nearly full ring, so .qnext (video.asm:%d) leaves the next "
+        "frame's sound unwritten and .ffin (video.asm:%d) waits until the reader has freed "
+        "room for it, up to one frame period. So a late clip is slowed by more than its "
+        "utilisation. The bench rows never see this: nxb_aud_body.ptr (video.asm:%d) puts the "
+        "writer half a ring ahead of the reader on every rep. ring_play runs the loop with "
+        "the frame work below and counts the waits." % (
+            asm_line("vid_run.pace"), asm_line("vid_run.paced"), asm_line("vid_aud_pump.unp"),
+            inc_equ("NXV_AUD_PUMP_CHUNK"), asm_line("vid_run.qnext"), asm_line("vid_run.ffin"),
+            asm_line("nxb_aud_body.ptr")))
+    add("")
+    rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
+    am = {f: res.period / (res.period - res.handler[f]) for f in FORMS}
+    add("Frame work = the gate's pixels-only frame + glue + plain DEBUG work (leg B runs the "
+        "DEBUG build; IFNDEF NXB_QUIET code the bench image does not carry), on a late "
+        "frame's path, base T x the armed factor 1 / (1 - handler / %d) (stereo %.4f, mono "
+        "%.4f). Frame 0 adds the palette sector and its DEBUG sector work." % (
+            res.period, am["stereo"], am["mono"]))
+    add("- per pixel sector %.1f T: vr_sector_n's PLAY divider %d T (.nocrc, video.asm:%d), "
+        "vid_sd_tok_h's poll counter %d T (.got, video.asm:%d), and vid_rl_poll "
+        "(video.asm:%d) %d T once per %d arms = %.1f T" % (
+            DBG["sector"] + DBG["token"] + rl, DBG["sector"], asm_line("vr_sector_n.nocrc"),
+            DBG["token"], asm_line("vid_sd_tok_h.got"), asm_line("vid_rl_poll"),
+            DBG["rl_poll"], inc_equ("VID_RL_DIV"), rl))
+    add("- per sound sector %.1f T: vid_ds_blkopen's arm %d T (video.asm:%d), the poll "
+        "counter %d T, %.1f T of vid_rl_poll" % (DBG["arm"] + DBG["token"] + rl, DBG["arm"],
+                                                 asm_line("vid_ds_blkopen"), DBG["token"], rl))
+    add("- per frame: vid_play_frame %d T (video.asm:%d); the .pace poll's arm %d + %.1f T "
+        "(vid_pace_poll, video.asm:%d); vid_dbg_late %d T (video.asm:%d); vid_dbg_urun %d T "
+        "with its own vid_pace_poll through vid_raw_rd_hl (video.asm:%d) + %.1f T; "
+        "vid_aud_pump's .next arm %d + %.1f T a pass (video.asm:%d) x 2 + sound bytes / %d "
+        "passes" % (DBG["play_frame"], asm_line("vid_play_frame"), DBG["arm"], rl,
+                    asm_line("vid_pace_poll"), DBG["late"], asm_line("vid_dbg_late"),
+                    DBG["urun"], asm_line("vid_dbg_urun"), rl, DBG["arm"], rl,
+                    asm_line("vid_aud_pump.next"), inc_equ("NXV_AUD_RING")))
+    add("- counted from the instructions (Zilog T, NEXTREG A,n read 13 T): every T figure "
+        "above. Estimated: the 1-in-%d share of vid_rl_poll at each arm, and the pump passes "
+        "a frame (one chunk, a second when the ring tail wraps, the final pass)." %
+        inc_equ("VID_RL_DIV"))
+    add("")
+    ring, guard, chunk = (inc_equ("NXV_AUD_RING"), inc_equ("NXV_AUD_GUARD"),
+                          inc_equ("NXV_AUD_PUMP_CHUNK"))
+    add("| step | clip | form | frames | DEBUG T a frame | util, pixels-only + DEBUG | PLAY | "
+        "on-time PLAY | measured slowdown | predicted PLAY | waits | predicted slowdown | "
+        "residual T a frame |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in raw:
+        clip = int(r["Clip"])
+        w, h, fps, ch = shapes[clip]
         form = form_of(ch)
-        u0 = utilisation(res, w, h, fps, form)
-        u1 = utilisation(res, w, h, fps, form, res.stall)
-        ud = (u0.total + DEBUG_SECTOR_T * u0.geo.spix) / u0.period
-        add("| %03d | %s | %s | %.4f | %.4f | %.4f | %s | awaited |" % (
-            clip, _fmt_shape(w, h, fps), form, u0.util, u1.util, ud,
-            "admitted" if u1.util <= 1.0 else "refused"))
+        g = geometry(w, h, fps, ch)
+        d = debug_work(res, g, form)
+        m0 = nxv2enc.raw_model_t(g.spix, g.ssnd, g.cols, False, res.k[form])["total_t"]
+        work = m0 + GLUE_T + d.total
+        work0 = work + res.k[form]["tp"] + d.pal
+        frames = int(r["FRM"].split("/")[0], 16)
+        per = g.samples * res.period
+        tot, waits = ring_play(frames, work, work0, g.real, ch, res.period, ring, guard, chunk)
+        play = int(r["PLAY"], 16)
+        on = frames * per / FIELD_T
+        add("| %s | %03d | %s | %d | %.0f | %.4f | %d | %.1f | %.4f | %.1f | %d | %.4f | %+.0f |"
+            % (r["Step"], clip, form, frames, d.total, work / per, play, on, play / on,
+               tot / FIELD_T, waits, tot / FIELD_T / on, (play * FIELD_T - tot) / frames))
+    add("")
+    add("PLAY counts whole fields of %d T: its resolution is %.0f T a frame over 250 frames, "
+        "%.0f over 167, %.0f over 125." % (FIELD_T, FIELD_T / 250.0, FIELD_T / 167.0,
+                                          FIELD_T / 125.0))
     return "\n".join(o) + "\n"
 
 
@@ -1012,6 +1384,38 @@ def selftest():
         res_files = fit(read_sections(log), reps=SYNTH_REPS, clips_dir=clipdir)
         (clipdir / "066.VID").write_bytes(hdr[:9] + b"\x02" + hdr[10:] + body)
         file_bad = check_clip_file(clipdir / "066.VID", 66)
+        swaplog = Path(tmp) / "SWAP.TXT"
+        swaplog.write_bytes(synth_log(swap=66).encode("ascii"))
+        res_swap = fit(read_sections(swaplog), reps=SYNTH_REPS)
+        pb = Path(tmp) / "playback.md"
+        pb.write_text("# t\n\n| Step | What |\n|---|---|\n| B.4 | 060 |\n\n"
+                      "| Step | Clip | FRM | PLAY | LATE | URUN |\n|---|---|---|---|---|---|\n"
+                      "| B.4 | 060 | 00FA/00FA | 01EE | 0000 | 0000 |\n"
+                      "| B.18 | 074 | - | - | - | - |\n\n| Step | Clip | PLAY |\n"
+                      "| X | 061 | 01EE |\n", encoding="utf-8")
+        readouts = read_playback(pb)
+        text = report(res, readouts)
+    check([r["Clip"] for r in readouts] == ["060"], "playback rows: %r" % readouts)
+    check("admitted clips that showed LATE or URUN: none" in text, "Step 6 lines printed")
+    check(exit_status(res) == 0 and exit_status(res_short) == 1,
+          "a RE-RUN anomaly makes the exit status 1")
+    check(any("066" in a and "channel label" in a for a in res_swap.anomalies),
+          "a twin with the other form's handler is listed: %r" % res_swap.anomalies)
+    # ring_play: under rate, no waits and the sound sets the time; the 062 leg B case.
+    tot, waits = ring_play(250, 0.9 * 1120000, 0.9 * 1120000, 1250, 2, per, 8192, 16, 256)
+    check(waits == 0 and tot == 250 * 625 * per, "ring_play under rate: %r" % ((tot, waits),))
+    tot, waits = ring_play(250, 1183393.0, 1212165.0, 1250, 2, per, 8192, 16, 256)
+    check(waits == 3 and abs(tot / FIELD_T - 527.4) < 0.05,
+          "ring_play 062 case: 3 waits, PLAY 527.4 (%r)" % ((tot / FIELD_T, waits),))
+    tot, waits = ring_play(10, 0.5 * 1120000, 3 * 1120000, 1250, 2, per, 8192, 16, 256)
+    check((tot, waits) == (12 * 625 * per, 0),
+          "ring_play drops a deficit over a whole frame (.paced): %r" % ((tot, waits),))
+    u = utilisation(res, 256, 192, 25, "stereo")
+    check(u.period == 625 * per and u.ref_period == PERIOD_NUM / 25,
+          "utilisation period: samples x CTC period (%r)" % u.period)
+    h, u = largest_height(res, 320, 25, "stereo")
+    check(u is not None and u <= 1.0 and (h == 256 or utilisation(
+        res, 320, h + 1, 25, "stereo").util > 1.0), "largest_height: %r" % ((h, u),))
     check(file_ok == ([], [0, 20], []), "clip file walk: %r" % (file_ok,))
     check(any(b.startswith("channels 2 != 1") for b in file_bad[0]),
           "clip file header byte 9 checked: %r" % (file_bad[0],))
@@ -1064,6 +1468,7 @@ def main(argv=None):
     ap.add_argument("log", nargs="?")
     ap.add_argument("--clips", help="folder holding the NNN.VID fixtures (read only)")
     ap.add_argument("--nr11", type=int, default=0, help="NR $11 of the sitting (default 0)")
+    ap.add_argument("--playback", help="playback.md with the leg B readout table")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
@@ -1072,12 +1477,13 @@ def main(argv=None):
         ap.error("a log path or --selftest")
     try:
         res = fit(read_sections(a.log), nr11=a.nr11, clips_dir=a.clips and Path(a.clips))
+        readouts = read_playback(a.playback) if a.playback else None
     except (nxbparse.LogError, FitError) as e:
         sys.stderr.write("error: %s\n" % e)
         return 2
     res.log = Path(a.log).name
-    sys.stdout.write(report(res))
-    return 0 if res.accepted else 1
+    sys.stdout.write(report(res, readouts))
+    return exit_status(res)
 
 
 if __name__ == "__main__":

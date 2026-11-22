@@ -14,6 +14,8 @@ nr: register line 51 3 3 3 0 0 (NR $01 33, NR $0E 03, NR $0F 03, machine timing 
 timing_from: the nr line (parse.timing: +3, 50 Hz, 311 x 1824 T)
 card: not recorded
 card_slot: not recorded
-legs: A returned (NXBENCH.TXT); B and C not returned
-exceptions: none reported for leg A
+display socket: not recorded
+legs: A returned (NXBENCH.TXT); B and C returned 2026-11-22 (playback.md)
+exceptions: none reported for leg A; leg B as recorded in playback.md
+picture and sound remarks: not recorded
 ingest: by hand in the results folder shape; ingest.py refuses this leg (no GATES.TXT in the leg folder; an NXB-only leg takes its timing from a same-date leg1, and there is none)

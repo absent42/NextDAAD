@@ -1,28 +1,66 @@
-# Raw direct video bench - KS3 sitting 1, leg A (2026-11-21)
+# Raw direct video - KS3 sitting 1 (leg A 2026-11-21; legs B and C returned 2026-11-22)
 
-Sitting: KS3, core 3.03.03 (register line 51 3 3 3 0 0: NR $01 $33, NR $0E 3, NR $0F 3, +3 timing, 50 Hz, NR $11 0); -BenchQuiet build from 3918c62 (interpreter source 09ba34b). Details in sitting.txt. Log: NXBENCH.TXT in this folder, 16 captures.
+Sitting: KS3, core 3.03.03 (register line 51 3 3 3 0 0: NR $01 $33, NR $0E 3, NR $0F 3, +3 timing, 50 Hz, NR $11 0). Leg A: -BenchQuiet build from 3918c62 (interpreter source 09ba34b), log NXBENCH.TXT in this folder, 16 captures. Legs B and C: readouts in playback.md. Details in sitting.txt.
 
-Produced by `python tests\raw_fit.py NXBENCH.TXT --clips <leg folder>`. The fit reads only NXBENCH.TXT; the clip files are read to check their headers and frame tags. ingest.py does not take this leg (no GATES.TXT in the leg folder; an NXB-only leg takes its timing from a same-date leg1, and there is none), so this folder follows the legBLT shape by hand and the timing comes from the register line through parse.timing.
+Produced by `python tests\raw_fit.py NXBENCH.TXT --clips <leg A folder> --playback playback.md`. The fit reads only NXBENCH.TXT. The clip files are read to check their headers and frame tags, and playback.md supplies the leg B readouts. ingest.py does not take this leg (no GATES.TXT in the leg folder; an NXB-only leg takes its timing from a same-date leg1, and there is none), so this folder follows the legBLT shape by hand and the timing comes from the register line through parse.timing.
 
 ## Summary
 
-- Acceptance: PASS. Largest |residual| 0.373 percent (clip 071, mono). Stereo residuals are within 0.06 percent, mono within 0.38 percent.
-- Over 1.00, stereo: 320x192@25 (1.0351), 280x224@25 (1.0576). The stall term adds at most 0.0001.
-- Over 1.00, mono: 320x192@25 (1.0125), 280x224@25 (1.0348).
+- Acceptance: PASS. Largest |residual| 0.373 percent (clip 071, mono). Stereo residuals are within 0.06 percent, mono within 0.38 percent. Acceptance tests nothing of the mono sound term (see "Sound term" below).
+- Period: a frame is released on sound consumption, so the gate period is samples a frame x 1792 T (1,120,000 T at 25 fps), not two fields.
+  - Code: vid_pace_poll at .pace and the deficit clamp at .paced in src/video.asm.
+  - Leg B: an on-time 250-frame clip reads PLAY 01EE = 494 fields = 250 x 1,120,000 / 567,264; pacing on two fields would read 500.
+  - The two-field figure is kept only as a reference column.
+- Over 1.00 (palette frame, sound period):
+  - stereo: 320x192@25 (1.0485), 280x224@25 (1.0714);
+  - mono: 320x192@25 (1.0256), 280x224@25 (1.0482).
+  - The stall term adds at most 0.0001. All four are over 1.00 on a pixels-only frame too (1.0231, 1.0459, 1.0010, 1.0236).
 - Within 10 percent of the limit (0.90 < util <= 1.00): none in stereo, none in mono.
-- Below 0.90 in both forms: 256x192@25, 320x160@25, 320x240@16.67, 256x240@16.67.
+- Below 0.90 in both forms (stereo / mono): 256x192@25 (0.8415 / 0.8214), 320x160@25 (0.8860 / 0.8652), 320x240@16.67 (0.8671 / 0.8446), 256x240@16.67 (0.7029 / 0.6825).
+- Largest admitted height at 25 fps (palette frame; pixels-only frame in brackets):
+
+  | width | stereo | mono |
+  |---|---|---|
+  | 320 | 182 (187) | 185 (190) |
+  | 280 | 208 (213) | 212 (219) |
+  | 256 | 228 (234) | 234 (240) |
+
+- Step 6: no clip the model admits showed LATE or URUN, and no clip it refuses played on time.
+  - Clip 074 never played (seven tries, no rows). It is listed as a failure outside the model, under investigation.
+  - 010 and 004 are outside the raw model.
+- A late clip is slowed by more than its utilisation: once the reader passes the pump's writer, the next frame waits for ring room ("Playback (leg B)" below). With that wait, the model's PLAY matches leg B within one field for every late clip except 069, which is 1.3 fields off.
 - Excluded: capture 10 (PICK 59, no such clip). It printed VID FILE?, its rows are clip 068's previous screen, and it has no #HIST lines.
-- Anomalies for a RE-RUN request: none. Every peer group is within 0.16 percent; no walk marks (O=01), no NXB SHORT or GEO, no missing rows; all 28 histograms sum to 2048.
-- Legs B and C: not returned. The playback table at the end has the model's prediction per clip; its readout column is awaited.
+- Anomalies for a RE-RUN request: none.
+
+## Sound term
+
+1. The mono sound constants are fixed exactly by 074 and the mean of the six 2-sector clips (two Ssnd groups for two constants). 074's residual is 0 by construction, so acceptance tests nothing of the mono sound term.
+2. Stereo has three Ssnd groups for two constants, one degree of freedom, with 072 alone at 5 sound sectors.
+3. The cost follows sound bytes against pad bytes. In the pad-aware fit (mono, sector count held), a pad byte costs 19.26 T more than a sound byte. In the code, vid_ds_pad discards a pad byte in 37 T, against about 16.4 T for a sound byte through vid_ds_xfer's ini train.
+4. Mono RAW_FRAME_T (-552.06 T) is negative, and mono RAW_SND_SECTOR_T is 1.69 x stereo's. Both are artefacts of fitting one term a sector to that pattern; they must not be read as physical costs.
+5. Gate error for sound layouts outside the fitted pairs (gate minus the pad-aware fit): mono 30 fps -4.0k T, mono 12.5 fps +4.4k T, stereo 20 fps -6.1k T, stereo 15.26 fps -8.8k T, stereo 30 fps -4.1k T. The largest is 0.48 percent of the period.
+6. Rule: the constants are valid for the fitted pairs only (stereo at 25, 16.67 and 12.5 fps; mono at 25, 16.67 and 15.26 fps). Elsewhere, allow about 0.5 percent. The equation is unchanged; the diagnostic fit below is information for a later decision.
+
+## 320x192@25 budget, percent of the 1,120,000 T period (palette frame)
+
+| term | stereo | mono |
+|---|---|---|
+| pixel bytes (of which the sound handler) | 94.46 (6.54) | 93.21 (5.31) |
+| per-sector overhead | 3.05 | 3.05 |
+| column ends | 1.20 | 1.17 |
+| sound sectors | 2.33 | 2.62 |
+| frame remainder | 1.17 | -0.05 |
+| palette sector | 2.54 | 2.46 |
+| glue | 0.10 | 0.10 |
+| total | 104.85 | 102.56 |
+
+1.0 percent of a 25 fps period is 11,200 T a frame. The T figures and the arithmetic are in "Budget of a 320x192@25 frame" below.
 
 ## Observations
 
-1. Mono residuals fall in two groups: 066-069 (625 sound bytes, 399 pad bytes a frame) +0.14 to +0.27 percent; 070-071 (937 sound bytes, 87 pad bytes) -0.28 and -0.37 percent; 074 0.000 (the only 3-sector mono clip, so it fixes the slope). The 2-sector mono least squares points differ by about 6,000 T between the two groups (30,352-31,189 T against 24,651-24,970 T). The equation has one term per sound sector.
-2. Mono RAW_FRAME_T is negative (-552.06 T). Mono RAW_SND_SECTOR_T (14,684.47 T) is 1.69 x the stereo figure (8,684.76 T). For the 2-sector mono shapes, 2 x tsnd + tf = 28,816.88 T enters the gate.
-3. tp per clip spans 26,829-29,773 T (stereo) and 26,112-28,533 T (mono). RFR0 is a single rep by design, read on the 1,824 T line clock.
-4. Every token wait in RHST and AHST is in bin 1 (exactly one $FF poll), on all 14 clips. RAW_STALL_T = 51.59 T, 0.005 percent of a 25 fps period.
-5. Pixels-only frames (the reference column): mono 320x192@25 is 0.9882 without the palette sector. The other three over-limit cases stay over 1.00.
-6. Reference table: against the period the frame loop paces on (samples x 1792 T: 1,120,000 T at 25 fps, 1.28 percent shorter than the plan's 1,134,528 T), every utilisation rises by about 1.3 percent. No shape changes class in this sitting.
+1. Mono residuals fall in two groups: 066-069 (625 sound bytes, 399 pad bytes a frame) +0.14 to +0.27 percent; 070-071 (937 sound bytes, 87 pad bytes) -0.28 and -0.37 percent; 074 0.000.
+2. tp per clip spans 26,829-29,773 T (stereo) and 26,112-28,533 T (mono). RFR0 is a single rep by design, read on the 1,824 T line clock.
+3. Every token wait in RHST and AHST is in bin 1 (exactly one $FF poll), on all 14 clips. RAW_STALL_T = 51.59 T, 0.005 percent of a 25 fps period.
 
 The rest of this file is the script's output, unedited.
 
@@ -398,6 +436,8 @@ clip 074 mono 256x192@15.2588: Spix 96, Ssnd 3, C 0 (section 15)
 - peers AHST polls (mono)       7 clips, largest deviation 0.00%
 - order RSWP/16 < ARSW/16      14/14 clips
 - order RSWP/16 < RFR0         14/14 clips
+- peers handler (stereo)        7 clips, largest deviation 0.09%
+- peers handler (mono)          7 clips, largest deviation 0.11%
 - walk marks (O=01): none
 
 Anomalies (RE-RUN request): none
@@ -414,6 +454,7 @@ stereo:
   RAW_PAL_T (tp)        = 28473.15 T: mean (RFR0' - RSWP') x ARSW'/RSWP' over 7 clips [RFR0, RSWP, ARSW]
   least squares points (clip, Ssnd, y = ARSW' - Spix x mean ARSE' - C x tc): 060 3 39690.0; 061 3 38987.3; 062 3 38686.5; 063 3 39397.2; 064 4 47811.4; 065 4 47643.2; 072 5 56648.4
   tp per clip: 060 27320.9; 061 28780.3; 062 27686.2; 063 26828.6; 064 29644.2; 065 29279.4; 072 29772.5
+note: stereo sound constants rest on 3 groups for two constants, 1 degree(s) of freedom (Ssnd 3: 060 061 062 063, Ssnd 4: 064 065, Ssnd 5: 072); valid for the fitted pairs only (stereo at 25, 16.67, 12.5 fps); elsewhere allow about 0.5 percent
 
 mono:
   RAW_T_PER_B (tb)      = 16.9917 T: (mean ARSE' - ts) / 512 over 7 clips [ARSE, RSEC]
@@ -423,7 +464,7 @@ mono:
   RAW_PAL_T (tp)        = 27528.25 T: mean (RFR0' - RSWP') x ARSW'/RSWP' over 7 clips [RFR0, RSWP, ARSW]
   least squares points (clip, Ssnd, y = ARSW' - Spix x mean ARSE' - C x tc): 066 2 31189.4; 067 2 30823.0; 068 2 30351.5; 069 2 30916.1; 070 2 24970.1; 071 2 24651.1; 074 3 43501.3
   tp per clip: 066 26713.5; 067 28532.9; 068 27200.8; 069 28286.0; 070 28046.8; 071 27805.7; 074 26112.1
-note: mono RAW_SND_SECTOR_T rests on clip 074 alone (its third sector is nearly all pad); valid for 2-sector shapes, not general
+note: mono sound constants are fixed exactly by the two groups' means (Ssnd 2: 066 067 068 069 070 071, Ssnd 3: 074); 074's residual is 0 by construction; valid for the fitted pairs only (mono at 25, 16.67, 15.2588 fps); elsewhere allow about 0.5 percent
 
 RAW_STALL_T = 51.59 T: highest occupied AHST bin 1 (1-1 polls), upper edge 1 x 48 T x ARSE/RSEC (clip 062) [AHST, ARSE, RSEC]
 mean token wait (bins at their mean poll count): unarmed 48.00 T [RHST]; armed stereo 51.54 T, mono 50.88 T [AHST x ARSE/RSEC]
@@ -484,46 +525,94 @@ pad B: the sound sectors' pad bytes a frame, the tag byte included.
 
 acceptance: PASS (largest |residual| 0.373%)
 
+## Sound term (diagnostic; the gate is unchanged)
+
+- stereo sound constants rest on 3 groups for two constants, 1 degree(s) of freedom (Ssnd 3: 060 061 062 063, Ssnd 4: 064 065, Ssnd 5: 072); valid for the fitted pairs only (stereo at 25, 16.67, 12.5 fps); elsewhere allow about 0.5 percent
+- mono sound constants are fixed exactly by the two groups' means (Ssnd 2: 066 067 068 069 070 071, Ssnd 3: 074); 074's residual is 0 by construction; valid for the fitted pairs only (mono at 25, 16.67, 15.2588 fps); elsewhere allow about 0.5 percent
+- pad-aware fit y = A + S x Ssnd + d x real bytes, on the gate fit's points:
+  - mono: A 2125.2, S 20366.4, d -19.26 T a sound byte (a pad byte costs 19.26 T more than a sound byte); residuals -369 -3 +469 -96 -159 +159 +0 T
+  - stereo, all three free: A 133014.5, S -111282.4, d 192.02 (condition number 3518223: the clips' sound bytes, 1250, 1874, 2500, track Ssnd)
+  - stereo with d = mono d x armed ratio = -19.52: A 920.0, S 20877.2; residuals -532 +170 +471 -239 +46 +214 -130 T
+  - code: vid_ds_pad .d (video.asm:3306) discards a pad byte in 37 T (in 11, dec hl 6, ld a,h 4, or l 4, jr nz 12); vid_ds_xfer (video.asm:3328) moves a sound byte by ini, 16 T plus 14 T a 32-byte pass, about 16.4 T: about 20.6 T more a pad byte, unarmed
+- mono RAW_FRAME_T -552.06 T and mono RAW_SND_SECTOR_T 14684.47 T (1.69 x stereo's 8684.76 T) come from one term a sector fitted to costs that follow sound against pad bytes: they are not physical costs.
+
+gate sound term (Ssnd x tsnd + tf) against the pad-aware fit for other sound layouts (mono: its fit; stereo: d scaled); err = gate - fit, negative = the gate under-prices:
+
+| form | fps | sound B | Ssnd | pad B | gate T | fit T | err T | err % of period | fitted pair |
+|---|---|---|---|---|---|---|---|---|---|
+| mono | 30 | 521 | 2 | 503 | 28817 | 32823 | -4006 | -0.43 | no |
+| mono | 25 | 625 | 2 | 399 | 28817 | 30820 | -2003 | -0.18 | yes |
+| mono | 20 | 781 | 2 | 243 | 28817 | 27815 | +1002 | +0.07 | no |
+| mono | 16.67 | 937 | 2 | 87 | 28817 | 24811 | +4006 | +0.24 | yes |
+| mono | 15.2588 | 1024 | 3 | 512 | 43501 | 43501 | -0 | -0.00 | yes |
+| mono | 12.5 | 1250 | 3 | 286 | 43501 | 39148 | +4353 | +0.19 | no |
+| mono | 10.5 | 1488 | 3 | 48 | 43501 | 34564 | +8937 | +0.34 | no |
+| stereo | 30 | 1042 | 3 | 494 | 39161 | 43217 | -4056 | -0.43 | no |
+| stereo | 25 | 1250 | 3 | 286 | 39161 | 39158 | +3 | +0.00 | yes |
+| stereo | 20 | 1562 | 4 | 486 | 47845 | 53946 | -6101 | -0.44 | no |
+| stereo | 16.67 | 1874 | 4 | 174 | 47845 | 47857 | -12 | -0.00 | yes |
+| stereo | 15.2588 | 2048 | 5 | 512 | 56530 | 65339 | -8809 | -0.48 | no |
+| stereo | 12.5 | 2500 | 5 | 60 | 56530 | 56518 | +12 | +0.00 | yes |
+| stereo | 10.5 | 2976 | 6 | 96 | 65215 | 68106 | -2891 | -0.11 | no |
+
+largest |err| outside the fitted pairs: 0.48 percent of the period
+
 ## Utilisation of the target shapes
 
-worst frame (palette sector included) + glue 1138.7 T (glue_t / audio_factor), over the plan's period 28363200 / fps T; F = 1.0.
+period = samples a frame x 1792 T: vid_run releases a frame when the CTC reader has consumed the previous frame's sound (vid_pace_poll at .pace, video.asm:2352; the deficit clamp at .paced, video.asm:2374), not on fields. Worst frame (palette sector) + glue 1138.7 T (glue_t / audio_factor); F = 1.0. The last column is the two-field period 28363200 / fps, for reference only.
 
-| shape | form | Spix | Ssnd | C | model T | period T | util | util with stall | ref: util, no palette sector |
-|---|---|---|---|---|---|---|---|---|---|
-| 256x192@25 | stereo | 96 | 3 | 0 | 941314 | 1134528 | 0.8307 | 0.8307 | 0.8056 |
-| 256x192@25 | mono | 96 | 2 | 0 | 918807 | 1134528 | 0.8109 | 0.8109 | 0.7866 |
-| 320x160@25 | stereo | 100 | 3 | 320 | 991151 | 1134528 | 0.8746 | 0.8747 | 0.8495 |
-| 320x160@25 | mono | 100 | 2 | 320 | 967851 | 1134528 | 0.8541 | 0.8541 | 0.8298 |
-| 320x192@25 | stereo | 120 | 3 | 320 | 1173168 | 1134528 | 1.0351 | 1.0351 | 1.0100 |
-| 320x192@25 | mono | 120 | 2 | 320 | 1147531 | 1134528 | 1.0125 | 1.0125 | 0.9882 |
-| 280x224@25 | stereo | 123 | 3 | 280 | 1198791 | 1134528 | 1.0576 | 1.0577 | 1.0325 |
-| 280x224@25 | mono | 123 | 2 | 280 | 1172844 | 1134528 | 1.0348 | 1.0348 | 1.0105 |
-| 320x240@16.67 | stereo | 150 | 4 | 320 | 1454878 | 1701452 | 0.8557 | 0.8558 | 0.8390 |
-| 320x240@16.67 | mono | 150 | 2 | 320 | 1417050 | 1701452 | 0.8335 | 0.8335 | 0.8173 |
-| 256x240@16.67 | stereo | 120 | 4 | 256 | 1179166 | 1701452 | 0.6937 | 0.6937 | 0.6770 |
-| 256x240@16.67 | mono | 120 | 2 | 256 | 1144909 | 1701452 | 0.6736 | 0.6736 | 0.6574 |
+| shape | form | Spix | Ssnd | C | model T | period T | util | util with stall | util, pixels-only frame | ref: util at two fields |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 256x192@25 | stereo | 96 | 3 | 0 | 941314 | 1120000 | 0.8415 | 0.8415 | 0.8161 | 0.8307 |
+| 256x192@25 | mono | 96 | 2 | 0 | 918807 | 1120000 | 0.8214 | 0.8214 | 0.7968 | 0.8109 |
+| 320x160@25 | stereo | 100 | 3 | 320 | 991151 | 1120000 | 0.8860 | 0.8860 | 0.8606 | 0.8746 |
+| 320x160@25 | mono | 100 | 2 | 320 | 967851 | 1120000 | 0.8652 | 0.8652 | 0.8406 | 0.8541 |
+| 320x192@25 | stereo | 120 | 3 | 320 | 1173168 | 1120000 | 1.0485 | 1.0485 | 1.0231 | 1.0351 |
+| 320x192@25 | mono | 120 | 2 | 320 | 1147531 | 1120000 | 1.0256 | 1.0256 | 1.0010 | 1.0125 |
+| 280x224@25 | stereo | 123 | 3 | 280 | 1198791 | 1120000 | 1.0714 | 1.0714 | 1.0459 | 1.0576 |
+| 280x224@25 | mono | 123 | 2 | 280 | 1172844 | 1120000 | 1.0482 | 1.0482 | 1.0236 | 1.0348 |
+| 320x240@16.67 | stereo | 150 | 4 | 320 | 1454878 | 1679104 | 0.8671 | 0.8672 | 0.8502 | 0.8557 |
+| 320x240@16.67 | mono | 150 | 2 | 320 | 1417050 | 1679104 | 0.8446 | 0.8446 | 0.8282 | 0.8335 |
+| 256x240@16.67 | stereo | 120 | 4 | 256 | 1179166 | 1679104 | 0.7029 | 0.7030 | 0.6860 | 0.6937 |
+| 256x240@16.67 | mono | 120 | 2 | 256 | 1144909 | 1679104 | 0.6825 | 0.6826 | 0.6661 | 0.6736 |
 
 stereo over 1.00: 320x192@25, 320x192@25 (with stall), 280x224@25, 280x224@25 (with stall)
 stereo within 10 percent of the limit (0.90 < util <= 1.00): none
 mono over 1.00: 320x192@25, 320x192@25 (with stall), 280x224@25, 280x224@25 (with stall)
 mono within 10 percent of the limit (0.90 < util <= 1.00): none
 
-For reference, not the plan's figure: the frame loop releases a frame on its sound (samples x CTC period):
+## Largest admitted height at 25 fps
 
-| shape | form | samples | sound period T | util at the sound period |
+Heights 256 down to 1, util <= 1.00 at the sound period, glue added, F = 1.0.
+
+| width | form | palette frame: height | util | pixels-only frame: height | util |
+|---|---|---|---|---|---|
+| 320 | stereo | 182 | 0.9997 | 187 | 0.9987 |
+| 320 | mono | 185 | 0.9935 | 190 | 0.9930 |
+| 280 | stereo | 208 | 0.9982 | 213 | 0.9972 |
+| 280 | mono | 212 | 0.9920 | 219 | 0.9996 |
+| 256 | stereo | 228 | 0.9973 | 234 | 0.9963 |
+| 256 | mono | 234 | 0.9992 | 240 | 0.9987 |
+
+## Budget of a 320x192@25 frame
+
+Period 1120000 T (625 samples x 1792 T). Palette frame, F = 1.0.
+
+| term | stereo T | stereo % | mono T | mono % |
 |---|---|---|---|---|
-| 256x192@25 | stereo | 625 | 1120000 | 0.8415 |
-| 256x192@25 | mono | 625 | 1120000 | 0.8214 |
-| 320x160@25 | stereo | 625 | 1120000 | 0.8860 |
-| 320x160@25 | mono | 625 | 1120000 | 0.8652 |
-| 320x192@25 | stereo | 625 | 1120000 | 1.0485 |
-| 320x192@25 | mono | 625 | 1120000 | 1.0256 |
-| 280x224@25 | stereo | 625 | 1120000 | 1.0714 |
-| 280x224@25 | mono | 625 | 1120000 | 1.0482 |
-| 320x240@16.67 | stereo | 937 | 1679104 | 0.8671 |
-| 320x240@16.67 | mono | 937 | 1679104 | 0.8446 |
-| 256x240@16.67 | stereo | 937 | 1679104 | 0.7029 |
-| 256x240@16.67 | mono | 937 | 1679104 | 0.6825 |
+| pixel bytes, Spix x 512 x tb | 1057990 | 94.46 | 1043967 | 93.21 |
+|   of which the sound handler: (byte T / 1792) interrupts x handler T | 73254 | 6.54 | 59455 | 5.31 |
+| per-sector overhead, Spix x ts | 34110 | 3.05 | 34110 | 3.05 |
+| column ends, C x tc | 13433 | 1.20 | 13108 | 1.17 |
+| sound sectors, Ssnd x tsnd | 26054 | 2.33 | 29369 | 2.62 |
+| frame remainder, tf | 13106 | 1.17 | -552 | -0.05 |
+| palette sector, tp | 28473 | 2.54 | 27528 | 2.46 |
+| glue | 1139 | 0.10 | 1139 | 0.10 |
+| total | 1174306 | 104.85 | 1148670 | 102.56 |
+
+- stereo handler: one interrupt a sample, 625 a frame, 124.08 T each = 77547 T a frame (6.92 percent of the period, all terms together)
+- mono handler: one interrupt a sample, 625 a frame, 102.06 T each = 63785 T a frame (5.70 percent of the period, all terms together)
+- 1.0 percent of a 25 fps period is 11200 T a frame.
 
 ## Handlers, sectors, column ends
 
@@ -567,29 +656,75 @@ old: NXBD on clip 10 (old direct layout), per block, rows as printed (the DS1 ha
 | T per byte, armed, transfer included | ADTC / 512 | 21.013 | ARSE / 512 stereo / mono | 17.960 / 17.729 |
 | gate T per byte | DIRECT_T_PER_B (section byte, wire included) | 24.2 | tb stereo / mono | 17.2199 / 16.9917 |
 
-## Playback prediction (leg B clips)
+## Playback (leg B)
 
-model: worst frame + glue over the plan's period; DEBUG column adds 86 T a pixel sector (plain DEBUG vr_sector_n PLAY divider; the DEBUG token-wait accumulator is not priced). Admitted = util <= 1.00.
+### Step 6: the model's verdict against LATE and URUN
 
-| clip | shape | form | util | util with stall | DEBUG util | model | readout |
-|---|---|---|---|---|---|---|---|
-| 060 | 256x192@25 | stereo | 0.8307 | 0.8307 | 0.8380 | admitted | awaited |
-| 061 | 320x160@25 | stereo | 0.8746 | 0.8747 | 0.8822 | admitted | awaited |
-| 062 | 320x192@25 | stereo | 1.0351 | 1.0351 | 1.0442 | refused | awaited |
-| 063 | 280x224@25 | stereo | 1.0576 | 1.0577 | 1.0670 | refused | awaited |
-| 064 | 320x240@16.67 | stereo | 0.8557 | 0.8558 | 0.8633 | admitted | awaited |
-| 065 | 256x240@16.67 | stereo | 0.6937 | 0.6937 | 0.6998 | admitted | awaited |
-| 066 | 256x192@25 | mono | 0.8109 | 0.8109 | 0.8181 | admitted | awaited |
-| 067 | 320x160@25 | mono | 0.8541 | 0.8541 | 0.8617 | admitted | awaited |
-| 068 | 320x192@25 | mono | 1.0125 | 1.0125 | 1.0216 | refused | awaited |
-| 069 | 280x224@25 | mono | 1.0348 | 1.0348 | 1.0441 | refused | awaited |
-| 070 | 320x240@16.67 | mono | 0.8335 | 0.8335 | 0.8411 | admitted | awaited |
-| 071 | 256x240@16.67 | mono | 0.6736 | 0.6736 | 0.6796 | admitted | awaited |
-| 072 | 320x256@12.5 | stereo | 0.6797 | 0.6797 | 0.6858 | admitted | awaited |
-| 073 | 256x192@25 | stereo | 0.8307 | 0.8307 | 0.8380 | admitted | awaited |
-| 074 | 256x192@15.2588 | mono | 0.5028 | 0.5028 | 0.5073 | admitted | awaited |
-| 075 | 256x192@25 | stereo | 0.8307 | 0.8307 | 0.8380 | admitted | awaited |
-| 076 | 256x192@25 | mono | 0.8109 | 0.8109 | 0.8181 | admitted | awaited |
-| 077 | 256x192@25 | stereo | 0.8307 | 0.8307 | 0.8380 | admitted | awaited |
-| 078 | 256x192@25 | mono | 0.8109 | 0.8109 | 0.8181 | admitted | awaited |
-| 079 | 320x256@25 | stereo | 1.3441 | 1.3441 | 1.3562 | refused | awaited |
+model: the gate (Release instructions, palette frame, stall term) at the sound period; admitted = util <= 1.00. On time = LATE 0000 and URUN 0000.
+
+| step | clip | shape | form | util | model | LATE | URUN | on time |
+|---|---|---|---|---|---|---|---|---|
+| B.4 | 060 | 256x192@25 | stereo | 0.8415 | admitted | 0000 | 0000 | yes |
+| B.5 | 061 | 320x160@25 | stereo | 0.8860 | admitted | 0000 | 0000 | yes |
+| B.6 | 062 | 320x192@25 | stereo | 1.0485 | refused | 00F9 | 00F9 | no |
+| B.7 | 063 | 280x224@25 | stereo | 1.0714 | refused | 00F9 | 00F9 | no |
+| B.8 | 064 | 320x240@16.67 | stereo | 0.8672 | admitted | 0000 | 0000 | yes |
+| B.9 | 065 | 256x240@16.67 | stereo | 0.7030 | admitted | 0000 | 0000 | yes |
+| B.10 | 066 | 256x192@25 | mono | 0.8214 | admitted | 0000 | 0000 | yes |
+| B.11 | 067 | 320x160@25 | mono | 0.8652 | admitted | 0000 | 0000 | yes |
+| B.12 | 068 | 320x192@25 | mono | 1.0256 | refused | 00F9 | 00F9 | no |
+| B.13 | 069 | 280x224@25 | mono | 1.0482 | refused | 00F9 | 00F9 | no |
+| B.14 | 070 | 320x240@16.67 | mono | 0.8446 | admitted | 0000 | 0000 | yes |
+| B.15 | 071 | 256x240@16.67 | mono | 0.6826 | admitted | 0000 | 0000 | yes |
+| B.16 | 072 | 320x256@12.5 | stereo | 0.6885 | admitted | 0000 | 0000 | yes |
+| B.17 | 073 | 256x192@25 | stereo | 0.8415 | admitted | 0000 | 0000 | yes |
+| B.19 | 075 | 256x192@25 | stereo | 0.8415 | admitted | 0000 | 0000 | yes |
+| B.20 | 076 | 256x192@25 | mono | 0.8214 | admitted | 0000 | 0000 | yes |
+| B.21 | 077 | 256x192@25 | stereo | 0.8415 | admitted | 0000 | 0000 | yes |
+| B.22 | 078 | 256x192@25 | mono | 0.8214 | admitted | 0000 | 0000 | yes |
+| B.23 | 060 | 256x192@25 | stereo | 0.8415 | admitted | 0000 | 0000 | yes |
+| B.24 | 063 | 280x224@25 | stereo | 1.0714 | refused | 00F9 | 00F9 | no |
+| B.25 | 079 | 320x256@25 | stereo | 1.3616 | refused | 00F9 | 00F9 | no |
+| B.26 | 062 | 320x192@25 | stereo | 1.0485 | refused | 00F9 | 00F9 | no |
+
+admitted clips that showed LATE or URUN: none
+refused clips that played on time: none
+fixture clips with no readout row: 074
+readout rows outside the raw model: 004, 010
+
+### Late clips: waits for ring room
+
+A frame is released when the CTC reader has consumed the previous frame's sound (vid_pace_poll at .pace, video.asm:2352); .paced (video.asm:2374) adds one frame's bytes and drops a deficit of a whole frame. The reader never stops: when the frame loop runs late it plays on into stale ring bytes and passes the writer. vid_aud_pump's room test (video.asm:1882: room = ring - guard - (writer - reader) mod ring, with a 256-byte floor) then sees a nearly full ring, so .qnext (video.asm:2445) leaves the next frame's sound unwritten and .ffin (video.asm:2394) waits until the reader has freed room for it, up to one frame period. So a late clip is slowed by more than its utilisation. The bench rows never see this: nxb_aud_body.ptr (video.asm:4773) puts the writer half a ring ahead of the reader on every rep. ring_play runs the loop with the frame work below and counts the waits.
+
+Frame work = the gate's pixels-only frame + glue + plain DEBUG work (leg B runs the DEBUG build; IFNDEF NXB_QUIET code the bench image does not carry), on a late frame's path, base T x the armed factor 1 / (1 - handler / 1792) (stereo 1.0744, mono 1.0604). Frame 0 adds the palette sector and its DEBUG sector work.
+- per pixel sector 277.4 T: vr_sector_n's PLAY divider 86 T (.nocrc, video.asm:5145), vid_sd_tok_h's poll counter 177 T (.got, video.asm:3040), and vid_rl_poll (video.asm:795) 231 T once per 16 arms = 14.4 T
+- per sound sector 231.4 T: vid_ds_blkopen's arm 40 T (video.asm:3224), the poll counter 177 T, 14.4 T of vid_rl_poll
+- per frame: vid_play_frame 179 T (video.asm:845); the .pace poll's arm 40 + 14.4 T (vid_pace_poll, video.asm:1810); vid_dbg_late 174 T (video.asm:5300); vid_dbg_urun 402 T with its own vid_pace_poll through vid_raw_rd_hl (video.asm:5323) + 14.4 T; vid_aud_pump's .next arm 40 + 14.4 T a pass (video.asm:1846) x 2 + sound bytes / 8192 passes
+- counted from the instructions (Zilog T, NEXTREG A,n read 13 T): every T figure above. Estimated: the 1-in-16 share of vid_rl_poll at each arm, and the pump passes a frame (one chunk, a second when the ring tail wraps, the final pass).
+
+| step | clip | form | frames | DEBUG T a frame | util, pixels-only + DEBUG | PLAY | on-time PLAY | measured slowdown | predicted PLAY | waits | predicted slowdown | residual T a frame |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| B.4 | 060 | stereo | 250 | 30372 | 0.8432 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +914 |
+| B.5 | 061 | stereo | 250 | 31565 | 0.8887 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +914 |
+| B.6 | 062 | stereo | 250 | 37526 | 1.0566 | 527 | 493.6 | 1.0677 | 527.4 | 3 | 1.0685 | -897 |
+| B.7 | 063 | stereo | 250 | 38420 | 1.0802 | 541 | 493.6 | 1.0960 | 540.6 | 4 | 1.0952 | +921 |
+| B.8 | 064 | stereo | 167 | 46722 | 0.8780 | 495 | 494.3 | 1.0014 | 494.3 | 0 | 1.0000 | +2307 |
+| B.9 | 065 | stereo | 167 | 37779 | 0.7085 | 495 | 494.3 | 1.0014 | 494.3 | 0 | 1.0000 | +2307 |
+| B.10 | 066 | mono | 250 | 29727 | 0.8233 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +914 |
+| B.11 | 067 | mono | 250 | 30904 | 0.8682 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +914 |
+| B.12 | 068 | mono | 250 | 36787 | 1.0339 | 513 | 493.6 | 1.0393 | 512.3 | 1 | 1.0378 | +1654 |
+| B.13 | 069 | mono | 250 | 37670 | 1.0573 | 527 | 493.6 | 1.0677 | 525.7 | 2 | 1.0650 | +2987 |
+| B.14 | 070 | mono | 167 | 45615 | 0.8554 | 495 | 494.3 | 1.0014 | 494.3 | 0 | 1.0000 | +2307 |
+| B.15 | 071 | mono | 167 | 36790 | 0.6881 | 495 | 494.3 | 1.0014 | 494.3 | 0 | 1.0000 | +2307 |
+| B.16 | 072 | stereo | 125 | 49955 | 0.6981 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +1827 |
+| B.17 | 073 | stereo | 250 | 30372 | 0.8432 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +914 |
+| B.19 | 075 | stereo | 249 | 30372 | 0.8432 | 492 | 491.6 | 1.0008 | 491.6 | 0 | 1.0000 | +859 |
+| B.20 | 076 | mono | 249 | 29727 | 0.8233 | 492 | 491.6 | 1.0008 | 491.6 | 0 | 1.0000 | +859 |
+| B.21 | 077 | stereo | 200 | 30372 | 0.8432 | 395 | 394.9 | 1.0003 | 394.9 | 0 | 1.0000 | +346 |
+| B.22 | 078 | mono | 200 | 29727 | 0.8233 | 395 | 394.9 | 1.0003 | 394.9 | 0 | 1.0000 | +346 |
+| B.23 | 060 | stereo | 250 | 30372 | 0.8432 | 494 | 493.6 | 1.0008 | 493.6 | 0 | 1.0000 | +914 |
+| B.24 | 063 | stereo | 250 | 38420 | 1.0802 | 541 | 493.6 | 1.0960 | 540.6 | 4 | 1.0952 | +921 |
+| B.25 | 079 | stereo | 250 | 49449 | 1.3803 | 710 | 493.6 | 1.4384 | 709.4 | 17 | 1.4372 | +1399 |
+| B.26 | 062 | stereo | 250 | 37526 | 1.0566 | 527 | 493.6 | 1.0677 | 527.4 | 3 | 1.0685 | -897 |
+
+PLAY counts whole fields of 567264 T: its resolution is 2269 T a frame over 250 frames, 3397 over 167, 4538 over 125.
