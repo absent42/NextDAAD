@@ -3722,9 +3722,10 @@ nxbQuietImage   equ 1            ; SLD marker of a -BenchQuiet image (no bytes)
 ; vid_fill_dma are CALLED, never re-implemented. The bench lives HERE,
 ; on VID_PAGE, because those routines are MMU7-resident on this page
 ; and no other page can reach them.
-; NXB_PAGE (DEBUG bank 47, MMU6) holds the tables and untimed session code
-; entered through nxb_hop6. Anything that decodes, pumps, produces, seeks,
-; maps MMU6 or runs inside a measured window stays on VID_PAGE.
+; NXB_PAGE (DEBUG bank 47, MMU6) holds the tables and untimed session and row
+; geometry code entered through nxb_hop6. Anything that decodes, pumps,
+; produces, seeks, maps MMU6 or runs inside a measured window stays on
+; VID_PAGE.
 ;
 ; CLOCK (carried verbatim from NXBEN, so results stay on the settled
 ; scale): the raster line pair NR $1E/$1F. One wrap = one frame; rows
@@ -4184,97 +4185,11 @@ nxb_sel_set:
     ld (vid_copy_body.thr), a
     ret
 
-; Per-row surface geometry (untimed), from nxbGeo:
-;   bit 0 gapped; bits 3:2 gapped height 192/144/72 (3 invalid);
-;   bits 5:4 dest start VID_DST_WIN/NXB_MID_DST/NXB_EDGE_DST/NXB_SEAM_DST;
-;   bits 7:6 and 1 zero; a gapped row may not use dest code 3 (E = 0).
-; CF set = invalid, nothing written. Corrupts AF, BC, HL.
+; Per-row surface geometry (untimed): nxb_geo_body on NXB_PAGE through nxb_hop6.
+; CF set = invalid, nothing written. Corrupts AF, BC, DE, HL.
 nxb_geo_setup:
-    ld a, (nxbGeo)
-    ld c, a
-    and $C2
-    scf
-    ret nz                       ; reserved bits
-    ld a, c
-    rrca
-    rrca
-    and 3                        ; height code
-    cp 3
-    ccf
-    ret c
-    ld hl, nxbGeoH
-    add hl, a
-    ld b, (hl)                   ; B = height
-    ld a, c
-    swapnib
-    and 3                        ; dest code
-    bit 0, c
-    jr z, .dcode
-    cp 3
-    ccf
-    ret c                        ; gapped at NXB_SEAM_DST
-.dcode:
-    add a, a
-    ld hl, nxbGeoDst
-    add hl, a
-    ld a, (hl)
-    inc hl
-    ld h, (hl)
-    ld l, a
-    ld (nxb_ops_body.dst), hl
-    or a                         ; CF clear: valid (LD leaves F alone)
-    bit 0, c
-    jr nz, .gap
-    ld hl, vf_op_skip8
-    ld (vid_stub + VOP_SKIP8 + 1), hl
-    ld hl, vf_op_run8
-    ld (vid_stub + VOP_RUN8 + 1), hl
-    ld hl, vf_op_copy8
-    ld (vid_stub + VOP_COPY8 + 1), hl
-    ld hl, vid_dst_norm_flat
-    ld (vid_skip_body.dn + 1), hl
-    ld (vid_run_body.dn + 1), hl
-    ld (vid_copy_body.dn + 1), hl
-    ld (vid_ds_copy_body.dn + 1), hl
-    ld hl, vid_chunk_dst_nocap_flat
-    ld (vid_skip_body.cd + 1), hl
-    ld (vid_ds_copy_body.cd + 1), hl
-    ld hl, vid_chunk_dst_flat
-    ld (vid_run_body.cd + 1), hl
-    ld (vid_chunk_all.dj + 1), hl
-    ret
-.gap:
-    ld hl, vg_op_skip8
-    ld (vid_stub + VOP_SKIP8 + 1), hl
-    ld hl, vg_op_run8
-    ld (vid_stub + VOP_RUN8 + 1), hl
-    ld hl, vg_op_copy8
-    ld (vid_stub + VOP_COPY8 + 1), hl
-    ld a, b                      ; the row's height
-    ld (vg_op_skip8.hcmp + 1), a
-    ld (vg_op_skip8.hsub + 1), a
-    ld (vg_op_skip8.hcmp2 + 1), a
-    ld (vg_op_run8.hcmp + 1), a
-    ld (vg_op_run8.hsub + 1), a
-    ld (vg_op_run8.hcmp2 + 1), a
-    ld (vg_op_copy8.hcmp + 1), a
-    ld (vg_op_copy8.hsub + 1), a
-    ld (vg_op_copy8.hcmp2 + 1), a
-    ld (vid_dst_norm_gap.h1 + 1), a
-    ld (vid_chunk_dst_gap.h1 + 1), a
-    ld (vid_chunk_dst_nocap_gap.h1 + 1), a
-    ld hl, vid_dst_norm_gap
-    ld (vid_skip_body.dn + 1), hl
-    ld (vid_run_body.dn + 1), hl
-    ld (vid_copy_body.dn + 1), hl
-    ld (vid_ds_copy_body.dn + 1), hl
-    ld hl, vid_chunk_dst_nocap_gap
-    ld (vid_skip_body.cd + 1), hl
-    ld (vid_ds_copy_body.cd + 1), hl
-    ld hl, vid_chunk_dst_gap
-    ld (vid_run_body.cd + 1), hl
-    ld (vid_chunk_all.dj + 1), hl
-    ret
+    ld hl, nxb_geo_body
+    jp nxb_hop6
 
 ; Build one rep's op stream at $C000: nxbOps copies of the row's op,
 ; then a FEND. COPY literal bodies are left as whatever the bank
@@ -5068,9 +4983,6 @@ nxbSynCur:   dw 0            ; SYNTH site cursor: vidFramePos, or vidRingRl stre
 nxbS0:       ds NXB_CELLS_LEN   ; decode start cells at session entry
 nxbCells:    ds NXB_CELLS_LEN   ; SCAN's current frame, FRAME's chosen frame
 vidPoolAtOpen: db 0          ; free pool banks before nxv2_open_body allocates
-; nxb_geo_setup lookups by code: gapped height, dest start.
-nxbGeoH:     db 192, 144, 72
-nxbGeoDst:   dw VID_DST_WIN, NXB_MID_DST, NXB_EDGE_DST, NXB_SEAM_DST
 nxbTabBuf:   ds NXB_TAB_MAX     ; the staged table (nxb_tab_stage)
 
 ; Token-poll instrument accumulators (vid_sd_tok_h, above).
@@ -5543,7 +5455,8 @@ nxbHistN:    db 0               ; histograms in nxbHistSav for the log step
  IFDEF DEBUG
 ; ---------------------------------------------------------------------
 ; NXB_PAGE - the DEBUG bench bank's lower 8K, at $C000. MMU6 holds it
-; only inside nxb_tab_stage and nxb_hop6: tables and untimed session steps.
+; only inside nxb_tab_stage and nxb_hop6: tables, untimed session steps and
+; row geometry.
 ; ---------------------------------------------------------------------
     MMU 6, NXB_PAGE, DATA_WINDOW
 
@@ -7291,6 +7204,107 @@ NXB_LOG_LINE  equ NXB_HIST_TXT + 2     ; a #HIST line and CRLF: longer than a ro
 nxbLogLine:   ds NXB_LOG_LINE
 nxbLogRd:     ds NXB_LOG_LINE
     ASSERT NXB_LOG_LINE < 256 && TM_ROWS == 32 && GLYPH_SPACE == ' '
+
+; ---------------------------------------------------------------------
+; ROW GEOMETRY - untimed, entered through nxb_hop6 from the hot stub
+; nxb_geo_setup. Writes hot operands only: no call, no MMU write.
+; ---------------------------------------------------------------------
+
+; Per-row surface geometry (untimed), from nxbGeo:
+;   bit 0 gapped; bits 3:2 gapped height 192/144/72 (3 invalid);
+;   bits 5:4 dest start VID_DST_WIN/NXB_MID_DST/NXB_EDGE_DST/NXB_SEAM_DST;
+;   bits 7:6 and 1 zero; a gapped row may not use dest code 3 (E = 0).
+; CF set = invalid, nothing written. Corrupts AF, BC, HL.
+nxb_geo_body:
+    ld a, (nxbGeo)
+    ld c, a
+    and $C2
+    scf
+    ret nz                       ; reserved bits
+    ld a, c
+    rrca
+    rrca
+    and 3                        ; height code
+    cp 3
+    ccf
+    ret c
+    ld hl, nxbGeoH
+    add hl, a
+    ld b, (hl)                   ; B = height
+    ld a, c
+    swapnib
+    and 3                        ; dest code
+    bit 0, c
+    jr z, .dcode
+    cp 3
+    ccf
+    ret c                        ; gapped at NXB_SEAM_DST
+.dcode:
+    add a, a
+    ld hl, nxbGeoDst
+    add hl, a
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    ld (nxb_ops_body.dst), hl
+    or a                         ; CF clear: valid (LD leaves F alone)
+    bit 0, c
+    jr nz, .gap
+    ld hl, vf_op_skip8
+    ld (vid_stub + VOP_SKIP8 + 1), hl
+    ld hl, vf_op_run8
+    ld (vid_stub + VOP_RUN8 + 1), hl
+    ld hl, vf_op_copy8
+    ld (vid_stub + VOP_COPY8 + 1), hl
+    ld hl, vid_dst_norm_flat
+    ld (vid_skip_body.dn + 1), hl
+    ld (vid_run_body.dn + 1), hl
+    ld (vid_copy_body.dn + 1), hl
+    ld (vid_ds_copy_body.dn + 1), hl
+    ld hl, vid_chunk_dst_nocap_flat
+    ld (vid_skip_body.cd + 1), hl
+    ld (vid_ds_copy_body.cd + 1), hl
+    ld hl, vid_chunk_dst_flat
+    ld (vid_run_body.cd + 1), hl
+    ld (vid_chunk_all.dj + 1), hl
+    ret
+.gap:
+    ld hl, vg_op_skip8
+    ld (vid_stub + VOP_SKIP8 + 1), hl
+    ld hl, vg_op_run8
+    ld (vid_stub + VOP_RUN8 + 1), hl
+    ld hl, vg_op_copy8
+    ld (vid_stub + VOP_COPY8 + 1), hl
+    ld a, b                      ; the row's height
+    ld (vg_op_skip8.hcmp + 1), a
+    ld (vg_op_skip8.hsub + 1), a
+    ld (vg_op_skip8.hcmp2 + 1), a
+    ld (vg_op_run8.hcmp + 1), a
+    ld (vg_op_run8.hsub + 1), a
+    ld (vg_op_run8.hcmp2 + 1), a
+    ld (vg_op_copy8.hcmp + 1), a
+    ld (vg_op_copy8.hsub + 1), a
+    ld (vg_op_copy8.hcmp2 + 1), a
+    ld (vid_dst_norm_gap.h1 + 1), a
+    ld (vid_chunk_dst_gap.h1 + 1), a
+    ld (vid_chunk_dst_nocap_gap.h1 + 1), a
+    ld hl, vid_dst_norm_gap
+    ld (vid_skip_body.dn + 1), hl
+    ld (vid_run_body.dn + 1), hl
+    ld (vid_copy_body.dn + 1), hl
+    ld (vid_ds_copy_body.dn + 1), hl
+    ld hl, vid_chunk_dst_nocap_gap
+    ld (vid_skip_body.cd + 1), hl
+    ld (vid_ds_copy_body.cd + 1), hl
+    ld hl, vid_chunk_dst_gap
+    ld (vid_run_body.cd + 1), hl
+    ld (vid_chunk_all.dj + 1), hl
+    ret
+
+; nxb_geo_body lookups by code: gapped height, dest start.
+nxbGeoH:     db 192, 144, 72
+nxbGeoDst:   dw VID_DST_WIN, NXB_MID_DST, NXB_EDGE_DST, NXB_SEAM_DST
 
     DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
     ASSERT $ <= DATA_WINDOW + $2000

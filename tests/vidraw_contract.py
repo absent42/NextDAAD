@@ -14,7 +14,8 @@ handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE
 vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
 kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain, the play
-log modes 16 and 17 and nxb_entry's mode routes); each is skipped with a note where it is not
+log modes 16 and 17 and nxb_entry's mode routes) and nxb_geo_setup's hop to NXB_PAGE against
+the baseline image in tests\\out\\vidraw-dma-base; each is skipped with a note where it is not
 assembled.
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
@@ -247,13 +248,13 @@ class RawMachine(Machine):
     """64K view over 2 MB of physical pages with the MMU applied: a slot's page is copied
     into the view when mapped and written back when unmapped (no page sits in two slots)."""
 
-    def __init__(self, syms):
+    def __init__(self, syms, pages=None):
         self.syms = syms
         self.phys = bytearray(PHYS_PAGES * SLOT)
-        for p in (4, 5, S("VID_PAGE"), S("VID_PAGE2")):
-            self.phys[p * SLOT:(p + 1) * SLOT] = read_page(p)
+        for p in (4, 5, self.sym("VID_PAGE"), self.sym("VID_PAGE2")):
+            self.phys[p * SLOT:(p + 1) * SLOT] = (pages or read_page)(p)
         self.mem = bytearray(0x10000)
-        self.mmu = [0, 1, 10, 11, 4, 5, 12, S("VID_PAGE")]
+        self.mmu = [0, 1, 10, 11, 4, 5, 12, self.sym("VID_PAGE")]
         for s, p in enumerate(self.mmu):
             self.mem[s * SLOT:(s + 1) * SLOT] = self.phys[p * SLOT:(p + 1) * SLOT]
         self.nr = {}
@@ -2610,11 +2611,13 @@ def mapnr(mc, slot, page):
     mc.nr[0x50 + slot] = page
 
 
-def nxb_machine(cls=None):
-    """A machine with the NXB page in physical RAM and NR $50-$57 readable (NRGET)."""
-    mc = (cls or RawMachine)(SYMS)
-    nxb = S("NXB_PAGE")
-    mc.phys[nxb * SLOT:(nxb + 1) * SLOT] = read_page(nxb)
+def nxb_machine(cls=None, syms=None, pages=None):
+    """A machine with the NXB page in physical RAM and NR $50-$57 readable (NRGET); syms and
+    pages: another image's (default this build's)."""
+    cls = cls or RawMachine
+    mc = cls(syms or SYMS, pages) if pages else cls(syms or SYMS)
+    nxb = mc.sym("NXB_PAGE")
+    mc.phys[nxb * SLOT:(nxb + 1) * SLOT] = (pages or read_page)(nxb)
     for s in range(8):
         mc.nr[0x50 + s] = mc.mmu[s]
     return mc
@@ -3679,6 +3682,109 @@ def test_rw_chain():
                    f"{sorted(readers ^ want)} differ, {npal} palette reads")
 
 
+BASE_DMA = Path(__file__).resolve().parent / "out" / "vidraw-dma-base"
+
+
+def base_image():
+    """(syms, page reader) of the baseline in tests\\out\\vidraw-dma-base of this build's
+    variant: quiet for a -BenchQuiet build, else debug."""
+    import dma_contract as dc
+    tag = "quiet" if "nxbQuietImage" in SYMS else "debug"
+    nex, sld = BASE_DMA / f"{tag}.nex", BASE_DMA / f"{tag}.sld"
+    for p in (nex, sld):
+        if not p.exists():
+            raise Fail(f"{p} is missing")
+    keep = dc.NEX, dc.SLD
+    dc.NEX, dc.SLD = nex, sld
+    try:
+        syms = dc.read_sld()
+        pages = {p: dc.read_page(p) for p in
+                 (4, 5) + tuple(syms[n][1] for n in ("VID_PAGE", "VID_PAGE2", "NXB_PAGE"))}
+    finally:
+        dc.NEX, dc.SLD = keep
+    return syms, pages.__getitem__
+
+
+class LoggedMem(bytearray):
+    """A machine's 64K view logging each byte store as (address, the page its slot maps)."""
+
+    def __setitem__(self, k, v):
+        if isinstance(k, int):
+            self.log.append((k, self.mc.mmu[k >> 13]))
+        super().__setitem__(k, v)
+
+
+def geo_run(syms, pages, geo):
+    """nxb_geo_setup on an image, nxbGeo = geo, MMU6 = CHAIN_ENTRY6: (CF, stores off the
+    stack, machine, MMU6 at each nxb_geo_body entry)."""
+    mc = nxb_machine(syms=syms, pages=pages)
+    mapnr(mc, 6, CHAIN_ENTRY6)
+    mc.poke("nxbGeo", geo)
+    mem = LoggedMem(mc.mem)
+    mem.mc, mem.log = mc, []
+    mc.mem = mc.cpu.m = mem
+    seen, traps = [], {}
+    if "nxb_geo_body" in syms:
+        def body(c):
+            seen.append(mc.mmu[6])
+            c.step()
+        traps[syms["nxb_geo_body"][1]] = body
+    cpu = mc.run(syms["nxb_geo_setup"][1], traps=traps, budget=10_000)
+    return cpu.fc, [(a, p) for a, p in mem.log if not STACK - 0x40 <= a < STACK], mc, seen
+
+
+def test_geo_hop():
+    """nxb_geo_setup is ld hl, nxb_geo_body / jp nxb_hop6; the body and its tables are on
+    NXB_PAGE. Each nxbGeo value 0-255 against the baseline image: CF equal; the same hot-page
+    stores by label with the same values (none with CF set, none elsewhere); the body entered
+    once with NXB_PAGE at MMU6; MMU6 (NR $56 too) and MMU7 on return as on entry."""
+    bench_only()
+    nxb, hot = S("NXB_PAGE"), S("VID_PAGE")
+    off = [n for n in ("nxb_geo_body", "nxbGeoH", "nxbGeoDst") if SYMS.get(n, (0,))[0] != nxb]
+    if off:
+        raise Fail(f"not NXB_PAGE labels: {', '.join(off)}")
+    body, hop = S("nxb_geo_body"), S("nxb_hop6")
+    code_is(nxb_machine(), "nxb_geo_setup",
+            bytes([0x21, body & 0xFF, body >> 8, 0xC3, hop & 0xFF, hop >> 8]))
+    osyms, opages = base_image()
+    ohot = osyms["VID_PAGE"][1]
+    at = {}
+    for n, (p, v) in osyms.items():
+        if p == ohot and v >= 0xE000:
+            at.setdefault(v, []).append(n)
+    addrs = sorted(at)
+    valid = 0
+    for g in range(256):
+        ofc, ost, omc, _ = geo_run(osyms, opages, g)
+        nfc, nst, nmc, seen = geo_run(SYMS, None, g)
+        if nfc != ofc:
+            raise Fail(f"nxbGeo ${g:02X}: CF {nfc}, baseline {ofc}")
+        stray = [(a, p) for a, p in ost if p != ohot] + [(a, p) for a, p in nst if p != hot]
+        if stray:
+            raise Fail(f"nxbGeo ${g:02X}: stores off the hot page (address, page) {stray[:4]}")
+        want = {}
+        for a, _ in ost:
+            la = addrs[bisect.bisect_right(addrs, a) - 1]
+            name = min(at[la], key=lambda n: ("." in n, n))
+            if SYMS.get(name, (0,))[0] != hot:
+                raise Fail(f"nxbGeo ${g:02X}: baseline store at {name}+{a - la} has no label "
+                           f"{name} on this image's VID_PAGE")
+            want[S(name) + a - la] = omc.mem[a]
+        got = {a: nmc.mem[a] for a, _ in nst}
+        if got != want or nfc and got:
+            diff = sorted((a, want.get(a), got.get(a)) for a in set(want) | set(got)
+                          if want.get(a) != got.get(a))
+            raise Fail(f"nxbGeo ${g:02X} (CF {nfc}): {len(got)} hot stores, {len(want)} "
+                       f"wanted; (address, wanted, got) {diff[:6]}")
+        if (seen, nmc.mmu[6], nmc.nr.get(0x56), nmc.mmu[7]) != ([nxb], CHAIN_ENTRY6,
+                                                                CHAIN_ENTRY6, hot):
+            raise Fail(f"nxbGeo ${g:02X}: (MMU6 at the body, MMU6, NR $56, MMU7) = "
+                       f"{(seen, nmc.mmu[6], nmc.nr.get(0x56), nmc.mmu[7])}")
+        valid += not nfc
+    if valid != 21:
+        raise Fail(f"{valid} valid geometry codes, expected 21")
+
+
 def test_rw_histlog():
     """The log step's pass: after the header and the (here empty) rows, one line per saved
     histogram, "#HIST <tag>" and 17 words, as hist.py and parse.parse_hist read it."""
@@ -4126,7 +4232,7 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
          test_play_log, test_play_clr, test_play_nofile, test_entry_modes,
-         test_rw_harness, test_rw_card_c, test_rw_chain, test_loop_sound_boundary]
+         test_rw_harness, test_rw_card_c, test_rw_chain, test_geo_hop, test_loop_sound_boundary]
 
 
 def main():
