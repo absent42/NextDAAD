@@ -564,7 +564,11 @@ def main(argv):
         print(f"--aspect {args.aspect}: width {width} -> free height {height}")
     elif args.shape is not None and "x" in args.shape.lower() and args.shape not in nxv2enc.PRESETS:
         w_str, h_str = args.shape.lower().split("x", 1)
-        shape = (int(w_str), int(h_str))
+        try:
+            shape = (int(w_str), int(h_str))
+        except ValueError:
+            raise SystemExit(f"error: --shape {args.shape}: not a preset name or "
+                             f"WIDTHxHEIGHT") from None
     else:
         shape = args.shape   # a preset name, or None (default: "full")
 
@@ -573,7 +577,15 @@ def main(argv):
         width, height = shape
         nxv2enc.raw_surface(width, height, args.direct_surface or "auto")
     else:
-        width, height = nxv2enc.resolve_shape(shape)
+        try:
+            width, height = nxv2enc.resolve_shape(shape)
+        except ValueError as e:
+            if args.direct or not isinstance(shape, tuple):
+                raise SystemExit(f"error: --shape {args.shape}: {e}") from None
+            raise SystemExit(
+                f"error: --shape {args.shape}: the compressed route takes width 256 "
+                f"(height 1-192) or 320 (height 1-256); any other shape needs --direct "
+                f"(width 4-320 in steps of 4, height 1-256)") from None
 
     src_w, src_h = probe_dimensions(ffmpeg, input_path)
     crop = compute_center_crop(src_w, src_h, width, height)

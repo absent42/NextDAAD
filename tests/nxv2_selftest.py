@@ -8581,11 +8581,16 @@ def t16_raw_gate_encode():
 @case(16, "raw gate - encode() threads the transport factor and the stall budget; old layout refuses raw options")
 def t16_raw_encode_threads_options():
     ex = _synthetic_ex(2, 320, 192)
+    calls = []
 
     def fake_extract(src_path, w, h, fps_val, start, duration, ffmpeg, dither, **kw):
-        expect(kw.get("raw") and kw.get("channels") == 2 and (w, h) == (320, 192),
-               f"raw stereo 320x192 extraction, got {w}x{h} {kw}")
-        return ex
+        expect(kw.get("raw"), f"raw extraction, got {kw}")
+        calls.append((w, h, kw.get("channels")))
+        out = dict(ex, orig=ex["orig"][:, :h, :w])
+        if kw.get("channels") == 1:
+            out.update(channels=1, abytes_real=625, abytes_pad=1024,
+                       audio_bytes=ex["audio_bytes"][:ex["nframes"] * 625])
+        return out
 
     real_extract, real_layout = enc._extract_source, enc.DIRECT_LAYOUT
     try:
@@ -8595,8 +8600,21 @@ def t16_raw_encode_threads_options():
                 return _quiet(enc.encode, "dummy.mp4", str(Path(td) / name), shape=(320, 192),
                               fps=25.0, direct=True, **kw)[0]
 
+            # 320x186@25 auto: stereo 0.97 alone; under factor 1.05 stereo 1.0157, mono 0.9937
+            for name, kw, ch in (("m.vid", dict(direct_transport_factor=1.05), 1),
+                                 ("s.vid", {}, 2)):
+                del calls[:]
+                _rep, out = _quiet(enc.encode, "dummy.mp4", str(Path(td) / name),
+                                   shape=(320, 186), fps=25.0, direct=True, **kw)
+                hdr = (Path(td) / name).read_bytes()[:32]
+                expect(calls == [(320, 186, ch)] and hdr[9] == ch,
+                       f"320x186@25 {kw}: extraction {calls}, header channels {hdr[9]}, want {ch}")
+                expect(("encoding mono sound" in out) == (ch == 1),
+                       f"320x186@25 {kw}: mono note printed only on the fallback:\n{out}")
+            del calls[:]
             u0 = run("off.vid").stream_utilization
             u1 = run("stall.vid", stall_budget="measured").stream_utilization
+            expect(calls == [(320, 192, 2)] * 2, f"raw stereo 320x192 extraction, got {calls}")
             expect(abs(u0 - enc.raw_supply_check(320, 192, 320, 25, "stereo")["utilization"]) < 1e-12,
                    f"default encode utilization {u0}")
             expect(abs(u1 - u0 - enc.RAW_STALL_T / RAW_P25) < 1e-12,
@@ -8674,6 +8692,24 @@ def t16_direct_cli_writes_raw():
             text = r.stdout.decode("utf-8", "replace")
             expect(r.returncode != 0 and opt[0] in text and "--direct" in text and not out.exists(),
                    f"{opt[0]} without --direct must be refused:\n{text}")
+
+
+@case(16, "videnc - a shape the compressed route cannot take refuses in one line, naming --direct")
+def t16_videnc_shape_refusal():
+    import videnc
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "x.vid"
+        # refused before ffmpeg runs: any existing file stands in for input and ffmpeg
+        base = ["videnc", str(LIB / "videnc.py"), str(out), "--ffmpeg", sys.executable]
+        for shape, needs in (("280x224", "width 256"), ("256x240", "width 256"),
+                             ("320x300", "width 256"), ("28ax224", "WIDTHxHEIGHT")):
+            msg = _exit_text(videnc.main, base + ["--shape", shape])
+            expect(msg.startswith(f"error: --shape {shape}:") and "\n" not in msg
+                   and needs in msg and not out.exists(),
+                   f"--shape {shape} without --direct: {msg!r}")
+            if needs == "width 256":
+                expect("320" in msg and "--direct" in msg and "4-320" in msg,
+                       f"--shape {shape}: names the compressed widths and --direct: {msg!r}")
 
 
 def main():
