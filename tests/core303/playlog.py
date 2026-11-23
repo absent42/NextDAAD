@@ -40,6 +40,16 @@ class PlayLogError(Exception):
     pass
 
 
+def _unended(part):
+    """A line that lost its end, split before a header cut to "#".."#PLAY" at its tail
+    ("#" appears in the log only at a header)."""
+    at = part.rfind("#")
+    if at > 0 and HEADER.startswith(part[at:]):
+        yield part[:at], False
+        part = part[at:]
+    yield part, False
+
+
 def _lines(text):
     """(content, ended) per line; a #PLAY header inside a line starts a new one, and the
     part before it is a line that lost its end."""
@@ -52,8 +62,11 @@ def _lines(text):
             body = body[at:]
             at = body.find(HEADER, 1)
         for p in parts:
-            yield p, False
-        yield body, ended
+            yield from _unended(p)
+        if ended:
+            yield body, True
+        else:
+            yield from _unended(body)
 
 
 def _is_header(line):

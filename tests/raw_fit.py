@@ -896,16 +896,26 @@ def read_playback(path):
     return out
 
 
+def frm_frames(r):
+    """Frames a session delivered: the larger FRM half (live/mirror; a counter fault zeroes
+    one half of a session that ran, as 0000/00FA)."""
+    return max(int(h, 16) for h in r["FRM"].split("/"))
+
+
 def unscored_reason(r):
     """Why a readout row is left out of the verdict, or None: no LATE, URUN or FRM figure
     ("-": a cut capture, or a -BenchQuiet report, which has no LATE row), or a session that
-    ended at once (FRM 1 or less)."""
-    if not (all(re.fullmatch(r"[0-9A-F]{4}", r.get(k, "")) for k in ("LATE", "URUN"))
-            and re.fullmatch(r"[0-9A-F]{4}/[0-9A-F]{4}", r.get("FRM", ""))):
-        return "no LATE, URUN or FRM figure (a cut capture, or a -BenchQuiet report)"
-    if int(r["FRM"].split("/")[0], 16) <= 1:
-        return "ended at once (FRM %s)" % r["FRM"]
-    return None
+    ended at once (both FRM halves 1 or less). The capture's LATE and URUN follow when
+    present."""
+    seen = [k for k in ("LATE", "URUN") if re.fullmatch(r"[0-9A-F]{4}", r.get(k, ""))]
+    if len(seen) < 2 or not re.fullmatch(r"[0-9A-F]{4}/[0-9A-F]{4}", r.get("FRM", "")):
+        why = "no LATE, URUN or FRM figure (a cut capture, or a -BenchQuiet report)"
+    elif frm_frames(r) <= 1:
+        why = "ended at once (FRM %s)" % r["FRM"]
+    else:
+        return None
+    return why + "".join(("; " if i == 0 else " ") + "%s %s" % (k, r[k])
+                         for i, k in enumerate(seen))
 
 
 def _fmt_shape(w, h, fps):
@@ -1450,7 +1460,7 @@ def report(res, readouts=None):
         m0 = nxv2enc.raw_model_t(g.spix, g.ssnd, g.cols, False, res.k[form])["total_t"]
         work = m0 + GLUE_T + d.total
         work0 = work + res.k[form]["tp"] + d.pal
-        frames = int(r["FRM"].split("/")[0], 16)
+        frames = frm_frames(r)
         per = g.samples * res.period
         tot, waits = ring_play(frames, work, work0, g.real, ch, res.period, ring, guard, chunk)
         play = int(r["PLAY"], 16)
@@ -1545,7 +1555,8 @@ def selftest():
         pb2.write_text("| Step | Clip | FRM | PLAY | LATE | URUN |\n|---|---|---|---|---|---|\n"
                        "| 1 | 060 | 00FA/00FA | 01EE | 0000 | 0000 |\n"
                        "| 2 | 061 | 00FA/00FA | 01EE | - | - |\n"
-                       "| 3 | 062 | 0001/0001 | 0002 | 0000 | 0000 |\n", encoding="utf-8")
+                       "| 3 | 062 | 0001/0001 | 0002 | 0000 | 0000 |\n"
+                       "| 4 | 063 | 0000/00FA | 021D | 00F9 | 00F9 |\n", encoding="utf-8")
         try:
             text_pb2 = report(res, read_playback(pb2))
         except ValueError as exc:
@@ -1556,8 +1567,14 @@ def selftest():
     check(any(ln.startswith("| 1 | 060 |") for ln in rows_pb2)
           and not any(ln.startswith(("| 2 | 061 |", "| 3 | 062 |")) for ln in rows_pb2)
           and "not scored: 2 061 - no LATE, URUN or FRM figure" in text_pb2
-          and "not scored: 3 062 - ended at once (FRM 0001/0001)" in text_pb2,
+          and "not scored: 3 062 - ended at once (FRM 0001/0001); LATE 0000 URUN 0000" in text_pb2,
           "cut and at-once captures are not scored: %s" % text_pb2[-400:])
+    # at once needs both FRM halves 1 or less: 0000/00FA ran (a counter fault), so it is scored
+    check(any(ln.startswith("| 4 | 063 |") and "| 00F9 | 00F9 | no |" in ln for ln in rows_pb2)
+          and any(ln.startswith("| 4 | 063 | stereo | 250 |") for ln in rows_pb2)
+          and "not scored: 4" not in text_pb2
+          and not re.search(r"not scored: 2 061 [^\n]*; LATE", text_pb2),
+          "FRM 0000/00FA is scored, frames from the nonzero half: %s" % text_pb2[-600:])
     # the wait shape from the log: RH39/AH39 rows or histograms only on the inline bench
     ns = SimpleNamespace
     check(infer_wait_shape([ns(rows={"RHST": 0}, hist={"AHST": []})]) == "sitting1"

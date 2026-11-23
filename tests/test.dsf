@@ -157,8 +157,7 @@ MTEST   72      verb
 ; ring and play RESIDENT (the fully-buffered special case). SP15 3b:
 ; files bigger than the ring now STREAM (circular prefetch ring, per
 ; frame SD reads) - the VSTR* verbs below and the -VidLong fixtures
-; exercise that path; the old VID SIZE? limit is gone (leg card:
-; .superpowers/sdd/sp14a-task-4-report.md sections 37-38).
+; exercise that path; the old VID SIZE? limit is gone.
 ; Names kept to 5 significant characters (DRF truncation collisions).
 VPLY4   74      verb
 VLOP4   76      verb
@@ -252,8 +251,7 @@ DPACL   89      verb
 ; screen, no crash); this verb is not meant to ship.
 KTEST 101     verb
 
-; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
-; report.md section 41): the seven-leg sitting could not exercise
+; Card #6 SNAP=03/00 sitting follow-up: the seven-leg sitting could not exercise
 ; vid_snap_geom's mode-0 (3-bank) or hidden-L2 (0-bank) branches - the
 ; test template always runs 320x256 mode-1, so SNAP=05 on every row.
 ; DEBUG build only owner instruments, EXTERN vectors 8/9/10
@@ -272,8 +270,7 @@ L2MOD 90      verb
 LHIDE 91      verb
 LSHOW 100     verb
 
-; SP17 T5 Layer 2 SCROLL bring-up (run sheet .superpowers/sdd/
-; sp14a-task-4-report.md section 41.4). Ten DEBUG-only owner verbs on
+; SP17 T5 Layer 2 SCROLL bring-up. Ten DEBUG-only owner verbs on
 ; ONE EXTERN vector (11 - debug.asm's l2scr_trampoline ->
 ; overlay2.asm's l2scr_run), the parameter selecting a config row.
 ; Every one of them: paints the existing DEBUG test card + its marker
@@ -308,8 +305,7 @@ LSTB  109     verb
 LSTC  110     verb
 LS256 111     verb
 
-; SP17 PLAYER BENCH (the NXBEN revival - card .superpowers/sdd/
-; sp14a-task-4-report.md section 42). NXBEN itself was retired at SP15
+; SP17 PLAYER BENCH (the NXBEN revival). NXBEN itself was retired at SP15
 ; 3a: the format froze on its evidence and its prototype kernels
 ; graduated into the production decoder. The revival measures the
 ; SHIPPING routines instead of prototypes, so the rows answer decode
@@ -388,9 +384,8 @@ NXBW  130     verb
 ; like letters - word_next, overlay1.asm - so "pick 23" parses as
 ; verb PICK + noun "23" = 23). Values 2-11/14/20 alias existing
 ; movement/INVEN/ALL nouns - harmless synonymy, only the VALUE is
-; used. Range 1-128 covers the W5 manifest and the raw video
-; sittings (100 also aliases TORCH, the same harmless synonymy)
-; (.superpowers/sdd/sp17-corpus/w5-manifest.md holds the number map).
+; used. Range 1-128 covers the W5 library's clip numbers and the raw
+; video sittings (100 also aliases TORCH, the same harmless synonymy).
 ; Verb numbers 116-118: 116 is the last of the retired NXBEN block,
 ; 117-118 were never assigned.
 PICK  116     verb

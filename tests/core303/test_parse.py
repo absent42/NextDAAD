@@ -634,3 +634,17 @@ def test_playlog_glued(tmp_path):
         ("5", "-", True), ("6", "060", False)]
     assert caps[0]["Row 23"] == "TRUNCATED: VID FMT?"
     assert all(c["PLAY"] == "01EE" for c in caps[1::2])
+
+
+def test_playlog_cut_header_after_partial(tmp_path):
+    """A header cut to 1-5 characters lands on a partial line: three captures written parse
+    as three (the cut ones TRUNCATED), whether a whole capture follows or the file ends."""
+    head = "#PLAY 060 50 1A2B\r\n" + PLAY_REPORT[0] + "\r\n" + PLAY_REPORT[1] + "\r\nPLAY   =01EE NO"
+    for cut in ("#", "#P", "#PL", "#PLA", "#PLAY"):
+        caps = _caps(tmp_path, head + cut + GOOD.replace("060", "062", 1))
+        assert [(c["Step"], c["Clip"], _cut(c)) for c in caps] == [
+            ("1", "060", True), ("2", "-", True), ("3", "062", False)], (cut, caps)
+        assert caps[2]["PLAY"] == "01EE", cut
+        caps = _caps(tmp_path, head + cut)
+        assert [(c["Step"], c["Clip"], _cut(c)) for c in caps] == [
+            ("1", "060", True), ("2", "-", True)], (cut, caps)
