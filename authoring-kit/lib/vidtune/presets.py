@@ -87,7 +87,7 @@ ROUTES = (
                  "a cinematic wide framing at full width, 320x160",
                  {"direct": True, "shape": "320x160"}),
            Route("fullrate-tall", "Action at full rate, tall",
-                 "the tallest picture at 25 fps, 280x224, with mono sound - "
+                 "a taller picture at 25 fps, 280x224, with mono sound - "
                  "at the edge of what the card delivers",
                  {"direct": True, "shape": "280x224"}))),
     Route("cutscene", "Long cutscene",

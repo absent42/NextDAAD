@@ -5098,6 +5098,64 @@ def t11_direct_routes():
         frame = snd + enc.raw_layout(w, h, enc.raw_surface(w, h)[0])["sectors"] * 512
         expect(f"{frame:,}" == nb and f"{frame * f / 1e6:.2f}" == mb,
                f"{w}x{h}@{f:g}: {frame:,} B x {f:g} = {frame * f / 1e6:.3f} MB/s, doc says {nb} / {mb}")
+    _raw_limit_figures(doc)
+
+
+def _raw_limit_figures(doc):
+    """The 25 fps tallest heights and the 'every shape at 16.67 and 12.5'
+    claims, wherever the manual pages and the --direct help state them."""
+    import re as _re
+    import videnc as vv
+
+    def tall(w, form, fps=25):
+        return enc.raw_max_height(w, "auto", fps, form)
+
+    def flat(text):
+        return " ".join(text.split())
+
+    for fps in (16.67, 12.5):
+        for form in enc.RAW_K:
+            short = [w for w in range(4, 321, 4) if tall(w, form, fps) < 256]
+            expect(not short, f"{fps:g} fps {form}: widths {short[:5]} do not reach 256 lines")
+    rows = _re.findall(r"^\| (\d+) \| (\d+) lines \| (\d+) lines \|$", doc, _re.M)
+    expect({(int(w), int(s), int(m)) for w, s, m in rows}
+           == {(w, tall(w, "stereo"), tall(w, "mono")) for w in (320, 280, 256)},
+           f"manual/video.md 25 fps limits table {rows}")
+    expect("At 16.67 or 12.5 fps every shape up to the full 320x256 plays." in flat(doc),
+           "manual/video.md no longer says every shape plays at 16.67 and 12.5 fps")
+    fmt = flat((ROOT / "manual" / "reference" / "video-format.md").read_text(encoding="utf-8"))
+    m = _re.search(r"At 25 fps the tallest pictures are (\d+)x(\d+), (\d+)x(\d+) and (\d+)x(\d+) "
+                   r"with stereo sound and (\d+)x(\d+), (\d+)x(\d+) and (\d+)x(\d+) with mono; "
+                   r"at 16\.67 and 12\.5 fps every shape up to 320x256 passes", fmt)
+    expect(m, "reference/video-format.md: the 25 fps limits sentence is missing or reworded")
+    v = list(map(int, m.groups()))
+    for i, form in enumerate(("stereo",) * 3 + ("mono",) * 3):
+        w, h = v[2 * i], v[2 * i + 1]
+        expect(h == tall(w, form), f"reference/video-format.md: {w}x{h} {form}, gate {tall(w, form)}")
+    dlv = flat((ROOT / "manual" / "reference" / "video-delivery.md").read_text(encoding="utf-8"))
+    m = _re.search(r"at 25 fps the tallest pictures are (\d+)x(\d+), (\d+)x(\d+) \(with mono sound\) "
+                   r"and (\d+)x(\d+), and at 16\.67 fps every shape up to 320x256 plays", dlv)
+    expect(m, "reference/video-delivery.md: the 25 fps limits sentence is missing or reworded")
+    v = list(map(int, m.groups()))
+    for (w, h), form in zip(zip(v[::2], v[1::2]), ("stereo", "mono", "stereo")):
+        expect(h == tall(w, form), f"reference/video-delivery.md: {w}x{h} {form}, gate {tall(w, form)}")
+    help_text = flat(_quiet_help(vv))
+    m = _re.search(r"at 25 fps up to (\d+)x(\d+), (\d+)x(\d+) or (\d+)x(\d+) mono", help_text)
+    expect(m, "videnc --direct help: the 25 fps limits are missing or reworded")
+    v = list(map(int, m.groups()))
+    for (w, h), form in zip(zip(v[::2], v[1::2]), ("stereo", "stereo", "mono")):
+        expect(h == tall(w, form), f"videnc --direct help: {w}x{h} {form}, gate {tall(w, form)}")
+
+
+def _quiet_help(vv):
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            vv.main(["videnc", "--help"])
+        except SystemExit:
+            pass
+    return buf.getvalue()
 
 
 @case(12, "review fix: no-audio-source probe skips extraction (no raw "

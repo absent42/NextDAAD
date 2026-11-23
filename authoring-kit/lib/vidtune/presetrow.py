@@ -110,7 +110,7 @@ class _RouteItem(QWidget):
 
         box = QVBoxLayout(self)
         left = theme.GAP_ZONE + theme.GAP_PANE if indent else theme.GAP_PANE
-        # A route and its framing variant are one decision, so they sit
+        # A route and its framing variants are one decision, so they sit
         # tight together; the air goes BETWEEN routes instead.
         box.setContentsMargins(left, theme.GAP_PANE if top_gap else theme.UNIT + 1,
                                theme.GAP_PANE, theme.UNIT + 1)

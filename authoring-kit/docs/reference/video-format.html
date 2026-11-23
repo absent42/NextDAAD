@@ -515,9 +515,8 @@ kit carries the format's definition, in order of usefulness:
 <code>lib\nxv2dec.py</code> is the executable specification of the player for the
 delta layout, so what it does with a stream IS the format's behaviour,
 and <code>lib\nxv2enc.py</code>, beside it, carries the matching header layout,
-opcode set and constants, and the raw layout's writer
-(<code>emit_raw_frame</code>, <code>pack_header</code>). Every section of the file is an
-exact multiple of 512-byte SD blocks.</p>
+opcode set and constants, and the raw layout's writer. Every section
+of the file is an exact multiple of 512-byte SD blocks.</p>
 <p>Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
 decimation. A mono source is converted to stereo automatically. A raw
 clip may instead carry mono: one byte a sample at 15625 Hz, played on
@@ -642,6 +641,11 @@ surface is column-major over its own width and height: columns of
 </tr>
 </tbody>
 </table>
+<p>The other header fields are as in every NXV v2 header: the magic
+<code>NXVID</code> (offset 0, 5 bytes), version 2 (5), fps x 10 (8, for
+information only), the keyframe policy byte (13, not read by the
+player), the frame count (14, 3 bytes, 1 to 65535), and zeros to the
+end of the 512 bytes.</p>
 <p>Each frame, in order:</p>
 <ol>
 <li><strong>Sound.</strong> The real sound bytes, then <code>$80</code> padding up to

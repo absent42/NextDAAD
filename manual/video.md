@@ -322,7 +322,7 @@ For a cinematic wide framing at full width instead:
 SET VIDOPTS_001=--direct --shape 320x160
 ```
 
-For the tallest picture that plays at 25 fps, with mono sound:
+For a taller picture at 25 fps, with mono sound:
 
 ```
 SET VIDOPTS_001=--direct --shape 280x224
