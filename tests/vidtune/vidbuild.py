@@ -7,7 +7,7 @@ shapes) with height capped at 192/256 respectively - there is no way to
 build a real NXV v2 header for an arbitrary tiny width like 32. So this
 helper's width/height must be one of those real shapes; callers wanting
 a small/fast fixture use a small HEIGHT (down to 1) rather than an
-off-format width.
+off-format width. The raw clip builders are shared with tests/nxv2_selftest.py.
 """
 import contextlib
 

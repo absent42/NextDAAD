@@ -62,6 +62,8 @@ def frames_of(vid_path):
     recorded any structural problems walking it."""
     buf = Path(vid_path).read_bytes()
     hdr = nxv2enc.unpack_header(buf)
+    if hdr["raw"]:
+        raise ValueError(f"{vid_path}: raw layout clip - no op stream to census")
     issues = []
     frames = list(nxv2dec._iter_frames(buf, hdr, issues=issues))
     if issues:

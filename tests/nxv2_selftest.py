@@ -23,12 +23,14 @@ ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "authoring-kit" / "lib"
 sys.path.insert(0, str(LIB))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent / "vidtune"))   # vidbuild
 
 import numpy as np
 
 import nxv2enc as enc
 import nxv2dec as dec
 import nxv2_bench_rows as bench
+import vidbuild
 
 SINTEL = ROOT / "tools" / "demo-files" / "Sintel_1080_10s_30MB.mp4"
 BBB = ROOT / "tools" / "demo-files" / "Big_Buck_Bunny_1080_10s_30MB.mp4"
@@ -8321,49 +8323,6 @@ def t16_raw_frame_bytes():
     assert set(b[1024:1535]) == {0x80} and b[1535] == 0
 
 
-def _raw_src_ex(n, width, height, fps=25.0, channels=2, cut_at=None, seed=11):
-    """_extract_source(raw=True)-shaped dict without ffmpeg: blocky random
-    frames; from cut_at a scene cut and a narrower colour range."""
-    rng = np.random.default_rng(seed)
-    blocks = rng.integers(0, 256, size=(n, -(-height // 8), -(-width // 8), 3), dtype=np.uint8)
-    chg = np.zeros(n)
-    if cut_at is not None:
-        blocks[cut_at:] = blocks[cut_at:] // 4 + 96
-        chg[cut_at] = 0.9
-    orig = np.ascontiguousarray(
-        np.repeat(np.repeat(blocks, 8, axis=1), 8, axis=2)[:, :height, :width])
-    rate, _samples, real, padded = enc.audio_layout(fps, channels, raw=True)
-    audio = bytes(rng.integers(0, 256, size=n * real, dtype=np.uint8))
-    return dict(orig=orig, chg=chg, audio_bytes=audio, channels=channels, rate=rate,
-                abytes_real=real, abytes_pad=padded, nframes=n)
-
-
-@contextlib.contextmanager
-def _record_quantised():
-    """Collects the decoded RGB frame of every dither_quantize call (the
-    picture the encoder scores its PSNR on), in call order."""
-    real, got = enc.dither_quantize, []
-
-    def rec(*a, **k):
-        idx, rgb = real(*a, **k)
-        got.append(rgb.copy())
-        return idx, rgb
-    enc.dither_quantize = rec
-    try:
-        yield got
-    finally:
-        enc.dither_quantize = real
-
-
-def _raw_encode(path, w, h, fps=25.0, channels=2, n=3, cut_at=2):
-    """_encode_raw (gate off) of a synthetic clip; returns the encoder's
-    quantised RGB frames."""
-    ex = _raw_src_ex(n, w, h, fps=fps, channels=channels, cut_at=cut_at)
-    with _record_quantised() as want:
-        _quiet(enc._encode_raw, ex, w, h, fps, path, channels=channels, gate=False)
-    return want
-
-
 @case(16, "raw layout - nxv2dec decodes _encode_raw output to the encoder's quantised frames "
           "at the clip's own shape, both surfaces, stereo and mono")
 def t16_raw_decode_roundtrip():
@@ -8374,7 +8333,7 @@ def t16_raw_decode_roundtrip():
         for w, h, ch, fps in runs:
             tag = f"{w}x{h} {'stereo' if ch == 2 else 'mono'} @{fps:g}"
             out = Path(td) / "r.vid"
-            want = _raw_encode(out, w, h, fps=fps, channels=ch)
+            want = vidbuild.build_raw_vid(out, w, h, fps=fps, channels=ch)
             sw, colmajor = enc.raw_surface(w, h)
             hdr = enc.unpack_header(out.read_bytes())
             expect(hdr["raw"] and hdr["raw_width"] == w and hdr["width"] == sw
@@ -8397,7 +8356,7 @@ def t16_raw_decode_palette():
     w, h, ch = 280, 224, 1
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "pal.vid"
-        want = _raw_encode(out, w, h, channels=ch)
+        want = vidbuild.build_raw_vid(out, w, h, channels=ch)
         data = out.read_bytes()
         frames = list(dec.decode(out))
     padded = enc.audio_layout(25.0, ch, raw=True)[3]
@@ -8421,35 +8380,48 @@ def t16_raw_decode_palette():
     expect(np.array_equal(p2[i2], want[2]), "frame 2 colours: the new palette applied")
 
 
-@case(16, "raw layout - malformed raw clips raise Nxv2FormatError from decode and are listed by validate")
+@case(16, "raw layout - malformed raw clips and every header field the player's open refuses "
+          "raise Nxv2FormatError from decode and are listed by validate")
 def t16_raw_decode_malformed():
     w, h, ch = 280, 224, 2
     padded = enc.audio_layout(25.0, ch, raw=True)[3]
     px = enc.raw_layout(w, h, 320)["sectors"] * 512
-    f0 = padded + 512 + px                             # frame 0 carries a palette
+    f0 = padded + 512 + px                             # frames 0 and 2 carry a palette
+    f1 = padded + px
     with tempfile.TemporaryDirectory() as td:
-        good_path = Path(td) / "good.vid"
-        _raw_encode(good_path, w, h, channels=ch)
-        good = good_path.read_bytes()
+        good_path, s256_path = Path(td) / "good.vid", Path(td) / "s256.vid"
+        vidbuild.build_raw_vid(good_path, w, h, channels=ch)
+        vidbuild.build_raw_vid(s256_path, 256, 192, channels=1, n=1, cut_at=None)
+        good, s256 = good_path.read_bytes(), s256_path.read_bytes()
 
-        def hdr_set(off, val, size=1):
-            b = bytearray(good)
+        def hdr_set(off, val, size=1, src=good):
+            b = bytearray(src)
             b[off:off + size] = int(val).to_bytes(size, "little")
             return bytes(b)
         bad_tag = bytearray(good)
         bad_tag[512 + f0 + padded - 1] = 2
         cases = [
             ("truncated mid-pixels", good[:512 + f0 + padded + 40 * 512], "end of file"),
-            ("truncated in the sound sectors", good[:512 + f0 + 700], "end of file"),
-            ("truncated in the palette sector", good[:512 + padded + 100], "end of file"),
+            ("truncated in the sound sectors", good[:512 + f0 + 1024], "end of file"),
+            ("truncated before frame 2's palette sector", good[:512 + f0 + f1 + padded], "end of file"),
+            ("not whole blocks", good[:512 + f0 + 700], "512-byte blocks"),
             ("bad tag", bytes(bad_tag), "tag"),
             ("frame count beyond the file", hdr_set(enc.HDR_OFF_FRAMES, 4, 3), "end of file"),
+            ("frame count 0", hdr_set(enc.HDR_OFF_FRAMES, 0, 3), "frame count"),
+            ("frame count 65536", hdr_set(enc.HDR_OFF_FRAMES, 65536, 3), "frame count"),
             ("cap not pixel sectors + 1", hdr_set(enc.HDR_OFF_FRAMECAP, 125, 2), "cap"),
+            ("ring margin past the file", hdr_set(enc.HDR_OFF_RINGMARGIN, len(good) // 512 + 1, 2),
+             "margin"),
             ("raw without direct ($11)", hdr_set(enc.HDR_OFF_FLAGS, 0x11), "raw"),
             ("raw width 6", hdr_set(enc.HDR_OFF_RAWW, 6, 2), "raw width"),
             ("raw width 0", hdr_set(enc.HDR_OFF_RAWW, 0, 2), "raw width"),
             ("raw width 324", hdr_set(enc.HDR_OFF_RAWW, 324, 2), "raw width"),
             ("three channels", hdr_set(enc.HDR_OFF_ACHAN, 3), "channels"),
+            ("rate 22050", hdr_set(enc.HDR_OFF_ARATE, 22050, 2), "sample rate"),
+            ("sound bytes 0", hdr_set(enc.HDR_OFF_ABYTES, 0, 2), "sound bytes"),
+            ("sound bytes 3073", hdr_set(enc.HDR_OFF_ABYTES, 3073, 2), "sound bytes"),
+            ("256 surface height 200", hdr_set(enc.HDR_OFF_HEIGHT, 200, src=s256), "height"),
+            ("256 surface height 0 (256)", hdr_set(enc.HDR_OFF_HEIGHT, 0, src=s256), "height"),
         ]
         for name, buf, word in cases:
             p = Path(td) / "bad.vid"
@@ -8464,6 +8436,45 @@ def t16_raw_decode_malformed():
                 raise AssertionError(f"{name}: decode did not raise")
             issues = dec.validate(p)
             expect(any(word in i for i in issues), f"{name}: validate {issues}")
+
+
+@case(16, "raw layout - the 256 surface ignores the raw width word, as the player does")
+def t16_raw_decode_256_width_word():
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "s256.vid"
+        want = vidbuild.build_raw_vid(p, 256, 192, channels=2)
+        good = p.read_bytes()
+        expect(good[enc.HDR_OFF_WIDTHCODE] == 0, "256 surface (width code 0)")
+        for word in (0, 6, 320, 0xFFFF):
+            b = bytearray(good)
+            b[enc.HDR_OFF_RAWW:enc.HDR_OFF_RAWW + 2] = word.to_bytes(2, "little")
+            p.write_bytes(b)
+            expect(enc.unpack_header(bytes(b))["raw_width"] == 256, f"word {word}: raw_width not 256")
+            frames = list(dec.decode(p))
+            expect(len(frames) == 3 and all(img.shape == (192, 256) for _pal, img in frames),
+                   f"word {word}: decoded {[img.shape for _pal, img in frames]}")
+            expect(all(np.array_equal(pal[img], q) for (pal, img), q in zip(frames, want)),
+                   f"word {word}: frames differ from the encoder's")
+            expect(dec.validate(p) == [], f"word {word}: validate {dec.validate(p)}")
+
+
+@case(16, "raw layout - the op-stream bench walkers refuse a raw clip by name")
+def t16_raw_bench_walkers_refuse():
+    import fit_gap_bench as g
+    import nxv2_copy_census as census
+    import nxv2_frame_model as fm
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "raw.vid"
+        vidbuild.build_raw_vid(p, 280, 224, channels=1)
+        for name, call in (("nxv2_copy_census.frames_of", lambda: list(census.frames_of(p))),
+                           ("nxv2_frame_model.frames", lambda: fm.frames(p)),
+                           ("fit_gap_bench.fixture_frames", lambda: g.fixture_frames(p, 16, 16))):
+            try:
+                call()
+            except ValueError as exc:
+                expect("raw layout" in str(exc), f"{name}: {exc}")
+            else:
+                raise AssertionError(f"{name} walked a raw clip without refusing")
 
 
 def _raw_demo_src():

@@ -37,6 +37,7 @@ from nxv2enc import (
     unflatten_frame,
     FLAG_DELTA_STREAM, FLAG_DIRECT_SERVE, FLAG_RAW, RAW_W_STEP, WIDTH_BY_CODE,
     RAW_TAG_PIXELS, RAW_TAG_PALETTE, PAL_BLOCK_SIZE, raw_layout, audio_pad_bytes,
+    MAX_HEIGHT_BY_WIDTH, RATE_STEREO, PLAYER_MAX_FRAMES, AUD_FRAME_MAX, BLOCK_B,
 )
 
 RAW_FLAGS = FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE | FLAG_RAW   # exactly $13
@@ -216,15 +217,32 @@ def _iter_raw_frames(buf, hdr, issues=None):
         else:
             raise Nxv2FormatError(msg)
 
+    # the player's open refusals (VID FMT?), in its order
     surface_w, width, height = hdr["width"], hdr["raw_width"], hdr["height"]
+    if height > MAX_HEIGHT_BY_WIDTH[surface_w]:
+        fail(f"raw layout: height {height} on the {surface_w} surface, must be "
+             f"1-{MAX_HEIGHT_BY_WIDTH[surface_w]}")
     if hdr["flags"] != RAW_FLAGS:
         fail(f"raw layout: flags must be exactly ${RAW_FLAGS:02X}, got ${hdr['flags']:02X}")
     if hdr["channels"] not in (1, 2):
         fail(f"raw layout: channels must be 1 or 2, got {hdr['channels']}")
+    if hdr["arate"] != RATE_STEREO:
+        fail(f"raw layout: sample rate {hdr['arate']} Hz, must be {RATE_STEREO}")
+    if not 1 <= hdr["frame_count"] <= PLAYER_MAX_FRAMES:
+        fail(f"raw layout: frame count {hdr['frame_count']}, must be 1-{PLAYER_MAX_FRAMES}")
+    if not 1 <= hdr["audio_bytes_per_frame"] <= AUD_FRAME_MAX:
+        fail(f"raw layout: sound bytes a frame {hdr['audio_bytes_per_frame']}, must be "
+             f"1-{AUD_FRAME_MAX}")
     if surface_w == WIDTH_BY_CODE[1] and not (
             RAW_W_STEP <= width <= surface_w and width % RAW_W_STEP == 0):
         fail(f"raw layout: raw width must be {RAW_W_STEP}-{surface_w} and a multiple "
              f"of {RAW_W_STEP} on the {surface_w} surface, got {width}")
+    if len(buf) % BLOCK_B:
+        fail(f"raw layout: file size {len(buf)} B is not a whole number of "
+             f"{BLOCK_B}-byte blocks")
+    if hdr["ring_start_margin_blocks"] > len(buf) // BLOCK_B:
+        fail(f"raw layout: ring start margin {hdr['ring_start_margin_blocks']} blocks "
+             f"is past the file's {len(buf) // BLOCK_B} blocks")
     geo = raw_layout(width, height, surface_w)
     if hdr["per_frame_cap_blocks"] != geo["cap_blocks"]:
         fail(f"raw layout: frame cap {hdr['per_frame_cap_blocks']} blocks, the "
@@ -412,7 +430,7 @@ def validate(vid_path):
         hdr = unpack_header(buf)
     except ValueError as exc:
         return [f"header: {exc}"]
-    if len(buf) % 512 != 0:
+    if len(buf) % 512 != 0 and not hdr["raw"]:   # the raw walker reports it
         issues.append(f"file size {len(buf)} is not a 512-byte block multiple")
     count = 0
     for _ in _iter_frames(buf, hdr, issues=issues):
