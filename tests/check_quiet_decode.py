@@ -120,7 +120,7 @@ TIMED = {
         "vid_ds_done",
         # raw direct reader, its sound handlers and play pointer access (after
         # the region: the hot page tail, so listed here only)
-        "vid_raw_frame", "vr_sector", "vr_sector_n", "vr_sector_c", "vr_page", "vid_raw_pal",
+        "vid_raw_frame", "vr_sector", "vr_sector_n", "vr_sector_c", "vid_raw_pal",
         "vid_raw_apad", "video_ctc_isr_raw_st", "video_ctc_isr_raw_mono",
         "vid_raw_rd_hl", "vid_raw_rd_de", "vid_raw_prime",
         # cold, but it writes the slide and palette train the raw decode runs

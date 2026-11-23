@@ -5086,7 +5086,8 @@ vidRawPage0:     db 0            ; vidP_RawX0 >> 5: surface page offset
 vidRawH0:        db 0            ; $40 + (vidP_RawX0 & 31): MMU2 dest high
 
 ; RAW DIRECT READER: the schedule (vid_raw_sched_build) runs at MMU6 with
-; HL = destination, C = PORT_SPI_DAT, B scrap (ini counts it).
+; HL = destination, C = PORT_SPI_DAT, E = the back surface page at MMU2, B scrap
+; (ini counts it), D scrap.
 
 ; Raw frame decode (vid_decode_any.raw). Remain, section bound and (frame inside
 ; its run) run count charged once before any read; vr_sector_n's entry set every
@@ -5119,11 +5120,10 @@ vid_raw_frame:
     or a
     call nz, vid_raw_pal
     ld a, (l2BackBank)
-    call vid_dst_base
-    ld hl, vidDstPage
-    ld a, (vidRawPage0)
+    add a, a
+    ld hl, vidRawPage0
     add a, (hl)
-    ld (hl), a
+    ld e, a                      ; E = the page at MMU2 for the schedule's page ends
     nextreg NR_MMU2, a
     ld a, (vidRawH0)
     ld h, a
@@ -5153,8 +5153,8 @@ VR_POLL_PAD_N equ 1
 VR_ENT_FAST equ (PORT_SPI_DAT << 8) | $DB
 VR_ENT_CROSS equ ((vr_sector_c - vr_sector_n - 2) << 8) | $18
 
-; Open a frame's first sector (CRC if due). Preserves HL. Out: C =
-; PORT_SPI_DAT, vidDsCrcDue = 1. Corrupts AF, B, DE. Faults abort.
+; Open a frame's first sector (CRC if due). Preserves HL, E. Out: C =
+; PORT_SPI_DAT, vidDsCrcDue = 1. Corrupts AF, B, D. Faults abort.
 vr_sector:
     ld c, PORT_SPI_DAT           ; the schedule's C from here on
     ld a, (vidDsCrcDue)
@@ -5163,7 +5163,7 @@ vr_sector:
     ld (vidDsCrcDue), a          ; flags kept: Z = no CRC pends
     jr z, vr_sector_n.fresh
 ; Open sectors 2..n (CRC pends; vidDsCrcDue untouched). In: C = PORT_SPI_DAT (kept;
-; reloaded after a walk or vid_sd_tok_h). Preserves HL. Corrupts AF, B, DE. Faults abort.
+; reloaded after a walk or vid_sd_tok_h). Preserves HL, E. Corrupts AF, B, D. Faults abort.
 ; VR_ENT_FAST: the frame charged the run; VR_ENT_CROSS: vr_sector_c counts, walks.
 vr_sector_n:
     in a, (PORT_SPI_DAT)         ; 2 CRC bytes 15 T apart, as blkopen
@@ -5209,7 +5209,8 @@ vr_sector_c:
     in a, (PORT_SPI_DAT)
     nop
     in a, (PORT_SPI_DAT)
-.nocrc:
+.nocrc:                          ; vr_sector_n.fresh enters here: the push follows it
+    push de                      ; E: the schedule's surface page
     ld de, (vidStrmRunBlkH)
     ld a, d
     or e
@@ -5217,6 +5218,7 @@ vr_sector_c:
 .run:
     dec de
     ld (vidStrmRunBlkH), de
+    pop de
     jp vr_sector_n.nocrc
 .walk:
     push hl
@@ -5225,20 +5227,10 @@ vr_sector_c:
     pop hl
     ld c, PORT_SPI_DAT           ; the walk corrupts BC
     jr nc, .run
-    jp vid_dec_abort_pos
+    jp vid_dec_abort_pos         ; SP reloaded there: the pushed DE is dropped
     ; on VID_PAGE (slot 7) here: {b} reads the assembled entry
     ASSERT {b vr_sector_n} == $DB && {b vr_sector_n + 1} == PORT_SPI_DAT
     ASSERT vr_sector_c - vr_sector_n - 2 <= 127
-
-; Schedule page end: map the next back-surface page at MMU2.
-; Out: HL = VID_DST_WIN. Corrupts AF.
-vr_page:
-    ld hl, vidDstPage
-    inc (hl)
-    ld a, (hl)
-    nextreg NR_MMU2, a
-    ld hl, VID_DST_WIN
-    ret
 
 ; One palette sector to the hidden Layer 2 palette, vid_ds_pal's
 ; choreography (edit the other bank, flip at present). MMU6 = the schedule
@@ -8207,7 +8199,7 @@ vid_raw_sched_build:
     ld hl, vr_sector
     call .ecall
 .loop:
-    ld hl, VR_SCHED_LIMIT - 19   ; one pass and the tail emit <= 19 bytes
+    ld hl, VR_SCHED_LIMIT - 23   ; one pass and the tail emit <= 23 bytes
     or a
     sbc hl, de
     ret c
@@ -8261,9 +8253,16 @@ vid_raw_sched_build:
     dec (hl)
     jr nz, .nseg
     ld (hl), 32
-.page:
-    ld hl, vr_page
-    call .ecall
+.page:                           ; L = 0 here: inc e / ld a, e /
+    ld a, $1C                    ; nextreg NR_MMU2, a / ld h, high VID_DST_WIN
+    ld hl, $ED7B
+    call .e3
+    ld a, $92
+    ld hl, $2600 | NR_MMU2
+    call .e3
+    ld a, high VID_DST_WIN
+    ld (de), a
+    inc de
 .nseg:
     ld hl, (vrgSec)
     ld a, h
@@ -8306,8 +8305,8 @@ vid_raw_sched_build:
     inc de
     ret
     ; worst legal schedule: a read and a column end per column, a split
-    ; read and vr_sector per sector, the page calls, the pad read and ret
-    ASSERT VR_SCHED + 320*6 + 160*6 + 10*3 + 8 <= VR_SCHED_LIMIT
+    ; read and vr_sector per sector, the page ends, the pad read and ret
+    ASSERT VR_SCHED + 320*6 + 160*6 + 10*7 + 8 <= VR_SCHED_LIMIT
 
 ; Stage a raw session's hot cells through vid_stage_common's open
 ; VID_PAGE window (rubric 3). Corrupts AF, C.

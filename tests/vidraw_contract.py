@@ -5,12 +5,12 @@ Runs the EMITTED bytes of build\\nextdaad.nex on the tests\\ddma_contract.py Z80
 the MMU applied and port $EB fed by a model of the SD card's CMD18 stream: the cold schedule
 generator (vid_raw_sched_build: slide, schedule, palette train) and hot-cell staging
 (vid_raw_stage), the raw frame decode (vid_raw_frame) with its sector opens, surface page
-step, palette sector and frame tag (vr_sector, vr_sector_n, vr_page, vid_raw_pal and the
-train, vid_raw_apad), with read spacing from a T trace (io_gaps), the per-session operand patches
-(vid_stage_common.vec), the raw sound handlers on the alternate set (video_ctc_isr_raw_st,
-video_ctc_isr_raw_mono: every ring start against a reference, T per path), the play pointer
-helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime) and the handler choice in
-vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and URUN counters (vid_dbg_late,
+step, palette sector and frame tag (vr_sector, vr_sector_n, vr_sector_c, the inline page ends,
+vid_raw_pal and the train, vid_raw_apad), with read spacing from a T trace (io_gaps), the
+per-session operand patches (vid_stage_common.vec), the raw sound handlers on the alternate
+set (video_ctc_isr_raw_st, video_ctc_isr_raw_mono: every ring start against a reference, T
+per path), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime) and the
+handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and URUN counters (vid_dbg_late,
 vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
 kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain); each is
@@ -475,9 +475,14 @@ def run_frame(mc, code, w, h, tag=0, waits=1, crc_due=0, pad=0, pal=None, remain
     return card, sectors, x0
 
 
+# The schedule's page end: inc e / ld a,e / nextreg NR_MMU2,a / ld h,high VID_DST_WIN.
+PAGE_END = bytes([0x1C, 0x7B, 0xED, 0x92, 0x52, 0x26, 0x40])
+
+
 def parse_sched(mc):
     """[(kind, value, addr)] from VR_SCHED to its ret; kind: read (value n), sector,
-    sectorn (vr_sector_n), page, colend, ldhl (value operand), ret."""
+    sectorn (vr_sector_n), page (PAGE_END), pagecall (a call vr_page, the routine PAGE_END
+    replaced), colend, ldhl (value operand), ret."""
     base = SCHED_PAGE * SLOT - S("VR_SLIDE")
     ph = mc.phys
     a, out = S("VR_SCHED"), []
@@ -486,13 +491,16 @@ def parse_sched(mc):
         if a + 3 > end:
             raise Fail(f"schedule runs to ${a:04X}, past VR_SCHED_LIMIT")
         b, v = ph[base + a], ph[base + a + 1] | ph[base + a + 2] << 8
-        if b == 0xCD:
+        if bytes(ph[base + a:base + a + 7]) == PAGE_END:
+            out.append(("page", 0, a))
+            a += 7
+        elif b == 0xCD:
             if v == S("vr_sector"):
                 out.append(("sector", v, a))
             elif v == S("vr_sector_n"):
                 out.append(("sectorn", v, a))
-            elif v == S("vr_page"):
-                out.append(("page", v, a))
+            elif "vr_page" in SYMS and v == S("vr_page"):
+                out.append(("pagecall", v, a))
             elif S("VR_SLIDE") <= v < slide_end and (slide_end - v) % 2 == 0:
                 out.append(("read", (slide_end - v) // 2, a))
             else:
@@ -575,14 +583,18 @@ def test_sched_reads():
 
 
 def test_sched_shape():
+    """320x192: 9 inline page ends (PAGE_END), each right after a column end (L = 0), no call
+    vr_page; 256x192 (flat): 5, each right after a read."""
     mc = RawMachine(SYMS)
     cpu = build_sched(mc, 1, 320, 192)
     if cpu.fc:
         raise Fail("320x192: CF set")
     items, _ = parse_sched(mc)
     kinds = [k for k, _, _ in items]
-    got = {k: kinds.count(k) for k in ("read", "sector", "sectorn", "colend", "page", "ldhl")}
-    want = {"read": 400, "sector": 1, "sectorn": 119, "colend": 319, "page": 9, "ldhl": 0}
+    got = {k: kinds.count(k) for k in ("read", "sector", "sectorn", "colend", "page", "pagecall",
+                                       "ldhl")}
+    want = {"read": 400, "sector": 1, "sectorn": 119, "colend": 319, "page": 9, "pagecall": 0,
+            "ldhl": 0}
     if got != want or kinds[0] != "sector" or kinds[-1] != "ret":
         raise Fail(f"320x192 schedule: {got}, first {kinds[0]}, last {kinds[-1]}; expected "
                    f"{want}, vr_sector first, ret last")
@@ -590,6 +602,8 @@ def test_sched_shape():
     for i, k in enumerate(kinds):
         if k == "colend" and not (kinds[i - 1] in calls and kinds[i + 1] in calls):
             raise Fail(f"320x192: column end at ${items[i][2]:04X} not between two calls")
+        if k == "page" and kinds[i - 1] != "colend":
+            raise Fail(f"320x192: page end at ${items[i][2]:04X} after {kinds[i - 1]}")
     if sum(v for k, v, _ in items if k == "read") != 320 * 192:
         raise Fail("320x192: the reads do not add up to the picture")
     build_sched(mc, 0, 256, 192)
@@ -597,10 +611,13 @@ def test_sched_shape():
     kinds = [k for k, _, _ in items]
     reads = [v for k, v, _ in items if k == "read"]
     if (kinds.count("sector"), kinds.count("sectorn"), len(reads), set(reads),
-            kinds.count("page"), kinds.count("colend")) != (1, 95, 96, {512}, 5, 0):
+            kinds.count("page"), kinds.count("pagecall"), kinds.count("colend")) \
+            != (1, 95, 96, {512}, 5, 0, 0) \
+            or any(kinds[i - 1] != "read" for i, k in enumerate(kinds) if k == "page"):
         raise Fail(f"256x192 schedule: {kinds.count('sector')} + {kinds.count('sectorn')} "
                    f"sector, {len(reads)} reads {sorted(set(reads))}, "
-                   f"{kinds.count('page')} page, {kinds.count('colend')} colend")
+                   f"{kinds.count('page')} page, {kinds.count('pagecall')} call vr_page, "
+                   f"{kinds.count('colend')} colend")
     if kinds[0] != "sector" or kinds[-1] != "ret":
         raise Fail("256x192: the schedule does not open with vr_sector and end with ret")
 
@@ -967,7 +984,7 @@ def open_gaps(mc, code, waits):
 def test_poll_pad():
     """CRC 2 to poll 1 is set by VR_POLL_PAD_N alone: 11 + 7 x VR_POLL_PAD_N (18 T) in
     vr_sector_n and its bench mirror nxb_rh_sec, 39 in nxb_rh_sec39; the whole open's gaps
-    [15, 18, 22, 47] on Release and -BenchQuiet ([15, 89, 22, 47] crossing, vr_sector_c), plain
+    [15, 18, 22, 47] on Release and -BenchQuiet ([15, 110, 22, 47] crossing, vr_sector_c), plain
     DEBUG's PLAY divider lengthening only CRC 2 to poll 1 and never in the mirrors; every read
     whose value is used (poll 1 on) at least 16 T after the one before. A scratch copy with 4
     cp (hl) (the fallback VR_POLL_PAD_N) puts poll 1 39 T after CRC 2, the rest unchanged."""
@@ -978,7 +995,7 @@ def test_poll_pad():
     mc = sector_mc(run=1000)
     div = sector_divider(mc)
     rows = [("vr_sector_n", "VR_ENT_FAST", poll1_t() + div),
-            ("vr_sector_n", "VR_ENT_CROSS", 89 + div)]
+            ("vr_sector_n", "VR_ENT_CROSS", 110 + div)]
     if "dbgNoBank" in SYMS:
         rows += [("nxb_rh_sec", None, poll1_t()), ("nxb_rh_sec39", None, 39)]
     got = {}
@@ -1015,7 +1032,8 @@ def test_sector_t():
     """T from call vr_sector_n to its return (DEBUG less the PLAY divider), VR_ENT_FAST: 101 at
     one $FF (155 with the run count, 252 before the inline wait), 95 with the token on poll
     1, 47 a further $FF; call vr_sector with a CRC due 152, with none 163. VR_ENT_CROSS
-    (vr_sector_c): vr_sector_n 184 at one $FF, vr_sector with none due 241."""
+    (vr_sector_c, its push de / pop de 21): vr_sector_n 205 at one $FF, vr_sector with none
+    due 262."""
     got, want = [], []
     for entry, crc, k, t, ent in (("vr_sector_n", 1, 1, 101, "VR_ENT_FAST"),
                                   ("vr_sector_n", 1, 0, 95, "VR_ENT_FAST"),
@@ -1023,8 +1041,8 @@ def test_sector_t():
                                   ("vr_sector_n", 1, 3, 195, "VR_ENT_FAST"),
                                   ("vr_sector", 1, 1, 152, "VR_ENT_FAST"),
                                   ("vr_sector", 0, 1, 163, "VR_ENT_FAST"),
-                                  ("vr_sector_n", 1, 1, 184, "VR_ENT_CROSS"),
-                                  ("vr_sector", 0, 1, 241, "VR_ENT_CROSS")):
+                                  ("vr_sector_n", 1, 1, 205, "VR_ENT_CROSS"),
+                                  ("vr_sector", 0, 1, 262, "VR_ENT_CROSS")):
         mc = sector_mc(crc=crc, entry=ent)
         div = sector_divider(mc)
         mc.set_card(Card(blocks(bytes(512)), waits=k, crc_first=bool(crc)))
@@ -1038,8 +1056,10 @@ def test_sector_t():
 
 def test_sector_joins():
     """A 320x192 palette frame, CRC due, one $FF a wait: the gap into each open's CRC 1 by what
-    the schedule runs before it (a slide read 41 T, a column end 52, vr_page, the train), each
-    open's CRC 15, CRC 2 to poll 1 18 (+ divider), poll 1 to the token 22, token on 48+."""
+    the schedule runs before it (a slide read 41 T, a column end 52, a page end 84, the train
+    197: in tail 4, out 12, ret 10, the destination 55, H0 and two calls 58, vr_sector's head
+    51, in head 7), each open's CRC 15, CRC 2 to poll 1 18 (+ divider), poll 1 to the token 22,
+    token on 48+."""
     code, w, h = 1, 320, 192
     mc = RawMachine(SYMS)
     if build_sched(mc, code, w, h).fc:
@@ -1073,11 +1093,120 @@ def test_sector_joins():
             raise Fail(f"open at read {i}: gaps {gaps[i:i + 4]}, reads {ph[i:i + 5]}")
     rng = {k: (min(v), max(v), len(v)) for k, v in joins.items()}
     if set(rng) != {"read", "colend", "page", "train"} or rng["read"][:2] != (41, 41) \
-            or rng["colend"][:2] != (52, 52) or min(v[0] for v in rng.values()) < 41:
+            or rng["colend"][:2] != (52, 52) or rng["page"] != (84, 84, 9) \
+            or rng["train"] != (197, 197, 1):
         raise Fail(f"into CRC 1 by what precedes the open (min, max, count): {rng}")
     print("  test_sector_joins: into CRC 1 after " + ", ".join(
         f"{k} {v[0]}" + (f"-{v[1]}" if v[1] != v[0] else "") + f" T (x{v[2]})"
         for k, v in sorted(rng.items())) + f"; CRC 2 to poll 1 {x} T")
+
+
+def page_trace(code, w, h, run0=0xFFFF):
+    """vid_raw_frame (no palette, CRC due, one $FF a wait, the walk trapped: a fresh run of 1000)
+    traced in T, vidDstPage/vidDstEnd primed $A7/$B8. -> (machine, card, read I/O marks, page
+    ends [(next read index, HL, E, MMU2 on entry, HL, E, MMU2 after, T across)], (T from entry,
+    E, MMU2, HL) at VR_SCHED's first instruction, x0)."""
+    mc = RawMachine(SYMS)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    items, _ = parse_sched(mc)
+    pages = {a for k, _, a in items if k == "page"}
+    x0, _ = setup_frame(mc, code, w, h, crc_due=1)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 250)
+    mc.poke16("vidStrmRunBlkH", run0)
+    set_entry(mc, "VR_ENT_FAST")
+    mc.poke("vidDstPage", 0xA7)
+    mc.poke("vidDstEnd", 0xB8)
+    card = Card(blocks(pixels(w * h)), waits=1, crc_first=True)
+    mc.set_card(card)
+    cpu, wa, sched = mc.cpu, S("vid_run_walk_h"), S("VR_SCHED")
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = S("vid_raw_frame")
+    t, reads, ends, at_sched, pend = 0, [], [], None, None
+    while cpu.pc != RET:
+        if cpu.pc == wa:
+            cpu.hl, cpu.fc, cpu.b, cpu.c = 1000, 0, 0x5A, 0x5A
+            cpu.pc = cpu.pop()
+            continue
+        if mc.mmu[6] == SCHED_PAGE:
+            if cpu.pc == sched and at_sched is None:
+                at_sched = (t, cpu.e, mc.mmu[2], cpu.hl)
+            if pend is not None and cpu.pc == pend[0] + 7:
+                ends.append((len(reads), *pend[2:], cpu.hl, cpu.e, mc.mmu[2], t - pend[1]))
+                pend = None
+            if cpu.pc in pages:
+                pend = (cpu.pc, t, cpu.hl, cpu.e, mc.mmu[2])
+        pc, n = cpu.pc, len(card.log)
+        op = mc.mem[pc]
+        dt = tstep(mc)
+        if len(card.log) != n:
+            reads.append(t + (IO_START["in a,(n)"] if op == 0xDB else IO_START["ini"]))
+        t += dt
+    mc.sync()
+    return mc, card, reads, ends, at_sched, x0
+
+
+def test_page_ends():
+    """The schedule's inline page end (PAGE_END: inc e 4, ld a,e 4, nextreg 17, ld h,n 7 =
+    32 T) entered with HL = $6000 and E = the page at MMU2, leaving HL = $4000 and E = MMU2 = the
+    next page; E = MMU2 = back bank x 2 + x0 / 32 and HL = H0 x 256 at the schedule's entry,
+    vid_raw_frame's entry to there 384 T (the direct destination: 117 under vid_dst_base's 501).
+    The read gap a page end sits in: data to CRC 1 73 T flat, 84 after a column end (slide
+    ini tail 7, ret 10, column end 11, 32, call 17, in head 7), 12 more through jr vr_sector_c;
+    data to data 86 (call 17, ini head 9). Page ends per shape; surface exact, nothing under 16
+    but a CRC pair's 15, vidDstPage/vidDstEnd not written."""
+    count = {(0, 256, 192): 5, (1, 320, 160): 9, (1, 320, 192): 9, (1, 280, 224): 9,
+             (1, 320, 240): 9, (1, 256, 240): 7}
+    for code, w, h in SHAPES:
+        mc = RawMachine(SYMS)
+        build_sched(mc, code, w, h)
+        items, _ = parse_sched(mc)
+        n = [k for k, _, _ in items].count("page")
+        if n != count[(code, w, h)]:
+            raise Fail(f"{code},{w}x{h}: {n} page ends, expected {count[(code, w, h)]}")
+    got = []
+    for code, w, h, run0, gap in ((0, 256, 192, 0xFFFF, {("data", "crc"): 73}),
+                                  (1, 320, 192, 0xFFFF, {("data", "crc"): 84}),
+                                  (1, 280, 224, 0xFFFF, {("data", "data"): 86}),
+                                  (0, 256, 192, 30, {("data", "crc"): 85}),
+                                  (1, 320, 192, 60, {("data", "crc"): 96})):
+        what = f"{code},{w}x{h} run {run0}"
+        mc, card, reads, ends, at_sched, x0 = page_trace(code, w, h, run0)
+        p0 = BACK_BANK * 2 + (x0 >> 5)
+        if at_sched is None or at_sched[1:] != (p0, p0, (0x40 + (x0 & 31)) << 8) \
+                or (run0 == 0xFFFF and at_sched[0] != 384):
+            raise Fail(f"{what}: at VR_SCHED (T, E, MMU2, HL) {at_sched}, expected E = MMU2 = "
+                       f"{p0}, HL ${(0x40 + (x0 & 31)) << 8:04X}" + (", 384 T" if run0 == 0xFFFF
+                                                                     else ""))
+        if len(ends) != count[(code, w, h)]:
+            raise Fail(f"{what}: {len(ends)} page ends run")
+        ph = [p for p, _ in card.log]
+        seen = {}
+        for k, (i, hl0, e0, m0, hl1, e1, m1, dt) in enumerate(ends):
+            if (hl0, e0, m0, hl1, e1, m1, dt) != (0x6000, p0 + k, p0 + k, 0x4000, p0 + k + 1,
+                                                   p0 + k + 1, 32):
+                raise Fail(f"{what}: page end {k}: in HL ${hl0:04X} E {e0} MMU2 {m0}, out HL "
+                           f"${hl1:04X} E {e1} MMU2 {m1}, {dt} T")
+            seen.setdefault((ph[i - 1], ph[i]), set()).add(reads[i] - reads[i - 1])
+        if seen != {k: {v} for k, v in gap.items()}:
+            raise Fail(f"{what}: gaps at the page ends {seen}, expected {gap}")
+        low = [(ph[i - 1], ph[i], reads[i] - reads[i - 1]) for i in range(1, len(reads))
+               if reads[i] - reads[i - 1] < 16 and not (ph[i - 1] == ph[i] == "crc"
+                                                       and reads[i] - reads[i - 1] == 15)]
+        if low or card.pos != len(card.stream) \
+                or (mc.peek("vidDstPage"), mc.peek("vidDstEnd")) != (0xA7, 0xB8):
+            raise Fail(f"{what}: short gaps {low[:4]}, {len(card.stream) - card.pos} unread, "
+                       f"vidDstPage ${mc.peek('vidDstPage'):02X} vidDstEnd "
+                       f"${mc.peek('vidDstEnd'):02X}")
+        base = BACK_BANK * 0x4000
+        expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, pixels(w * h)),
+               f"{what} surface")
+        got.append(f"{w}x{h}{' crossing' if run0 != 0xFFFF else ''} "
+                   + "/".join(f"{a}-{b} {min(v)}" for (a, b), v in seen.items()))
+    print("  test_page_ends: 32 T a page end, entry to schedule 384 T; gaps " + ", ".join(got))
 
 
 def test_sector_walkfault():
@@ -1107,6 +1236,47 @@ def test_sector_walkfault():
                     or mc.peek("vidStrmRunBlkH", 2) != 0 or cpu.hl != 0x1234:
                 raise Fail(f"{what}: returned after {card.pos} reads, walks {fired}, run "
                            f"{mc.peek('vidStrmRunBlkH', 2)}")
+
+
+def test_sched_regs():
+    """E (the schedule's back surface page) unchanged across every open the schedule calls:
+    vr_sector (CRC due and not), vr_sector_n (1 and 300 $FF: vid_sd_tok_h), vr_sector_c (entered
+    directly and through VR_ENT_CROSS; a walk trap returning DE = $A5A5); vr_sector with no CRC
+    due under VR_ENT_CROSS (vr_sector_n.fresh into vr_sector_c.nocrc), with and without a walk.
+    Each returns with SP at the caller's, HL kept, C = PORT_SPI_DAT, the run count as counted."""
+    cases = [("vr_sector", 1, 1, "VR_ENT_FAST", 100, 100),
+             ("vr_sector", 0, 1, "VR_ENT_FAST", 100, 100),
+             ("vr_sector_n", 1, 1, "VR_ENT_FAST", 100, 100),
+             ("vr_sector_n", 1, 300, "VR_ENT_FAST", 100, 100),
+             ("vr_sector_c", 1, 1, "VR_ENT_CROSS", 100, 99),
+             ("vr_sector_c", 1, 1, "VR_ENT_CROSS", 0, 49),
+             ("vr_sector_n", 1, 2, "VR_ENT_CROSS", 100, 99),
+             ("vr_sector_n", 1, 2, "VR_ENT_CROSS", 0, 49),
+             ("vr_sector", 0, 1, "VR_ENT_CROSS", 100, 99),
+             ("vr_sector", 0, 1, "VR_ENT_CROSS", 0, 49)]
+    for name, crc, waits, ent, run, left in cases:
+        what = f"{name} CRC due {crc}, {waits} $FF, {ent}, run {run}"
+        for e in (0x3C, 0xC3):
+            mc = sector_mc(run=run, crc=crc, entry=ent)
+            card = Card(blocks(bytes(512)), waits=waits,
+                        crc_first=name != "vr_sector" or crc == 1)
+            mc.set_card(card)
+            fired = []
+
+            def walk(cpu):
+                fired.append(card.pos)
+                cpu.hl, cpu.fc = 50, 0
+                cpu.d = cpu.e = 0xA5
+                cpu.b = cpu.c = 0x5A
+            cpu = mc.run(name, traps={S("vid_run_walk_h"): ret_trap(walk), **aborts()},
+                         hl=0x2345, b=0, c=PORT_SPI, d=0x99, e=e, budget=2_000_000)
+            got = (cpu.e, cpu.sp, cpu.hl, cpu.c, mc.peek("vidStrmRunBlkH", 2), len(fired),
+                   len(card.stream) - card.pos)
+            want = (e, STACK, 0x2345, PORT_SPI, left, int(run == 0), 512)
+            if got != want:
+                raise Fail(f"{what}, E ${e:02X}: (E, SP, HL, C, run, walks, unread) = "
+                           f"{tuple(hex(x) if i < 4 else x for i, x in enumerate(got))}, expected "
+                           f"{tuple(hex(x) if i < 4 else x for i, x in enumerate(want))}")
 
 
 PAL = bytes((i * 29 + 11) & 255 for i in range(512))
@@ -1275,7 +1445,7 @@ def test_frame_boundaries():
 
 def test_frame_cross_gaps():
     """Read spacing of a crossing frame (palette 320x192 from a run of 60, CRC due, one $FF a
-    wait), traced in T: every open through vr_sector_c - CRC 15, CRC 2 to poll 1 89 (+ the
+    wait), traced in T: every open through vr_sector_c - CRC 15, CRC 2 to poll 1 110 (+ the
     PLAY divider in DEBUG; the walked open's gap spans the walk and is left out), poll 1 to
     the token 22; into CRC 1 after a slide read 53 T (the jr vr_sector_c); nothing else
     under 16."""
@@ -1314,7 +1484,7 @@ def test_frame_cross_gaps():
     ph = [p for p, _ in card.log]
     reads = [m for m in marks if m is not None]
     walk_after = marks.index(None)              # reads made before the walk
-    x = 89 + sector_divider(mc)
+    x = 110 + sector_divider(mc)
     pairs = []
     for i in range(1, len(reads)):
         if i == walk_after:
@@ -1801,17 +1971,6 @@ def test_apad_t():
             raise Fail(f"{what}: into the pad {tin} T, tag to CRC {tout} T, short gaps {low[:4]}")
         joins.append(f"{real}: {lead} to pad {tin}, tag to CRC {tout}")
     print(f"  test_apad_t: HL=0 token to slide {tok} T; " + "; ".join(joins) + " T")
-
-
-def test_vr_page():
-    mc = RawMachine(SYMS)
-    mc.map(7, S("VID_PAGE"))
-    mc.poke("vidDstPage", 61)
-    cpu = mc.run("vr_page", bc=0x12EB, de=0x3456, hl=0x6000)
-    if (cpu.hl, mc.peek("vidDstPage"), mc.mmu[2], cpu.bc, cpu.de) != (0x4000, 62, 62,
-                                                                         0x12EB, 0x3456):
-        raise Fail(f"vr_page: HL ${cpu.hl:04X} page {mc.peek('vidDstPage')} MMU2 "
-                   f"{mc.mmu[2]} BC ${cpu.bc:04X} DE ${cpu.de:04X}")
 
 
 def test_vec_patch():
@@ -3710,11 +3869,12 @@ def test_loop_sound_boundary():
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_fresh, test_sector_walkfault, test_sector_polls, test_sector_timeout,
-         test_sector_gaps, test_poll_pad, test_sector_t, test_sector_joins, test_frame_remain,
+         test_sector_gaps, test_poll_pad, test_sector_t, test_sector_joins, test_page_ends,
+         test_sched_regs, test_frame_remain,
          test_frame_palette, test_paltrain, test_pal_t, test_frame_fit, test_frame_runwalk,
          test_frame_zero, test_entry_stale, test_frame_boundaries, test_frame_cross_gaps,
          test_frame_end_walk, test_frame_rewind, test_frame_abort,
-         test_apad, test_apad_boundary, test_apad_map, test_apad_t, test_vr_page,
+         test_apad, test_apad_boundary, test_apad_map, test_apad_t,
          test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_t, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
