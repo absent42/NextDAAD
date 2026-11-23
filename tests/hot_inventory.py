@@ -6,7 +6,8 @@
 
 Reads the SLD and src/video.asm. A label is a non-local address label on the page (VID_PAGE
 hot, VID_PAGE2 cold); its size is the next label's address less its own, the page's last
-label running to the page end. Totals by nesting: DEBUG, and DEBUG and not NXB_QUIET.
+label running to the page end. Totals by nesting: DEBUG, and DEBUG and not NXB_QUIET (0 on a
+-BenchQuiet image: not assembled). A label on a conditional directive line is refused.
 Page end: the page's last SLD record plus what its line and the lines after it emit up to
 the page's "ends at" DISPLAY (data sized from the source, an instruction decoded from the
 NEX, default the SLD's sibling .nex). Headroom = OVL_LIMIT - page end.
@@ -15,6 +16,8 @@ Exit 0 = ok or a Release image; 1 = a DEBUG image under --min (default hot 40, c
 """
 
 import argparse
+import contextlib
+import io
 import re
 import sys
 from pathlib import Path
@@ -29,6 +32,7 @@ DEBUG_MARKER = "dbgNoBank"          # DEBUG-only symbol, as tests\vidraw_oldpath
 QUIET_MARKER = "nxbQuietImage"      # -BenchQuiet SLD marker (video.asm)
 PAGES = {"hot": ("VID_PAGE", "video ends at", 40), "cold": ("VID_PAGE2", "video2 ends at", 100)}
 NEST_D, NEST_DQ = "DEBUG", "DEBUG and not NXB_QUIET"
+QUIET_NOTE = "not assembled in a -BenchQuiet image"
 
 
 class Setup(Exception):
@@ -56,8 +60,10 @@ def read_sld(text):
     return syms, recs
 
 
-COND = re.compile(r"^\s*(IFNDEF|IFDEF|IFNUSED|IFUSED|IFN|IF|ELSEIF|ELSE|ENDIF)\b\s*([^;\s]*)",
-                  re.I)
+CONDS = r"(IFNDEF|IFDEF|IFNUSED|IFUSED|IFN|IF|ELSEIF|ELSE|ENDIF)\b"
+COND = re.compile(r"^\s*" + CONDS + r"\s*([^;\s]*)", re.I)
+# sjasmplus 1.24 does not pair a conditional that carries a label: refused, not guessed.
+LABELLED_COND = re.compile(r"^([A-Za-z_.@?!][\w.@?!#]*)(?::\s*|\s+)" + CONDS, re.I)
 
 
 def contexts(lines):
@@ -65,6 +71,9 @@ def contexts(lines):
     out, stack = [], []
     for n, text in enumerate(lines, 1):
         m = COND.match(text)
+        lab = None if m else LABELLED_COND.match(text)
+        if lab:
+            raise Setup(f"line {n}: label {lab.group(1)} on a conditional directive line")
         if m:
             k = m.group(1).upper()
             if k == "ENDIF":
@@ -351,6 +360,30 @@ tailbuf: ds 2 * N, 0     ; cells
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
 """
 
+SELF_ELSE = """\
+    MMU 7, VID_PAGE, OVL_ORG
+ IFDEF DEBUG
+dbg_e:  nop
+ ELSE
+rel_e:  nop
+    nop
+ ENDIF
+ IFNDEF DEBUG
+rel_f:  nop
+ ELSE
+dbg_f:  nop
+    nop
+    nop
+ ENDIF
+both:   nop
+ IFDEF DEBUG
+    db 1
+ ELSE
+    ds 4
+ ENDIF
+    DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
+"""
+
 SELF_SYMS = ["src/nextdaad.inc|1||0|-1|59|D|VID_PAGE",
              "src/nextdaad.inc|2||0|-1|57344|D|OVL_ORG",
              "src/nextdaad.inc|3||0|-1|57376|D|OVL_LIMIT",
@@ -428,6 +461,46 @@ def selftest():
         pass
     except Exception as exc:                                    # noqa: BLE001
         fails.append(f"D: {type(exc).__name__}: {exc}")
+    # ELSE branches: of IFDEF DEBUG not DEBUG-only, of IFNDEF DEBUG DEBUG-only; tail by branch.
+    nop8 = lambda p: bytes(8)                                   # noqa: E731
+    ed = self_sld([("F", e, 3, "dbg_e"), ("T", e, 3, ""), ("F", e + 1, 11, "dbg_f"),
+                   ("T", e + 1, 11, ""), ("T", e + 2, 12, ""), ("T", e + 3, 13, ""),
+                   ("F", e + 4, 15, "both"), ("T", e + 4, 15, "")], [dbg])
+    er = self_sld([("F", e, 5, "rel_e"), ("T", e, 5, ""), ("T", e + 1, 6, ""),
+                   ("F", e + 2, 9, "rel_f"), ("T", e + 2, 9, ""), ("F", e + 3, 15, "both"),
+                   ("T", e + 3, 15, "")])
+    try:
+        r = inventory(ed, SELF_ELSE, page_bytes=nop8)
+        check("E DEBUG sizes", [(x["name"], x["size"], x["nest"]) for x in r["labels"]],
+              [("dbg_e", 1, NEST_D), ("dbg_f", 3, NEST_D), ("both", 2, None)])
+        check("E DEBUG end", r["end"], e + 6)
+        r = inventory(er, SELF_ELSE, page_bytes=nop8)
+        check("E Release sizes", [(x["name"], x["size"], x["nest"]) for x in r["labels"]],
+              [("rel_e", 2, None), ("rel_f", 1, None), ("both", 5, None)])
+        check("E Release end", r["end"], e + 8)
+    except Exception as exc:                                    # noqa: BLE001
+        fails.append(f"E: {type(exc).__name__}: {exc}")
+    # A label on a conditional directive line is refused, naming the line.
+    lab_if = SELF_SRC.replace("\n IFDEF DEBUG\ndbg_a:", "\nlab: IFDEF DEBUG\ndbg_a:")
+    lab_else = SELF_ELSE.replace("\n ELSE\nrel_e:", "\nlab ELSE\nrel_e:")
+    for tag, sld, src, n in (("F IFDEF", a, lab_if, 2), ("F ELSE", ed, lab_else, 4)):
+        try:
+            inventory(sld, src, page_bytes=nop8)
+            fails.append(f"{tag}: a labelled directive was accepted")
+        except Setup as exc:
+            check(f"{tag} message", str(exc).startswith(f"line {n}: label lab "), True)
+        except Exception as exc:                                # noqa: BLE001
+            fails.append(f"{tag}: {type(exc).__name__}: {exc}")
+    # The quiet image's report says why its not-NXB_QUIET total is 0; DEBUG's does not.
+    for tag, sld, want in (("G quiet", b, True), ("G DEBUG", a, False)):
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                report(inventory(sld, SELF_SRC), 40, "selftest")
+            tot = [x for x in buf.getvalue().splitlines() if x.startswith("totals:")]
+            check(f"{tag} totals note", [QUIET_NOTE in x for x in tot], [want])
+        except Exception as exc:                                # noqa: BLE001
+            fails.append(f"{tag}: {type(exc).__name__}: {exc}")
     for f in fails:
         print("FAIL " + f)
     print("hot_inventory selftest: " + ("FAIL" if fails else "PASS"))
@@ -466,8 +539,9 @@ def report(r, floor, where):
     else:
         print("  no labels inside IFDEF DEBUG")
     n = {k: sum(1 for x in debug if x["nest"] == k) for k in (NEST_D, NEST_DQ)}
+    quiet = f": {QUIET_NOTE}" if r["image"] == "DEBUG+NXB_QUIET" else ""
     print(f"totals: {NEST_D} {r['totals'][NEST_D]} ({n[NEST_D]} labels), "
-          f"{NEST_DQ} {r['totals'][NEST_DQ]} ({n[NEST_DQ]} labels)")
+          f"{NEST_DQ} {r['totals'][NEST_DQ]} ({n[NEST_DQ]} labels{quiet})")
     verdict = ("Release: no floor" if r["image"] == "Release" else
                f"floor {floor}: " + ("UNDER" if exit_code(r, floor) else "ok"))
     print(f"page end ${r['end']:04X}, OVL_LIMIT ${r['limit']:04X}, "
