@@ -8438,6 +8438,50 @@ def t16_raw_decode_malformed():
             expect(any(word in i for i in issues), f"{name}: validate {issues}")
 
 
+@case(16, "raw layout - the open's accept boundaries: 3072 sound bytes a frame decode clean; a "
+          "ring margin equal to the file's blocks passes; 65535 frames fail only at end of file")
+def t16_raw_decode_accept_bounds():
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "b.vid"
+        want = vidbuild.build_raw_vid(p, 4, 1, fps=15625 / 1536, channels=2)
+        good = p.read_bytes()
+        expect(enc.unpack_header(good)["audio_bytes_per_frame"] == enc.AUD_FRAME_MAX == 3072,
+               f"4x1 stereo @15625/1536: {enc.unpack_header(good)['audio_bytes_per_frame']} sound B")
+        frames = list(dec.decode(p))
+        expect(len(frames) == 3 and all(np.array_equal(pal[img], q)
+                                        for (pal, img), q in zip(frames, want)),
+               "3072 sound bytes: frames differ from the encoder's")
+        expect(dec.validate(p) == [], f"3072 sound bytes: validate {dec.validate(p)}")
+        blocks = len(good) // 512
+
+        def variant(margin=None, nframes=None):
+            b = bytearray(good)
+            if margin is not None:
+                b[enc.HDR_OFF_RINGMARGIN:enc.HDR_OFF_RINGMARGIN + 2] = margin.to_bytes(2, "little")
+            if nframes is not None:
+                b[enc.HDR_OFF_FRAMES:enc.HDR_OFF_FRAMES + 3] = nframes.to_bytes(3, "little")
+            p.write_bytes(b)
+        variant(margin=blocks)
+        expect(len(list(dec.decode(p))) == 3 and dec.validate(p) == [],
+               f"margin {blocks} (the file's blocks): validate {dec.validate(p)}")
+        # header refusals read "raw layout: ...", the walker's end-of-file stop "raw frame ..."
+        for name, kw in (("65535 frames", {"nframes": 65535}),
+                         ("65535 frames, margin = the file's blocks",
+                          {"nframes": 65535, "margin": blocks})):
+            variant(**kw)
+            try:
+                list(dec.decode(p))
+            except dec.Nxv2FormatError as exc:
+                expect(str(exc).startswith("raw frame 3 of 65535") and "end of file" in str(exc),
+                       f"{name}: {exc}")
+            else:
+                raise AssertionError(f"{name}: decode did not raise")
+            issues = dec.validate(p)
+            expect(any("end of file" in i for i in issues)
+                   and not any(i.startswith("raw layout") for i in issues),
+                   f"{name}: validate {issues}")
+
+
 @case(16, "raw layout - the 256 surface ignores the raw width word, as the player does")
 def t16_raw_decode_256_width_word():
     with tempfile.TemporaryDirectory() as td:
