@@ -1776,6 +1776,7 @@ def t10_direct_payloads():
         buf = path.read_bytes()
         hdr = enc.unpack_header(buf)
         expect(hdr["flags"] & enc.FLAG_DIRECT_SERVE, f"{path.name}: not a direct-serve clip")
+        expect(not hdr["flags"] & enc.FLAG_RAW, f"{path.name}: raw layout, DS1 reads the old one")
         issues = []
         frames = list(dec._iter_frames(buf, hdr, issues=issues))
         expect(not issues, f"{path.name}: {issues[:1]}")
@@ -4749,9 +4750,10 @@ def t11_direct_gate():
             # (b) even with only the flags that still exist (no
             # accept-slow at all), the same over-wire shape must be
             # refused by the wire gate itself, not just
-            # by argparse rejecting an unknown flag.
+            # by argparse rejecting an unknown flag. Old layout: --direct
+            # writes the raw layout now.
             out3 = Path(td) / "over_wire_plain.vid"
-            cmd2 = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out3),
+            cmd2 = [sys.executable, str(ROOT / "tests" / "videnc_old_direct.py"), str(SINTEL), str(out3),
                     "--shape", "320x123", "--fps", "25", "--duration", "1",
                     "--direct", "--ffmpeg", str(FFMPEG)]
             proc2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -5248,6 +5250,7 @@ def t13_amplitude_threading_e2e():
                     nframes=n)
 
     real_extract = enc._extract_source
+    real_layout = enc.DIRECT_LAYOUT
     try:
         enc._extract_source = fake_extract_source
         with tf.TemporaryDirectory() as td_s:
@@ -5259,6 +5262,15 @@ def t13_amplitude_threading_e2e():
                            fps=fps, **kw)
                 return out.read_bytes()
 
+            # raw layout: the amplitude reaches _encode_raw's sites too
+            raw_amp = run("r_amp.vid", direct=True, dither=AMP)
+            raw_def = run("r_def.vid", direct=True)
+            expect(raw_amp[12] == 0x13 and raw_def == run("r_def2.vid", direct=True),
+                   "raw direct encode is the raw layout and deterministic")
+            expect(raw_amp != raw_def, "raw direct wire bytes must differ between --dither "
+                                       "1.0 and the default")
+            # the rest proves the old direct writer through the nxv2dec mirror
+            enc.DIRECT_LAYOUT = "old"
             # the real entry point, both pipelines, both amplitudes
             direct_amp = run("d_amp.vid", direct=True, dither=AMP)
             direct_def = run("d_def.vid", direct=True)
@@ -5335,6 +5347,7 @@ def t13_amplitude_threading_e2e():
                 enc.mixture_planner = real_mp
     finally:
         enc._extract_source = real_extract
+        enc.DIRECT_LAYOUT = real_layout
 
 
 # =======================================================================
@@ -5839,6 +5852,50 @@ def t14_no_transparency_collision_direct():
            "dodge must still keep $E3 off the direct-serve wire even "
            "with the lattice exclusion disabled - the two mechanisms "
            "must not fight")
+
+
+@case(14, "raw direct path - same clip through _encode_raw, zero $E3-byte0 entries in its palette sectors")
+def t14_no_transparency_collision_raw():
+    # Raw twin of the case above: the raw writer's own scene_palette and
+    # build_palette_block call sites, palette sectors read from the file.
+    N, h, w = 12, 128, 256
+    orig = _near_white_gradient(N, h, w)
+    chg, _ = _synth_clip(orig)
+    ex = dict(orig=orig, chg=chg, audio_bytes=bytes(N * 1250), channels=2,
+              rate=enc.RATE_STEREO, abytes_real=1250, abytes_pad=1536, nframes=N)
+
+    def do_encode():
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "transp_raw.vid"
+            report = enc._encode_raw(ex, w, h, 25.0, p, gate=True)
+            expect(report.mode == "raw", "raw report mode")
+            return p.read_bytes()
+
+    def pal_sectors(buf):
+        pos, blocks = 512, []
+        for _ in range(N):
+            tag = buf[pos + 1535]
+            pos += 1536
+            if tag:
+                blocks.append(buf[pos:pos + 512])
+                pos += 512
+            pos += 64 * 512
+        expect(pos == len(buf) and len(blocks) >= 1, "raw walk: no palette sector or bad size")
+        return blocks
+
+    buf, pal_calls = _collect_pal_rgb(do_encode)
+    expect(_fe_entries(pal_sectors(buf)) == [], "raw palette sectors carry a byte0 $E3 entry")
+    expect(_transp_rgb_hits(pal_calls) == [], "raw encoder selected an excluded collision colour")
+    saved = enc.TRANSP_REMAP
+    try:
+        enc.TRANSP_REMAP = {}
+        control_buf, control_pal_calls = _collect_pal_rgb(do_encode)
+    finally:
+        enc.TRANSP_REMAP = saved
+    expect(_transp_rgb_hits(control_pal_calls) != [], "negative control: the raw path must "
+           "select a collision colour with the exclusion disabled (test needs re-arming)")
+    expect(_fe_entries(pal_sectors(control_buf)) == [], "build_palette_block's dodge must keep "
+           "$E3 off the raw palette sectors with the exclusion disabled")
 
 
 @case(14, "lattice exclusion - representable set excludes exactly the two collision points")
@@ -8270,6 +8327,275 @@ def t16_raw_mono_audio():
     expect(len(mst) > 1000, "stereo mono extraction produced no samples")
     expect(min(mst) > 0 and max(mst) < 255,
            f"hot stereo tone clipped in mono: min {min(mst)} max {max(mst)}")
+
+
+RAW_P25 = 625 * 1792          # sound period at 25 fps: samples x CTC 0 period
+
+
+def _flat_k(pix_util, pal_util, period=RAW_P25):
+    """RAW_K entry whose frame costs pix_util x period without a palette and
+    pal_util x period with one, at any shape."""
+    glue = enc.TMODEL_COEFFS["glue_t"] / enc.TMODEL_COEFFS["audio_factor"]
+    return dict(tb=0.0, ts=0.0, tsnd=0.0, tc=0.0, tf=pix_util * period - glue,
+                tp=(pal_util - pix_util) * period)
+
+
+@contextlib.contextmanager
+def _patched_raw_k(stereo, mono):
+    saved = enc.RAW_K
+    enc.RAW_K = {"stereo": stereo, "mono": mono}
+    try:
+        yield
+    finally:
+        enc.RAW_K = saved
+
+
+def _quiet(fn, *args, **kwargs):
+    """(result, stdout text) of fn; SystemExit propagates."""
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        out = fn(*args, **kwargs)
+    return out, buf.getvalue()
+
+
+def _exit_text(fn, *args, **kwargs):
+    import io
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            fn(*args, **kwargs)
+    except SystemExit as e:
+        return str(e)
+    raise AssertionError(f"{getattr(fn, '__name__', fn)} did not refuse")
+
+
+@case(16, "raw gate - frame terms from RAW_K, glue, stall budget, sound period")
+def t16_raw_gate_terms():
+    r = enc.raw_frame_t(320, 192, 320, 25, "stereo")
+    k = enc.RAW_K["stereo"]
+    assert r["snd_t"] == 3 * k["tsnd"] and r["col_t"] == 320 * k["tc"] and r["stall_t"] == 0
+    assert r["byte_t"] == 120 * 512 * k["tb"] and r["sector_t"] == 120 * k["ts"]
+    assert r["pal_t"] == k["tp"] and r["frame_t"] == k["tf"]
+    assert r["glue_t"] == enc.TMODEL_COEFFS["glue_t"] / enc.TMODEL_COEFFS["audio_factor"]
+    assert abs(r["total_t"] - sum(v for n, v in r.items() if n != "total_t")) < 1e-6
+    assert enc.raw_frame_t(320, 192, 320, 25, "stereo", palette=False)["pal_t"] == 0
+    assert enc.raw_frame_t(256, 192, 256, 25, "stereo")["col_t"] == 0
+    assert enc.raw_frame_t(320, 240, 320, 16.67, "mono")["snd_t"] == 2 * enc.RAW_K["mono"]["tsnd"]
+    m = enc.raw_frame_t(320, 192, 320, 25, "stereo", stall_budget="measured")
+    assert abs(m["total_t"] - r["total_t"] - enc.RAW_STALL_T) < 1e-6
+    f = enc.raw_frame_t(320, 192, 320, 25, "stereo", transport_factor=1.1)
+    assert abs(f["byte_t"] - 1.1 * r["byte_t"]) < 1e-6 and f["sector_t"] == r["sector_t"]
+    assert enc.RAW_K["stereo"]["ts"] == enc.RAW_K["mono"]["ts"]
+    _raises(ValueError, enc.raw_frame_t, 256, 192, 256, 25, "quad")
+    _raises(ValueError, enc.raw_frame_t, 256, 192, 256, 25, "stereo", stall_budget="on")
+    # a frame is released on sound consumption: samples x CTC 0 period; two fields for reference
+    c = enc.raw_supply_check(256, 192, 256, 25, "stereo")
+    assert c["period_t"] == RAW_P25 == 1120000
+    assert c["ref_period_t"] == 1134528 == 2 * enc.RAW_PERIOD_FIELD_T
+    assert abs(enc.raw_supply_check(320, 240, 320, 50 / 3, "stereo")["ref_period_t"] - 1701792) < 0.01
+    assert enc.raw_supply_check(320, 240, 320, 16.67, "mono")["period_t"] == 937 * 1792
+    # the gate is on a frame without a palette
+    px = enc.raw_frame_t(256, 192, 256, 25, "stereo", palette=False)["total_t"]
+    assert abs(c["utilization"] - px / RAW_P25) < 1e-12
+    s = enc.raw_supply_check(320, 192, 320, 25, "stereo", stall_budget="measured")
+    assert abs(s["utilization"] * RAW_P25 - enc.raw_frame_t(
+        320, 192, 320, 25, "stereo", palette=False)["total_t"] - enc.RAW_STALL_T) < 1e-6
+
+
+@case(16, "raw gate - matches the KS3 bench 2026-11-23 rows, constants and utilisation table")
+def t16_raw_gate_matches_silicon():
+    import raw_fit
+    res_dir = ROOT / "tests" / "core303" / "results" / "2026-11-23-ks3-legRAW1B"
+    res = raw_fit.fit(raw_fit.read_sections(res_dir / "NXBENCH.TXT"))
+    expect(len(res.clips) == 16, f"{len(res.clips)} clips fitted, want 16")
+    worst = 0.0
+    for c in res.clips.values():
+        w, h, fps, _ch, _n = c.shape
+        sw, _ = enc.raw_surface(w, h)
+        r = enc.raw_frame_t(w, h, sw, fps, c.form, palette=False)
+        model = r["total_t"] - r["glue_t"]
+        pct = 100.0 * (c.p["ARSW"] - model) / model
+        worst = max(worst, abs(pct))
+        expect(abs(pct) <= 1.0, f"clip {c.clip:03d} {c.form} {w}x{h}@{fps:g}: ARSW' "
+                                f"{c.p['ARSW']:.0f} T against the gate's {model:.0f} T ({pct:+.3f}%)")
+    print(f"    16 clips, largest |ARSW' - gate| {worst:.3f}%")
+    # RAW_K and RAW_STALL_T are this log's fit, as pasted (tb to 4 places, the rest to 2)
+    for form in ("stereo", "mono"):
+        for name, v in enc.RAW_K[form].items():
+            tol = 0.00006 if name == "tb" else 0.0051
+            expect(abs(res.k[form][name] - v) <= tol,
+                   f"RAW_K[{form}][{name}] {v} against the log's fit {res.k[form][name]:.6f}")
+    expect(abs(res.stall - enc.RAW_STALL_T) <= 0.0051, f"RAW_STALL_T against {res.stall:.4f}")
+    # the sitting report's table: palette frame / frame without a palette
+    table = {(256, 192, 25): ((0.8033, 0.7916), (0.7836, 0.7724)),
+             (320, 160, 25): ((0.8467, 0.8350), (0.8265, 0.8153)),
+             (320, 192, 25): ((1.0055, 0.9938), (0.9832, 0.9720)),
+             (280, 224, 25): ((1.0278, 1.0161), (1.0053, 0.9941)),
+             (320, 240, 16.67): ((0.8361, 0.8283), (0.8126, 0.8051)),
+             (256, 240, 16.67): ((0.6757, 0.6679), (0.6543, 0.6468))}
+    for (w, h, fps), forms in table.items():
+        sw, _ = enc.raw_surface(w, h)
+        for form, (pal_u, px_u) in zip(("stereo", "mono"), forms):
+            u = enc.raw_supply_check(w, h, sw, fps, form)["utilization"]
+            up = enc.raw_frame_t(w, h, sw, fps, form)["total_t"] / enc.raw_supply_check(
+                w, h, sw, fps, form)["period_t"]
+            expect(abs(u - px_u) <= 0.00006 and abs(up - pal_u) <= 0.00006,
+                   f"{w}x{h}@{fps:g} {form}: {up:.4f} / {u:.4f}, report {pal_u} / {px_u}")
+
+
+@case(16, "raw gate - sound form: auto stereo, then mono with a note, else refused; forced forms refuse over 1.00")
+def t16_raw_pick_sound():
+    def pick(st, mo, want="auto", fps=25):
+        # palette frames at 2.00: the pick must ignore them
+        with _patched_raw_k(_flat_k(st, 2.0), _flat_k(mo, 2.0)):
+            return _quiet(enc.raw_pick_sound, 256, 192, 256, fps, want)
+
+    (form, chk), out = pick(0.95, 0.90)
+    expect(form == "stereo" and abs(chk["utilization"] - 0.95) < 1e-9 and out == "",
+           f"0.95 stereo: {form} {chk['utilization']} {out!r}")
+    (form, chk), out = pick(1.02, 0.97)
+    expect(form == "mono" and abs(chk["utilization"] - 0.97) < 1e-9, f"1.02/0.97: {form}")
+    note = ("note: stereo does not hold rate at this shape (utilization 1.02 on a frame without "
+            "a palette); encoding mono sound (0.97). --direct-sound stereo forces stereo.")
+    expect(note in out, f"note printed: {out!r}")
+    with _patched_raw_k(_flat_k(1.05, 2.0), _flat_k(1.01, 2.0)):
+        msg = _exit_text(enc.raw_pick_sound, 256, 192, 256, 25, "auto")
+    expect("stereo 1.05" in msg and "mono 1.01" in msg and "without a palette" in msg,
+           f"both forms named: {msg}")
+    expect("16.67 fps" in msg, f"the next lower rate that plays is named: {msg}")
+    with _patched_raw_k(_flat_k(1.02, 2.0), _flat_k(0.97, 2.0)):
+        msg = _exit_text(enc.raw_pick_sound, 256, 192, 256, 25, "stereo")
+    expect("stereo 1.02" in msg and "without a palette" in msg, f"forced stereo refused: {msg}")
+    (form, chk), out = pick(1.02, 0.97, want="mono")
+    expect(form == "mono" and out == "", f"forced mono at 0.97: {form} {out!r}")
+    (form, chk), out = pick(0.95, 0.97, want="stereo")
+    expect(form == "stereo" and out == "", f"forced stereo at 0.95: {form}")
+    with _patched_raw_k(_flat_k(2.2, 3.0), _flat_k(2.1, 3.0)):
+        msg = _exit_text(enc.raw_pick_sound, 256, 192, 256, 12.5, "auto")
+    expect("no lower rate" in msg, f"no lower rate in the list at 12.5 fps: {msg}")
+    _raises(ValueError, enc.raw_pick_sound, 256, 192, 256, 25, "quad")
+
+
+@case(16, "raw gate - 320x256@25 refused in both forms, naming the tallest picture that plays")
+def t16_raw_gate_refuses():
+    for form in ("stereo", "mono", "auto"):
+        msg = _exit_text(enc.raw_pick_sound, 320, 256, 320, 25, form)
+        expect("320x256" in msg and "without a palette" in msg, f"{form}: {msg}")
+        expect("320x192 stereo" in msg and "320x196 mono" in msg, f"{form}: heights named: {msg}")
+        expect("16.67 fps" in msg, f"{form}: the next lower rate that plays: {msg}")
+    # tallest heights on a frame without a palette, as the sitting report's table
+    for w, sw, want in ((320, 320, (192, 196)), (280, 320, (219, 224)), (256, "auto", (242, 246))):
+        got = tuple(enc.raw_max_height(w, sw, 25, f) for f in ("stereo", "mono"))
+        expect(got == want, f"{w} wide: tallest {got}, report {want}")
+    expect(enc.raw_max_height(256, 256, 25, "stereo") == 192, "the 256 surface stops at 192")
+    expect(enc.raw_max_height(320, 320, 25, "stereo", util=0.90) < 192, "util bound applies")
+    ex = _synthetic_ex(2, 320, 256)
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "over.vid"
+        msg = _exit_text(enc._encode_raw, ex, 320, 256, 25.0, out, gate=True)
+        expect("320x256" in msg and not out.exists(), f"_encode_raw refuses, no file: {msg}")
+
+
+@case(16, "raw gate - palette debt walk over the clip's frames")
+def t16_raw_debt_walk():
+    # real constants: a frame without a palette under 1.00, one palette frame
+    pal = enc.raw_frame_t(320, 192, 320, 25, "stereo")["total_t"]
+    d = enc.raw_debt_check([True] + [False] * 49, 320, 192, 320, 25, "stereo")
+    expect(abs(d["peak_t"] - max(0.0, pal - RAW_P25)) < 1e-6 and d["ok"], f"one palette frame: {d}")
+    expect(d["frame"] == (0 if pal > RAW_P25 else None) and d["limit_t"] == enc.RAW_K["stereo"]["tp"],
+           f"one palette frame: {d}")
+    # a palette frame under 1.00 never accrues debt, whatever the flags
+    rng = np.random.default_rng(5)
+    for flags in ([True] * 40, [bool(b) for b in rng.integers(0, 2, 60)]):
+        for form in ("stereo", "mono"):
+            d = enc.raw_debt_check(flags, 256, 192, 256, 25, form)
+            expect(d["peak_t"] == 0 and d["ok"] and d["frame"] is None, f"256x192 {form}: {d}")
+    with _patched_raw_k(_flat_k(0.99, 1.02), _flat_k(0.95, 0.98)):
+        flags = [True, False, True, True, False, False]
+        d = enc.raw_debt_check(flags, 256, 192, 256, 25, "stereo")
+        expect(abs(d["peak_t"] - 0.05 * RAW_P25) < 1e-3 and d["frame"] == 3 and not d["ok"],
+               f"consecutive palettes: {d}")
+        expect(abs(d["limit_t"] - 0.03 * RAW_P25) < 1e-6, f"limit is the form's tp: {d}")
+        d = enc.raw_debt_check([True, False, False, True, False, False, True], 256, 192, 256, 25,
+                               "stereo")
+        expect(d["ok"] and d["frame"] == 0 and abs(d["peak_t"] - 0.02 * RAW_P25) < 1e-3,
+               f"spaced palettes recover: {d}")
+        # frames without a palette bank no credit: debt never goes below 0
+        d = enc.raw_debt_check([True] + [False] * 10 + [True] * 3, 256, 192, 256, 25, "stereo")
+        expect(abs(d["peak_t"] - 0.06 * RAW_P25) < 1e-3 and d["frame"] == 13 and not d["ok"],
+               f"no credit before stacked cuts: {d}")
+        d = enc.raw_debt_check(flags, 256, 192, 256, 25, "mono")
+        expect(d["peak_t"] == 0 and d["ok"], f"mono palette frame under 1.00: {d}")
+        d = enc.raw_debt_check(flags, 256, 192, 256, 25, "stereo", stall_budget="measured")
+        expect(abs(d["peak_t"] - 0.05 * RAW_P25 - 4 * enc.RAW_STALL_T) < 1e-3 and d["frame"] == 3,
+               f"the stall budget reaches the walk: {d}")
+
+
+@case(16, "raw gate - _encode_raw refuses stacked scene cuts, admits spaced ones, warns over 0.90")
+def t16_raw_gate_encode():
+    real_cuts = enc.detect_scene_cuts
+    ex = _synthetic_ex(6, 320, 192)
+    try:
+        with _patched_raw_k(_flat_k(0.99, 1.02), _flat_k(0.95, 0.98)), \
+                tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "cuts.vid"
+            enc.detect_scene_cuts = lambda chg: [2, 3]
+            msg = _exit_text(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
+            expect("frame 3" in msg and "5.0 percent" in msg and "faster than the player" in msg,
+                   f"stacked cuts refused at frame 3: {msg}")
+            expect("--direct-sound mono" in msg and not out.exists(), f"mono suggested, no file: {msg}")
+            enc.detect_scene_cuts = lambda chg: [3]
+            rep, text = _quiet(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
+            expect("warning" in text and "0.99" in text and "without a palette" in text,
+                   f"0.90 warning: {text!r}")
+            data = out.read_bytes()
+            pos, tags = 512, []
+            for _ in range(6):
+                tags.append(data[pos + 1535])
+                pos += 1536 + 512 * tags[-1] + 120 * 512
+            expect(tags == [1, 0, 0, 1, 0, 0] and pos == len(data),
+                   f"palette on scene starts only: {tags}")
+            expect(abs(rep.stream_utilization - 0.99) < 1e-9 and rep.stream_checked,
+                   "report carries the gate figure")
+    finally:
+        enc.detect_scene_cuts = real_cuts
+
+
+@case(16, "raw gate - videnc --direct writes the raw layout; new options need --direct")
+def t16_direct_cli_writes_raw():
+    import subprocess
+    src = _raw_demo_src()
+
+    def run(*args):
+        return subprocess.run([sys.executable, str(LIB / "videnc.py"), str(src), *args,
+                               "--start", "00:00:00", "--ffmpeg", str(FFMPEG)],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    with tempfile.TemporaryDirectory() as td:
+        def enc_hdr(name, *args):
+            out = Path(td) / name
+            r = run(str(out), "--direct", "--duration", "1", *args)
+            text = r.stdout.decode("utf-8", "replace")
+            expect(r.returncode == 0, f"{args}: videnc failed:\n{text}")
+            return out.read_bytes()[:512], text
+
+        h, _ = enc_hdr("a.vid", "--shape", "256x192", "--fps", "25")
+        expect(h[12] == 0x13 and h[6] == 0 and h[9] == 2, f"256x192: flags {h[12]:#x} code {h[6]} ch {h[9]}")
+        h, _ = enc_hdr("b.vid", "--shape", "256x240", "--fps", "16.67")
+        expect(h[12] == 0x13 and h[6] == 1 and h[7] == 240
+               and int.from_bytes(h[23:25], "little") == 256, "256x240: 320 surface, width word 256")
+        h, _ = enc_hdr("c.vid", "--shape", "256x192", "--fps", "25", "--direct-sound", "mono")
+        expect(h[9] == 1 and int.from_bytes(h[17:19], "little") == 625, "mono: 1 channel, 625 B")
+        h, text = enc_hdr("d.vid", "--shape", "280x224", "--fps", "25")
+        expect(h[6] == 1 and int.from_bytes(h[23:25], "little") == 280 and h[9] == 1,
+               "280x224 auto: 320 surface, width 280, mono")
+        expect("stereo does not hold rate" in text, f"280x224 auto prints the mono note:\n{text}")
+        for opt in (("--direct-surface", "320"), ("--direct-sound", "mono"), ("--stall-budget", "measured")):
+            out = Path(td) / "e.vid"
+            r = run(str(out), "--shape", "256x192", "--duration", "1", *opt)
+            text = r.stdout.decode("utf-8", "replace")
+            expect(r.returncode != 0 and opt[0] in text and "--direct" in text and not out.exists(),
+                   f"{opt[0]} without --direct must be refused:\n{text}")
 
 
 def main():

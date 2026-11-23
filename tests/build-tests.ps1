@@ -425,7 +425,8 @@
 #              007-014.VID + 099.VID: full-duration research clips that
 #              exceed the pool ring (007-009, exercising the prefetch
 #              producer across ring wraps) plus five --direct legs
-#              (010-014, one per direct route the kit ships) and a
+#              (010-014, the old direct layout through
+#              tests\videnc_old_direct.py: they back the DS1 rows) and a
 #              deliberate-underrun copy (099 = a byte copy of 007).
 #              Operating points for 007-009 are auto-derived by videnc's
 #              streaming supply gate - see this switch's own code block
@@ -5298,7 +5299,11 @@ if ($Font) {
 # resident 001-006 shrank 19456-47616 B, streamed 007-009 grew
 # 83968-400896 B, direct 010-012 reshaped (Task 22, not model-
 # isolated), 013/014 byte-identical.
-$vidLegSettlementTag = 'pal9w'
+# BUMP pal9w -> raw1 (--direct writes the raw layout, gated by the KS3
+# raw bench fit): --direct output changed layout. 010-014 back the DS1
+# rows and stay old-layout through tests\videnc_old_direct.py; delta
+# encodes are unchanged. See $encoderGeneration 'raw1' in video.ps1.
+$vidLegSettlementTag = 'raw1'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the
@@ -5429,23 +5434,25 @@ if ($VidLong) {
         # and 0.54 lands at util 0.892 - the same ~0.90 target the 3b
         # operating points were chosen against, now +0.63 dB richer
         '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @(); tag = 'auto' }
+        # 010-014 back the DS1 rows and the regression control: old direct
+        # layout, encoded through tests\videnc_old_direct.py (oldDirect).
         # 010 = the DIRECT-SERVE leg (VDIR/VDIRL): all-literal, header hint set,
         # served SD-to-surface with no ring; shape = the fullrate route, 256x167@25
         # stereo (direct gate util 0.9996, the 25 fps 256-wide edge).
-        '010.VID' = @{ shape = '256x167'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct' }
+        '010.VID' = @{ shape = '256x167'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct'; oldDirect = $true }
         # 011 = the DIRECT PACING CARD (DPACE/DPACL): 006's test card and 5.000 s
         # cut at 010's shape. The 256x167 side crop clips the banner's leading "f";
         # the frame number, pts time and seconds box stay inside.
-        '011.VID' = @{ shape = '256x167'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
+        '011.VID' = @{ shape = '256x167'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct'); tag = 'directpace'; start = '00:00:00'; duration = '5.0'; oldDirect = $true }
         # 012 fullrate-wide 320x105@25 (util 0.993, the 320-wide edge); 013 action
         # 320x256@12.5 (0.937); 014 action-169 320x192@12.5 (0.812). 013/014's
         # 12.5 is a second --fps after the loop's --fps 25 (argparse keeps the last).
-        '012.VID' = @{ shape = '320x105'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct105' }
+        '012.VID' = @{ shape = '320x105'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct105'; oldDirect = $true }
         # 013/014 use the 011 test-card source/cut, not Sintel: direct-serve
         # cost is content-independent, and the static card keeps frames
         # 1-32 free of the palette re-declares real footage triggers.
-        '013.VID' = @{ shape = '320x256'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--fps', '12.5'); tag = 'directfull'; start = '00:00:00'; duration = '5.0' }
-        '014.VID' = @{ shape = '320x192'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--fps', '12.5'); tag = 'direct169'; start = '00:00:00'; duration = '5.0' }
+        '013.VID' = @{ shape = '320x256'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--fps', '12.5'); tag = 'directfull'; start = '00:00:00'; duration = '5.0'; oldDirect = $true }
+        '014.VID' = @{ shape = '320x192'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--fps', '12.5'); tag = 'direct169'; start = '00:00:00'; duration = '5.0'; oldDirect = $true }
     }
     $vidLongStaged = 0
     foreach ($dest in $vidLongMap.Keys) {
@@ -5467,9 +5474,10 @@ if ($VidLong) {
         if ($vidLongMap[$dest].start)    { $cut += @('--start', $vidLongMap[$dest].start) }
         if ($vidLongMap[$dest].duration) { $cut += @('--duration', $vidLongMap[$dest].duration) }
         if (-not (Test-Path -LiteralPath $cache)) {
-            "encoding sd\$legName\$dest (shape $shape, source $(Split-Path -Leaf $src), $(if ($cut) { "cut $($vidLongMap[$dest].start) dur $($vidLongMap[$dest].duration)" } else { 'FULL duration' })) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
-            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe" @($vidLongMap[$dest].extraArgs) @cut
-            if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$legName\$dest not staged" }
+            $vidEnc = if ($vidLongMap[$dest].oldDirect) { "$PSScriptRoot\videnc_old_direct.py" } else { "$root\authoring-kit\lib\videnc.py" }
+            "encoding sd\$legName\$dest (shape $shape, source $(Split-Path -Leaf $src), $(if ($cut) { "cut $($vidLongMap[$dest].start) dur $($vidLongMap[$dest].duration)" } else { 'FULL duration' })) via $(Split-Path -Leaf $vidEnc) - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            & python $vidEnc $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe" @($vidLongMap[$dest].extraArgs) @cut
+            if ($LASTEXITCODE -ne 0) { throw "$(Split-Path -Leaf $vidEnc) failed (exit $LASTEXITCODE) - sd\$legName\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {
             Copy-Item -LiteralPath $cache -Destination "$leg\$dest" -Force
