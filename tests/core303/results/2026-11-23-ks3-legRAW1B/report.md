@@ -1,6 +1,6 @@
 # Raw direct video - KS3 sitting 1b (2026-11-23)
 
-Sitting: KS3, core 3.03.03. Legs staged from 2b75eed (interpreter source 95cd894). Leg A: -BenchQuiet build, log NXBENCH.TXT in this folder, 17 captures (NXBW on 060-072, 074, 088, 089; NXBD on 010). Leg B: DEBUG build; part 1 (B.3 to B.19) replays sitting 1's order with GOX (no log) and ends with B.19's logged GO of 074; part 2, after a power cycle, logs every GO and LOOP to NXPLAY.TXT in this folder (31 captures, table in playback.md). Details and the owner's notes in sitting.txt.
+Sitting: KS3, the 2026-11-21 sitting's board (core 3.03.03 read then; the core was not read at this sitting). Legs staged from 2b75eed (interpreter source 95cd894). Leg A: -BenchQuiet build, log NXBENCH.TXT in this folder, 17 captures (NXBW on 060-072, 074, 088, 089; NXBD on 010). Leg B: DEBUG build; part 1 (B.3 to B.19) replays sitting 1's order with GOX (no log) and ends with B.19's logged GO of 074; part 2, after a power cycle, logs every GO and LOOP. NXPLAY.TXT in this folder holds 31 captures (capture 1 is B.19, captures 2-31 part 2; table in playback.md). Details and the owner's notes in sitting.txt.
 
 Produced by:
 
@@ -15,7 +15,7 @@ The control, projection, attribution, capture and CHK tables in the first half a
 - Acceptance: PASS. Largest |residual| 0.081 percent (clip 068); 16 clips, 8 a form (stereo 060-065, 072, 089; mono 066-071, 074, 088).
 - Sound-term rule: PASS. Pad-aware d = +2.45 T a sound byte (mono) and +1.21 (stereo, now determined: 089 holds 1562 sound bytes in 4 sectors against 064/065's 1874); every listed layout's gate minus fit is within 0.055 percent of the period (limit 0.15). The plan expected d near +1.7. One term a sound sector holds.
 - Anomalies for a RE-RUN request: none.
-- Utilisation of the six target shapes (sound period, glue added, stall included), palette frame / pixels-only frame:
+- Utilisation of the six target shapes (sound period, glue added, no stall term; RAW_STALL_T 23.49 T moves only 320x160@25 mono palette, to 0.8266), palette frame / pixels-only frame:
 
   | shape | stereo | mono |
   |---|---|---|
@@ -36,7 +36,7 @@ The control, projection, attribution, capture and CHK tables in the first half a
 - Leg B (DEBUG build) against the model: every clip the gate admits played with LATE 0000 and URUN 0000; no clip it refuses played on time. 062, 063 and 069 (DEBUG utilisation 1.0068, 1.0295, 1.0070) were late on 249 of 250 frames, as the plan projected (1.0067, 1.0293, 1.0048); 068 (0.9847, projected 0.9826) played on time, where it was late at sitting 1. The ring-wait model's PLAY against the log: 062 498.9 / 499, 063 512.0 / 512, 069 499.1 / 499, 063 LOOP 2379.5 / 2380, 062 to SPACE 157.0 / 157.
 - 074 played every time in 1b: B.17 (GOX, the 15th session, as at sitting 1) "played all way through"; B.19, B.36 and B.37 logged FRM 0099/0099, PLAY 01EF (on time 494.9 fields), LATE and URUN 0000, pool 50. The sitting-1 failure (seven tries, no picture) did not recur; its cause is not established.
 - 004 logged RUNS=00 on both captures (pool 50), on time. Sitting 1's hand copy read RUNS=01. See "004".
-- CHK: on every clip without bars (the 256 surface, and 072 at 320x256) CHK equals the sum of the clip file's last two frames' pixels, in both sittings. On the barred 320-surface clips CHK also sums bytes the clip never writes, and 1b's is 1417 above sitting 1's on 064, 065, 067, 068, 069, 070 and 071 (899 on 061). See "CHK".
+- CHK: on every clip without bars (the 256 surface, and 072 at 320x256) CHK equals the sum of the clip file's last two frames' pixels, in both sittings. On the barred 320-surface clips CHK also sums bar bytes no code writes; 1b's is 1417 above sitting 1's on 064, 065, 067, 068, 069, 070 and 071 (899 on 061) because those bytes held different content from power-on. Not a player defect. See "CHK".
 
 ## Control: NXBD on 010 against sitting 1
 
@@ -160,7 +160,7 @@ Every wait at both spacings saw one $FF then the token, as sitting 1 saw at 48 T
 
 ### Captures and sheet steps
 
-Part 2 order. Capture is the NXPLAY.TXT capture number (raw_fit's Step column below). LOOP is read from PASS above 01 and FRM above the clip's frames; the log header does not record the verb. On-time PLAY = frames x samples a frame x 1792 / 567,264 (fields); NOM is the two-field nominal. Gate util: Release instructions, palette frame, stall term, sound period.
+Log order: capture 1 is B.19 (part 1), captures 2-31 part 2. Capture is the NXPLAY.TXT capture number (raw_fit's Step column below). LOOP is read from PASS above 01 and FRM above the clip's frames; the log header does not record the verb. On-time PLAY = frames x samples a frame x 1792 / 567,264 (fields); NOM is the two-field nominal. Gate util: Release instructions, palette frame, stall term, sound period.
 
 | capture | step | clip | pool | row 23 | FRM | PASS | PLAY | on-time PLAY | NOM | LATE | MAXL | URUN | RUNS | gate util | model | owner's note |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -173,7 +173,7 @@ Part 2 order. Capture is the NXPLAY.TXT capture number (raw_fit's Step column be
 | 7 | B.26 GO | 064 | 50 | - | 00A7/00A7 | 01 | 01EF | 494.3 | 01F3 | 0000 | 0000 | 0000 | 01 | 0.8361 | admitted | |
 | 8 | B.27 GO | 065 | 50 | - | 00A7/00A7 | 01 | 01EF | 494.3 | 01F3 | 0000 | 0000 | 0000 | 01 | 0.6757 | admitted | |
 | 9 | B.28 GO | 066 | 50 | - | 00FA/00FA | 01 | 01EE | 493.6 | 01F4 | 0000 | 0000 | 0000 | 01 | 0.7836 | admitted | |
-| 10 | not a sheet step | 057 | FF (no open) | VID FILE? | - | - | - | - | - | - | - | - | - | - | - | |
+| 10 | not a sheet step | 057 | FF (no open) | VID FILE? | - | - | - | - | - | - | - | - | - | - | - | stated after the sitting: a mistyped PICK (57 for 67) before B.29 |
 | 11 | B.29 GO | 067 | 50 | - | 00FA/00FA | 01 | 01EE | 493.6 | 01F4 | 0000 | 0000 | 0000 | 01 | 0.8266 | admitted | |
 | 12 | B.30 GO | 068 | 50 | - | 00FA/00FA | 01 | 01EE | 493.6 | 01F4 | 0000 | 0000 | 0000 | 01 | 0.9832 | admitted | |
 | 13 | B.31 GO | 069 | 50 | - | 00FA/00FA | 01 | 01F3 | 493.6 | 01F4 | 00F9 | 028A | 00F9 | 01 | 1.0053 | refused | "STUTTER" |
@@ -258,9 +258,10 @@ CHK (DEBUG) is the byte sum of both Layer 2 decode sets at teardown. Below, the 
 | 071 | 256x240 | 320 | 5250016 | 7688733 | 7690150 | +2438717 | +2440134 |
 
 - Without bars, CHK is exactly the last two frames' pixels in both sittings: the final surfaces are byte-exact on the 256 surface (five page ends a frame) and on 072 (320x256, nine page ends, every 320-surface page), on the build with O2-O7.
-- With bars, CHK also sums bytes outside the picture: raw clips play in a centred Layer 2 clip window (the open's vidP_ClipX1/X2/Y1/Y2), and the bar bytes are not the clip's. The excess differs between same-shape clips in one sitting (061 against 067), so it depends on what was in those banks before the clip.
-- 1b - sitting 1 = +1417 on 064, 065, 067, 068, 069, 070 and 071, and +899 on 061. Not explained by this data: a barred clip's CHK cannot separate the picture from the bars. The owner reported no picture exception on any of these clips.
-- 062 and 063 (late) and 004, 010 (other formats) also differ from sitting 1; they are not compared here.
+- With bars, CHK also sums bytes outside the picture. vid_chk_surface (the same in both builds) sums every byte of the surface pages of both sets, 6 or 10 8K pages a set by vidP_Shape, bars included; raw clips play in a centred Layer 2 clip window (the open's vidP_ClipX1/X2/Y1/Y2) and the player never clears the bars. So bar bytes hold earlier content: 064's excess is not a whole multiple of its 10,240 bar bytes, and same-shape 061 and 067 differ in one sitting.
+- The 1b - sitting 1 offset: the 4096 bytes at surface rows 240-255, columns 192-319 of both sets (banks 12-13 and 33-34) are written by no clip before 072 and by no code in either build. On 064-071 CHK therefore includes whatever RAM held there since power-on, and both leg B sessions started from a power-on. CHK minus the modelled written bytes is one constant per sitting across 064, 065, 067, 068, 069, 070 and 071: 374,495 at sitting 1, 375,912 at 1b (difference 1417). 061 exposes rows 160-255 of those columns (+899). 062 and 063 differ from sitting 1 for the same reason, not because they were late. The residual is 0 on 060, 066 and 072.
+- A harness run of the staged DEBUG image over seven geometries with random-filled surfaces changed no byte outside the clip window. Not a player defect and nothing visible: those rows are outside the clip window, and Layer 2 is hidden at teardown. Not established: whether that content is RAM power-up state or left by NextZXOS.
+- 004 and 010 (other formats) also differ from sitting 1; they are not compared here.
 
 ## Leg A log notes
 
@@ -273,11 +274,14 @@ RE-RUN request: none (no BAD, SHORT or missing row, no O=01, no row 3 percent fr
 
 Observations, not explained away:
 
-1. NXPLAY.TXT capture 10, "#PLAY 057 FF 4B24" with VID FILE?, is not a sheet step and not in the owner's notes. 057 is the clip number the last PICK set; the leg folder has no 057.VID; pool FF means no open ran. It sits 326 frames after the 066 capture and 975 frames before the 067 capture. Not used.
-2. 004 RUNS=00 (both captures) against sitting 1's hand-copied RUNS=01.
-3. CHK on barred 320-surface clips: +1417 against sitting 1 (+899 on 061).
-4. The owner noted stutters on the logged plays of 062, 063 and 069 only, not on part 1's plays of the same clips.
-5. Stereo RAW_FRAME_T is negative (-1,019 T); the sound-term rule passes.
+1. 004 RUNS=00 (both captures) against sitting 1's hand-copied RUNS=01.
+2. The owner noted stutters on the logged plays of 062, 063 and 069 only, not on part 1's plays of the same clips.
+3. Stereo RAW_FRAME_T is negative (-1,019 T); the sound-term rule passes.
+
+Explained:
+
+- NXPLAY.TXT capture 10 ("#PLAY 057 FF 4B24", VID FILE?, no open ran) is not a sheet step: a mistyped PICK (57 for 67) before B.29, as the owner stated after the sitting. Not used.
+- CHK on barred 320-surface clips (+1417 against sitting 1, +899 on 061): bar bytes no code writes, holding different content from power-on in the two sittings (see "CHK").
 
 The rest of this file is the script's output, unedited.
 

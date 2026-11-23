@@ -6,10 +6,10 @@ src_stamp: 95cd894
 build: leg A -BenchQuiet (DEBUG plus NXB_QUIET); leg B DEBUG
 nex_sha256: leg A 3fae83af48484977e3e5461237f20a8b518051ea202f977699c5b2b71ba83390; leg B 0f109981a39e51ffdf59c74285582ced5ab73b5d4d94da5f70929b6a74b177a8
 game_ddb_sha256: 1d7770013ceaed5fde0d5575c33182e2ac8607efca5d60f71a62527c14800bbc (both legs)
-core: 3.03.03
+core: not read at this sitting (the 2026-11-21 sitting's board, which read NR $01 $33, NR $0E $03: 3.03.03)
 board_id: not recorded
 sd_folders: LEGRAW1BA (leg A), LEGRAW1BB (leg B)
-logs: NXBENCH.TXT (leg A, 17 captures: NXBW on 060-072, 074, 088, 089; NXBD on 010), sha256 9c95db21ab70b09ead61345e8f35cc457e0d9ac744efddd4a6a691b32bda861b; NXPLAY.TXT (leg B part 2, 31 captures), sha256 cd7416610f66bb3977abe918a01148cdce9f9ba5f1eaf6713a9701e59834766d
+logs: NXBENCH.TXT (leg A, 17 captures: NXBW on 060-072, 074, 088, 089; NXBD on 010), sha256 9c95db21ab70b09ead61345e8f35cc457e0d9ac744efddd4a6a691b32bda861b; NXPLAY.TXT (leg B, 31 captures: capture 1 is B.19, the last step of part 1; captures 2-31 part 2), sha256 cd7416610f66bb3977abe918a01148cdce9f9ba5f1eaf6713a9701e59834766d
 nr: not recorded in this sitting
 timing_from: raw_fit BENCH_NR (+3, 50 Hz, 311 x 1824 T); NXBD on 010 within 0.158 percent of sitting 1 row by row
 card: not recorded
@@ -25,6 +25,7 @@ exceptions (owner's notes, verbatim):
   B.47 (063, LOOP): "LOOPED BUT STUTTER (NOT AT LOOP POINT)"
   no other exceptions reported: no blip, no hang, no LOG ERR
 sheet expectations at those steps: stutters expected at B.5, B.6, B.12 (part 1), B.24, B.25, B.31 and B.47; B.18 not run (B.17 played the full 10 seconds)
-not a sheet step: NXPLAY.TXT capture 10, "#PLAY 057 FF 4B24" and "VID FILE?", between the 066 and 067 captures; there is no 057.VID in the leg folder; not in the owner's notes
+not a sheet step: NXPLAY.TXT capture 10, "#PLAY 057 FF 4B24" and "VID FILE?", between the 066 and 067 captures; owner, after the sitting: a mistyped PICK (57 for 67) before B.29; no 057.VID in the leg folder; not used
+chk: barred 320-surface clips read CHK above sitting 1 (+1417 on 064, 065, 067-071; +899 on 061; 062, 063 likewise): bar bytes no code writes (rows 240-255, columns 192-319 of both sets) held different content from power-on; not a player defect, nothing visible
 picture and sound remarks: none beyond the exceptions
 ingest: by hand in the results folder shape, as sitting 1; playback.md from tests/core303/playlog.py

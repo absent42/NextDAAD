@@ -277,7 +277,10 @@ def synth_t(clip, P=SYNTH):
     arse_p = P["ts"] + 512 * k["tb"]
     arco_p = arse_p + COL_ENDS * k["tc"]
     arsw_p = nxv2enc.raw_model_t(g.spix, g.ssnd, g.cols, False, k)["total_t"]
-    arsw_p += P.get("pad_t", 0.0) * (g.padded - g.real)    # a pad byte surcharge, armed
+    pad_t = P.get("pad_t", 0.0)                            # a pad byte surcharge, armed:
+    if isinstance(pad_t, dict):                            # T, or {form: T}
+        pad_t = pad_t.get(form, 0.0)
+    arsw_p += pad_t * (g.padded - g.real)
     rswp_p = arsw_p / P["duty"][form]
     pre, tcs = ctc_period()
     per = pre * tcs[0]
@@ -881,7 +884,8 @@ def d_determined(res, form):
 def pad_aware(res):
     """Diagnostic: y = A + S x Ssnd + d x real bytes on the gate fit's points, all three free
     per form; stereo also with d = mono d x armed ratio. "use" maps a form to the fit the
-    sound-term rule takes: its own when d_determined, else the scaled stereo fit."""
+    sound-term rule takes: its own when d_determined; else stereo the scaled fit while mono's d
+    is determined; else None (no fit: the rule reads NOT DETERMINED)."""
     import numpy as np
     out = {}
     for form in FORMS:
@@ -896,16 +900,22 @@ def pad_aware(res):
     pts = [(s, y - d * res.clips[c].geo.real) for c, s, y in res.lsq["stereo"]]
     a0, s0 = _lsq(pts)
     out["stereo_d"] = dict(A=a0, S=s0, d=d, resid=[a0 + s0 * s - y for s, y in pts])
-    out["use"] = {f: f if out[f]["determined"] or f == "mono" else "stereo_d" for f in FORMS}
+    use = {"mono": "mono" if out["mono"]["determined"] else None}
+    use["stereo"] = ("stereo" if out["stereo"]["determined"] else
+                     "stereo_d" if use["mono"] else None)
+    out["use"] = use
     return out
 
 
 def sound_rule(res, pa):
-    """-> (ok, rows, worst d, worst err %): gate Ssnd x tsnd + tf against each form's used
-    pad-aware fit at 256x192 for SOUND_FPS; rows (form, fps, geo, gate, fit, err %, fitted)."""
+    """-> (ok, rows, worst d, worst err %, verdict): gate Ssnd x tsnd + tf against each form's
+    used pad-aware fit at 256x192 for SOUND_FPS; rows (form, fps, geo, gate, fit, err %, fitted).
+    verdict PASS, FAIL, or NOT DETERMINED (a form with no fit to use; ok is False)."""
     fitted = {f: {res.clips[c].shape[2] for c, _, _ in res.lsq[f]} for f in FORMS}
     rows, worst = [], 0.0
     for form, ch in (("mono", 1), ("stereo", 2)):
+        if pa["use"][form] is None:
+            continue
         fa = pa[pa["use"][form]]
         for fps in SOUND_FPS:
             try:
@@ -917,8 +927,11 @@ def sound_rule(res, pa):
             pct = 100.0 * (gate - fit_t) / (g.samples * res.period)
             worst = max(worst, abs(pct))
             rows.append((form, fps, g, gate, fit_t, pct, fps in fitted[form]))
-    dmax = max(abs(pa[pa["use"][f]]["d"]) for f in FORMS)
-    return dmax <= SOUND_D_MAX and worst <= SOUND_ERR_PCT, rows, dmax, worst
+    dmax = max((abs(pa[pa["use"][f]]["d"]) for f in FORMS if pa["use"][f]), default=0.0)
+    if None in pa["use"].values():
+        return False, rows, dmax, worst, "NOT DETERMINED"
+    ok = dmax <= SOUND_D_MAX and worst <= SOUND_ERR_PCT
+    return ok, rows, dmax, worst, "PASS" if ok else "FAIL"
 
 
 def read_playback(path):
@@ -1186,10 +1199,11 @@ def report(res, readouts=None):
         res.k["mono"]["tf"], res.k["mono"]["tsnd"],
         res.k["mono"]["tsnd"] / res.k["stereo"]["tsnd"], res.k["stereo"]["tsnd"]))
     add("")
-    ok, rows, dmax, worst_all = res.sound
+    ok, rows, dmax, worst_all, verdict = res.sound
     add("gate sound term (Ssnd x tsnd + tf) against the pad-aware fit, 256x192 (mono: %s; "
         "stereo: %s); err = gate - fit, negative = the gate under-prices:" % tuple(
-            "its own fit" if pa["use"][f] == f else "d scaled from mono" for f in FORMS[::-1]))
+            "its own fit" if pa["use"][f] == f else "d scaled from mono" if pa["use"][f]
+            else "d not determined" for f in FORMS[::-1]))
     add("")
     add("| form | fps | sound B | Ssnd | pad B | gate T | fit T | err T | err % of period | "
         "fitted pair |")
@@ -1203,9 +1217,12 @@ def report(res, readouts=None):
             "yes" if fitted else "no"))
     add("")
     add("largest |err| outside the fitted pairs: %.3f percent of the period" % worst)
+    none = [f for f in FORMS[::-1] if pa["use"][f] is None]
     add("sound-term rule (one term a sector holds: |d| <= %.1f T a sound byte in both forms and "
-        "every layout above within %.2f percent): %s (largest |d| %.2f T, largest |err| %.3f "
-        "percent)" % (SOUND_D_MAX, SOUND_ERR_PCT, "PASS" if ok else "FAIL", dmax, worst_all))
+        "every layout above within %.2f percent): %s" % (SOUND_D_MAX, SOUND_ERR_PCT, verdict)
+        + (" (%s: %s sound bytes track Ssnd)" % (", ".join(f + " d" for f in none),
+                                                 "its" if len(none) == 1 else "their") if none
+           else " (largest |d| %.2f T, largest |err| %.3f percent)" % (dmax, worst_all)))
     add("")
     add("## Utilisation of the target shapes")
     add("")
@@ -1573,6 +1590,16 @@ def selftest():
         no89.write_bytes(synth_log(omit=(89,)).encode("ascii"))
         res_no89 = fit(read_sections(no89), reps=SYNTH_REPS)
         text_no89 = report(res_no89)
+        padst = Path(tmp) / "PADST.TXT"
+        padst.write_bytes(synth_log(P=dict(SYNTH, pad_t={"stereo": 5.0})).encode("ascii"))
+        res_padst = fit(read_sections(padst), reps=SYNTH_REPS)
+        undet = Path(tmp) / "UNDET.TXT"
+        undet.write_bytes(synth_log(omit=(70, 71, 88)).encode("ascii"))
+        res_undet = fit(read_sections(undet), reps=SYNTH_REPS)
+        text_undet = report(res_undet)
+        undet2 = Path(tmp) / "UNDET2.TXT"
+        undet2.write_bytes(synth_log(omit=(70, 71, 88, 89)).encode("ascii"))
+        res_undet2 = fit(read_sections(undet2), reps=SYNTH_REPS)
         # A fixture clip on disk: 066's layout, palette sectors on frames 0 and 20.
         g = geometry(256, 192, 25, 1)
         clipdir = Path(tmp) / "clips"
@@ -1758,6 +1785,27 @@ def selftest():
           and "stereo: d scaled from mono" in text_no89
           and "d not determined: the clips' sound bytes, 1250, 1874, 2500, track Ssnd"
           in text_no89, "stereo fallback without 089: %r" % res_no89.pad["use"])
+    # a stereo-only pad surcharge: |d| is taken from both forms
+    check(abs(res_padst.pad["stereo"]["d"] + 5.0) < 0.05 and abs(res_padst.pad["mono"]["d"]) < 0.05
+          and abs(res_padst.sound[2] - 5.0) < 0.05 and not res_padst.sound_ok,
+          "stereo-only pad surcharge: d %r, largest |d| %.2f, rule %r" % (
+              [res_padst.pad[f]["d"] for f in FORMS], res_padst.sound[2], res_padst.sound_ok))
+    # d = 0 but the gate 0.3 percent of a 25 fps period off the fit: the error clause fails it
+    pa_off = dict(res.pad, mono=dict(res.pad["mono"], A=res.pad["mono"]["A"] + 0.003 * 625 * per))
+    off = sound_rule(res, pa_off)
+    check(not off[0] and off[2] < 0.05 and off[3] > SOUND_ERR_PCT,
+          "gate off the fit with d = 0: ok %r, |d| %.3f, err %.3f" % (off[0], off[2], off[3]))
+    # mono d not determined (070, 071, 088 out): a distinct verdict, failing closed
+    check(res_undet.pad["use"] == {"stereo": "stereo", "mono": None}
+          and res_undet.sound[4] == "NOT DETERMINED" and not res_undet.sound_ok
+          and exit_status(res_undet) == 1
+          and ": NOT DETERMINED (mono d: its sound bytes track Ssnd)" in text_undet
+          and res_undet2.pad["use"] == {"stereo": None, "mono": None}
+          and res_undet2.sound[4] == "NOT DETERMINED" and not res_undet2.sound_ok
+          and res.sound[4] == "PASS" and res_pad.sound[4] == "FAIL",
+          "undetermined d: use %r / %r, verdicts %r %r" % (
+              res_undet.pad["use"], res_undet2.pad["use"], res_undet.sound[4:],
+              res_undet2.sound[4:]))
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,
