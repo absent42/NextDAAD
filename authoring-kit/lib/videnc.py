@@ -445,7 +445,7 @@ def main(argv):
                           "timing of a frame without a palette "
                           "(nxv2enc.raw_supply_check) and by the clip's "
                           "scene cuts (nxv2enc.raw_debt_check); at 25 "
-                          "fps up to 256x192, 320x192 or 280x224 mono. "
+                          "fps up to 256x242, 320x192 or 280x224 mono. "
                           "The gate is unconditional - over 1.00 refuses "
                           "and names the tallest picture that plays, "
                           "with no slow-playback override")
@@ -511,12 +511,14 @@ def main(argv):
     ap.add_argument("--ffmpeg", default=str(DEFAULT_FFMPEG),
                      help=f"ffmpeg binary (default: {DEFAULT_FFMPEG})")
     args = ap.parse_args(argv[1:])
-    if not args.direct:
-        given = [name for name, v in (("--direct-surface", args.direct_surface),
-                                      ("--direct-sound", args.direct_sound),
-                                      ("--stall-budget", args.stall_budget)) if v is not None]
-        if given:
-            raise SystemExit(f"error: {', '.join(given)} needs --direct")
+    given = [name for name, v in (("--direct-surface", args.direct_surface),
+                                  ("--direct-sound", args.direct_sound),
+                                  ("--stall-budget", args.stall_budget)) if v is not None]
+    if given and not args.direct:
+        raise SystemExit(f"error: {', '.join(given)} needs --direct")
+    if given and nxv2enc.DIRECT_LAYOUT != "raw":
+        raise SystemExit(f"error: {', '.join(given)}: raw layout only; the old "
+                         f"direct layout takes none of these options")
 
     input_path = Path(args.input)
     if not input_path.exists():

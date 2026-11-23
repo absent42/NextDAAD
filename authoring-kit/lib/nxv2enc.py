@@ -1060,6 +1060,12 @@ def raw_max_height(width, surface_width, fps, form, util=1.0, **kw):
     return 0
 
 
+def _raw_factor_txt(kw):
+    """'; --direct-transport-factor F' when F is not the default 1.00."""
+    f = kw.get("transport_factor")
+    return "" if f is None or float(f) == 1.0 else f"; --direct-transport-factor {float(f):g}"
+
+
 def _raw_refusal(width, height, surface_width, fps, checks, **kw):
     """SystemExit text for a raw shape over 1.00 in each form of checks."""
     over = ", ".join(f"{f} {_util_txt(c['utilization'])}" for f, c in checks.items())
@@ -1078,7 +1084,8 @@ def _raw_refusal(width, height, surface_width, fps, checks, **kw):
         lower = (f"{width}x{height} plays at no lower rate of "
                  + ", ".join(f"{r:g}" for r in RAW_RATES) + " fps. ")
     return (f"error: raw --direct cannot play {width}x{height} at {float(fps):g} fps: "
-            f"utilization {over} on a frame without a palette (over 1.00). Tallest at "
+            f"utilization {over} on a frame without a palette (over 1.00"
+            f"{_raw_factor_txt(kw)}). Tallest at "
             f"{width} wide and {float(fps):g} fps: {tall}. {lower}Use a smaller shape or "
             f"a lower --fps.")
 
@@ -1106,7 +1113,8 @@ def raw_pick_sound(width, height, surface_width, fps, want="auto", **kw):
 def raw_debt_check(palette_flags, width, height, surface_width, fps, form, **kw):
     """Lateness walk over a clip's frames (palette_flags: one bool a frame):
     debt = max(0, debt + frame T - period). ok while the peak is within
-    RAW_DEBT_MAX_T, the form's tp (one palette frame at exactly 1.00)."""
+    limit_t, the form's tp (one palette frame at exactly 1.00). frame is
+    the peak's 0-based index, None when no debt accrues."""
     period = raw_supply_check(width, height, surface_width, fps, form, **kw)["period_t"]
     t_pal = raw_frame_t(width, height, surface_width, fps, form, palette=True, **kw)["total_t"]
     t_px = raw_frame_t(width, height, surface_width, fps, form, palette=False, **kw)["total_t"]
@@ -1143,8 +1151,9 @@ def _raw_debt_refusal(debt, flags, width, height, surface, fps, form, chk, **kw)
     return (f"error: raw --direct refuses this clip at {width}x{height}, {float(fps):g} fps, "
             f"{form} sound: a scene's first frame carries a palette sector "
             f"(utilization {_util_txt(pal_u)} on that frame, {_util_txt(chk['utilization'])} "
-            f"on a frame without a palette) and the clip cuts scenes faster than the player can "
-            f"recover at this shape: at frame {debt['frame']} it is "
+            f"on a frame without a palette{_raw_factor_txt(kw)}) and the clip cuts scenes "
+            f"faster than the player can recover at this shape: at frame {debt['frame'] + 1} "
+            f"(the first frame is 1) it is "
             f"{100.0 * debt['peak_t'] / period:.1f} percent of the frame period behind "
             f"(limit {100.0 * debt['limit_t'] / period:.1f} percent, one palette sector). "
             f"Use {alt}{tail}.")
@@ -5561,8 +5570,12 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     byte-identical to what it was."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
-    if not direct and (direct_surface, direct_sound, stall_budget) != ("auto", "auto", "off"):
-        raise ValueError("direct_surface, direct_sound and stall_budget need direct=True")
+    if (direct_surface, direct_sound, stall_budget) != ("auto", "auto", "off"):
+        if not direct:
+            raise ValueError("direct_surface, direct_sound and stall_budget need direct=True")
+        if DIRECT_LAYOUT != "raw":
+            raise ValueError("direct_surface, direct_sound and stall_budget are raw layout "
+                             "options; the old direct layout takes none of them")
 
     raw_direct = direct and DIRECT_LAYOUT == "raw"
     if raw_direct and shape is not None and not isinstance(shape, str):

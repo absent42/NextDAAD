@@ -8483,6 +8483,9 @@ def t16_raw_gate_refuses():
         expect("320x256" in msg and "without a palette" in msg, f"{form}: {msg}")
         expect("320x192 stereo" in msg and "320x196 mono" in msg, f"{form}: heights named: {msg}")
         expect("16.67 fps" in msg, f"{form}: the next lower rate that plays: {msg}")
+        expect("--direct-transport-factor" not in msg, f"{form}: default factor not named: {msg}")
+    msg = _exit_text(enc.raw_pick_sound, 320, 192, 320, 25, "auto", transport_factor=1.05)
+    expect("--direct-transport-factor 1.05" in msg, f"a non-default factor is named: {msg}")
     # tallest heights on a frame without a palette, as the sitting report's table
     for w, sw, want in ((320, 320, (192, 196)), (280, 320, (219, 224)), (256, "auto", (242, 246))):
         got = tuple(enc.raw_max_height(w, sw, 25, f) for f in ("stereo", "mono"))
@@ -8541,9 +8544,14 @@ def t16_raw_gate_encode():
             out = Path(td) / "cuts.vid"
             enc.detect_scene_cuts = lambda chg: [2, 3]
             msg = _exit_text(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
-            expect("frame 3" in msg and "5.0 percent" in msg and "faster than the player" in msg,
-                   f"stacked cuts refused at frame 3: {msg}")
+            # the debt dict counts from 0, the message from 1 as the player's readouts do
+            expect("at frame 4 " in msg and "first frame is 1" in msg and "5.0 percent" in msg
+                   and "faster than the player" in msg, f"stacked cuts refused at frame 4: {msg}")
             expect("--direct-sound mono" in msg and not out.exists(), f"mono suggested, no file: {msg}")
+            expect("--direct-transport-factor" not in msg, f"default factor not named: {msg}")
+            msg = _exit_text(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True,
+                             direct_transport_factor=1.05)
+            expect("--direct-transport-factor 1.05" in msg, f"factor named in the refusal: {msg}")
             enc.detect_scene_cuts = lambda chg: [3]
             rep, text = _quiet(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
             expect("warning" in text and "0.99" in text and "without a palette" in text,
@@ -8557,8 +8565,59 @@ def t16_raw_gate_encode():
                    f"palette on scene starts only: {tags}")
             expect(abs(rep.stream_utilization - 0.99) < 1e-9 and rep.stream_checked,
                    "report carries the gate figure")
+        # the 0.90 warning is on a frame without a palette, not on the palette frame
+        enc.detect_scene_cuts = lambda chg: []
+        small = _synthetic_ex(2, 256, 64)
+        for px, pal, warns in ((0.895, 0.91, False), (0.905, 0.91, True)):
+            with _patched_raw_k(_flat_k(px, pal), _flat_k(0.85, 0.87)), \
+                    tempfile.TemporaryDirectory() as td:
+                _rep, text = _quiet(enc._encode_raw, small, 256, 64, 25.0, Path(td) / "w.vid",
+                                    gate=True)
+                expect(("warning" in text) == warns, f"{px}/{pal}: warning {not warns}: {text!r}")
     finally:
         enc.detect_scene_cuts = real_cuts
+
+
+@case(16, "raw gate - encode() threads the transport factor and the stall budget; old layout refuses raw options")
+def t16_raw_encode_threads_options():
+    ex = _synthetic_ex(2, 320, 192)
+
+    def fake_extract(src_path, w, h, fps_val, start, duration, ffmpeg, dither, **kw):
+        expect(kw.get("raw") and kw.get("channels") == 2 and (w, h) == (320, 192),
+               f"raw stereo 320x192 extraction, got {w}x{h} {kw}")
+        return ex
+
+    real_extract, real_layout = enc._extract_source, enc.DIRECT_LAYOUT
+    try:
+        enc._extract_source = fake_extract
+        with tempfile.TemporaryDirectory() as td:
+            def run(name, **kw):
+                return _quiet(enc.encode, "dummy.mp4", str(Path(td) / name), shape=(320, 192),
+                              fps=25.0, direct=True, **kw)[0]
+
+            u0 = run("off.vid").stream_utilization
+            u1 = run("stall.vid", stall_budget="measured").stream_utilization
+            expect(abs(u0 - enc.raw_supply_check(320, 192, 320, 25, "stereo")["utilization"]) < 1e-12,
+                   f"default encode utilization {u0}")
+            expect(abs(u1 - u0 - enc.RAW_STALL_T / RAW_P25) < 1e-12,
+                   f"--stall-budget measured reaches the gate: {u0} -> {u1}")
+            msg = _exit_text(enc.encode, "dummy.mp4", str(Path(td) / "f.vid"), shape=(320, 192),
+                             fps=25.0, direct=True, direct_transport_factor=1.05)
+            expect("320x192" in msg and "--direct-transport-factor 1.05" in msg
+                   and not (Path(td) / "f.vid").exists(),
+                   f"factor 1.05 refuses 320x192@25 and is named: {msg}")
+            enc.DIRECT_LAYOUT = "old"
+            for kw in (dict(direct_sound="mono"), dict(direct_surface="320"),
+                       dict(stall_budget="measured")):
+                try:
+                    enc.encode("dummy.mp4", str(Path(td) / "old.vid"), shape=(256, 128),
+                               fps=25.0, direct=True, **kw)
+                except ValueError as e:
+                    expect("old direct layout" in str(e), f"{kw}: {e}")
+                else:
+                    raise AssertionError(f"old layout must refuse {kw}")
+    finally:
+        enc._extract_source, enc.DIRECT_LAYOUT = real_extract, real_layout
 
 
 @case(16, "raw gate - videnc --direct writes the raw layout; new options need --direct")
@@ -8584,8 +8643,27 @@ def t16_direct_cli_writes_raw():
         h, _ = enc_hdr("b.vid", "--shape", "256x240", "--fps", "16.67")
         expect(h[12] == 0x13 and h[6] == 1 and h[7] == 240
                and int.from_bytes(h[23:25], "little") == 256, "256x240: 320 surface, width word 256")
-        h, _ = enc_hdr("c.vid", "--shape", "256x192", "--fps", "25", "--direct-sound", "mono")
+        rp = Path(td) / "c.json"
+        h, _ = enc_hdr("c.vid", "--shape", "256x192", "--fps", "25", "--direct-sound", "mono",
+                       "--stall-budget", "measured", "--report", str(rp))
         expect(h[9] == 1 and int.from_bytes(h[17:19], "little") == 625, "mono: 1 channel, 625 B")
+        import json
+        u = json.loads(rp.read_text())["stream_utilization"]
+        want = enc.raw_supply_check(256, 192, 256, 25, "mono", stall_budget="measured")["utilization"]
+        expect(abs(u - want) < 1e-12, f"--stall-budget measured reaches the gate: {u} vs {want}")
+        out = Path(td) / "f.vid"
+        r = run(str(out), "--direct", "--duration", "1", "--shape", "320x192",
+                "--direct-transport-factor", "1.05")
+        text = r.stdout.decode("utf-8", "replace")
+        expect(r.returncode != 0 and "--direct-transport-factor 1.05" in text and not out.exists(),
+               f"factor 1.05 refuses 320x192@25 and is named:\n{text}")
+        r = subprocess.run([sys.executable, str(ROOT / "tests" / "videnc_old_direct.py"), str(src),
+                            str(out), "--direct", "--direct-sound", "mono", "--shape", "256x128",
+                            "--duration", "1", "--ffmpeg", str(FFMPEG)],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        text = r.stdout.decode("utf-8", "replace")
+        expect(r.returncode != 0 and "old direct layout" in text and not out.exists(),
+               f"the old layout refuses --direct-sound:\n{text}")
         h, text = enc_hdr("d.vid", "--shape", "280x224", "--fps", "25")
         expect(h[6] == 1 and int.from_bytes(h[23:25], "little") == 280 and h[9] == 1,
                "280x224 auto: 320 surface, width 280, mono")
