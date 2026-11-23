@@ -26,6 +26,6 @@ exceptions (owner's notes, verbatim):
   no other exceptions reported: no blip, no hang, no LOG ERR
 sheet expectations at those steps: stutters expected at B.5, B.6, B.12 (part 1), B.24, B.25, B.31 and B.47; B.18 not run (B.17 played the full 10 seconds)
 not a sheet step: NXPLAY.TXT capture 10, "#PLAY 057 FF 4B24" and "VID FILE?", between the 066 and 067 captures; owner, after the sitting: a mistyped PICK (57 for 67) before B.29; no 057.VID in the leg folder; not used
-chk: barred 320-surface clips read CHK above sitting 1 (+1417 on 064, 065, 067-071; +899 on 061; 062, 063 likewise): bar bytes no code writes (rows 240-255, columns 192-319 of both sets) held different content from power-on; not a player defect, nothing visible
+chk: barred 320-surface clips read CHK above sitting 1 (+1417 on 064, 065, 067-071; +899 on 061; 062, 063 likewise): 4096 bar bytes no code these sessions run writes (rows 240-255, columns 192-319 of both sets; more on 061) held different content from power-on; not a player defect, nothing visible
 picture and sound remarks: none beyond the exceptions
 ingest: by hand in the results folder shape, as sitting 1; playback.md from tests/core303/playlog.py

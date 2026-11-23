@@ -15,7 +15,7 @@ The control, projection, attribution, capture and CHK tables in the first half a
 - Acceptance: PASS. Largest |residual| 0.081 percent (clip 068); 16 clips, 8 a form (stereo 060-065, 072, 089; mono 066-071, 074, 088).
 - Sound-term rule: PASS. Pad-aware d = +2.45 T a sound byte (mono) and +1.21 (stereo, now determined: 089 holds 1562 sound bytes in 4 sectors against 064/065's 1874); every listed layout's gate minus fit is within 0.055 percent of the period (limit 0.15). The plan expected d near +1.7. One term a sound sector holds.
 - Anomalies for a RE-RUN request: none.
-- Utilisation of the six target shapes (sound period, glue added, no stall term; RAW_STALL_T 23.49 T moves only 320x160@25 mono palette, to 0.8266), palette frame / pixels-only frame:
+- Utilisation of the six target shapes (sound period, glue added, no stall term; adding RAW_STALL_T 23.49 T moves five figures by 0.0001: 320x160@25 mono palette to 0.8266, and pixels-only 256x192@25 mono to 0.7725, 320x160@25 stereo to 0.8351 and mono to 0.8154, 320x192@25 mono to 0.9721), palette frame / pixels-only frame:
 
   | shape | stereo | mono |
   |---|---|---|
@@ -36,7 +36,7 @@ The control, projection, attribution, capture and CHK tables in the first half a
 - Leg B (DEBUG build) against the model: every clip the gate admits played with LATE 0000 and URUN 0000; no clip it refuses played on time. 062, 063 and 069 (DEBUG utilisation 1.0068, 1.0295, 1.0070) were late on 249 of 250 frames, as the plan projected (1.0067, 1.0293, 1.0048); 068 (0.9847, projected 0.9826) played on time, where it was late at sitting 1. The ring-wait model's PLAY against the log: 062 498.9 / 499, 063 512.0 / 512, 069 499.1 / 499, 063 LOOP 2379.5 / 2380, 062 to SPACE 157.0 / 157.
 - 074 played every time in 1b: B.17 (GOX, the 15th session, as at sitting 1) "played all way through"; B.19, B.36 and B.37 logged FRM 0099/0099, PLAY 01EF (on time 494.9 fields), LATE and URUN 0000, pool 50. The sitting-1 failure (seven tries, no picture) did not recur; its cause is not established.
 - 004 logged RUNS=00 on both captures (pool 50), on time. Sitting 1's hand copy read RUNS=01. See "004".
-- CHK: on every clip without bars (the 256 surface, and 072 at 320x256) CHK equals the sum of the clip file's last two frames' pixels, in both sittings. On the barred 320-surface clips CHK also sums bar bytes no code writes; 1b's is 1417 above sitting 1's on 064, 065, 067, 068, 069, 070 and 071 (899 on 061) because those bytes held different content from power-on. Not a player defect. See "CHK".
+- CHK: on every clip without bars (the 256 surface, and 072 at 320x256) CHK equals the sum of the clip file's last two frames' pixels, in both sittings. On the barred 320-surface clips CHK also sums the bar bytes, and 4096 of them (rows 240-255, columns 192-319 of both sets; more on 061) are written by no code these sessions run. 1b's CHK is 1417 above sitting 1's on 064, 065, 067, 068, 069, 070 and 071 (899 on 061) because those bytes held different content from power-on. Not a player defect. See "CHK".
 
 ## Control: NXBD on 010 against sitting 1
 
@@ -259,8 +259,8 @@ CHK (DEBUG) is the byte sum of both Layer 2 decode sets at teardown. Below, the 
 
 - Without bars, CHK is exactly the last two frames' pixels in both sittings: the final surfaces are byte-exact on the 256 surface (five page ends a frame) and on 072 (320x256, nine page ends, every 320-surface page), on the build with O2-O7.
 - With bars, CHK also sums bytes outside the picture. vid_chk_surface (the same in both builds) sums every byte of the surface pages of both sets, 6 or 10 8K pages a set by vidP_Shape, bars included; raw clips play in a centred Layer 2 clip window (the open's vidP_ClipX1/X2/Y1/Y2) and the player never clears the bars. So bar bytes hold earlier content: 064's excess is not a whole multiple of its 10,240 bar bytes, and same-shape 061 and 067 differ in one sitting.
-- The 1b - sitting 1 offset: the 4096 bytes at surface rows 240-255, columns 192-319 of both sets (banks 12-13 and 33-34) are written by no clip before 072 and by no code in either build. On 064-071 CHK therefore includes whatever RAM held there since power-on, and both leg B sessions started from a power-on. CHK minus the modelled written bytes is one constant per sitting across 064, 065, 067, 068, 069, 070 and 071: 374,495 at sitting 1, 375,912 at 1b (difference 1417). 061 exposes rows 160-255 of those columns (+899). 062 and 063 differ from sitting 1 for the same reason, not because they were late. The residual is 0 on 060, 066 and 072.
-- A harness run of the staged DEBUG image over seven geometries with random-filled surfaces changed no byte outside the clip window. Not a player defect and nothing visible: those rows are outside the clip window, and Layer 2 is hidden at teardown. Not established: whether that content is RAM power-up state or left by NextZXOS.
+- The 1b - sitting 1 offset: the 4096 bytes at surface rows 240-255, columns 192-319 of both sets (banks 12-13 and 33-34) are written by no clip before 072 and by no code these sessions run (the interpreter's l2_clear / l2_clear_back would clear them, but the bench game draws only when a picture file exists and neither leg has one). On 064-071 CHK therefore includes whatever RAM held there since power-on, and both leg B sessions started from a power-on. CHK minus the modelled written bytes is one constant per sitting across 064, 065, 067, 068, 069, 070 and 071: 374,495 at sitting 1, 375,912 at 1b (difference 1417). 061 exposes rows 160-255 of those columns (+899). 062 and 063 differ from sitting 1 for the same reason, not because they were late. The residual is 0 on 060, 066 and 072.
+- A one-off run of the staged DEBUG image through the vidraw_contract harness (not a tracked test), over seven geometries with random-filled surfaces, changed no byte outside the clip window. Not a player defect and nothing visible: those rows are outside the clip window, and Layer 2 is hidden at teardown. Not established: whether that content is RAM power-up state or left by NextZXOS.
 - 004 and 010 (other formats) also differ from sitting 1; they are not compared here.
 
 ## Leg A log notes
@@ -281,7 +281,7 @@ Observations, not explained away:
 Explained:
 
 - NXPLAY.TXT capture 10 ("#PLAY 057 FF 4B24", VID FILE?, no open ran) is not a sheet step: a mistyped PICK (57 for 67) before B.29, as the owner stated after the sitting. Not used.
-- CHK on barred 320-surface clips (+1417 against sitting 1, +899 on 061): bar bytes no code writes, holding different content from power-on in the two sittings (see "CHK").
+- CHK on barred 320-surface clips (+1417 against sitting 1, +899 on 061): 4096 bar bytes (more on 061) written by no code these sessions run, holding different content from power-on in the two sittings (see "CHK").
 
 The rest of this file is the script's output, unedited.
 

@@ -1186,10 +1186,14 @@ def report(res, readouts=None):
                 form, f["A"], f["S"], f["d"], f["cond"],
                 "d determined: one Ssnd group holds two sound-byte counts" if f["determined"]
                 else "d not determined: the clips' sound bytes, %s, track Ssnd" % ", ".join(
-                    sorted({"%d" % res.clips[c].geo.real for c, _, _ in res.lsq[form]})),
+                    "%d" % b for b in sorted({res.clips[c].geo.real for c, _, _ in
+                                              res.lsq[form]})),
                 " ".join("%+.0f" % v for v in f["resid"])))
-    add("  - stereo with d = mono d x armed ratio = %+.2f: A %.1f, S %.1f; residuals %s T" % (
-        s2["d"], s2["A"], s2["S"], " ".join("%+.0f" % v for v in s2["resid"])))
+    if m["determined"]:
+        add("  - stereo with d = mono d x armed ratio = %+.2f: A %.1f, S %.1f; residuals %s T" % (
+            s2["d"], s2["A"], s2["S"], " ".join("%+.0f" % v for v in s2["resid"])))
+    else:
+        add("  - stereo with d = mono d x armed ratio: not formed (mono d not determined)")
     add("  - code: vid_raw_apad (video.asm:%d) reads the pad and tag through the INI slide, "
         "16 T a byte; vid_ds_xfer (video.asm:%d) moves a sound byte by ini, 16 T plus 14 T a "
         "32-byte pass and about 300 T an arm, about 17.6 T in 256-byte arms: a sound byte "
@@ -1806,6 +1810,12 @@ def selftest():
           "undetermined d: use %r / %r, verdicts %r %r" % (
               res_undet.pad["use"], res_undet2.pad["use"], res_undet.sound[4:],
               res_undet2.sound[4:]))
+    # undetermined mono: byte counts in numeric order, no scaled stereo figure printed
+    check("d not determined: the clips' sound bytes, 625, 1024, track Ssnd" in text_undet
+          and "stereo with d = mono d x armed ratio: not formed (mono d not determined)"
+          in text_undet and "armed ratio = " not in text_undet and "armed ratio = " in text,
+          "undetermined mono text: %r" % [ln for ln in text_undet.splitlines()
+                                          if "not determined" in ln or "armed ratio" in ln])
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,
