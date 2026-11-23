@@ -11,8 +11,8 @@ Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback 
 The token wait shape is read from the log: a capture with an RH39 or AH39 row or histogram
 is the inline wait (22 T, then 47 T a poll), a log with neither is sitting 1's (48 T a poll,
 vid_sd_tok_h); --wait-shape overrides it.
-Exit 0 when every residual is within ACCEPT_PCT and no row is listed for a RE-RUN, 1 when
-not, 2 on a log or fit error.
+Exit 0 when every residual is within ACCEPT_PCT, the sound-term rule holds (SOUND_D_MAX,
+SOUND_ERR_PCT) and no row is listed for a RE-RUN, 1 when not, 2 on a log or fit error.
 """
 import argparse
 import re
@@ -65,6 +65,8 @@ FIXTURES = {
     66: (256, 192, 25, 1, 250), 67: (320, 160, 25, 1, 250), 68: (320, 192, 25, 1, 250),
     69: (280, 224, 25, 1, 250), 70: (320, 240, 16.67, 1, 167), 71: (256, 240, 16.67, 1, 167),
     72: (320, 256, 12.5, 2, 125), 74: (256, 192, 15.2587890625, 1, 153),
+    # sound-term clips: mono 1250 B in 3 sectors, stereo 1562 B in 4 (pad 286, 486)
+    88: (256, 192, 12.5, 1, 250), 89: (256, 192, 20, 2, 200),
 }
 # Leg B playback clips outside the fit (shape known, same table).
 PLAYBACK_ONLY = {73: (256, 192, 25, 2), 75: (256, 192, 25, 2), 76: (256, 192, 25, 1),
@@ -76,6 +78,10 @@ RW1_TAGS = benchlog.table_tags("NXBW")
 DS1_TAGS = benchlog.table_tags("NXBD")
 RW1_REPS = {r[0]: r[3] for r in benchrows.SESSION_TABLES["RW1"] if r[0] in RW1_TAGS}
 OTHER_LAYOUT_PCT = 0.5       # allowance for sound layouts outside the fitted pairs
+# One term a sound sector holds while the pad-aware d is small and the gate stays near that fit.
+SOUND_D_MAX = 3.0            # |d|, T a sound byte, each form
+SOUND_ERR_PCT = 0.15         # |gate - fit|, percent of the period, every listed layout
+SOUND_FPS = (30, 25, 20, 16.67, 15.2587890625, 12.5, 10.5)
 
 
 def sound_note(res, form):
@@ -271,6 +277,7 @@ def synth_t(clip, P=SYNTH):
     arse_p = P["ts"] + 512 * k["tb"]
     arco_p = arse_p + COL_ENDS * k["tc"]
     arsw_p = nxv2enc.raw_model_t(g.spix, g.ssnd, g.cols, False, k)["total_t"]
+    arsw_p += P.get("pad_t", 0.0) * (g.padded - g.real)    # a pad byte surcharge, armed
     rswp_p = arsw_p / P["duty"][form]
     pre, tcs = ctc_period()
     per = pre * tcs[0]
@@ -302,9 +309,10 @@ def _row_line(tag, o, r, f, d):
     return "%s O=%02X R=%04X F=%04X D=%04X" % (tag, o, r, f, d & 0xFFFF)
 
 
-def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swap=None):
-    """NXBENCH.TXT text: one NXBW capture per fixture clip, then an NXBD capture on
-    clip 10. marks: (clip, tag) rows printed with O = 01 and T x 1.05; stale_after:
+def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swap=None,
+              omit=()):
+    """NXBENCH.TXT text: one NXBW capture per fixture clip not in omit, then an NXBD capture
+    on clip 10. marks: (clip, tag) rows printed with O = 01 and T x 1.05; stale_after:
     a clip followed by a PICK 59 capture that prints VID FILE? over the old rows;
     distort: (clip, tag, factor) applied to an unmarked row; short: (clip, tag) printed
     as the NXB SHORT marker in place of the row, or (clip, tag, marker) with that refusal;
@@ -317,7 +325,7 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
         stamp += 0x0321
         out.extend(lines)
 
-    for n, clip in enumerate(sorted(FIXTURES)):
+    for n, clip in enumerate(c for c in sorted(FIXTURES) if c not in omit):
         w, h, fps, ch, frames = FIXTURES[clip]
         t = synth_t(clip, P)
         if clip == swap:
@@ -470,6 +478,9 @@ class Result:
     max_resid: float = 0.0
     clipfiles: object = None
     wait_shape: str = "inline"
+    pad: dict = field(default_factory=dict)     # pad_aware
+    sound: tuple = ()                           # sound_rule
+    sound_ok: bool = False
 
 
 def _mean(xs):
@@ -814,12 +825,15 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
                                      k, v, other, res.handler[other], own, res.handler[own]))
     res.col_unarmed = _mean((c.t["RCOL"] - c.t["RSEC"]) / COL_ENDS
                             for c in clips if "RCOL" in c.t and "RSEC" in c.t)
+    res.pad = pad_aware(res)
+    res.sound = sound_rule(res, res.pad)
+    res.sound_ok = res.sound[0]
     return res
 
 
 def exit_status(res):
-    """0 when acceptance passes and no row is listed for a RE-RUN, else 1."""
-    return 0 if res.accepted and not res.anomalies else 1
+    """0 when acceptance and the sound-term rule pass and no row is listed for a RE-RUN."""
+    return 0 if res.accepted and res.sound_ok and not res.anomalies else 1
 
 
 def asm_line(label):
@@ -856,9 +870,18 @@ def largest_height(res, w, fps, form, palette=True):
     return 0, None
 
 
+def d_determined(res, form):
+    """d is fixed only by clips of one Ssnd with different sound bytes; else bytes track Ssnd."""
+    by = {}
+    for c, s, _ in res.lsq[form]:
+        by.setdefault(s, set()).add(res.clips[c].geo.real)
+    return any(len(v) > 1 for v in by.values())
+
+
 def pad_aware(res):
-    """Diagnostic only: y = A + S x Ssnd + d x real bytes on the gate fit's points. Mono
-    fits all three; stereo also with d = mono d x armed ratio (its bytes track Ssnd)."""
+    """Diagnostic: y = A + S x Ssnd + d x real bytes on the gate fit's points, all three free
+    per form; stereo also with d = mono d x armed ratio. "use" maps a form to the fit the
+    sound-term rule takes: its own when d_determined, else the scaled stereo fit."""
     import numpy as np
     out = {}
     for form in FORMS:
@@ -866,13 +889,36 @@ def pad_aware(res):
         a = np.array([[1, s, r] for s, _, r in pts], float)
         b = np.array([y for _, y, _ in pts])
         x = np.linalg.lstsq(a, b, rcond=None)[0]
-        out[form] = dict(A=x[0], S=x[1], d=x[2], cond=np.linalg.cond(a), resid=a @ x - b)
+        out[form] = dict(A=x[0], S=x[1], d=x[2], cond=np.linalg.cond(a), resid=a @ x - b,
+                         determined=d_determined(res, form))
     am = {f: res.period / (res.period - res.handler[f]) for f in FORMS}
     d = out["mono"]["d"] * am["stereo"] / am["mono"]
     pts = [(s, y - d * res.clips[c].geo.real) for c, s, y in res.lsq["stereo"]]
     a0, s0 = _lsq(pts)
     out["stereo_d"] = dict(A=a0, S=s0, d=d, resid=[a0 + s0 * s - y for s, y in pts])
+    out["use"] = {f: f if out[f]["determined"] or f == "mono" else "stereo_d" for f in FORMS}
     return out
+
+
+def sound_rule(res, pa):
+    """-> (ok, rows, worst d, worst err %): gate Ssnd x tsnd + tf against each form's used
+    pad-aware fit at 256x192 for SOUND_FPS; rows (form, fps, geo, gate, fit, err %, fitted)."""
+    fitted = {f: {res.clips[c].shape[2] for c, _, _ in res.lsq[f]} for f in FORMS}
+    rows, worst = [], 0.0
+    for form, ch in (("mono", 1), ("stereo", 2)):
+        fa = pa[pa["use"][form]]
+        for fps in SOUND_FPS:
+            try:
+                g = geometry(256, 192, fps, ch)
+            except SystemExit:
+                continue
+            gate = g.ssnd * res.k[form]["tsnd"] + res.k[form]["tf"]
+            fit_t = fa["A"] + fa["S"] * g.ssnd + fa["d"] * g.real
+            pct = 100.0 * (gate - fit_t) / (g.samples * res.period)
+            worst = max(worst, abs(pct))
+            rows.append((form, fps, g, gate, fit_t, pct, fps in fitted[form]))
+    dmax = max(abs(pa[pa["use"][f]]["d"]) for f in FORMS)
+    return dmax <= SOUND_D_MAX and worst <= SOUND_ERR_PCT, rows, dmax, worst
 
 
 def read_playback(path):
@@ -1117,51 +1163,49 @@ def report(res, readouts=None):
     add("")
     for form in FORMS:
         add("- " + sound_note(res, form)[len("note: "):])
-    pa = pad_aware(res)
+    pa = res.pad
     m, s, s2 = pa["mono"], pa["stereo"], pa["stereo_d"]
-    add("- pad-aware fit y = A + S x Ssnd + d x real bytes, on the gate fit's points:")
-    add("  - mono: A %.1f, S %.1f, d %.2f T a sound byte (a pad byte costs %.2f T more than a "
-        "sound byte); residuals %s T" % (m["A"], m["S"], m["d"], -m["d"],
-                                         " ".join("%+.0f" % v for v in m["resid"])))
-    add("  - stereo, all three free: A %.1f, S %.1f, d %.2f (condition number %.0f: the "
-        "clips' sound bytes, %s, track Ssnd)" % (s["A"], s["S"], s["d"], s["cond"], ", ".join(
-            sorted({"%d" % res.clips[c].geo.real for c, _, _ in res.lsq["stereo"]}))))
-    add("  - stereo with d = mono d x armed ratio = %.2f: A %.1f, S %.1f; residuals %s T" % (
+    add("- pad-aware fit y = A + S x Ssnd + d x real bytes, on the gate fit's points (d: T a "
+        "sound byte costs over a pad byte):")
+    for form, f in (("mono", m), ("stereo", s)):
+        add("  - %s, all three free: A %.1f, S %.1f, d %+.2f T a sound byte (condition number "
+            "%.0f; %s); residuals %s T" % (
+                form, f["A"], f["S"], f["d"], f["cond"],
+                "d determined: one Ssnd group holds two sound-byte counts" if f["determined"]
+                else "d not determined: the clips' sound bytes, %s, track Ssnd" % ", ".join(
+                    sorted({"%d" % res.clips[c].geo.real for c, _, _ in res.lsq[form]})),
+                " ".join("%+.0f" % v for v in f["resid"])))
+    add("  - stereo with d = mono d x armed ratio = %+.2f: A %.1f, S %.1f; residuals %s T" % (
         s2["d"], s2["A"], s2["S"], " ".join("%+.0f" % v for v in s2["resid"])))
-    add("  - code: vid_ds_pad .d (video.asm:%d) discards a pad byte in 37 T (in 11, dec hl 6, "
-        "ld a,h 4, or l 4, jr nz 12); vid_ds_xfer (video.asm:%d) moves a sound byte by ini, "
-        "16 T plus 14 T a 32-byte pass, about 16.4 T: about 20.6 T more a pad byte, unarmed"
-        % (asm_line("vid_ds_pad.d"), asm_line("vid_ds_xfer")))
-    add("- mono RAW_FRAME_T %.2f T and mono RAW_SND_SECTOR_T %.2f T (%.2f x stereo's %.2f T) "
-        "come from one term a sector fitted to costs that follow sound against pad bytes: they "
-        "are not physical costs." % (res.k["mono"]["tf"], res.k["mono"]["tsnd"],
-                                     res.k["mono"]["tsnd"] / res.k["stereo"]["tsnd"],
-                                     res.k["stereo"]["tsnd"]))
+    add("  - code: vid_raw_apad (video.asm:%d) reads the pad and tag through the INI slide, "
+        "16 T a byte; vid_ds_xfer (video.asm:%d) moves a sound byte by ini, 16 T plus 14 T a "
+        "32-byte pass and about 300 T an arm, about 17.6 T in 256-byte arms: a sound byte "
+        "about 1.6 T over a pad byte, unarmed" % (asm_line("vid_raw_apad"),
+                                                  asm_line("vid_ds_xfer")))
+    add("- mono RAW_FRAME_T %.2f T, mono RAW_SND_SECTOR_T %.2f T (%.2f x stereo's %.2f T)." % (
+        res.k["mono"]["tf"], res.k["mono"]["tsnd"],
+        res.k["mono"]["tsnd"] / res.k["stereo"]["tsnd"], res.k["stereo"]["tsnd"]))
     add("")
-    add("gate sound term (Ssnd x tsnd + tf) against the pad-aware fit for other sound layouts "
-        "(mono: its fit; stereo: d scaled); err = gate - fit, negative = the gate under-prices:")
+    ok, rows, dmax, worst_all = res.sound
+    add("gate sound term (Ssnd x tsnd + tf) against the pad-aware fit, 256x192 (mono: %s; "
+        "stereo: %s); err = gate - fit, negative = the gate under-prices:" % tuple(
+            "its own fit" if pa["use"][f] == f else "d scaled from mono" for f in FORMS[::-1]))
     add("")
     add("| form | fps | sound B | Ssnd | pad B | gate T | fit T | err T | err % of period | "
         "fitted pair |")
     add("|---|---|---|---|---|---|---|---|---|---|")
-    fitted = {f: {res.clips[c].shape[2] for c, _, _ in res.lsq[f]} for f in FORMS}
     worst = 0.0
-    for form, ch, fa in (("mono", 1, m), ("stereo", 2, s2)):
-        for fps in (30, 25, 20, 16.67, 15.2587890625, 12.5, 10.5):
-            try:
-                g = geometry(256, 192, fps, ch)
-            except SystemExit:
-                continue
-            gate = g.ssnd * res.k[form]["tsnd"] + res.k[form]["tf"]
-            fit_t = fa["A"] + fa["S"] * g.ssnd + fa["d"] * g.real
-            pct = 100.0 * (gate - fit_t) / (g.samples * res.period)
-            if fps not in fitted[form]:
-                worst = max(worst, abs(pct))
-            add("| %s | %g | %d | %d | %d | %.0f | %.0f | %+.0f | %+.2f | %s |" % (
-                form, fps, g.real, g.ssnd, g.padded - g.real, gate, fit_t, gate - fit_t, pct,
-                "yes" if fps in fitted[form] else "no"))
+    for form, fps, g, gate, fit_t, pct, fitted in rows:
+        if not fitted:
+            worst = max(worst, abs(pct))
+        add("| %s | %g | %d | %d | %d | %.0f | %.0f | %+.0f | %+.3f | %s |" % (
+            form, fps, g.real, g.ssnd, g.padded - g.real, gate, fit_t, gate - fit_t, pct,
+            "yes" if fitted else "no"))
     add("")
-    add("largest |err| outside the fitted pairs: %.2f percent of the period" % worst)
+    add("largest |err| outside the fitted pairs: %.3f percent of the period" % worst)
+    add("sound-term rule (one term a sector holds: |d| <= %.1f T a sound byte in both forms and "
+        "every layout above within %.2f percent): %s (largest |d| %.2f T, largest |err| %.3f "
+        "percent)" % (SOUND_D_MAX, SOUND_ERR_PCT, "PASS" if ok else "FAIL", dmax, worst_all))
     add("")
     add("## Utilisation of the target shapes")
     add("")
@@ -1521,6 +1565,14 @@ def selftest():
         runlog = Path(tmp) / "RUN.TXT"
         runlog.write_bytes(synth_log(short=(66, "RSEC", "NXB RUN")).encode("ascii"))
         res_run = fit(read_sections(runlog), reps=SYNTH_REPS)
+        padlog = Path(tmp) / "PAD.TXT"
+        padlog.write_bytes(synth_log(P=dict(SYNTH, pad_t=5.0)).encode("ascii"))
+        res_pad = fit(read_sections(padlog), reps=SYNTH_REPS)
+        text_pad = report(res_pad)
+        no89 = Path(tmp) / "NO89.TXT"
+        no89.write_bytes(synth_log(omit=(89,)).encode("ascii"))
+        res_no89 = fit(read_sections(no89), reps=SYNTH_REPS)
+        text_no89 = report(res_no89)
         # A fixture clip on disk: 066's layout, palette sectors on frames 0 and 20.
         g = geometry(256, 192, 25, 1)
         clipdir = Path(tmp) / "clips"
@@ -1686,6 +1738,26 @@ def selftest():
     worst = max(res_bad.residuals, key=lambda r: abs(r.pct))
     check(worst.clip == 62, "the distorted clip has the largest residual (%d)" % worst.clip)
     check(res.anomalies == [], "no anomalies on the synthetic log: %r" % res.anomalies)
+    # 088 and 089 in the fit: each form's d determined, near 0 on a one-term log, rule PASS
+    lsq_clips = {f: sorted(c for c, _, _ in res.lsq[f]) for f in FORMS}
+    check(88 in lsq_clips["mono"] and 89 in lsq_clips["stereo"]
+          and {s for c, s, _ in res.lsq["stereo"]} == {3, 4, 5}
+          and {s for c, s, _ in res.lsq["mono"]} == {2, 3}, "fit sets: %r" % lsq_clips)
+    check(res.pad["use"] == {"stereo": "stereo", "mono": "mono"}
+          and all(abs(res.pad[f]["d"]) < 0.05 for f in FORMS) and res.sound_ok
+          and "sound-term rule" in text and ": PASS (largest |d|" in text,
+          "one-term log: d %r, rule %r" % ([res.pad[f]["d"] for f in FORMS], res.sound_ok))
+    # a pad byte 5 T dearer: d = -5 in both forms, the rule fails and so does the exit status
+    check(all(abs(res_pad.pad[f]["d"] + 5.0) < 0.05 for f in FORMS) and not res_pad.sound_ok
+          and exit_status(res_pad) == 1 and ": FAIL (largest |d| 5.0" in text_pad,
+          "pad surcharge: d %r, rule %r" % ([res_pad.pad[f]["d"] for f in FORMS],
+                                            res_pad.sound_ok))
+    # no 089: stereo bytes track Ssnd, so the rule takes the scaled stereo fit
+    check(not res_no89.pad["stereo"]["determined"] and res_no89.pad["mono"]["determined"]
+          and res_no89.pad["use"]["stereo"] == "stereo_d"
+          and "stereo: d scaled from mono" in text_no89
+          and "d not determined: the clips' sound bytes, 1250, 1874, 2500, track Ssnd"
+          in text_no89, "stereo fallback without 089: %r" % res_no89.pad["use"])
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,

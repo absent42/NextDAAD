@@ -14,3 +14,4 @@
 | 2026-11-19 | ks3 | legP4 | ingested | 2026-11-19-ks3-legP4 |
 | 2026-11-21 | ks3 | legBLT | ingested | 2026-11-21-ks3-legBLT |
 | 2026-11-21 | ks3 | legRAW1 | raw gate fit: residuals within 1.0% (max 0.373%) | 2026-11-21-ks3-legRAW1 |
+| 2026-11-23 | ks3 | legRAW1B | raw gate refit after the reader trims: residuals within 1.0% (max 0.081%), sound term PASS | 2026-11-23-ks3-legRAW1B |
