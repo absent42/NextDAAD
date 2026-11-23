@@ -896,6 +896,18 @@ def read_playback(path):
     return out
 
 
+def unscored_reason(r):
+    """Why a readout row is left out of the verdict, or None: no LATE, URUN or FRM figure
+    ("-": a cut capture, or a -BenchQuiet report, which has no LATE row), or a session that
+    ended at once (FRM 1 or less)."""
+    if not (all(re.fullmatch(r"[0-9A-F]{4}", r.get(k, "")) for k in ("LATE", "URUN"))
+            and re.fullmatch(r"[0-9A-F]{4}/[0-9A-F]{4}", r.get("FRM", ""))):
+        return "no LATE, URUN or FRM figure (a cut capture, or a -BenchQuiet report)"
+    if int(r["FRM"].split("/")[0], 16) <= 1:
+        return "ended at once (FRM %s)" % r["FRM"]
+    return None
+
+
 def _fmt_shape(w, h, fps):
     return "%dx%d@%g" % (w, h, fps)
 
@@ -1328,7 +1340,15 @@ def report(res, readouts=None):
                                                   u.util, "admitted" if u.util <= 1 else
                                                   "refused"))
         return "\n".join(o) + "\n"
-    raw = [r for r in readouts if int(r["Clip"]) in shapes]
+    raw, unscored = [], []
+    for r in readouts:
+        if int(r["Clip"]) not in shapes:
+            continue
+        why = unscored_reason(r)
+        if why:
+            unscored.append("not scored: %s %s - %s" % (r["Step"], r["Clip"], why))
+        else:
+            raw.append(r)
     add("### Step 6: the model's verdict against LATE and URUN")
     add("")
     add("model: the gate (Release instructions, palette frame, stall term) at the sound period; "
@@ -1351,10 +1371,12 @@ def report(res, readouts=None):
             r["Step"], clip, _fmt_shape(w, h, fps), form_of(ch), u.util,
             "admitted" if adm else "refused", r["LATE"], r["URUN"], "yes" if ontime else "no"))
     add("")
+    for line in unscored:
+        add(line)
     add("admitted clips that showed LATE or URUN: %s" % (", ".join(bad_adm) or "none"))
     add("refused clips that played on time: %s" % (", ".join(bad_ref) or "none"))
     add("fixture clips with no readout row: %s" % (", ".join(
-        "%03d" % c for c in sorted(set(shapes) - {int(r["Clip"]) for r in raw})) or "none"))
+        "%03d" % c for c in sorted(set(shapes) - {int(r["Clip"]) for r in readouts})) or "none"))
     add("readout rows outside the raw model: %s" % (", ".join(sorted(
         {r["Clip"] for r in readouts if int(r["Clip"]) not in shapes})) or "none"))
     add("")
@@ -1519,7 +1541,23 @@ def selftest():
         text = report(res, readouts)
         text_s1 = report(res_s1, readouts)
         text_b0 = report(replace(res, stall=0.0, stall_top=(0, 63)))
+        pb2 = Path(tmp) / "playback2.md"
+        pb2.write_text("| Step | Clip | FRM | PLAY | LATE | URUN |\n|---|---|---|---|---|---|\n"
+                       "| 1 | 060 | 00FA/00FA | 01EE | 0000 | 0000 |\n"
+                       "| 2 | 061 | 00FA/00FA | 01EE | - | - |\n"
+                       "| 3 | 062 | 0001/0001 | 0002 | 0000 | 0000 |\n", encoding="utf-8")
+        try:
+            text_pb2 = report(res, read_playback(pb2))
+        except ValueError as exc:
+            text_pb2 = "report raised %r" % exc
     check([r["Clip"] for r in readouts] == ["060"], "playback rows: %r" % readouts)
+    # a capture with no LATE/URUN row, and one that ended at once, are listed, never scored
+    rows_pb2 = [ln for ln in text_pb2.splitlines() if ln.startswith("| ")]
+    check(any(ln.startswith("| 1 | 060 |") for ln in rows_pb2)
+          and not any(ln.startswith(("| 2 | 061 |", "| 3 | 062 |")) for ln in rows_pb2)
+          and "not scored: 2 061 - no LATE, URUN or FRM figure" in text_pb2
+          and "not scored: 3 062 - ended at once (FRM 0001/0001)" in text_pb2,
+          "cut and at-once captures are not scored: %s" % text_pb2[-400:])
     # the wait shape from the log: RH39/AH39 rows or histograms only on the inline bench
     ns = SimpleNamespace
     check(infer_wait_shape([ns(rows={"RHST": 0}, hist={"AHST": []})]) == "sitting1"

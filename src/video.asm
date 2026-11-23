@@ -6891,10 +6891,15 @@ NXB_LOG_RD       equ $C0     ; read
 NXB_LOG_CMP      equ $E0     ; compare, final close
 NXB_PLAY_ROW0    equ 23      ; vid_fail_puts' refusal row, then the report's four
 NXB_PLAY_ROWS    equ 5
-    ASSERT VID_TL_ROW0 == NXB_PLAY_ROW0 + 1 && NXB_PLAY_ROW0 + NXB_PLAY_ROWS < TM_ROWS - 1
+NXB_POOL_NONE    equ $FF     ; vidPoolAtOpen until an open writes it: above any pool count
+    ASSERT NXB_PLAY_ROW0 == VID_FAIL_ROW && VID_TL_ROW0 == NXB_PLAY_ROW0 + 1
+    ASSERT NXB_PLAY_ROW0 + NXB_PLAY_ROWS < TM_ROWS - 1
 
-; Mode 17: blank rows 23-27 and row 31, so a capture and LOG OK are the next step's own.
+; Mode 17: blank rows 23-27 and row 31, so a capture and LOG OK are the next step's own;
+; the pool figure reads NXB_POOL_NONE unless the play's open (nxv2_open_body) writes it.
 nxb_log_clr:
+    ld a, NXB_POOL_NONE
+    ld (vidPoolAtOpen), a
     ld a, (tmCols)
     ld e, a
     ld d, NXB_PLAY_ROWS
@@ -9669,8 +9674,9 @@ vid_open_fail_print:
 ; HL = ASCIIZ. Prints at row 23 col 0, white on black (reserved pair 0),
 ; straight through the resident tm_putc_at (overlay1 calls it the same
 ; way). Corrupts AF, BC, DE, HL.
+VID_FAIL_ROW equ 23              ; the play log captures from here (NXB_PLAY_ROW0)
 vid_fail_puts:
-    ld bc, 23*256+0              ; B = row 23, C = col 0
+    ld bc, VID_FAIL_ROW*256+0    ; B = row 23, C = col 0
     ld e, TM_ATTR_DEFAULT        ; reserved pair 0: white ink, black paper
 .loop:
     ld a, (hl)

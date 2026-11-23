@@ -572,8 +572,65 @@ def test_parse_playlog(tmp_path):
     assert [(r["Step"], r["Clip"], r["PLAY"], r["LATE"], r["URUN"], r["FRM"]) for r in back] == [
         ("1", "060", "01EE", "0000", "0000", "00FA/00FA"),
         ("3", "074", "0002", "0000", "0000", "0001/0001")]
-    for bad in ("VID FMT?\r\n", "#PLAY 60 50 1A2B\r\n", "#PLAY 060 50 1A2B\r\n PLAY   =01EE ZZZ=00\r\n"):
+    for bad in ("VID FMT?\r\n", "\r\n", "ROW 0\r\n#PLAY 060 50 1A2B\r\n"):
         q = tmp_path / "BAD.TXT"
         q.write_bytes(bad.encode("ascii"))
         with pytest.raises(playlog.PlayLogError):
             playlog.parse_playlog(q)
+
+
+def _playlog():
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import playlog
+    return playlog
+
+
+def _caps(tmp_path, text):
+    playlog = _playlog()
+    p = tmp_path / "NXPLAY.TXT"
+    p.write_bytes(text.encode("ascii"))
+    return playlog.parse_playlog(p)
+
+
+GOOD = "#PLAY 060 50 1A2B\r\n" + "".join(s + "\r\n" for s in PLAY_REPORT)
+
+
+def _cut(cap):
+    return cap["Row 23"].startswith("TRUNCATED") and all(cap[k] == "-" for k in _playlog().FIELDS)
+
+
+def test_playlog_pool_ff(tmp_path):
+    """Pool FF (mode 17's no-figure mark, left when no open ran) prints as "-"."""
+    caps = _caps(tmp_path, "#PLAY 099 FF 0C0C\r\nVID FILE?\r\n" + GOOD)
+    assert [(c["Clip"], c["Pool"], c["Row 23"]) for c in caps] == [
+        ("099", "-", "VID FILE?"), ("060", "50", "-")]
+
+
+def test_playlog_truncated(tmp_path):
+    """A last capture cut inside a key, a value, the header, or at a field edge with no line
+    end, or a line with a short value, is kept as a TRUNCATED row with no report field; the
+    captures before it are intact."""
+    for tail in ("LATE   =0000 MA", "LATE   =00", "LATE   =0000", "#PLAY 07", "#PLAY 074 5",
+                 "PLAY   =01EE NOM=01F4 CHK=0051D0\r\n", " FRM=00FA/00F ERR=00\r\n",
+                 "RING   =0000/0000 FILL=0001 SNAP=00\r\n", "PLAY   =01EE ZZZ=00\r\n",
+                 "PLAY   =01EE PLAY=01EE\r\n"):
+        head = "" if tail.startswith("#PLAY") else "#PLAY 061 4F 0100\r\n"
+        caps = _caps(tmp_path, GOOD + head + tail)
+        assert len(caps) == 2 and caps[0]["PLAY"] == "01EE" and caps[0]["Row 23"] == "-", tail
+        assert _cut(caps[1]), (tail, caps[1])
+        clip = "061" if head else ("074" if tail.startswith("#PLAY 074") else "-")
+        assert caps[1]["Clip"] == clip, (tail, caps[1])
+
+
+def test_playlog_glued(tmp_path):
+    """A short write leaves a line without its end; the next capture's #PLAY header lands on
+    it. The cut capture is TRUNCATED and the header starts a new capture."""
+    text = ("#PLAY 062 50 0101\r\nVID FMT?\r\n FRM=00FA/00FA ERR=00 OP" + GOOD
+            + "#PLAY 07" + GOOD + "#PL" + GOOD)
+    caps = _caps(tmp_path, text)
+    assert [(c["Step"], c["Clip"], _cut(c)) for c in caps] == [
+        ("1", "062", True), ("2", "060", False), ("3", "-", True), ("4", "060", False),
+        ("5", "-", True), ("6", "060", False)]
+    assert caps[0]["Row 23"] == "TRUNCATED: VID FMT?"
+    assert all(c["PLAY"] == "01EE" for c in caps[1::2])

@@ -5,10 +5,15 @@ into one markdown row per capture.
 Usage: python tests/core303/playlog.py NXPLAY.TXT [--out playback.md]
 
 A capture is the header "#PLAY ccc pp ffff" (ccc = flag 140 in decimal, the clip PICK armed;
-pp = vidPoolAtOpen, the free pool banks before that open; ffff = frameCounter) and the
-non-empty screen rows 23-27: the open-refusal row, then the timeline report rows (FRM, RING,
-PLAY, LATE). The table's Step is the capture number; raw_fit.read_playback reads its Step,
-Clip, PLAY, FRM, LATE and URUN columns. Absent fields print "-". Exit 0, or 2 on a log error.
+pp = vidPoolAtOpen, the free pool banks before that open, FF = no open ran; ffff =
+frameCounter) and the non-empty screen rows 23-27: the open-refusal row, then the timeline
+report rows (FRM, RING, PLAY, LATE). The table's Step is the capture number; raw_fit.read_playback
+reads its Step, Clip, PLAY, FRM, LATE and URUN columns. Absent fields print "-".
+
+A capture cut short (a line without its end, a field of the wrong width, a header cut, or the
+next capture's header written onto a partial line by a short F_WRITE) is kept as a row whose
+Row 23 starts TRUNCATED and whose report fields are all "-". Exit 0, or 2 when the file holds
+no capture or does not start with one.
 """
 import argparse
 import re
@@ -18,48 +23,89 @@ from pathlib import Path
 COLUMNS = ["Step", "Clip", "Pool", "Row 23", "FRM", "ERR", "OP", "POS", "PASS", "RING",
            "FILL", "SNAP", "PLAY", "NOM", "CHK", "LATE", "MAXL", "URUN", "RUNS"]
 FIELDS = COLUMNS[4:]
+# hex digits per part, from vid_tl_report_body (src/video.asm)
+WIDTHS = {"FRM": (4, 4), "ERR": (2,), "OP": (2,), "POS": (6,), "PASS": (2,),
+          "RING": (4, 4, 2), "FILL": (4,), "SNAP": (2,), "PLAY": (4,), "NOM": (4,),
+          "CHK": (8,), "LATE": (4,), "MAXL": (4,), "URUN": (4,), "RUNS": (2,)}
+assert list(WIDTHS) == FIELDS
+POOL_NONE = "FF"
 
-HEADER = re.compile(r"#PLAY (\d{3}) ([0-9A-F]{2}) ([0-9A-F]{4})")
+HEADER = "#PLAY "
+HEADER_RE = re.compile(r"#PLAY (\d{3}) ([0-9A-F]{2}) ([0-9A-F]{4})")
 REPORT_ROW = re.compile(r"\s*(FRM|RING|PLAY|LATE)\s*=")
-PAIR = re.compile(r"([A-Z]+)\s*=([0-9A-F]+(?:/[0-9A-F]+)*)")
+PAIR = re.compile(r"([A-Z]+)\s*=([0-9A-F/]*)")
 
 
 class PlayLogError(Exception):
     pass
 
 
-def _report_fields(line, cap, n):
+def _lines(text):
+    """(content, ended) per line; a #PLAY header inside a line starts a new one, and the
+    part before it is a line that lost its end."""
+    for piece in text.splitlines(keepends=True):
+        body = piece.rstrip("\r\n")
+        ended = body != piece
+        parts, at = [], body.find(HEADER, 1)
+        while at > 0:
+            parts.append(body[:at])
+            body = body[at:]
+            at = body.find(HEADER, 1)
+        for p in parts:
+            yield p, False
+        yield body, ended
+
+
+def _is_header(line):
+    return line.startswith(HEADER.rstrip()) or (line.startswith("#") and HEADER.startswith(line))
+
+
+def _report_ok(line, cap):
+    """Fill cap from a report row; False when the row is malformed."""
     pairs = PAIR.findall(line)
-    if PAIR.sub("", line).strip():
-        raise PlayLogError("line %d: unreadable report row %r" % (n, line))
+    if PAIR.sub("", line).strip() or not pairs:
+        return False
     for key, value in pairs:
-        if key not in FIELDS:
-            raise PlayLogError("line %d: unknown field %s" % (n, key))
-        if cap[key] != "-":
-            raise PlayLogError("line %d: %s twice in one capture" % (n, key))
+        parts = value.split("/")
+        if key not in WIDTHS or cap[key] != "-" or [len(p) for p in parts] != list(WIDTHS[key]):
+            return False
         cap[key] = value
+    return True
 
 
 def parse_playlog(path):
     """[{column: cell}] in COLUMNS order, one per capture."""
-    caps, row23 = [], []
-    for n, line in enumerate(Path(path).read_bytes().decode("latin-1").splitlines(), 1):
-        if not line.strip():
+    caps, extra = [], []
+    for n, (line, ended) in enumerate(_lines(Path(path).read_bytes().decode("latin-1")), 1):
+        if not line.strip() and ended:
             continue
-        m = HEADER.fullmatch(line)
-        if m:
-            caps.append(dict.fromkeys(COLUMNS, "-"))
-            caps[-1].update(Step=str(len(caps)), Clip=m.group(1), Pool=m.group(2))
-            row23.append([])
-        elif line.startswith("#PLAY") or not caps:
-            raise PlayLogError("line %d: %r is not a #PLAY ccc pp ffff header" % (n, line))
+        if _is_header(line):
+            cap = dict.fromkeys(COLUMNS, "-")
+            cap["Step"] = str(len(caps) + 1)
+            m = HEADER_RE.fullmatch(line)
+            words = line[len(HEADER):].split(" ") if line.startswith(HEADER) else []
+            if len(words) > 0 and re.fullmatch(r"\d{3}", words[0]):
+                cap["Clip"] = words[0]
+            if len(words) > 1 and re.fullmatch(r"[0-9A-F]{2}", words[1]):
+                cap["Pool"] = "-" if words[1] == POOL_NONE else words[1]
+            caps.append(cap)
+            extra.append({"row23": [], "cut": not (m and ended)})
+        elif not caps:
+            raise PlayLogError("line %d: %r before the first #PLAY header" % (n, line))
         elif REPORT_ROW.match(line):
-            _report_fields(line, caps[-1], n)
+            if not (ended and _report_ok(line, caps[-1])):
+                extra[-1]["cut"] = True
         else:
-            row23[-1].append(line.strip())
-    for cap, text in zip(caps, row23):
-        if text:
-            cap["Row 23"] = " / ".join(text)
+            extra[-1]["row23"].append(line.strip())
+            extra[-1]["cut"] |= not ended
+    if not caps:
+        raise PlayLogError("no #PLAY capture")
+    for cap, x in zip(caps, extra):
+        text = " / ".join(t for t in x["row23"] if t)
+        if x["cut"]:
+            cap.update(dict.fromkeys(FIELDS, "-"))
+            text = "TRUNCATED" + (": " + text if text else "")
+        cap["Row 23"] = text or "-"
     return caps
 
 

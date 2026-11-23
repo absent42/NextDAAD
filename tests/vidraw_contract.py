@@ -3905,6 +3905,29 @@ def test_play_clr():
         raise Fail(f"mode 17: flags+250 = {mc.mem[fl + 250]}, not cleared")
 
 
+def test_play_nofile():
+    """GO on a missing clip: mode 17 sets vidPoolAtOpen to $FF (no pool figure), and mode 16
+    with no open between logs "#PLAY 074 FF 1234" and the refusal row."""
+    bench_only()
+    fl = S("flags")
+    mc = play_machine()
+    mc.mem[fl + 140] = 74
+    mc.poke("vidPoolAtOpen", 0x50)
+    mc.poke16("frameCounter", 0x1234)
+    mc.mem[fl + 250] = S("NXB_MODE_CLR")
+    mc.run("nxb_entry", traps=no_esx())
+    if mc.peek("vidPoolAtOpen") != 0xFF:
+        raise Fail(f"mode 17: vidPoolAtOpen ${mc.peek('vidPoolAtOpen'):02X}, expected $FF")
+    tm = S("TM_MAP") + 23 * 160
+    mc.mem[tm:tm + 18] = b"".join(bytes([ord(ch), 0]) for ch in "VID FILE?")
+    esx = Esx(mc)
+    mc.mem[fl + 250] = S("NXB_MODE_PLAY")
+    mc.run("nxb_entry", traps=esx.traps())
+    got = bytes(esx.files.get("NXPLAY.TXT", b""))
+    if got != b"#PLAY 074 FF 1234\r\nVID FILE?\r\n" or tm_text(mc, 31) != "LOG OK":
+        raise Fail(f"mode 16 after 17: NXPLAY.TXT {got!r}, row 31 {tm_text(mc, 31)!r}")
+
+
 def test_entry_modes():
     """nxb_entry: flags+250 = 15, 16, 17 reach nxb_log with NXB_PAGE at MMU6 and nxbMode the
     mode, 14 reaches .arm, none enters the standalone path; 18 and 255 reach nxb_log and show
@@ -4102,7 +4125,7 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
-         test_play_log, test_play_clr, test_entry_modes,
+         test_play_log, test_play_clr, test_play_nofile, test_entry_modes,
          test_rw_harness, test_rw_card_c, test_rw_chain, test_loop_sound_boundary]
 
 

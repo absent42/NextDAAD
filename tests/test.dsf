@@ -381,6 +381,8 @@ NXBW  130     verb
 ; dereferences flag 140 at dispatch, engine.asm:443); LOOP plays it
 ; looping via GFX @140 14 (any key exits). PLAY is a synonym of GO.
 ; DEBUG builds log each GO/LOOP play to NXPLAY.TXT (see the responses).
+; GOX (131, free) plays the armed clip as GO did before the log: no row
+; blanking, no log step.
 ; The number words below make the numerals themselves vocabulary
 ; nouns with word value = the numeral (the parser tokenizes digits
 ; like letters - word_next, overlay1.asm - so "pick 23" parses as
@@ -395,6 +397,7 @@ PICK  116     verb
 GO    117     verb
 PLAY  117     verb
 LOOP  118     verb
+GOX   131     verb
 1     1       noun
 2     2       noun
 3     3       noun
@@ -1329,6 +1332,14 @@ $pictureOK
                 DONE
 
 > LOOP    _     MES "No clip armed - PICK nn first.#n"
+                DONE
+
+> GOX     _     NOTZERO 140
+                GFX     @140 13
+                PROCESS 10
+                DONE
+
+> GOX     _     MES "No clip armed - PICK nn first.#n"
                 DONE
 
 ; The VSTG/VS* staged-entry ladder responses (verbs 88-91, 96-100)
