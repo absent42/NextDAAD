@@ -12,8 +12,8 @@ The six things in that doc are three different kinds of object, and this
 module keeps them apart:
 
   ROUTES    presets 1/2/3/5 - a complete answer for a class of footage,
-            mutually exclusive, each with an optional framing VARIANT
-            (the same routing decision at a different crop)
+            mutually exclusive, each with optional framing VARIANTS
+            (the same routing decision at other crops)
   MODIFIER  preset 4 - `--prefilter`, added ON TOP of whichever route is
             in use. It is already a real Knob, so there is no separate
             state for it here; MODIFIER_KNOB just names it.
@@ -54,41 +54,54 @@ class Route:
     label: str
     blurb: str                        # what class of footage this is for
     values: dict = field(default_factory=dict)
-    variant: "Route" = None           # the same route at a different crop
+    variants: tuple = ()              # the same route at other crops
 
 
 # Transcribed from authoring-kit/docs/video.html section 4. Preset 1 is
 # "nothing at all - the kit defaults are the right answer", which is why
-# its values are empty: applying it IS the reset.
+# its values are empty: applying it IS the reset. Direct shapes and rates
+# follow the raw gate (tests/raw_presets.py prints its verdicts).
 ROUTES = (
     Route("quiet", "Quiet scene",
           "slow zooms and pans, held shots, talking heads, title cards",
           {},
-          Route("quiet-motion", "Quiet scene, continuous motion",
-                "a zoom or pan that never stops rather than a static shot",
-                {"tile_slack": "0.5"})),
+          (Route("quiet-motion", "Quiet scene, continuous motion",
+                 "a zoom or pan that never stops rather than a static shot",
+                 {"tile_slack": "0.5"}),)),
     Route("action", "Full-screen action",
           "detailed sustained motion filling the frame - sea, weather, "
-          "snow, crowds, smoke",
-          {"direct": True, "shape": "full", "fps": "12.5"},
-          Route("action-169", "Full-screen action, 16:9 source",
-                "the same route using a 16:9 source's own shape",
-                {"direct": True, "shape": "16:9", "fps": "12.5"})),
+          "snow, crowds, smoke - at 320x240 and 16.67 fps",
+          {"direct": True, "shape": "320x240", "fps": "16.67"},
+          (Route("action-169", "Full-screen action, 16:9 source",
+                 "the same route using a 16:9 source's own shape, 320x192",
+                 {"direct": True, "shape": "16:9", "fps": "16.67"}),
+           Route("action-tall", "Full-screen action, narrower",
+                 "256x240: the same height, narrower than the screen with "
+                 "black at the sides, for a fifth less card space",
+                 {"direct": True, "shape": "256x240", "fps": "16.67"}))),
     Route("fullrate", "Action at full rate",
           "the same detailed motion, when smooth movement matters more "
-          "than picture size",
-          {"direct": True, "shape": "256x167"},
-          Route("fullrate-wide", "Action at full rate, wide",
-                "a cinematic wide framing at full width",
-                {"direct": True, "shape": "320x105"})),
+          "than picture size - 256x192 at 25 fps",
+          {"direct": True, "shape": "256x192"},
+          (Route("fullrate-wide", "Action at full rate, wide",
+                 "a cinematic wide framing at full width, 320x160",
+                 {"direct": True, "shape": "320x160"}),
+           Route("fullrate-tall", "Action at full rate, tall",
+                 "the tallest picture at 25 fps, 280x224, with mono sound - "
+                 "at the edge of what the card delivers",
+                 {"direct": True, "shape": "280x224"}))),
     Route("cutscene", "Long cutscene",
           "anything over about 15 seconds - length forces the compressed "
           "route, so the decision moves to the shape",
           {"shape": "16:9", "tile_slack": "0.5"},
-          Route("cutscene-43", "Long cutscene, 4:3 framing",
-                "a 4:3 framing that still needs the room",
-                {"shape": "classic", "tile_slack": "0.5"})),
+          (Route("cutscene-43", "Long cutscene, 4:3 framing",
+                 "a 4:3 framing that still needs the room",
+                 {"shape": "classic", "tile_slack": "0.5"}),)),
 )
+
+# Raw target shapes the gate refuses in both sound forms at their rate, so
+# no route: ("WxH", fps, {"stereo": util, "mono": util}).
+REFUSED_TARGETS = ()
 
 
 def all_routes():
@@ -96,8 +109,7 @@ def all_routes():
     out = []
     for route in ROUTES:
         out.append(route)
-        if route.variant is not None:
-            out.append(route.variant)
+        out.extend(route.variants)
     return out
 
 

@@ -33,6 +33,16 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   mono and stereo files, persist across effects and reset at boot and on
   <code>SFX n 5</code>. 15625 Hz is the recommended rate for every sample. See
   <a href="audio.html#volume-and-pan">Audio</a>.</li>
+<li><strong>Bigger uncompressed video.</strong> <code>--direct</code> now writes a new uncompressed
+  layout that the player reads straight from the card at a much lower
+  cost, so the uncompressed presets grow: 256x192, 320x160 and 280x224
+  at 25 fps, and 320x240, 320x192 and 256x240 at 16.67 fps. An
+  uncompressed clip may be any width that is a multiple of 4 up to 320,
+  centred on the 320-wide screen with black at the sides, and carries
+  mono sound when stereo would not keep up at its shape
+  (<code>--direct-sound</code> chooses). Uncompressed clips from earlier kits still
+  play; a clip in the new layout needs this release's interpreter, and
+  an older one does not play it. See <a href="video.html#4-the-presets">Video</a>.</li>
 <li><strong>Fix: a looped sample lost its loop when another sample condact
   followed it in the same process entry.</strong> <code>SFX n 12</code> or
   <code>SFX n 14</code> immediately followed by a play-once <code>SFX n 1</code>

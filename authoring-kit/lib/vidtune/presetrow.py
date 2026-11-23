@@ -172,8 +172,8 @@ class RouteMenuButton(QPushButton):
         for i, route in enumerate(presets.ROUTES):
             self._add(menu, route, settings, kit_base, indent=False,
                       top_gap=i > 0)
-            if route.variant is not None:
-                self._add(menu, route.variant, settings, kit_base, indent=True)
+            for variant in route.variants:
+                self._add(menu, variant, settings, kit_base, indent=True)
         menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
 
     def _add(self, menu, route, settings, kit_base, indent, top_gap=False):

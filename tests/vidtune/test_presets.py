@@ -29,12 +29,22 @@ def _base(**overrides):
 EXPECTED = {
     "quiet":          {},
     "quiet-motion":   {"tile_slack": "0.5"},
-    "action":         {"direct": True, "shape": "full", "fps": "12.5"},
-    "action-169":     {"direct": True, "shape": "16:9", "fps": "12.5"},
-    "fullrate":       {"direct": True, "shape": "256x167"},
-    "fullrate-wide":  {"direct": True, "shape": "320x105"},
+    "action":         {"direct": True, "shape": "320x240", "fps": "16.67"},
+    "action-169":     {"direct": True, "shape": "16:9", "fps": "16.67"},
+    "action-tall":    {"direct": True, "shape": "256x240", "fps": "16.67"},
+    "fullrate":       {"direct": True, "shape": "256x192"},
+    "fullrate-wide":  {"direct": True, "shape": "320x160"},
+    "fullrate-tall":  {"direct": True, "shape": "280x224"},
     "cutscene":       {"shape": "16:9", "tile_slack": "0.5"},
     "cutscene-43":    {"shape": "classic", "tile_slack": "0.5"},
+}
+
+# each route and its framing variants, in menu order
+GROUPS = {
+    "quiet":    ["quiet-motion"],
+    "action":   ["action-169", "action-tall"],
+    "fullrate": ["fullrate-wide", "fullrate-tall"],
+    "cutscene": ["cutscene-43"],
 }
 
 
@@ -42,6 +52,10 @@ def test_every_route_matches_the_presets_doc():
     assert {r.key for r in presets.all_routes()} == set(EXPECTED)
     for key, values in EXPECTED.items():
         assert presets.route_by_key(key).values == values
+
+
+def test_routes_group_their_framing_variants():
+    assert {r.key: [v.key for v in r.variants] for r in presets.ROUTES} == GROUPS
 
 
 def test_applied_route_round_trips_through_deviations():
@@ -221,8 +235,8 @@ def test_route_menu_builds_an_item_for_every_route(qtbot):
     menu = QMenu()
     for route in presets.ROUTES:
         button._add(menu, route, settings, settings, indent=False)
-        if route.variant is not None:
-            button._add(menu, route.variant, settings, settings, indent=True)
+        for variant in route.variants:
+            button._add(menu, variant, settings, settings, indent=True)
     assert len(menu.actions()) == len(presets.all_routes())
 
 
@@ -251,8 +265,8 @@ def test_panel_route_stamps_the_knob_widgets(qtbot):
 
     out = panel.get_settings()
     assert out["direct"] is True
-    assert out["fps"] == "12.5"
-    assert out["shape"] == "full"
+    assert out["fps"] == "16.67"
+    assert out["shape"] == "320x240"
 
 
 def test_panel_ladder_apply_stamps_one_value(qtbot):

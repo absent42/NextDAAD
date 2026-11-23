@@ -5008,18 +5008,29 @@ def t11_direct_gate_fps_floor_menu():
             raise AssertionError("320x256@25 direct must be refused")
 
 
-def _direct_util(w, h, fps):
-    return enc.direct_supply_check(enc.direct_worst_section_bytes(fps, w, h), fps, w, h)["utilization"]
+# Raw target shapes and the route key the preset rule gives each.
+RAW_TARGET_ROUTES = {(256, 192, 25.0): "fullrate", (320, 160, 25.0): "fullrate-wide",
+                     (320, 192, 25.0): "action-169", (280, 224, 25.0): "fullrate-tall",
+                     (320, 240, 16.67): "action", (256, 240, 16.67): "action-tall"}
 
 
-@case(11, "direct-serve kit routes - every --direct preset passes at its own fps, limit "
-          "routes sit at their edge, manual/video.md sections 4 and 6 quote them")
+def _raw_pick(w, h, fps):
+    """(form, utilisation) raw_pick_sound auto gives, or None when refused."""
+    sw, _ = enc.raw_surface(w, h)
+    try:
+        form, chk = _quiet(enc.raw_pick_sound, w, h, sw, fps)[0]
+    except SystemExit:
+        return None
+    return form, chk["utilization"]
+
+
+@case(11, "direct kit routes - every --direct preset passes the raw gate at its shape and rate, "
+          "the target shapes are routes or REFUSED_TARGETS, manual/video.md sections 4 and 6 quote them")
 def t11_direct_routes():
     import re as _re
     from vidtune import presets
     from vidtune.settingsmodel import KNOBS
     kit_fps = float(next(k.default for k in KNOBS if k.name == "fps"))
-    limits = {"fullrate", "fullrate-wide"}      # the tallest height that plays at their width and fps
     routes = {}
     for r in presets.all_routes():
         if not r.values.get("direct"):
@@ -5027,16 +5038,36 @@ def t11_direct_routes():
         shape = r.values["shape"]
         w, h = enc.PRESETS[shape] if shape in enc.PRESETS else tuple(map(int, shape.lower().split("x")))
         fps = float(r.values.get("fps") or kit_fps)
-        routes[r.key] = (shape, w, h, fps)
-        u = _direct_util(w, h, fps)
-        expect(u <= 1.0, f"route {r.key} ({w}x{h}@{fps:g}) scores {u:.4f} over 1.00")
-        if r.key in limits:
-            expect(h < enc.MAX_HEIGHT_BY_WIDTH[w] and _direct_util(w, h + 1, fps) > 1.0,
-                   f"route {r.key} is under-sized: {w}x{h + 1}@{fps:g} also plays")
-            expect(enc.direct_max_raw_bytes(fps, w, enc.MAX_HEIGHT_BY_WIDTH[w]) == w * h,
-                   f"route {r.key} {w}x{h}@{fps:g} is not the tallest admitted height")
-        print(f"    {r.key}: {w}x{h}@{fps:g} util {u:.4f}")
-    expect(set(routes) == {"action", "action-169"} | limits, f"direct routes: {sorted(routes)}")
+        sw, _ = enc.raw_surface(w, h)
+        (form, chk), _out = _quiet(enc.raw_pick_sound, w, h, sw, fps)   # a refusal fails here
+        routes[r.key] = (shape, w, h, fps, form)
+        expect("direct_sound" not in r.values, f"route {r.key} forces a sound form")
+        expect(("mono" in r.blurb.lower()) == (form == "mono"),
+               f"route {r.key} plays {form}; its blurb must say mono exactly when it is: {r.blurb!r}")
+        print(f"    {r.key}: {w}x{h}@{fps:g} {form} util {chk['utilization']:.4f}")
+    # the preset rule: a target that is admitted gets its route, at its rate; action-169 at the
+    # highest of 25 and 16.67 that passes without the warning
+    refused = {tuple(map(int, s.split("x"))) + (float(f),): u for s, f, u in presets.REFUSED_TARGETS}
+    want = {}
+    for (w, h, fps), key in RAW_TARGET_ROUTES.items():
+        if key == "action-169":
+            ok = [r for r in (25.0, 16.67)
+                  if (p := _raw_pick(w, h, r)) and p[1] <= enc.STREAM_WARN_UTIL]
+            rate = ok[0] if ok else None
+        else:
+            rate = fps if _raw_pick(w, h, fps) else None
+        if rate is None:
+            expect((w, h, fps) in refused, f"{w}x{h}@{fps:g} is refused but not in REFUSED_TARGETS")
+            for form, u in refused[(w, h, fps)].items():
+                got = enc.raw_supply_check(w, h, enc.raw_surface(w, h)[0], fps, form)["utilization"]
+                expect(u > 1.0 and abs(u - got) < 5e-5,
+                       f"REFUSED_TARGETS {w}x{h}@{fps:g} {form} {u} vs gate {got:.4f}")
+        else:
+            expect((w, h, fps) not in refused, f"{w}x{h}@{fps:g} plays but is in REFUSED_TARGETS")
+            want[key] = (w, h, rate)
+    expect(set(refused) <= set(RAW_TARGET_ROUTES), f"REFUSED_TARGETS names a non-target: {sorted(refused)}")
+    expect({k: (w, h, f) for k, (_s, w, h, f, _fm) in routes.items()} == want,
+           f"direct routes {sorted(routes.items())}, the preset rule gives {sorted(want.items())}")
     # section 4's CONFIG.BAT lines name exactly the presets' direct routes
     doc = (ROOT / "manual" / "video.md").read_text(encoding="utf-8")
     sec4 = doc[doc.index("## 4. The presets"):doc.index("## 5. ")]
@@ -5045,20 +5076,28 @@ def t11_direct_routes():
         shape = _re.search(r"--shape (\S+)", line).group(1)
         fps = _re.search(r"--fps (\S+)", line)
         quoted.add((shape, float(fps.group(1)) if fps else kit_fps))
-    expect(quoted == {(s, f) for s, _w, _h, f in routes.values()},
+    expect(quoted == {(s, f) for s, _w, _h, f, _fm in routes.values()},
            f"manual/video.md section 4 quotes {sorted(quoted)}, presets ship "
-           f"{sorted((s, f) for s, _w, _h, f in routes.values())}")
-    # section 6's card-space table: the same shapes, MB/s from the ordinary section
-    rows = _re.findall(r"^\| \d \| (\d+)x(\d+) at ([\d.]+) fps \| about ([\d.]+) MB per second \|$", doc, _re.M)
-    expect({(int(w), int(h), float(f)) for w, h, f, _mb in rows}
-           == {(w, h, f) for _s, w, h, f in routes.values()},
+           f"{sorted((s, f) for s, _w, _h, f, _fm in routes.values())}")
+    for opt in ("--direct-sound stereo", "--direct-sound mono", "--direct-transport-factor",
+                "--stall-budget measured"):
+        expect(opt in doc, f"manual/video.md never states {opt}")
+    for (w, h, f) in refused:
+        expect(f"{w}x{h}" in sec4, f"manual/video.md section 4 never names refused {w}x{h}")
+    # section 6's card-space table: the same shapes, bytes per frame (sound in the form the
+    # gate picks + pixel sectors; palette sectors not counted) and MB/s
+    rows = _re.findall(r"^\| \d \| (\d+)x(\d+) at ([\d.]+) fps \| ([\d,]+) bytes \| "
+                       r"about ([\d.]+) MB per second \|$", doc, _re.M)
+    expect({(int(w), int(h), float(f)) for w, h, f, _b, _mb in rows}
+           == {(w, h, f) for _s, w, h, f, _fm in routes.values()},
            f"manual/video.md card-space rows {rows} do not match the direct routes")
-    for w, h, f, mb in rows:
+    forms = {(w, h, f): fm for _s, w, h, f, fm in routes.values()}
+    for w, h, f, nb, mb in rows:
         w, h, f = int(w), int(h), float(f)
-        payload = enc.emit_direct_frame_payload(np.zeros(w * h, dtype=np.uint8))
-        section = enc.audio_layout(f)[3] + -(-len(payload) // 512) * 512
-        expect(f"{section * f / 1e6:.2f}" == mb,
-               f"{w}x{h}@{f:g}: {section} B x {f:g} = {section * f / 1e6:.3f} MB/s, doc says {mb}")
+        snd = enc.audio_layout(f, 2 if forms[(w, h, f)] == "stereo" else 1, raw=True)[3]
+        frame = snd + enc.raw_layout(w, h, enc.raw_surface(w, h)[0])["sectors"] * 512
+        expect(f"{frame:,}" == nb and f"{frame * f / 1e6:.2f}" == mb,
+               f"{w}x{h}@{f:g}: {frame:,} B x {f:g} = {frame * f / 1e6:.3f} MB/s, doc says {nb} / {mb}")
 
 
 @case(12, "review fix: no-audio-source probe skips extraction (no raw "
