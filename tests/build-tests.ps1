@@ -435,9 +435,10 @@
 #              Shares sd\VID\ with -Vid - give both together for the
 #              full 001-014+099 card. Cached like -Vid. CSpect-lock:
 #              see header.
-#   -VidRawBench  stage the raw direct video sitting 1 and 1b card into sd\VIDRAW\:
-#              raw clips 060-079 and 088-089 (tests\mkrawclip.py, ungated), header-fault
-#              copies 080-086 (tests\mkrawbad.py), old-layout direct 010
+#   -VidRawBench  stage the raw direct video sitting 1 and 1b card into
+#              sd\VIDRAW\: raw clips 060-079 and 088-089 (tests\mkrawclip.py,
+#              ungated), header-fault copies 080-086 (tests\mkrawbad.py),
+#              old-layout direct 010
 #              (tests\videnc_old_direct.py) and the -Vid delta 004. Encodes are
 #              cached in tests\out\vidraw\ by source, shape, rate, channels, cut
 #              and $vidLegSettlementTag (the tone source and its clips also by
