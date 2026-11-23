@@ -531,3 +531,49 @@ def test_nxb_ratio_isr_note():
     assert shown.splitlines().count(ISR_NOTE) == 1
     quiet = parse.report([], runs, None, timing=(311, 228))
     assert ISR_NOTE not in quiet
+
+
+PLAY_REPORT = [" FRM=00FA/00FA ERR=00 OP=00 POS=000000 PASS=01",
+               "RING   =0000/0000/00 FILL=0001 SNAP=00",
+               "PLAY   =01EE NOM=01F4 CHK=0051D039",
+               "LATE   =0000 MAXL=0000 URUN=0000 RUNS=01"]
+PLAY_ONCE = [" FRM=0001/0001 ERR=00 OP=00 POS=000000 PASS=01",
+             "RING   =0000/0000/00 FILL=0000 SNAP=00",
+             "PLAY   =0002 NOM=0002 CHK=00000000",
+             "LATE   =0000 MAXL=0000 URUN=0000 RUNS=00"]
+
+
+def test_parse_playlog(tmp_path):
+    """NXPLAY.TXT (the log step's mode 16): a normal capture, a refusal (row 23 only) and a
+    session that ended at once parse to one row each; the markdown reads back through
+    raw_fit.read_playback, which keeps the two with a PLAY figure."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import playlog
+    import raw_fit
+    lines = (["#PLAY 060 50 1A2B"] + PLAY_REPORT + ["#PLAY 080 50 1C00", "VID FMT?"]
+             + ["#PLAY 074 4E 1D10"] + PLAY_ONCE)
+    p = tmp_path / "NXPLAY.TXT"
+    p.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    caps = playlog.parse_playlog(p)
+    assert [list(c) for c in caps] == [playlog.COLUMNS] * 3
+    assert [(c["Step"], c["Clip"], c["Pool"], c["Row 23"]) for c in caps] == [
+        ("1", "060", "50", "-"), ("2", "080", "50", "VID FMT?"), ("3", "074", "4E", "-")]
+    assert {k: caps[0][k] for k in playlog.COLUMNS[4:]} == {
+        "FRM": "00FA/00FA", "ERR": "00", "OP": "00", "POS": "000000", "PASS": "01",
+        "RING": "0000/0000/00", "FILL": "0001", "SNAP": "00", "PLAY": "01EE", "NOM": "01F4",
+        "CHK": "0051D039", "LATE": "0000", "MAXL": "0000", "URUN": "0000", "RUNS": "01"}
+    assert all(caps[1][k] == "-" for k in playlog.COLUMNS[4:])
+    assert (caps[2]["FRM"], caps[2]["PLAY"], caps[2]["NOM"], caps[2]["RUNS"]) == (
+        "0001/0001", "0002", "0002", "00")
+    out = tmp_path / "playback.md"
+    assert playlog.main([str(p), "--out", str(out)]) == 0
+    back = raw_fit.read_playback(out)
+    assert [(r["Step"], r["Clip"], r["PLAY"], r["LATE"], r["URUN"], r["FRM"]) for r in back] == [
+        ("1", "060", "01EE", "0000", "0000", "00FA/00FA"),
+        ("3", "074", "0002", "0000", "0000", "0001/0001")]
+    for bad in ("VID FMT?\r\n", "#PLAY 60 50 1A2B\r\n", "#PLAY 060 50 1A2B\r\n PLAY   =01EE ZZZ=00\r\n"):
+        q = tmp_path / "BAD.TXT"
+        q.write_bytes(bad.encode("ascii"))
+        with pytest.raises(playlog.PlayLogError):
+            playlog.parse_playlog(q)

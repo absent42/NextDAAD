@@ -13,8 +13,9 @@ per path), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime
 handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and URUN counters (vid_dbg_late,
 vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
-kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain); each is
-skipped with a note where it is not assembled.
+kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain, the play
+log modes 16 and 17 and nxb_entry's mode routes); each is skipped with a note where it is not
+assembled.
 
     .\\build.ps1 (or .\\build.ps1 -Release)   then   python tests\\vidraw_contract.py
 
@@ -186,8 +187,18 @@ def _out_c_r(r):
     return h
 
 
+def _dd(c):
+    op = c.imm8()
+    if op == 0x21:
+        c.ix = c.imm16()
+    elif op == 0x2A:
+        c.ix = c.r16(c.imm16())
+    else:
+        raise Fail(f"opcode DD {op:02X} at ${c.at:04X} is not in the model")
+
+
 EXT = {0xDB: _in_a_n, 0xD3: _out_n_a, 0xD9: _exx, 0x08: _ex_af, 0xF3: _di, 0xFB: _ei,
-       0xE3: _ex_sp_hl}
+       0xE3: _ex_sp_hl, 0xDD: _dd}
 ED_EXT = {0xA2: _ini, 0xA0: _ldi, 0x4D: _reti, 0x45: _reti, 0x23: _swapnib}
 for _r in range(8):
     ED_EXT[0x40 | _r << 3] = _in_r_c(_r)
@@ -196,7 +207,8 @@ for _r in range(8):
 
 class RawCPU(CPU):
     """ddma_contract's model plus the port, alternate-set and interrupt opcodes. IX and IY
-    are held as values only: no DD/FD opcode is modelled, so code that touches them fails."""
+    are held as values: of the DD/FD opcodes only ld ix,nn and ld ix,(nn) (the log step's
+    esxDOS arguments) are modelled, so other code that touches them fails."""
 
     def __init__(self, machine):
         super().__init__(machine)
@@ -3711,6 +3723,222 @@ def test_rw_histlog():
             raise Fail(f"a #HIST line ({len(text)} B) overruns nxbLogLine")
 
 
+# --------------------------------------------------------------------------- play log
+
+class Esx:
+    """The esxDOS wrappers the log step calls, trapped over a dict of files: F_OPEN (mode bit
+    3 creates), F_FSTAT (+7 the size), F_SEEK (IXL 0 only), F_WRITE, F_READ, F_CLOSE. calls
+    logs every entry."""
+
+    def __init__(self, mc, files=None):
+        self.mc, self.calls, self.open = mc, [], {}
+        self.files = {k: bytearray(v) for k, v in (files or {}).items()}
+
+    def traps(self):
+        t = {"esx_getsetdrv": self.drv, "esx_fopen": self.fopen, "esx_fstat": self.fstat,
+             "esx_fseek": self.fseek, "esx_fwrite": self.fwrite, "esx_fread": self.fread,
+             "esx_fclose": self.fclose}
+        return {S(k): ret_trap(f) for k, f in t.items()}
+
+    def drv(self, c):
+        self.calls.append(("drv",))
+        c.a, c.fc = ord("C"), 0
+
+    def fopen(self, c):
+        m = self.mc.mem
+        name = bytes(m[c.ix:m.index(0, c.ix)]).decode("ascii")
+        self.calls.append(("fopen", name, c.b))
+        if c.b & 0x08:
+            self.files.setdefault(name, bytearray())
+        elif name not in self.files:
+            c.a, c.fc = 5, 1
+            return
+        h = 0x40 + len(self.calls)
+        self.open[h] = [name, 0]
+        c.a, c.fc = h, 0
+
+    def _f(self, c, what):
+        if c.a not in self.open:
+            raise Fail(f"{what} on handle ${c.a:02X}, not open")
+        f = self.open[c.a]
+        self.calls.append((what, f[0]))
+        return f
+
+    def fstat(self, c):
+        f = self._f(c, "fstat")
+        self.mc.mem[c.ix:c.ix + 11] = bytes(7) + len(self.files[f[0]]).to_bytes(4, "little")
+        c.fc = 0
+
+    def fseek(self, c):
+        f = self._f(c, "fseek")
+        if c.ix & 0xFF:
+            raise Fail(f"F_SEEK mode {c.ix & 0xFF}, expected 0 (from the start)")
+        f[1] = c.bc << 16 | c.de
+        c.fc = 0
+
+    def fwrite(self, c):
+        f = self._f(c, "fwrite")
+        data = bytes(self.mc.mem[c.ix:c.ix + c.bc])
+        self.files[f[0]][f[1]:f[1] + len(data)] = data
+        f[1] += len(data)
+        c.fc = 0
+
+    def fread(self, c):
+        f = self._f(c, "fread")
+        data = self.files[f[0]][f[1]:f[1] + c.bc]
+        self.mc.mem[c.ix:c.ix + len(data)] = data
+        f[1] += len(data)
+        c.bc, c.fc = len(data), 0
+
+    def fclose(self, c):
+        self._f(c, "fclose")
+        del self.open[c.a]
+        c.fc = 0
+
+
+def no_esx():
+    out = {}
+    for n in ("esx_getsetdrv", "esx_fopen", "esx_fstat", "esx_fseek", "esx_fwrite", "esx_fread",
+              "esx_fclose"):
+        out.update(forbid(n))
+    return out
+
+
+PLAY_ROWS = {23: "VID FMT?", 24: " FRM=00FA/00FA ERR=00 OP=00 POS=000000 PASS=01",
+             25: "RING   =0000/0000/00 FILL=0001 SNAP=00",
+             26: "PLAY   =01EE NOM=01F4 CHK=0051D039",
+             27: "LATE   =0000 MAXL=0000 URUN=0000 RUNS=01"}
+
+
+def play_machine(rows=None):
+    """nxb_machine with an 80-column tilemap: row r holds "ROW rr" and a tail (attribute
+    $11) unless rows gives its text; dbg output to the tilemap."""
+    mc = nxb_machine()
+    mc.poke("tmCols", 80)
+    mc.poke("dbgTilemap", 1)
+    base = S("TM_MAP")
+    for r in range(32):
+        text = (rows or {}).get(r, f"ROW {r:02d} " + chr(65 + r % 26) * (r % 9))
+        mc.mem[base + r * 160:base + (r + 1) * 160] = b"".join(
+            bytes([ord(ch), 0x11]) for ch in text.ljust(80))
+    return mc
+
+
+def tm_bytes(mc, row):
+    base = S("TM_MAP") + row * 160
+    return bytes(mc.mem[base:base + 160])
+
+
+def tm_text(mc, row):
+    return tm_bytes(mc, row)[::2].decode("latin-1").rstrip(" ")
+
+
+def test_play_log():
+    """Mode 16 through nxb_entry: NXPLAY.TXT opened twice (append, read back), the capture
+    appended after what the file held - "#PLAY ccc pp ffff" (flag 140 in decimal,
+    vidPoolAtOpen, frameCounter), rows 23-27 trimmed, CRLF ends, nothing from rows 0-22 or
+    28-31, no #HIST line with nxbHistN 2 - every handle closed, rows 0-30 unchanged, LOG OK on
+    row 31. Then mode 15 on the same screen writes NXBENCH.TXT: every row, both #HIST lines."""
+    bench_only()
+    fl, hdr = S("flags"), "#PLAY 074 50 1234"
+    for clip, pool, fc, want_hdr in ((74, 0x50, 0x1234, hdr), (0, 0, 0, "#PLAY 000 00 0000"),
+                                     (9, 0x7F, 0xFFFF, "#PLAY 009 7F FFFF"),
+                                     (100, 0xA0, 0x0102, "#PLAY 100 A0 0102"),
+                                     (255, 0xFF, 0x8000, "#PLAY 255 FF 8000")):
+        mc = play_machine(PLAY_ROWS)
+        mc.mem[fl + 140] = clip
+        mc.poke("vidPoolAtOpen", pool)
+        mc.poke16("frameCounter", fc)
+        mc.poke("nxbHistN", 2)
+        prior = b"#PLAY 001 4F 0001\r\nVID FILE?\r\n"
+        esx = Esx(mc, {"NXPLAY.TXT": prior})
+        before = [tm_bytes(mc, r) for r in range(32)]
+        mc.mem[fl + 250] = S("NXB_MODE_PLAY")
+        mc.run("nxb_entry", traps=esx.traps())
+        want = prior + (want_hdr + "\r\n").encode() + b"".join(
+            PLAY_ROWS[r].rstrip(" ").encode() + b"\r\n" for r in range(23, 28))
+        got = bytes(esx.files.get("NXPLAY.TXT", b""))
+        opens = [x for x in esx.calls if x[0] == "fopen"]
+        if got != want or set(esx.files) != {"NXPLAY.TXT"}:
+            raise Fail(f"flag 140 = {clip}: files {sorted(esx.files)}, NXPLAY.TXT {got!r}, "
+                       f"expected {want!r}")
+        if opens != [("fopen", "NXPLAY.TXT", S("NXB_LOG_WMODE")),
+                     ("fopen", "NXPLAY.TXT", S("ESX_MODE_READ"))] or esx.open:
+            raise Fail(f"flag 140 = {clip}: opens {opens}, still open {esx.open}")
+        changed = [r for r in range(31) if tm_bytes(mc, r) != before[r]]
+        if tm_text(mc, 31) != "LOG OK" or changed or mc.mem[fl + 250]:
+            raise Fail(f"flag 140 = {clip}: row 31 {tm_text(mc, 31)!r}, rows changed "
+                       f"{changed}, flags+250 = {mc.mem[fl + 250]}")
+    # mode 15 after it: NXBENCH.TXT gets every row and the two saved histograms
+    sav, ln = S("nxbHistSav"), S("NXB_HIST_LEN")
+    o = S("NXB_PAGE") * SLOT + sav - S("DATA_WINDOW")
+    hist = [("RHST", list(range(1, 18))), ("AHST", [0x1000 + k for k in range(17)])]
+    for i, (t, b) in enumerate(hist):
+        mc.phys[o + i * ln:o + (i + 1) * ln] = t.encode() + b"".join(le(n) for n in b)
+    screen = [tm_text(mc, r) for r in range(32)]
+    mc.mem[fl + 250] = S("NXB_MODE_LOG")
+    mc.run("nxb_entry", traps=esx.traps())
+    want = f"#NXB {fc:04X}\r\n" + "".join(s + "\r\n" for s in screen if s) + "".join(
+        "#HIST " + t + "".join(f" {x:04X}" for x in b) + "\r\n" for t, b in hist)
+    got = bytes(esx.files.get("NXBENCH.TXT", b"")).decode("latin-1")
+    if got != want or tm_text(mc, 31) != "LOG OK":
+        raise Fail(f"mode 15 after 16: NXBENCH.TXT {got!r}, expected {want!r}; row 31 "
+                   f"{tm_text(mc, 31)!r}")
+
+
+def test_play_clr():
+    """Mode 17 through nxb_entry: rows 23-27 and 31 blank (spaces at TM_ATTR_DEFAULT over
+    tmCols), every other tilemap byte unchanged (rows 22 and 28 hold text), no esxDOS call."""
+    bench_only()
+    fl = S("flags")
+    mc = play_machine({31: "LOG OK"})
+    before = [tm_bytes(mc, r) for r in range(32)]
+    mc.mem[fl + 250] = S("NXB_MODE_CLR")
+    mc.run("nxb_entry", traps=no_esx())
+    blank = bytes([S("GLYPH_SPACE"), S("TM_ATTR_DEFAULT")]) * 80
+    for r in range(32):
+        want = blank if r in (23, 24, 25, 26, 27, 31) else before[r]
+        if tm_bytes(mc, r) != want:
+            raise Fail(f"mode 17: row {r} reads {tm_text(mc, r)!r} "
+                       f"{'not blank' if want == blank else 'changed'}")
+    if mc.mem[fl + 250]:
+        raise Fail(f"mode 17: flags+250 = {mc.mem[fl + 250]}, not cleared")
+
+
+def test_entry_modes():
+    """nxb_entry: flags+250 = 15, 16, 17 reach nxb_log with NXB_PAGE at MMU6 and nxbMode the
+    mode, 14 reaches .arm, none enters the standalone path; 18 and 255 reach nxb_log and show
+    LOG ERR 01 on row 31 with no esxDOS call, rows 0-30 unchanged."""
+    bench_only()
+    fl, nxb = S("flags"), S("NXB_PAGE")
+    for mode in (14, 15, 16, 17):
+        mc = play_machine()
+        mc.mem[fl + 250] = mode
+        seen = []
+        traps = {S("nxb_log"): ret_trap(lambda c: seen.append(("log", mc.mmu[6],
+                                                                mc.peek("nxbMode")))),
+                 S("nxb_entry.arm"): ret_trap(lambda c: seen.append(("arm",))),
+                 **forbid("nxb_blank"), **no_esx()}
+        mc.run("nxb_entry", traps=traps)
+        want = [("arm",)] if mode == 14 else [("log", nxb, mode)]
+        if seen != want:
+            raise Fail(f"mode {mode}: reached {seen}, expected {want}")
+    for mode in (18, 255):
+        mc = play_machine()
+        before = [tm_bytes(mc, r) for r in range(31)]
+        mc.mem[fl + 250] = mode
+        seen = []
+
+        def watch(c):
+            seen.append(mc.mmu[6])
+            c.step()
+        mc.run("nxb_entry", traps={S("nxb_log"): watch, **forbid("nxb_blank"), **no_esx()})
+        changed = [r for r in range(31) if tm_bytes(mc, r) != before[r]]
+        if seen != [nxb] or tm_text(mc, 31) != "LOG ERR 01" or changed:
+            raise Fail(f"mode {mode}: nxb_log entries {seen}, row 31 {tm_text(mc, 31)!r}, "
+                       f"rows changed {changed}")
+
+
 # --------------------------------------------------------------------------- frame loop
 
 class LoopMachine(RawMachine):
@@ -3874,6 +4102,7 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
+         test_play_log, test_play_clr, test_entry_modes,
          test_rw_harness, test_rw_card_c, test_rw_chain, test_loop_sound_boundary]
 
 

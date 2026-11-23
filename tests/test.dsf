@@ -380,6 +380,7 @@ NXBW  130     verb
 ; once via GFX @140 13 (first-operand indirection - the engine
 ; dereferences flag 140 at dispatch, engine.asm:443); LOOP plays it
 ; looping via GFX @140 14 (any key exits). PLAY is a synonym of GO.
+; DEBUG builds log each GO/LOOP play to NXPLAY.TXT (see the responses).
 ; The number words below make the numerals themselves vocabulary
 ; nouns with word value = the numeral (the parser tokenizes digits
 ; like letters - word_next, overlay1.asm - so "pick 23" parses as
@@ -1292,7 +1293,10 @@ $pictureOK
 ; with the indirection bit, so the DDB byte is $D7), guarded by
 ; NOTZERO so an un-armed GO prints the hint rather than hunting for
 ; 000.VID. Same PROCESS 10 post-video redraw convention as every
-; other video verb.
+; other video verb. DEBUG play log around the play: LET 250 17 /
+; EXTERN 0 12 blanks rows 23-27 and 31, LET 250 16 / EXTERN 0 12
+; appends flag 140, the pool and rows 23-27 to NXPLAY.TXT (LOG OK on
+; row 31). Release: vector 12 forwards to an XBN, none staged, so no-op.
 > PICK    _     NOTEQ   fNoun 255
                 COPYFF  fNoun 140
                 MES "Clip "
@@ -1304,7 +1308,11 @@ $pictureOK
                 DONE
 
 > GO      _     NOTZERO 140
+                LET     250 17
+                EXTERN  0 12
                 GFX     @140 13
+                LET     250 16
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 
@@ -1312,7 +1320,11 @@ $pictureOK
                 DONE
 
 > LOOP    _     NOTZERO 140
+                LET     250 17
+                EXTERN  0 12
                 GFX     @140 14
+                LET     250 16
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 

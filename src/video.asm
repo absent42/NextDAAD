@@ -3782,6 +3782,9 @@ NXB_MODE_FIRST   equ 2       ; standalone modes, nxbTabDir order
 NXB_MODE_LAST    equ 12
 NXB_MODE_ARM     equ 14      ; flags+248 -> nxbSessReq, flags+248 cleared
 NXB_MODE_LOG     equ 15      ; the log step (nxb_log, NXB_PAGE)
+NXB_MODE_PLAY    equ 16      ; the log step: play capture to NXPLAY.TXT
+NXB_MODE_CLR     equ 17      ; the log step: blank the play capture rows
+NXB_MODE_LOGMAX  equ 17      ; modes above: nxb_log shows LOG ERR 01
 NXB_TAB_MAX      equ 560     ; nxbTabBuf: every table asserts it fits
 NXB_ROW_LEN      equ 12      ; ds 4 tag, db opc, dw count, db ops,
                              ; dw reps, db thr, db geo
@@ -3853,7 +3856,7 @@ NXB_HIST_TXT     equ 6 + 4 + 5 * NXB_HIST_BINS   ; "#HIST tttt" and " hhhh" per 
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
 ; Modes 2-12 run standalone; mode 14 arms a session (nxbSessReq, nxb_sess).
-; Modes 15 (the log step) and 14 are tested first: no blank, bank or table.
+; Modes 15 and up (the log step) and 14 are tested first: no blank, bank or table.
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
 ; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
@@ -3863,7 +3866,7 @@ nxb_entry:
     ld (hl), 0
     ld (nxbMode), a
     cp NXB_MODE_LOG
-    jr z, .log
+    jr nc, .log                  ; nxb_log sorts 15 and up
     cp NXB_MODE_ARM
     jr z, .arm
     ld (vidDecSp), sp            ; abort anchor for the standalone
@@ -6872,9 +6875,9 @@ nxbSesSysEnd:
     ASSERT nxbSesSysEnd - nxbSesSys == NXB_STAB_B + 1
 
 ; ---------------------------------------------------------------------
-; LOG STEP (mode 15, via nxb_hop6): "#NXB <frameCounter>", text rows 0-31 and a
-; "#HIST" line per saved RHIST row appended to NXBENCH.TXT, read back and
-; compared, then LOG OK or LOG ERR xx on row 31. Untimed. Corrupts everything.
+; LOG STEP (via nxb_hop6, untimed, corrupts everything) by nxbMode: 15 appends "#NXB ffff",
+; rows 0-31 and #HIST lines to NXBENCH.TXT, 16 "#PLAY ccc pp ffff" and rows 23-27 to
+; NXPLAY.TXT, both read back, then LOG OK / ERR xx on row 31; 17 blanks; above: LOG ERR 01.
 ; ---------------------------------------------------------------------
 NXB_LOG_WMODE    equ $0B     ; F_OPEN open_creat + read/write: the API append (.extract -a)
 ; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0 for
@@ -6886,8 +6889,42 @@ NXB_LOG_CLW      equ $80     ; close after writing
 NXB_LOG_REOP     equ $A0     ; drive, reopen for read, size, seek back
 NXB_LOG_RD       equ $C0     ; read
 NXB_LOG_CMP      equ $E0     ; compare, final close
+NXB_PLAY_ROW0    equ 23      ; vid_fail_puts' refusal row, then the report's four
+NXB_PLAY_ROWS    equ 5
+    ASSERT VID_TL_ROW0 == NXB_PLAY_ROW0 + 1 && NXB_PLAY_ROW0 + NXB_PLAY_ROWS < TM_ROWS - 1
 
+; Mode 17: blank rows 23-27 and row 31, so a capture and LOG OK are the next step's own.
+nxb_log_clr:
+    ld a, (tmCols)
+    ld e, a
+    ld d, NXB_PLAY_ROWS
+    ld bc, NXB_PLAY_ROW0 << 8    ; B = top row, C = column 0
+    call tm_clear_blank
+; Blank row 31. Corrupts everything.
+nxb_log_b31:
+    ld bc, (TM_ROWS - 1) << 8
+    ld d, 1
+    ld a, (tmCols)
+    ld e, a
+    jp tm_clear_blank
+
+    ASSERT NXB_MODE_PLAY == NXB_MODE_LOG + 1 && NXB_MODE_CLR == NXB_MODE_PLAY + 1
+    ASSERT NXB_MODE_LOGMAX == NXB_MODE_CLR
 nxb_log:
+    ld a, (nxbMode)
+    cp NXB_MODE_CLR
+    jr z, nxb_log_clr            ; 17, and 18 up below: no esxDOS call
+    ld hl, nxbLogM16
+    cp NXB_MODE_PLAY
+    jr z, .sel
+    ld hl, nxbLogM15
+    jr c, .sel
+    ld a, 1                      ; LOG ERR 01: a real failure has its step in bits 7-5
+    jp nxb_log_show
+.sel:
+    ld de, nxbLogNm
+    ld bc, NXB_LSEL_LEN
+    ldir
     ld (nxbLogSp), sp            ; every failure unwinds to here
     ld hl, (frameCounter)
     ld (nxbLogFc), hl
@@ -6899,7 +6936,7 @@ nxb_log:
     ld (nxbLogStep), a
     call esx_getsetdrv           ; A = the default drive
     jp c, nxb_log_fail
-    ld ix, nxbLogName
+    ld ix, (nxbLogNm)
     ld b, NXB_LOG_WMODE
     call esx_fopen
     jp c, nxb_log_fail
@@ -6924,7 +6961,7 @@ nxb_log:
     ld (hl), NXB_LOG_REOP
     call esx_getsetdrv
     jp c, nxb_log_fail
-    ld ix, nxbLogName
+    ld ix, (nxbLogNm)
     ld b, ESX_MODE_READ
     call esx_fopen
     jp c, nxb_log_fail
@@ -6972,11 +7009,7 @@ nxb_log_fail:
 ; A = 0 (LOG OK) or the code (LOG ERR xx), on a blanked row 31.
 nxb_log_show:
     push af
-    ld bc, (TM_ROWS - 1) << 8
-    ld d, 1
-    ld a, (tmCols)
-    ld e, a
-    call tm_clear_blank
+    call nxb_log_b31
     ld bc, (TM_ROWS - 1) << 8
     call dbg_at
     ld hl, nxbLogMsg
@@ -7024,22 +7057,59 @@ nxb_log_close:
     ld (hl), $FF
     jp esx_fclose
 
-; One pass: the header, then every non-empty row, each line built in
-; nxbLogLine and handed to HL (nxb_log_put or nxb_log_get) with BC = its length.
+; One pass: the header, every non-empty row nxbLogRow0 to nxbLogRowN - 1, the #HIST
+; lines unless nxbLogPlay; each line built in nxbLogLine and handed to HL
+; (nxb_log_put or nxb_log_get) with BC = its length.
 nxb_log_pass:
     ld (.io + 1), hl
-    ld hl, nxbLogHdr
     ld de, nxbLogLine
+    ld a, (nxbLogPlay)
+    or a
+    jr nz, .play
+    ld hl, nxbLogHdr
     ld bc, NXB_LOG_HDR_LEN
     ldir
+    jr .fc
+.play:
+    ld hl, nxbPlayHdr
+    ld bc, NXB_PLAY_HDR_LEN
+    ldir
+    ld a, (flags + 140)          ; the clip PICK armed, in three decimal digits
+    ld hl, nxbPlayPow
+    ld b, 3
+.dig:
+    ld c, '0' - 1
+.sub:
+    inc c
+    sub (hl)
+    jr nc, .sub
+    add a, (hl)
+    inc hl
+    ex de, hl
+    ld (hl), c
+    inc hl
+    ex de, hl
+    djnz .dig                    ; B = 0 for the length below
+    ld a, ' '
+    ld (de), a
+    inc de
+    ld a, (vidPoolAtOpen)        ; free pool banks before the open
+    call nxb_log_hex
+    ld a, ' '
+    ld (de), a
+    inc de
+.fc:
     ld hl, (nxbLogFc)
     ld a, h
     call nxb_log_hex
     ld a, l
     call nxb_log_hex
-    ld c, NXB_LOG_HDR_LEN + 4    ; B = 0
+    ld a, e
+    sub low nxbLogLine
+    ld c, a                      ; B = 0: the ldir or the djnz
     call .line
-    ld b, 0                      ; the row
+    ld a, (nxbLogRow0)
+    ld b, a                      ; the row
 .row:
     push bc
     ld c, 0
@@ -7067,9 +7137,12 @@ nxb_log_pass:
     call nz, .line               ; an empty row writes nothing
     pop bc
     inc b
-    ld a, b
-    cp TM_ROWS
-    jr c, .row
+    ld a, (nxbLogRowN)
+    cp b
+    jr nz, .row
+    ld a, (nxbLogPlay)           ; a play capture carries no #HIST lines
+    or a
+    ret nz
     ld a, (nxbHistN)             ; then "#HIST tttt" and NXB_HIST_BINS words
     or a                         ; per saved RHIST row
     ret z
@@ -7178,8 +7251,23 @@ nxb_log_get:
     jp nxb_log_short
 
 nxbLogName:   db "NXBENCH.TXT", 0
+nxbPlayName:  db "NXPLAY.TXT", 0
 nxbLogHdr:    db "#NXB "
 NXB_LOG_HDR_LEN equ $ - nxbLogHdr
+nxbPlayHdr:   db "#PLAY "
+NXB_PLAY_HDR_LEN equ $ - nxbPlayHdr
+nxbPlayPow:   db 100, 10, 1
+; nxb_log's selection by mode, copied to nxbLogNm: dw name, db first row, end row, play.
+nxbLogM15:    dw nxbLogName
+              db 0, TM_ROWS, 0
+nxbLogM16:    dw nxbPlayName
+              db NXB_PLAY_ROW0, NXB_PLAY_ROW0 + NXB_PLAY_ROWS, 1
+NXB_LSEL_LEN  equ nxbLogM16 - nxbLogM15
+nxbLogNm:     dw nxbLogName          ; mode 15's until the first selection
+nxbLogRow0:   db 0
+nxbLogRowN:   db TM_ROWS
+nxbLogPlay:   db 0
+    ASSERT $ - nxbLogNm == NXB_LSEL_LEN && NXB_LSEL_LEN == 5
 nxbLogHist:   db "#HIST "
     ASSERT $ - nxbLogHist == 6
 nxbLogMsg:    db "LOG ", 0
