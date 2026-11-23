@@ -42,7 +42,7 @@ DAC_PORTS = (DAC_L, DAC_R, DAC_M)
 
 SHAPES = [(0, 256, 192), (1, 320, 160), (1, 320, 192), (1, 280, 224), (1, 320, 240),
           (1, 256, 240)]
-EXTRA = [(1, 320, 256), (1, 4, 1), (1, 320, 191), (0, 256, 1)]
+EXTRA = [(1, 320, 256), (1, 4, 1), (1, 320, 191), (0, 256, 1), (1, 280, 256), (0, 256, 100)]
 
 SYMS = {}
 
@@ -481,8 +481,7 @@ PAGE_END = bytes([0x1C, 0x7B, 0xED, 0x92, 0x52, 0x26, 0x40])
 
 def parse_sched(mc):
     """[(kind, value, addr)] from VR_SCHED to its ret; kind: read (value n), sector,
-    sectorn (vr_sector_n), page (PAGE_END), pagecall (a call vr_page, the routine PAGE_END
-    replaced), colend, ldhl (value operand), ret."""
+    sectorn (vr_sector_n), page (PAGE_END), colend, ldhl (value operand), ret."""
     base = SCHED_PAGE * SLOT - S("VR_SLIDE")
     ph = mc.phys
     a, out = S("VR_SCHED"), []
@@ -499,8 +498,6 @@ def parse_sched(mc):
                 out.append(("sector", v, a))
             elif v == S("vr_sector_n"):
                 out.append(("sectorn", v, a))
-            elif "vr_page" in SYMS and v == S("vr_page"):
-                out.append(("pagecall", v, a))
             elif S("VR_SLIDE") <= v < slide_end and (slide_end - v) % 2 == 0:
                 out.append(("read", (slide_end - v) // 2, a))
             else:
@@ -583,18 +580,16 @@ def test_sched_reads():
 
 
 def test_sched_shape():
-    """320x192: 9 inline page ends (PAGE_END), each right after a column end (L = 0), no call
-    vr_page; 256x192 (flat): 5, each right after a read."""
+    """320x192: 9 inline page ends (PAGE_END), each right after a column end (L = 0);
+    256x192 (flat): 5, each right after a read."""
     mc = RawMachine(SYMS)
     cpu = build_sched(mc, 1, 320, 192)
     if cpu.fc:
         raise Fail("320x192: CF set")
     items, _ = parse_sched(mc)
     kinds = [k for k, _, _ in items]
-    got = {k: kinds.count(k) for k in ("read", "sector", "sectorn", "colend", "page", "pagecall",
-                                       "ldhl")}
-    want = {"read": 400, "sector": 1, "sectorn": 119, "colend": 319, "page": 9, "pagecall": 0,
-            "ldhl": 0}
+    got = {k: kinds.count(k) for k in ("read", "sector", "sectorn", "colend", "page", "ldhl")}
+    want = {"read": 400, "sector": 1, "sectorn": 119, "colend": 319, "page": 9, "ldhl": 0}
     if got != want or kinds[0] != "sector" or kinds[-1] != "ret":
         raise Fail(f"320x192 schedule: {got}, first {kinds[0]}, last {kinds[-1]}; expected "
                    f"{want}, vr_sector first, ret last")
@@ -611,13 +606,12 @@ def test_sched_shape():
     kinds = [k for k, _, _ in items]
     reads = [v for k, v, _ in items if k == "read"]
     if (kinds.count("sector"), kinds.count("sectorn"), len(reads), set(reads),
-            kinds.count("page"), kinds.count("pagecall"), kinds.count("colend")) \
-            != (1, 95, 96, {512}, 5, 0, 0) \
+            kinds.count("page"), kinds.count("colend")) \
+            != (1, 95, 96, {512}, 5, 0) \
             or any(kinds[i - 1] != "read" for i, k in enumerate(kinds) if k == "page"):
         raise Fail(f"256x192 schedule: {kinds.count('sector')} + {kinds.count('sectorn')} "
                    f"sector, {len(reads)} reads {sorted(set(reads))}, "
-                   f"{kinds.count('page')} page, {kinds.count('pagecall')} call vr_page, "
-                   f"{kinds.count('colend')} colend")
+                   f"{kinds.count('page')} page, {kinds.count('colend')} colend")
     if kinds[0] != "sector" or kinds[-1] != "ret":
         raise Fail("256x192: the schedule does not open with vr_sector and end with ret")
 
