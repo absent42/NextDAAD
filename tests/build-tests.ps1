@@ -435,8 +435,8 @@
 #              Shares sd\VID\ with -Vid - give both together for the
 #              full 001-014+099 card. Cached like -Vid. CSpect-lock:
 #              see header.
-#   -VidRawBench  stage the raw direct video sitting 1 card into sd\VIDRAW\:
-#              raw clips 060-079 (tests\mkrawclip.py, ungated), header-fault
+#   -VidRawBench  stage the raw direct video sitting 1 and 1b card into sd\VIDRAW\:
+#              raw clips 060-079 and 088-089 (tests\mkrawclip.py, ungated), header-fault
 #              copies 080-086 (tests\mkrawbad.py), old-layout direct 010
 #              (tests\videnc_old_direct.py) and the -Vid delta 004. Encodes are
 #              cached in tests\out\vidraw\ by source, shape, rate, channels, cut
@@ -5532,6 +5532,10 @@ if ($VidRawBench) {
         '077' = @{ src = 'tone';   w = 256; h = 192; fps = '25';            ch = 2; dur = '8.0';  real = 1250; check = 'lr' }
         '078' = @{ src = 'tone';   w = 256; h = 192; fps = '25';            ch = 1; dur = '8.0';  real = 625;  check = 'monotones' }
         '079' = @{ src = 'card';   w = 320; h = 256; fps = '25';            ch = 2; dur = '10.0'; real = 1250; check = 'beeps' }
+        # sitting 1b sound-term clips: mono pad 286 in a 3-sector section (074 pads 512),
+        # 20 s so every armed card row runs; stereo pad 486 in a 4-sector section (064/065: 174)
+        '088' = @{ src = 'card';   w = 256; h = 192; fps = '12.5';          ch = 1; dur = '20.0'; real = 1250; check = 'monobeeps'; section = 1536 }
+        '089' = @{ src = 'card';   w = 256; h = 192; fps = '20';            ch = 2; dur = '10.0'; real = 1562; check = 'beeps'; section = 2048 }
     }
     $vrCache = @{}
     foreach ($clip in $vrRaw.Keys) {
@@ -5636,7 +5640,7 @@ if ($VidRawBench) {
     foreach ($clip in ($vrCache.Keys | Sort-Object)) {
         Copy-Item -LiteralPath $vrCache[$clip] -Destination "$leg\$clip.VID" -Force
     }
-    "staged $($vrCache.Count) clip(s) -> sd\$legName\ (raw 060-079, header faults 080-086, old direct 010, delta 004)"
+    "staged $($vrCache.Count) clip(s) -> sd\$legName\ (raw 060-079 and 088-089, header faults 080-086, old direct 010, delta 004)"
 }
 
 if ($NxBench) {
