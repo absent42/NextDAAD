@@ -20,6 +20,10 @@ Two entry points:
                      pairing). Never raises on a malformed file - it
                      reports issues instead, so a caller can decide.
 
+Both read the raw layout (flags bit 4) as well as the delta layout: a raw
+clip decodes at its own width x height (picture_shape), sound sectors
+skipped, a palette sector applied from its tagged frame on.
+
 Header/opcode constants are imported from nxv2enc (the single source of
 truth for both sides, per the format reference)."""
 from pathlib import Path
@@ -31,7 +35,11 @@ from nxv2enc import (
     OP_FEND, OP_SKIP16, OP_RUN8, OP_RUN16, OP_COPY8, OP_COPY16, OP_PAL,
     OP_SKIP8, OP_KFLIP, OP_KSTART, TERMINAL_OPS,
     unflatten_frame,
+    FLAG_DELTA_STREAM, FLAG_DIRECT_SERVE, FLAG_RAW, RAW_W_STEP, WIDTH_BY_CODE,
+    RAW_TAG_PIXELS, RAW_TAG_PALETTE, PAL_BLOCK_SIZE, raw_layout, audio_pad_bytes,
 )
+
+RAW_FLAGS = FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE | FLAG_RAW   # exactly $13
 
 
 class Nxv2FormatError(Exception):
@@ -189,6 +197,71 @@ def _round_up_block(n):
     return ((n + 511) // 512) * 512
 
 
+def picture_shape(hdr):
+    """(width, height, column_major) of a decoded frame: a raw clip's own
+    picture width, else the surface width."""
+    width = hdr["raw_width"] if hdr["flags"] & FLAG_RAW else hdr["width"]
+    return width, hdr["height"], hdr["column_major"]
+
+
+def _iter_raw_frames(buf, hdr, issues=None):
+    """_iter_frames for the raw layout: per frame, sound sectors (tag in
+    the last byte), a palette sector after tag 1, then the pixels in
+    surface order, zero-padded to 512. Yields as _iter_frames does: term
+    is OP_KFLIP (a whole picture, as the old direct layout's frames) and
+    the payload is the palette and pixel sectors."""
+    def fail(msg):
+        if issues is not None:
+            issues.append(msg)
+        else:
+            raise Nxv2FormatError(msg)
+
+    surface_w, width, height = hdr["width"], hdr["raw_width"], hdr["height"]
+    if hdr["flags"] != RAW_FLAGS:
+        fail(f"raw layout: flags must be exactly ${RAW_FLAGS:02X}, got ${hdr['flags']:02X}")
+    if hdr["channels"] not in (1, 2):
+        fail(f"raw layout: channels must be 1 or 2, got {hdr['channels']}")
+    if surface_w == WIDTH_BY_CODE[1] and not (
+            RAW_W_STEP <= width <= surface_w and width % RAW_W_STEP == 0):
+        fail(f"raw layout: raw width must be {RAW_W_STEP}-{surface_w} and a multiple "
+             f"of {RAW_W_STEP} on the {surface_w} surface, got {width}")
+    geo = raw_layout(width, height, surface_w)
+    if hdr["per_frame_cap_blocks"] != geo["cap_blocks"]:
+        fail(f"raw layout: frame cap {hdr['per_frame_cap_blocks']} blocks, the "
+             f"{width}x{height} picture needs exactly {geo['cap_blocks']} "
+             f"(pixel sectors + 1)")
+    apad = audio_pad_bytes(hdr["audio_bytes_per_frame"], raw=True)
+    px_bytes, px_span = geo["pixel_bytes"], geo["sectors"] * 512
+    surface = np.zeros(px_bytes, dtype=np.uint8)
+    palette = np.zeros((256, 3), dtype=np.uint8)
+    nframes = hdr["frame_count"]
+    pos, n = HEADER_SIZE, len(buf)
+    for fi in range(nframes):
+        where = f"raw frame {fi} of {nframes}"
+        if pos + apad > n:
+            fail(f"{where}: sound sectors run past end of file")
+            return
+        tag = buf[pos + apad - 1]
+        pos += apad
+        start = pos
+        if tag == RAW_TAG_PALETTE:
+            if pos + PAL_BLOCK_SIZE > n:
+                fail(f"{where}: palette sector runs past end of file")
+                return
+            palette[:] = _decode_palette_block(buf[pos:pos + PAL_BLOCK_SIZE])
+            pos += PAL_BLOCK_SIZE
+        elif tag != RAW_TAG_PIXELS:
+            fail(f"{where}: tag byte {tag} at byte {pos - 1} (0 pixels follow, "
+                 f"1 a palette sector follows)")
+            return
+        if pos + px_span > n:
+            fail(f"{where}: pixel sectors run past end of file")
+            return
+        surface[:] = np.frombuffer(buf, dtype=np.uint8, count=px_bytes, offset=pos)
+        pos += px_span
+        yield palette.copy(), surface.copy(), OP_KFLIP, start, pos - start
+
+
 def _iter_frames(buf, hdr, issues=None):
     """Internal frame walker shared by decode()/validate(). Yields, per
     SOURCE frame (a multi-chunk keyframe span contributes one entry per
@@ -198,7 +271,14 @@ def _iter_frames(buf, hdr, issues=None):
 
     validate() mode (issues is a list): problems are recorded and
     walking continues best-effort. decode() mode (issues is None):
-    the same problems raise Nxv2FormatError immediately."""
+    the same problems raise Nxv2FormatError immediately.
+
+    A raw clip (flags bit 4) walks through _iter_raw_frames: the surface
+    is then the picture in surface order, picture_shape(hdr) long."""
+    if hdr["flags"] & FLAG_RAW:
+        yield from _iter_raw_frames(buf, hdr, issues)
+        return
+
     def fail(msg):
         if issues is not None:
             issues.append(msg)
@@ -305,12 +385,12 @@ def _iter_frames(buf, hdr, issues=None):
 def decode(vid_path):
     """Decode an NXV v2 file. Yields (palette (256,3) uint8, indexed
     frame (H,W) uint8) pairs, one per source frame (container frame
-    count), in display order. Raises Nxv2FormatError on the first
-    structural violation encountered."""
+    count), in display order; W is a raw clip's own width. Raises
+    Nxv2FormatError on the first structural violation encountered."""
     path = Path(vid_path)
     buf = path.read_bytes()
     hdr = unpack_header(buf)
-    width, height, colmajor = hdr["width"], hdr["height"], hdr["column_major"]
+    width, height, colmajor = picture_shape(hdr)
     for pal, surf, term, _, _ in _iter_frames(buf, hdr, issues=None):
         img = unflatten_frame(surf, height, width, colmajor)
         yield pal, img

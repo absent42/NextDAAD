@@ -454,10 +454,10 @@ new header flag bits, which an older player refuses at open rather than
 misplaying; the raw layout below is one. If you are writing a tool, the
 kit carries the format's definition, in order of usefulness:
 `lib\nxv2dec.py` is the executable specification of the player for the
-delta layout, so what it does with a stream IS the format's behaviour,
-and `lib\nxv2enc.py`, beside it, carries the matching header layout,
-opcode set and constants, and the raw layout's writer. Every section
-of the file is an exact multiple of 512-byte SD blocks.
+delta and raw layouts, so what it does with a stream IS the format's
+behaviour, and `lib\nxv2enc.py`, beside it, carries the matching header
+layout, opcode set and constants, and the writers. Every section of the
+file is an exact multiple of 512-byte SD blocks.
 
 Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
 decimation. A mono source is converted to stereo automatically. A raw

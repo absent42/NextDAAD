@@ -29,6 +29,10 @@ def decode_vid(vid_path):
                      (legitimately expensive) can be told apart from a
                      delta frame that simply overran
 
+    A raw clip's frames are its own width x height (nxv2dec.picture_shape;
+    header "width" stays the surface), each a whole picture with term
+    KFLIP and the palette and pixel sectors as its cost.
+
     This walks nxv2dec._iter_frames rather than its public decode(): the
     costs are a by-product the walker already yields and decode() drops,
     and the alternative - decode() for pixels plus a second walk for
@@ -36,7 +40,7 @@ def decode_vid(vid_path):
     thread."""
     buf = Path(vid_path).read_bytes()
     hdr = nxv2enc.unpack_header(buf)
-    width, height, colmajor = hdr["width"], hdr["height"], hdr["column_major"]
+    width, height, colmajor = nxv2dec.picture_shape(hdr)
 
     frames, costs, terms = [], [], []
     for pal, surf, term, _start, used in nxv2dec._iter_frames(buf, hdr,

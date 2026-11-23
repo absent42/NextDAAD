@@ -9,7 +9,54 @@ helper's width/height must be one of those real shapes; callers wanting
 a small/fast fixture use a small HEIGHT (down to 1) rather than an
 off-format width.
 """
+import contextlib
+
+import numpy as np
+
 import nxv2enc as enc
+
+
+def raw_source_ex(n, width, height, fps=25.0, channels=2, cut_at=None, seed=11):
+    """nxv2enc._extract_source(raw=True)-shaped dict without ffmpeg: blocky
+    random frames; from cut_at a scene cut and a narrower colour range."""
+    rng = np.random.default_rng(seed)
+    blocks = rng.integers(0, 256, size=(n, -(-height // 8), -(-width // 8), 3), dtype=np.uint8)
+    chg = np.zeros(n)
+    if cut_at is not None:
+        blocks[cut_at:] = blocks[cut_at:] // 4 + 96
+        chg[cut_at] = 0.9
+    orig = np.ascontiguousarray(
+        np.repeat(np.repeat(blocks, 8, axis=1), 8, axis=2)[:, :height, :width])
+    rate, _samples, real, padded = enc.audio_layout(fps, channels, raw=True)
+    audio = bytes(rng.integers(0, 256, size=n * real, dtype=np.uint8))
+    return dict(orig=orig, chg=chg, audio_bytes=audio, channels=channels, rate=rate,
+                abytes_real=real, abytes_pad=padded, nframes=n)
+
+
+@contextlib.contextmanager
+def record_quantised():
+    """Collects the decoded RGB frame of every nxv2enc.dither_quantize call
+    (the picture the encoder scores its PSNR on), in call order."""
+    real, got = enc.dither_quantize, []
+
+    def rec(*a, **k):
+        idx, rgb = real(*a, **k)
+        got.append(rgb.copy())
+        return idx, rgb
+    enc.dither_quantize = rec
+    try:
+        yield got
+    finally:
+        enc.dither_quantize = real
+
+
+def build_raw_vid(path, width, height, channels=2, n=3, cut_at=2, fps=25.0):
+    """Encodes a synthetic clip through nxv2enc._encode_raw (gate off).
+    Returns the encoder's quantised RGB frames, one (H, W, 3) per frame."""
+    ex = raw_source_ex(n, width, height, fps=fps, channels=channels, cut_at=cut_at)
+    with record_quantised() as want:
+        enc._encode_raw(ex, width, height, fps, path, channels=channels, gate=False)
+    return want
 
 
 def build_solid_vid(path, width, height, colours, cap_blocks=0):

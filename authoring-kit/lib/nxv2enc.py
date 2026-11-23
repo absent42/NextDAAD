@@ -93,6 +93,8 @@ FLAG_OCOPY = 1 << 3          # RETIRED SP17 T5a offset-copy capability
 FLAG_RAW = 1 << 4            # raw frame layout; a raw clip's flags are $13
 HDR_OFF_RAWW = 23            # 2  raw picture width in columns, LE
 RAW_W_STEP = 4               # raw width on the 320 surface: multiple of 4
+RAW_TAG_PIXELS = 0           # raw frame tag (last sound byte): pixels follow
+RAW_TAG_PALETTE = 1          # a palette sector follows, then the pixels
 
 # "raw" writes the raw layout, "old" the SP15 direct layout (test scripts).
 DIRECT_LAYOUT = "raw"
@@ -323,7 +325,10 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
 def unpack_header(buf):
     """Inverse of pack_header. Raises ValueError on bad magic/version/
     width code. Returns a dict with the decoded fields plus
-    column_major (True for width==320, Layer 2 mode-1 addressing)."""
+    column_major (True for width==320, Layer 2 mode-1 addressing), raw
+    (flags bit 4) and raw_width: a raw clip's picture columns (the header
+    word on the 320 surface, 256 on the 256 surface, where the player does
+    not read it), None when not raw. width stays the surface width."""
     if len(buf) < HEADER_SIZE:
         raise ValueError(f"header buffer too short ({len(buf)} < {HEADER_SIZE})")
     if bytes(buf[HDR_OFF_MAGIC:HDR_OFF_MAGIC + 5]) != MAGIC:
@@ -337,8 +342,14 @@ def unpack_header(buf):
         raise ValueError(f"bad width code {widthcode} (must be 0 or 1)")
     height_b = buf[HDR_OFF_HEIGHT]
     height = 256 if height_b == 0 else height_b
+    raw = bool(buf[HDR_OFF_FLAGS] & FLAG_RAW)
+    raw_width = None
+    if raw:
+        raw_width = (int.from_bytes(buf[HDR_OFF_RAWW:HDR_OFF_RAWW + 2], "little")
+                     if width == 320 else 256)
     return dict(
         width=width, height=height, column_major=(width == 320),
+        raw=raw, raw_width=raw_width,
         fps_x10=buf[HDR_OFF_FPSX10],
         channels=buf[HDR_OFF_ACHAN],
         arate=int.from_bytes(buf[HDR_OFF_ARATE:HDR_OFF_ARATE + 2], "little"),
@@ -3907,7 +3918,7 @@ def emit_raw_frame(sound_real, padded, flat_pixels, pal):
         raise ValueError(f"palette sector must be {PAL_BLOCK_SIZE} B, got {len(pal)}")
     out = bytearray(sound_real)
     out += bytes([SILENCE_U8]) * (padded - 1 - len(sound_real))
-    out.append(0 if pal is None else 1)
+    out.append(RAW_TAG_PIXELS if pal is None else RAW_TAG_PALETTE)
     if pal is not None:
         out += pal
     px = (bytes(flat_pixels) if isinstance(flat_pixels, (bytes, bytearray))
@@ -4131,8 +4142,13 @@ def audio_layout(fps, channels=2, raw=False):
             f"fps >= {_math.ceil(min_fps_for() * 100) / 100:.2f} "
             f"(the floor itself fits - 3b re-review wording fix); "
             f"raise --fps.")
-    padded = (real // 512 + 1) * 512 if raw else ((real + 511) // 512) * 512
-    return rate, samples, real, padded
+    return rate, samples, real, audio_pad_bytes(real, raw)
+
+
+def audio_pad_bytes(real, raw=False):
+    """Padded sound section for real bytes a frame: the next 512 multiple,
+    or for raw (real // 512 + 1) * 512 so the tag byte always fits."""
+    return (real // 512 + 1) * 512 if raw else ((real + 511) // 512) * 512
 
 
 SILENCE_U8 = 128

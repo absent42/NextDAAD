@@ -8321,6 +8321,151 @@ def t16_raw_frame_bytes():
     assert set(b[1024:1535]) == {0x80} and b[1535] == 0
 
 
+def _raw_src_ex(n, width, height, fps=25.0, channels=2, cut_at=None, seed=11):
+    """_extract_source(raw=True)-shaped dict without ffmpeg: blocky random
+    frames; from cut_at a scene cut and a narrower colour range."""
+    rng = np.random.default_rng(seed)
+    blocks = rng.integers(0, 256, size=(n, -(-height // 8), -(-width // 8), 3), dtype=np.uint8)
+    chg = np.zeros(n)
+    if cut_at is not None:
+        blocks[cut_at:] = blocks[cut_at:] // 4 + 96
+        chg[cut_at] = 0.9
+    orig = np.ascontiguousarray(
+        np.repeat(np.repeat(blocks, 8, axis=1), 8, axis=2)[:, :height, :width])
+    rate, _samples, real, padded = enc.audio_layout(fps, channels, raw=True)
+    audio = bytes(rng.integers(0, 256, size=n * real, dtype=np.uint8))
+    return dict(orig=orig, chg=chg, audio_bytes=audio, channels=channels, rate=rate,
+                abytes_real=real, abytes_pad=padded, nframes=n)
+
+
+@contextlib.contextmanager
+def _record_quantised():
+    """Collects the decoded RGB frame of every dither_quantize call (the
+    picture the encoder scores its PSNR on), in call order."""
+    real, got = enc.dither_quantize, []
+
+    def rec(*a, **k):
+        idx, rgb = real(*a, **k)
+        got.append(rgb.copy())
+        return idx, rgb
+    enc.dither_quantize = rec
+    try:
+        yield got
+    finally:
+        enc.dither_quantize = real
+
+
+def _raw_encode(path, w, h, fps=25.0, channels=2, n=3, cut_at=2):
+    """_encode_raw (gate off) of a synthetic clip; returns the encoder's
+    quantised RGB frames."""
+    ex = _raw_src_ex(n, w, h, fps=fps, channels=channels, cut_at=cut_at)
+    with _record_quantised() as want:
+        _quiet(enc._encode_raw, ex, w, h, fps, path, channels=channels, gate=False)
+    return want
+
+
+@case(16, "raw layout - nxv2dec decodes _encode_raw output to the encoder's quantised frames "
+          "at the clip's own shape, both surfaces, stereo and mono")
+def t16_raw_decode_roundtrip():
+    runs = [(w, h, ch, 25.0) for w, h in ((256, 192), (320, 160), (280, 224), (256, 240), (320, 256))
+            for ch in (2, 1)]
+    runs.append((256, 192, 1, 15625 / 1024))          # 1024 real bytes: the tag alone in a sector
+    with tempfile.TemporaryDirectory() as td:
+        for w, h, ch, fps in runs:
+            tag = f"{w}x{h} {'stereo' if ch == 2 else 'mono'} @{fps:g}"
+            out = Path(td) / "r.vid"
+            want = _raw_encode(out, w, h, fps=fps, channels=ch)
+            sw, colmajor = enc.raw_surface(w, h)
+            hdr = enc.unpack_header(out.read_bytes())
+            expect(hdr["raw"] and hdr["raw_width"] == w and hdr["width"] == sw
+                   and hdr["column_major"] == colmajor and hdr["channels"] == ch,
+                   f"{tag}: header raw {hdr.get('raw')} width {hdr.get('raw_width')} surface {hdr['width']}")
+            frames = list(dec.decode(out))
+            expect(len(frames) == len(want) == 3, f"{tag}: {len(frames)} frames decoded")
+            for i, (pal, img) in enumerate(frames):
+                expect(img.shape == (h, w), f"{tag}: frame {i} decodes {img.shape[1]}x{img.shape[0]}")
+                expect(np.array_equal(pal[img], want[i]),
+                       f"{tag}: frame {i} differs from the encoder's quantised frame")
+            expect(dec.validate(out) == [], f"{tag}: validate {dec.validate(out)}")
+    plain = enc.unpack_header(enc.pack_header(**_hdr_args()))
+    expect(plain["raw"] is False and plain["raw_width"] is None, "non-raw header: raw False, raw_width None")
+
+
+@case(16, "raw layout - a 280x224 clip decodes 280 wide; palette only on tagged frames, held "
+          "within the scene, changed at the cut")
+def t16_raw_decode_palette():
+    w, h, ch = 280, 224, 1
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "pal.vid"
+        want = _raw_encode(out, w, h, channels=ch)
+        data = out.read_bytes()
+        frames = list(dec.decode(out))
+    padded = enc.audio_layout(25.0, ch, raw=True)[3]
+    sectors = enc.raw_layout(w, h, 320)["sectors"]
+    pos, tags, sent = 512, [], []
+    for _ in range(3):
+        tags.append(data[pos + padded - 1])
+        pos += padded
+        if tags[-1]:
+            sent.append(data[pos:pos + 512])
+            pos += 512
+        pos += sectors * 512
+    expect(tags == [1, 0, 1] and pos == len(data), f"tags {tags}, walked {pos} of {len(data)} B")
+    (p0, i0), (p1, i1), (p2, i2) = frames
+    expect(i0.shape == i1.shape == i2.shape == (224, 280), f"decoded {i0.shape[1]}x{i0.shape[0]}, not 280x224")
+    expect(np.array_equal(p0, dec._decode_palette_block(sent[0])), "frame 0: its palette sector")
+    expect(np.array_equal(p1, p0), "frame 1 (tag 0) keeps frame 0's palette")
+    expect(np.array_equal(p1[i1], want[1]), "frame 1 colours: frame 0's palette applied")
+    expect(np.array_equal(p2, dec._decode_palette_block(sent[1])) and not np.array_equal(p2, p0),
+           "frame 2 (scene cut): the new palette sector")
+    expect(np.array_equal(p2[i2], want[2]), "frame 2 colours: the new palette applied")
+
+
+@case(16, "raw layout - malformed raw clips raise Nxv2FormatError from decode and are listed by validate")
+def t16_raw_decode_malformed():
+    w, h, ch = 280, 224, 2
+    padded = enc.audio_layout(25.0, ch, raw=True)[3]
+    px = enc.raw_layout(w, h, 320)["sectors"] * 512
+    f0 = padded + 512 + px                             # frame 0 carries a palette
+    with tempfile.TemporaryDirectory() as td:
+        good_path = Path(td) / "good.vid"
+        _raw_encode(good_path, w, h, channels=ch)
+        good = good_path.read_bytes()
+
+        def hdr_set(off, val, size=1):
+            b = bytearray(good)
+            b[off:off + size] = int(val).to_bytes(size, "little")
+            return bytes(b)
+        bad_tag = bytearray(good)
+        bad_tag[512 + f0 + padded - 1] = 2
+        cases = [
+            ("truncated mid-pixels", good[:512 + f0 + padded + 40 * 512], "end of file"),
+            ("truncated in the sound sectors", good[:512 + f0 + 700], "end of file"),
+            ("truncated in the palette sector", good[:512 + padded + 100], "end of file"),
+            ("bad tag", bytes(bad_tag), "tag"),
+            ("frame count beyond the file", hdr_set(enc.HDR_OFF_FRAMES, 4, 3), "end of file"),
+            ("cap not pixel sectors + 1", hdr_set(enc.HDR_OFF_FRAMECAP, 125, 2), "cap"),
+            ("raw without direct ($11)", hdr_set(enc.HDR_OFF_FLAGS, 0x11), "raw"),
+            ("raw width 6", hdr_set(enc.HDR_OFF_RAWW, 6, 2), "raw width"),
+            ("raw width 0", hdr_set(enc.HDR_OFF_RAWW, 0, 2), "raw width"),
+            ("raw width 324", hdr_set(enc.HDR_OFF_RAWW, 324, 2), "raw width"),
+            ("three channels", hdr_set(enc.HDR_OFF_ACHAN, 3), "channels"),
+        ]
+        for name, buf, word in cases:
+            p = Path(td) / "bad.vid"
+            p.write_bytes(buf)
+            try:
+                list(dec.decode(p))
+            except dec.Nxv2FormatError as exc:
+                expect(word in str(exc), f"{name}: message {str(exc)!r} lacks {word!r}")
+            except Exception as exc:
+                raise AssertionError(f"{name}: {exc.__class__.__name__} {exc}, not Nxv2FormatError")
+            else:
+                raise AssertionError(f"{name}: decode did not raise")
+            issues = dec.validate(p)
+            expect(any(word in i for i in issues), f"{name}: validate {issues}")
+
+
 def _raw_demo_src():
     src = ROOT / "tools" / "demo-files" / "1920x1080-25p.mp4"
     if not src.exists() or not FFMPEG.exists():
