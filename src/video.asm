@@ -5439,8 +5439,8 @@ vidRawVar:   db 0               ; raw: 1 = the column train, 0 = inline (vid_raw
  IFDEF DEBUG
 ; ---------------------------------------------------------------------
 ; NXB_PAGE - the DEBUG bench bank's lower 8K, at $C000. MMU6 holds it
-; only inside nxb_tab_stage and nxb_hop6: tables, untimed session steps and
-; row geometry.
+; only inside nxb_tab_stage, nxb_hop6 and vid_open_fail_print: tables, untimed
+; session steps, row geometry and the open-failure prints.
 ; ---------------------------------------------------------------------
     MMU 6, NXB_PAGE, DATA_WINDOW
 
@@ -7306,6 +7306,50 @@ nxb_geo_body:
 ; nxb_geo_body lookups by code: gapped height, dest start.
 nxbGeoH:     db 192, 144, 72
 nxbGeoDst:   dw VID_DST_WIN, NXB_MID_DST, NXB_EDGE_DST, NXB_SEAM_DST
+
+; ---------------------------------------------------------------------
+; OPEN-FAILURE PRINTS - untimed, from the cold stub vid_open_fail_print
+; (MMU6 = NXB_PAGE, MMU7 = VID_PAGE2). Calls resident code only.
+; ---------------------------------------------------------------------
+
+; B = 0 VID FILE? / 1 VID FMT? / 2 VID NOBANK2 (no bank) / 3 VID SIZE? (no ring fits) /
+; 4 VID FRAG? (the filemap exceeds the hot copy). Corrupts AF, BC, DE, HL.
+vid_fail_body:
+    ld a, b
+    or a
+    ld hl, msgVidMissing
+    jr z, vid_fail_puts          ; B = 0
+    cp 2
+    ld hl, msgVidBadFmt
+    jr c, vid_fail_puts          ; B = 1
+    ld hl, msgVidNoBank2
+    jr z, vid_fail_puts          ; B = 2
+    cp 4
+    ld hl, msgVidTooBig
+    jr c, vid_fail_puts          ; B = 3
+    ld hl, msgVidFrag            ; B = 4
+; HL = ASCIIZ. Prints at row VID_FAIL_ROW col 0, white on black (reserved pair 0),
+; through the resident tm_putc_at. Corrupts AF, BC, DE, HL.
+VID_FAIL_ROW equ 23              ; the play log captures from here (NXB_PLAY_ROW0)
+vid_fail_puts:
+    ld bc, VID_FAIL_ROW*256+0    ; B = row 23, C = col 0
+    ld e, TM_ATTR_DEFAULT        ; reserved pair 0: white ink, black paper
+.loop:
+    ld a, (hl)
+    or a
+    ret z
+    push hl
+    call tm_putc_at              ; preserves BC, DE
+    pop hl
+    inc hl
+    inc c
+    jr .loop
+
+msgVidMissing:  db "VID FILE?", 0
+msgVidNoBank2:  db "VID NOBANK2", 0
+msgVidBadFmt:   db "VID FMT?", 0
+msgVidTooBig:   db "VID SIZE?", 0
+msgVidFrag:     db "VID FRAG?", 0
 
     DISPLAY "nxb page ends at ", $, " headroom ", /D, DATA_WINDOW + $2000 - $
     ASSERT $ <= DATA_WINDOW + $2000
@@ -10195,66 +10239,20 @@ vid_open_video_body:
     ld hl, vid_play.openret
     jp vid_hop1
 
-; Open-failure diagnostic prints - DEBUG ONLY (owner ruling 2026-08-27:
-; a player must never see error codes mid-game) - an SFX/GFX-triggered
-; stream refused on a platform without SD streaming fails silently in
-; Release; authors diagnose with the DEBUG build. Printed via the
-; resident tm_putc_at instead of the dbg console (one route, no double
-; print in DEBUG).
-; Safe from here because both call sites fire strictly pre-arm: the
-; video never started, no L2/mode switch happened (vid_run_l2setup_body
-; runs only on success), the game's tilemap at TM_MAP ($6000, MMU3) is
-; still live and mapped - the open path only brackets MMU6 (data_save/
-; data_restore, closed on every failure exit) and MMU7 (this page);
-; MMU2/MMU3 are captured, never remapped, pre-arm. Row 23 col 0 is the
-; position the old DEBUG dbg_at path used; reserved pair 0 (white ink
-; on black paper) is the attr dbg_putc_tm also uses. The game
-; continues after the print (non-fatal, unchanged) and its own window
-; scrolling may later overwrite the text - a diagnostic, not a HUD.
+; Open-failure prints, DEBUG only (Release fails silently): vid_fail_body on NXB_PAGE,
+; mapped at MMU6 for the call. Pre-arm at both call sites: the game's tilemap is mapped.
+; In: B = 1..4 (vid_fail_body); vid_play_missing_print needs none. Corrupts AF, BC, DE, HL.
  IFDEF DEBUG
 vid_play_missing_print:
-    ld hl, msgVidMissing
-    jr vid_fail_puts
-
-; Open/load failure print: B = 1 VID FMT / 2 no bank / 3 no ring fits
-; (pool below one streamed frame's need) / 4 too fragmented to stream
-; (filemap exceeds the hot copy - and the file-size ceiling that a
-; too-long clip now meets: VID_STRM_HOT_ENT extents of 65535 blocks).
-; Corrupts B - the caller brackets it.
+    ld b, 0
 vid_open_fail_print:
-    ld a, b
-    cp 2
-    ld hl, msgVidBadFmt
-    jr c, vid_fail_puts          ; B = 1
-    ld hl, msgVidNoBank2
-    jr z, vid_fail_puts          ; B = 2
-    cp 4
-    ld hl, msgVidTooBig
-    jr c, vid_fail_puts          ; B = 3
-    ld hl, msgVidFrag            ; B = 4
-; HL = ASCIIZ. Prints at row 23 col 0, white on black (reserved pair 0),
-; straight through the resident tm_putc_at (overlay1 calls it the same
-; way). Corrupts AF, BC, DE, HL.
-VID_FAIL_ROW equ 23              ; the play log captures from here (NXB_PLAY_ROW0)
-vid_fail_puts:
-    ld bc, VID_FAIL_ROW*256+0    ; B = row 23, C = col 0
-    ld e, TM_ATTR_DEFAULT        ; reserved pair 0: white ink, black paper
-.loop:
-    ld a, (hl)
-    or a
-    ret z
-    push hl
-    call tm_putc_at              ; preserves BC, DE
-    pop hl
-    inc hl
-    inc c
-    jr .loop
-
-msgVidMissing:  db "VID FILE?", 0
-msgVidNoBank2:  db "VID NOBANK2", 0
-msgVidBadFmt:   db "VID FMT?", 0
-msgVidTooBig:   db "VID SIZE?", 0
-msgVidFrag:     db "VID FRAG?", 0
+    NRGET NR_MMU6
+    push af
+    nextreg NR_MMU6, NXB_PAGE
+    call vid_fail_body
+    pop af
+    nextreg NR_MMU6, a
+    ret
  ENDIF
 
 ; ---------------------------------------------------------------------

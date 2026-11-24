@@ -20,7 +20,8 @@ IM2_CTC_STUB again from vid_run_restore_body; the image's writers). DEBUG images
 frame loop's LATE and URUN counters (vid_dbg_late, vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
 kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain, the play
-log modes 16 and 17 and nxb_entry's mode routes) and nxb_geo_setup's hop to NXB_PAGE against
+log modes 16 and 17, nxb_entry's mode routes, the open-failure prints on NXB_PAGE behind
+their cold stub) and nxb_geo_setup's hop to NXB_PAGE against
 the baseline image in tests\\out\\vidraw-dma-base; each is skipped with a note where it is not
 assembled.
 
@@ -5720,6 +5721,47 @@ def test_play_nofile():
         raise Fail(f"mode 16 after 17: NXPLAY.TXT {got!r}, row 31 {tm_text(mc, 31)!r}")
 
 
+def test_fail_print():
+    """The DEBUG open-failure prints: vid_play_missing_print (VID FILE?) and vid_open_fail_print
+    with B = 1..4 (VID FMT?, VID NOBANK2, VID SIZE?, VID FRAG?) on row VID_FAIL_ROW from column
+    0 at TM_ATTR_DEFAULT, nothing else on the tilemap changed. The body and its strings are on
+    NXB_PAGE, entered once with NXB_PAGE at MMU6 from a cold stub of at most 20 bytes; MMU6
+    (NR $56 too) and MMU7 on return as on entry."""
+    bench_only()
+    nxb, cold = S("NXB_PAGE"), S("VID_PAGE2")
+    names = ("vid_fail_body", "vid_fail_puts", "msgVidMissing", "msgVidNoBank2", "msgVidBadFmt",
+             "msgVidTooBig", "msgVidFrag")
+    off = [n for n in names if SYMS.get(n, (0,))[0] != nxb]
+    stub = [n for n in ("vid_play_missing_print", "vid_open_fail_print")
+            if SYMS.get(n, (0,))[0] != cold]
+    if off or stub:
+        raise Fail(f"not NXB_PAGE labels: {off}; not VID_PAGE2 labels: {stub}")
+    after = min(v for k, (pg, v) in SYMS.items()
+                if pg == cold and v > S("vid_open_fail_print") and "." not in k)
+    if after - S("vid_play_missing_print") > 20:
+        raise Fail(f"the cold stub is {after - S('vid_play_missing_print')} bytes")
+    row, attr = S("VID_FAIL_ROW"), S("TM_ATTR_DEFAULT")
+    for entry, b, text in (("vid_play_missing_print", 0x77, "VID FILE?"),
+                           ("vid_open_fail_print", 1, "VID FMT?"),
+                           ("vid_open_fail_print", 2, "VID NOBANK2"),
+                           ("vid_open_fail_print", 3, "VID SIZE?"),
+                           ("vid_open_fail_print", 4, "VID FRAG?")):
+        mc = play_machine({row: ""})
+        mapnr(mc, 7, cold)
+        mapnr(mc, 6, CHAIN_ENTRY6)
+        before = [tm_bytes(mc, r) for r in range(32)]
+        seen = []
+        mc.run(entry, traps={S("vid_fail_body"): lambda c: seen.append(mc.mmu[6]) or c.step()},
+               b=b)
+        want = b"".join(bytes([ord(ch), attr]) for ch in text) + before[row][2 * len(text):]
+        changed = [r for r in range(32) if r != row and tm_bytes(mc, r) != before[r]]
+        got = (seen, mc.mmu[6], mc.nr.get(0x56), mc.mmu[7], mc.cpu.sp)
+        if tm_bytes(mc, row) != want or changed or got != ([nxb], CHAIN_ENTRY6, CHAIN_ENTRY6,
+                                                           cold, STACK):
+            raise Fail(f"{entry} B={b}: row {row} {tm_text(mc, row)!r}, expected {text!r}; rows "
+                       f"changed {changed}; (MMU6 at the body, MMU6, NR $56, MMU7, SP) = {got}")
+
+
 def test_entry_modes():
     """nxb_entry: flags+250 = 15, 16, 17 reach nxb_log with NXB_PAGE at MMU6 and nxbMode the
     mode, 14 reaches .arm, none enters the standalone path; 18 and 255 reach nxb_log and show
@@ -5929,7 +5971,7 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_vec_install, test_vec_restore,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_vec_bench, test_rw_kinds, test_rw_histlog,
-         test_play_log, test_play_clr, test_play_nofile, test_entry_modes,
+         test_play_log, test_play_clr, test_play_nofile, test_fail_print, test_entry_modes,
          test_rw_harness, test_rw_card_c, test_rw_chain, test_geo_hop, test_loop_sound_boundary]
 
 
