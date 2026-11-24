@@ -1344,9 +1344,9 @@ VID_DAC_LEFT    equ $F3
 VID_DAC_RIGHT   equ $F9
 VID_DAC_MONO    equ DAC2_PORT  ; $B3 writes DAC B and C at once: mono to both sides
 
-; Raw session schedule bank (ring bank 0, at MMU6 for the decode): a 512 x ini
-; slide ending in ret, a 512-byte pad scratch, the schedule, the sound reader
-; (vrPumpT), the palette train, then 16 stub bytes at the page top (zero).
+; Raw session schedule bank, page A (ring bank 0, at MMU6 for the decode): a 512 x ini
+; slide ending in ret, a 512-byte pad scratch, the dispatcher and classic schedule, the
+; sound reader (vrPumpT), the palette train, the 16 page switch stub bytes at the top.
 VR_SLIDE        equ DATA_WINDOW
 VR_SLIDE_END    equ VR_SLIDE + 1024
 VR_SCRATCH      equ VR_SLIDE_END + 1    ; 512 bytes

@@ -18,6 +18,8 @@ Exit 0 when every residual is within ACCEPT_PCT, the sound-term rule holds (SOUN
 SOUND_ERR_PCT) and no row is listed for a RE-RUN, 1 when not, 2 on a log or fit error.
 """
 import argparse
+import contextlib
+import io
 import re
 import sys
 import tempfile
@@ -408,6 +410,7 @@ class Section:
     markers: list = field(default_factory=list)
     iden_mark: object = False    # the token after IDEN's D (None: none), False: no IDEN line
     typed: bool = False          # typed screen text (no #NXB header)
+    iden_bad: object = None      # the first IDEN-tagged line IDEN_MARK_RE refuses, or None
 
 
 def read_sections(path):
@@ -431,19 +434,25 @@ def read_sections(path):
             rows[tag] = (o, r, f, d)
         fail = next((l.strip() for l in run.lines if FAIL_RE.match(l.strip())), None)
         marks = [l.strip() for l in run.lines if MARKER_RE.search(l)]
-        iden = next((m for m in (IDEN_MARK_RE.match(l.strip()) for l in run.lines) if m), None)
+        idl = [l.strip() for l in run.lines if l.split()[:1] and l.split()[0].upper() == "IDEN"]
+        iden = next((m for m in map(IDEN_MARK_RE.match, idl) if m), None)
+        bad = next((l for l in idl if not IDEN_MARK_RE.match(l)), None)
         out.append(Section(k, run.stamp, run.command, run.clip, rows, run.hist, fail,
                            run.err, notes, marks, iden.group(1) if iden else False,
-                           run.stamp is None))
+                           run.stamp is None, bad))
     return out
 
 
 def log_model(sections):
     """The frame harness model the log's NXBW captures name: MODEL_MARK's token after their
     IDEN row, UNMARKED_MODEL for a #NXB capture with none. -> (model or None, captures read);
-    None when no usable NXBW capture has an IDEN row. Two models in one log: FitError."""
+    None when no usable NXBW capture has an IDEN row. Two models in one log, or an IDEN row
+    the grammar refuses (an NXBW capture, typed or not): FitError."""
     by = {}
     for s in sections:
+        if s.verb == "NXBW" and not s.failure and s.iden_bad is not None:
+            raise FitError("section %d: IDEN row %r does not parse (IDEN O= R= F= D= and at "
+                           "most one mark): refused" % (s.index, s.iden_bad))
         if s.verb != "NXBW" or s.failure or s.iden_mark is False or s.typed:
             continue
         mark = (s.iden_mark or "").upper()
@@ -1941,6 +1950,24 @@ def selftest():
         check(all(_near(res_inf1b.k[f][key], want) for f in FORMS
                   for key, want in SYNTH["k"][f].items()),
               "a 1b log with no --model: model 1b read from it, constants recovered")
+    # an IDEN row with a token too many (1b: two after D=, 1c: one after its mark) is refused,
+    # not read as no IDEN row; main exits 2 naming it
+    with tempfile.TemporaryDirectory() as tmp:
+        set_model("1b")
+        try:
+            t1b = synth_log()
+        finally:
+            set_model("1c")
+        row, got = "IDEN O=02 R=00FA F=0100 D=00C0", []
+        for name, txt, old, new in (("B1B.TXT", t1b, "", " X Y"), ("B1C.TXT", synth_log(),
+                                                                   " H1C", " H1C X")):
+            p = Path(tmp) / name
+            p.write_bytes(txt.replace(row + old + "\r\n", row + new + "\r\n", 1).encode("ascii"))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = main([str(p)])
+            got.append((chosen(read_sections(p))[:8], rc, "does not parse" in err.getvalue()))
+        check(got == [("refused:", 2, True)] * 2, "IDEN row with a token too many: %r" % got)
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,

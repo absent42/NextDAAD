@@ -1111,7 +1111,12 @@ VR_OPEN_T = 86
 VR_READ_T = 27
 VR_HOP_T = 11
 VR_PAGE_T = 32
+# VR_FAST_T counts VR_TAILA's ret, which replaces the classic schedule's own: a fast frame
+# costs VR_FAST_NET_T more than the classic; a frame crossing its run pays VR_CROSS_T (the
+# dispatcher) before VR_CLASSIC.
 VR_FAST_T = 110
+VR_FAST_NET_T = 100
+VR_CROSS_T = 30
 VR_FIRST_T = 152
 NOSITE = (0, ())
 

@@ -2189,7 +2189,8 @@ def test_fast_t():
     inside its run, CRC due, one $FF a wait, no pad): VR_OPEN_T an inline open to its first
     read's call, VR_READ_T a slide call less its ini, VR_HOP_T a column end, VR_PAGE_T a page
     end, VR_FIRST_T the program's call vr_sector to its return (plain DEBUG less the PLAY
-    divider), VR_FAST_T the dispatcher, both nextregs and the three jps with VR_TAILA's ret."""
+    divider), VR_FAST_T the dispatcher, both nextregs and the three jps with VR_TAILA's ret;
+    VR_FAST_NET_T a fast frame over the classic, VR_CROSS_T a crossing frame's dispatcher."""
     import nxv2_bench_rows as bench
     code, w, h = 1, 320, 192
     mc = RawMachine(SYMS)
@@ -2230,6 +2231,60 @@ def test_fast_t():
     if got != want or (disp, back - tx) != (60, 50):
         raise Fail(f"fast program T {got}, nxv2_bench_rows {want}; dispatcher to VR_PROG "
                    f"{disp}, jp VR_XOUT to the return {back - tx}")
+    # VR_FAST_NET_T: one inline frame (320x240, no pad) through the classic schedule (P4's path:
+    # vid_raw_frame's call VR_SCHED aimed at VR_CLASSIC) less through the fast program is
+    # (sectors - 1) x (CLASSIC_OPEN_T - VR_OPEN_T) - VR_FAST_NET_T; VR_CROSS_T: a crossing
+    # frame's dispatcher, VR_SCHED to VR_CLASSIC
+    (tf, sec), (tc, _) = (frame_t(1, 320, 240, classic=c) for c in (False, True))
+    mc = RawMachine(SYMS)
+    if build_sched(mc, 1, 320, 240).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    setup_frame(mc, 1, 320, 240)
+    set_entry(mc, "VR_ENT_CROSS")
+    cpu = mc.cpu
+    cpu.sp, cpu.pc = STACK, S("VR_SCHED")
+    cross = tcount(mc, lambda c: c.pc == S("VR_CLASSIC"))
+    got = (tc - tf, cross)
+    want = ((sec - 1) * (CLASSIC_OPEN_T - bench.VR_OPEN_T) - bench.VR_FAST_NET_T,
+            bench.VR_CROSS_T)
+    if got != want or bench.VR_FAST_NET_T != bench.VR_FAST_T - 10:
+        raise Fail(f"classic less fast frame (320x240, {sec} sectors), crossing dispatcher = "
+                   f"{got}, expected {want} (VR_FAST_NET_T {bench.VR_FAST_NET_T}, VR_FAST_T "
+                   f"{bench.VR_FAST_T} less VR_TAILA's ret 10)")
+
+
+CLASSIC_OPEN_T = 101                # call vr_sector_n at one $FF (test_sector_t)
+
+
+def frame_t(code, w, h, classic=False):
+    """T of vid_raw_frame (inside its run, CRC due, one $FF a wait, no palette) and its pixel
+    sectors; classic: its call VR_SCHED aimed at VR_CLASSIC. Surface and reads checked."""
+    mc = RawMachine(SYMS)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail(f"{code},{w}x{h}: vid_raw_sched_build set CF")
+    x0, sectors = setup_frame(mc, code, w, h, crc_due=1)
+    for n in ("vidRlDiv", "vidRlSpinDiv"):
+        if n in SYMS:
+            mc.poke(n, 250)
+    px = pixels(w * h)
+    card = Card(blocks(px), waits=1, crc_first=True)
+    mc.set_card(card)
+    f = S("vid_raw_frame")
+    if classic:
+        at = find_code(mc, f, f + 0x80, b"\xCD" + le(S("VR_SCHED")))
+        mc.mem[at + 1:at + 3] = le(S("VR_CLASSIC"))
+    cpu = mc.cpu
+    cpu.sp, cpu.pc = STACK, f
+    cpu.push(RET)
+    t = tcount(mc, lambda c: c.pc == RET)
+    mc.sync()
+    base = BACK_BANK * 0x4000
+    if card.pos != len(card.stream) or cpu.a != S("VOP_KFLIP"):
+        raise Fail(f"{code},{w}x{h} classic {classic}: {len(card.stream) - card.pos} reads "
+                   f"left, A ${cpu.a:02X}")
+    expect(mc.phys[base:base + SURF_LEN], want_surface(code, w, h, x0, px),
+           f"{code},{w}x{h} classic {classic} surface")
+    return t, sectors
 
 
 def pump_template():
