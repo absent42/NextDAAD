@@ -1362,12 +1362,13 @@ VR_PUMP_LEN     equ 216                 ; vrPumpT's ASSERT bounds it
 VR_PUMP         equ VR_PALTRAIN - VR_PUMP_LEN
 VR_SCHED_LIMIT  equ VR_PUMP
 ; VR_SCHED holds the dispatcher, the classic schedule follows at VR_CLASSIC. Page B (page A
-; + 1): the slide, the fast frame program from VR_PROG to VR_BEND, VR_BS1, VR_BPG, the stubs.
+; + 1): the slide and inline program from VR_PROG, or the column train (period at DATA_WINDOW,
+; then its driver), below VR_BEND; VR_BS1, VR_BPG, the stubs.
 VR_DISP_LEN     equ 8
 VR_CLASSIC      equ VR_SCHED + VR_DISP_LEN
 VR_PROG         equ VR_SLIDE_END + 1
 VR_BS1          equ VR_XIN - 20         ; 12 bytes: the token on poll 1
-VR_BPG          equ VR_XIN - 8          ; 8 bytes
+VR_BPG          equ VR_XIN - 8          ; 8 bytes: the train's page end, ret
 VR_BEND         equ VR_BS1
 
 ; Layer 2 mode select (NR $70), matching l2_mode_set's own literals

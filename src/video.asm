@@ -5431,6 +5431,8 @@ nxbHistBin:  ds 2 * NXB_HIST_BINS   ; RHIST bins, zeroed per row (nxb_kind_rhist
 nxbHistN:    db 0               ; histograms in nxbHistSav for the log step
  ENDIF
 
+vidRawVar:   db 0               ; raw: 1 = the column train, 0 = inline (vid_raw_stage)
+
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
 
@@ -8224,8 +8226,9 @@ vid_strm_validate:
     ret
 
 ; Page A (at DATA_WINDOW): the slide, palette train, pump, dispatcher, classic schedule,
-; VR_TAILA, stubs; then page B (page A + 1, mapped and back): slide, fast program, VR_BS1,
-; stubs. In: vidP_*, vidRingBanksC. Out: CF = a limit would be passed. Corrupts all.
+; VR_TAILA, stubs; then page B (page A + 1, mapped and back): slide and inline program, or the
+; column train (.var), VR_BS1, stubs. In: vidP_*, vidRingBanksC. Out: CF = a limit would be
+; passed. Corrupts all.
 vid_raw_sched_build:
     call .slide
     ASSERT PORT_SPI_DAT == $EB
@@ -8258,55 +8261,44 @@ vid_raw_sched_build:
     xor a                        ; the classic: opens called
     call .pass
     ret c
-    call .stubs
     ld a, (vidRingBanksC)
     add a, a
     inc a
     nextreg NR_MMU6, a           ; page B
-    call .slide
-    ld hl, .bs1t
-    ld de, VR_BS1
-    ld bc, VR_BPG - VR_BS1
-    ldir
-    call .stubs                  ; the same 16 bytes as page A's
-    ld de, VR_PROG
-    ld hl, VR_BEND - 16 - VR_OPEN_BUDGET   ; a pass with an inline open, the exit jp
-    ld a, 1                      ; the fast program: opens inline
+    ld de, DATA_WINDOW
+    ld a, 2                      ; the column train if its bytes fit (.lim), else
     call .pass
+    ld a, 1
+    jr nc, .pbt
+    call .slide                  ; the slide and the inline program
+    ld hl, VR_PROG
+    ld (vrgDrv), hl
+    ex de, hl
+    ld hl, VR_BEND - 16 - VR_OPEN_BUDGET   ; a pass with an inline open, the exit jp
+    ld a, 1
+    call .pass
+    ld a, 0
+.pbt:
+    ld (vrgVar), a
     push af
+    ld hl, .bs1t                 ; VR_BS1 and VR_BPG, over anything the train passed
+    ld de, VR_BS1
+    ld bc, VR_XIN - VR_BS1
+    ldir
+    call .stubs
     ld a, (vidRingBanksC)
     add a, a
     nextreg NR_MMU6, a           ; page A back
+    call .stubs                  ; the same 16 bytes as page B's
     pop af
     ret
-; One schedule from DE: A = 0 the classic, 1 the fast program; HL = DE's limit at a pass.
+; One schedule from DE: A = 0 the classic, 1 the inline program, 2 the train (its period:
+; vrgPix = Lp); HL = DE's limit at a read.
 .pass:
     ld (vrgInl), a
     ld (vrgLim), hl
     push de
-    ; pixel bytes w*h: w = 4k, so A:HL = 4 * k*h (k*h <= 80*256)
-    ld hl, (vidP_RawW)
-    srl h
-    rr l
-    srl h
-    rr l                         ; L = k
-    ld a, (vidP_HeightB)
-    or a
-    jr z, .h256
-    ld d, l
-    ld e, a
-    mul d, e
-    ex de, hl
-    jr .hk
-.h256:
-    ld h, l
-    ld l, a                      ; k*256 (A = 0)
-.hk:
-    xor a
-    add hl, hl
-    rla
-    add hl, hl
-    rla
+    call .pix
     ld (vrgPix), hl
     ld (vrgPix+2), a
     ; the first page starts x0 & 31 columns in
@@ -8340,13 +8332,21 @@ vid_raw_sched_build:
     ld (vrgGap), a
     ld hl, 512
     ld (vrgSec), hl
+    ld a, 32
+    ld (vrgCRst), a
+    ld a, (vrgInl)
+    xor 2
+    call z, .var                 ; the train: its period's cells over these; CF: none
     pop de
+    ret c
+    ld a, (vrgInl)
+    cp 2
+    ld a, 1
+    jp z, .inl                   ; the train: the period's first open, no pad
     ld hl, vr_sector
     call .ecall
 .loop:
-    ld hl, (vrgLim)
-    or a
-    sbc hl, de
+    call .lim
     ret c
     ld bc, (vrgSec)              ; n = min(sector, segment, pixels left)
     ld hl, (vrgSeg)
@@ -8364,6 +8364,7 @@ vid_raw_sched_build:
     ld bc, (vrgPix)
 .n2:
     call .eread
+    ret c                        ; the train past vrgLim
     ld hl, (vrgSec)
     or a
     sbc hl, bc
@@ -8382,6 +8383,11 @@ vid_raw_sched_build:
     or h
     or l
     jr z, .fin                   ; last pixel: no column or page end
+    ld bc, (vrgPP)
+    sbc hl, bc                   ; CF clear from the or
+    jr nz, .npp
+    ld (vrgPA), de               ; the train's patch site: the code after this read
+.npp:
     ld hl, (vrgSeg)
     ld a, h
     or l
@@ -8391,23 +8397,23 @@ vid_raw_sched_build:
     ld a, (vrgGap)
     or a
     jr z, .page
-    ld a, $2E
-    ld hl, $2400
-    call .e3                     ; ld l, 0 / inc h
+    call .hop
     ld hl, vrgCols
     dec (hl)
     jr nz, .nseg
-    ld (hl), 32
-.page:                           ; L = 0 here: inc e / ld a, e /
-    ld a, $1C                    ; nextreg NR_MMU2, a / ld h, high VID_DST_WIN
-    ld hl, $ED7B
-    call .e3
-    ld a, $92
-    ld hl, $2600 | NR_MMU2
-    call .e3
-    ld a, high VID_DST_WIN
-    ld (de), a
-    inc de
+    ld a, (vrgCRst)
+    and $7F
+    ld (hl), a
+.page:                           ; L = 0 here: .bpgt, or the train's check .chkt
+    ld hl, .bpgt
+    ld bc, 7
+    ld a, (vrgCRst)
+    rla
+    jr nc, .pg1
+    ld hl, .chkt
+    ld c, 5
+.pg1:
+    ldir
 .nseg:
     ld hl, (vrgSec)
     ld a, h
@@ -8421,20 +8427,95 @@ vid_raw_sched_build:
     ld hl, vr_sector_n           ; sectors 2..n: the CRC always pends
     call .ecall
     jp .loop
-.inl:
+.inl:                            ; A = 1: the open; 2 (the train): nop, then the open
     ld hl, .opent
     ld bc, .opend - .opent
+    rra
+    jr c, .inl1
+    dec hl                       ; .opad
+    inc bc
+.inl1:
     ldir
     jp .loop
 .fin:
     ld a, (vrgInl)
     or a
-    jr z, .tails
+    jp z, .tails
+    cp 2
+    jr z, .tfin
+.xout:
     ld a, $C3                    ; jp VR_XOUT at the last pixel byte: VR_TAILA reads the pad
     ld hl, VR_XOUT
     call .e3
     or a
     ret
+.tfin:                           ; the train: the period's last hop (gapped) and ret; the driver
+    ld a, (vrgGap)
+    or a
+    call nz, .hop
+    ld a, $C9
+    ld (de), a
+    inc de
+    ld (vrgDrv), de              ; VR_XJP's target
+    ld hl, vr_sector
+    call .ecall
+    ld hl, DATA_WINDOW + .opend - .opent
+    call .ecall                  ; pass 1 after the period's first open (vr_sector's)
+    ld a, (vrgPasses)
+    dec a
+    jr z, .tend
+    ld b, a                      ; further passes
+    ld a, (vidP_RawX0)
+    neg
+    and 31
+    ld c, a                      ; (U0 - columns so far) & 31: 0 at a page's start
+.tdl:
+    call .lim
+    ret c                        ; past the rule's bytes: no train
+    ld a, c
+    ld hl, vrgIp
+    sub (hl)
+    and 31
+    ld c, a
+    jr nz, .tdp
+    push bc
+    ld hl, .bpgt
+    ld bc, 7
+    ldir                         ; this pass starts a page
+    pop bc
+.tdp:
+    ld a, b
+    dec a
+    jr nz, .tdc
+    ld a, (vrgPart)
+    or a
+    ld a, $C9
+    call nz, .epatch             ; the partial last pass returns at the patch site
+.tdc:
+    ld a, $CD
+    ld hl, DATA_WINDOW
+    call .e3                     ; call the period
+    djnz .tdl
+    ld a, (vrgPart)
+    or a
+    jr z, .tend
+    ld hl, (vrgPA)
+    ld a, (hl)
+    call .epatch                 ; and the byte back
+.tend:
+    call .xout
+.lim:                            ; CF: DE past vrgLim (the train: the rule's bytes, VR_BEND)
+    ld hl, (vrgLim)
+    or a
+    sbc hl, de
+    ret
+.epatch:                         ; ld a, A / ld (vrgPA), a to (DE)+. Preserves BC.
+    ld l, a
+    ld a, $3E
+    ld h, $32
+    call .e3
+    ld hl, (vrgPA)
+    jr .e2
 .tails:                          ; the classic's pad tail, then VR_TAILA the same
     call .tail
     ld (vrgTail), de
@@ -8475,8 +8556,17 @@ vid_raw_sched_build:
     ld (VR_XIN + 3), a           ; page B
     ld hl, (vrgTail)
     ld (VR_XTAIL + 1), hl
+    ld hl, (vrgDrv)
+    ld (VR_XJP + 1), hl          ; VR_PROG, or the train's driver
     ret
-.eread:                          ; call VR_SLIDE_END - 2 * BC (BC <= 512)
+.hop:                            ; ld l, 0 / inc h to (DE)+. Preserves BC.
+    ld a, $2E
+    ld hl, $2400
+    jr .e3
+.eread:                          ; call VR_SLIDE_END - 2 * BC (BC <= 512); the train: BC x ini
+    ld a, (vrgInl)
+    cp 2
+    jr z, .eini
     ld hl, VR_SLIDE_END
     or a
     sbc hl, bc
@@ -8486,12 +8576,200 @@ vid_raw_sched_build:
 .e3:                             ; A, L, H to (DE)+. Preserves BC.
     ld (de), a
     inc de
+.e2:
     ld a, l
     ld (de), a
     inc de
     ld a, h
     ld (de), a
     inc de
+    ret
+.eini:                           ; BC (1..512) x ini to (DE)+; CF: the run passes vrgLim (none
+    push de                      ; written). Preserves BC.
+    ex de, hl
+    add hl, bc
+    add hl, bc
+    ex de, hl
+    call .lim
+    pop de
+    ret c
+    push bc
+    ex de, hl
+.ein1:
+    ld (hl), $ED
+    inc hl
+    ld (hl), $A2
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, .ein1
+    ex de, hl
+    pop bc
+    ret
+.pix:                            ; A:HL = w x h: w = 4k, 4 x k x h (k x h <= 80 x 256). Keeps BC.
+    ld hl, (vidP_RawW)
+    srl h
+    rr l
+    srl h
+    rr l                         ; L = k
+    ld a, (vidP_HeightB)
+    or a
+    jr z, .h256
+    ld d, l
+    ld e, a
+    mul d, e
+    ex de, hl
+    jr .hk
+.h256:
+    ld h, l
+    ld l, a                      ; k*256 (A = 0)
+.hk:
+    xor a
+    add hl, hl
+    rla
+    add hl, hl
+    rla
+    ret
+; The column train's cells. nxv2_bench_rows.raw_variant is the rule; the train pass holds to it
+; (.lim, each open counted at VR_OPEN_BUDGET). vrgPix = Lp, vrgPasses, vrgPart, vrgPP or vrgPA,
+; vrgIp, vrgLim; checks: vrgCols, vrgCRst (bit 7). CF: no train. Corrupts all.
+.var:
+    xor a
+    ld (vrgPart), a
+    ld (vrgPix+2), a
+    ld h, a
+    ld l, a
+    ld (vrgPP), hl               ; no patch site met in the period
+    ld a, (vidP_RawX0)
+    neg
+    and 31
+    ld c, a                      ; C = U0 & 31 (U0: 256-byte columns in the first page)
+    ld a, (vidP_Shape)
+    or a
+    jr z, .vflat
+    ld a, (vidP_HeightB)
+    or a
+    jr nz, .vgap
+.vflat:                          ; a pass a sector (2 columns of 256); page ends between passes
+    scf
+    bit 0, c
+    ret nz                       ; the first page is not whole sectors: no train
+    call .pix                    ; A:H = 256-byte units
+    ld de, 512
+    ld l, h
+    ld h, a
+    inc hl
+    srl h
+    rr l                         ; L = passes; CF: the units are even
+    ld a, l
+    ld (vrgPasses), a
+    jr c, .vfe
+    dec a
+    jr nz, .vfp
+    ld d, 1                      ; one unit: Lp 256
+    jr .vfe
+.vfp:
+    ld a, 1
+    ld (vrgPart), a
+    ld hl, DATA_WINDOW + .opend - .opent + 512
+    ld (vrgPA), hl               ; period offset 256's ini
+.vfe:
+    ld a, 2
+    ld (vrgIp), a
+    ex de, hl
+    jr .vend
+.vgap:                           ; A = h, 1..255
+    ld b, a
+    neg
+    and b                        ; g = h & -h
+    ld hl, 512
+.vg:
+    rra
+    jr c, .vg1
+    srl h
+    rr l
+    jr .vg
+.vg1:                            ; HL = Cp = 512 / g: columns a period
+    ld a, l
+    and 31
+    ld (vrgIp), a                ; Cp mod 32: the page counter's step a pass
+    ex de, hl
+    ld hl, (vidP_RawW)
+    xor a
+.vq:
+    inc a
+    or a
+    sbc hl, de
+    jr z, .vq1
+    jr nc, .vq
+.vq1:                            ; A = passes; HL = minus the last pass's columns short
+    ld (vrgPasses), a
+    dec a
+    jr nz, .vmp
+    add hl, de                   ; one pass: cols = w, page ends inline at their columns
+    ex de, hl
+    jr .vlp
+.vmp:                            ; DE = Cp = cols, <= 256 (Cp < w)
+    ld a, h
+    or l
+    jr z, .vmw
+    xor a
+    sub l                        ; columns short, < 256
+    push de
+    ld d, a
+    ld e, b
+    mul d, e
+    ld (vrgPP), de               ; vrgPix after the partial pass's last read
+    pop de
+    ld a, 1
+    ld (vrgPart), a
+.vmw:                            ; checks: reset m = min(32, Cp), start ((U0 - 1) & (m - 1)) + 1
+    ld a, 32
+    inc d
+    dec d
+    jr nz, .vm1
+    cp e
+    jr c, .vm1
+    ld a, e
+.vm1:
+    ld h, a
+    or $80
+    ld (vrgCRst), a              ; bit 7: checks in place of page ends
+    dec h
+    ld a, c
+    dec a
+    and h
+    inc a
+    ld (vrgCols), a
+.vlp:                            ; DE = cols, a multiple of 4, <= 320; B = h
+    srl d
+    rr e
+    srl d
+    rr e
+    ld d, b
+    mul d, e                     ; Lp / 4
+    ld hl, 1019
+    or a
+    sbc hl, de
+    ret c                        ; Lp over 4076: 2 x Lp alone passes VR_BEND
+    ex de, hl
+    add hl, hl
+    add hl, hl
+.vend:                           ; HL = Lp
+    ld (vrgPix), hl
+    dec hl
+    ld a, h
+    srl a
+    ld b, a                      ; sector starts in the period, less 1
+    inc b
+    ld hl, VR_BEND
+    ld de, .opend - .opent - VR_OPEN_BUDGET
+.vl:
+    add hl, de
+    djnz .vl
+    ld (vrgLim), hl              ; the rule counts each open at VR_OPEN_BUDGET
+    or a
     ret
 .dispt:                          ; at VR_SCHED: VR_ENT_FAST takes page B
     ld a, (vr_sector_n)
@@ -8511,6 +8789,17 @@ vid_raw_sched_build:
     add hl, .op2 - .op1
     ex (sp), hl
     ret
+.bpgt:                           ; at VR_BPG (the train), and the page end every program emits
+    inc e
+    ld a, e
+    nextreg NR_MMU2, a
+    ld h, high VID_DST_WIN
+    ret
+.chkt:                           ; the train's page check after a hop: H = $60 at a page end
+    bit 5, h
+    call nz, VR_BPG
+.opad:                           ; the train's pad before an open: ini to CRC 1 18 T, not 14
+    nop
 .opent:                          ; sectors 2..n of the fast program: vr_sector_n's open, 86 T
     in a, (PORT_SPI_DAT)
     nop
@@ -8533,7 +8822,8 @@ vid_raw_sched_build:
 .opend:
     ASSERT .stubt - .dispt == VR_DISP_LEN && low VR_ENT_FAST == $DB
     ASSERT .bs1t - .stubt == VR_XSTUB_LEN && VR_XJP == VR_XIN + 4 && VR_XTAIL == VR_XOUT + 4
-    ASSERT .opent - .bs1t == VR_BPG - VR_BS1 && .op2 - .op1 == 7
+    ASSERT .bpgt - .bs1t == VR_BPG - VR_BS1 && .chkt - .bpgt == VR_XIN - VR_BPG
+    ASSERT .opent - .chkt == 6 && .op2 - .op1 == 7 && high VID_DST_WIN == $40
     ASSERT .op1 - .opent == VR_OPEN_LEN - 7 && .opend - .opent <= VR_OPEN_BUDGET
     ; worst legal schedules: a read and a column end per column, a split read and an
     ; open per sector, the page ends, the first call and the tails
@@ -8708,6 +8998,8 @@ vid_raw_stage:
     ld (vidRawH0 + DATA_WINDOW - OVL_ORG), a
     xor a
     ld (vidRawTag + DATA_WINDOW - OVL_ORG), a
+    ld a, (vrgVar)
+    ld (vidRawVar + DATA_WINDOW - OVL_ORG), a
     ret
 
 ; vid_raw_sched_build state
@@ -8717,9 +9009,17 @@ vrgSegLen: dw 0                  ; column height, or $2000 (flat)
 vrgPix:    ds 3                  ; pixel bytes left (24-bit)
 vrgCols:   db 0                  ; columns left in the page (gapped)
 vrgGap:    db 0                  ; 1 = gapped surface
-vrgInl:    db 0                  ; 1 = page B's pass: opens inline, jp VR_XOUT
+vrgInl:    db 0                  ; 1 = page B's inline pass, 2 = the train's period
 vrgLim:    dw 0                  ; the pass's limit for DE at each read
 vrgTail:   dw 0                  ; VR_TAILA (page A, after the classic's ret)
+vrgVar:    db 0                  ; 1 = the column train, 0 = inline
+vrgCRst:   db 0                  ; the page counter's reset: 32, or m + $80 (the train's checks)
+vrgPasses: db 0
+vrgPart:   db 0                  ; 1 = the last pass is partial
+vrgIp:     db 0                  ; columns a pass, mod 32
+vrgPP:     dw 0                  ; vrgPix after the read the patch site follows
+vrgPA:     dw 0                  ; the patch site (page B)
+vrgDrv:    dw 0                  ; VR_XJP's target
 
 ; Common hot staging (both deliveries): fileEnd, the parameter block,
 ; ring count + bank list, DEBUG fill row, per-file SMC patches (stub

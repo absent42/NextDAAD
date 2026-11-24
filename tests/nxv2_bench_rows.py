@@ -1118,6 +1118,21 @@ VR_FAST_T = 110
 VR_FAST_NET_T = 100
 VR_CROSS_T = 30
 VR_FIRST_T = 152
+# vid_raw_frame's own T on a pixels-only frame inside its run, and VR_TAILA's pad read (its
+# ld hl and the slide call less the data) when the last sector has a pad.
+VR_FRAME_T = 401
+VR_PAD_T = 37
+# The column train (raw_train, raw_variant): the rule counts an open at VR_OPEN_BUDGET bytes in
+# every build and fits period and driver in VR_TRAIN_ROOM (VR_BEND - DATA_WINDOW). Its T: a
+# pass's call and ret, the nop before an in-period open, a page check not taken / taken (its
+# VR_BPG page end), the partial pass's two patches.
+VR_OPEN_BUDGET = 24
+VR_TRAIN_ROOM = 8156
+VR_PASS_T = 27
+VR_TPAD_T = 4
+VR_CHK_T = 18
+VR_CHK_PAGE_T = 67
+VR_PATCH_T = 40
 NOSITE = (0, ())
 
 SESSION_TABLES = {
@@ -1313,6 +1328,87 @@ def raw_blocks(name, frame_blocks, palettes=1):
             card += row[3] + 1
             need = max(need, row[3] + 1)
     return frames, frames * frame_blocks + palettes, card, need
+
+
+def raw_x0(shape, w, x0=None):
+    """The left margin in columns the open stages: centred on the 320 surface, 0 on shape 0."""
+    return x0 if x0 is not None else (320 - w) // 2 if shape else 0
+
+
+def raw_train(shape, w, h, x0=None):
+    """The column train's numbers for a raw geometry (h 0 = 256): L, Lp, Cp (0 flat), passes,
+    partial, c0, m, checks, cols, starts (sector starts in Lp), pe (page ends on period
+    boundaries; one pass: page ends in the frame), patch (total mod Lp when partial, else 0)
+    and bytes (the rule's count: opens at VR_OPEN_BUDGET); None when a flat surface's first
+    page is not whole sectors. Shape 0 has x0 = 0: its first page is 8192 bytes."""
+    x0 = raw_x0(shape, w, x0)
+    h = h & 0xFF or 256
+    total, c0 = w * h, -x0 & 31
+    if shape and h < 256:
+        g = h & -h
+        big, cp, unit = 512 * h // g, 512 // g, h
+    else:
+        if (32 - (x0 & 31)) * 256 % 512:
+            return None
+        big, cp, unit = 512, 0, 256
+    lp = min(big, total)
+    passes = -(-total // lp)
+    partial = total % lp != 0 and passes > 1
+    m = min(32, cp)
+    checks = 0 if passes == 1 or not cp else sum((j - c0) % m == 0 for j in range(1, cp))
+    cols = lp // h if cp else 0
+    starts = -(-lp // 512)
+    if passes == 1:
+        pe = sum((u - c0) % 32 == 0 for u in range(1, total // unit))
+    else:
+        pe = sum((p * (cp or 2) - c0) % 32 == 0 for p in range(1, passes))
+    nbytes = (2 * lp + 3 * cols + VR_OPEN_BUDGET * starts + (starts - 1) + 5 * checks + 1
+              + 6 + 3 * (passes - 1) + 7 * pe + (10 if partial else 0) + 3)
+    return dict(L=big, Lp=lp, Cp=cp, passes=passes, partial=partial, c0=c0, m=m,
+                checks=checks, cols=cols, starts=starts, pe=pe,
+                patch=total % lp if partial else 0, bytes=nbytes)
+
+
+def raw_variant(shape, w, h, x0=None):
+    """'train' when raw_train's bytes fit VR_TRAIN_ROOM, else 'inline' (P5's inline opens)."""
+    t = raw_train(shape, w, h, x0)
+    return "train" if t and t["bytes"] <= VR_TRAIN_ROOM else "inline"
+
+
+def raw_frame_overhead(shape, w, h, x0=None):
+    """Unarmed T of a pixels-only raw frame (inside its run, a CRC due, one $FF a wait, the
+    token on poll 2), vid_raw_frame's entry to its return, beyond 16 T a data byte read (the
+    pad included), for the variant raw_variant names."""
+    x0 = raw_x0(shape, w, x0)
+    h = h & 0xFF or 256
+    total, c0 = w * h, -x0 & 31
+    gapped = shape and h < 256
+    unit = h if gapped else 256
+    nsec = -(-total // 512)
+    pages = sum((u - c0) % 32 == 0 for u in range(1, total // unit))
+    t = VR_FRAME_T + VR_FAST_T + VR_FIRST_T + (nsec - 1) * VR_OPEN_T
+    t += VR_PAD_T if total % 512 else 0
+    if raw_variant(shape, w, h, x0) == "inline":
+        cuts = set(range(512, total, 512))
+        if gapped:
+            cuts |= set(range(h, total, h))
+        else:
+            cuts |= set(range((32 - (x0 & 31)) * 256, total, 8192))
+        return t + (len(cuts) + 1) * VR_READ_T + (w - 1 if gapped else 0) * VR_HOP_T \
+            + pages * VR_PAGE_T
+    r = raw_train(shape, w, h, x0)
+    t += r["passes"] * VR_PASS_T + (nsec - r["passes"]) * VR_TPAD_T
+    if r["partial"]:
+        t += VR_PATCH_T
+    if gapped:
+        t += (w - 1 if r["partial"] else w) * VR_HOP_T
+    if r["passes"] == 1 or not r["Cp"]:
+        return t + pages * VR_PAGE_T
+    k = w % r["Cp"] or r["Cp"]                 # the last pass's columns
+    pos = [j for j in range(1, r["Cp"]) if (j - r["c0"]) % r["m"] == 0]
+    run = (r["passes"] - 1) * len(pos) + sum(j < k for j in pos)
+    taken = pages - r["pe"]
+    return t + run * VR_CHK_T + taken * (VR_CHK_PAGE_T - VR_CHK_T) + r["pe"] * VR_PAGE_T
 
 
 def session_rows(name, delivery):
