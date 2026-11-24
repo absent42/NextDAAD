@@ -1336,32 +1336,29 @@ def raw_x0(shape, w, x0=None):
 
 
 def raw_train(shape, w, h, x0=None):
-    """The column train's numbers for a raw geometry (h 0 = 256): L, Lp, Cp (0 flat), passes,
+    """The column train's numbers for a raw geometry (h 0 = 256): L, Lp, Cp, passes,
     partial, c0, m, checks, cols, starts (sector starts in Lp), pe (page ends on period
     boundaries; one pass: page ends in the frame), patch (total mod Lp when partial, else 0)
-    and bytes (the rule's count: opens at VR_OPEN_BUDGET); None when a flat surface's first
-    page is not whole sectors. Shape 0 has x0 = 0: its first page is 8192 bytes."""
+    and bytes (the rule's count: opens at VR_OPEN_BUDGET); None for a flat surface (shape 0, or
+    h 256: no gap between columns), which has no train."""
     x0 = raw_x0(shape, w, x0)
     h = h & 0xFF or 256
     total, c0 = w * h, -x0 & 31
-    if shape and h < 256:
-        g = h & -h
-        big, cp, unit = 512 * h // g, 512 // g, h
-    else:
-        if (32 - (x0 & 31)) * 256 % 512:
-            return None
-        big, cp, unit = 512, 0, 256
+    if not shape or h == 256:
+        return None
+    g = h & -h
+    big, cp = 512 * h // g, 512 // g
     lp = min(big, total)
     passes = -(-total // lp)
     partial = total % lp != 0 and passes > 1
     m = min(32, cp)
-    checks = 0 if passes == 1 or not cp else sum((j - c0) % m == 0 for j in range(1, cp))
-    cols = lp // h if cp else 0
+    checks = 0 if passes == 1 else sum((j - c0) % m == 0 for j in range(1, cp))
+    cols = lp // h
     starts = -(-lp // 512)
     if passes == 1:
-        pe = sum((u - c0) % 32 == 0 for u in range(1, total // unit))
+        pe = sum((u - c0) % 32 == 0 for u in range(1, w))
     else:
-        pe = sum((p * (cp or 2) - c0) % 32 == 0 for p in range(1, passes))
+        pe = sum((p * cp - c0) % 32 == 0 for p in range(1, passes))
     nbytes = (2 * lp + 3 * cols + VR_OPEN_BUDGET * starts + (starts - 1) + 5 * checks + 1
               + 6 + 3 * (passes - 1) + 7 * pe + (10 if partial else 0) + 3)
     return dict(L=big, Lp=lp, Cp=cp, passes=passes, partial=partial, c0=c0, m=m,
@@ -1400,9 +1397,8 @@ def raw_frame_overhead(shape, w, h, x0=None):
     t += r["passes"] * VR_PASS_T + (nsec - r["passes"]) * VR_TPAD_T
     if r["partial"]:
         t += VR_PATCH_T
-    if gapped:
-        t += (w - 1 if r["partial"] else w) * VR_HOP_T
-    if r["passes"] == 1 or not r["Cp"]:
+    t += (w - 1 if r["partial"] else w) * VR_HOP_T
+    if r["passes"] == 1:
         return t + pages * VR_PAGE_T
     k = w % r["Cp"] or r["Cp"]                 # the last pass's columns
     pos = [j for j in range(1, r["Cp"]) if (j - r["c0"]) % r["m"] == 0]

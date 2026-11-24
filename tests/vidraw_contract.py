@@ -558,7 +558,8 @@ def ref_train(code, w, h, x0=None, debug=None):
     DATA_WINDOW: at each period offset 0..Lp, at a column end its hop, then a check (more than
     one pass, a check column) or a page end (one pass, a page's last column); at a sector start
     a nop (not the first) and the open; each byte an ini; then ret and the driver. -> (bytes,
-    the driver's address, the patch address or None); None when the rule has no train."""
+    the driver's address, the patch address or None); None when the rule has no train (a flat
+    surface)."""
     import nxv2_bench_rows as bench
     if x0 is None:
         x0, _ = geom(code, w, h)
@@ -567,12 +568,12 @@ def ref_train(code, w, h, x0=None, debug=None):
         return None
     opn, dw = ref_open(debug), S("VR_SLIDE")
     hh = h & 0xFF or 256
-    gapped, multi = code != 0 and hh < 256, r["passes"] > 1
+    multi = r["passes"] > 1
     chk = b"\xCB\x6C\xC4" + le(S("VR_BPG"))
     out, pa = bytearray(), None
     for o in range(r["Lp"] + 1):
         start = len(out)
-        if gapped and o and o % hh == 0:
+        if o and o % hh == 0:
             j = o // hh
             out += HOP
             if multi and j < r["Cp"] and (j - r["c0"]) % r["m"] == 0:
@@ -589,7 +590,7 @@ def ref_train(code, w, h, x0=None, debug=None):
     drv = dw + len(out)
     out += b"\xCD" + le(S("vr_sector")) + b"\xCD" + le(dw + len(opn))
     for p in range(1, r["passes"]):
-        if (p * (r["Cp"] or 2) - r["c0"]) % 32 == 0:
+        if (p * r["Cp"] - r["c0"]) % 32 == 0:
             out += PAGE_END
         if p == r["passes"] - 1 and r["partial"]:
             out += b"\x3E\xC9\x32" + le(pa)
@@ -1497,10 +1498,10 @@ def test_page_ends():
     vid_raw_frame's entry to there 384 T (the direct destination: 117 under vid_dst_base's 501).
     The read gap a page end sits in: the inline program (a frame inside its run) data to CRC 1
     67 after a column end (slide ini tail 7, ret 10, column end 11, 32, in head 7), data to data
-    86 (call 17, ini head 9); the train's driver between passes data to CRC 1 73 flat (ini tail
-    7, ret 10, 32, call 17, in head 7), 84 after the pass's hop; a taken check data to data 94
-    (hop 11, bit 8, call nz 17, 32, ret 10); the classic (crossing) 17 more than page B's flat
-    56 for call vr_sector_n and 12 more through jr vr_sector_c (85, 96). Page ends per shape;
+    86 (call 17, ini head 9), flat 56 (slide ini tail 7, ret 10, 32, in head 7); the train's
+    driver between passes data to CRC 1 84 (the pass's hop 11, ret 10, 32, call 17); a taken
+    check data to data 94 (hop 11, bit 8, call nz 17, 32, ret 10); the classic (crossing) 17
+    more for call vr_sector_n and 12 more through jr vr_sector_c (85, 96). Page ends per shape;
     surface exact, nothing under 16 but a CRC pair's 15, vidDstPage/vidDstEnd not written."""
     count = {(0, 256, 192): 5, (1, 320, 160): 9, (1, 320, 192): 9, (1, 280, 224): 9,
              (1, 320, 240): 9, (1, 256, 240): 7, (1, 280, 240): 9}
@@ -1512,7 +1513,7 @@ def test_page_ends():
         if n != count[(code, w, h)]:
             raise Fail(f"{code},{w}x{h}: {n} page ends, expected {count[(code, w, h)]}")
     got = []
-    for code, w, h, run0, gap in ((0, 256, 192, 0xFFFF, {("data", "crc"): 73}),
+    for code, w, h, run0, gap in ((0, 256, 192, 0xFFFF, {("data", "crc"): 56}),
                                   (1, 320, 192, 0xFFFF, {("data", "crc"): 84}),
                                   (1, 280, 224, 0xFFFF, {("data", "data"): 94}),
                                   (1, 320, 240, 0xFFFF, {("data", "crc"): 67}),
@@ -2468,7 +2469,7 @@ def test_variant_rule():
     160, 192, 224, 240, 255, 256; 20x197, whose rule bytes equal VR_TRAIN_ROOM (a train); and
     the 32 geometries that fit with the Release open's 19 bytes and not with VR_OPEN_BUDGET
     (inline in every build). The reduced grid: the whole one (20,672 builds) takes about 12
-    minutes here, over two."""
+    minutes here, over two. A flat surface (shape 0, h 256) is inline whatever its size."""
     import nxv2_bench_rows as bench
     grid = [(0, 256, h) for h in range(1, 193)]
     for w in (4, 64, 128, 256, 280, 320):
@@ -2485,6 +2486,11 @@ def test_variant_rule():
     if (by[edge[0]]["bytes"] != room or len(budget) != 32 or any(
             not room < by[g]["bytes"] <= room + slack * by[g]["starts"] for g in budget)):
         raise Fail("the rule's edge geometries are not the edge any more")
+    flat = [(0, 256, 192), (1, 320, 256), (1, 280, 256), (0, 256, 167), (0, 256, 1), (1, 4, 256)]
+    if any(bench.raw_variant(*g) != "inline" or bench.raw_train(*g) is not None or g not in grid
+           for g in flat) or any(bench.raw_train(c, w, h) is not None
+                                 for c, w, h in grid if not c or h == 256):
+        raise Fail("raw_train has a train for a flat surface")
     grid += [g for g in edge + budget if g not in grid]
     mc = RawMachine(SYMS)
     off, hot = S("DATA_WINDOW") - S("OVL_ORG"), S("VID_PAGE")
@@ -2572,16 +2578,15 @@ def train_gaps(code, w, h, mutate=False):
 
 def test_train_gaps():
     """io_gaps of whole frames through the train (320x192; 280x224, its checks and partial
-    pass; flat 256x192 and 256x167; one pass 8x32 and 256x1): inside an ini run 16; across a
-    hop 27; across a check 45 (taken, its page end at VR_BPG: 94); a one-pass page end 59; a
-    sector's last ini to the next open's CRC 1 18 (the nop); across a pass end (hop, ret, call)
-    52, flat 41, with the driver's page end 84 / 73, with the patch before the partial pass
-    72 / 61; inside an open [15, 18, 25] and the token to its first ini 30 (plain DEBUG: the
-    PLAY divider after the token); the first sector's open (vr_sector) [15, 18, 22], its token
-    to the pass's first ini 48; out to VR_TAILA's pad: the partial pass's patched ret 113, one
-    pass 104 / 93; the driver's page end with the patch (192x4, 256x33) 104 / 93. Nothing
-    else, none under 15, none but a CRC pair under 16. A generator that drops the pad meets a
-    14."""
+    pass; one pass 8x32; 192x4): inside an ini run 16; across a hop 27; across a check 45
+    (taken, its page end at VR_BPG: 94); a one-pass page end 59; a sector's last ini to the
+    next open's CRC 1 18 (the nop); across a pass end (hop, ret, call) 52, with the driver's
+    page end 84, with the patch before the partial pass 72, with both (192x4) 104; inside an
+    open [15, 18, 25] and the token to its first ini 30 (plain DEBUG: the PLAY divider after
+    the token); the first sector's open (vr_sector) [15, 18, 22], its token to the pass's
+    first ini 48; out to VR_TAILA's pad: the partial pass's patched ret 113, one pass 104.
+    Nothing else, none under 15, none but a CRC pair under 16. A generator that drops the pad
+    meets a 14."""
     div = sector_divider(sector_mc())
     base = {("crc", "crc", "B", "B", ()): 15, ("crc", "wait", "B", "B", ()): 18,
             ("wait", "token", "B", "B", ()): 25, ("token", "data", "B", "B", ()): 30 + div,
@@ -2595,15 +2600,12 @@ def test_train_gaps():
             ("data", "crc", "B", "B", ("pad",)): 18,
             ("data", "data", "B", "A", ("pret", "patch", "xout")): 113,
             ("data", "data", "A", "A", ()): 16}
-    for hop in ((), ("colend",)):
-        t0 = 52 if hop else 41
-        for mid, dt in (((), 0), (("page",), 32), (("patch",), 20), (("page", "patch"), 52)):
-            base[("data", "crc", "B", "B", hop + ("ret",) + mid + ("call",))] = t0 + dt
-        base[("data", "data", "B", "A", hop + ("ret", "xout"))] = t0 + 52   # one pass, a pad
+    for mid, dt in (((), 0), (("page",), 32), (("patch",), 20), (("page", "patch"), 52)):
+        base[("data", "crc", "B", "B", ("colend", "ret") + mid + ("call",))] = 52 + dt
+    base[("data", "data", "B", "A", ("colend", "ret", "xout"))] = 104       # one pass, a pad
     base[("data", "data", "B", "B", ("colend", "page"))] = 59               # one pass's page end
     seen = {}
-    for code, w, h in ((1, 320, 192), (1, 280, 224), (0, 256, 192), (0, 256, 167), (1, 8, 32),
-                       (0, 256, 1), (1, 192, 4), (0, 256, 33)):
+    for code, w, h in ((1, 320, 192), (1, 280, 224), (1, 8, 32), (1, 192, 4)):
         gaps, _ = train_gaps(code, w, h)
         for key, g in gaps:
             if base.get(key) != g:
@@ -2615,13 +2617,9 @@ def test_train_gaps():
             ("data", "crc", "B", "B", ("colend", "ret", "call")),
             ("data", "crc", "B", "B", ("colend", "ret", "page", "call")),
             ("data", "crc", "B", "B", ("colend", "ret", "patch", "call")),
-            ("data", "crc", "B", "B", ("ret", "page", "call")),
-            ("data", "crc", "B", "B", ("ret", "patch", "call")),
             ("data", "crc", "B", "B", ("colend", "ret", "page", "patch", "call")),
-            ("data", "crc", "B", "B", ("ret", "page", "patch", "call")),
             ("data", "data", "B", "A", ("pret", "patch", "xout")),
             ("data", "data", "B", "A", ("colend", "ret", "xout")),
-            ("data", "data", "B", "A", ("ret", "xout")),
             ("data", "data", "B", "B", ("colend", "page"))}
     if need - set(seen):
         raise Fail(f"joins not met: {sorted(need - set(seen))}")
@@ -5226,20 +5224,20 @@ def chain_ctl(m, pc):
 
 def test_rw_chain():
     """An RFRAME row's chain from nxb_hop6 (HL = nxb_srow_go, MMU6 = page 12) over two frames:
-    each $C000-$DFFF fetch on the page MMU6 maps (page A's code, page B's column train (256x192:
+    each $C000-$DFFF fetch on the page MMU6 maps (page A's code, page B's column train (320x192:
     period and driver), VR_BS1, VR_BPG and stubs, NXB_PAGE), each entry there named (a label of
     that page, the train's driver, period, pass 1 entry, or a call's return), the MMU6 swaps,
     the print, the card read to its end."""
     bench_only()
     mc = nxb_machine()
     patch_session(mc, 1, 1)
-    if build_sched(mc, 0, 256, 192).fc or built_var(mc) != "train":
+    if build_sched(mc, 1, 320, 192).fc or built_var(mc) != "train":
         raise Fail("vid_raw_sched_build set CF, or built no train")
-    ref = ref_fast(0, 256, 192)
+    ref = ref_fast(1, 320, 192)
     send = S("VR_SCHED") + len(ref["a"])
     _, bend = parse_fast(mc)
     drv = fast_entry(mc)
-    setup_frame(mc, 0, 256, 192)
+    setup_frame(mc, 1, 320, 192)
     mapnr(mc, 7, S("VID_PAGE"))
     mapnr(mc, 6, CHAIN_ENTRY6)
     rw_cells(mc, run=1000, crc=0)
@@ -5254,7 +5252,7 @@ def test_rw_chain():
     for f, tag in enumerate((1, 0)):
         snd = bytes((i * 11 + 5 + f) & 0xFF for i in range(1250)) + pad_bytes(3 * 512 - 1250, tag)
         pal = [bytes((i * 29 + 11) & 255 for i in range(512))] if tag else []
-        sectors += blocks(snd) + pal + blocks(pixels(256 * 192))
+        sectors += blocks(snd) + pal + blocks(pixels(320 * 192))
     card = Card(sectors, waits=1)
     mc.set_card(card)
     nxb, sched = S("NXB_PAGE"), SCHED_PAGE

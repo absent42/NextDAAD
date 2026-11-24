@@ -8448,10 +8448,8 @@ vid_raw_sched_build:
     call .e3
     or a
     ret
-.tfin:                           ; the train: the period's last hop (gapped) and ret; the driver
-    ld a, (vrgGap)
-    or a
-    call nz, .hop
+.tfin:                           ; the train: the period's last hop and ret; the driver
+    call .hop
     ld a, $C9
     ld (de), a
     inc de
@@ -8646,41 +8644,10 @@ vid_raw_sched_build:
     neg
     and 31
     ld c, a                      ; C = U0 & 31 (U0: 256-byte columns in the first page)
-    ld a, (vidP_Shape)
-    or a
-    jr z, .vflat
-    ld a, (vidP_HeightB)
-    or a
-    jr nz, .vgap
-.vflat:                          ; a pass a sector (2 columns of 256); page ends between passes
-    scf
-    bit 0, c
-    ret nz                       ; the first page is not whole sectors: no train
-    call .pix                    ; A:H = 256-byte units
-    ld de, 512
-    ld l, h
-    ld h, a
-    inc hl
-    srl h
-    rr l                         ; L = passes; CF: the units are even
-    ld a, l
-    ld (vrgPasses), a
-    jr c, .vfe
-    dec a
-    jr nz, .vfp
-    ld d, 1                      ; one unit: Lp 256
-    jr .vfe
-.vfp:
-    ld a, 1
-    ld (vrgPart), a
-    ld hl, DATA_WINDOW + .opend - .opent + 512
-    ld (vrgPA), hl               ; period offset 256's ini
-.vfe:
-    ld a, 2
-    ld (vrgIp), a
-    ex de, hl
-    jr .vend
-.vgap:                           ; A = h, 1..255
+    ld a, (vrgGap)
+    sub 1
+    ret c                        ; a flat surface (shape 0, h 256): inline
+    ld a, (vidP_HeightB)         ; h, 1..255
     ld b, a
     neg
     and b                        ; g = h & -h
@@ -8757,8 +8724,7 @@ vid_raw_sched_build:
     ex de, hl
     add hl, hl
     add hl, hl
-.vend:                           ; HL = Lp
-    ld (vrgPix), hl
+    ld (vrgPix), hl              ; Lp
     dec hl
     ld a, h
     srl a
