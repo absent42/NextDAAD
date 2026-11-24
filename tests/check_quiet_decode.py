@@ -213,6 +213,9 @@ QUIET_PINNED = [
     ("src/video.asm", "vr_sector_n", ".nocrc:",
      ("ld d, 0", "call vid_dst_norm_flat"),
      "PLAY= raster arm, per raw sector (vid_dst_norm_flat's divider)"),
+    ("src/video.asm", "vid_raw_sched_build", ".op2:",
+     ("ld d, 0", "call vid_dst_norm_flat"),
+     "PLAY= raster arm, per inline sector open (the open page B's program runs)"),
 ]
 
 # The other COLD top-level IFDEF DEBUG blocks, for --list only - never

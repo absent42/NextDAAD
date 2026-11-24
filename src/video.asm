@@ -5063,6 +5063,9 @@ VR_POLL_PAD_N equ 1
         cp (hl)
       EDUP
     ENDM
+; Page B's inline open (vid_raw_sched_build .opent): bytes, and with plain DEBUG's divider.
+VR_OPEN_LEN equ 18 + VR_POLL_PAD_N
+VR_OPEN_BUDGET equ VR_OPEN_LEN + 5
 ; vr_sector_n's first two bytes, written by vid_raw_frame (every frame) and
 ; nxb_rw_charge: the CRC read, or jr vr_sector_c (the counted open).
 VR_ENT_FAST equ (PORT_SPI_DAT << 8) | $DB
@@ -5100,6 +5103,7 @@ vr_sector_n:
     in a, (PORT_SPI_DAT)         ; 22 T after poll 1, then 47 T apart
     cp $FE
     ret z
+.s2:                             ; page B's open, poll 2 not the token: call nz here
     inc a
     jr nz, .tokf
     djnz .p                      ; B scrap: B (0: 256) polls, then the long wait
@@ -8219,18 +8223,11 @@ vid_strm_validate:
     scf
     ret
 
-; Build the slide, the palette train and the frame read schedule at DATA_WINDOW.
-; In: vidP_Shape, vidP_HeightB, vidP_RawW, vidP_RawX0. Out: CF set = the schedule
-; would pass VR_SCHED_LIMIT (it writes nothing there). Corrupts all.
+; Page A (at DATA_WINDOW): the slide, palette train, pump, dispatcher, classic schedule,
+; VR_TAILA, stubs; then page B (page A + 1, mapped and back): slide, fast program, VR_BS1,
+; stubs. In: vidP_*, vidRingBanksC. Out: CF = a limit would be passed. Corrupts all.
 vid_raw_sched_build:
-    ld hl, $A2ED                 ; ini
-    ld (VR_SLIDE), hl
-    ld hl, VR_SLIDE
-    ld de, VR_SLIDE + 2
-    ld bc, 1022
-    ldir                         ; the overlapping copy repeats the pair
-    ld a, $C9
-    ld (de), a                   ; ret at VR_SLIDE_END
+    call .slide
     ASSERT PORT_SPI_DAT == $EB
     ld hl, $EBDB                 ; in a, (PORT_SPI_DAT)
     ld (VR_PALTRAIN), hl
@@ -8242,7 +8239,7 @@ vid_raw_sched_build:
     ldir                         ; repeats the 4 bytes to 512 pairs
     ld (de), a                   ; the train's ret (A = $C9 still)
     ASSERT VR_PALTRAIN + VR_PAL_LEN == VR_XIN && VR_XIN + VR_XSTUB_LEN == DATA_WINDOW + $2000
-    inc de                       ; DE = VR_XIN: the stub bytes zero until used
+    inc de                       ; DE = VR_XIN: the stub bytes zero until built
     xor a
     ld b, VR_XSTUB_LEN
 .xz:
@@ -8253,6 +8250,40 @@ vid_raw_sched_build:
     ld de, VR_PUMP
     ld bc, vrPumpLen
     ldir
+    ld hl, .dispt
+    ld de, VR_SCHED
+    ld bc, VR_DISP_LEN
+    ldir                         ; DE = VR_CLASSIC
+    ld hl, VR_SCHED_LIMIT - 30   ; a pass, the pad tail and VR_TAILA emit <= 30 bytes
+    xor a                        ; the classic: opens called
+    call .pass
+    ret c
+    call .stubs
+    ld a, (vidRingBanksC)
+    add a, a
+    inc a
+    nextreg NR_MMU6, a           ; page B
+    call .slide
+    ld hl, .bs1t
+    ld de, VR_BS1
+    ld bc, VR_BPG - VR_BS1
+    ldir
+    call .stubs                  ; the same 16 bytes as page A's
+    ld de, VR_PROG
+    ld hl, VR_BEND - 16 - VR_OPEN_BUDGET   ; a pass with an inline open, the exit jp
+    ld a, 1                      ; the fast program: opens inline
+    call .pass
+    push af
+    ld a, (vidRingBanksC)
+    add a, a
+    nextreg NR_MMU6, a           ; page A back
+    pop af
+    ret
+; One schedule from DE: A = 0 the classic, 1 the fast program; HL = DE's limit at a pass.
+.pass:
+    ld (vrgInl), a
+    ld (vrgLim), hl
+    push de
     ; pixel bytes w*h: w = 4k, so A:HL = 4 * k*h (k*h <= 80*256)
     ld hl, (vidP_RawW)
     srl h
@@ -8309,11 +8340,11 @@ vid_raw_sched_build:
     ld (vrgGap), a
     ld hl, 512
     ld (vrgSec), hl
-    ld de, VR_SCHED
+    pop de
     ld hl, vr_sector
     call .ecall
 .loop:
-    ld hl, VR_SCHED_LIMIT - 23   ; one pass and the tail emit <= 23 bytes
+    ld hl, (vrgLim)
     or a
     sbc hl, de
     ret c
@@ -8384,10 +8415,30 @@ vid_raw_sched_build:
     jp nz, .loop
     ld hl, 512
     ld (vrgSec), hl
+    ld a, (vrgInl)
+    or a
+    jr nz, .inl
     ld hl, vr_sector_n           ; sectors 2..n: the CRC always pends
     call .ecall
     jp .loop
+.inl:
+    ld hl, .opent
+    ld bc, .opend - .opent
+    ldir
+    jp .loop
 .fin:
+    ld a, (vrgInl)
+    or a
+    jr z, .tails
+    ld a, $C3                    ; jp VR_XOUT at the last pixel byte: VR_TAILA reads the pad
+    ld hl, VR_XOUT
+    call .e3
+    or a
+    ret
+.tails:                          ; the classic's pad tail, then VR_TAILA the same
+    call .tail
+    ld (vrgTail), de
+.tail:
     ld bc, (vrgSec)              ; the last sector's pad, if any
     ld a, b
     or c
@@ -8399,7 +8450,31 @@ vid_raw_sched_build:
 .end:
     ld a, $C9
     ld (de), a
+    inc de
     or a
+    ret
+.slide:                          ; 512 x ini and its ret at DATA_WINDOW. Out: A = $C9.
+    ld hl, $A2ED                 ; ini
+    ld (VR_SLIDE), hl
+    ld hl, VR_SLIDE
+    ld de, VR_SLIDE + 2
+    ld bc, 1022
+    ldir                         ; the overlapping copy repeats the pair
+    ld a, $C9
+    ld (de), a                   ; ret at VR_SLIDE_END
+    ret
+.stubs:                          ; the 16 stub bytes, the same in both pages
+    ld hl, .stubt
+    ld de, VR_XIN
+    ld bc, VR_XSTUB_LEN
+    ldir
+    ld a, (vidRingBanksC)
+    add a, a
+    ld (VR_XOUT + 3), a          ; page A
+    inc a
+    ld (VR_XIN + 3), a           ; page B
+    ld hl, (vrgTail)
+    ld (VR_XTAIL + 1), hl
     ret
 .eread:                          ; call VR_SLIDE_END - 2 * BC (BC <= 512)
     ld hl, VR_SLIDE_END
@@ -8418,9 +8493,52 @@ vid_raw_sched_build:
     ld (de), a
     inc de
     ret
-    ; worst legal schedule: a read and a column end per column, a split
-    ; read and vr_sector per sector, the page ends, the pad read and ret
-    ASSERT VR_SCHED + 320*6 + 160*6 + 10*7 + 8 <= VR_SCHED_LIMIT
+.dispt:                          ; at VR_SCHED: VR_ENT_FAST takes page B
+    ld a, (vr_sector_n)
+    cp low VR_ENT_FAST
+    jp z, VR_XIN
+.stubt:                          ; page numbers and VR_TAILA patched by .stubs
+    nextreg NR_MMU6, 0           ; VR_XIN: page B
+    jp VR_PROG                   ; VR_XJP
+    db 0
+    nextreg NR_MMU6, 0           ; VR_XOUT: page A
+    jp 0                         ; VR_XTAIL: jp VR_TAILA
+    db 0
+.bs1t:                           ; at VR_BS1: the token on poll 1 skips poll 2
+    cp $FF
+    jp nz, vr_sector_n.tokf
+    ex (sp), hl
+    add hl, .op2 - .op1
+    ex (sp), hl
+    ret
+.opent:                          ; sectors 2..n of the fast program: vr_sector_n's open, 86 T
+    in a, (PORT_SPI_DAT)
+    nop
+    in a, (PORT_SPI_DAT)
+    VR_POLL_PAD
+    in a, (PORT_SPI_DAT)         ; poll 1, 11 + 7 x VR_POLL_PAD_N T after CRC 2
+    inc a
+    call nz, VR_BS1              ; the token or a bad byte
+.op1:
+    in a, (PORT_SPI_DAT)         ; poll 2, 25 T after poll 1
+    cp $FE
+    call nz, vr_sector_n.s2      ; a $FF: the wait loop, its ret z returns here
+.op2:
+ IFDEF DEBUG
+  IFNDEF NXB_QUIET
+    ld d, 0                      ; PLAY= clock, after the token
+    call vid_dst_norm_flat
+  ENDIF
+ ENDIF
+.opend:
+    ASSERT .stubt - .dispt == VR_DISP_LEN && low VR_ENT_FAST == $DB
+    ASSERT .bs1t - .stubt == VR_XSTUB_LEN && VR_XJP == VR_XIN + 4 && VR_XTAIL == VR_XOUT + 4
+    ASSERT .opent - .bs1t == VR_BPG - VR_BS1 && .op2 - .op1 == 7
+    ASSERT .op1 - .opent == VR_OPEN_LEN - 7 && .opend - .opent <= VR_OPEN_BUDGET
+    ; worst legal schedules: a read and a column end per column, a split read and an
+    ; open per sector, the page ends, the first call and the tails
+    ASSERT VR_CLASSIC + 320*6 + 160*6 + 10*7 + 16 <= VR_SCHED_LIMIT
+    ASSERT VR_SLIDE_END + 1 + 320*6 + 160*(3 + VR_OPEN_BUDGET) + 10*7 + 16 <= VR_BEND
 
 ; Raw sound section reader at VR_PUMP (vid_raw_sched_build copies it), from vid_raw_pump:
 ; the whole feed or nothing; counted opens (vr_sector_c); the ring split once at $8000;
@@ -8599,6 +8717,9 @@ vrgSegLen: dw 0                  ; column height, or $2000 (flat)
 vrgPix:    ds 3                  ; pixel bytes left (24-bit)
 vrgCols:   db 0                  ; columns left in the page (gapped)
 vrgGap:    db 0                  ; 1 = gapped surface
+vrgInl:    db 0                  ; 1 = page B's pass: opens inline, jp VR_XOUT
+vrgLim:    dw 0                  ; the pass's limit for DE at each read
+vrgTail:   dw 0                  ; VR_TAILA (page A, after the classic's ret)
 
 ; Common hot staging (both deliveries): fileEnd, the parameter block,
 ; ring count + bank list, DEBUG fill row, per-file SMC patches (stub

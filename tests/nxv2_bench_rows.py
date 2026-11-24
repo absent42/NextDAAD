@@ -1103,6 +1103,16 @@ RW_FRAME_HARNESS_T_1B = 210  # sitting 1b's images: nxb_rw_feed read HL' without
 # pump), Release instructions, by (sectors, real sound bytes): a CRC due, the token on poll 2,
 # no ring wrap, no walk. vidraw_contract test_pump_t pins it to the image.
 RAW_PUMP_T = {(3, 1250): 26203, (2, 625): 17757, (3, 1024): 26045}
+# The fast frame program (page B, a frame inside its run), unarmed base T from emitted
+# bytes, pinned by vidraw_contract test_fast_t: an inline sector open (sectors 2..n, one $FF,
+# the token on poll 2), a slide call's call and ret, a column end, a page end; the dispatcher,
+# both page switches and VR_TAILA's ret a frame; the first sector's call vr_sector (a CRC due).
+VR_OPEN_T = 86
+VR_READ_T = 27
+VR_HOP_T = 11
+VR_PAGE_T = 32
+VR_FAST_T = 110
+VR_FIRST_T = 152
 NOSITE = (0, ())
 
 SESSION_TABLES = {
