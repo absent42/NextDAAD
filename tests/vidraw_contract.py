@@ -3937,11 +3937,23 @@ def geo_run(syms, pages, geo):
     return cpu.fc, [(a, p) for a, p in mem.log if not STACK - 0x40 <= a < STACK], mc, seen
 
 
+def geo_relabel(at, addrs, hot, a, what):
+    """Baseline hot address a as this image's: the same label (a non-local one first) plus
+    the same offset."""
+    la = addrs[bisect.bisect_right(addrs, a) - 1]
+    names = [n for n in sorted(at[la], key=lambda n: ("." in n, n))
+             if SYMS.get(n, (0,))[0] == hot]
+    if not names:
+        raise Fail(f"{what} at {min(at[la])}+{a - la} has no label on this image's VID_PAGE")
+    return S(names[0]) + a - la
+
+
 def test_geo_hop():
     """nxb_geo_setup is ld hl, nxb_geo_body / jp nxb_hop6; the body and its tables are on
     NXB_PAGE. Each nxbGeo value 0-255 against the baseline image: CF equal; the same hot-page
-    stores by label with the same values (none with CF set, none elsewhere); the body entered
-    once with NXB_PAGE at MMU6; MMU6 (NR $56 too) and MMU7 on return as on entry."""
+    stores by label with the same values (a stored word naming a hot label maps through both
+    SLDs; none with CF set, none elsewhere); the body entered once with NXB_PAGE at MMU6;
+    MMU6 (NR $56 too) and MMU7 on return as on entry."""
     bench_only()
     nxb, hot = S("NXB_PAGE"), S("VID_PAGE")
     off = [n for n in ("nxb_geo_body", "nxbGeoH", "nxbGeoDst") if SYMS.get(n, (0,))[0] != nxb]
@@ -3967,13 +3979,21 @@ def test_geo_hop():
         if stray:
             raise Fail(f"nxbGeo ${g:02X}: stores off the hot page (address, page) {stray[:4]}")
         want = {}
-        for a, _ in ost:
-            la = addrs[bisect.bisect_right(addrs, a) - 1]
-            name = min(at[la], key=lambda n: ("." in n, n))
-            if SYMS.get(name, (0,))[0] != hot:
-                raise Fail(f"nxbGeo ${g:02X}: baseline store at {name}+{a - la} has no label "
-                           f"{name} on this image's VID_PAGE")
-            want[S(name) + a - la] = omc.mem[a]
+        log = [a for a, _ in ost]
+        i = 0
+        while i < len(log):                 # a word store logs its low byte, then a + 1
+            a = log[i]
+            what = f"nxbGeo ${g:02X}: baseline store"
+            na = geo_relabel(at, addrs, hot, a, what)
+            if i + 1 < len(log) and log[i + 1] == a + 1:
+                v = omc.mem[a] | omc.mem[a + 1] << 8
+                if v >= addrs[0]:
+                    v = geo_relabel(at, addrs, hot, v, f"{what} of a word")
+                want[na], want[na + 1] = v & 0xFF, v >> 8
+                i += 2
+            else:
+                want[na] = omc.mem[a]
+                i += 1
         got = {a: nmc.mem[a] for a, _ in nst}
         if got != want or nfc and got:
             diff = sorted((a, want.get(a), got.get(a)) for a in set(want) | set(got)
