@@ -16,7 +16,10 @@ VR_PUMP, against the baseline image's vid_aud_pump), with read spacing from a T 
 the alternate set (video_ctc_isr_raw_st, video_ctc_isr_raw_mono: every ring start against a
 reference, T per path), the play pointer helpers (vid_raw_rd_hl, vid_raw_rdv, vid_raw_prime), the
 handler choice in vid_run_l2setup_body and CTC 0's IM2 table entry (raw handler from l2setup,
-IM2_CTC_STUB again from vid_run_restore_body; the image's writers). DEBUG images only: the
+IM2_CTC_STUB again from vid_run_restore_body; the image's writers), and raw mono sound from
+the zxnDMA against a register model of port $6B (class Dma): the open's sound path sites, the
+program l2setup sends, the start at the field tick, the pointer read vid_dma_rd_hl and its
+tear retry, the teardown in the restore body, the switch vidMonoDma. DEBUG images only: the
 frame loop's LATE and URUN counters (vid_dbg_late, vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
 kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain, the play
@@ -42,6 +45,7 @@ PHYS_PAGES = 256
 SCHED_PAGE = 100            # the schedule bank's page (ring bank 50): page A
 SCHED_PAGE_B = SCHED_PAGE + 1                   # its second page: the fast frame program
 BACK_BANK = 30              # Layer 2 back surface: 16K banks 30-34 (pages 60-69)
+FRONT_BANK = 20             # a session's front surface: pages 40-49, clear of the code pages
 SURF_LEN = 5 * 0x4000       # the 320x256 surface; 256x192 uses the first 48K
 STACK = 0xBD00
 RET = 0x0001
@@ -130,6 +134,119 @@ class Card:
 def blocks(data, pad=0):
     data = bytes(data) + bytes([pad]) * ((-len(data)) % 512)
     return [data[i:i + 512] for i in range(0, len(data), 512)]
+
+
+# --------------------------------------------------------------------------- zxnDMA model
+
+DMA_PORT = 0x6B
+AUD_BANK = 40               # the session audio bank l2setup maps at MMU3 (page 80: in no slot)
+
+
+class Dma:
+    """Port $6B by the zxnDDMA guide's patterns (2.2-2.6): WR0 with its follow bytes, WR1 and
+    WR2 with timing and prescaler bytes, WR4 with address bytes, WR5, and the WR6 commands C3
+    CF 87 83 A7 BB; anything else fails. $C3 changes exactly what guide 2.6 lists. Reads
+    return the masked registers in order, live. advance steps port A's working address for an
+    A to B transfer from memory going up, with the restart; dwell: the address reads start +
+    length for the period before the reload. before_read(dma, n) runs ahead of the n-th read
+    since $A7. Registers and the address only: no samples, no timing, no bus steal."""
+    CYCLES = {0: 4, 1: 3, 2: 2, 3: 4}
+    ADDR = {0: "down", 1: "up", 2: "fixed", 3: "fixed"}
+    MODES = {0: "continuous", 1: "continuous", 2: "burst"}
+    FIELDS = ("enabled", "a_start", "length", "a_io", "a_mode", "a_cycles", "b_start", "b_io",
+              "b_mode", "b_cycles", "mode", "prescaler", "restart", "mask", "addr")
+
+    def __init__(self, dwell=False):
+        self.log, self.pend = [], []
+        self.enabled, self.a2b, self.restart = False, None, False
+        self.a_start = self.b_start = self.length = 0
+        self.a_io = self.b_io = self.a_mode = self.b_mode = self.mode = None
+        self.a_cycles = self.b_cycles = 3
+        self.prescaler, self.mask = 0, 0x7F
+        self.addr = self.b_addr = self.count = 0
+        self.dwell, self.before_read = dwell, None
+        self.rpos = self.reads = self.seqs = 0
+
+    def state(self):
+        return {k: getattr(self, k) for k in self.FIELDS}
+
+    def _set(self, name, shift):
+        def f(v):
+            setattr(self, name, getattr(self, name) & ~(0xFF << shift) & 0xFFFF | v << shift)
+        return f
+
+    def _timing(self, p):
+        def f(v):
+            setattr(self, p + "_cycles", self.CYCLES[v & 3])
+            if v & 0x20:                            # one more byte: port B's is the prescaler
+                self.pend.insert(0, (lambda x: setattr(self, "prescaler", x)) if p == "b"
+                                 else (lambda x: None))
+        return f
+
+    def _mask(self, v):
+        self.mask, self.rpos = v & 0x7F, 0
+
+    def write(self, v):
+        self.log.append(v)
+        if self.pend:
+            self.pend.pop(0)(v)
+        elif not v & 0x80 and v & 3:                                    # WR0
+            self.a2b = bool(v & 4)
+            follow = ((3, "a_start", 0), (4, "a_start", 8), (5, "length", 0), (6, "length", 8))
+            self.pend = [self._set(k, sh) for bit, k, sh in follow if v >> bit & 1]
+        elif not v & 0x80:                                              # WR1 (port A), WR2
+            p = "a" if v & 4 else "b"
+            setattr(self, p + "_io", bool(v & 8))
+            setattr(self, p + "_mode", self.ADDR[v >> 4 & 3])
+            if v & 0x40:
+                self.pend = [self._timing(p)]
+        elif v & 3 == 1:                                                # WR4
+            if v & 0x10 or v >> 5 & 3 == 3:
+                raise Fail(f"DMA model: WR4 ${v:02X} (interrupt byte bit, or mode 11)")
+            self.mode = self.MODES[v >> 5 & 3]
+            self.pend = [self._set("b_start", sh) for bit, sh in ((2, 0), (3, 8)) if v >> bit & 1]
+        elif v & 0xC7 == 0x82:                                          # WR5
+            self.restart = bool(v & 0x20)
+        elif v == 0xC3:
+            self.enabled, self.restart, self.prescaler = False, False, 0
+            self.a_cycles = self.b_cycles = 3
+        elif v == 0xCF:
+            self.addr, self.b_addr, self.count = self.a_start, self.b_start, 0
+        elif v in (0x87, 0x83):
+            self.enabled = v == 0x87
+        elif v == 0xA7:
+            self.rpos, self.seqs = 0, self.seqs + 1
+        elif v == 0xBB:
+            self.pend = [self._mask]
+        else:
+            raise Fail(f"DMA model: byte ${v:02X} is not a modelled register write")
+
+    def read(self):
+        order = [b for b in range(7) if self.mask >> b & 1]
+        if not order:
+            raise Fail("DMA model: a read with an empty read mask")
+        if self.before_read:
+            self.before_read(self, self.rpos)
+        k = order[self.rpos % len(order)]
+        self.rpos, self.reads = self.rpos + 1, self.reads + 1
+        return (0, self.count & 0xFF, self.count >> 8 & 0xFF, self.addr & 0xFF, self.addr >> 8,
+                self.b_addr & 0xFF, self.b_addr >> 8)[k]
+
+    def advance(self, n=1):
+        """n bytes transferred (none while disabled)."""
+        for _ in range(n):
+            if not self.enabled:
+                return
+            if not (self.a2b and self.a_io is False and self.a_mode == "up" and self.length):
+                raise Fail("DMA model: advance needs A to B from memory going up")
+            if self.count == self.length:                   # the dwell's reload
+                self.addr, self.count = self.a_start, 0
+            self.addr, self.count = (self.addr + 1) & 0xFFFF, self.count + 1
+            if self.count == self.length:
+                if not self.restart:
+                    self.enabled = False
+                elif not self.dwell:
+                    self.addr, self.count = self.a_start, 0
 
 
 # --------------------------------------------------------------------------- Z80 model
@@ -282,6 +399,9 @@ class RawMachine(Machine):
         self.sel = 0
         self.card = None
         self.dac = None             # a list: DAC port writes (low byte, value) are logged
+        self.dma = None             # a Dma: port $6B
+        self.trace = None           # a list: ("out", port, v, now) and ("nr", n, v, now)
+        self.now = 0                # the caller's clock, stamped on trace entries
         self.cpu = RawCPU(self)
 
     def map(self, slot, page):
@@ -307,6 +427,8 @@ class RawMachine(Machine):
     def nextreg(self, n, v):
         self.nr[n] = v
         self.nrlog.append((n, v))
+        if self.trace is not None:
+            self.trace.append(("nr", n, v, self.now))
         if 0x50 <= n <= 0x57:
             self.mmu_writes.append((n, v))
             self.map(n - 0x50, v)
@@ -314,15 +436,23 @@ class RawMachine(Machine):
     def port_in(self, port):
         if port & 0xFF == PORT_SPI and self.card is not None:
             return self.card.read()
+        if port & 0xFF == DMA_PORT and self.dma is not None:
+            return self.dma.read()
         raise Fail(f"read of port ${port:04X} at ${self.cpu.at:04X}")
 
     def port_out(self, port, v):
         if port == 0x243B:
             self.sel = v
-        elif port == 0x253B:
+            return
+        if port == 0x253B:
             self.nextreg(self.sel, v)
-        elif self.dac is not None and port & 0xFF in DAC_PORTS:
+            return
+        if self.trace is not None:
+            self.trace.append(("out", port, v, self.now))
+        if self.dac is not None and port & 0xFF in DAC_PORTS:
             self.dac.append((port & 0xFF, v))
+        elif self.dma is not None and port & 0xFF == DMA_PORT:
+            self.dma.write(v)
         else:
             raise Fail(f"write to port ${port:04X} at ${self.cpu.at:04X}")
 
@@ -3382,9 +3512,10 @@ def test_vec_patch():
                        f"expected {[hex(x) for x in want]}")
 
 
-def vec_sites(raw):
+def vec_sites(raw, path=0):
     """[(site, address, bytes)]: each play pointer and pump site after an open, raw or not
-    (vid_aud_pump.rd and .apad are never reached in a raw session and keep their bytes)."""
+    (vid_aud_pump.rd and .apad are never reached in a raw session and keep their bytes), and
+    the sound path's four (snd_sites: path 0 CTC stereo and non-raw, 1 CTC mono, 2 DMA mono)."""
     prime = b"\xCD" + le(S("vid_raw_prime")) + b"\x00"
     return [("vid_pace_poll.rd", S("vid_pace_poll.rd"),
              b"\xCD" + le(S("vid_raw_rdv")) if raw else b"\xDD\xE5\xE1"),
@@ -3394,21 +3525,34 @@ def vec_sites(raw):
             ("vid_run.ixp1", S("vid_run.ixp1"), prime if raw else ix_form()),
             ("vid_run.ixp2", S("vid_run.ixp2"), prime if raw else ix_form()),
             ("vid_aud_pump.apad + 1", S("vid_aud_pump.apad") + 1, le(S("vid_ds_pad"))),
-            ("vid_raw_rdv", S("vid_raw_rdv"), b"\xC3" + le(S("vid_raw_rd_hl")))]
+            ("vid_raw_rdv", S("vid_raw_rdv"), b"\xC3")] + snd_sites(path)
 
 
 def test_vec_sites():
     """vid_stage_common.vec for a raw header, then a non-raw one, then raw again on the same
     machine: after each, every site holds its column's bytes (vid_aud_pump's first three bytes
-    jp vid_raw_pump, else the assembled ld (vidAudBudget), bc head)."""
+    jp vid_raw_pump, else the assembled ld (vidAudBudget), bc head). The sound path sites
+    (vid_run.cw, .tcsrc, .tcport, vid_raw_rdv's operand) and vidSndPath: as assembled path
+    0's; after every pair of successive opens out of path 0 (raw stereo, and non-raw), path 1
+    (raw mono, vidMonoDma 0) and path 2 (raw mono, vidMonoDma 1), the second open's; .tcport
+    is .tcsrc + 3 (the open writes the ld bc opcode between them with its own value)."""
     mc = RawMachine(SYMS)
+    sites_are(mc, 0, 0, "as assembled")
+    if S("vid_run.tcport") != S("vid_run.tcsrc") + 3 or mc.peek("vidDmaGo") != 0x87 \
+            or (mc.mem[S("vid_run.cw") - 1], mc.mem[S("vid_run.tcsrc") - 1],
+                mc.mem[S("vid_run.tcport") - 1]) != (0x3E, 0x3A, 0x01):
+        raise Fail("vid_run's sound sites are not ld a,n / ld a,(nn) / ld bc,nn operands")
     for raw in (1, 0, 1):
         patch_session(mc, 1, raw)
-        for name, a, want in vec_sites(raw):
-            got = bytes(mc.mem[a:a + len(want)])
-            if got != want:
-                raise Fail(f"raw {raw}: {name} {got.hex(' ').upper()}, expected "
-                           f"{want.hex(' ').upper()}")
+        sites_are(mc, raw, 0, f"raw {raw}")
+    opens = dict(SND_OPENS)
+    opens["0 (non-raw)"] = (0, 2, 1)
+    for a, first in opens.items():
+        for b, (raw, ach, mono) in opens.items():
+            mc = RawMachine(SYMS)
+            snd_open(mc, *first)
+            snd_open(mc, raw, ach, mono)
+            sites_are(mc, raw, int(str(b)[0]), f"path {b} after path {a}")
 
 
 def test_raw_stage():
@@ -3783,7 +3927,8 @@ def vec_writes(direct, raw):
     out += [(S("vid_decode_any.raw") + 1, le(S("vid_raw_frame" if raw else "vid_decode_frame_ds"))),
             (S("vr_sector_n"), le(S("VR_ENT_FAST")))]
     out += [(a, bs) for _, a, bs in vec_sites(raw)]
-    return out + [(S("vidRaw"), bytes([raw])), (S("vidDirect"), bytes([direct]))]
+    return out + [(S("vidRaw"), bytes([raw])), (S("vidDirect"), bytes([direct])),
+                  (S("vidSndPath"), b"\x00")]
 
 
 def with_writes(page, writes):
@@ -3995,10 +4140,10 @@ def nex_store_sites(addrs):
 
 
 def test_vec_restore():
-    """vid_run_restore_body opens with ld hl, IM2_CTC_STUB / ld (IM2_TABLE + IM2_CTC_VEC), hl;
-    run to its hop back after a raw stereo, a raw mono and a non-raw session: CTC 0's entry is
-    IM2_CTC_STUB, the stub's target the saved vector, the whole table as im2_init left it
-    (CTC 1's entry included). The image names CTC 0's entry only at im2_init, l2setup, the
+    """vid_run_restore_body holds ld hl, IM2_CTC_STUB / ld (IM2_TABLE + IM2_CTC_VEC), hl after
+    its DMA sound teardown; run to its hop back after a raw stereo, a raw mono and a non-raw
+    session: CTC 0's entry is IM2_CTC_STUB, the stub's target the saved vector, the whole
+    table as im2_init left it (CTC 1's entry included). The image names CTC 0's entry only at im2_init, l2setup, the
     restore body and (DEBUG) nxb_kind_rarm / nxb_kind_armold / nxb_kind_disarm."""
     stub, at = S("IM2_CTC_STUB"), S("IM2_TABLE") + S("IM2_CTC_VEC")
     for installed, target in (("video_ctc_isr_raw_st", "video_ctc_isr_raw_st"),
@@ -4006,7 +4151,8 @@ def test_vec_restore():
                               ("IM2_CTC_STUB", "video_ctc_isr_stereo")):
         mc = RawMachine(SYMS)
         mc.map(7, S("VID_PAGE2"))
-        code_is(mc, "vid_run_restore_body", b"\x21" + le(stub) + b"\x22" + le(at))
+        rb = S("vid_run_restore_body")
+        find_code(mc, rb, rb + 48, b"\x21" + le(stub) + b"\x22" + le(at))
         set_table(mc, S(installed))
         mc.mem[stub + 1:stub + 3] = le(S(target))
         mc.poke16("vidSvCtcStub", S("ctc_isr"))
@@ -5815,23 +5961,42 @@ class LoopMachine(RawMachine):
         if port == S("AUD_CTC_PORT"):
             self.armed = v != S("AUD_CTC_RESET") and self.ctc[-1:] == [S("AUD_CTC_CW16")]
             self.ctc.append(v)
+            if self.trace is not None:
+                self.trace.append(("ctc", port, v, self.now))
         elif port & 0xFF in (DAC_L, DAC_R, DAC_M, S("DAC_PORT") & 0xFF):
-            pass
+            if self.trace is not None:
+                self.trace.append(("out", port, v, self.now))
         else:
             super().port_out(port, v)
 
 
-def loop_session(real, frames=2, waits=1):
+def loop_session(real, frames=2, waits=1, path=0, bad=None, teardown=False):
     """vid_run from the audio-0 preload (ld (vidDecSp),sp before .ixp1) through `frames`
     frame loop iterations, 256x192 mono raw, cells as a raw direct open stages them, the
     card serving frame sections laid out as the encoder writes them (frame 0 carries the
     palette sector). The mono handler is modelled as HL' += 1 per 1792 T (15625 Hz at
-    28 MHz) while interrupts are on. Returns (machine, card, events, stop reason)."""
+    28 MHz) while interrupts are on. path 1, 2: the open's sound path (snd_open; 0: the
+    header's channel count unset, the CTC forms), a traced machine with the DMA model, on
+    path 2 programmed by l2setup itself and advanced a byte per 1792 T once enabled; mc.early:
+    the addresses the model was read at before that. bad: the sector whose token is $00.
+    teardown: run on through the abort and vid_run.restore to vid_hop2 (vid_win_close_h and
+    the DEBUG vid_play_close skipped); the stop reason is then (abort entry, A, HL at the
+    hop). Returns (machine, card, events, stop reason, sound)."""
     code, w, h = 0, 256, 192
     x0, sec = geom(code, w, h)
     pad = (real // 512 + 1) * 512
     mc = LoopMachine(SYMS)
-    patch_session(mc, 1, 1)
+    if path:
+        mc.dma, mc.trace, mc.early = Dma(), [], set()
+        snd_open(mc, 1, 1, path == 2)
+    else:
+        patch_session(mc, 1, 1)
+    if path == 2:
+        set_table(mc)
+        l2setup(mc)                             # programs the model, sets vidSvDmaSnd
+        mc.trace.clear()
+        mc.dma.log.clear()
+        mc.dma.before_read = lambda d, n: d.enabled or mc.early.add(d.addr)
     if build_sched(mc, code, w, h).fc:
         raise Fail("vid_raw_sched_build set CF")
     mc.map(7, S("VID_PAGE"))
@@ -5848,7 +6013,7 @@ def loop_session(real, frames=2, waits=1):
     need = sec + 1 + pad // 512 + 1                       # vid_strm_validate: cap + apad + 1
     for name, v in (("vidRawSchedPage", SCHED_PAGE), ("vidRawSec", sec), ("vidRawCap", sec + 1),
                     ("vidRawTag", 0), ("vidRawPage0", x0 >> 5), ("vidRawH0", 0x40 + (x0 & 31)),
-                    ("l2BackBank", BACK_BANK), ("l2FrontBank", 33), ("vidStreaming", 0),
+                    ("l2BackBank", BACK_BANK), ("l2FrontBank", FRONT_BANK), ("vidStreaming", 0),
                     ("vidDsCrcDue", 0), ("vidDsFrmBlk", 0), ("vidDsBound", need),
                     ("vidApadBlk", pad // 512), ("vidLoopMode", 0), ("vidStrmEntryCnt", 1),
                     ("vidStrmEntryIdx", 1), ("vidWinOpenH", 1), ("vidPalCtrl", 0),
@@ -5865,6 +6030,8 @@ def loop_session(real, frames=2, waits=1):
     base, ring = S("vidAudBuf"), S("NXV_AUD_RING")
     mc.mem[base:base + ring] = bytes([0xEE]) * ring
     card = Card(data, waits=waits)
+    if bad is not None:
+        card.stream[[i for i, ph in enumerate(card.phase) if ph == "token"][bad]] = 0x00
     mc.set_card(card)
     cpu = mc.cpu
     start = S("vid_run.ixp1") - 4
@@ -5882,10 +6049,21 @@ def loop_session(real, frames=2, waits=1):
              loop: "loop"}
     stops = {S("vid_dec_abort"): "vid_dec_abort", S("vid_dec_abort_pos"): "vid_dec_abort_pos",
              S("vid_run.restore"): "vid_run.restore"}
+    skip = {S(n) for n in ("vid_win_close_h", "vid_play_close") if n in SYMS}
     acc, loops, budget, prev = 0, 0, 20_000_000, 0
     while True:
         pc = cpu.pc
-        if pc in stops:
+        if teardown:
+            if pc == S("vid_hop2"):
+                why = (why or (None, None))[:2] + (cpu.hl,)
+                break
+            if pc in skip:
+                cpu.pc = cpu.pop()
+                continue
+            if pc in stops and why is None and pc != S("vid_run.restore"):
+                why = (stops[pc], cpu.a)
+                mc.trace.append(("abort", stops[pc], cpu.a, mc.now))
+        elif pc in stops:
             why = (stops[pc], cpu.a)
             break
         if pc in watch and not (pc == nocrc and crc0 <= prev < nocrc) \
@@ -5898,6 +6076,8 @@ def loop_session(real, frames=2, waits=1):
         if pc == phase:                                   # the field tick the arm waits for
             fc = S("frameCounter")
             mc.mem[fc] = (mc.mem[fc] + 1) & 0xFF
+            if mc.trace is not None:
+                mc.trace.append(("tick", mc.mem[fc], 0, mc.now))
         prev = pc
         try:
             t = tstep(mc)
@@ -5906,11 +6086,17 @@ def loop_session(real, frames=2, waits=1):
                 raise
             cpu.step()                                    # NRGET (ED C7): timing not asserted
             t = 8
+        mc.now += t
         if mc.armed:
             acc += t
             while acc >= 1792 and cpu.iff:
                 acc -= 1792
                 set_alt_hl(cpu, base if alt_hl(cpu) + 1 == base + ring else alt_hl(cpu) + 1)
+        elif mc.dma is not None and mc.dma.enabled:
+            acc += t
+            while acc >= 1792:
+                acc -= 1792
+                mc.dma.advance()
         budget -= 1
         if budget <= 0:
             why = ("budget", 0)
@@ -5952,6 +6138,522 @@ def test_loop_sound_boundary():
                 raise Fail(f"{what}: frame {f} sound not at ring +${f * real:04X}")
 
 
+# --------------------------------------------------------------------------- DMA mono sound
+
+SND_PROG = bytes.fromhex("C3 7D 00 60 00 20 54 02 68 22 38 CD B3 00 B2 BB 18 CF")
+SND_OFF = bytes.fromhex("83 C3 54 02 50 02 82 A1 BB 7F")
+SND_STATE = dict(enabled=False, a_start=0x6000, length=8192, a_io=False, a_mode="up", a_cycles=2,
+                 b_start=0x00B3, b_io=True, b_mode="fixed", b_cycles=2, mode="burst",
+                 prescaler=56, restart=True, mask=0x18, addr=0x6000)
+PRESC = (56, 57, 59, 60, 62, 64, 66, 54)        # (CTC constant + 1) >> 1 for NR $11 = 0..7
+SND_OPENS = {0: (1, 2, 1), 1: (1, 1, 0), 2: (1, 1, 1)}      # path: raw, channels, vidMonoDma
+
+
+def cold_bytes(name, n):
+    """n bytes at a VID_PAGE2 label, as assembled."""
+    o = S(name) - S("OVL_ORG")
+    return bytes(read_page(S("VID_PAGE2"))[o:o + n])
+
+
+def dma_init():
+    return cold_bytes("vidDmaInit", S("vidDmaInit_len"))
+
+
+def snd_open(mc, raw, ach, mono=None, direct=1):
+    """vid_stage_common.vec (patch_session) for a header of ach channels; mono: vidMonoDma
+    poked first (None: as it stands). From and to MMU6 = page 12, MMU7 = VID_PAGE."""
+    if mono is not None:
+        mc.poke("vidMonoDma", mono)
+    mc.map(7, S("VID_PAGE2"))
+    mc.poke("vidP_AChan", ach)
+    patch_session(mc, direct, raw)
+
+
+def snd_sites(path):
+    """[(site, address, bytes)]: the four sound path sites after an open on path 0, 1 or 2."""
+    dma = path == 2
+    return [("vid_run.cw", S("vid_run.cw"),
+             bytes([S("AUD_CTC_RESET") if dma else S("AUD_CTC_CW16")])),
+            ("vid_run.tcsrc", S("vid_run.tcsrc"), le(S("vidDmaGo" if dma else "vidCtcTc"))),
+            ("vid_run.tcport", S("vid_run.tcport"), le(DMA_PORT if dma else S("AUD_CTC_PORT"))),
+            ("vid_raw_rdv + 1", S("vid_raw_rdv") + 1,
+             le(S("vid_dma_rd_hl" if dma else "vid_raw_rd_hl")))]
+
+
+def sites_are(mc, raw, path, what):
+    for name, a, want in vec_sites(raw, path):
+        got = bytes(mc.mem[a:a + len(want)])
+        if got != want:
+            raise Fail(f"{what}: {name} {got.hex(' ').upper()}, expected "
+                       f"{want.hex(' ').upper()}")
+    if mc.peek("vidSndPath") != path:
+        raise Fail(f"{what}: vidSndPath {mc.peek('vidSndPath')}, expected {path}")
+
+
+def dma_machine(cls=None, dwell=False):
+    """A machine with the DMA model at port $6B, a trace of port and next register writes
+    and the DAC ports logged."""
+    mc = (cls or RawMachine)(SYMS)
+    mc.dma, mc.trace, mc.dac = Dma(dwell), [], []
+    return mc
+
+
+def l2setup(mc, timing=0):
+    """vid_run_l2setup_body as the orchestrator calls it, NR $11 = timing, the audio bank
+    AUD_BANK. From and to MMU6 = page 12, MMU7 = VID_PAGE."""
+    mc.map(7, S("VID_PAGE2"))
+    mc.poke("vidAudBankC", AUD_BANK)
+    mc.nr[0x11] = timing
+    for s in range(8):
+        mc.nr[0x50 + s] = mc.mmu[s]
+    mc.run("vid_run_l2setup_body")
+    mc.map(7, S("VID_PAGE"))
+
+
+def restore_body(mc, saved="ctc_isr"):
+    """vid_run_restore_body to its hop back, the snapshot restore, the frees and the close
+    trapped. From MMU7 = VID_PAGE; leaves VID_PAGE2 there. -> the hop targets."""
+    mc.map(7, S("VID_PAGE2"))
+    mc.poke16("vidSvCtcStub", S(saved))
+    mc.poke("vidSvMmu2", mc.mmu[2])
+    mc.poke("vidSvMmu3", mc.mmu[3])
+    hops = []
+
+    def hop(c):
+        hops.append(c.hl)
+        c.pc = RET
+    noop = ret_trap(lambda c: None)
+    traps = {S(n): noop for n in ("vid_snap_restore_body", "vid_ring_free",
+                                  "vid_aud_bank_free", "vid_snap_free", "vid_stream_close")}
+    traps[S("vid_hop1")] = hop
+    mc.run("vid_run_restore_body", traps=traps)
+    return hops
+
+
+def dma_program(dma, presc=56):
+    """The model as a path 2 l2setup leaves it: vidDmaInit, the sound program; log cleared."""
+    for b in dma_init() + SND_PROG[:10] + bytes([presc]) + SND_PROG[11:]:
+        dma.write(b)
+    dma.log.clear()
+    return dma
+
+
+def dma_playing(dma, addr=0x6000):
+    """The model as a path 2 session runs it: programmed, enabled, advanced to addr."""
+    dma_program(dma).write(0x87)
+    dma.advance((addr - 0x6000) & 0x1FFF)
+    dma.log.clear()
+    return dma
+
+
+def test_dma_prog():
+    """l2setup for a raw mono header with vidMonoDma = 1 and NR $11 = 0: port $6B takes
+    vidDmaInit, then C3 / 7D 00 60 00 20 / 54 02 / 68 22 38 / CD B3 00 / B2 / BB 18 / CF and no
+    $87; the model: memory at $6000 up, 8192 bytes, to I/O port $B3 fixed, burst, prescaler 56,
+    restart, read mask $18, not enabled; NR $CD written once, 0; vidCtcTc 112; vid_run.tcsrc
+    names vidDmaGo, which holds $87; vidSvDmaSnd 1; CTC 0's entry and the stub's target stay
+    video_ctc_isr_raw_mono. vidDmaSndOff as assembled: 83 C3 54 02 50 02 82 A1 BB 7F, its bytes
+    3 to 7 vidDmaInit's 2 to 6."""
+    mc = dma_machine()
+    set_table(mc)
+    snd_open(mc, 1, 1, 1)
+    l2setup(mc, 0)
+    init = dma_init()
+    if bytes(mc.dma.log) != init + SND_PROG:
+        raise Fail(f"port $6B took {bytes(mc.dma.log).hex(' ').upper()}, expected "
+                   f"{(init + SND_PROG).hex(' ').upper()}")
+    if mc.dma.state() != SND_STATE or mc.dma.pend or mc.dma.reads:
+        diff = {k: v for k, v in mc.dma.state().items() if SND_STATE[k] != v}
+        raise Fail(f"DMA state differs: {diff}; follow bytes pending {len(mc.dma.pend)}, "
+                   f"reads {mc.dma.reads}")
+    cd = [v for n, v in mc.nrlog if n == S("NR_DMA_INT_EN_2")]
+    got = (cd, mc.peek("vidCtcTc"), mc.peek("vid_run.tcsrc", 2), mc.peek("vidDmaGo"),
+           mc.peek("vidSndPath"), vec_entry(mc), stub_target(mc))
+    mono = S("video_ctc_isr_raw_mono")
+    if got != ([0], 112, S("vidDmaGo"), 0x87, 2, mono, mono):
+        raise Fail(f"(NR $CD writes, vidCtcTc, vid_run.tcsrc, (vidDmaGo), vidSndPath, CTC 0's "
+                   f"entry, stub target) = {got}")
+    off = cold_bytes("vidDmaSndOff", len(SND_OFF))
+    if off != SND_OFF or off[2:7] != init[1:6] or cold_bytes("vidSvDmaSnd", 1) != b"\x00":
+        raise Fail(f"vidDmaSndOff {off.hex(' ').upper()}; vidDmaInit {init.hex(' ').upper()}; "
+                   f"or vidSvDmaSnd is not assembled 0")
+    mc.map(7, S("VID_PAGE2"))
+    if mc.peek("vidSvDmaSnd") != 1:
+        raise Fail(f"vidSvDmaSnd {mc.peek('vidSvDmaSnd')} after a path 2 l2setup")
+
+
+def test_dma_presc():
+    """The prescaler l2setup programs for NR $11 = 0..7: (the CTC table's value + 1) >> 1 = 56,
+    57, 59, 60, 62, 64, 66, 54; vidCtcTc keeps the table's value; the rest of the program as
+    test_dma_prog's."""
+    table = cold_bytes("vidCtcTcNxvStereo", 8)
+    for k in range(8):
+        mc = dma_machine()
+        snd_open(mc, 1, 1, 1)
+        l2setup(mc, k)
+        want = SND_PROG[:10] + bytes([PRESC[k]]) + SND_PROG[11:]
+        got = (mc.dma.prescaler, mc.peek("vidCtcTc"), bytes(mc.dma.log[-len(SND_PROG):]))
+        if got != (PRESC[k], table[k], want) or PRESC[k] != (table[k] + 1) >> 1:
+            raise Fail(f"NR $11 = {k}: (prescaler, vidCtcTc, program) = {got[0]}, {got[1]}, "
+                       f"{got[2].hex(' ').upper()}; expected {PRESC[k]}, {table[k]}")
+
+
+def rd_call(mc, name="vid_dma_rd_hl", iff=1):
+    """One call of the pointer read with the main set seeded: -> (HL, T less the call's 17).
+    BC, DE, the rest of the main set, IX, IY, SP, IFF kept; no memory write."""
+    cpu = mc.cpu
+    set_main(cpu)
+    cpu.iff = iff
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = S(name)
+    before = bytes(mc.mem[:STACK - 0x40]) + bytes(mc.mem[STACK:])
+    t = tcount(mc, lambda c: c.pc == RET, budget=1000)
+    if (cpu.b, cpu.c, cpu.d, cpu.e, cpu.ix, cpu.iy, cpu.sp, cpu.iff) != (
+            MAIN["b"], MAIN["c"], MAIN["d"], MAIN["e"], 0xDEAD, 0xBEEF, STACK, iff):
+        raise Fail(f"{name}: BC ${cpu.bc:04X} DE ${cpu.de:04X} IX ${cpu.ix:04X} IY "
+                   f"${cpu.iy:04X} SP ${cpu.sp:04X} IFF {cpu.iff}")
+    if bytes(mc.mem[:STACK - 0x40]) + bytes(mc.mem[STACK:]) != before:
+        raise Fail(f"{name}: wrote memory off the stack")
+    return cpu.hl, t
+
+
+RD_BYTES = bytes.fromhex("C5 01 6B 04 3E A7 ED 79 ED 68 ED 60 ED 78 BD 30 02 10 F1 6F 7C E6 1F "
+                         "F6 60 67 C1 C9")
+
+
+def test_dma_rd():
+    """vid_dma_rd_hl: its 28 bytes; it returns the model's port A address with one read
+    sequence ($A7, low, high, low) in 138 T, 155 with its call (165 through vid_raw_rdv's jp),
+    BC, DE, IX, IY, SP and IFF kept, nothing written. A byte transferred between the low and
+    the high read, or between the high and the second low, at $60FF, $7FFF and $6010: the
+    result is an address the model held during the call (a fallen low byte costs one more
+    sequence). A model whose low byte falls in every sequence: exactly 4 sequences, then the
+    fourth pair, clamped."""
+    if S("vidAudBuf") != 0x6000 or S("NXV_AUD_RING") != 0x2000:
+        raise Fail("the ring is not $6000-$7FFF")
+    code_is(RawMachine(SYMS), "vid_dma_rd_hl", RD_BYTES)
+    for addr in (0x6000, 0x6001, 0x60FF, 0x6100, 0x7ABC, 0x7FFF):
+        for iff in (1, 0):
+            mc = dma_machine()
+            dma_playing(mc.dma, addr)
+            hl, t = rd_call(mc, iff=iff)
+            if (hl, t, mc.dma.seqs, mc.dma.reads, mc.dma.log) != (addr, 138, 1, 3, [0xA7]):
+                raise Fail(f"address ${addr:04X}: read ${hl:04X} in {t} T, {mc.dma.seqs} "
+                           f"sequences, {mc.dma.reads} reads, writes {mc.dma.log}")
+    mc = dma_machine()
+    dma_playing(mc.dma, 0x6123)
+    snd_open(mc, 1, 1, 1)
+    hl, t = rd_call(mc, "vid_raw_rdv")
+    if (hl, t) != (0x6123, 148):
+        raise Fail(f"through vid_raw_rdv on path 2: ${hl:04X} in {t} T, expected $6123, 148")
+    for dwell in (False, True):
+        for addr, at, seqs in ((0x60FF, 1, 2), (0x60FF, 2, 2), (0x7FFF, 1, 2), (0x7FFF, 2, 2),
+                               (0x6010, 1, 1), (0x6010, 2, 1)):
+            mc = dma_machine(dwell=dwell)
+            dma_playing(mc.dma, addr)
+            held = [addr]
+
+            def step(d, n, at=at, held=held):
+                if n == at and len(held) == 1:
+                    d.advance()
+                    held.append(d.addr)
+            mc.dma.before_read = step
+            hl, _ = rd_call(mc)
+            ring = {0x6000 | a & 0x1FFF for a in held}
+            if hl not in ring or mc.dma.seqs != seqs or len(held) != 2:
+                raise Fail(f"a byte before read {at} at ${addr:04X} (dwell {dwell}): read "
+                           f"${hl:04X}, the model held {[hex(a) for a in held]}, "
+                           f"{mc.dma.seqs} sequences (expected {seqs})")
+    mc = dma_machine()
+    mc.dma.before_read = lambda d, n: setattr(d, "addr", (0x9A80, 0x9A80, 0x9A10)[n % 3])
+    mc.dma.mask = 0x18
+    hl, t = rd_call(mc)
+    if (hl, mc.dma.seqs, mc.dma.reads) != (0x7A10, 4, 12):
+        raise Fail(f"a low byte that always falls: read ${hl:04X} after {mc.dma.seqs} "
+                   f"sequences, {mc.dma.reads} reads; expected $7A10, 4, 12")
+    print(f"  test_dma_rd: 138 T (155 with its call, 165 through the vector); 4 exhausted "
+          f"sequences {t} T")
+
+
+def test_dma_rd_end():
+    """The ring end. A model that dwells at $8000 reads as $6000; over a whole lap, byte by
+    byte, every value read is the model's address folded into $6000-$7FFF; raw addresses
+    $0000, $1234, $5FFF, $8001, $A000, $C123, $FFFF read as $6000 + their low 13 bits;
+    vid_pace_poll on path 2 debits 8192 over the lap, one poll landing on the dwell; DEBUG:
+    nxb_aud_body.ptr entered with each value read stores a vidAudWr inside the ring."""
+    lo, hi = 0x6000, 0x7FFF
+    mc = dma_machine(dwell=True)
+    dma_playing(mc.dma, 0x7FFF)
+    mc.dma.advance()
+    hl, _ = rd_call(mc)
+    if (mc.dma.addr, hl) != (0x8000, 0x6000):
+        raise Fail(f"the dwell: the model holds ${mc.dma.addr:04X}, read ${hl:04X}")
+    seen = set()
+    for _ in range(8192 + 16):
+        mc.dma.advance()
+        hl, _ = rd_call(mc)
+        if hl != 0x6000 | mc.dma.addr & 0x1FFF:
+            raise Fail(f"lap: the model holds ${mc.dma.addr:04X}, read ${hl:04X}")
+        seen.add(hl)
+    if seen != set(range(lo, hi + 1)):
+        raise Fail(f"lap: {len(seen)} distinct values read, expected the 8192 ring addresses")
+    vals = []
+    for raw in (0x0000, 0x1234, 0x5FFF, 0x8001, 0xA000, 0xC123, 0xFFFF, 0x8000):
+        mc = dma_machine()
+        mc.dma.mask, mc.dma.addr = 0x18, raw
+        hl, _ = rd_call(mc)
+        if hl != 0x6000 | raw & 0x1FFF:
+            raise Fail(f"raw address ${raw:04X} read as ${hl:04X}")
+        vals.append(hl)
+    mc = dma_machine(dwell=True)
+    dma_playing(mc.dma)
+    snd_open(mc, 1, 1, 1)
+    mc.poke16("vidAudRdPrev", 0x6000)
+    mc.poke16("vidPaceRem", 20000)
+    dwelt = 0
+    for _ in range(128):
+        mc.dma.advance(64)
+        dwelt += mc.dma.addr == 0x8000
+        if "vidRlSpinDiv" in SYMS:
+            mc.poke("vidRlSpinDiv", 100)
+        mc.run("vid_pace_poll")
+    got = (mc.peek("vidPaceRem", 2), mc.peek("vidAudRdPrev", 2), dwelt)
+    if got != (20000 - 8192, 0x6000, 1):
+        raise Fail(f"vid_pace_poll over a lap: (rem, rdPrev, polls on the dwell) = {got}, "
+                   f"expected ({20000 - 8192}, $6000, 1)")
+    if "nxb_aud_body" in SYMS:
+        noop = ret_trap(lambda c: None)
+        for v in vals:
+            mc = RawMachine(SYMS)
+            mc.run(S("nxb_aud_body.ptr"), hl=v,
+                   traps={S("vid_aud_stage"): noop, S("vid_aud_pump"): noop})
+            wr = mc.peek("vidAudWr", 2)
+            if not lo <= wr <= hi or wr != v ^ 0x1000:
+                raise Fail(f"nxb_aud_body.ptr with ${v:04X}: vidAudWr ${wr:04X}")
+
+
+def trace_outs(mc, port):
+    """The bytes written to the port with this low byte, from the machine's trace."""
+    return bytes(e[2] for e in mc.trace if e[0] == "out" and e[1] & 0xFF == port)
+
+
+def test_dma_off_state():
+    """The restore body after a path 2 session (vidSvDmaSnd 1, the model playing): its first
+    writes are 83 C3 54 02 50 02 82 A1 BB 7F to $6B, DAC_SILENCE to port $B3, NR $CD =
+    IM2_DMA_INT_EN_2_VAL, before any other port or next register write; vidSvDmaSnd 0 after;
+    the model: disabled, prescaler 0, no restart, continuous, port A memory up, port B memory
+    up (not I/O, not fixed), both timings 2 cycles, mask $7F. Then vidDmaCpArm's bytes alone,
+    and vidSnapDmaArm's, each parse to a continuous memory to memory copy going up with
+    prescaler 0 and no restart. A second restore sends nothing to $6B."""
+    import copy
+    mc = dma_machine()
+    set_table(mc, S("video_ctc_isr_raw_mono"))
+    dma_playing(mc.dma, 0x6789)
+    mc.map(7, S("VID_PAGE2"))
+    mc.poke("vidSvDmaSnd", 1)
+    mc.map(7, S("VID_PAGE"))
+    hops = restore_body(mc)
+    cd = S("NR_DMA_INT_EN_2")
+    want = [("out", DMA_PORT, b) for b in SND_OFF] + [("out", DAC_M, S("DAC_SILENCE")),
+                                                      ("nr", cd, S("IM2_DMA_INT_EN_2_VAL"))]
+    head = [(e[0], e[1] & 0xFF if e[0] == "out" else e[1], e[2]) for e in mc.trace[:len(want)]]
+    if head != want or S("IM2_DMA_INT_EN_2_VAL") != 3 or hops != [S("vid_run.restore_tail")]:
+        raise Fail(f"the restore body opens with {head}, expected {want}; hops {hops}")
+    rest = mc.trace[len(want):]
+    if any(e[0] == "out" and e[1] & 0xFF == DMA_PORT or e[0] == "nr" and e[1] == cd
+           for e in rest) or mc.peek("vidSvDmaSnd") != 0 or mc.dac != [(DAC_M, 0x80)]:
+        raise Fail(f"after the teardown: a further $6B or NR $CD write, vidSvDmaSnd "
+                   f"{mc.peek('vidSvDmaSnd')}, or DAC writes {mc.dac}")
+    off = dict(enabled=False, prescaler=0, restart=False, mode="continuous", a_io=False,
+               a_mode="up", b_io=False, b_mode="up", a_cycles=2, b_cycles=2, mask=0x7F)
+    got = {k: v for k, v in mc.dma.state().items() if k in off}
+    if got != off or mc.dma.pend:
+        raise Fail(f"the DMA after the teardown: {got}, expected {off}")
+    hot = read_page(S("VID_PAGE"))
+    arms = (("vidDmaCpArm", bytes(hot[S("vidDmaCpArm") - 0xE000:][:S("vidDmaCpArm_len")])),
+            ("vidSnapDmaArm", cold_bytes("vidSnapDmaArm", S("vidSnapDmaArm_len"))))
+    for name, prog in arms:
+        d = copy.deepcopy(mc.dma)
+        for b in prog:
+            d.write(b)
+        got = {k: v for k, v in d.state().items() if k in off}
+        if got != dict(off, enabled=True) or d.pend or not d.a2b:
+            raise Fail(f"{name} after the teardown: {got}")
+    n = len(mc.trace)
+    restore_body(mc)
+    if any(e[0] == "out" and e[1] & 0xFF in (DMA_PORT, DAC_M) or e[0] == "nr" and e[1] == cd
+           for e in mc.trace[n:]):
+        raise Fail("a second restore wrote to $6B, the DAC or NR $CD")
+
+
+def test_mono_switch():
+    """vidMonoDma = 0: a raw mono open and l2setup send port $6B vidDmaInit and nothing more,
+    never write NR $CD, leave vidSvDmaSnd 0 and every site at path 1's value, and the restore
+    body after it writes neither $6B, NR $CD nor a DAC port. The same for a raw stereo and a
+    non-raw open with vidMonoDma = 1 (path 0). The cell is assembled VID_RAW_MONO_DMA."""
+    mc = RawMachine(SYMS)
+    if mc.peek("vidMonoDma") != S("VID_RAW_MONO_DMA") or S("VID_RAW_MONO_DMA") != 1:
+        raise Fail(f"vidMonoDma is assembled {mc.peek('vidMonoDma')}, VID_RAW_MONO_DMA "
+                   f"{S('VID_RAW_MONO_DMA')}")
+    cd = S("NR_DMA_INT_EN_2")
+    for what, raw, ach, mono, path in (("raw mono, switch off", 1, 1, 0, 1),
+                                       ("raw stereo", 1, 2, 1, 0), ("non-raw", 0, 2, 1, 0)):
+        mc = dma_machine()
+        set_table(mc)
+        snd_open(mc, raw, ach, mono)
+        l2setup(mc, 0)
+        sites_are(mc, raw, path, what)
+        mc.map(7, S("VID_PAGE2"))
+        sv = mc.peek("vidSvDmaSnd")
+        mc.map(7, S("VID_PAGE"))
+        if bytes(mc.dma.log) != dma_init() or cd in [n for n, _ in mc.nrlog] or sv:
+            raise Fail(f"{what}: port $6B took {bytes(mc.dma.log).hex(' ').upper()}, NR $CD "
+                       f"written {cd in [n for n, _ in mc.nrlog]}, vidSvDmaSnd {sv}")
+        n, k = len(mc.trace), len(mc.nrlog)
+        restore_body(mc)
+        if any(e[0] == "out" for e in mc.trace[n:]) or cd in [r for r, _ in mc.nrlog[k:]] \
+                or mc.dma.reads:
+            raise Fail(f"{what}: the restore body wrote a port or NR $CD, or the DMA was read")
+
+
+def test_im2_bytes():
+    """im2_init against the baseline image of this variant: the same bytes (NR $CD's operand
+    is IM2_DMA_INT_EN_2_VAL, the literal it replaced), and it holds nextreg NR $CD, 3."""
+    osyms, opages = base_image()
+    page = SYMS["im2_init"][0]
+    if osyms["im2_init"][0] != page or page not in (4, 5):
+        raise Fail("im2_init is not on the same resident page as the baseline's")
+
+    def body(syms, rd):
+        a = syms["im2_init"][1]
+        end = min(v for k, (p, v) in syms.items() if p == page and v > a and "." not in k)
+        return bytes(rd(page)[a & 0x1FFF:end & 0x1FFF])
+    new, old = body(SYMS, read_page), body(osyms, opages)
+    pat = bytes([0xED, 0x91, S("NR_DMA_INT_EN_2"), S("IM2_DMA_INT_EN_2_VAL")])
+    if new != old or new.count(pat) != 1 or pat[3] != 3:
+        raise Fail(f"im2_init: {len(new)} bytes against the baseline's {len(old)}, equal "
+                   f"{new == old}; nextreg $CD, 3 found {new.count(pat)} time(s)")
+
+
+def test_loop_dma():
+    """vid_loop_rewind on a path 2 session (the model playing): no CTC write, no $6B write or
+    read, no next register $CD write; the walk and the header discard as test_frame_rewind's."""
+    code, w, h = 1, 320, 192
+    mc = dma_machine(LoopMachine)
+    dma_playing(mc.dma, 0x6400)
+    snd_open(mc, 1, 1, 1)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    setup_frame(mc, code, w, h, tag=1)
+    for n, v in (("vidDirect", 1), ("vidStreaming", 0), ("vidDsBound", 255),
+                 ("vidRlDiv", 250), ("vidRlSpinDiv", 250)):
+        if n in SYMS:
+            mc.poke(n, v)
+    mc.poke("vidTotalBlk", (0x3000).to_bytes(3, "little"))
+    card = Card([bytes([0xAA]) * 512], waits=1)
+    mc.set_card(card)
+    walks = []
+
+    def walk(cpu):
+        walks.append(card.pos)
+        cpu.b = cpu.c = cpu.d = cpu.e = 0x5A
+        cpu.hl, cpu.fc = 2000, 0
+    n = len(mc.trace)
+    mc.run("vid_loop_rewind", traps={S("vid_run_walk_h"): ret_trap(walk),
+                                     S("vid_win_close_h"): ret_trap(lambda c: 0), **aborts()})
+    cd = S("NR_DMA_INT_EN_2")
+    if mc.ctc or mc.dma.log or mc.dma.reads or walks != [0] or not mc.dma.enabled \
+            or any(e[0] in ("out", "ctc") or e[:2] == ("nr", cd) for e in mc.trace[n:]) \
+            or card.pos != len(card.stream):
+        raise Fail(f"vid_loop_rewind on path 2: CTC writes {mc.ctc}, $6B writes {mc.dma.log}, "
+                   f"reads {mc.dma.reads}, trace {mc.trace[n:]}, walks {walks}, card "
+                   f"{card.pos}/{len(card.stream)}")
+
+
+def snd_times(mc, path):
+    """(T from the last field tick to the sound start's port write - the $87 on path 2, CTC
+    0's fourth write on the others - and that write's trace index)."""
+    tick, ctc = None, 0
+    for i, e in enumerate(mc.trace):
+        ctc += e[0] == "ctc"
+        if e[0] == "tick":
+            tick = e[3]
+        elif (e[:3] == ("out", DMA_PORT, 0x87) if path == 2 else e[0] == "ctc" and ctc == 4):
+            if tick is None:
+                raise Fail(f"path {path}: the sound started before any field tick")
+            return e[3] - tick, i
+    raise Fail(f"path {path}: no sound start in the trace")
+
+
+def test_dma_start():
+    """vid_run from the preload to the second frame loop iteration, 256x192 raw mono (625
+    sound bytes). Path 2: CTC 0 is written 03 03 03 and nothing more; port $6B takes $87 and,
+    one for each read sequence of the pointer, $A7, nothing more; the $87 after the field
+    tick, as many T after it as path 1's time constant write; the preload's room test reads
+    the pointer before the start ($6000) and none of its reads is torn; no abort, the card
+    read as on path 1, both frames' sound in the ring. Path 1: CTC 0 takes 03 03 85 and the
+    time constant, port $6B nothing."""
+    rst, cw = S("AUD_CTC_RESET"), S("AUD_CTC_CW16")
+    out = {}
+    for path in (1, 2):
+        mc, card, ev, why, snd = loop_session(625, frames=1, path=path)
+        if why is not None:
+            raise Fail(f"path {path}: {why[0]} reached with A=${why[1]:02X} at card read "
+                       f"{card.pos}")
+        dt, at = snd_times(mc, path)
+        six = trace_outs(mc, DMA_PORT)
+        if path == 2 and (six.count(0xA7), 3 * mc.dma.seqs) != (mc.dma.seqs, mc.dma.reads):
+            raise Fail(f"path 2: {six.count(0xA7)} $A7 writes, {mc.dma.seqs} sequences, "
+                       f"{mc.dma.reads} reads")
+        six = bytes(v for v in six if v != 0xA7)
+        base = S("vidAudBuf")
+        ring = bytes(mc.mem[base:base + 2 * 625])
+        out[path] = (dt, card.pos, ring == snd[0] + snd[1])
+        want_ctc, want_six = ([rst, rst, rst], b"\x87") if path == 2 else ([rst, rst, cw, 112],
+                                                                         b"")
+        if mc.ctc != want_ctc or six != want_six or not out[path][2]:
+            raise Fail(f"path {path}: CTC 0 took {mc.ctc}, $6B {six.hex(' ').upper()!r}; "
+                       f"sound in the ring {out[path][2]}")
+        if path == 2 and (mc.dma.reads == 0 or mc.early != {0x6000} or not mc.dma.enabled):
+            raise Fail(f"path 2: $87 at trace {at}, pointer values read before it "
+                       f"{sorted(mc.early)}, reads {mc.dma.reads}, enabled {mc.dma.enabled}")
+    if out[1][:2] != out[2][:2] or (rst, cw) != (0x03, 0x85):
+        raise Fail(f"(T tick to start, card reads): path 1 {out[1][:2]}, path 2 {out[2][:2]}")
+    print(f"  test_dma_start: sound starts {out[2][0]} T after the field tick on both paths")
+
+
+def test_dma_abort():
+    """A bad token in frame 3's pixels of a path 2 session, run on through vid_run.restore
+    and the restore body: vid_dec_abort_pos with VID_ERR_TOKEN; after it CTC 0 takes the two
+    resets, then port $6B takes 83 C3 54 02 50 02 82 A1 BB 7F and nothing else; DAC B and C
+    are parked after the DMA is off; NR $CD = IM2_DMA_INT_EN_2_VAL; the model disabled."""
+    real = 625
+    ns = (real // 512 + 1)
+    bad = (ns + 1 + 96) + (ns + 96) + ns + 10
+    mc, card, ev, why, snd = loop_session(real, frames=3, path=2, bad=bad, teardown=True)
+    if why != ("vid_dec_abort_pos", S("VID_ERR_TOKEN"), S("vid_run_restore_body")):
+        raise Fail(f"the session ended {why}, expected vid_dec_abort_pos, VID_ERR_TOKEN and "
+                   f"the hop to vid_run_restore_body")
+    k = next(i for i, e in enumerate(mc.trace) if e[0] == "abort")
+    started = bytes(v for v in trace_outs(mc, DMA_PORT) if v != 0xA7)
+    if started != b"\x87" or not mc.dma.enabled or mc.dma.addr == 0x6000:
+        raise Fail(f"at the hop to the restore body: $6B took {started.hex(' ').upper()} "
+                   f"beside the reads, enabled {mc.dma.enabled}, address ${mc.dma.addr:04X}")
+    restore_body(mc)
+    after = mc.trace[k + 1:]
+    six = [i for i, e in enumerate(after) if e[0] == "out" and e[1] & 0xFF == DMA_PORT]
+    ctc = [e[2] for e in after if e[0] == "ctc"]
+    cd = [e[2] for e in after if e[0] == "nr" and e[1] == S("NR_DMA_INT_EN_2")]
+    park = [e[2] for e in after[six[-1] if six else 0:]
+            if e[0] == "out" and e[1] & 0xFF == DAC_M]
+    if bytes(after[i][2] for i in six) != SND_OFF or ctc != [3, 3] or mc.dma.enabled \
+            or cd != [S("IM2_DMA_INT_EN_2_VAL")] or park != [S("DAC_SILENCE")]:
+        raise Fail(f"after the abort: $6B took {bytes(after[i][2] for i in six).hex(' ')}, CTC "
+                   f"0 {ctc}, NR $CD {cd}, DAC B+C parks after the DMA stop {park}, enabled "
+                   f"{mc.dma.enabled}")
+
+
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_fresh, test_sector_walkfault, test_sector_polls, test_sector_timeout,
@@ -5969,6 +6671,8 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_isr_stereo, test_isr_mono, test_isr_t, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
          test_vec_install, test_vec_restore,
+         test_dma_prog, test_dma_presc, test_dma_start, test_dma_rd, test_dma_rd_end,
+         test_dma_off_state, test_dma_abort, test_mono_switch, test_loop_dma, test_im2_bytes,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_vec_bench, test_rw_kinds, test_rw_histlog,
          test_play_log, test_play_clr, test_play_nofile, test_fail_print, test_entry_modes,

@@ -2266,6 +2266,7 @@ vid_run:
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                   ; double soft-reset (unknown -> clean)
+.cw equ $ + 1                    ; DMA mono: AUD_CTC_RESET, a third reset (.vec)
     ld a, AUD_CTC_CW16
     out (c), a                   ; control word - timer not running yet
 .ixp2:                           ; raw: call vid_raw_prime / nop (.vec)
@@ -2300,7 +2301,9 @@ vid_run:
     ld a, (frameCounter)
     cp d
     jr z, .phase                 ; released by the ULA field tick
-    ld a, (vidCtcTc)
+.tcsrc equ $ + 1                 ; DMA mono: vidDmaGo and DMA_PORT (.vec), so this
+    ld a, (vidCtcTc)             ; write is the enable at the same field phase
+.tcport equ $ + 1
     ld bc, AUD_CTC_PORT
     out (c), a                   ; time constant -> timer starts NOW,
                                  ; phase-locked to the field (T9)
@@ -5432,6 +5435,35 @@ nxbHistN:    db 0               ; histograms in nxbHistSav for the log step
  ENDIF
 
 vidRawVar:   db 0               ; raw: 1 = the column train, 0 = inline (vid_raw_stage)
+
+; Play pointer read of a DMA mono session (vid_raw_rdv): port A's working address, guide
+; 2.4. Low, high, low: a fallen low byte is a carry across the pair, read again (4 tries).
+; Out: HL folded into the ring ($8000 reads $6000). Preserves BC, DE, IX. Corrupts AF.
+vid_dma_rd_hl:
+    push bc
+    ld bc, (4 << 8) | DMA_PORT   ; B: tries (the port decodes A7-A0 only, guide 2.1)
+.again:
+    ld a, $A7                    ; read sequence from the first masked register
+    out (c), a
+    in l, (c)                    ; port A low
+    in h, (c)                    ; port A high
+    in a, (c)                    ; low again (the sequence wraps)
+    cp l
+    jr nc, .got
+    djnz .again
+.got:
+    ld l, a
+    ld a, h
+    and $1F
+    or high vidAudBuf
+    ld h, a
+    pop bc
+    ret
+    ASSERT high vidAudBuf == $60 && NXV_AUD_RING == $2000
+
+vidMonoDma:  db VID_RAW_MONO_DMA ; raw mono sound: 0 = CTC 0's handler, else the zxnDMA
+vidSndPath:  db 0               ; .vec, every open: 0 CTC stereo / non-raw, 1 CTC mono, 2 DMA mono
+vidDmaGo:    db DDMA_ENABLE     ; what vid_run.tcsrc loads on path 2. Never written.
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
@@ -9147,8 +9179,6 @@ vid_stage_common:
     ld (vid_decode_any.raw + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, VR_ENT_FAST           ; reset: a session ended mid-crossing left VR_ENT_CROSS
     ld (vr_sector_n + DATA_WINDOW - OVL_ORG), hl
-    ld hl, vid_raw_rd_hl
-    ld (vid_raw_rdv + 1 + DATA_WINDOW - OVL_ORG), hl
     ld h, b
     ld l, c
     ld de, vid_pace_poll.rd + DATA_WINDOW - OVL_ORG
@@ -9167,6 +9197,36 @@ vid_stage_common:
     ld de, vid_run.ixp2 + DATA_WINDOW - OVL_ORG
     ldi
     ldi
+    ldi
+    ldi
+    ; The sound path (vidSndPath) and its sites: vid_run's control word, time constant
+    ; source and port, the pointer read. Path 2: raw, one channel, vidMonoDma set.
+    ld bc, (vidP_Raw)            ; C = raw (0 / 1), B = channels
+    ASSERT vidP_AChan == vidP_Raw + 1
+    ld hl, vidSndCtc
+    ld a, c
+    dec b
+    jr z, .sndm
+    xor a                        ; two channels: path 0
+.sndm:
+    or a
+    jr z, .snds                  ; not raw: path 0
+    ld a, (vidMonoDma + DATA_WINDOW - OVL_ORG)
+    or a
+    ld a, 1
+    jr z, .snds
+    inc a
+    ld hl, vidSndDma
+.snds:
+    ld (vidSndPath + DATA_WINDOW - OVL_ORG), a
+    ld a, (hl)
+    inc hl
+    ld (vid_run.cw + DATA_WINDOW - OVL_ORG), a
+    ld de, vid_run.tcsrc + DATA_WINDOW - OVL_ORG
+    ld bc, 5
+    ldir                         ; .tcsrc, the ld bc opcode between, .tcport
+    ASSERT vid_run.tcport == vid_run.tcsrc + 3
+    ld de, vid_raw_rdv + 1 + DATA_WINDOW - OVL_ORG
     ldi
     ldi
     ld a, (vidDeliverDir)
@@ -9219,6 +9279,18 @@ vidPtrRaw:
     nop
 vidPtrEnd:
     ASSERT vidPtrRaw - vidPtrIx == 14 && vidPtrEnd - vidPtrRaw == 14
+; .vec sources by sound path: vid_run.cw; .tcsrc, the opcode after it, .tcport;
+; vid_raw_rdv's operand.
+vidSndCtc:
+    db AUD_CTC_CW16
+    dw vidCtcTc
+    ld bc, AUD_CTC_PORT
+    dw vid_raw_rd_hl
+vidSndDma:
+    db AUD_CTC_RESET             ; CTC 0 is never left waiting for a time constant
+    dw vidDmaGo
+    ld bc, DMA_PORT
+    dw vid_dma_rd_hl
 
 ; ---------------------------------------------------------------------
 ; vid_file_blocks - the CEILING LIFT's one conversion point: the
@@ -9676,6 +9748,23 @@ vid_run_l2setup_body:
     add hl, bc
     ld a, (hl)
     ld (vidCtcTc+DATA_WINDOW-OVL_ORG), a
+    ; DMA mono (path 2): the prescaler is the CTC constant halved, rounded up (875 kHz / P
+    ; against 1.75 MHz / TC); no source admitted in NR $CD for the session (guide 2.9 note
+    ; 10). The enable is vid_run's. The handler below is still installed; it never runs.
+    ld c, a
+    ld a, (vidSndPath+DATA_WINDOW-OVL_ORG)
+    cp 2
+    jr nz, .isrsel
+    ld a, c
+    inc a
+    srl a
+    ld (vidDmaSnd.presc), a
+    nextreg NR_DMA_INT_EN_2, 0
+    ld hl, vidDmaSnd
+    ld bc, (vidDmaSnd_len << 8) | DMA_PORT
+    otir
+    ld a, 1
+    ld (vidSvDmaSnd), a
     ; IM2_CTC_STUB (ISR vector) - RESIDENT memory, single atomic
     ; LD (nn),HL; strictly before the CTC arm (hot, after this body).
     ; Raw sessions: the HL' handler for the clip's channel count.
@@ -9788,6 +9877,44 @@ vidDmaInit:
     db %10000010                 ; WR5: stop on end of block (one-shot)
 vidDmaInit_len equ $ - vidDmaInit
 
+; DMA mono sound program (zxnDDMA guide 2.3, 2.4, 2.8): the ring to the DAC B+C port, one
+; byte a prescaler period, burst (the CPU runs between bytes), restarting at the ring end.
+; No enable: vid_run sends it at the field tick. The read mask selects port A's address.
+vidDmaSnd:
+    db DDMA_RESET
+    db %01111101                 ; WR0: A -> B, port A address and length follow
+    dw vidAudBuf, NXV_AUD_RING
+    db %01010100, %00000010      ; WR1: A memory, incrementing, cycle length 2
+    db %01101000, %00100010      ; WR2: B I/O, fixed, cycle length 2, prescaler follows
+.presc:
+    db 0                         ; l2setup: (CTC constant + 1) >> 1
+    db %11001101                 ; WR4: burst, port B address follows
+    dw VID_DAC_MONO
+    db %10110010                 ; WR5: auto restart
+    db $BB, %00011000            ; read mask: port A address low, high
+    db DDMA_LOAD
+vidDmaSnd_len equ $ - vidDmaSnd
+    ASSERT vidDmaSnd_len == 18
+
+; The end of a DMA mono session, sent first by the restore body: stop, reset (guide 2.6:
+; prescaler 0, auto restart off, timings 3 cycles), then what the reset leaves or undoes -
+; vidDmaInit's WR1, WR2 and WR5, WR4 continuous, the power-up read mask.
+vidSvDmaSnd:     db 0            ; 1 = l2setup sent vidDmaSnd; cleared by the restore body
+vidDmaSndOff:
+    db $83, DDMA_RESET
+    db %01010100, %00000010      ; WR1: A memory, incrementing, cycle length 2
+    db %01010000, %00000010      ; WR2: B memory, incrementing, cycle length 2
+    db %10000010                 ; WR5: stop on end of block
+    db %10100001                 ; WR4: continuous, no address bytes
+    db $BB, $7F
+vidDmaSndOff_len equ $ - vidDmaSndOff
+    ASSERT vidDmaSndOff_len == 10 && vidDmaSndOff == vidSvDmaSnd + 1
+    ASSERT {b vidDmaSndOff + 2} == {b vidDmaInit + 1}   ; bytes 3 to 7 are vidDmaInit's 2 to 6
+    ASSERT {b vidDmaSndOff + 3} == {b vidDmaInit + 2}
+    ASSERT {b vidDmaSndOff + 4} == {b vidDmaInit + 3}
+    ASSERT {b vidDmaSndOff + 5} == {b vidDmaInit + 4}
+    ASSERT {b vidDmaSndOff + 6} == {b vidDmaInit + 5}
+
 ; Per-video-mode CTC time constants for the ONE supported audio rate
 ; (carried verbatim from v1 - same rate, same derivation; see git
 ; history for the full per-mode error tables and for the mono table
@@ -9834,6 +9961,20 @@ vidCtcTcNxvStereo:
 ; Hops back to vid_run.restore_tail. Corrupts everything.
 ; ---------------------------------------------------------------------
 vid_run_restore_body:
+    ; A DMA mono session: the DMA played on through vid_run.restore, so stop it, park
+    ; DAC B and C again and admit CTC 0 and 1 in NR $CD as im2_init does.
+    ld hl, vidSvDmaSnd
+    ld a, (hl)
+    or a
+    jr z, .nodma
+    ld (hl), 0
+    inc hl                       ; vidDmaSndOff
+    ld bc, (vidDmaSndOff_len << 8) | DMA_PORT
+    otir
+    ld a, DAC_SILENCE
+    out (DAC2_PORT), a
+    nextreg NR_DMA_INT_EN_2, IM2_DMA_INT_EN_2_VAL
+.nodma:
     ld hl, IM2_CTC_STUB          ; CTC 0's entry back to the stub (a raw
     ld (IM2_TABLE + IM2_CTC_VEC), hl ; session pointed it at its handler)
     ld hl, (vidSvCtcStub)        ; vidSv* are VID_PAGE2-local (3c cell

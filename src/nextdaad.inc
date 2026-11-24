@@ -28,6 +28,7 @@ NR_INT_EN_3     equ $C6     ; int enables: UART Rx/Tx
 NR_DMA_INT_EN_1 equ $CC     ; DMA pre-emption: bit 0 ULA, bit 1 line
 NR_DMA_INT_EN_2 equ $CD     ; DMA pre-emption: bit n = CTC channel n
 NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
+IM2_DMA_INT_EN_2_VAL equ %00000011  ; NR $CD outside a DMA sound session: CTC channels 0 and 1
 
 ; NRGET n: A = Next register n; other registers, flags, $243B selection kept.
 ; The parameter is nrgn: sjasmplus substitutes one inside underscore-separated names.
@@ -1343,6 +1344,9 @@ GFX_POS_VALID  equ $80
 VID_DAC_LEFT    equ $F3
 VID_DAC_RIGHT   equ $F9
 VID_DAC_MONO    equ DAC2_PORT  ; $B3 writes DAC B and C at once: mono to both sides
+; Raw mono sound from the zxnDMA (burst, prescaler, auto restart over the ring). 0: no mono
+; session uses the DMA; CTC 0's mono handler plays it. Assembled into the cell vidMonoDma.
+VID_RAW_MONO_DMA equ 1
 
 ; Raw session schedule bank, page A (ring bank 0, at MMU6 for the decode): a 512 x ini
 ; slide ending in ret, a 512-byte pad scratch, the dispatcher and classic schedule, the

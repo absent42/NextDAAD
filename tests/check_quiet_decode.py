@@ -123,6 +123,7 @@ TIMED = {
         "vid_raw_frame", "vr_sector", "vr_sector_n", "vr_sector_c", "vid_raw_pal",
         "video_ctc_isr_raw_st", "video_ctc_isr_raw_mono",
         "vid_raw_rd_hl", "vid_raw_rdv", "vid_raw_pump", "vid_raw_prime",
+        "vid_dma_rd_hl",
         # cold, but it writes the slide, palette train and pump the raw decode runs,
         # and the pump's template (run at VR_PUMP)
         "vid_raw_sched_build", "vrPumpT",
