@@ -9,9 +9,10 @@ step, palette sector and frame tag (vr_sector, vr_sector_n, vr_sector_c, the inl
 vid_raw_pal and the train, vid_raw_apad), with read spacing from a T trace (io_gaps), the
 per-session operand patches (vid_stage_common.vec), the raw sound handlers on the alternate
 set (video_ctc_isr_raw_st, video_ctc_isr_raw_mono: every ring start against a reference, T
-per path), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime) and the
-handler choice in vid_run_l2setup_body. DEBUG images only: the frame loop's LATE and URUN counters (vid_dbg_late,
-vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
+per path), the play pointer helpers (vid_raw_rd_hl, vid_raw_rd_de, vid_raw_prime), the
+handler choice in vid_run_l2setup_body and CTC 0's IM2 table entry (raw handler from l2setup,
+IM2_CTC_STUB again from vid_run_restore_body; the image's writers). DEBUG images only: the
+frame loop's LATE and URUN counters (vid_dbg_late, vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
 kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain, the play
 log modes 16 and 17 and nxb_entry's mode routes) and nxb_geo_setup's hop to NXB_PAGE against
@@ -2184,19 +2185,48 @@ def test_isr_mono():
 
 
 # T entry to RETI inclusive: a tick, a page step (HL' + step crosses a page), the ring end
-# (HL' back to vidAudBuf). IM2_ACK_T: the IM2 acknowledge (Zilog), before the stub's jp.
+# (HL' back to vidAudBuf). IM2_ACK_T: the IM2 acknowledge (Zilog); a raw session's CTC 0
+# table entry is the handler itself, so no stub jp follows it.
 ISR_T = {"video_ctc_isr_raw_st": (85, 114, 128), "video_ctc_isr_raw_mono": (63, 92, 106)}
 IM2_ACK_T = 19
+SRC_VIDEO = Path(__file__).resolve().parent.parent / "src" / "video.asm"
+
+
+def handler_banner():
+    """The comment block above video_ctc_isr_raw_st in src/video.asm, one line."""
+    lines = SRC_VIDEO.read_text(encoding="utf-8").splitlines()
+    i = next((k for k, ln in enumerate(lines) if ln.startswith("video_ctc_isr_raw_st:")), None)
+    if i is None:
+        raise Fail("src/video.asm has no video_ctc_isr_raw_st: line")
+    out = []
+    for ln in reversed(lines[:i]):
+        s = ln.strip()
+        if s.startswith("ASSERT"):
+            continue
+        if not s.startswith(";"):
+            break
+        out.append(s.lstrip("; "))
+    return " ".join(reversed(out))
 
 
 def test_isr_t():
     """Each handler's T from every legal start: the common tick, the page step and the ring
-    end at their ISR_T figures, HL' as test_isr_stereo/_mono; from IM2_CTC_STUB (jp handler,
-    as the session writes it) 10 T more. Prints the per-interrupt averages over a ring lap
-    with the acknowledge and the stub, and the reference's."""
+    end at their ISR_T figures, HL' as test_isr_stereo/_mono; the handler banner's totals
+    (acknowledge + common tick, stereo / mono, and the page step) are these. Prints the
+    per-interrupt averages over a ring lap with the acknowledge, and the reference's."""
+    import re
     mc, ring = isr_machine()
     base, n = S("vidAudBuf"), S("NXV_AUD_RING")
-    stub = S("IM2_CTC_STUB")
+    st, mono = ISR_T["video_ctc_isr_raw_st"], ISR_T["video_ctc_isr_raw_mono"]
+    want_doc = (st[0] + IM2_ACK_T, mono[0] + IM2_ACK_T, st[1] - st[0])
+    if mono[1] - mono[0] != want_doc[2]:
+        raise Fail(f"ISR_T: page steps {st[1] - st[0]} / {mono[1] - mono[0]} differ")
+    banner = handler_banner()
+    m = re.search(r"T with IM2 ack: (\d+) / (\d+), page step \+(\d+)", banner)
+    got_doc = tuple(int(x) for x in m.groups()) if m else None
+    if got_doc != want_doc:
+        raise Fail(f"handler banner {banner!r}: totals {got_doc}, expected 'T with IM2 ack: "
+                   f"{want_doc[0]} / {want_doc[1]}, page step +{want_doc[2]}'")
     notes = []
     for name, (common, page, wrap) in ISR_T.items():
         step = ISR_STEP[name]
@@ -2211,14 +2241,10 @@ def test_isr_t():
             want = wrap if off + step == n else page if (off + step) & 0xFF == 0 else common
             if t != want:
                 raise Fail(f"{name} from base+${off:X}: {t} T, expected {want}")
-        mc.mem[stub:stub + 3] = b"\xC3" + le(S(name))
-        _, t = isr_tick(mc, name, base + 10, at=stub)
-        if t != common + 10:
-            raise Fail(f"{name} through IM2_CTC_STUB: {t} T, expected {common + 10}")
         avg, ravg = sum(ts.values()) / len(ts), sum(rts.values()) / len(rts)
         notes.append(f"{'stereo' if step == 2 else 'mono'} {common}/{page}/{wrap} T, lap average "
-                     f"{avg + 10 + IM2_ACK_T:.2f} with ack + stub (reference "
-                     f"{ravg + 10 + IM2_ACK_T:.2f}, {ravg - avg:.2f} less)")
+                     f"{avg + IM2_ACK_T:.2f} with ack (reference {ravg + IM2_ACK_T:.2f}, "
+                     f"{ravg - avg:.2f} less)")
     print("  test_isr_t: " + "; ".join(notes))
 
 
@@ -2479,6 +2505,141 @@ def test_isr_choice():
         got = mc.mem[stub] | mc.mem[stub + 1] << 8
         if got != S(want):
             raise Fail(f"raw {raw} channels {ach}: vector ${got:04X}, expected {want}")
+
+
+def im2_default():
+    """The IM2 table as im2_init leaves it: the IM2_VECTOR_BYTE fill, CTC 0's entry the stub
+    (only its low byte written: the high byte is the fill), CTC 1's entry ctc2_isr."""
+    t = bytearray([S("IM2_VECTOR_BYTE")]) * 257
+    v, v2, stub = S("IM2_CTC_VEC"), S("IM2_CTC2_VEC"), S("IM2_CTC_STUB")
+    if stub >> 8 != S("IM2_VECTOR_BYTE"):
+        raise Fail("IM2_CTC_STUB's high byte is not the table fill")
+    t[v] = stub & 0xFF
+    t[v2:v2 + 2] = le(S("ctc2_isr"))
+    return bytes(t)
+
+
+def set_table(mc, entry=None):
+    """im2_default at IM2_TABLE, CTC 0's entry = entry if given."""
+    t = bytearray(im2_default())
+    if entry is not None:
+        t[S("IM2_CTC_VEC"):S("IM2_CTC_VEC") + 2] = le(entry)
+    mc.mem[S("IM2_TABLE"):S("IM2_TABLE") + 257] = t
+
+
+def vec_entry(mc):
+    a = S("IM2_TABLE") + S("IM2_CTC_VEC")
+    return mc.mem[a] | mc.mem[a + 1] << 8
+
+
+def table_rest(mc):
+    """The IM2 table less CTC 0's entry (bytes IM2_CTC_VEC, +1)."""
+    a, v = S("IM2_TABLE"), S("IM2_CTC_VEC")
+    t = bytes(mc.mem[a:a + 257])
+    return t[:v] + t[v + 2:]
+
+
+def stub_target(mc):
+    a = S("IM2_CTC_STUB") + 1
+    return mc.mem[a] | mc.mem[a + 1] << 8
+
+
+def test_vec_install():
+    """vid_run_l2setup_body from .isrsel to its end (MMU6 = VID_PAGE, the body's bracket):
+    CTC 0's IM2 table entry is video_ctc_isr_raw_st / video_ctc_isr_raw_mono for a raw stereo
+    / mono header and stays IM2_CTC_STUB for a non-raw one; the stub's target is the handler
+    as before; no other table byte changes."""
+    for raw, ach, entry, target in ((1, 2, "video_ctc_isr_raw_st", "video_ctc_isr_raw_st"),
+                                    (1, 1, "video_ctc_isr_raw_mono", "video_ctc_isr_raw_mono"),
+                                    (0, 2, "IM2_CTC_STUB", "video_ctc_isr_stereo"),
+                                    (0, 1, "IM2_CTC_STUB", "video_ctc_isr_stereo")):
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE2"))
+        mc.map(6, S("VID_PAGE"))
+        mc.poke("vidP_Raw", raw)
+        mc.poke("vidP_AChan", ach)
+        set_table(mc)
+        stub = S("IM2_CTC_STUB") + 1
+        mc.mem[stub:stub + 2] = b"\x00\x00"
+        rest = table_rest(mc)
+        mc.run(S("vid_run_l2setup_body.isrsel"),
+               traps={S("data_restore"): lambda c: setattr(c, "pc", RET)})
+        got = (vec_entry(mc), stub_target(mc))
+        if got != (S(entry), S(target)) or table_rest(mc) != rest:
+            raise Fail(f"raw {raw} channels {ach}: entry ${got[0]:04X}, stub target ${got[1]:04X}"
+                       f", rest of the table kept {table_rest(mc) == rest}; expected {entry}, "
+                       f"{target}")
+
+
+def nex_store_sites(addrs):
+    """[(routine, page, address)]: every ld (nn),a / ld (nn),hl / ld (nn),rr store and ld
+    rr,nn / ld ix,nn / ld iy,nn load naming an address in addrs, over every page in the .nex;
+    routine = the nearest non-local SLD label at or below on that page."""
+    import dma_contract
+    d = dma_contract.NEX.read_bytes()
+    present = [b for b in dma_contract.NEX_BANK_ORDER if d[18 + b]]
+    pats = []
+    for a in addrs:
+        w = le(a)
+        pats += [bytes([op]) + w for op in (0x22, 0x32, 0x01, 0x11, 0x21)]
+        pats += [b"\xED" + bytes([op]) + w for op in (0x43, 0x53, 0x63, 0x73)]
+        pats += [bytes([p, 0x21]) + w for p in (0xDD, 0xFD)]
+    out = []
+    for i, bank in enumerate(present):
+        for half in (0, 1):
+            page = bank * 2 + half
+            buf = d[512 + 16384 * i + 8192 * half:512 + 16384 * i + 8192 * (half + 1)]
+            labels = sorted((v, k) for k, (p, v) in SYMS.items() if p == page and "." not in k)
+            org = labels[0][0] & 0xE000 if labels else 0
+            for pat in pats:
+                o = buf.find(pat)
+                while o >= 0:
+                    a = org + o
+                    j = bisect.bisect_right([v for v, _ in labels], a) - 1
+                    out.append((labels[j][1] if j >= 0 else "?", page, a))
+                    o = buf.find(pat, o + 1)
+    return sorted(out)
+
+
+def test_vec_restore():
+    """vid_run_restore_body opens with ld hl, IM2_CTC_STUB / ld (IM2_TABLE + IM2_CTC_VEC), hl;
+    run to its hop back after a raw stereo, a raw mono and a non-raw session: CTC 0's entry is
+    IM2_CTC_STUB, the stub's target the saved vector, the whole table as im2_init left it
+    (CTC 1's entry included). The image names CTC 0's entry only at im2_init, l2setup, the
+    restore body and (DEBUG) nxb_kind_rarm / nxb_kind_disarm."""
+    stub, at = S("IM2_CTC_STUB"), S("IM2_TABLE") + S("IM2_CTC_VEC")
+    for installed, target in (("video_ctc_isr_raw_st", "video_ctc_isr_raw_st"),
+                              ("video_ctc_isr_raw_mono", "video_ctc_isr_raw_mono"),
+                              ("IM2_CTC_STUB", "video_ctc_isr_stereo")):
+        mc = RawMachine(SYMS)
+        mc.map(7, S("VID_PAGE2"))
+        code_is(mc, "vid_run_restore_body", b"\x21" + le(stub) + b"\x22" + le(at))
+        set_table(mc, S(installed))
+        mc.mem[stub + 1:stub + 3] = le(S(target))
+        mc.poke16("vidSvCtcStub", S("ctc_isr"))
+        mc.poke("vidSvMmu2", mc.mmu[2])
+        mc.poke("vidSvMmu3", mc.mmu[3])
+        hops = []
+
+        def hop(c):
+            hops.append(c.hl)
+            c.pc = RET
+        noop = ret_trap(lambda c: None)
+        traps = {S(n): noop for n in ("vid_snap_restore_body", "vid_ring_free",
+                                      "vid_aud_bank_free", "vid_snap_free", "vid_stream_close")}
+        traps[S("vid_hop1")] = hop
+        mc.run("vid_run_restore_body", traps=traps)
+        table = bytes(mc.mem[S("IM2_TABLE"):S("IM2_TABLE") + 257])
+        if (hops, vec_entry(mc), stub_target(mc)) != ([S("vid_run.restore_tail")], stub,
+                                                        S("ctc_isr")) or table != im2_default():
+            raise Fail(f"after {installed}: hop {hops}, entry ${vec_entry(mc):04X}, stub target "
+                       f"${stub_target(mc):04X}, table as im2_init's {table == im2_default()}")
+    sites = nex_store_sites((at - 1, at, at + 1))
+    want = sorted(["im2_init", "vid_run_l2setup_body", "vid_run_restore_body"]
+                  + (["nxb_kind_disarm", "nxb_kind_rarm"] if "dbgNoBank" in SYMS else []))
+    if [r for r, _, _ in sites] != want:
+        raise Fail(f"code naming IM2_TABLE + IM2_CTC_VEC (+-1): {sites}, expected one site in "
+                   f"each of {want}")
 
 
 ALT_ALL = {"b": 0x11, "c": 0x22, "d": 0x33, "e": 0x44, "h": 0x55, "l": 0x66}
@@ -3065,7 +3226,8 @@ def test_rw_hist():
 
 
 class PortMachine(RawMachine):
-    """Logs CTC 0 and DAC port writes with HL', IX and the CTC 0 vector at each write."""
+    """Logs CTC 0 and DAC port writes with HL', IX, the stub's target and CTC 0's IM2 table
+    entry at each write."""
 
     def __init__(self, syms):
         super().__init__(syms)
@@ -3074,21 +3236,23 @@ class PortMachine(RawMachine):
     def port_out(self, port, v):
         lo, ctc = port & 0xFF, S("AUD_CTC_PORT")
         if port == ctc or lo in (S("DAC_PORT"),) + DAC_PORTS:
-            stub = S("IM2_CTC_STUB") + 1
             self.ports.append((port if port == ctc else lo, v, alt_hl(self.cpu), self.cpu.ix,
-                               self.mem[stub] | self.mem[stub + 1] << 8))
+                               stub_target(self), vec_entry(self)))
             return
         super().port_out(port, v)
 
 
 def test_rw_arms():
-    """RARM primes HL' after CTC 0's reset and control word, before its time constant, and
-    leaves IX alone; ARMOLD installs video_ctc_isr_stereo with CTC 0 stopped and primes IX;
-    ARM is unchanged; DISARM stops CTC 0, parks the DACs, then puts nxbSessVec back."""
+    """RARM primes HL' after CTC 0's reset and control word, before its time constant, leaves
+    IX alone and points CTC 0's table entry at nxbSessVec before that time constant; ARMOLD
+    installs video_ctc_isr_stereo with CTC 0 stopped and primes IX; ARMOLD and ARM leave the
+    entry; DISARM stops CTC 0, parks the DACs, then puts nxbSessVec back and the entry to
+    IM2_CTC_STUB."""
     bench_only()
     ctc, base, sil = S("AUD_CTC_PORT"), S("vidAudBuf"), S("DAC_SILENCE")
     raw_st, stereo = S("video_ctc_isr_raw_st"), S("video_ctc_isr_stereo")
     stub = S("IM2_CTC_STUB") + 1
+    im2s = S("IM2_CTC_STUB")
     cw, rst = S("AUD_CTC_CW16"), S("AUD_CTC_RESET")
     for kind in ("nxb_kind_rarm", "nxb_kind_armold", "nxb_kind_arm", "nxb_kind_disarm"):
         mc = nxb_machine(PortMachine)
@@ -3096,6 +3260,7 @@ def test_rw_arms():
         cpu = mc.cpu
         mc.poke("vidCtcTc", 0x70)
         mc.mem[stub:stub + 2] = le(stereo if kind == "nxb_kind_disarm" else raw_st)
+        set_table(mc, raw_st if kind == "nxb_kind_disarm" else im2s)
         mc.poke16("nxbSessVec", raw_st)
         mc.mem[base:base + S("NXV_AUD_RING")] = bytes([0x11]) * S("NXV_AUD_RING")
         set_alt_hl(cpu, 0x1234)
@@ -3109,22 +3274,61 @@ def test_rw_arms():
                 c.pc += 4
             traps[S("nxb_arm_ix")] = ldix
         mc.run(kind, traps=traps)
-        vec = mc.mem[stub] | mc.mem[stub + 1] << 8
+        vec, ent = stub_target(mc), vec_entry(mc)
         if kind == "nxb_kind_disarm":
-            want = [(ctc, rst, 0x1234, 0xDEAD, stereo)] * 2 + [
-                (p, sil, 0x1234, 0xDEAD, stereo) for p in (S("DAC_PORT"), DAC_L, DAC_R, DAC_M)]
-            if mc.ports != want or vec != raw_st:
-                raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}")
+            want = [(ctc, rst, 0x1234, 0xDEAD, stereo, raw_st)] * 2 + [
+                (p, sil, 0x1234, 0xDEAD, stereo, raw_st)
+                for p in (S("DAC_PORT"), DAC_L, DAC_R, DAC_M)]
+            if mc.ports != want or (vec, ent) != (raw_st, im2s):
+                raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}, entry ${ent:04X}")
             continue
-        hl1, ix1, v1 = {"nxb_kind_rarm": (base, 0xDEAD, raw_st),
-                        "nxb_kind_armold": (0x1234, base, stereo),
-                        "nxb_kind_arm": (0x1234, base, raw_st)}[kind]
-        want = [(ctc, rst, 0x1234, 0xDEAD, raw_st)] * 2 + [(ctc, cw, 0x1234, 0xDEAD, raw_st),
-                                                         (ctc, 0x70, hl1, ix1, v1)]
+        hl1, ix1, v1, e1 = {"nxb_kind_rarm": (base, 0xDEAD, raw_st, raw_st),
+                            "nxb_kind_armold": (0x1234, base, stereo, im2s),
+                            "nxb_kind_arm": (0x1234, base, raw_st, im2s)}[kind]
+        want = [(ctc, rst, 0x1234, 0xDEAD, raw_st, im2s)] * 2 + [
+            (ctc, cw, 0x1234, 0xDEAD, raw_st, im2s), (ctc, 0x70, hl1, ix1, v1, e1)]
         ring = bytes(mc.mem[base:base + S("NXV_AUD_RING")])
-        if mc.ports != want or vec != v1 or ring != bytes([sil]) * len(ring):
-            raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}, ring silent "
-                       f"{ring == bytes([sil]) * len(ring)}")
+        if mc.ports != want or (vec, ent) != (v1, e1) or ring != bytes([sil]) * len(ring):
+            raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}, entry ${ent:04X}, ring "
+                       f"silent {ring == bytes([sil]) * len(ring)}")
+
+
+def test_vec_bench():
+    """RW1's arm rows on a raw session, CTC 0's entry as l2setup leaves it (the handler):
+    ARM1 (RARM) has the entry at nxbSessVec at its time constant; DSRM stops CTC 0 with the
+    entry in place, then puts IM2_CTC_STUB back; ARM2 (RARM) writes nxbSessVec again; DSRM;
+    ARMO runs video_ctc_isr_stereo through the stub (entry IM2_CTC_STUB at its time
+    constant); the last DSRM leaves the entry IM2_CTC_STUB and the stub's target nxbSessVec.
+    No other table byte changes."""
+    bench_only()
+    base, im2s, stereo = S("vidAudBuf"), S("IM2_CTC_STUB"), S("video_ctc_isr_stereo")
+
+    def ldix(c):
+        c.ix = base
+        c.pc += 4
+    for h in ("video_ctc_isr_raw_st", "video_ctc_isr_raw_mono"):
+        hv = S(h)
+        mc = nxb_machine(PortMachine)
+        mapnr(mc, 6, S("NXB_PAGE"))
+        code_is(mc, "nxb_arm_ix", b"\xDD\x21" + le(base))
+        mc.poke("vidCtcTc", 0x70)
+        set_table(mc, hv)
+        mc.mem[im2s + 1:im2s + 3] = le(hv)
+        mc.poke16("nxbSessVec", hv)
+        rest = table_rest(mc)
+        for row, kind, at_last, entry, target in (
+                ("ARM1", "nxb_kind_rarm", hv, hv, hv), ("DSRM", "nxb_kind_disarm", hv, im2s, hv),
+                ("ARM2", "nxb_kind_rarm", hv, hv, hv), ("DSRM", "nxb_kind_disarm", hv, im2s, hv),
+                ("ARMO", "nxb_kind_armold", im2s, im2s, stereo),
+                ("DSRM", "nxb_kind_disarm", im2s, im2s, hv)):
+            mc.ports = []
+            mc.run(kind, traps={S("nxb_arm_ix"): ldix})
+            got = (mc.ports[-1][5], vec_entry(mc), stub_target(mc))
+            if got != (at_last, entry, target) or table_rest(mc) != rest:
+                raise Fail(f"{h} {row}: entry at the last CTC/DAC write ${got[0]:04X}, after "
+                           f"${got[1]:04X}, stub target ${got[2]:04X}, rest of the table kept "
+                           f"{table_rest(mc) == rest}; expected ${at_last:04X}, ${entry:04X}, "
+                           f"${target:04X}")
 
 
 def test_rw_kinds():
@@ -4229,8 +4433,9 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_vec_patch, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_t, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
+         test_vec_install, test_vec_restore,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
-         test_rw_card, test_rw_hist, test_rw_arms, test_rw_kinds, test_rw_histlog,
+         test_rw_card, test_rw_hist, test_rw_arms, test_vec_bench, test_rw_kinds, test_rw_histlog,
          test_play_log, test_play_clr, test_play_nofile, test_entry_modes,
          test_rw_harness, test_rw_card_c, test_rw_chain, test_geo_hop, test_loop_sound_boundary]
 

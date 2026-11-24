@@ -5195,7 +5195,8 @@ vid_raw_apad:
 
 ; Raw session CTC handlers: play pointer HL' (the alternate set is free in the
 ; armed window). MMU-free, no port $6B, exit by RETI (the stereo handler's DMA
-; pre-emption contract). T with IM2 ack + stub: 114 / 92, page step +29.
+; pre-emption contract). CTC 0's IM2 entry is the handler (l2setup), no stub jp.
+; T with IM2 ack: 104 / 82, page step +29.
     ASSERT vidAudBuf + NXV_AUD_RING == $8000 && low vidAudBuf == 0
 video_ctc_isr_raw_st:
     ex af, af'
@@ -6297,6 +6298,8 @@ nxb_arm_tc:
 nxb_kind_rarm:
     call nxb_arm_ring
     call vid_raw_prime           ; CTC 0 stopped until the time constant; keeps BC
+    ld hl, (nxbSessVec)          ; CTC 0's entry at the handler, as l2setup's
+    ld (IM2_TABLE + IM2_CTC_VEC), hl
     jr nxb_arm_tc
 ; The silent ring, CTC 0 double reset and its control word (timer not running).
 ; Out: BC = AUD_CTC_PORT.
@@ -6311,7 +6314,8 @@ nxb_arm_ring:
     out (c), a
     ret
 ; DISARM: vid_run.restore's CTC stop and DAC park, then the session's own
-; handler vector (an ARMOLD row swapped it).
+; handler vector (an ARMOLD row swapped it) and CTC 0's entry at the stub
+; (a RARM row pointed it at the handler; ARMOLD runs through the stub).
 nxb_kind_disarm:
     call nxb_ctc_rst
     ld a, DAC_SILENCE
@@ -6321,6 +6325,8 @@ nxb_kind_disarm:
     out (DAC2_PORT), a
     ld hl, (nxbSessVec)
     ld (IM2_CTC_STUB+1), hl
+    ld hl, IM2_CTC_STUB
+    ld (IM2_TABLE + IM2_CTC_VEC), hl
     ret
 nxb_ctc_rst:
     ld bc, AUD_CTC_PORT
@@ -9103,8 +9109,12 @@ vid_run_l2setup_body:
     ld hl, video_ctc_isr_raw_st
     ld a, (vidP_AChan)
     dec a
-    jr nz, .isrset
+    jr nz, .isrraw
     ld hl, video_ctc_isr_raw_mono
+.isrraw:
+    ; raw: CTC 0's table entry straight at the handler, no stub jp (vectors
+    ; are even: bytes 6-7 are CTC 0's alone); the restore body puts it back
+    ld (IM2_TABLE + IM2_CTC_VEC), hl
 .isrset:
     ld (IM2_CTC_STUB+1), hl
     ; T10: no per-file ISR end markers any more - every ISR's ring-end
@@ -9217,7 +9227,8 @@ vidCtcTcNxvStereo:
 ; still visible in the video mode, and one field of the old surface
 ; scanned out through the new interpretation (the exit corruption
 ; flash). Symmetry matrix (restore order):
-;   1. IM2 stub, audEnable, l2Front/Back cells (resident state)
+;   1. CTC 0's IM2 entry and stub, audEnable, l2Front/Back cells
+;      (resident state)
 ;   2. NR $69 bit7 CLEARED - Layer 2 hidden, other bits held
 ;   3. NR $12 bank, NR $70 mode - restored invisibly
 ;   4. clip window (NR $1C/$18) + scroll (NR $16/$17) + NR $43
@@ -9245,6 +9256,8 @@ vidCtcTcNxvStereo:
 ; Hops back to vid_run.restore_tail. Corrupts everything.
 ; ---------------------------------------------------------------------
 vid_run_restore_body:
+    ld hl, IM2_CTC_STUB          ; CTC 0's entry back to the stub (a raw
+    ld (IM2_TABLE + IM2_CTC_VEC), hl ; session pointed it at its handler)
     ld hl, (vidSvCtcStub)        ; vidSv* are VID_PAGE2-local (3c cell
     ld (IM2_CTC_STUB+1), hl      ; move) - the old MMU6 bracket is gone
     ld a, (vidSvAudEnable)
