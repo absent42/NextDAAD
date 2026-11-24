@@ -3,10 +3,11 @@
 
 Fits T = Spix (512 tb F + ts) + Ssnd tsnd + C tc + tf + P tp + stall per sound form,
 after taking the tracked bench harness out of every row (nxv2_bench_rows
-RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T).
+RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T; --model 1b: RW_FRAME_HARNESS_T_1B, the frame
+harness of the images sitting 1b's committed logs came from).
 
 Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback FILE]
-                                            [--wait-shape inline|sitting1]
+                                            [--wait-shape inline|sitting1] [--model 1c|1b]
        python tests/raw_fit.py --selftest
 The token wait shape is read from the log: a capture with an RH39 or AH39 row or histogram
 is the inline wait (22 T, then 47 T a poll), a log with neither is sitting 1's (48 T a poll,
@@ -33,7 +34,9 @@ import parse as nxbparse               # noqa: E402
 import tags as nxbtags                 # noqa: E402
 
 H_CARD = benchrows.RW_CARD_HARNESS_T
-G_FRAME = benchrows.RW_FRAME_HARNESS_T
+# The frame harness of the bench image a log came from: 1c this tree's, 1b sitting 1b's.
+MODEL_G_FRAME = {"1c": benchrows.RW_FRAME_HARNESS_T, "1b": benchrows.RW_FRAME_HARNESS_T_1B}
+G_FRAME = MODEL_G_FRAME["1c"]
 INI_T = 16
 SECTOR_INI_T = 512 * INI_T
 COL_ENDS = 8                 # RCOL/ARCO: 8 reads of 64 (nxb_rw_col)
@@ -990,8 +993,8 @@ def report(res, readouts=None):
         LPF, T_LINE, LPF, T_LINE))
     add("CTC 0 period: %d x %d = %d T (AUD_CTC_CW16 prescaler, vidCtcTcNxvStereo[NR $11 = %d])"
         % (pre, tc, res.period, nr11))
-    add("harness: card h = %d T a rep, frame g = %d T a frame (nxv2_bench_rows)" % (
-        H_CARD, G_FRAME))
+    add("harness: card h = %d T a rep, frame g = %d T a frame (nxv2_bench_rows, model %s)" % (
+        H_CARD, G_FRAME, next(m for m, g in MODEL_G_FRAME.items() if g == G_FRAME)))
     add("")
     add("## Sections")
     add("")
@@ -1194,11 +1197,11 @@ def report(res, readouts=None):
             s2["d"], s2["A"], s2["S"], " ".join("%+.0f" % v for v in s2["resid"])))
     else:
         add("  - stereo with d = mono d x armed ratio: not formed (mono d not determined)")
-    add("  - code: vid_raw_apad (video.asm:%d) reads the pad and tag through the INI slide, "
-        "16 T a byte; vid_ds_xfer (video.asm:%d) moves a sound byte by ini, 16 T plus 14 T a "
-        "32-byte pass and about 300 T an arm, about 17.6 T in 256-byte arms: a sound byte "
-        "about 1.6 T over a pad byte, unarmed" % (asm_line("vid_raw_apad"),
-                                                  asm_line("vid_ds_xfer")))
+    add("  - code: the raw pump (vrPumpT, video.asm:%d) reads sound, pad and tag through the "
+        "INI slide, 16 T a byte; sitting 1b's images read the pad and tag by the slide and a "
+        "sound byte by vid_ds_xfer (video.asm:%d), 16 T plus 14 T a 32-byte pass and about "
+        "300 T an arm, about 17.6 T in 256-byte arms: a sound byte about 1.6 T over a pad "
+        "byte there, unarmed" % (asm_line("vrPumpT"), asm_line("vid_ds_xfer")))
     add("- mono RAW_FRAME_T %.2f T, mono RAW_SND_SECTOR_T %.2f T (%.2f x stereo's %.2f T)." % (
         res.k["mono"]["tf"], res.k["mono"]["tsnd"],
         res.k["mono"]["tsnd"] / res.k["stereo"]["tsnd"], res.k["stereo"]["tsnd"]))
@@ -1548,6 +1551,12 @@ def _near(got, want, pct=0.1):
     return abs(got - want) <= abs(want) * pct / 100.0
 
 
+def set_model(model):
+    """The frame harness the fit and the synthetic rows use: MODEL_G_FRAME[model]."""
+    global G_FRAME
+    G_FRAME = MODEL_G_FRAME[model]
+
+
 def selftest():
     fails, checks = [], 0
 
@@ -1816,6 +1825,26 @@ def selftest():
           in text_undet and "armed ratio = " not in text_undet and "armed ratio = " in text,
           "undetermined mono text: %r" % [ln for ln in text_undet.splitlines()
                                           if "not determined" in ln or "armed ratio" in ln])
+    # --model: 1c this tree's frame harness (nxb_rw_feed reads through vid_raw_rdv's jp),
+    # 1b sitting 1b's; a log made under 1b's harness is recovered under 1b, not under 1c
+    check(MODEL_G_FRAME == {"1c": 220, "1b": 210} and G_FRAME == MODEL_G_FRAME["1c"]
+          and MODEL_G_FRAME["1c"] == benchrows.RW_FRAME_HARNESS_T,
+          "model frame harness %r, in force %d" % (MODEL_G_FRAME, G_FRAME))
+    with tempfile.TemporaryDirectory() as tmp:
+        log1b = Path(tmp) / "M1B.TXT"
+        set_model("1b")
+        try:
+            log1b.write_bytes(synth_log().encode("ascii"))
+            res_1b = fit(read_sections(log1b), reps=SYNTH_REPS, wait_shape="inline")
+        finally:
+            set_model("1c")
+        res_1c = fit(read_sections(log1b), reps=SYNTH_REPS, wait_shape="inline")
+    check(all(_near(res_1b.k[f][key], want) for f in FORMS
+              for key, want in SYNTH["k"][f].items()),
+          "a log under 1b's harness, --model 1b: constants recovered")
+    check(abs(res_1c.k["mono"]["tf"] - res_1b.k["mono"]["tf"]) > 5,
+          "the same log under 1c: tf moves (%.1f against %.1f)" % (
+              res_1c.k["mono"]["tf"], res_1b.k["mono"]["tf"]))
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,
@@ -1832,12 +1861,17 @@ def main(argv=None):
     ap.add_argument("--wait-shape", choices=sorted(WAIT_SHAPES), default=None,
                     help="override the token wait shape read from the log: inline (first 22, "
                          "then 47 T a poll) or sitting1 (48 each, the sitting-1 bench)")
+    ap.add_argument("--model", choices=sorted(MODEL_G_FRAME), default="1c",
+                    help="the bench image the log came from: 1c (this tree, the default) or "
+                         "1b (sitting 1b's committed logs: frame harness %d T)" %
+                         MODEL_G_FRAME["1b"])
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
     if not a.log:
         ap.error("a log path or --selftest")
+    set_model(a.model)
     try:
         res = fit(read_sections(a.log), nr11=a.nr11, clips_dir=a.clips and Path(a.clips),
                   wait_shape=a.wait_shape)

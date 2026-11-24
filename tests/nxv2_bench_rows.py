@@ -1097,7 +1097,12 @@ NXB_HIST_MAX = 4                                     # #HIST rows the log step c
 # T per rep inside an RW1 row's window that playback never runs (unarmed, base T), for
 # the gate fit to subtract; vidraw_contract test_rw_harness pins both to the image.
 RW_CARD_HARNESS_T = 88       # RSEC/RCOL/RHST rep over the schedule's call vr_sector_n / slide
-RW_FRAME_HARNESS_T = 210     # RFR0/RSWP/ARSW rep over vid_run's stage / pump / decode calls
+RW_FRAME_HARNESS_T = 220     # RFR0/RSWP/ARSW rep over vid_run's stage / pump / decode calls
+RW_FRAME_HARNESS_T_1B = 210  # sitting 1b's images: nxb_rw_feed read HL' without vid_raw_rdv
+# T from call vid_aud_pump to its return in a raw session (vid_raw_pump, the schedule page's
+# pump), Release instructions, by (sectors, real sound bytes): a CRC due, the token on poll 2,
+# no ring wrap, no walk. vidraw_contract test_pump_t pins it to the image.
+RAW_PUMP_T = {(3, 1250): 26203, (2, 625): 17757, (3, 1024): 26045}
 NOSITE = (0, ())
 
 SESSION_TABLES = {

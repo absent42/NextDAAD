@@ -1763,10 +1763,10 @@ vid_src_seek:
 ;     legal file - the pre-T10 shape, restored at every fps), with
 ;     NXV_AUD_PUMP_CHUNK from the .pace spin (the chasing writer, now
 ;     only reachable if the reader is behind), and to completion at
-;     .paced (the force-finish backstop). The rd snapshot (push ix,
-;     or HL' under DI in a raw session - vid_raw_rd_de at .rd)
+;     .paced (the force-finish backstop). The rd snapshot (push ix)
 ;     only goes stale in the safe direction - the reader advances,
-;     so true room only grows while a chunk runs.
+;     so true room only grows while a chunk runs. A raw session
+;     enters vid_raw_pump instead (.vec: the entry is jp there).
 ;   the .pace consumption integrator - pacing (see the frame loop).
 ;
 ; Source-cursor bookkeeping is INCREMENTAL: each chunk advances the
@@ -1821,7 +1821,7 @@ vid_pace_poll:
                                  ; often than once a field there
   ENDIF
  ENDIF
-.rd:                             ; raw: call vid_raw_rd_hl (.vec patch)
+.rd:                             ; raw: call vid_raw_rdv (.vec patch)
     push ix
     pop hl                       ; HL = read pointer (atomic snapshot)
     ld de, (vidAudRdPrev)
@@ -1870,7 +1870,7 @@ vid_aud_pump:
     ld bc, (vidAudBudget)
 .bud:
     ; room = ring - guard - unplayed; unplayed = (wr - rd) mod ring
-.rd:                             ; raw: call vid_raw_rd_de (.vec patch)
+.rd:                             ; never reached raw (vid_raw_pump)
     push ix
     pop de                       ; DE = rd (single-instruction snap)
     ld hl, (vidAudWr)
@@ -2035,8 +2035,8 @@ vid_aud_pump:
     or a
     jr z, .ramdone
     ld hl, (vidDsAudBlkRem)      ; ds: discard the section pad to the
-.apad:                           ; block boundary (HL = 0 on exit); raw
-    call vid_ds_pad              ; sessions: vid_raw_apad (.vec patch)
+.apad:                           ; block boundary (HL = 0 on exit); never
+    call vid_ds_pad              ; reached raw (vid_raw_pump)
     ld (vidDsAudBlkRem), hl
     ret
 .ramdone:
@@ -2311,7 +2311,7 @@ vid_run:
 ; boundary event, so the boundary detection moved from the ISR to a
 ; MAINLINE CONSUMPTION INTEGRATOR: each .pace poll snapshots the
 ; ISR's free-running read pointer (push ix, or HL' under DI in a raw
-; session via vid_raw_rd_hl - atomic either way), accumulates the
+; session via vid_raw_rdv - atomic either way), accumulates the
 ; consumed delta (mod ring) and releases the frame when one frame's
 ; real audio bytes have been consumed. PACING HANDOFF (T9+T10 design,
 ; documented per the charter): the pacing SOURCE remains the audio
@@ -4991,7 +4991,7 @@ vidTokCalls: dw 0
  ENDIF
 
 ; Raw direct session cells (vidRaw: vid_stage_common.vec; the rest:
-; vid_raw_stage; vidRawTag: vid_raw_apad each frame).
+; vid_raw_stage; vidRawTag: the pump each frame).
 vidRaw:          db 0            ; 1 = raw frame layout session
 vidRawSec:       db 0            ; pixel sectors per frame
 vidRawCap:       db 0            ; header frame cap (pixel sectors + 1)
@@ -5164,35 +5164,6 @@ vid_raw_pal:
     ld b, high TBBLUE_REG_ACC    ; C stays $3B
     jp VR_PALTRAIN               ; 23 T a byte; its ret returns to our caller
 
-; Raw pump section end (vid_aud_pump.apad): HL = bytes left in the open sound
-; sector, 0..511 (0: the tag is alone in the next), read by the slide; corrupts
-; AF, BC, DE. Out: HL = 0, vidRawTag = the last byte, MMU6 = the schedule page.
-vid_raw_apad:
-    ld a, (vidRawSchedPage)
-    nextreg NR_MMU6, a           ; the slide (unmapped at the preload, RW1 rows)
-    ld a, h
-    or l
-    call z, vid_ds_blkopen       ; the tag alone in the next sector: HL = 512
-    add hl, hl                   ; 2n, n <= 512: CF clear
-    ex de, hl
-    ld hl, VR_SLIDE_END
-    sbc hl, de
-    ex de, hl                    ; DE = the slide entry for n bytes
-    ld hl, VR_SCRATCH
-    ld c, PORT_SPI_DAT
-    call .rd                     ; n ini 16 T apart; B scrap (ini counts it)
-    dec hl
-    ld a, (hl)                   ; the tag: the last byte read
-    ld (vidRawTag), a
-    ld hl, 0
-    cp 2                         ; above 1: not a tag
-    ret c
-    ld a, VID_ERR_OP
-    jp vid_dec_abort
-.rd:
-    push de
-    ret                          ; into the slide; its ret returns above
-
 ; Raw session CTC handlers: play pointer HL' (the alternate set is free in the
 ; armed window). MMU-free, no port $6B, exit by RETI (the stereo handler's DMA
 ; pre-emption contract). CTC 0's IM2 entry is the handler (l2setup), no stub jp.
@@ -5241,9 +5212,9 @@ video_ctc_isr_raw_mono:
     ld h, high vidAudBuf
     jr .r
 
-; Play pointer reads for vid_pace_poll.rd / vid_aud_pump.rd (raw sessions):
-; HL' snapped with interrupts off (the handler swaps the set). Callers run
-; with interrupts on. Out: HL (or DE) = HL', interrupts on. Nothing else.
+; Play pointer read of a raw session, through vid_raw_rdv: HL' snapped with
+; interrupts off (the handler swaps the set). Callers run with interrupts on.
+; Out: HL = HL', interrupts on. Nothing else.
 vid_raw_rd_hl:
     di
     exx
@@ -5252,14 +5223,21 @@ vid_raw_rd_hl:
     ei
     pop hl
     ret
-vid_raw_rd_de:
-    di
-    exx
-    push hl
-    exx
-    ei
-    pop de
-    ret
+; The one play pointer read of a raw session (vid_pace_poll.rd, the pump,
+; nxb_rw_feed); .vec writes the operand. Out: HL = the next byte to play.
+; Preserves BC, DE, IX.
+vid_raw_rdv:
+    jp vid_raw_rd_hl
+; vid_aud_pump's entry in a raw session (.vec: jp here): the schedule page at
+; MMU6, then its section reader (vrPumpT). BC ignored. Corrupts AF, BC, DE, HL;
+; preserves IX. Out: MMU6 = the schedule page.
+vid_raw_pump:
+    ld a, (vidRawSchedPage)
+    nextreg NR_MMU6, a
+    jp VR_PUMP
+    ; vidPtrIx restores these three bytes (on VID_PAGE here: {b} reads them)
+    ASSERT {b vid_aud_pump} == $ED && {b vid_aud_pump + 1} == $43
+    ASSERT {b vid_aud_pump + 2} == low vidAudBudget
 
 ; HL' = ring base (vid_run.ixp1 / .ixp2, raw). Call only while CTC 0 is
 ; stopped: a raw handler inside the exx pair would swap the wrong set.
@@ -5324,10 +5302,10 @@ nxb_rw_fbody:
     call nxb_rw_feed
     jp vid_decode_any
 
-; The raw twin of nxb_aud_body.feed: the play pointer from HL', then its writer,
-; stage and whole pump (vid_raw_apad stores the tag). Run with interrupts on.
+; The raw twin of nxb_aud_body.feed: the play pointer through vid_raw_rdv, then
+; its writer, stage and whole pump (the tag stored). Run with interrupts on.
 nxb_rw_feed:
-    call vid_raw_rd_hl
+    call vid_raw_rdv
     jp nxb_aud_body.ptr
 
 ; Card rows (nxb_kind_rblk/rhist): the schedule page at MMU6, one untimed sector
@@ -8251,7 +8229,19 @@ vid_raw_sched_build:
     ld de, VR_PALTRAIN + 4
     ld bc, VR_PAL_LEN - 5
     ldir                         ; repeats the 4 bytes to 512 pairs
-    ld (de), a                   ; ret at the page top (A = $C9 still)
+    ld (de), a                   ; the train's ret (A = $C9 still)
+    ASSERT VR_PALTRAIN + VR_PAL_LEN == VR_XIN && VR_XIN + VR_XSTUB_LEN == DATA_WINDOW + $2000
+    inc de                       ; DE = VR_XIN: the stub bytes zero until used
+    xor a
+    ld b, VR_XSTUB_LEN
+.xz:
+    ld (de), a
+    inc de
+    djnz .xz
+    ld hl, vrPumpT               ; the sound section reader
+    ld de, VR_PUMP
+    ld bc, vrPumpLen
+    ldir
     ; pixel bytes w*h: w = 4k, so A:HL = 4 * k*h (k*h <= 80*256)
     ld hl, (vidP_RawW)
     srl h
@@ -8421,6 +8411,151 @@ vid_raw_sched_build:
     ; read and vr_sector per sector, the page ends, the pad read and ret
     ASSERT VR_SCHED + 320*6 + 160*6 + 10*7 + 8 <= VR_SCHED_LIMIT
 
+; Raw sound section reader at VR_PUMP (vid_raw_sched_build copies it), from vid_raw_pump:
+; the whole feed or nothing; counted opens (vr_sector_c); the ring split once at $8000;
+; pad and tag to VR_SCRATCH. Corrupts AF, BC, DE, HL; preserves IX. Faults abort.
+vrPumpT:
+    DISP VR_PUMP
+    ld hl, (vidAudFeedRem)
+    ld a, h
+    or l
+    ret z                        ; feed complete
+    ex de, hl                    ; DE = real bytes (1..3072)
+    call vid_raw_rdv             ; HL = the play pointer
+    ld b, h
+    ld c, l
+    ld hl, (vidAudWr)
+    or a
+    sbc hl, bc
+    ld a, h
+    and high (NXV_AUD_RING - 1)
+    ld h, a                      ; (wr - rd) mod ring
+    add hl, de
+    ld bc, -(NXV_AUD_RING - NXV_AUD_GUARD + 1)
+    add hl, bc
+    ret c                        ; room below the feed: the callers poll again
+    ld a, d
+    rra                          ; CF clear: A = whole sectors (real >> 9)
+    ld e, a                      ; E: whole sectors left (the opens keep E)
+    inc a
+    ld b, a                      ; B = the section's sectors
+    ld hl, vidDsFrmBlk           ; frame bound and whole-pass remain charged
+    add a, (hl)                  ; once, as vid_ds_blkopen's per block
+    ld (hl), a
+    ld a, (vidDsBound)
+    cp (hl)
+    jr c, .ovr                   ; over the bound: corrupt payload
+    ld c, b
+    ld b, 0                      ; CF clear
+    ld hl, (vidStrmRemainBlk)
+    sbc hl, bc
+    ld a, (vidStrmRemainBlk+2)
+    sbc a, b
+    jr c, .ovr                   ; past the file
+    ld (vidStrmRemainBlk), hl
+    ld (vidStrmRemainBlk+2), a
+    ld hl, (vidAudWr)
+    ld c, PORT_SPI_DAT
+    ld a, (vidDsCrcDue)          ; vr_sector's head for the first open; the
+    or a                         ; later ones always find a CRC pending
+    ld a, 1
+    ld (vidDsCrcDue), a
+    jr z, .fresh
+    call vr_sector_c
+.opened:
+    ld a, e
+    or a
+    jr z, .last
+.whole:
+    ld a, h
+    cp high (vidAudBuf + NXV_AUD_RING - 512)
+    jr nc, .edge                 ; the sector may reach $8000
+    call VR_SLIDE                ; 512 bytes, 16 T apart
+.wnext:
+    call vr_sector_c
+    dec e
+    jr nz, .whole
+.last:                           ; real & 511 bytes to the ring, the rest to scratch
+    ld a, (vidAudFeedRem)
+    add a, a
+    ld e, a
+    ld a, (vidAudFeedRem+1)
+    rla
+    and 3
+    ld d, a                      ; DE = 2 x (real & 511)
+    or e
+    jr z, .tagsec                ; the tag alone in this sector
+    push de
+    call .rring
+    pop de
+.tagsec:
+    ld (vidAudWr), hl            ; the ring cursor, wrapped
+    ld hl, VR_SLIDE
+    add hl, de
+    ex de, hl                    ; DE = the entry for 512 - (real & 511) bytes
+    ld hl, VR_SCRATCH
+    call .via                    ; the pad, then the tag
+    dec hl
+    ld a, (hl)
+    ld (vidRawTag), a
+    cp 2                         ; above 1: not a tag
+    jr nc, .badtag
+    ld hl, 0
+    ld (vidAudFeedRem), hl
+    ld (vidDsAudBlkRem), hl
+    ret
+.badtag:
+    ld a, VID_ERR_OP
+    jp vid_dec_abort
+.ovr:
+    ld a, VID_ERR_SRCOVR
+    jp vid_dec_abort_pos
+.fresh:
+    call vr_sector_c.nocrc       ; no CRC pends (the preload)
+    jr .opened
+.edge:
+    push de
+    ld de, 2 * 512
+    call .rring
+    pop de
+    jr .wnext
+; DE = 2n (n = 1..512) bytes to the ring at HL by the slide, split once at $8000
+; (HL there wraps to vidAudBuf). Out: HL past them. Corrupts AF, B, DE.
+.rring:
+    push hl
+    add hl, hl
+    add hl, de                   ; CF: they reach $8000; HL = 2 x the bytes past it
+    jr c, .cross
+    pop hl
+.rd:                             ; CF clear: n bytes to HL
+    push hl
+    ld hl, VR_SLIDE_END
+    sbc hl, de
+    ex (sp), hl                  ; HL = destination, the entry stacked
+    ret                          ; into the slide; its ret returns to our caller
+.cross:
+    ex (sp), hl                  ; HL = destination, 2 x the bytes past stacked
+    push hl
+    add hl, hl
+    ld de, VR_SLIDE_END
+    add hl, de                   ; the entry for $8000 - HL bytes
+    ex de, hl
+    pop hl
+    call .via
+    ld hl, vidAudBuf             ; the ring wraps
+    pop de
+    ld a, d
+    or e                         ; CF clear
+    ret z                        ; ended on $8000
+    jr .rd
+.via:
+    push de
+    ret                          ; into the slide at DE
+    ENT
+vrPumpLen equ $ - vrPumpT
+    ASSERT vrPumpLen <= VR_PUMP_LEN
+    ASSERT NXV_AUD_RING == $2000 && vidAudBuf + NXV_AUD_RING == $8000
+
 ; Stage a raw session's hot cells through vid_stage_common's open
 ; VID_PAGE window (rubric 3). Corrupts AF, C.
 vid_raw_stage:
@@ -8554,30 +8689,30 @@ vid_stage_common:
     ; RAM decode (resident/streaming) or the SD-stream decode (direct).
     ; Patched EVERY open - a previous session may have left the other
     ; set. Same doc-08/rubric-3 bracket as the stub patches above. ---
-    ; Raw sessions: the frame decode, the pump's section-end pad and the
-    ; four play pointer sites (HL' forms, else the assembled IX forms).
+    ; Raw sessions: the frame decode, the play pointer read vector, the pace
+    ; poll's read, the pump's entry (jp vid_raw_pump) and the two arm sites
+    ; (else the assembled IX forms and ld (vidAudBudget), bc).
     ld a, (vidP_Raw)
     ld (vidRaw + DATA_WINDOW - OVL_ORG), a
     or a
     ld hl, vid_decode_frame_ds
-    ld de, vid_ds_pad
     ld bc, vidPtrIx
     jr z, .rawv
     ld hl, vid_raw_frame
-    ld de, vid_raw_apad
     ld bc, vidPtrRaw
 .rawv:
     ld (vid_decode_any.raw + 1 + DATA_WINDOW - OVL_ORG), hl
-    ld (vid_aud_pump.apad + 1 + DATA_WINDOW - OVL_ORG), de
     ld hl, VR_ENT_FAST           ; reset: a session ended mid-crossing left VR_ENT_CROSS
     ld (vr_sector_n + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_raw_rd_hl
+    ld (vid_raw_rdv + 1 + DATA_WINDOW - OVL_ORG), hl
     ld h, b
     ld l, c
     ld de, vid_pace_poll.rd + DATA_WINDOW - OVL_ORG
     ldi
     ldi
     ldi
-    ld de, vid_aud_pump.rd + DATA_WINDOW - OVL_ORG
+    ld de, vid_aud_pump + DATA_WINDOW - OVL_ORG
     ldi
     ldi
     ldi
@@ -8623,18 +8758,18 @@ vid_stage_common:
     ld (vid_term_exit + 1 + DATA_WINDOW - OVL_ORG), hl
     ret
 
-; .vec sources, site order vid_pace_poll.rd, vid_aud_pump.rd, vid_run.ixp1,
+; .vec sources, site order vid_pace_poll.rd, vid_aud_pump (its first three
+; bytes: ld (vidAudBudget), bc's head, asserted at vid_raw_pump), vid_run.ixp1,
 ; vid_run.ixp2 (equal lengths per site). Data, never executed here.
 vidPtrIx:
     push ix
     pop hl
-    push ix
-    pop de
+    db $ED, $43, low vidAudBudget
     ld ix, vidAudBuf
     ld ix, vidAudBuf
 vidPtrRaw:
-    call vid_raw_rd_hl
-    call vid_raw_rd_de
+    call vid_raw_rdv
+    jp vid_raw_pump
     call vid_raw_prime
     nop
     call vid_raw_prime

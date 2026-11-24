@@ -8703,7 +8703,11 @@ def t16_raw_gate_terms():
 def t16_raw_gate_matches_silicon():
     import raw_fit
     res_dir = ROOT / "tests" / "core303" / "results" / "2026-11-23-ks3-legRAW1B"
-    res = raw_fit.fit(raw_fit.read_sections(res_dir / "NXBENCH.TXT"))
+    raw_fit.set_model("1b")             # the 1b images' frame harness (raw_fit --model 1b)
+    try:
+        res = raw_fit.fit(raw_fit.read_sections(res_dir / "NXBENCH.TXT"))
+    finally:
+        raw_fit.set_model("1c")
     expect(len(res.clips) == 16, f"{len(res.clips)} clips fitted, want 16")
     worst = 0.0
     for c in res.clips.values():
