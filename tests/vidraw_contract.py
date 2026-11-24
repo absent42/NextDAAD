@@ -165,6 +165,7 @@ class Dma:
         self.prescaler, self.mask = 0, 0x7F
         self.addr = self.b_addr = self.count = 0
         self.dwell, self.before_read = dwell, None
+        self.c3_presc = True                    # False: $C3 leaves the prescaler (a control)
         self.rpos = self.reads = self.seqs = 0
 
     def state(self):
@@ -208,7 +209,8 @@ class Dma:
         elif v & 0xC7 == 0x82:                                          # WR5
             self.restart = bool(v & 0x20)
         elif v == 0xC3:
-            self.enabled, self.restart, self.prescaler = False, False, 0
+            self.enabled, self.restart = False, False
+            self.prescaler = 0 if self.c3_presc else self.prescaler
             self.a_cycles = self.b_cycles = 3
         elif v == 0xCF:
             self.addr, self.b_addr, self.count = self.a_start, self.b_start, 0
@@ -3533,7 +3535,8 @@ def test_vec_sites():
     machine: after each, every site holds its column's bytes (vid_aud_pump's first three bytes
     jp vid_raw_pump, else the assembled ld (vidAudBudget), bc head). The sound path sites
     (vid_run.cw, .tcsrc, .tcport, vid_raw_rdv's operand) and vidSndPath: as assembled path
-    0's; after every pair of successive opens out of path 0 (raw stereo, and non-raw), path 1
+    0's; after every pair of successive opens out of path 0 (raw stereo, non-raw, and non-raw
+    with one channel), path 1
     (raw mono, vidMonoDma 0) and path 2 (raw mono, vidMonoDma 1), the second open's; .tcport
     is .tcsrc + 3 (the open writes the ld bc opcode between them with its own value)."""
     mc = RawMachine(SYMS)
@@ -3547,6 +3550,7 @@ def test_vec_sites():
         sites_are(mc, raw, 0, f"raw {raw}")
     opens = dict(SND_OPENS)
     opens["0 (non-raw)"] = (0, 2, 1)
+    opens["0 (non-raw mono)"] = (0, 1, 1)               # the open refuses it; .vec tests vidRaw
     for a, first in opens.items():
         for b, (raw, ach, mono) in opens.items():
             mc = RawMachine(SYMS)
@@ -6141,7 +6145,7 @@ def test_loop_sound_boundary():
 # --------------------------------------------------------------------------- DMA mono sound
 
 SND_PROG = bytes.fromhex("C3 7D 00 60 00 20 54 02 68 22 38 CD B3 00 B2 BB 18 CF")
-SND_OFF = bytes.fromhex("83 C3 54 02 50 02 82 A1 BB 7F")
+SND_OFF = bytes.fromhex("83 C3 54 02 50 22 00 82 A1 BB 7F")
 SND_STATE = dict(enabled=False, a_start=0x6000, length=8192, a_io=False, a_mode="up", a_cycles=2,
                  b_start=0x00B3, b_io=True, b_mode="fixed", b_cycles=2, mode="burst",
                  prescaler=56, restart=True, mask=0x18, addr=0x6000)
@@ -6252,8 +6256,8 @@ def test_dma_prog():
     $87; the model: memory at $6000 up, 8192 bytes, to I/O port $B3 fixed, burst, prescaler 56,
     restart, read mask $18, not enabled; NR $CD written once, 0; vidCtcTc 112; vid_run.tcsrc
     names vidDmaGo, which holds $87; vidSvDmaSnd 1; CTC 0's entry and the stub's target stay
-    video_ctc_isr_raw_mono. vidDmaSndOff as assembled: 83 C3 54 02 50 02 82 A1 BB 7F, its bytes
-    3 to 7 vidDmaInit's 2 to 6."""
+    video_ctc_isr_raw_mono. vidDmaSndOff as assembled: 83 C3 54 02 50 22 00 82 A1 BB 7F:
+    vidDmaInit's WR1, its WR2 with the prescaler sent as 0, its WR5."""
     mc = dma_machine()
     set_table(mc)
     snd_open(mc, 1, 1, 1)
@@ -6274,7 +6278,8 @@ def test_dma_prog():
         raise Fail(f"(NR $CD writes, vidCtcTc, vid_run.tcsrc, (vidDmaGo), vidSndPath, CTC 0's "
                    f"entry, stub target) = {got}")
     off = cold_bytes("vidDmaSndOff", len(SND_OFF))
-    if off != SND_OFF or off[2:7] != init[1:6] or cold_bytes("vidSvDmaSnd", 1) != b"\x00":
+    if off != SND_OFF or off[2:5] + off[7:8] != init[1:4] + init[5:6] \
+            or off[5:7] != bytes([init[4] | 0x20, 0]) or cold_bytes("vidSvDmaSnd", 1) != b"\x00":
         raise Fail(f"vidDmaSndOff {off.hex(' ').upper()}; vidDmaInit {init.hex(' ').upper()}; "
                    f"or vidSvDmaSnd is not assembled 0")
     mc.map(7, S("VID_PAGE2"))
@@ -6440,13 +6445,22 @@ def trace_outs(mc, port):
 
 def test_dma_off_state():
     """The restore body after a path 2 session (vidSvDmaSnd 1, the model playing): its first
-    writes are 83 C3 54 02 50 02 82 A1 BB 7F to $6B, DAC_SILENCE to port $B3, NR $CD =
+    writes are 83 C3 54 02 50 22 00 82 A1 BB 7F to $6B, DAC_SILENCE to port $B3, NR $CD =
     IM2_DMA_INT_EN_2_VAL, before any other port or next register write; vidSvDmaSnd 0 after;
     the model: disabled, prescaler 0, no restart, continuous, port A memory up, port B memory
     up (not I/O, not fixed), both timings 2 cycles, mask $7F. Then vidDmaCpArm's bytes alone,
     and vidSnapDmaArm's, each parse to a continuous memory to memory copy going up with
-    prescaler 0 and no restart. A second restore sends nothing to $6B."""
+    prescaler 0 and no restart. A second restore sends nothing to $6B. A model whose $C3
+    leaves the prescaler: the teardown's WR2 still sets it to 0."""
     import copy
+    keep = Dma()
+    keep.c3_presc = False
+    dma_playing(keep, 0x6789)
+    for b in cold_bytes("vidDmaSndOff", S("vidDmaSndOff_len")):
+        keep.write(b)
+    if keep.prescaler or keep.pend or keep.enabled:
+        raise Fail(f"vidDmaSndOff on a DMA whose $C3 keeps the prescaler: prescaler "
+                   f"{keep.prescaler}, enabled {keep.enabled}, {len(keep.pend)} bytes pending")
     mc = dma_machine()
     set_table(mc, S("video_ctc_isr_raw_mono"))
     dma_playing(mc.dma, 0x6789)
@@ -6626,7 +6640,7 @@ def test_dma_start():
 def test_dma_abort():
     """A bad token in frame 3's pixels of a path 2 session, run on through vid_run.restore
     and the restore body: vid_dec_abort_pos with VID_ERR_TOKEN; after it CTC 0 takes the two
-    resets, then port $6B takes 83 C3 54 02 50 02 82 A1 BB 7F and nothing else; DAC B and C
+    resets, then port $6B takes 83 C3 54 02 50 22 00 82 A1 BB 7F and nothing else; DAC B and C
     are parked after the DMA is off; NR $CD = IM2_DMA_INT_EN_2_VAL; the model disabled."""
     real = 625
     ns = (real // 512 + 1)

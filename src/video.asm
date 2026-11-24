@@ -9484,10 +9484,8 @@ vid_run_orch_body:
 .fail:
  IFDEF DEBUG
     push bc
-    call vid_open_fail_print     ; per-verdict message (plain call;
-    pop bc                       ; DEBUG only - Release fails silently,
-                                 ; owner ruling 2026-08-27, see the
-                                 ; print block below)
+    call vid_open_fail_print     ; per-verdict message, DEBUG only:
+    pop bc                       ; Release fails silently
  ENDIF
     ; nothing armed, nothing displayed, ring freed: only the music
     ; freeze needs reversing (the PSG park recovers on the next tick)
@@ -9896,24 +9894,24 @@ vidDmaSnd:
 vidDmaSnd_len equ $ - vidDmaSnd
     ASSERT vidDmaSnd_len == 18
 
-; The end of a DMA mono session, sent first by the restore body: stop, reset (guide 2.6:
-; prescaler 0, auto restart off, timings 3 cycles), then what the reset leaves or undoes -
-; vidDmaInit's WR1, WR2 and WR5, WR4 continuous, the power-up read mask.
+; The end of a DMA mono session, sent first by the restore body: stop, reset (guide 2.6),
+; then vidDmaInit's WR1, WR2 and WR5 with the prescaler sent as 0 (guide 2.3: WR2 timing
+; bit 5, guide 2.7: 0 = none), WR4 continuous, the power-up read mask.
 vidSvDmaSnd:     db 0            ; 1 = l2setup sent vidDmaSnd; cleared by the restore body
 vidDmaSndOff:
     db $83, DDMA_RESET
     db %01010100, %00000010      ; WR1: A memory, incrementing, cycle length 2
-    db %01010000, %00000010      ; WR2: B memory, incrementing, cycle length 2
+    db %01010000, %00100010, 0   ; WR2: B memory, incrementing, cycle length 2, prescaler 0
     db %10000010                 ; WR5: stop on end of block
     db %10100001                 ; WR4: continuous, no address bytes
     db $BB, $7F
 vidDmaSndOff_len equ $ - vidDmaSndOff
-    ASSERT vidDmaSndOff_len == 10 && vidDmaSndOff == vidSvDmaSnd + 1
-    ASSERT {b vidDmaSndOff + 2} == {b vidDmaInit + 1}   ; bytes 3 to 7 are vidDmaInit's 2 to 6
+    ASSERT vidDmaSndOff_len == 11 && vidDmaSndOff == vidSvDmaSnd + 1
+    ASSERT {b vidDmaSndOff + 2} == {b vidDmaInit + 1}   ; vidDmaInit's WR1, WR2 and WR5
     ASSERT {b vidDmaSndOff + 3} == {b vidDmaInit + 2}
     ASSERT {b vidDmaSndOff + 4} == {b vidDmaInit + 3}
-    ASSERT {b vidDmaSndOff + 5} == {b vidDmaInit + 4}
-    ASSERT {b vidDmaSndOff + 6} == {b vidDmaInit + 5}
+    ASSERT {b vidDmaSndOff + 5} == {b vidDmaInit + 4} | $20
+    ASSERT {b vidDmaSndOff + 7} == {b vidDmaInit + 5}
 
 ; Per-video-mode CTC time constants for the ONE supported audio rate
 ; (carried verbatim from v1 - same rate, same derivation; see git
@@ -9932,6 +9930,8 @@ vidCtcTcNxvStereo:
 ; still visible in the video mode, and one field of the old surface
 ; scanned out through the new interpretation (the exit corruption
 ; flash). Symmetry matrix (restore order):
+;   0. a DMA mono session (vidSvDmaSnd): the DMA stopped and reset,
+;      DAC B and C parked, NR $CD back to im2_init's value
 ;   1. CTC 0's IM2 entry and stub, audEnable, l2Front/Back cells
 ;      (resident state)
 ;   2. NR $69 bit7 CLEARED - Layer 2 hidden, other bits held
@@ -10371,10 +10371,8 @@ vid_open_video_body:
     ld b, 1
  IFDEF DEBUG
     push bc
-    call vid_play_missing_print  ; "VID FILE?" (plain call, 3c; DEBUG
-    pop bc                       ; only - Release fails silently, owner
-                                 ; ruling 2026-08-27, see the print
-                                 ; block below)
+    call vid_play_missing_print  ; "VID FILE?", DEBUG only: Release
+    pop bc                       ; fails silently
  ENDIF
 .haveresult:
     ld hl, vid_play.openret

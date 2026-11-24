@@ -248,7 +248,7 @@ COLD = [
      "report after teardown"),
     ("src/video.asm", "vidSvHook", ("vid_tl_report:",),
      "report cells, report hop and the NXB bench"),
-    ("src/video.asm", "vid_raw_prime", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
+    ("src/video.asm", "vidDmaGo", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
      "NXB_PAGE: bench tables"),
     ("src/video.asm", "nxv2_open_body", ("ld (vidFillT0), hl",),
      "open: FILL= start stamp"),
