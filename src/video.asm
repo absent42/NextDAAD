@@ -5164,10 +5164,9 @@ vid_raw_pal:
     ld b, high TBBLUE_REG_ACC    ; C stays $3B
     jp VR_PALTRAIN               ; 23 T a byte; its ret returns to our caller
 
-; Raw session CTC handlers: play pointer HL' (the alternate set is free in the
-; armed window). MMU-free, no port $6B, exit by RETI (the stereo handler's DMA
-; pre-emption contract). CTC 0's IM2 entry is the handler (l2setup), no stub jp.
-; T with IM2 ack: 104 / 82, page step +29.
+; Raw session CTC handlers: play pointer HL' (alternate set free while armed). MMU-free,
+; no port $6B, exit by RETI (the stereo handler's DMA pre-emption contract). CTC 0's IM2
+; entry is the handler, no stub jp. T with IM2 ack: 104 / 82, page step +29.
     ASSERT vidAudBuf + NXV_AUD_RING == $8000 && low vidAudBuf == 0
 video_ctc_isr_raw_st:
     ex af, af'
@@ -5935,7 +5934,8 @@ nxb_sat:
     call dbg_at
     jp nxb_puttag
 
-; ID: O = delivery, R = vidFrames, F = width, D = the height byte.
+; ID: O = delivery, R = vidFrames, F = width, D = the height byte; a raw clip's
+; row then nxbMsgHarn (raw_fit reads the bench image's frame harness model from it).
 nxb_kind_id:
     call nxb_deliv
     ld (nxbSO), a
@@ -5968,7 +5968,14 @@ nxb_kind_id:
     ld a, (vidHeightB)
     ld l, a
     ld h, 0
-    jp nxb_fprint
+    ld a, (vidRaw)
+    or a
+    jp z, nxb_fprint
+    call nxb_fprint
+    call nxb_tm_in               ; a raw clip's row ends with the harness model
+    ld hl, nxbMsgHarn
+    call dbg_puts
+    jp nxb_tm_out
 
 ; RING: O = 00, R = vidRingDepth at entry (0 resident), F = vidTlFillFrames,
 ; D = vidPoolAtOpen.
@@ -6257,11 +6264,13 @@ nxb_loop_done:
     ld (l2FrontBank), hl
     jp nxb_sprint1
 
-; ARM: a silent ring, then vid_run's CTC start without the field-phase wait.
-; ARMOLD (raw sessions): video_ctc_isr_stereo installed for the row, the DISARM
-; after it restores the session's handler. RARM: HL' primed in place of IX.
+; ARM: a silent ring, then vid_run's CTC start without the field-phase wait. ARMOLD (raw):
+; CTC 0's entry at the stub (a RARM may have left the handler), video_ctc_isr_stereo behind
+; it; the DISARM after it restores the session's handler. RARM: HL' primed in place of IX.
 nxb_kind_armold:
     call nxb_arm_ring
+    ld hl, IM2_CTC_STUB
+    ld (IM2_TABLE + IM2_CTC_VEC), hl
     ld hl, video_ctc_isr_stereo
     ld (IM2_CTC_STUB+1), hl      ; CTC 0 stopped: no tick sees the swap
     jr nxb_arm_ix
@@ -6551,6 +6560,8 @@ nxb_kind_syn:
 nxbMsgSess:  db "NXB SESSION", 0
 nxbMsgShort: db " NXB SHORT", 0
 nxbMsgRun:   db " NXB RUN", 0
+; raw_fit's frame harness model (MODEL_MARK): 1C = RW_FRAME_HARNESS_T 220
+nxbMsgHarn:  db " H1C", 0
 nxbSessVec:  dw 0               ; IM2_CTC_STUB+1 at session entry (DISARM)
 nxbRunB:     dw 0               ; walk mark: vidStrmRunBlkH before the row
 nxbRemB:     dw 0               ; walk mark: vidStrmRemainBlk (low word) before it

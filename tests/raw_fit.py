@@ -3,8 +3,10 @@
 
 Fits T = Spix (512 tb F + ts) + Ssnd tsnd + C tc + tf + P tp + stall per sound form,
 after taking the tracked bench harness out of every row (nxv2_bench_rows
-RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T; --model 1b: RW_FRAME_HARNESS_T_1B, the frame
-harness of the images sitting 1b's committed logs came from).
+RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T; model 1b: RW_FRAME_HARNESS_T_1B, the frame
+harness of the images sitting 1b's committed logs came from). The model is read from
+the log: a raw clip's IDEN row ends "H1C" on this tree's bench image and has no mark on
+sitting 1b's; --model that disagrees is refused, and only chooses for a log naming none.
 
 Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback FILE]
                                             [--wait-shape inline|sitting1] [--model 1c|1b]
@@ -37,6 +39,12 @@ H_CARD = benchrows.RW_CARD_HARNESS_T
 # The frame harness of the bench image a log came from: 1c this tree's, 1b sitting 1b's.
 MODEL_G_FRAME = {"1c": benchrows.RW_FRAME_HARNESS_T, "1b": benchrows.RW_FRAME_HARNESS_T_1B}
 G_FRAME = MODEL_G_FRAME["1c"]
+# The model a bench image prints after a raw clip's IDEN row (nxb_kind_id, nxbMsgHarn);
+# sitting 1b's image printed none.
+MODEL_MARK = {"1c": "H1C"}
+UNMARKED_MODEL = "1b"
+IDEN_MARK_RE = re.compile(r"^IDEN\s+O=[0-9A-F]{2}\s+R=[0-9A-F]{4}\s+F=[0-9A-F]{4}\s+"
+                          r"D=[0-9A-F]{4}(?:\s+(\S+))?\s*$", re.IGNORECASE)
 INI_T = 16
 SECTOR_INI_T = 512 * INI_T
 COL_ENDS = 8                 # RCOL/ARCO: 8 reads of 64 (nxb_rw_col)
@@ -337,9 +345,10 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
         if clip == swap:
             pre, tcs = ctc_period()
             t["ASPN"] = P["spn0"] / (1 - P["handler"][form_of(3 - ch)] / (pre * tcs[0]))
+        mark = MODEL_MARK.get(model_in_force())
         body = ["What now?", ">pick %d" % clip,
                 "Clip %d armed - GO plays once, LOOP loops." % clip, "What next?", ">nxbw",
-                _row_line("IDEN", 2, frames, w, h & 0xFF)]
+                _row_line("IDEN", 2, frames, w, h & 0xFF) + (" " + mark if mark else "")]
         for i, tag in enumerate(RW1_TAGS[1:]):
             reps = SYNTH_REPS[tag]
             o, tt = 0, t[tag]
@@ -397,6 +406,8 @@ class Section:
     err: int
     notes: list = field(default_factory=list)
     markers: list = field(default_factory=list)
+    iden_mark: object = False    # the token after IDEN's D (None: none), False: no IDEN line
+    typed: bool = False          # typed screen text (no #NXB header)
 
 
 def read_sections(path):
@@ -420,9 +431,54 @@ def read_sections(path):
             rows[tag] = (o, r, f, d)
         fail = next((l.strip() for l in run.lines if FAIL_RE.match(l.strip())), None)
         marks = [l.strip() for l in run.lines if MARKER_RE.search(l)]
+        iden = next((m for m in (IDEN_MARK_RE.match(l.strip()) for l in run.lines) if m), None)
         out.append(Section(k, run.stamp, run.command, run.clip, rows, run.hist, fail,
-                           run.err, notes, marks))
+                           run.err, notes, marks, iden.group(1) if iden else False,
+                           run.stamp is None))
     return out
+
+
+def log_model(sections):
+    """The frame harness model the log's NXBW captures name: MODEL_MARK's token after their
+    IDEN row, UNMARKED_MODEL for a #NXB capture with none. -> (model or None, captures read);
+    None when no usable NXBW capture has an IDEN row. Two models in one log: FitError."""
+    by = {}
+    for s in sections:
+        if s.verb != "NXBW" or s.failure or s.iden_mark is False or s.typed:
+            continue
+        mark = (s.iden_mark or "").upper()
+        model = next((m for m, t in MODEL_MARK.items() if t == mark), None)
+        if model is None:
+            if s.iden_mark:
+                raise FitError("section %d: IDEN carries %r, no known harness model (%s)" % (
+                    s.index, s.iden_mark, ", ".join(sorted(MODEL_MARK.values()))))
+            model = UNMARKED_MODEL
+        by.setdefault(model, []).append(s.index)
+    if len(by) > 1:
+        raise FitError("the log mixes bench images: %s" % "; ".join(
+            "model %s in sections %s" % (m, v) for m, v in sorted(by.items())))
+    if not by:
+        return None, 0
+    (model, secs), = by.items()
+    return model, len(secs)
+
+
+def choose_model(sections, explicit=None):
+    """The model to fit with -> (model, note). The log's (log_model) wins; an explicit
+    --model that disagrees with it is refused (FitError); with none in the log, the explicit
+    one, else 1c with a warning."""
+    found, n = log_model(sections)
+    if found is not None:
+        if explicit is not None and explicit != found:
+            raise FitError("--model %s, but the log's %d NXBW captures are model %s (frame "
+                           "harness %d T, not %d): refused" % (
+                               explicit, n, found, MODEL_G_FRAME[found],
+                               MODEL_G_FRAME[explicit]))
+        return found, "model %s (from the log's IDEN rows, %d captures)" % (found, n)
+    if explicit is not None:
+        return explicit, "model %s (--model; no NXBW IDEN row in the log)" % explicit
+    return "1c", ("WARNING: no NXBW IDEN row names the bench image; model 1c assumed "
+                  "(--model to choose)")
 
 
 @dataclass
@@ -1557,6 +1613,10 @@ def set_model(model):
     G_FRAME = MODEL_G_FRAME[model]
 
 
+def model_in_force():
+    return next(m for m, g in MODEL_G_FRAME.items() if g == G_FRAME)
+
+
 def selftest():
     fails, checks = [], 0
 
@@ -1845,6 +1905,42 @@ def selftest():
     check(abs(res_1c.k["mono"]["tf"] - res_1b.k["mono"]["tf"]) > 5,
           "the same log under 1c: tf moves (%.1f against %.1f)" % (
               res_1c.k["mono"]["tf"], res_1b.k["mono"]["tf"]))
+    # the model from the log: this tree's IDEN mark names 1c, no mark 1b; an explicit
+    # --model against it is refused both ways; mixed captures and an unknown mark refused
+    def chosen(sections, explicit=None):
+        try:
+            return choose_model(sections, explicit)[0]
+        except FitError as e:
+            return "refused: %s" % e
+    with tempfile.TemporaryDirectory() as tmp:
+        log1c, log1b, mixed = (Path(tmp) / n for n in ("M1C.TXT", "M1B.TXT", "MIX.TXT"))
+        log1c.write_bytes(synth_log().encode("ascii"))
+        set_model("1b")
+        try:
+            log1b.write_bytes(synth_log().encode("ascii"))
+        finally:
+            set_model("1c")
+        mixed.write_bytes(log1c.read_bytes() + log1b.read_bytes())
+        s1c, s1b = read_sections(log1c), read_sections(log1b)
+        smix = read_sections(mixed)
+        unknown = [replace(s, iden_mark="H9Z") if s.verb == "NXBW" else s for s in s1c]
+        typed = [replace(s, iden_mark=None, typed=True) for s in s1b]
+        got = (chosen(s1c), chosen(s1c, "1c"), chosen(s1c, "1b")[:8], chosen(s1b),
+               chosen(s1b, "1b"), chosen(s1b, "1c")[:8], chosen(smix)[:8],
+               chosen(unknown)[:8], chosen(typed), chosen(typed, "1b"))
+        check(got == ("1c", "1c", "refused:", "1b", "1b", "refused:", "refused:", "refused:",
+                      "1c", "1b"), "model from the log: %r" % (got,))
+        check("IDEN O=02 R=00FA F=0100 D=00C0 H1C" in log1c.read_text()
+              and " H1C" not in log1b.read_text(), "synthetic IDEN marks by model")
+        model, _ = choose_model(s1b)
+        set_model(model)
+        try:
+            res_inf1b = fit(s1b, reps=SYNTH_REPS, wait_shape="inline")
+        finally:
+            set_model("1c")
+        check(all(_near(res_inf1b.k[f][key], want) for f in FORMS
+                  for key, want in SYNTH["k"][f].items()),
+              "a 1b log with no --model: model 1b read from it, constants recovered")
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,
@@ -1861,9 +1957,10 @@ def main(argv=None):
     ap.add_argument("--wait-shape", choices=sorted(WAIT_SHAPES), default=None,
                     help="override the token wait shape read from the log: inline (first 22, "
                          "then 47 T a poll) or sitting1 (48 each, the sitting-1 bench)")
-    ap.add_argument("--model", choices=sorted(MODEL_G_FRAME), default="1c",
-                    help="the bench image the log came from: 1c (this tree, the default) or "
-                         "1b (sitting 1b's committed logs: frame harness %d T)" %
+    ap.add_argument("--model", choices=sorted(MODEL_G_FRAME), default=None,
+                    help="the bench image the log came from, read from the log's NXBW IDEN "
+                         "rows (refused if it disagrees); for a log that names none: 1c (this "
+                         "tree, the default) or 1b (sitting 1b's: frame harness %d T)" %
                          MODEL_G_FRAME["1b"])
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
@@ -1871,9 +1968,12 @@ def main(argv=None):
         return selftest()
     if not a.log:
         ap.error("a log path or --selftest")
-    set_model(a.model)
     try:
-        res = fit(read_sections(a.log), nr11=a.nr11, clips_dir=a.clips and Path(a.clips),
+        sections = read_sections(a.log)
+        model, note = choose_model(sections, a.model)
+        set_model(model)
+        sys.stderr.write("%s\n" % note)
+        res = fit(sections, nr11=a.nr11, clips_dir=a.clips and Path(a.clips),
                   wait_shape=a.wait_shape)
         readouts = read_playback(a.playback) if a.playback else None
     except (nxbparse.LogError, FitError) as e:

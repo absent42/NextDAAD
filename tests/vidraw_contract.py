@@ -1946,13 +1946,31 @@ def whole_calls(real):
     return (real >> 9) + (1 if real & 511 else 0) + 1
 
 
+def pump_allow(mc, cells=None):
+    """stray_writes allowance for a pump run on mc: the ring's page, VR_SCRATCH, the stack,
+    and on VID_PAGE only cells (default PUMP_CELLS) and the DEBUG PLAY divider's cells."""
+    names = (PUMP_CELLS if cells is None else cells) + (
+        ("vidRlDiv", 1), ("vidRlSpinDiv", 1), ("vidRlLast", 2), ("vidRlFields", 2),
+        ("vidTokPolls", 2), ("vidTokCalls", 2))
+    hot = set()
+    for name, n in names:
+        if name in SYMS:
+            hot |= {(SYMS[name][1] & 0x1FFF) + k for k in range(n)}
+    scr = S("VR_SCRATCH") - S("VR_SLIDE")
+    return {S("VID_PAGE"): lambda k: k in hot,
+            mc.mmu[S("vidAudBuf") >> 13]: True,
+            5: lambda k: (STACK - 0x100) - 0xA000 <= k < STACK - 0xA000,
+            SCHED_PAGE: lambda k: scr <= k < scr + 512}
+
+
 def test_pump_cells():
     """For each PUMP_CASES section (a CRC due, the token on poll 2, the write cursor at
     vidAudBuf + 100, the ring empty, MMU6 another page): the baseline DEBUG image's
     vid_aud_pump (BC = $FFFF; its raw patches: vid_ds_xfer, vid_ds_blkopen, vid_raw_apad)
     against this image's patched vid_aud_pump (vid_raw_pump, VR_PUMP): the ring, vidAudWr,
     vidAudFeedRem, vidDsAudBlkRem, vidRawTag, vidStrmRemainBlk, vidStrmRunBlkH, vidDsFrmBlk,
-    vidDsCrcDue and the card reads equal; MMU6 (NR $56 too) = the schedule page."""
+    vidDsCrcDue and the card reads equal; MMU6 (NR $56 too) = the schedule page; nothing
+    written but the ring, those cells, VR_SCRATCH and the stack."""
     osyms, opages = base_image("debug")
     base = S("vidAudBuf")
     if img_addr(osyms, "vidAudBuf") != base:
@@ -1962,7 +1980,10 @@ def test_pump_cells():
         old = pump_mc(real, nsec, base + 100, syms=osyms, pages=opages)
         old.run(img_addr(osyms, "vid_aud_pump"), traps=img_aborts(osyms), bc=0xFFFF)
         new = pump_mc(real, nsec, base + 100)
+        new.sync()
+        before = bytes(new.phys)
         pump_run(new)
+        stray_writes(before, bytes(new.phys), pump_allow(new))
         o, n = pump_state(old, osyms), pump_state(new)
         if o[0] != n[0]:
             bad = next(i for i in range(len(o[0])) if o[0][i] != n[0][i])
@@ -2017,7 +2038,8 @@ def test_pump_wrap():
     vidAudBuf, one extra slide call, vidAudWr past the wrap. The write cursor $8000 - 300
     with 1250 bytes (the split in a whole sector): vidAudWr = vidAudBuf + 950. Also: a whole
     sector or the last real byte ending on $8000 exactly (no extra call, the cursor wraps to
-    vidAudBuf), the split in the last sector's real part, and in a mono first sector."""
+    vidAudBuf), the split in the last sector's real part, and in a mono first sector. Nothing
+    written but the ring, the pump's cells, VR_SCRATCH and the stack."""
     base, end = S("vidAudBuf"), S("vidAudBuf") + S("NXV_AUD_RING")
     for back, real, nsec, extra in ((300, 1250, 3, 1), (512, 1250, 3, 0), (1024, 1250, 3, 0),
                                     (1100, 1250, 3, 1), (1250, 1250, 3, 0), (100, 625, 2, 1),
@@ -2025,7 +2047,10 @@ def test_pump_wrap():
         what = f"write cursor $8000 - {back}, {real} bytes"
         wr = end - back
         mc = pump_mc(real, nsec, wr)
+        mc.sync()
+        before = bytes(mc.phys)
         calls = pump_run(mc)
+        stray_writes(before, bytes(mc.phys), pump_allow(mc))
         snd = snd_section(real, nsec, 1)[:real]
         got = (calls, mc.peek("vidAudWr", 2), mc.peek("vidAudFeedRem", 2), mc.peek("vidRawTag"),
                mc.card.pos == len(mc.card.stream))
@@ -2090,6 +2115,52 @@ def test_pump_runwalk():
     if got != want:
         raise Fail(f"(walks (reads, last phase), run count, wr, tag, all read, ring) = {got}, "
                    f"expected {want}")
+
+
+def test_pump_faults():
+    """The section's charges before its first open (sections of 3 and 2 sectors): the remain
+    below the section's sectors (0..n-1) and the bound passed by one (vidDsFrmBlk + n =
+    vidDsBound + 1) stop at vid_dec_abort_pos with VID_ERR_SRCOVR, no card read, nothing
+    written but vidDsFrmBlk and the stack, the remain kept. The remain $010000 + k (k < n:
+    the borrow crosses its 16-bit word) and the bound met exactly complete the section, the
+    remain $010000 + k - n."""
+    base = S("vidAudBuf")
+    for real, nsec in PUMP_CASES[:2]:
+        cases = [(f"remain {r}", r, 0, 255, True) for r in range(nsec)]
+        cases += [(f"remain ${0x010000 + k:06X}", 0x010000 + k, 0, 255, False)
+                  for k in range(nsec)]
+        cases += [("bound + 1", 0x012345, 41 - nsec, 40, True),
+                  ("bound met", 0x012345, 40 - nsec, 40, False)]
+        for what, remain, frm, bound, fault in cases:
+            what = f"{real} bytes in {nsec} sectors, {what}"
+            mc = pump_mc(real, nsec, base + 100)
+            mc.poke("vidStrmRemainBlk", remain.to_bytes(3, "little"))
+            mc.poke("vidDsFrmBlk", frm)
+            mc.poke("vidDsBound", bound)
+            mc.sync()
+            before = bytes(mc.phys)
+            stop = None
+            try:
+                pump_run(mc)
+            except Stop as e:
+                stop = e
+            mc.sync()
+            got = (mc.peek("vidStrmRemainBlk", 3), mc.peek("vidDsFrmBlk"), mc.card.pos)
+            if fault:
+                if stop is None or not reached(stop, "vid_dec_abort_pos") \
+                        or stop.a != S("VID_ERR_SRCOVR") or got != (remain, frm + nsec, 0):
+                    raise Fail(f"{what}: {stop or 'returned'}; (remain, FrmBlk, card reads) = "
+                               f"{got}, expected vid_dec_abort_pos with VID_ERR_SRCOVR and "
+                               f"{(remain, frm + nsec, 0)}")
+                frm_at = S("vidDsFrmBlk") & 0x1FFF
+                stray_writes(before, bytes(mc.phys),
+                             {S("VID_PAGE"): lambda k: k == frm_at,
+                              5: lambda k: (STACK - 0x100) - 0xA000 <= k < STACK - 0xA000})
+                continue
+            if stop is not None or got != (remain - nsec, frm + nsec, len(mc.card.stream)) \
+                    or mc.peek("vidAudFeedRem", 2):
+                raise Fail(f"{what}: {stop or 'returned'}; (remain, FrmBlk, card reads) = {got}, "
+                           f"expected {(remain - nsec, frm + nsec, len(mc.card.stream))}")
 
 
 def test_pump_t():
@@ -2867,7 +2938,7 @@ def test_vec_restore():
     run to its hop back after a raw stereo, a raw mono and a non-raw session: CTC 0's entry is
     IM2_CTC_STUB, the stub's target the saved vector, the whole table as im2_init left it
     (CTC 1's entry included). The image names CTC 0's entry only at im2_init, l2setup, the
-    restore body and (DEBUG) nxb_kind_rarm / nxb_kind_disarm."""
+    restore body and (DEBUG) nxb_kind_rarm / nxb_kind_armold / nxb_kind_disarm."""
     stub, at = S("IM2_CTC_STUB"), S("IM2_TABLE") + S("IM2_CTC_VEC")
     for installed, target in (("video_ctc_isr_raw_st", "video_ctc_isr_raw_st"),
                               ("video_ctc_isr_raw_mono", "video_ctc_isr_raw_mono"),
@@ -2897,7 +2968,8 @@ def test_vec_restore():
                        f"${stub_target(mc):04X}, table as im2_init's {table == im2_default()}")
     sites = nex_store_sites((at - 1, at, at + 1))
     want = sorted(["im2_init", "vid_run_l2setup_body", "vid_run_restore_body"]
-                  + (["nxb_kind_disarm", "nxb_kind_rarm"] if "dbgNoBank" in SYMS else []))
+                  + (["nxb_kind_armold", "nxb_kind_disarm", "nxb_kind_rarm"]
+                     if "dbgNoBank" in SYMS else []))
     if [r for r, _, _ in sites] != want:
         raise Fail(f"code naming IM2_TABLE + IM2_CTC_VEC (+-1): {sites}, expected one site in "
                    f"each of {want}")
@@ -3502,34 +3574,58 @@ class PortMachine(RawMachine):
 
 def test_rw_arms():
     """RARM primes HL' after CTC 0's reset and control word, before its time constant, leaves
-    IX alone and points CTC 0's table entry at nxbSessVec before that time constant; ARMOLD
-    installs video_ctc_isr_stereo with CTC 0 stopped and primes IX; ARMOLD and ARM leave the
-    entry; DISARM stops CTC 0, parks the DACs, then puts nxbSessVec back and the entry to
-    IM2_CTC_STUB."""
+    IX alone and points CTC 0's table entry at nxbSessVec before that time constant; ARMOLD,
+    entered with the entry at the raw handler (as RARM leaves it), puts the entry at
+    IM2_CTC_STUB and installs video_ctc_isr_stereo behind it with CTC 0 stopped and primes IX;
+    ARM leaves the entry; DISARM stops CTC 0, parks the DACs, then puts nxbSessVec back and
+    the entry to IM2_CTC_STUB. RARM then ARMOLD with no DISARM between: ARMOLD's time constant
+    starts the old stereo handler."""
     bench_only()
     ctc, base, sil = S("AUD_CTC_PORT"), S("vidAudBuf"), S("DAC_SILENCE")
     raw_st, stereo = S("video_ctc_isr_raw_st"), S("video_ctc_isr_stereo")
     stub = S("IM2_CTC_STUB") + 1
     im2s = S("IM2_CTC_STUB")
     cw, rst = S("AUD_CTC_CW16"), S("AUD_CTC_RESET")
+
+    def ldix(c):
+        c.ix = base
+        c.pc += 4
+
+    def runs(mc):
+        """The handler CTC 0's interrupt reaches: the entry, through the stub's jp."""
+        e = vec_entry(mc)
+        return stub_target(mc) if e == im2s and mc.mem[im2s] == 0xC3 else e
+    mc = nxb_machine(PortMachine)
+    mapnr(mc, 6, S("NXB_PAGE"))
+    code_is(mc, "nxb_arm_ix", b"\xDD\x21" + le(base))
+    mc.poke("vidCtcTc", 0x70)
+    mc.mem[im2s:im2s + 3] = b"\xC3" + le(raw_st)          # im2_init's jp, the session target
+    set_table(mc, im2s)
+    mc.poke16("nxbSessVec", raw_st)
+    seq = []
+    for kind in ("nxb_kind_rarm", "nxb_kind_armold"):
+        mc.ports = []
+        mc.run(kind, traps={S("nxb_arm_ix"): ldix})
+        tc = mc.ports[-1]
+        seq.append((tc[1], stub_target(mc), vec_entry(mc), runs(mc)))
+    if seq != [(0x70, raw_st, raw_st, raw_st), (0x70, stereo, im2s, stereo)]:
+        raise Fail(f"RARM then ARMOLD: (time constant, stub target, entry, handler run) = "
+                   f"{[tuple(hex(x) for x in s) for s in seq]}; ARMOLD must run "
+                   f"video_ctc_isr_stereo ${stereo:04X} through IM2_CTC_STUB ${im2s:04X}")
     for kind in ("nxb_kind_rarm", "nxb_kind_armold", "nxb_kind_arm", "nxb_kind_disarm"):
         mc = nxb_machine(PortMachine)
         mapnr(mc, 6, S("NXB_PAGE"))
         cpu = mc.cpu
         mc.poke("vidCtcTc", 0x70)
         mc.mem[stub:stub + 2] = le(stereo if kind == "nxb_kind_disarm" else raw_st)
-        set_table(mc, raw_st if kind == "nxb_kind_disarm" else im2s)
+        e0 = raw_st if kind in ("nxb_kind_disarm", "nxb_kind_armold") else im2s
+        set_table(mc, e0)
         mc.poke16("nxbSessVec", raw_st)
         mc.mem[base:base + S("NXV_AUD_RING")] = bytes([0x11]) * S("NXV_AUD_RING")
         set_alt_hl(cpu, 0x1234)
         cpu.ix = 0xDEAD
         traps = {}
         if kind in ("nxb_kind_armold", "nxb_kind_arm"):
-            code_is(mc, "nxb_arm_ix", b"\xDD\x21" + le(base))
-
-            def ldix(c):
-                c.ix = base
-                c.pc += 4
             traps[S("nxb_arm_ix")] = ldix
         mc.run(kind, traps=traps)
         vec, ent = stub_target(mc), vec_entry(mc)
@@ -3543,8 +3639,8 @@ def test_rw_arms():
         hl1, ix1, v1, e1 = {"nxb_kind_rarm": (base, 0xDEAD, raw_st, raw_st),
                             "nxb_kind_armold": (0x1234, base, stereo, im2s),
                             "nxb_kind_arm": (0x1234, base, raw_st, im2s)}[kind]
-        want = [(ctc, rst, 0x1234, 0xDEAD, raw_st, im2s)] * 2 + [
-            (ctc, cw, 0x1234, 0xDEAD, raw_st, im2s), (ctc, 0x70, hl1, ix1, v1, e1)]
+        want = [(ctc, rst, 0x1234, 0xDEAD, raw_st, e0)] * 2 + [
+            (ctc, cw, 0x1234, 0xDEAD, raw_st, e0), (ctc, 0x70, hl1, ix1, v1, e1)]
         ring = bytes(mc.mem[base:base + S("NXV_AUD_RING")])
         if mc.ports != want or (vec, ent) != (v1, e1) or ring != bytes([sil]) * len(ring):
             raise Fail(f"{kind}: ports {mc.ports}, vector ${vec:04X}, entry ${ent:04X}, ring "
@@ -3731,19 +3827,31 @@ def test_rw_kinds():
     if (mc.peek("nxbSessReq"), mc.peek("nxbHistN"), mc.mem[fl + 248], mc.mem[fl + 250]) != (5, 0, 0, 0):
         raise Fail(f"nxb_entry mode 14: request {mc.peek('nxbSessReq')}, nxbHistN "
                    f"{mc.peek('nxbHistN')}")
-    # IDEN: F = the surface width, less 2 x x0 for a raw clip
+    # IDEN: F = the surface width, less 2 x x0 for a raw clip; a raw clip's row then " H1C"
+    # (raw_fit.MODEL_MARK), printed inside the MMU3 print bracket
     for raw, pages, page0, h0, want in ((1, 10, 0, 0x40, 320), (1, 10, 0, 0x54, 280),
                                         (1, 10, 1, 0x40, 256), (1, 10, 4, 0x5E, 4),
                                         (1, 6, 0, 0x40, 256), (0, 10, 3, 0x41, 320),
                                         (0, 6, 3, 0x41, 256)):
         mc = kmc()
         for name, v in (("vidRaw", raw), ("vidDstPages", pages), ("vidRawPage0", page0),
-                        ("vidRawH0", h0), ("vidHeightB", 192)):
+                        ("vidRawH0", h0), ("vidHeightB", 192), ("nxbSessLive", 1),
+                        ("nxbSvTm3", 0x2A), ("nxbSvAud3", 0x2B)):
             mc.poke(name, v)
-        mc.run("nxb_kind_id", traps={S("nxb_fprint"): ret_trap(lambda c: None)})
-        if mc.peek("nxbLcF", 2) != want:
+        out = []
+
+        def puts(c):
+            a, s = c.hl, b""
+            while mc.mem[a]:
+                s, a = s + bytes([mc.mem[a]]), a + 1
+            out.append((s.decode("ascii"), mc.nr.get(0x53)))
+        mc.run("nxb_kind_id", traps={S("nxb_fprint"): ret_trap(lambda c: out.append("row")),
+                                     S("dbg_puts"): ret_trap(puts)})
+        mark = ["row", (" H1C", 0x2A)] if raw else ["row"]
+        if mc.peek("nxbLcF", 2) != want or out != mark or raw and mc.nr.get(0x53) != 0x2B:
             raise Fail(f"IDEN raw {raw} pages {pages} x0 {page0 * 32 + h0 - 0x40}: F "
-                       f"{mc.peek('nxbLcF', 2)}, expected {want}")
+                       f"{mc.peek('nxbLcF', 2)}, expected {want}; prints {out}, expected "
+                       f"{mark}; MMU3 after {mc.nr.get(0x53)}")
 
 
 # Zilog T-states (no wait states on core 3.03.03) for tcount. T_COND: (taken, not taken,
@@ -3905,7 +4013,8 @@ def test_rw_harness():
     against vid_run's call vid_aud_stage / ld bc / call vid_aud_pump / call vid_decode_any;
     the binned wait's polls as far apart as vr_sector_n's (tags' wait shape), [15, 18, 22, 47]
     in both and [15, 39, 22, 47] in nxb_rh_sec39; the reps' reads. VR_ENT_FAST throughout, as
-    nxb_rw_charge and a frame inside its run leave it."""
+    nxb_rw_charge and a frame inside its run leave it. The mark a raw IDEN row ends with
+    (nxbMsgHarn) is raw_fit's model whose frame harness is RW_FRAME_HARNESS_T."""
     bench_only()
     import nxv2_bench_rows as bench
     sys.path.insert(0, str(Path(__file__).resolve().parent / "core303"))
@@ -3956,6 +4065,17 @@ def test_rw_harness():
     if fbench - play != bench.RW_FRAME_HARNESS_T:
         raise Fail(f"frame rep {fbench} T, playback's calls {play} T: harness {fbench - play} "
                    f"(RW_FRAME_HARNESS_T {bench.RW_FRAME_HARNESS_T})")
+    # the model IDEN prints (nxbMsgHarn) is raw_fit's model of this harness
+    import raw_fit
+    if SYMS["nxbMsgHarn"][0] != S("NXB_PAGE"):
+        raise Fail("nxbMsgHarn is not on NXB_PAGE")
+    pg, o = read_page(S("NXB_PAGE")), S("nxbMsgHarn") & 0x1FFF
+    mark = bytes(pg[o:pg.index(0, o)]).decode("ascii")
+    model = next((m for m, t in raw_fit.MODEL_MARK.items() if " " + t == mark), None)
+    if model is None or raw_fit.MODEL_G_FRAME[model] != bench.RW_FRAME_HARNESS_T:
+        raise Fail(f"IDEN's mark {mark!r}: raw_fit model {model}, frame harness "
+                   f"{raw_fit.MODEL_G_FRAME.get(model)} (RW_FRAME_HARNESS_T "
+                   f"{bench.RW_FRAME_HARNESS_T})")
     gaps = {}
     for name in ("vr_sector_n", "nxb_rh_sec", "nxb_rh_sec39"):
         mc = card_mc(1)
@@ -4090,7 +4210,10 @@ def test_rw_chain():
     # Named entries: the schedule page's VR_SCHED, VR_PALTRAIN, VR_PUMP and the pump's labels,
     # even slide entries; any NXB_PAGE label; else only a ret to the return address a call
     # pushed with the same page.
-    labels6 = {v for p, v in SYMS.values() if p == nxb and 0xC000 <= v < 0xE000}
+    # vrPumpT's labels are DISP'd: the SLD gives them the page at slot 6 when assembled
+    # (NXB_PAGE on DEBUG), so they are not NXB_PAGE entries
+    labels6 = {v for k, (p, v) in SYMS.items() if p == nxb and 0xC000 <= v < 0xE000
+               and not k.startswith("vrPumpT.")}
     fixed = {S("VR_SCHED"), S("VR_PALTRAIN"), S("VR_PUMP")} | pump_labels
     lo, end = S("VR_SLIDE"), S("VR_SLIDE_END")
     shadow, how, popped, prev_in = {}, "jump", None, False
@@ -4722,7 +4845,7 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_frame_zero, test_entry_stale, test_frame_boundaries, test_frame_cross_gaps,
          test_frame_end_walk, test_frame_rewind, test_frame_abort,
          test_pump_cells, test_pump_boundary, test_pump_wrap, test_pump_room, test_pump_runwalk,
-         test_pump_t, test_pump_gaps,
+         test_pump_faults, test_pump_t, test_pump_gaps,
          test_vec_patch, test_vec_sites, test_raw_stage,
          test_isr_stereo, test_isr_mono, test_isr_t, test_isr_static, test_rd_bytes,
          test_patch_sites_default, test_patch_roundtrip, test_patched_reads, test_isr_choice,
