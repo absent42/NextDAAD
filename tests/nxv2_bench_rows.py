@@ -1370,7 +1370,7 @@ def raw_train(shape, w, h, x0=None):
 
 
 def raw_variant(shape, w, h, x0=None):
-    """'train' when raw_train's bytes fit VR_TRAIN_ROOM, else 'inline' (P5's inline opens)."""
+    """'train' when raw_train's bytes fit VR_TRAIN_ROOM, else 'inline'."""
     t = raw_train(shape, w, h, x0)
     return "train" if t and t["bytes"] <= VR_TRAIN_ROOM else "inline"
 

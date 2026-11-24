@@ -2404,8 +2404,8 @@ def test_fast_t():
     if got != want or (disp, back - tx) != (60, 50):
         raise Fail(f"fast program T {got}, nxv2_bench_rows {want}; dispatcher to VR_PROG "
                    f"{disp}, jp VR_XOUT to the return {back - tx}")
-    # VR_FAST_NET_T: one inline frame (320x240, no pad) through the classic schedule (P4's path:
-    # vid_raw_frame's call VR_SCHED aimed at VR_CLASSIC) less through the fast program is
+    # VR_FAST_NET_T: one inline frame (320x240, no pad) through the classic schedule
+    # (vid_raw_frame's call VR_SCHED aimed at VR_CLASSIC) less through the fast program is
     # (sectors - 1) x (CLASSIC_OPEN_T - VR_OPEN_T) - VR_FAST_NET_T; VR_CROSS_T: a crossing
     # frame's dispatcher, VR_SCHED to VR_CLASSIC
     (tf, sec), (tc, _) = (frame_t(1, 320, 240, classic=c) for c in (False, True))
@@ -2465,14 +2465,27 @@ def test_variant_rule():
     nxv2_bench_rows.raw_variant by full builds, centred, nothing written off the schedule bank
     but the generator's cells, every program ending below VR_BEND: shape 0 at every h 1..192;
     shape 1 at every h 1..256 for w 4, 64, 128, 256, 280, 320 and every w 4..320 step 4 for h
-    160, 192, 224, 240, 255, 256. The reduced grid: the whole one (20,672 builds) takes about
-    12 minutes here, over two."""
+    160, 192, 224, 240, 255, 256; 20x197, whose rule bytes equal VR_TRAIN_ROOM (a train); and
+    the 32 geometries that fit with the Release open's 19 bytes and not with VR_OPEN_BUDGET
+    (inline in every build). The reduced grid: the whole one (20,672 builds) takes about 12
+    minutes here, over two."""
     import nxv2_bench_rows as bench
     grid = [(0, 256, h) for h in range(1, 193)]
     for w in (4, 64, 128, 256, 280, 320):
         grid += [(1, w, h) for h in range(1, 257)]
     for h in (160, 192, 224, 240, 255, 256):
         grid += [(1, w, h) for w in range(4, 321, 4) if w not in (4, 64, 128, 256, 280, 320)]
+    edge = [(1, 20, 197)]
+    budget = [(1, w, h) for w, h in (
+        (16, 247), (20, 198), (24, 164), (28, 141), (32, 123), (36, 109), (40, 98), (44, 89),
+        (52, 75), (60, 65), (68, 57), (112, 34), (144, 26), (176, 21), (240, 15))]
+    budget += [(1, w, 14) for w in range(256, 321, 4)]
+    room, slack = bench.VR_TRAIN_ROOM, bench.VR_OPEN_BUDGET - 19
+    by = {g: bench.raw_train(*g) for g in edge + budget}
+    if (by[edge[0]]["bytes"] != room or len(budget) != 32 or any(
+            not room < by[g]["bytes"] <= room + slack * by[g]["starts"] for g in budget)):
+        raise Fail("the rule's edge geometries are not the edge any more")
+    grid += [g for g in edge + budget if g not in grid]
     mc = RawMachine(SYMS)
     off, hot = S("DATA_WINDOW") - S("OVL_ORG"), S("VID_PAGE")
     allow = gen_allow(lambda k: True)
@@ -2566,8 +2579,9 @@ def test_train_gaps():
     72 / 61; inside an open [15, 18, 25] and the token to its first ini 30 (plain DEBUG: the
     PLAY divider after the token); the first sector's open (vr_sector) [15, 18, 22], its token
     to the pass's first ini 48; out to VR_TAILA's pad: the partial pass's patched ret 113, one
-    pass 104 / 93. Nothing else, none under 15, none but a CRC pair under 16. A generator that
-    drops the pad meets a 14."""
+    pass 104 / 93; the driver's page end with the patch (192x4, 256x33) 104 / 93. Nothing
+    else, none under 15, none but a CRC pair under 16. A generator that drops the pad meets a
+    14."""
     div = sector_divider(sector_mc())
     base = {("crc", "crc", "B", "B", ()): 15, ("crc", "wait", "B", "B", ()): 18,
             ("wait", "token", "B", "B", ()): 25, ("token", "data", "B", "B", ()): 30 + div,
@@ -2589,7 +2603,7 @@ def test_train_gaps():
     base[("data", "data", "B", "B", ("colend", "page"))] = 59               # one pass's page end
     seen = {}
     for code, w, h in ((1, 320, 192), (1, 280, 224), (0, 256, 192), (0, 256, 167), (1, 8, 32),
-                       (0, 256, 1)):
+                       (0, 256, 1), (1, 192, 4), (0, 256, 33)):
         gaps, _ = train_gaps(code, w, h)
         for key, g in gaps:
             if base.get(key) != g:
@@ -2603,6 +2617,8 @@ def test_train_gaps():
             ("data", "crc", "B", "B", ("colend", "ret", "patch", "call")),
             ("data", "crc", "B", "B", ("ret", "page", "call")),
             ("data", "crc", "B", "B", ("ret", "patch", "call")),
+            ("data", "crc", "B", "B", ("colend", "ret", "page", "patch", "call")),
+            ("data", "crc", "B", "B", ("ret", "page", "patch", "call")),
             ("data", "data", "B", "A", ("pret", "patch", "xout")),
             ("data", "data", "B", "A", ("colend", "ret", "xout")),
             ("data", "data", "B", "A", ("ret", "xout")),

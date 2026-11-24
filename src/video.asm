@@ -8225,10 +8225,9 @@ vid_strm_validate:
     scf
     ret
 
-; Page A (at DATA_WINDOW): the slide, palette train, pump, dispatcher, classic schedule,
-; VR_TAILA, stubs; then page B (page A + 1, mapped and back): slide and inline program, or the
-; column train (.var), VR_BS1, stubs. In: vidP_*, vidRingBanksC. Out: CF = a limit would be
-; passed. Corrupts all.
+; Page A at DATA_WINDOW: slide, palette train, pump, dispatcher, classic schedule, stubs. Page B
+; (page A + 1): the column train (.var) or slide and inline program, VR_BS1, stubs.
+; In: vidP_*, vidRingBanksC. Out: CF = a limit would be passed. Corrupts all.
 vid_raw_sched_build:
     call .slide
     ASSERT PORT_SPI_DAT == $EB
@@ -8491,6 +8490,8 @@ vid_raw_sched_build:
     or a
     ld a, $C9
     call nz, .epatch             ; the partial last pass returns at the patch site
+    ; An aborted partial pass leaves $C9 at the site: every abort ends the session and
+    ; every raw open rebuilds page B.
 .tdc:
     ld a, $CD
     ld hl, DATA_WINDOW
