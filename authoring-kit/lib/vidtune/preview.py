@@ -2,6 +2,7 @@
 videnc's own extraction path (parity by reuse), diff heatmap and
 stale-band overlay. Pure functions; the GUI thread wrapper lives in
 mainwindow.py."""
+import re
 from fractions import Fraction
 from pathlib import Path
 
@@ -29,6 +30,10 @@ def decode_vid(vid_path):
                      (legitimately expensive) can be told apart from a
                      delta frame that simply overran
 
+    A raw clip's frames are its own width x height (nxv2dec.picture_shape;
+    header "width" stays the surface), each a whole picture with term
+    KFLIP and the palette and pixel sectors as its cost.
+
     This walks nxv2dec._iter_frames rather than its public decode(): the
     costs are a by-product the walker already yields and decode() drops,
     and the alternative - decode() for pixels plus a second walk for
@@ -36,7 +41,7 @@ def decode_vid(vid_path):
     thread."""
     buf = Path(vid_path).read_bytes()
     hdr = nxv2enc.unpack_header(buf)
-    width, height, colmajor = hdr["width"], hdr["height"], hdr["column_major"]
+    width, height, colmajor = nxv2dec.picture_shape(hdr)
 
     frames, costs, terms = [], [], []
     for pal, surf, term, _start, used in nxv2dec._iter_frames(buf, hdr,
@@ -84,6 +89,23 @@ def extract_source(ffmpeg, mp4, width, height, fps, retime, start, duration):
                                   stages=stages)
     arr = np.frombuffer(raw, np.uint8).reshape(n, height, width, 3)
     return list(arr)
+
+
+def source_seconds_from_banner(stderr):
+    """Seconds from ffmpeg's "Duration: HH:MM:SS.ss" banner line, or None."""
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", stderr or "")
+    if not m:
+        return None
+    seconds = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    return seconds if seconds > 0 else None
+
+
+def probe_source_seconds(ffmpeg, mp4):
+    """Source length via videnc's banner probe; None on any failure."""
+    try:
+        return source_seconds_from_banner(videnc._probe_stderr(Path(ffmpeg), Path(mp4)))
+    except (OSError, ValueError):
+        return None
 
 
 def diff_heatmap(src, enc):

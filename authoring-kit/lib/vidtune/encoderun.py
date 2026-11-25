@@ -81,6 +81,11 @@ def parse_progress_line(line):
     return None
 
 
+def encoder_warnings(lines):
+    """The encoder's "warning:" lines, verbatim, from a successful encode."""
+    return [l.strip() for l in lines if l.strip().startswith("warning:")]
+
+
 def read_report(path):
     try:
         return json.loads(Path(path).read_text())

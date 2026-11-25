@@ -1,0 +1,21 @@
+date: 2026-11-21
+board: ks3
+leg: legRAW1
+stamp: 3918c62
+src_stamp: 09ba34b
+build: -BenchQuiet (DEBUG plus NXB_QUIET)
+nex_sha256: c97a14b31a4c8344e95c9818a0c298ac632c0a247b564677e97759f7448d2f30
+game_ddb_sha256: 88df3b8f08d3c9e0f187a91802b743e2bd5b292a4f741b1fea3800e682f0af6b
+core: 33.03
+board_id: 03
+sd_folder: LEGRAW1A
+logs: NXBENCH.TXT
+nr: register line 51 3 3 3 0 0 (NR $01 33, NR $0E 03, NR $0F 03, machine timing 3 = +3, refresh 0 = 50 Hz, NR $11 00)
+timing_from: the nr line (parse.timing: +3, 50 Hz, 311 x 1824 T)
+card: not recorded
+card_slot: not recorded
+display socket: not recorded
+legs: A returned (NXBENCH.TXT); B and C returned 2026-11-22 (playback.md)
+exceptions: none reported for leg A; leg B as recorded in playback.md
+picture and sound remarks: not recorded
+ingest: by hand in the results folder shape; ingest.py refuses this leg (no GATES.TXT in the leg folder; an NXB-only leg takes its timing from a same-date leg1, and there is none)

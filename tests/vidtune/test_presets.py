@@ -29,19 +29,78 @@ def _base(**overrides):
 EXPECTED = {
     "quiet":          {},
     "quiet-motion":   {"tile_slack": "0.5"},
-    "action":         {"direct": True, "shape": "full", "fps": "12.5"},
-    "action-169":     {"direct": True, "shape": "16:9", "fps": "12.5"},
-    "fullrate":       {"direct": True, "shape": "256x167"},
-    "fullrate-wide":  {"direct": True, "shape": "320x105"},
+    "action":         {"direct": True, "shape": "320x240", "fps": "16.67"},
+    "action-169":     {"direct": True, "shape": "16:9", "fps": "25"},
+    "action-narrow":  {"direct": True, "shape": "256x240", "fps": "16.67"},
+    "fullrate":       {"direct": True, "shape": "256x192"},
+    "fullrate-wide":  {"direct": True, "shape": "320x160"},
+    "fullrate-tall":  {"direct": True, "shape": "280x224"},
     "cutscene":       {"shape": "16:9", "tile_slack": "0.5"},
     "cutscene-43":    {"shape": "classic", "tile_slack": "0.5"},
 }
+
+# each route and its framing variants, in menu order
+GROUPS = [
+    ("fullrate", ["fullrate-wide", "fullrate-tall"]),
+    ("action",   ["action-169", "action-narrow"]),
+    ("quiet",    ["quiet-motion"]),
+    ("cutscene", ["cutscene-43"]),
+]
 
 
 def test_every_route_matches_the_presets_doc():
     assert {r.key for r in presets.all_routes()} == set(EXPECTED)
     for key, values in EXPECTED.items():
         assert presets.route_by_key(key).values == values
+
+
+def test_routes_group_their_framing_variants_in_menu_order():
+    assert [(r.key, [v.key for v in r.variants]) for r in presets.ROUTES] == GROUPS
+
+
+def test_opening_route_is_full_rate_and_listed_first():
+    assert presets.OPENING_ROUTE == "fullrate"
+    assert presets.ROUTES[0].key == presets.OPENING_ROUTE
+
+
+# -- card space ---------------------------------------------------------
+
+def test_raw_rate_of_the_opening_route_matches_the_manual_table():
+    # 256x192 at 25 fps stereo: 1536 B sound + 96 pixel sectors.
+    cfg, settings = _base()
+    after = presets.apply_route(settings, settings,
+                                presets.route_by_key("fullrate"))
+    rate = presets.raw_rate(after)
+    assert (rate["width"], rate["height"], rate["form"]) == (256, 192, "stereo")
+    assert rate["frame_bytes"] == 50_688
+    assert rate["per_second"] == 1_267_200
+
+
+def test_raw_rate_reads_the_gate_options_in_extra():
+    # 320x195@25: stereo 0.9995; a transport factor of 1.05 leaves only mono
+    _cfg, settings = _base(direct=True, shape="320x195", fps="25")
+    assert presets.raw_rate(settings)["form"] == "stereo"
+    settings["extra"] = ["--direct-transport-factor", "1.05"]
+    rate = presets.raw_rate(settings)
+    assert rate["form"] == "mono" and rate["frame_bytes"] == 1024 + 122 * 512
+    settings["extra"] = ["--direct-transport-factor", "1.2"]
+    assert presets.raw_rate(settings)["form"] is None
+
+
+def test_size_text_states_rate_and_clip_total():
+    cfg, settings = _base()
+    after = presets.apply_route(settings, settings,
+                                presets.route_by_key("fullrate"))
+    assert presets.size_text(after) == "uncompressed: 1.27 MB a second"
+    assert presets.size_text(after, 30.0) == (
+        "uncompressed: 1.27 MB a second, about 38.0 MB for this 30.0 s clip")
+    assert "over the 256 MB file limit" in presets.size_text(after, 240.0)
+
+
+def test_size_text_for_a_compressed_route_points_at_the_encode():
+    cfg, settings = _base()
+    assert presets.raw_rate(settings) is None
+    assert presets.size_text(settings, 30.0).startswith("compressed:")
 
 
 def test_applied_route_round_trips_through_deviations():
@@ -221,9 +280,22 @@ def test_route_menu_builds_an_item_for_every_route(qtbot):
     menu = QMenu()
     for route in presets.ROUTES:
         button._add(menu, route, settings, settings, indent=False)
-        if route.variant is not None:
-            button._add(menu, route.variant, settings, settings, indent=True)
+        for variant in route.variants:
+            button._add(menu, variant, settings, settings, indent=True)
     assert len(menu.actions()) == len(presets.all_routes())
+
+
+def test_route_card_shows_the_clip_size(qtbot):
+    cfg, settings = _base()
+    button = RouteMenuButton(lambda: (settings, settings),
+                             seconds_for=lambda s: 10.0)
+    qtbot.addWidget(button)
+    menu = QMenu()
+    button._add(menu, presets.route_by_key("fullrate"), settings, settings,
+                indent=False)
+    item = menu.actions()[0].defaultWidget()
+    assert item.size_label.text() == (
+        "uncompressed: 1.27 MB a second, about 12.7 MB for this 10.0 s clip")
 
 
 def test_route_button_never_claims_a_route_is_active(qtbot):
@@ -251,8 +323,8 @@ def test_panel_route_stamps_the_knob_widgets(qtbot):
 
     out = panel.get_settings()
     assert out["direct"] is True
-    assert out["fps"] == "12.5"
-    assert out["shape"] == "full"
+    assert out["fps"] == "16.67"
+    assert out["shape"] == "320x240"
 
 
 def test_panel_ladder_apply_stamps_one_value(qtbot):

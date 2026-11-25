@@ -40,7 +40,8 @@ import nxv2_bench_rows as bench
 # tests/test.dsf: standalone verbs set flags+250 = mode, session verbs flags+248.
 STANDALONE_VERBS = {"NXBO": 2, "NXBC": 3, "NXBK": 4, "NXBX": 5, "NXBG": 6, "NXBL": 7,
                     "NXBT": 8, "NXBE": 9, "NXBH": 10, "NXBF": 11, "NXBV": 12}
-SESSION_VERBS = {"NXBD": "DS1", "NXBR": "REAL", "NXBQ": "SYN", "NXBY": "SYS"}
+SESSION_VERBS = {"NXBD": "DS1", "NXBR": "REAL", "NXBQ": "SYN", "NXBY": "SYS", "NXBW": "RW1",
+                 "NXBM": "RD1", "NXBP": "RT1"}
 VERBS = {**STANDALONE_VERBS, **SESSION_VERBS}
 COL2 = 40                                   # NXB_SESS_COL2
 
@@ -61,6 +62,8 @@ VERB_RE = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(VERBS) + r")(?![A-Za-z0-9])
 PICK_RE = re.compile(r"(?<![A-Za-z0-9])PICK\s+(\d+)", re.IGNORECASE)
 ERR_RE = re.compile(r"(?<![A-Za-z])ERR=([0-9A-F]{2})")
 VIDFAIL_RE = re.compile(r"^VID (FILE\?|FMT\?|NOBANK2|SIZE\?|FRAG\?)")   # vid_fail_puts, row 23
+# The log step's histogram line (RW1 RHST, RH39, AHST, AH39): the tag, then 17 bin counts.
+HIST_RE = re.compile(r"^#HIST ([A-Z0-9]{4})((?: [0-9A-F]{4}){17})$")
 
 
 @dataclass
@@ -76,6 +79,7 @@ class Run:
     dropped: list = field(default_factory=list)   # groups of other tables' tags
     warnings: list = field(default_factory=list)
     lines: list = field(default_factory=list)     # the capture as written
+    hist: dict = field(default_factory=dict)      # #HIST tag -> 17 bin counts
 
 
 def table_tags(command):
@@ -133,6 +137,13 @@ def _run(lines, stamp):
     for i, line in enumerate(lines):
         if LOG_RE.match(line.strip()):
             status = line.strip()[4:].upper()
+            continue
+        h = HIST_RE.match(line.strip())
+        if h:
+            run.hist[h.group(1)] = [int(x, 16) for x in h.group(2).split()]
+            continue
+        if line.startswith("#HIST"):
+            run.warnings.append(f"malformed #HIST line (a tag and 17 words): {line.strip()!r}")
             continue
         groups = _groups(line, run.warnings)
         for col, g in groups:

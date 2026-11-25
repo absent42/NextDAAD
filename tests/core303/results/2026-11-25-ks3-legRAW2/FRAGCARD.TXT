@@ -1,0 +1,25 @@
+fragcard: for a freshly formatted card only (the pin method assumes no free holes before the clip)
+source   D:\NextDAAD\sd\LEGRAW2A\FRAG\123.VID (12627456 bytes, 249 frames: 3 sound + 96 pixel sectors a frame, a palette sector on tagged frames)
+card     E: (Removable, FAT32, cluster 32768 bytes, 31302647808 bytes free)
+dest     E:\LEGRAW2A\123.VID
+runs     4
+chunk 1: bytes 0-3145727 (3145728 bytes, 96 clusters): append to dest, flush, close; write E:\LEGRAW2A\FRAGPIN1.TMP (1 byte), flush, close
+chunk 2: bytes 3145728-6324223 (3178496 bytes, 97 clusters): append to dest, flush, close; write E:\LEGRAW2A\FRAGPIN2.TMP (1 byte), flush, close
+chunk 3: bytes 6324224-9502719 (3178496 bytes, 97 clusters): append to dest, flush, close; write E:\LEGRAW2A\FRAGPIN3.TMP (1 byte), flush, close
+chunk 4: bytes 9502720-12627455 (3124736 bytes, 96 clusters): append to dest, flush, close
+boundary at byte 3145728: file sector 6144 = frame 62, sector 3 of the frame (both count from 0), pixel
+boundary at byte 6324224: file sector 12352 = frame 124, sector 69 of the frame (both count from 0), pixel - inside the pixel sectors
+boundary at byte 9502720: file sector 18560 = frame 187, sector 37 of the frame (both count from 0), pixel - inside the pixel sectors
+then: delete E:\LEGRAW2A\FRAGPIN1.TMP, E:\LEGRAW2A\FRAGPIN2.TMP, E:\LEGRAW2A\FRAGPIN3.TMP; compare dest with source byte for byte
+expected on the Next: RUNS=04 (up to 08 passes; fewer means the pins did not land after the clip; over 08 is VID FRAG?)
+chunk 1 written
+pin E:\LEGRAW2A\FRAGPIN1.TMP written
+chunk 2 written
+pin E:\LEGRAW2A\FRAGPIN2.TMP written
+chunk 3 written
+pin E:\LEGRAW2A\FRAGPIN3.TMP written
+chunk 4 written
+pin E:\LEGRAW2A\FRAGPIN1.TMP deleted
+pin E:\LEGRAW2A\FRAGPIN2.TMP deleted
+pin E:\LEGRAW2A\FRAGPIN3.TMP deleted
+fragcard: OK - E:\LEGRAW2A\123.VID written in 4 chunks and equal to the source; check RUNS= on the Next

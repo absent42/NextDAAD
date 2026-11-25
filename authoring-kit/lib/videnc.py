@@ -18,13 +18,16 @@ FREE height for a given width from a target displayed aspect ratio
 (e.g. --width 320 --aspect 2.35 for true cinema scope), correcting for
 Layer 2 mode-1's non-square pixels (nxv2enc.derive_free_height's own
 docstring has the exact math). --fps is independent of shape - default
-25.
+25. With --direct (the raw layout) an explicit WIDTHxHEIGHT may also be
+any width 4-320 in steps of 4 and any height 1-256, placed on the 320
+surface unless it is 256x1-192 (nxv2enc.raw_surface).
 
 Audio: full rate always, stereo 15625 Hz, chosen so the CTC time
 constant divides cleanly on every video mode (nxv2enc.RATE_STEREO). A
 mono SOURCE is handled automatically: ffmpeg duplicates its single
 channel into both. Samples/frame = round(rate/fps) - the achieved rate
-drifts a few Hz from nominal on some fps values.
+drifts a few Hz from nominal on some fps values. A --direct clip is
+mono (ffmpeg's own downmix) only when mono is chosen (--direct-sound).
 
 Cropping: the source's own pixel dimensions are always probed (ffmpeg
 -i stderr) and compared against the target shape's aspect ratio
@@ -306,22 +309,19 @@ def extract_video(ffmpeg, input_path, start, duration, width, height, fps,
 def extract_audio(ffmpeg, input_path, start, duration, channels, rate):
     """Decode the source audio to 8-bit unsigned PCM at `rate`.
 
-    -ac is pinned to 2, NOT to `channels`: stereo is the only layout
-    the NXV format carries, and ffmpeg's channel-count filter upmixes
-    a MONO source transparently (it duplicates the single channel into
-    both), so a mono source needs no author action and produces the
-    same wire bytes a stereo source of the same material would. The
-    `channels` argument is kept - and asserted - so a caller that ever
-    drifted from 2 fails here rather than writing a file the player
-    refuses at open."""
-    assert channels == 2, f"NXV audio is stereo only, got {channels}"
+    channels 2 (every layout but raw): -ac 2, so a MONO source is
+    upmixed transparently (duplicated into both channels). channels 1
+    (raw layout only): -ac 1 for every source, ffmpeg's own downmix.
+    Anything else is asserted, so a caller that drifted fails here
+    rather than writing a file the player refuses at open."""
+    assert channels in (1, 2), f"NXV audio is 1 (raw only) or 2 channels, got {channels}"
     args = []
     if start:
         args += ["-ss", start]
     args += ["-i", str(input_path)]
     if duration:
         args += ["-t", str(duration)]
-    args += ["-vn", "-ac", "2", "-ar", str(rate),
+    args += ["-vn", "-ac", str(channels), "-ar", str(rate),
               "-f", "u8", "pipe:1"]
     return run_ffmpeg(ffmpeg, args, "audio")
 
@@ -337,7 +337,8 @@ def main(argv):
     ap.add_argument("--shape", default=None,
                      help="shape preset (full/16:9/scope/classic/"
                           "classic-wide, default: full) or an explicit "
-                          "WIDTHxHEIGHT (width must be 256 or 320)")
+                          "WIDTHxHEIGHT (width must be 256 or 320; with "
+                          "--direct, 4-320 in steps of 4)")
     ap.add_argument("--width", type=int, choices=(256, 320), default=None,
                      help="Layer 2 width for --aspect free-height "
                           "derivation (256 or 320); ignored if --shape "
@@ -434,28 +435,51 @@ def main(argv):
                           f"REFUSED by the same gate as ever, never quietly "
                           f"shipped")
     ap.add_argument("--direct", action="store_true",
-                     help="direct-serve preset: all-literal raw-equivalent "
-                          "encode (every frame a full keyframe repaint, "
-                          "header direct-serve hint set) - the player "
-                          "serves it straight from SD to the surface, no "
-                          "ring. Gated by worst-frame WIRE feasibility "
-                          "(nxv2enc.direct_supply_check); at 25 fps "
-                          "stereo up to 256x167 or 320x105, at 12.5 fps "
-                          "320x256 or 320-wide up to 320x247 (raw "
-                          "bytes/frame = WxH). The "
-                          "gate is unconditional - a worst-frame "
-                          "utilization above 1.00 refuses outright and "
-                          "prints the at-rate envelope, with no "
-                          "slow-playback override. Use a smaller shape, "
-                          "lower --fps, or drop --direct for the delta "
-                          "encoder instead")
+                     help="raw direct preset: every frame stored "
+                          "uncompressed (sound, a palette on each scene's "
+                          "first frame, pixels) and read straight from "
+                          "the card to the screen, no ring. --shape WxH "
+                          "may be any width 4-320 in steps of 4 and any "
+                          "height 1-256; anything but 256x1-192 sits on "
+                          "the 320 surface. Gated by the KS3 bench's "
+                          "timing of a frame without a palette "
+                          "(nxv2enc.raw_supply_check) and by the clip's "
+                          "scene cuts (nxv2enc.raw_debt_check); at 25 "
+                          "fps up to 320x195, 280x224 or 256x244 stereo "
+                          "(320x208, 280x237 or 256x256 mono), "
+                          "warning over 0.90. The kit presets: 256x192, "
+                          "320x160 and 280x224 at 25 fps; "
+                          "320x240, 320x192 and 256x240 at 16.67. "
+                          "The gate is unconditional - over 1.00 refuses "
+                          "and names the tallest picture that plays, "
+                          "with no slow-playback override")
+    ap.add_argument("--direct-surface", dest="direct_surface",
+                     choices=("auto", "256", "320"), default=None,
+                     help="Layer 2 surface of a --direct picture (default: "
+                          "auto - 256 for 256x1-192, else 320). Only "
+                          "with --direct")
+    ap.add_argument("--direct-sound", dest="direct_sound",
+                     choices=("auto", "stereo", "mono"), default=None,
+                     help="sound of a --direct clip (default: auto - "
+                          "stereo when it holds rate at this shape, else "
+                          "mono with a note, else refused; mono with a "
+                          "warning when the clip's scene cuts are too "
+                          "close together for stereo). stereo or mono "
+                          "forces the form and refuses a shape it does "
+                          "not hold; stereo encodes close scene cuts "
+                          "with a warning. Only with --direct")
+    ap.add_argument("--stall-budget", dest="stall_budget",
+                     choices=("off", "measured"), default=None,
+                     help="measured adds the bench's longest card token "
+                          "wait to every --direct frame (nxv2enc."
+                          "RAW_STALL_T); default: off. Only with --direct")
     ap.add_argument("--direct-transport-factor", dest="direct_transport_factor",
                      type=float, default=None, metavar="F",
-                     help="EXPERT OVERRIDE for the direct-serve gate's "
+                     help="EXPERT OVERRIDE for the --direct gate's "
                           "per-BYTE transport factor - default None uses "
-                          "the shipping DIRECT_TRANSPORT_FACTOR (the "
-                          "gate's gapped column and per-frame terms are "
-                          "NOT scaled by this flag). Probe encodes at "
+                          "1.00 (the gate's per-sector, column, sound "
+                          "and per-frame terms are NOT scaled by this "
+                          "flag). Probe encodes at "
                           "a hypothesised rate go through this flag "
                           "instead of editing the constant; probe files "
                           "are diagnostic - a slow probe is a "
@@ -494,6 +518,14 @@ def main(argv):
     ap.add_argument("--ffmpeg", default=str(DEFAULT_FFMPEG),
                      help=f"ffmpeg binary (default: {DEFAULT_FFMPEG})")
     args = ap.parse_args(argv[1:])
+    given = [name for name, v in (("--direct-surface", args.direct_surface),
+                                  ("--direct-sound", args.direct_sound),
+                                  ("--stall-budget", args.stall_budget)) if v is not None]
+    if given and not args.direct:
+        raise SystemExit(f"error: {', '.join(given)} needs --direct")
+    if given and nxv2enc.DIRECT_LAYOUT != "raw":
+        raise SystemExit(f"error: {', '.join(given)}: raw layout only; the old "
+                         f"direct layout takes none of these options")
 
     input_path = Path(args.input)
     if not input_path.exists():
@@ -539,11 +571,28 @@ def main(argv):
         print(f"--aspect {args.aspect}: width {width} -> free height {height}")
     elif args.shape is not None and "x" in args.shape.lower() and args.shape not in nxv2enc.PRESETS:
         w_str, h_str = args.shape.lower().split("x", 1)
-        shape = (int(w_str), int(h_str))
+        try:
+            shape = (int(w_str), int(h_str))
+        except ValueError:
+            raise SystemExit(f"error: --shape {args.shape}: not a preset name or "
+                             f"WIDTHxHEIGHT") from None
     else:
         shape = args.shape   # a preset name, or None (default: "full")
 
-    width, height = nxv2enc.resolve_shape(shape)
+    raw_direct = args.direct and nxv2enc.DIRECT_LAYOUT == "raw"
+    if raw_direct and isinstance(shape, tuple):
+        width, height = shape
+        nxv2enc.raw_surface(width, height, args.direct_surface or "auto")
+    else:
+        try:
+            width, height = nxv2enc.resolve_shape(shape)
+        except ValueError as e:
+            if args.direct or not isinstance(shape, tuple):
+                raise SystemExit(f"error: --shape {args.shape}: {e}") from None
+            raise SystemExit(
+                f"error: --shape {args.shape}: the compressed route takes width 256 "
+                f"(height 1-192) or 320 (height 1-256); any other shape needs --direct "
+                f"(width 4-320 in steps of 4, height 1-256)") from None
 
     src_w, src_h = probe_dimensions(ffmpeg, input_path)
     crop = compute_center_crop(src_w, src_h, width, height)
@@ -555,8 +604,8 @@ def main(argv):
         print(f"  source {src_w}x{src_h} aspect already matches "
               f"{width}x{height} - no crop, straight scale")
 
-    print(f"encoding {width}x{height} @ {args.fps} fps (stereo) "
-          f"-> {args.output}")
+    print(f"encoding {width}x{height} @ {args.fps} fps "
+          f"({'raw direct' if raw_direct else 'stereo'}) -> {args.output}")
     report = nxv2enc.encode(
         str(input_path), args.output, shape=(width, height), fps=args.fps,
         quality_profile="max", report_path=args.report,
@@ -567,10 +616,16 @@ def main(argv):
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,
         direct_transport_factor=args.direct_transport_factor,
-        kf_cadence=args.kf_cadence, prefilter=args.prefilter)
+        kf_cadence=args.kf_cadence, prefilter=args.prefilter,
+        direct_surface=args.direct_surface or "auto",
+        direct_sound=args.direct_sound or "auto",
+        stall_budget=args.stall_budget or "off")
 
     stream_line = ""
-    if report.mode == "direct":
+    if report.mode == "raw":
+        stream_line = (f", RAW direct util {report.stream_utilization:.2f} "
+                       f"(frame without a palette)")
+    elif report.mode == "direct":
         stream_line = (f", DIRECT-SERVE wire util "
                        f"{report.stream_utilization:.2f} "
                        f"(SD {report.stream_sd_ms:.1f} ms/frame, "

@@ -57,6 +57,12 @@ def base_src():
 
 
 def _unchanged(base_src, flavour):
+    # The premise holds only while src/ is the merge base's: a branch that changes the
+    # interpreter (the working tree is what gets assembled) changes these images on purpose.
+    base = _git("merge-base", "HEAD", "main").strip()
+    if subprocess.run(["git", "-C", str(ROOT), "diff", "--quiet", base, "--", "src"],
+                      timeout=120).returncode:
+        pytest.skip("src/ differs from the merge base %s: the NEX is expected to differ" % base[:12])
     defs = FLAVOURS[flavour]
     want = _assemble(base_src / "src" / "main.asm", base_src / "out" / flavour, defs)
     got = _assemble(ROOT / "src" / "main.asm", BRANCH_DIR / flavour, defs)

@@ -28,6 +28,7 @@ NR_INT_EN_3     equ $C6     ; int enables: UART Rx/Tx
 NR_DMA_INT_EN_1 equ $CC     ; DMA pre-emption: bit 0 ULA, bit 1 line
 NR_DMA_INT_EN_2 equ $CD     ; DMA pre-emption: bit n = CTC channel n
 NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
+IM2_DMA_INT_EN_2_VAL equ %00000011  ; NR $CD outside a DMA sound session: CTC channels 0 and 1
 
 ; NRGET n: A = Next register n; other registers, flags, $243B selection kept.
 ; The parameter is nrgn: sjasmplus substitutes one inside underscore-separated names.
@@ -956,22 +957,23 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;                 block-alignment rule any more)
 ;     8      1    fps*10 low byte - informational only (pacing derives
 ;                 from audio bytes, as v1 proved)
-;     9      1    audio channels - MUST BE 2. Mono (1) was a supported
-;                 pairing until 2026-08-03 and is now REFUSED at open
-;                 (VID FMT?); see NXV2_OFF_ACHAN below. The field stays
-;                 in the wire format at its frozen offset
-;    10      2    audio rate Hz LE (15625, the stereo pair rate)
+;     9      1    audio channels: 2, or 1 (mono) only with flags bit 4;
+;                 anything else is VID FMT? at open
+;    10      2    audio rate Hz LE (15625 for both channel counts)
 ;    12      1    flags: bit0 = delta stream (always 1 in v2), bit1 =
 ;                 direct-serve hint (HONOURED from 3c: the file is
 ;                 served SD-to-surface, no ring - nxv2_open_body
 ;                 .direct_setup), bit2 = RESERVED band-palette
 ;                 experiment, bit3 = RETIRED OCOPY capability (see
-;                 NXV2_FLAG_OCOPY), bits 4-7 reserved 0 (any bit other
-;                 than 0/1 set = VID FMT? at open - forward hygiene)
+;                 NXV2_FLAG_OCOPY), bit4 = raw frame layout (needs
+;                 bit1: a raw clip's flags are exactly $13), bits 5-7
+;                 reserved 0. Bit 2, 3 or 5-7 set, or bit4 without
+;                 bit1, = VID FMT? at open
 ;    13      1    keyframe policy byte (encoder bookkeeping, ignored)
 ;    14      3    frame count LE24
 ;    17      2    audio bytes/frame LE (REAL, pre-pad; the wire block
-;                 is this rounded up to a 512 multiple). v2.0 PLAYER
+;                 is this rounded up to a 512 multiple; raw: real /
+;                 512 + 1 blocks). v2.0 PLAYER
 ;                 BOUND (SP17 T10, circular feed): the audio feed is
 ;                 ONE circular NXV_AUD_RING (8192-byte) buffer, so
 ;                 open REJECTS > NXV_AUD_FRAME_MAX (3072) real
@@ -995,12 +997,23 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;                 cap + apad + 1 blocks - open validates it in
 ;                 1..NXV2_STRM_CAP_MAX (a lying/absent cap is a
 ;                 corrupt header, VID FMT?); resident ignores it.
-;    23..511      reserved 0
+;                 Raw: must equal ceil(w * h / 512) + 1 (pixel sectors
+;                 plus the palette sector), else VID FMT?.
+;    23      2    raw picture width in columns LE. Raw on width code 1:
+;                 4..320 and a multiple of 4, else VID FMT?. Code 0:
+;                 written as 256, ignored by the player.
+;    25..511      reserved 0
 ;
 ; Frame layout: [audio blocks (padded 512)] [payload blocks (padded
 ; 512)]. Payload = opcode stream; opcode byte VALUES are PRE-SCALED BY
 ; 4 so the wire byte IS the dispatch offset into the player's
 ; 256-aligned stub block (doc 07 dense dispatch at its floor).
+; Raw frame layout (flags bit 4): [sound blocks] [palette sector, if
+; the tag is 1] [pixel blocks]. Sound: real bytes, $80 pad, padded to
+; (real / 512 + 1) * 512 so the last byte is always pad: the frame tag
+; (0 = pixels only, 1 = palette sector follows, else VID_ERR_OP).
+; Palette: 512 bytes in NR $44 order. Pixels: w * h bytes in surface
+; order (code 0 row-major, code 1 columns of h bytes), zero-padded.
 NXV_MAGIC_LEN    equ 5
 NXV2_VERSION     equ 2
 NXV2_OFF_MAGIC   equ 0
@@ -1008,12 +1021,10 @@ NXV2_OFF_VERSION equ 5
 NXV2_OFF_WIDTH   equ 6      ; width CODE (0/1), not a pixel count
 NXV2_OFF_HEIGHT  equ 7
 NXV2_OFF_FPSX10  equ 8
-NXV2_OFF_ACHAN   equ 9      ; MONO IS WITHDRAWN (2026-08-03): refused at
-                            ; open with VID FMT? if not 2. Load-bearing,
-                            ; not tidiness - a mono file through the
-                            ; stereo ISR would interleave one channel
-                            ; across both DACs at the wrong rate. Offset
-                            ; is FROZEN wire format; value is always 2.
+NXV2_OFF_ACHAN   equ 9      ; 2; 1 only with NXV2_FLAG_RAW (the mono
+                            ; handler is raw-only). Load-bearing: a mono
+                            ; file through the stereo ISR would play at
+                            ; the wrong rate. Else VID FMT? at open.
 NXV2_OFF_ARATE   equ 10
 NXV2_OFF_FLAGS   equ 12
 NXV2_OFF_KFPOL   equ 13
@@ -1021,6 +1032,8 @@ NXV2_OFF_FRAMES  equ 14     ; 3 bytes LE24
 NXV2_OFF_ABYTES  equ 17     ; real (pre-pad) audio bytes/frame
 NXV2_OFF_RMARGIN equ 19
 NXV2_OFF_FRAMECAP equ 21
+NXV2_OFF_RAWW    equ 23     ; raw picture width in columns, LE word
+NXV_RAW_W_MAX    equ 320    ; raw width bound (code 1); also its full width
 
 NXV2_FLAG_DELTA  equ 1      ; bit0 - must be set
 NXV2_FLAG_DIRECT equ 2      ; bit1 - direct-serve hint (3c: honoured -
@@ -1033,6 +1046,7 @@ NXV2_FLAG_OCOPY  equ 8      ; bit3 - RETIRED offset-copy capability
                             ; at OPEN with VID FMT?, never reaching a
                             ; decoder that no longer implements the op.
                             ; Do NOT re-use bit3 for anything else.
+NXV2_FLAG_RAW    equ 16     ; bit4 - raw frame layout; needs bit1
 
 ; Opcode values (v2 frozen set, x4-scaled). Reserved: $24/$30 (the
 ; retired T5a OCOPY8/OCOPY16 - decode withdrawn; a file declaring them
@@ -1166,7 +1180,7 @@ VID_ERR_SRCOVR   equ $F8    ; payload ran past the loaded file
                             ; page-walk bound tripped - corrupt input)
 VID_ERR_DSTOVR   equ $F7    ; cursor ran past the Layer 2 surface
 
-; The supported audio rate - ONE since mono was withdrawn (T4 design
+; The supported audio rate - ONE (T4 design
 ; step, T1's derivation method, CW16 across every video mode - see
 ; vidCtcTcNxvStereo, video.asm, and the task report's TC tables). Any
 ; other header rate = VID FMT?.
@@ -1220,6 +1234,8 @@ NXV_AUD_GUARD    equ 16     ; writer keeps this many bytes clear of
 ; than widened - a bound that keeps a proven invariant beats a bigger
 ; one that silently breaks it (ring-guard would be 8176, apad 16, and
 ; 240+16+1 wraps a byte).
+; Raw pads to (real / 512 + 1) * 512, so apad reaches 7 at 3072: raw is
+; direct-only (need <= 240+7+1 = 248); the ring-fit test never sees it.
 ; CONTENTION-FREE BY CONSTRUCTION: 2*3072 = 6144 <= 8176 = ring-guard,
 ; so EVERY legal file's next-frame feed fits the single post-present
 ; pump with 2032 bytes to spare. There is no room-limited regime left
@@ -1327,16 +1343,45 @@ GFX_POS_VALID  equ $80
 ; "8-bit DACs on" gate.
 VID_DAC_LEFT    equ $F3
 VID_DAC_RIGHT   equ $F9
+VID_DAC_MONO    equ DAC2_PORT  ; $B3 writes DAC B and C at once: mono to both sides
+; Raw mono sound from the zxnDMA (burst, prescaler, auto restart over the ring). 0: no mono
+; session uses the DMA; CTC 0's mono handler plays it. Assembled into the cell vidMonoDma.
+VID_RAW_MONO_DMA equ 1
+
+; Raw session schedule bank, page A (ring bank 0, at MMU6 for the decode): a 512 x ini
+; slide ending in ret, a 512-byte pad scratch, the dispatcher and classic schedule, the
+; sound reader (vrPumpT), the palette train, the 16 page switch stub bytes at the top.
+VR_SLIDE        equ DATA_WINDOW
+VR_SLIDE_END    equ VR_SLIDE + 1024
+VR_SCRATCH      equ VR_SLIDE_END + 1    ; 512 bytes
+VR_SCHED        equ VR_SCRATCH + 512
+VR_XSTUB_LEN    equ 16
+VR_XIN          equ DATA_WINDOW + $2000 - VR_XSTUB_LEN
+VR_XJP          equ VR_XIN + 4
+VR_XOUT         equ VR_XIN + 8
+VR_XTAIL        equ VR_XIN + 12
+VR_PAL_LEN      equ NXV_PAL_BYTES * 4 + 1
+VR_PALTRAIN     equ VR_XIN - VR_PAL_LEN
+VR_PUMP_LEN     equ 216                 ; vrPumpT's ASSERT bounds it
+VR_PUMP         equ VR_PALTRAIN - VR_PUMP_LEN
+VR_SCHED_LIMIT  equ VR_PUMP
+; VR_SCHED holds the dispatcher, the classic schedule follows at VR_CLASSIC. Page B (page A
+; + 1): the slide and inline program from VR_PROG, or the column train (period at DATA_WINDOW,
+; then its driver), below VR_BEND; VR_BS1, VR_BPG, the stubs.
+VR_DISP_LEN     equ 8
+VR_CLASSIC      equ VR_SCHED + VR_DISP_LEN
+VR_PROG         equ VR_SLIDE_END + 1
+VR_BS1          equ VR_XIN - 20         ; 12 bytes: the token on poll 1
+VR_BPG          equ VR_XIN - 8          ; 8 bytes: the train's page end, ret
+VR_BEND         equ VR_BS1
 
 ; Layer 2 mode select (NR $70), matching l2_mode_set's own literals
 ; (overlay2.asm).
 NXV_NR70_MODE1  equ %00010000  ; mode 1 (320x256/column-major)
 NXV_NR70_MODE0  equ 0          ; mode 0 (256x192/row-major)
 
-; NR $18 clip X (full-bleed, every NXV profile - no pillarbox anywhere in
-; the new matrix, unlike the old fmt2/3's 256-of-320 subset): mode-1 X
-; units are 2px/unit (X2=(320/2)-1=159), mode-0 X units are 1px/unit
-; (X2=256-1=255) - both full width, X1=0 always.
+; NR $18 clip X: full-bleed (X1=0) for non-raw clips; a raw clip on mode 1 is
+; pillarboxed by its own X1/X2 (nxv2_open_body). Units: mode 1 2px (X2=159), mode 0 1px (X2=255).
 NXV_CLIP_X2_MODE1 equ (320/2)-1   ; = 159
 NXV_CLIP_X2_MODE0 equ 256-1        ; = 255
 

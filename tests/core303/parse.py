@@ -14,7 +14,8 @@ from typing import Optional
 import tags as tagtab
 from tags import TAGS
 
-# Standalone NXB verbs, modes 2-12 (tests/test.dsf:322-332). NXBR/NXBD are session verbs.
+# Standalone NXB verbs, modes 2-12 (tests/test.dsf:322-332). NXBR/NXBD/NXBQ/NXBY/NXBW
+# are session verbs.
 STANDALONE_VERBS = frozenset(
     "nxbo nxbc nxbk nxbx nxbg nxbl nxbt nxbe nxbh nxbf nxbv".split())
 
@@ -318,6 +319,63 @@ def report_pi(pilogs, nextlogs):
 _NXB_ROW = re.compile(
     r"(?<![A-Z0-9])([A-Z0-9]{4}) O=([0-9A-F]{2}) R=([0-9A-F]{4}) F=([0-9A-F]{4}) D=([0-9A-F]{4})")
 _SIZE_TAG = re.compile(r"[A-Z]\d{3}")
+_NXB_HIST = re.compile(r"#HIST ([A-Z0-9]{4})((?: [0-9A-F]{4})+)")
+
+
+def _hist_line(line):
+    """One "#HIST" line -> (tag, bins); a tag outside NXB_HIST_TAGS or a bin count other
+    than NXB_HIST_BINS is a LogError."""
+    m = _NXB_HIST.fullmatch(line)
+    if not m:
+        raise LogError("malformed #HIST line: %r" % line)
+    bins = [int(x, 16) for x in m.group(2).split()]
+    if m.group(1) not in tagtab.NXB_HIST_TAGS or len(bins) != tagtab.NXB_HIST_BINS:
+        raise LogError("#HIST %s with %d bins: expected one of %s with %d" % (
+            m.group(1), len(bins), "/".join(tagtab.NXB_HIST_TAGS), tagtab.NXB_HIST_BINS))
+    return m.group(1), bins
+
+
+def parse_hist(path):
+    """The log step's wait histograms (RW1 RHST, RH39, AHST, AH39; RD1 MHST, RHST) of an NXB log, in order:
+    [(section, tag, [NXB_HIST_BINS counts])], section numbered as NxbRun.section (the
+    #NXB capture the line follows; 0 before any). Bin k: waits whose $FF poll count has
+    bit length k."""
+    out, section = [], 0
+    for line in _read(path).split("\n")[:-1]:
+        line = line.rstrip("\r")
+        if line.startswith("#NXB "):
+            section += 1
+        elif line.startswith("#HIST"):
+            out.append((section,) + _hist_line(line))
+    return out
+
+
+def rw1_walked(runs):
+    """RW1, RD1 and RT1 frame and card rows printed with O = 01: a run walk fell inside the
+    row's window, so its T is not a figure (re-run)."""
+    return [r for r in runs if r.kind == "session" and r.tag in tagtab.NXB_WALK_MARKED
+            and r.o == tagtab.NXB_RW1_WALK_O]
+
+
+def rd_count(row):
+    """An MCN1-3 or TCN1 row's 24-bit count."""
+    return (row.f & 0xFF) << 16 | row.r
+
+
+def rd_sum(row):
+    """A sum row's 32-bit sum (MSUM, NSM0, TSTR, TSLO, TSUM)."""
+    return row.f << 16 | row.r
+
+
+def rt_active(row):
+    """TCHK's verdict as the bench takes it: bit 2 read back, or the turbo spin at least a
+    sixteenth shorter."""
+    return bool(row.o & 4) or row.f <= row.r - row.r // 16
+
+
+def iden_train(row):
+    """True when a raw clip's IDEN row says the frame rows ran the column train."""
+    return bool(row.o & tagtab.NXB_IDEN_TRAIN)
 
 
 def parse_nxb(path):
@@ -342,6 +400,9 @@ def parse_nxb(path):
             section += 1
             verb = None
             prev_keys, cur_keys = cur_keys, set()
+            continue
+        if line.startswith("#HIST"):
+            _hist_line(line)                       # rows only here: parse_hist reads these
             continue
         m = re.match(r">\s*(\S+)", line)
         if m:
@@ -710,6 +771,11 @@ def _report_nxb(runs, base, lpf, tpl35, ratio_tags, out):
             r.tag, "-" if r.size is None else r.size, r.kind, r.o, r.r, r.f,
             r.d & 0xFFFF, _nxb_t(r, lpf, tpl35), per))
     out.append("")
+    walked = rw1_walked(runs)
+    for r in walked:
+        out.append("WALK %s (section %d): a run walk inside the row (O=01), re-run" % (r.tag, r.section))
+    if walked:
+        out.append("")
     multi = multi_run_tags(runs)
     for tg, n in sorted(multi.items()):
         out.append("MULTI-RUN %s: %d table runs, last used" % (tg, n))

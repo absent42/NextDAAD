@@ -86,6 +86,8 @@ def frames(vid_path, copy_thr=None, run_thr=None, streamed=None):
     nxv2enc.STREAM_RESIDENT_POOL_B)."""
     buf = Path(vid_path).read_bytes()
     hdr = nxv2enc.unpack_header(buf)
+    if hdr["raw"]:
+        raise ValueError(f"{vid_path}: raw layout clip - no op stream to model")
     issues = []
     walked = list(nxv2dec._iter_frames(buf, hdr, issues=issues))
     if issues:

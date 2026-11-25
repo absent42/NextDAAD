@@ -161,7 +161,17 @@ if (-not $sources) { exit 0 }
 # per-byte + gapped-column + fixed direct_frame_ms (routes 256x167@25,
 # 320x105@25, 320x256/192@12.5). Bytes: resident shrank <=47616 B,
 # streamed grew <=400896 B, direct reshaped/unchanged, no gate refusal.
-$encoderGeneration = 'pal9w'
+# raw1: BUMP - --direct output changed layout. --direct writes the raw
+# layout (flags $13: sound sectors ending in a tag byte, a palette sector
+# on each scene's first frame, pixels in surface order), gated by the KS3
+# raw bench fit (RAW_K) on a frame without a palette plus a scene-cut
+# check; mono sound when stereo does not hold rate. Delta encodes unchanged.
+# raw2: BUMP - the raw gate is refitted (KS3 2026-11-25: trimmed reader,
+# counted frame-program overhead, mono sound from the zxnDMA at its measured
+# sample period), so it admits different shapes and picks the sound form
+# differently (280x224@25 is now stereo). Raw bytes per form unchanged.
+# raw3: BUMP - --direct-sound auto encodes mono when the clip's scene cuts outrun stereo; explicit stereo warns and encodes.
+$encoderGeneration = 'raw3'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

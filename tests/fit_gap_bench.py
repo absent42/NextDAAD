@@ -592,6 +592,8 @@ def fixture_frames(path, copy_thr, run_thr):
     if path not in _WALKS:
         buf = Path(path).read_bytes()
         hdr = enc.unpack_header(buf)
+        if hdr["raw"]:
+            raise ValueError(f"{path}: raw layout clip - no op stream to walk")
         issues = []
         walked = list(nxv2dec._iter_frames(buf, hdr, issues=issues))
         if issues:

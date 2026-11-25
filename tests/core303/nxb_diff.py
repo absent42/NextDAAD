@@ -153,7 +153,7 @@ def _listing(full):
     keep = nex.read_bytes() if nex.exists() else None
     with _tree(tree):
         try:
-            ts = cqd.TimedSet()
+            ts = cqd.TimedSet(tolerant=True)     # a revision may predate a TIMED routine
             lst, _ = cqd.build("release")
             rows = cqd.select(cqd.parse_listing(lst), ts)
         finally:

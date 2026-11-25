@@ -1,0 +1,22 @@
+date: 2026-11-25
+board: ks3
+leg: legRAW2 (legs A and B)
+stamp: 4edad59 (clean tree, both legs)
+build: leg A DEBUG; leg B Release
+nex_sha256: leg A 4f812e9c757385b763afb6d8df26bb44a8a178ed406a8032371bd76934672486 (the same bytes as sitting 1c leg B); leg B ddf96a3ac766ef9f3b396bd206ce7a2ecda99f1a8d8fe3519f4dd6c427febf1f (the same bytes as the kit interpreter refreshed with these results)
+game_ddb_sha256: 1a1a12ed52e0ca6737f214bd9deab9fe50aba9d66eb029dd33718cfed1b6e6a3 (both legs; tests/test.dsf at 4edad59)
+core: 3.03.03 as stated for the sitting; no log row reads the core version
+board_id: not recorded
+sd_folders: LEGRAW2A (leg A), LEGRAW2B (leg B)
+logs: NXPLAY.TXT (leg A, 30 captures), sha256 04e01b4005cb826c6f0c6f2fe078f0b8989ec8dbdef5ead2a41e8bb6d1aa3062; FRAGCARD.TXT (the card fragmenting script's output for clip 123, written on the PC before leg A), sha256 51cf0dd9e3b8fc9fc1024a3a0fdd4dc8ddefe424cc53819a64ee40a21f54d82e; leg B (Release) writes no log
+fixtures: vidraw-pairs.txt in this folder (encoder era raw3)
+nr: not recorded in this sitting
+card: external slot, FAT32, cluster 32768 bytes, 31302647808 bytes free before clip 123 was written (FRAGCARD.TXT); A.1 format note: none written, so formatted
+card_slot: external only
+display socket: not recorded
+legs: A and B returned 2026-11-25, one sitting
+owner's note, in full: "A.4 RUNS=04. A.5 RUNS=05. A.9 - watched twice, didn't notice a stutter but it's hard to tell because the cuts are so fast. A.20 - watched twice, clean. B.7 smooth. Leg B pass. Logs in folder."
+  A.4 = clip 123 (fragmented); A.5 = clip 120 (long); A.9 = clip 106 (stereo 280x224@25, the encoder's warned clip); A.20 = clip 131 (scene cuts, colours at each cut); B.7 = clip 106 on Release.
+  exceptions: none reported on either leg - no blip, hang, row 31 other than LOG OK, text on row 23 outside A.23, RUNS other than expected, torn, shifted or striped picture, one-speaker sound, click, gap, buzz or hum, residue, missing music, or tone crackle at B.17/B.18. These are absences of a note, not observations.
+log against the sheet: the sheet asked for three plays at A.6-A.11; the log holds one play of each of 100, 102, 104, 108, 110 and two of 106 (A.9); A.20 (131, one play asked) holds two. A.13 and A.30 stopped below a full play as asked.
+ingest: by hand in the results folder shape, as sitting 1c; playback.md from tests/core303/playlog.py; model figures from the sitting-2 fixture projections (tests/raw_fit.py model 1c functions), since raw_fit.py scores only the sitting 1c leg B clip set

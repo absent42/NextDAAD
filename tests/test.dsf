@@ -157,8 +157,7 @@ MTEST   72      verb
 ; ring and play RESIDENT (the fully-buffered special case). SP15 3b:
 ; files bigger than the ring now STREAM (circular prefetch ring, per
 ; frame SD reads) - the VSTR* verbs below and the -VidLong fixtures
-; exercise that path; the old VID SIZE? limit is gone (leg card:
-; .superpowers/sdd/sp14a-task-4-report.md sections 37-38).
+; exercise that path; the old VID SIZE? limit is gone.
 ; Names kept to 5 significant characters (DRF truncation collisions).
 VPLY4   74      verb
 VLOP4   76      verb
@@ -248,12 +247,11 @@ DPACL   89      verb
 ; Silicon keyboard-defect task: KTEST is the owner's hardware-sweep
 ; instrument for the keyboard matrix/decode fix (see PRO 9 below and
 ; overlay1.asm's ktest_poll / overlay0.asm's EXTERN vector 6). DEBUG
-; build only - Release's EXTERN 0 6 is ext_stub (silent no-op, blank
-; screen, no crash); this verb is not meant to ship.
+; build only - Release's EXTERN 0 6 forwards to an XBN, none staged
+; (silent, no crash); this verb is not meant to ship.
 KTEST 101     verb
 
-; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
-; report.md section 41): the seven-leg sitting could not exercise
+; SNAP=03/00 follow-up: the seven-leg sitting could not exercise
 ; vid_snap_geom's mode-0 (3-bank) or hidden-L2 (0-bank) branches - the
 ; test template always runs 320x256 mode-1, so SNAP=05 on every row.
 ; DEBUG build only owner instruments, EXTERN vectors 8/9/10
@@ -272,8 +270,7 @@ L2MOD 90      verb
 LHIDE 91      verb
 LSHOW 100     verb
 
-; SP17 T5 Layer 2 SCROLL bring-up (run sheet .superpowers/sdd/
-; sp14a-task-4-report.md section 41.4). Ten DEBUG-only owner verbs on
+; Layer 2 SCROLL bring-up. Ten DEBUG-only owner verbs on
 ; ONE EXTERN vector (11 - debug.asm's l2scr_trampoline ->
 ; overlay2.asm's l2scr_run), the parameter selecting a config row.
 ; Every one of them: paints the existing DEBUG test card + its marker
@@ -283,8 +280,8 @@ LSHOW 100     verb
 ; (unlike L2MOD, which leaves its card up - a mode-1 card covers all
 ; but the bottom 16 lines, so leaving it up would mean typing the
 ; next row's verb blind). Verb numbers 102-111 are
-; free (NXBEN's retired 102-116 block). Release's EXTERN 0 11 is
-; ext_stub - a silent no-op.
+; free (NXBEN's retired 102-116 block). Release's EXTERN 0 11
+; forwards to an XBN, none staged, so it is silent.
 ;   LSX0/LSX1 - X offset wrap, mode-0 (256 wide) / mode-1 (320 wide,
 ;     the 9-bit NR $16 + NR $71 offset)
 ;   LSY0/LSY1 - Y offset wrap, mode-0 (192 high) / mode-1 (256 high)
@@ -308,9 +305,8 @@ LSTB  109     verb
 LSTC  110     verb
 LS256 111     verb
 
-; SP17 PLAYER BENCH (the NXBEN revival - card .superpowers/sdd/
-; sp14a-task-4-report.md section 42). NXBEN itself was retired at SP15
-; 3a: the format froze on its evidence and its prototype kernels
+; PLAYER BENCH (the NXBEN revival). NXBEN itself was retired with the
+; v1 player: the format froze on its evidence and its prototype kernels
 ; graduated into the production decoder. The revival measures the
 ; SHIPPING routines instead of prototypes, so the rows answer decode
 ; questions the player actually has. Four verbs on the last of the old
@@ -342,14 +338,30 @@ LS256 111     verb
 ;          resident clip (23 rows, two columns).
 ;   NXBY - verb 129, flag 248 = 4: the SYS synthetic-frame rows on a
 ;          streaming clip (14 rows).
+;   NXBW - verb 130, flag 248 = 5 + GFX @140 13 after PICK nn: the RW1
+;          rows on a raw direct clip (13 rows: frame 0, two 16-frame
+;          sweeps, sector, column and wait histogram rows, handler
+;          spins); the log step adds a #HIST line per histogram row.
+;          A card row with under 5000 blocks left prints NXB SHORT.
+;   NXBM - verb 132, flag 248 = 6 + GFX @140 13 after PICK nn: the RD1
+;          rows on a raw one-channel clip (15 rows: mono sound from the
+;          zxnDMA - copies, counted spins, frames and sectors, a card
+;          sum, pointer reads, frame ticks); #HIST lines for MHST, RHST.
+;   NXBP - verb 135, flag 248 = 7 + GFX @140 13 after PICK nn: the RT1
+;          rows on a raw clip (12 rows: NR $07 bit 2 - a check, spins,
+;          sectors and card sums); no turbo prints NXB NOTURBO.
 ;          Session verbs REPLACE playback; a clip of the wrong delivery
-;          prints NXB SESSION.
+;          (or a raw clip on NXBD, a non-raw clip on NXBW, NXBM or NXBP,
+;          a two-channel clip on NXBM) prints NXB SESSION.
 ; Rows print at tilemap rows 8+ and become visible when the timeline
 ; report hides Layer 2 at teardown. Each verb ends with the log step
 ; (mode 15): NXBENCH.TXT in the launch folder, LOG OK or LOG ERR xx on
 ; row 31. Session verbs arm through EXTERN 0 12 mode 14, so a game's own
-; flag 248 never diverts a clip. Release's EXTERN 0 12 is ext_stub,
-; so all of them are silent no-ops there.
+; flag 248 never diverts a clip. Release's EXTERN 0 12 forwards to an
+; XBN, none staged, so all of them are silent no-ops there.
+;   MCTC - verb 133, mode 18: a raw one-channel clip's sound comes from
+;          CTC 0's handler from the next open on; MONO CTC on row 31.
+;   MDMA - verb 134, mode 19: from the zxnDMA; MONO DMA on row 31.
 NXBO  112     verb
 NXBC  113     verb
 NXBK  114     verb
@@ -365,6 +377,11 @@ NXBV  126     verb
 NXBR  127     verb
 NXBQ  128     verb
 NXBY  129     verb
+NXBW  130     verb
+NXBM  132     verb
+MCTC  133     verb
+MDMA  134     verb
+NXBP  135     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -373,19 +390,23 @@ NXBY  129     verb
 ; once via GFX @140 13 (first-operand indirection - the engine
 ; dereferences flag 140 at dispatch, engine.asm:443); LOOP plays it
 ; looping via GFX @140 14 (any key exits). PLAY is a synonym of GO.
+; DEBUG builds log each GO/LOOP play to NXPLAY.TXT (see the responses).
+; GOX (131, free) plays the armed clip as GO did before the log: no row
+; blanking, no log step.
 ; The number words below make the numerals themselves vocabulary
 ; nouns with word value = the numeral (the parser tokenizes digits
 ; like letters - word_next, overlay1.asm - so "pick 23" parses as
 ; verb PICK + noun "23" = 23). Values 2-11/14/20 alias existing
 ; movement/INVEN/ALL nouns - harmless synonymy, only the VALUE is
-; used. Range 1-64 + 99 covers the W5 manifest
-; (.superpowers/sdd/sp17-corpus/w5-manifest.md holds the number map).
+; used. Range 1-134 covers the W5 library's clip numbers and the raw
+; video sittings (100 also aliases TORCH, the same harmless synonymy).
 ; Verb numbers 116-118: 116 is the last of the retired NXBEN block,
 ; 117-118 were never assigned.
 PICK  116     verb
 GO    117     verb
 PLAY  117     verb
 LOOP  118     verb
+GOX   131     verb
 1     1       noun
 2     2       noun
 3     3       noun
@@ -450,7 +471,76 @@ LOOP  118     verb
 62    62      noun
 63    63      noun
 64    64      noun
+65    65      noun
+66    66      noun
+67    67      noun
+68    68      noun
+69    69      noun
+70    70      noun
+71    71      noun
+72    72      noun
+73    73      noun
+74    74      noun
+75    75      noun
+76    76      noun
+77    77      noun
+78    78      noun
+79    79      noun
+80    80      noun
+81    81      noun
+82    82      noun
+83    83      noun
+84    84      noun
+85    85      noun
+86    86      noun
+87    87      noun
+88    88      noun
+89    89      noun
+90    90      noun
+91    91      noun
+92    92      noun
+93    93      noun
+94    94      noun
+95    95      noun
+96    96      noun
+97    97      noun
+98    98      noun
 99    99      noun
+100   100     noun
+101   101     noun
+102   102     noun
+103   103     noun
+104   104     noun
+105   105     noun
+106   106     noun
+107   107     noun
+108   108     noun
+109   109     noun
+110   110     noun
+111   111     noun
+112   112     noun
+113   113     noun
+114   114     noun
+115   115     noun
+116   116     noun
+117   117     noun
+118   118     noun
+119   119     noun
+120   120     noun
+121   121     noun
+122   122     noun
+123   123     noun
+124   124     noun
+125   125     noun
+126   126     noun
+127   127     noun
+128   128     noun
+129   129     noun
+130   130     noun
+131   131     noun
+132   132     noun
+133   133     noun
+134   134     noun
 
 ;                       Verbs
 GET     20      verb
@@ -664,7 +754,7 @@ S 1
                 #endif
                 WINDOW 1
                 WINAT 0 0               ; Full screen text window
-                WINSIZE 8 127           ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-26
+                WINSIZE 8 127           ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-27
                 CLS
 $pictureOK
 
@@ -1089,7 +1179,7 @@ $pictureOK
 ; SP17 player bench (see the vocabulary block). The standalone
 ; modes set flag 250 then share EXTERN 0 12; the mode cell self-clears
 ; in the handler, so a stray EXTERN can never re-run a row set. The
-; session verbs (NXBD/NXBR/NXBQ/NXBY) set flag 248, arm it with mode 14
+; session verbs (NXBD/NXBR/NXBQ/NXBY/NXBW/NXBM/NXBP) set flag 248, arm it with mode 14
 ; (EXTERN 0 12, which clears flag 248), and then play the
 ; clip PICK armed: the player opens the file exactly as it ships, and
 ; the bench hook diverts to the session rows once the session is staged
@@ -1163,8 +1253,8 @@ $pictureOK
                 EXTERN  0 12
                 DONE
 
-; NXBD/NXBR/NXBQ/NXBY: the DS1/REAL/SYN/SYS session bench on the clip
-; PICK armed (flag 140). Mode 14 copies flag 248 into the arm cell.
+; NXBD/NXBR/NXBQ/NXBY/NXBW/NXBM/NXBP: the DS1/REAL/SYN/SYS/RW1/RD1/RT1 session bench on the
+; clip PICK armed (flag 140). Mode 14 copies flag 248 into the arm cell.
 > NXBD    _     LET     248 1
                 LET     250 14
                 EXTERN  0 12
@@ -1201,6 +1291,42 @@ $pictureOK
                 PROCESS 10
                 DONE
 
+> NXBW    _     LET     248 5
+                LET     250 14
+                EXTERN  0 12
+                GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
+                PROCESS 10
+                DONE
+
+> NXBM    _     LET     248 6
+                LET     250 14
+                EXTERN  0 12
+                GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
+                PROCESS 10
+                DONE
+
+> NXBP    _     LET     248 7
+                LET     250 14
+                EXTERN  0 12
+                GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
+                PROCESS 10
+                DONE
+
+; MCTC/MDMA: the sound path of a raw one-channel clip, from the next open on.
+> MCTC    _     LET     250 18
+                EXTERN  0 12
+                DONE
+
+> MDMA    _     LET     250 19
+                EXTERN  0 12
+                DONE
+
 ; BUILD WAVE W5 numbered play (see the vocabulary block note). PICK nn
 ; copies the parsed noun's word value (the numeral) into user flag 140
 ; - flag 140 is untouched by everything else in this template (120-123
@@ -1212,7 +1338,10 @@ $pictureOK
 ; with the indirection bit, so the DDB byte is $D7), guarded by
 ; NOTZERO so an un-armed GO prints the hint rather than hunting for
 ; 000.VID. Same PROCESS 10 post-video redraw convention as every
-; other video verb.
+; other video verb. DEBUG play log around the play: LET 250 17 /
+; EXTERN 0 12 blanks rows 23-27 and 31, LET 250 16 / EXTERN 0 12
+; appends flag 140, the pool, the sound path, the reader variant and
+; rows 23-27 to NXPLAY.TXT (LOG OK on row 31). Release: vector 12 forwards to an XBN, none staged, so no-op.
 > PICK    _     NOTEQ   fNoun 255
                 COPYFF  fNoun 140
                 MES "Clip "
@@ -1224,7 +1353,11 @@ $pictureOK
                 DONE
 
 > GO      _     NOTZERO 140
+                LET     250 17
+                EXTERN  0 12
                 GFX     @140 13
+                LET     250 16
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 
@@ -1232,11 +1365,23 @@ $pictureOK
                 DONE
 
 > LOOP    _     NOTZERO 140
+                LET     250 17
+                EXTERN  0 12
                 GFX     @140 14
+                LET     250 16
+                EXTERN  0 12
                 PROCESS 10
                 DONE
 
 > LOOP    _     MES "No clip armed - PICK nn first.#n"
+                DONE
+
+> GOX     _     NOTZERO 140
+                GFX     @140 13
+                PROCESS 10
+                DONE
+
+> GOX     _     MES "No clip armed - PICK nn first.#n"
                 DONE
 
 ; The VSTG/VS* staged-entry ladder responses (verbs 88-91, 96-100)
@@ -1250,7 +1395,7 @@ $pictureOK
 > _       _     
                 WINDOW  0                  ; Make window 0 be full screen, and clear it
                 WINAT 0 0
-                WINSIZE 8 128              ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-26
+                WINSIZE 8 128              ; rows 0-7: DEBUG bench rows start at 8, VID report on 24-27
                 BORDER 1                   ; blue surround: one-look NR $4A fallback check
                 CLS
                 WINDOW  1                  ; Define text Window starting at line 14
@@ -1408,8 +1553,8 @@ $initLoop
 ;
 ; Entry 1 (poll + draw + exit-check): EXTERN 0 6 (action, argc 2)
 ; dispatches to ktest_poll (overlay1.asm) via extVec vector 6
-; (debug.asm's ktest_trampoline) - DEBUG-only; Release's vector 6 is
-; ext_stub, a silent no-op, so this verb just leaves a blank diagnostic
+; (debug.asm's ktest_trampoline) - DEBUG-only; Release's vector 6
+; forwards to an XBN, none staged, so this verb just leaves a blank diagnostic
 ; area in a Release build rather than crashing. ktest_poll draws the
 ; whole diagnostic screen itself (native dbg_* console calls - DAAD's
 ; own PRINT is decimal-only and cannot show binary/hex/glyphs) and

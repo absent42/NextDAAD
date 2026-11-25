@@ -90,6 +90,14 @@ FLAG_OCOPY = 1 << 3          # RETIRED SP17 T5a offset-copy capability
                              # refuses it (VID FMT?) - a legacy T5a file
                              # must fail at open, not mis-decode. Do not
                              # re-use bit3 for anything else
+FLAG_RAW = 1 << 4            # raw frame layout; a raw clip's flags are $13
+HDR_OFF_RAWW = 23            # 2  raw picture width in columns, LE
+RAW_W_STEP = 4               # raw width on the 320 surface: multiple of 4
+RAW_TAG_PIXELS = 0           # raw frame tag (last sound byte): pixels follow
+RAW_TAG_PALETTE = 1          # a palette sector follows, then the pixels
+
+# "raw" writes the raw layout, "old" the SP15 direct layout (test scripts).
+DIRECT_LAYOUT = "raw"
 
 RATE_STEREO = 15625   # 28,000,000/16/112 - matches v1's NXV_RATE_STEREO
                       # and is the ONLY rate the player accepts. Mono
@@ -166,7 +174,7 @@ def total_size_check(total_bytes, frames, mode, width, height, fps,
     total_bytes is the projected size (the writer's own arithmetic,
     computed ahead of the write)."""
     seconds = frames / float(fps) if fps else 0.0
-    chan = "stereo"                 # the only channel count v2 carries
+    chan = "mono" if channels == 1 else "stereo"
     if frames > PLAYER_MAX_FRAMES:
         max_seconds = PLAYER_MAX_FRAMES / float(fps)
         raise SystemExit(
@@ -203,18 +211,40 @@ def total_size_check(total_bytes, frames, mode, width, height, fps,
 def pack_header(*, width, height, fps, channels, arate, frame_count,
                  audio_bytes_per_frame, ring_start_margin_blocks,
                  per_frame_cap_blocks, flags=FLAG_DELTA_STREAM,
-                 kf_policy=KF_POLICY_V2):
+                 kf_policy=KF_POLICY_V2, raw_width=None):
     """Build the 512-byte NXV v2 header. width must be 256 or 320
     (the only two Layer 2 shapes); height is 1-192 for width 256
     (mode-0, 192 lines) or 1-256 for width 320 (mode-1, 256 lines) -
-    256 encodes as the sentinel byte 0, see HDR_OFF_HEIGHT."""
+    256 encodes as the sentinel byte 0, see HDR_OFF_HEIGHT.
+
+    raw_width (bytes 23-24, picture width in columns) is required with
+    FLAG_RAW, which needs flags exactly $13 and allows 1 or 2 channels,
+    and refused without it."""
     if width not in CODE_BY_WIDTH:
         raise ValueError(f"width must be 256 or 320, got {width}")
     max_height = MAX_HEIGHT_BY_WIDTH[width]
     if not (1 <= height <= max_height):
         raise ValueError(f"height must be 1-{max_height} for width {width} "
                           f"(Layer 2 mode-{CODE_BY_WIDTH[width]} has {max_height} lines), got {height}")
-    if channels != 2:
+    raw = bool(flags & FLAG_RAW)
+    if raw:
+        # raw layout: mono allowed; needs the delta + direct-serve bits
+        # (flags $13) and the picture width in columns
+        if flags != (FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE | FLAG_RAW):
+            raise ValueError(f"a raw clip's flags must be exactly $13, got {flags:#x}")
+        if channels not in (1, 2):
+            raise ValueError(f"channels must be 1 or 2, got {channels}")
+        if raw_width is None:
+            raise ValueError("raw_width is required when FLAG_RAW is set")
+        if width == 320:
+            if not (RAW_W_STEP <= raw_width <= 320 and raw_width % RAW_W_STEP == 0):
+                raise ValueError(f"raw_width must be 4-320 and a multiple of "
+                                 f"{RAW_W_STEP} on the 320 surface, got {raw_width}")
+        elif raw_width != 256:
+            raise ValueError(f"raw_width must be 256 on the 256 surface, got {raw_width}")
+    elif raw_width is not None:
+        raise ValueError("raw_width is only valid with FLAG_RAW")
+    elif channels != 2:
         # Mono withdrawn 2026-08-03 (owner ruling). The FIELD stays -
         # it is frozen wire format at offset 9 - and the player still
         # validates it, refusing anything but 2 with VID FMT? at open.
@@ -287,13 +317,18 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
     hdr[HDR_OFF_ABYTES:HDR_OFF_ABYTES + 2] = int(audio_bytes_per_frame).to_bytes(2, "little")
     hdr[HDR_OFF_RINGMARGIN:HDR_OFF_RINGMARGIN + 2] = int(ring_start_margin_blocks).to_bytes(2, "little")
     hdr[HDR_OFF_FRAMECAP:HDR_OFF_FRAMECAP + 2] = int(per_frame_cap_blocks).to_bytes(2, "little")
+    if raw:
+        hdr[HDR_OFF_RAWW:HDR_OFF_RAWW + 2] = int(raw_width).to_bytes(2, "little")
     return bytes(hdr)
 
 
 def unpack_header(buf):
     """Inverse of pack_header. Raises ValueError on bad magic/version/
     width code. Returns a dict with the decoded fields plus
-    column_major (True for width==320, Layer 2 mode-1 addressing)."""
+    column_major (True for width==320, Layer 2 mode-1 addressing), raw
+    (flags bit 4) and raw_width: a raw clip's picture columns (the header
+    word on the 320 surface, 256 on the 256 surface, where the player does
+    not read it), None when not raw. width stays the surface width."""
     if len(buf) < HEADER_SIZE:
         raise ValueError(f"header buffer too short ({len(buf)} < {HEADER_SIZE})")
     if bytes(buf[HDR_OFF_MAGIC:HDR_OFF_MAGIC + 5]) != MAGIC:
@@ -307,8 +342,14 @@ def unpack_header(buf):
         raise ValueError(f"bad width code {widthcode} (must be 0 or 1)")
     height_b = buf[HDR_OFF_HEIGHT]
     height = 256 if height_b == 0 else height_b
+    raw = bool(buf[HDR_OFF_FLAGS] & FLAG_RAW)
+    raw_width = None
+    if raw:
+        raw_width = (int.from_bytes(buf[HDR_OFF_RAWW:HDR_OFF_RAWW + 2], "little")
+                     if width == 320 else 256)
     return dict(
         width=width, height=height, column_major=(width == 320),
+        raw=raw, raw_width=raw_width,
         fps_x10=buf[HDR_OFF_FPSX10],
         channels=buf[HDR_OFF_ACHAN],
         arate=int.from_bytes(buf[HDR_OFF_ARATE:HDR_OFF_ARATE + 2], "little"),
@@ -878,6 +919,7 @@ def supply_scale(stats, target):
 # DIRECT-SERVE TRANSPORT - armed T per frame section (audio pad + padded
 # payload), least squares over DS1 T(ADSW)/16 on 010/012/013/014 (S15).
 # Re-fit all three whenever vid_ds_xfer/vid_ds_pad/vid_ds_copy_body change.
+# Old layout only (DIRECT_LAYOUT "old"); the raw layout uses RAW_K below.
 # ---------------------------------------------------------------------
 DIRECT_T_PER_B = 24.2       # per section byte, SD wire included
 DIRECT_COL_T = 674.6        # per column of a gapped surface
@@ -947,6 +989,330 @@ def direct_max_raw_bytes(fps, width, height, util=1.0, transport_factor=None):
                                transport_factor)["utilization"] <= util:
             return int(width) * h
     return 0
+
+
+# ---------------------------------------------------------------------
+# RAW DIRECT GATE - armed T of one raw frame (raw_model_t terms), fitted by
+# tests/raw_fit.py (model 1c) to the KS3 bench 2026-11-25 NXBW and NXBM rows
+# (tests/core303/results/2026-11-25-ks3-legRAW1C). "mono" is the zxnDMA form.
+# ---------------------------------------------------------------------
+RAW_K = {
+    "stereo": dict(
+        a=1.06181,       # armed factor [ARSE, RSEC] 8 clips
+        tb=16.9890,      # 16 x a
+        tsnd=9069.23,    # sound sector [ARSW, RSWP, counted overhead] 8 clips
+        tf=1438.24,      # frame remainder, same points
+        tp=13270.26),    # palette sector [RFR0, RSWP, ARSW] 8 clips
+    "mono": dict(
+        a=1.00784,       # armed factor [MHST, RHST] 8 clips
+        tb=16.1254,      # 16 x a
+        tsnd=9412.87,    # sound sector [MRSW, counted overhead] 8 clips
+        tf=579.51,       # frame remainder, same points
+        tp=12322.48),    # palette sector [RFR0, RSWP, MRSW] 8 clips
+}
+RAW_STALL_T = 23.38            # AHST bin 1 upper edge x ARSE/RSEC
+RAW_PERIOD_FIELD_T = 567264    # one field, 311 x 1824 T (+3 timing): reference only
+# Frames are paced by sound consumption: period = samples x one sample's T.
+# Stereo: CTC 0 at 16 x 112 T. Mono: the zxnDMA's prescaled burst, measured.
+RAW_SAMPLE_T = {"stereo": 1792.0, "mono": 1799.64}
+RAW_RATES = (25, 16.67, 12.5)  # rates a refusal offers
+
+# Unarmed base T of the player's frame program, equal to tests/nxv2_bench_rows.py
+# (VR_*), pinned there to the emitted bytes: open, slide call and ret, column hop,
+# page end, fast program frame cost, first sector, vid_raw_frame, last-sector pad
+# read; the train's pass, pre-open pad, page check not taken / taken, partial patch.
+RAW_OPEN_T = 86
+RAW_READ_T = 27
+RAW_HOP_T = 11
+RAW_PAGE_T = 32
+RAW_FAST_T = 110
+RAW_FIRST_T = 152
+RAW_FRAME_OV_T = 401
+RAW_PAD_T = 37
+RAW_PASS_T = 27
+RAW_TPAD_T = 4
+RAW_CHK_T = 18
+RAW_CHK_PAGE_T = 67
+RAW_PATCH_T = 40
+RAW_OPEN_BUDGET = 24           # bytes the train rule counts an open at
+RAW_TRAIN_ROOM = 8156          # bytes for period and driver in page B
+
+
+def _raw_x0(width, surface_width):
+    """Left margin in columns the player stages: centred on the 320 surface."""
+    return (320 - int(width)) // 2 if surface_width == 320 else 0
+
+
+def _raw_train(width, height, surface_width):
+    """The column train's numbers (tests/nxv2_bench_rows.py raw_train), or None
+    on a flat surface (256 surface, or height 256): no train there."""
+    w, h = int(width), int(height) & 0xFF or 256
+    if surface_width != 320 or h == 256:
+        return None
+    total, c0 = w * h, -_raw_x0(w, surface_width) & 31
+    g = h & -h
+    big, cp = 512 * h // g, 512 // g
+    lp = min(big, total)
+    passes = -(-total // lp)
+    partial = total % lp != 0 and passes > 1
+    m = min(32, cp)
+    checks = 0 if passes == 1 else sum((j - c0) % m == 0 for j in range(1, cp))
+    cols = lp // h
+    starts = -(-lp // 512)
+    if passes == 1:
+        pe = sum((u - c0) % 32 == 0 for u in range(1, w))
+    else:
+        pe = sum((p * cp - c0) % 32 == 0 for p in range(1, passes))
+    nbytes = (2 * lp + 3 * cols + RAW_OPEN_BUDGET * starts + (starts - 1) + 5 * checks + 1
+              + 6 + 3 * (passes - 1) + 7 * pe + (10 if partial else 0) + 3)
+    return dict(Cp=cp, passes=passes, partial=partial, c0=c0, m=m, pe=pe, bytes=nbytes)
+
+
+def raw_variant(width, height, surface_width):
+    """The frame program the player builds: "train" when the column train fits
+    page B, else "inline"."""
+    t = _raw_train(width, height, surface_width)
+    return "train" if t and t["bytes"] <= RAW_TRAIN_ROOM else "inline"
+
+
+def raw_frame_overhead(width, height, surface_width):
+    """Unarmed T of a pixels-only frame beyond 16 T a data byte (pad included),
+    on the program raw_variant names (tests/nxv2_bench_rows.py raw_frame_overhead)."""
+    w, h = int(width), int(height) & 0xFF or 256
+    x0 = _raw_x0(w, surface_width)
+    total, c0 = w * h, -x0 & 31
+    gapped = surface_width == 320 and h < 256
+    unit = h if gapped else 256
+    nsec = -(-total // 512)
+    pages = sum((u - c0) % 32 == 0 for u in range(1, total // unit))
+    t = RAW_FRAME_OV_T + RAW_FAST_T + RAW_FIRST_T + (nsec - 1) * RAW_OPEN_T
+    t += RAW_PAD_T if total % 512 else 0
+    if raw_variant(w, h, surface_width) == "inline":
+        cuts = set(range(512, total, 512))
+        if gapped:
+            cuts |= set(range(h, total, h))
+        else:
+            cuts |= set(range((32 - (x0 & 31)) * 256, total, 8192))
+        return float(t + (len(cuts) + 1) * RAW_READ_T + (w - 1 if gapped else 0) * RAW_HOP_T
+                     + pages * RAW_PAGE_T)
+    r = _raw_train(w, h, surface_width)
+    t += r["passes"] * RAW_PASS_T + (nsec - r["passes"]) * RAW_TPAD_T
+    if r["partial"]:
+        t += RAW_PATCH_T
+    t += (w - 1 if r["partial"] else w) * RAW_HOP_T
+    if r["passes"] == 1:
+        return float(t + pages * RAW_PAGE_T)
+    k = w % r["Cp"] or r["Cp"]
+    pos = [j for j in range(1, r["Cp"]) if (j - r["c0"]) % r["m"] == 0]
+    run = (r["passes"] - 1) * len(pos) + sum(j < k for j in pos)
+    taken = pages - r["pe"]
+    return float(t + run * RAW_CHK_T + taken * (RAW_CHK_PAGE_T - RAW_CHK_T)
+                 + r["pe"] * RAW_PAGE_T)
+
+
+def _util_txt(u):
+    """u to 2 places, more when 2 would not read over 1.00."""
+    if u <= 1.0:
+        return f"{u:.2f}"
+    return next((f"{u:.{d}f}" for d in range(2, 7) if float(f"{u:.{d}f}") > 1.0),
+                f"{math.ceil(u * 1e6) / 1e6:.6f}")
+
+
+def raw_frame_t(width, height, surface_width, fps, form, *, palette=True,
+                transport_factor=None, stall_budget="off"):
+    """raw_model_t terms of one raw frame of this shape, rate and sound form
+    (RAW_K[form]), plus glue_t, the frame-loop glue the sweeps do not time.
+    transport_factor scales the per-byte term (None = 1.0); stall_budget
+    "measured" adds RAW_STALL_T."""
+    if form not in RAW_K:
+        raise ValueError(f"sound form must be stereo or mono, got {form!r}")
+    if stall_budget not in ("off", "measured"):
+        raise ValueError(f"stall budget must be off or measured, got {stall_budget!r}")
+    geo = raw_layout(width, height, surface_width)
+    padded = audio_layout(fps, 2 if form == "stereo" else 1, raw=True)[3]
+    t = raw_model_t(geo["sectors"], padded // 512,
+                    raw_frame_overhead(width, height, surface_width), palette, RAW_K[form],
+                    1.0 if transport_factor is None else float(transport_factor),
+                    RAW_STALL_T if stall_budget == "measured" else 0.0)
+    t["glue_t"] = TMODEL_COEFFS["glue_t"] / TMODEL_COEFFS["audio_factor"]
+    t["total_t"] += t["glue_t"]
+    t["variant"] = raw_variant(width, height, surface_width)
+    return t
+
+
+def raw_supply_check(width, height, surface_width, fps, form, **kw):
+    """The raw gate's figure: a frame without a palette over the sound period.
+    kw: transport_factor, stall_budget (raw_frame_t)."""
+    t = raw_frame_t(width, height, surface_width, fps, form, palette=False, **kw)
+    samples = audio_layout(fps, 2 if form == "stereo" else 1, raw=True)[1]
+    period = samples * RAW_SAMPLE_T[form]
+    return dict(utilization=t["total_t"] / period, period_t=period, total_t=t["total_t"],
+                terms=t, form=form, ref_period_t=RAW_PERIOD_FIELD_T * 50 / float(fps))
+
+
+def raw_max_height(width, surface_width, fps, form, util=1.0, **kw):
+    """Tallest raw picture this wide (256 down to 1) whose frame without a
+    palette is within util; 0 if none. surface_width: 256, 320 or "auto"."""
+    for h in range(256, 0, -1):
+        try:
+            sw, _ = raw_surface(width, h, surface_width)
+        except SystemExit:
+            continue
+        if raw_supply_check(width, h, sw, fps, form, **kw)["utilization"] <= util:
+            return h
+    return 0
+
+
+def _raw_factor_txt(kw):
+    """'; --direct-transport-factor F' when F is not the default 1.00."""
+    f = kw.get("transport_factor")
+    return "" if f is None or float(f) == 1.0 else f"; --direct-transport-factor {float(f):g}"
+
+
+def _raw_refusal(width, height, surface_width, fps, checks, **kw):
+    """SystemExit text for a raw shape over 1.00 in each form of checks."""
+    over = ", ".join(f"{f} {_util_txt(c['utilization'])}" for f, c in checks.items())
+    tall = ", ".join(f"{width}x{h} {f}" if h else f"no height in {f}"
+                     for f in RAW_K for h in [raw_max_height(width, surface_width, fps, f, **kw)])
+    for r in RAW_RATES:
+        if r >= float(fps) - 1e-9:
+            continue
+        us = {f: raw_supply_check(width, height, surface_width, r, f, **kw)["utilization"]
+              for f in RAW_K}
+        if min(us.values()) <= 1.0:
+            lower = (f"{width}x{height} plays at {r:g} fps ("
+                     + ", ".join(f"{f} {_util_txt(u)}" for f, u in us.items()) + "). ")
+            break
+    else:
+        lower = (f"{width}x{height} plays at no lower rate of "
+                 + ", ".join(f"{r:g}" for r in RAW_RATES) + " fps. ")
+    return (f"error: raw --direct cannot play {width}x{height} at {float(fps):g} fps: "
+            f"utilization {over} on a frame without a palette (over 1.00"
+            f"{_raw_factor_txt(kw)}). Tallest at "
+            f"{width} wide and {float(fps):g} fps: {tall}. {lower}Use a smaller shape or "
+            f"a lower --fps.")
+
+
+def raw_pick_sound(width, height, surface_width, fps, want="auto", **kw):
+    """(form, raw_supply_check) for want "auto": stereo when it holds rate,
+    else mono with a note, else SystemExit; "stereo"/"mono" force the form
+    and refuse over 1.00. Shape and rate only: runs before extraction."""
+    if want not in ("auto", "stereo", "mono"):
+        raise ValueError(f"sound must be auto, stereo or mono, got {want!r}")
+    checks = {}
+    for form in (("stereo", "mono") if want == "auto" else (want,)):
+        checks[form] = raw_supply_check(width, height, surface_width, fps, form, **kw)
+        if checks[form]["utilization"] <= 1.0:
+            if form == "mono" and want == "auto":
+                print(f"  note: stereo does not hold rate at this shape (utilization "
+                      f"{_util_txt(checks['stereo']['utilization'])} on a frame without a "
+                      f"palette); encoding mono sound "
+                      f"({_util_txt(checks['mono']['utilization'])}). --direct-sound "
+                      f"stereo forces stereo.")
+            return form, checks[form]
+    raise SystemExit(_raw_refusal(width, height, surface_width, fps, checks, **kw))
+
+
+def raw_debt_check(palette_flags, width, height, surface_width, fps, form, **kw):
+    """Lateness walk over a clip's frames (palette_flags: one bool a frame):
+    debt = max(0, debt + frame T - period). ok while the peak is within
+    limit_t, the form's tp (one palette frame at exactly 1.00). frame is
+    the peak's 0-based index, None when no debt accrues."""
+    period = raw_supply_check(width, height, surface_width, fps, form, **kw)["period_t"]
+    t_pal = raw_frame_t(width, height, surface_width, fps, form, palette=True, **kw)["total_t"]
+    t_px = raw_frame_t(width, height, surface_width, fps, form, palette=False, **kw)["total_t"]
+    debt = peak = 0.0
+    frame = None
+    for i, pal in enumerate(palette_flags):
+        debt = max(0.0, debt + (t_pal if pal else t_px) - period)
+        if debt > peak:
+            peak, frame = debt, i
+    limit = RAW_K[form]["tp"]
+    return dict(peak_t=peak, limit_t=limit, frame=frame, ok=peak <= limit)
+
+
+def raw_palette_flags(ex):
+    """(cuts, flags) of an extracted clip: scene cuts inside it, and one bool
+    a frame, True on each scene's first frame (frame 0 included)."""
+    n = ex["nframes"]
+    cuts = [c for c in detect_scene_cuts(ex["chg"]) if 0 < c < n]
+    flags = [False] * n
+    for s in [0] + cuts:
+        if s < n:
+            flags[s] = True
+    return cuts, flags
+
+
+def _raw_cut_ok(flags, width, h, surface, fps, form, **kw):
+    hs, _ = raw_surface(width, h, surface)
+    return (raw_supply_check(width, h, hs, fps, form, **kw)["utilization"] <= 1.0
+            and raw_debt_check(flags, width, h, hs, fps, form, **kw)["ok"])
+
+
+def _raw_cut_lower(flags, width, height, surface, fps, forms, **kw):
+    """Tallest height under height at which one of forms plays these cuts; 0 if none."""
+    for h in range(height - 1, 0, -1):
+        if any(_raw_cut_ok(flags, width, h, surface, fps, f, **kw) for f in forms):
+            return h
+    return 0
+
+
+def _raw_cut_text(kind, debt, flags, width, height, surface, fps, form, forms=None, **kw):
+    """The scene-cut message: kind "refuse", "auto" (mono used) or "stereo"
+    (encoded anyway). debt is the walk of form; forms are the sound forms a
+    lower height may use (default: form)."""
+    sw, _ = raw_surface(width, height, surface)
+    period = raw_supply_check(width, height, sw, fps, form, **kw)["period_t"]
+    frac = debt["peak_t"] / period
+    f = kw.get("transport_factor")
+    factor = "" if f is None or float(f) == 1.0 else f" (--direct-transport-factor {float(f):g})"
+    where = (f"at frame {debt['frame'] + 1} (counting from 1) the picture "
+             f"{'would fall' if kind == 'auto' else 'falls'} furthest behind, by about "
+             f"{1000.0 * frac / float(fps):.1f} ms ({100.0 * frac:.1f} percent of a frame)")
+    why = "each scene cut costs extra loading time, and this clip's cuts come too close together"
+    at = f"{width}x{height}, {float(fps):g} fps"
+    if kind == "auto":
+        return (f"warning: stereo sound cannot keep up with this clip at {at}{factor}: {why} "
+                f"for stereo at a picture this size - {where}. Encoding with mono sound "
+                f"instead; --direct-sound stereo forces stereo.")
+    forms = forms or (form,)
+    lower = _raw_cut_lower(flags, width, height, surface, fps, forms, **kw)
+    if kind == "stereo":
+        smaller = f"{width}x{lower} or smaller" if lower else "a smaller picture"
+        if _raw_cut_ok(flags, width, height, surface, fps, "mono", **kw):
+            fix = f"--direct-sound auto or mono, or {smaller}, avoids it"
+        else:
+            fix = f"{smaller[0].upper()}{smaller[1:]} avoids it"
+        return (f"warning: the picture may stutter briefly after closely spaced scene cuts "
+                f"at {at} with stereo sound{factor}: {why} for a picture this size - "
+                f"{where}. {fix}.")
+    label = "stereo or mono" if len(forms) > 1 and form == "mono" else form
+    use = (f"The tallest picture at this width that plays these cuts is {width}x{lower}."
+           if lower else "Use a smaller picture.")
+    return (f"error: raw --direct cannot play this clip at {at} with {label} sound{factor}: "
+            f"{why} for a picture this size - {where}. {use}")
+
+
+def raw_cut_sound(flags, width, height, surface, fps, want, form, **kw):
+    """(form, debt, warning) for a clip's palette flags; form is the one the
+    supply check picked. Cuts that outrun stereo: want "auto" falls to mono
+    with a warning when mono plays them, want "stereo" keeps stereo with a
+    warning; anything else is SystemExit. warning is None when the cuts pass."""
+    sw, _ = raw_surface(width, height, surface)
+    debt = raw_debt_check(flags, width, height, sw, fps, form, **kw)
+    if debt["ok"]:
+        return form, debt, None
+    args = (flags, width, height, surface, fps)
+    if form == "stereo" and want == "stereo":
+        return form, debt, _raw_cut_text("stereo", debt, *args, "stereo", **kw)
+    forms = tuple(RAW_K) if want == "auto" else (form,)
+    if form == "stereo" and want == "auto":
+        if raw_supply_check(width, height, sw, fps, "mono", **kw)["utilization"] <= 1.0:
+            mono = raw_debt_check(flags, width, height, sw, fps, "mono", **kw)
+            if mono["ok"]:
+                return "mono", mono, _raw_cut_text("auto", debt, *args, "stereo", **kw)
+            raise SystemExit(_raw_cut_text("refuse", mono, *args, "mono", forms, **kw))
+    raise SystemExit(_raw_cut_text("refuse", debt, *args, form, forms, **kw))
 
 
 # ---------------------------------------------------------------------
@@ -3638,6 +4004,82 @@ def emit_direct_frame_payload(target_flat, pal=None):
 
 
 # ---------------------------------------------------------------------
+# Raw frame layout: sound sectors (tag byte last), optional palette
+# sector, pixels in surface order zero-padded to 512.
+# ---------------------------------------------------------------------
+
+def raw_surface(width, height, surface="auto"):
+    """(surface_width, column_major) for a raw picture. SystemExit on a
+    shape the player would refuse (VID FMT?)."""
+    width, height = int(width), int(height)
+    if not (RAW_W_STEP <= width <= 320) or width % RAW_W_STEP:
+        raise SystemExit(f"error: raw width must be 4-320 and a multiple of "
+                         f"{RAW_W_STEP}, got {width}")
+    if not (1 <= height <= 256):
+        raise SystemExit(f"error: raw height must be 1-256, got {height}")
+    if surface == "auto":
+        sw = 256 if (width == 256 and height <= 192) else 320
+    elif str(surface) in ("256", "320"):
+        sw = int(surface)
+    else:
+        raise SystemExit(f"error: raw surface must be auto, 256 or 320, got {surface!r}")
+    if sw == 256 and (width != 256 or height > 192):
+        raise SystemExit(f"error: the 256 surface carries 256 x 1-192, got {width}x{height}")
+    return sw, sw == 320
+
+
+def raw_layout(width, height, surface_width):
+    """Pixel geometry of a raw frame: bytes, 512 B sectors, pad bytes,
+    column ends (gapped 320 surface), and the header frame cap."""
+    pixel_bytes = int(width) * int(height)
+    sectors = (pixel_bytes + 511) // 512
+    columns = int(width) if (surface_width == 320 and int(height) != 256) else 0
+    return dict(pixel_bytes=pixel_bytes, sectors=sectors,
+                pad=sectors * 512 - pixel_bytes, columns=columns,
+                cap_blocks=sectors + 1)
+
+
+def raw_model_t(s_pix, s_snd, overhead_t, palette, k, transport_factor=1.0, stall=0.0):
+    """Gate equation for one raw frame, in T, term by term (no frame-loop
+    glue). k holds one form's constants: a, tb, tsnd, tf, tp; overhead_t is
+    raw_frame_overhead (unarmed), priced at a. A k without "a" is the
+    sitting 1b form (tb, ts, tsnd, tc, tf, tp; overhead_t = column ends) that
+    tests/raw_fit.py still fits."""
+    if "a" not in k:
+        t = dict(byte_t=s_pix * 512 * k["tb"] * transport_factor, sector_t=s_pix * k["ts"],
+                 snd_t=s_snd * k["tsnd"], col_t=overhead_t * k["tc"], frame_t=k["tf"],
+                 pal_t=k["tp"] if palette else 0, stall_t=stall)
+        return dict(total_t=sum(t.values()), **t)
+    t = dict(
+        byte_t=s_pix * 512 * k["tb"] * transport_factor,
+        overhead_t=k["a"] * overhead_t,
+        snd_t=s_snd * k["tsnd"],
+        frame_t=k["tf"],
+        pal_t=k["tp"] if palette else 0,
+        stall_t=stall)
+    return dict(total_t=sum(t.values()), **t)
+
+
+def emit_raw_frame(sound_real, padded, flat_pixels, pal):
+    """One raw frame: sound, $80 pad, tag byte (0 pixels only, 1 palette
+    sector follows), optional 512 B palette, pixels zero-padded to 512."""
+    if padded % 512 or len(sound_real) > padded - 1:
+        raise ValueError(f"sound of {len(sound_real)} B does not fit {padded} B "
+                         f"with a tag byte")
+    if pal is not None and len(pal) != PAL_BLOCK_SIZE:
+        raise ValueError(f"palette sector must be {PAL_BLOCK_SIZE} B, got {len(pal)}")
+    out = bytearray(sound_real)
+    out += bytes([SILENCE_U8]) * (padded - 1 - len(sound_real))
+    out.append(RAW_TAG_PIXELS if pal is None else RAW_TAG_PALETTE)
+    if pal is not None:
+        out += pal
+    px = (bytes(flat_pixels) if isinstance(flat_pixels, (bytes, bytearray))
+          else np.asarray(flat_pixels, dtype=np.uint8).tobytes())
+    out += px + bytes((-len(px)) % 512)
+    return bytes(out)
+
+
+# ---------------------------------------------------------------------
 # BuildReport (T1 step 7)
 # ---------------------------------------------------------------------
 
@@ -3827,16 +4269,16 @@ def min_fps_for():
     return RATE_STEREO / (AUD_FRAME_MAX // 2 + 0.5)
 
 
-def audio_layout(fps, channels=2):
+def audio_layout(fps, channels=2, raw=False):
     """Audio layout for one frame: (rate, samples, real, padded).
 
     channels is retained because the layout arithmetic genuinely uses
     it (real = samples * channels) and because it is a frozen header
-    field - but 2 is the only value the format carries since mono was
-    withdrawn, and anything else is refused here as it is at open."""
+    field - 2 unless raw, where 1 is also carried. raw pads to
+    (real // 512 + 1) * 512 so a tag byte always follows the sound."""
     from fractions import Fraction
-    if channels != 2:
-        raise ValueError(f"channels must be 2, got {channels}")
+    if channels != 2 and not (raw and channels == 1):
+        raise ValueError(f"channels must be 2 (1 only for raw), got {channels}")
     rate = RATE_STEREO
     exact = Fraction(rate) / Fraction(fps).limit_denominator(1000)
     samples = int(exact + Fraction(1, 2))
@@ -3852,8 +4294,13 @@ def audio_layout(fps, channels=2):
             f"fps >= {_math.ceil(min_fps_for() * 100) / 100:.2f} "
             f"(the floor itself fits - 3b re-review wording fix); "
             f"raise --fps.")
-    padded = ((real + 511) // 512) * 512
-    return rate, samples, real, padded
+    return rate, samples, real, audio_pad_bytes(real, raw)
+
+
+def audio_pad_bytes(real, raw=False):
+    """Padded sound section for real bytes a frame: the next 512 multiple,
+    or for raw (real // 512 + 1) * 512 so the tag byte always fits."""
+    return (real // 512 + 1) * 512 if raw else ((real + 511) // 512) * 512
 
 
 SILENCE_U8 = 128
@@ -3865,7 +4312,8 @@ SILENCE_U8 = 128
 # ---------------------------------------------------------------------
 
 def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dither,
-                    dither_mode=None, retime=None, prefilter=None):
+                    dither_mode=None, retime=None, prefilter=None,
+                    raw=False, channels=2):
     """Extracts (orig (N,H,W,3) uint8 RGB frames, po_ceil, chg,
     audio_bytes, channels, rate) from a source file, reusing videnc.py's
     own ffmpeg plumbing (probe/crop/extract) - the canonical location
@@ -3896,13 +4344,13 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     crop = _videnc.compute_center_crop(src_w, src_h, width, height)
     from fractions import Fraction
     fps_frac = fps if isinstance(fps, Fraction) else Fraction(fps).limit_denominator(1000)
-    channels = 2                 # the only channel count v2 carries; a
-                                 # mono SOURCE is upmixed by ffmpeg's
-                                 # -ac 2 in videnc.extract_audio
+    # channels is 2 except a raw clip, which may carry 1; at 2 a mono
+    # SOURCE is upmixed by ffmpeg's -ac 2 in videnc.extract_audio
     # Lay out the audio FIRST: the player-bound guard (real
     # bytes/frame <= AUD_FRAME_MAX) rejects a doomed fps
     # before the slow ffmpeg extraction, not after.
-    rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(fps_frac, channels)
+    rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(
+        fps_frac, channels, raw=raw)
     # SP17 T0: resample in TIME to the target rate when the source is not
     # already at it. Free to detect (same banner as the dimensions above),
     # and a source already at the target takes no filter at all - so a 25p
@@ -4811,6 +5259,108 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     return report
 
 
+def _encode_raw(ex, width, height, fps_val, out_path, *, surface="auto",
+                channels=2, gate=True, report_path=None, dither_amp=None,
+                dither_mode=None, direct_transport_factor=None,
+                stall_budget="off", sound=None):
+    """Raw-layout encode: same scene palette and quantise pipeline as
+    _encode_direct, frames written by emit_raw_frame. ex must come from
+    _extract_source(raw=True, channels=channels). gate=True refuses a shape
+    whose frame without a palette is over 1.00 (raw_pick_sound) and judges
+    the clip's scene cuts by raw_cut_sound with want sound (None: the form
+    of channels, given explicitly); gate=False skips admission. A mono
+    fallback needs a mono ex: encode() re-extracts for it."""
+    surface_width, column_major = raw_surface(width, height, surface)
+    geo = raw_layout(width, height, surface_width)
+    if ex["channels"] != channels:
+        raise ValueError(f"ex carries {ex['channels']} channel(s), asked for {channels}")
+    form = "stereo" if channels == 2 else "mono"
+    kw = dict(transport_factor=direct_transport_factor, stall_budget=stall_budget)
+    chk = debt = None
+    if gate:
+        if direct_transport_factor is not None:
+            print(f"  note: --direct-transport-factor {float(direct_transport_factor):g} "
+                  f"scales the raw gate's per-byte term for this encode")
+        form, chk = raw_pick_sound(width, height, surface_width, fps_val, form, **kw)
+        if chk["utilization"] > STREAM_WARN_UTIL:
+            print(f"  warning: raw direct utilization {_util_txt(chk['utilization'])} on a "
+                  f"frame without a palette (> {STREAM_WARN_UTIL:.2f}) - at the edge of rate")
+    orig = ex["orig"]
+    N = ex["nframes"]
+    dither_amp = _dither_amp(dither_amp)
+    dither_mode = _dither_mode(dither_mode)
+    cuts, flags = raw_palette_flags(ex)
+    bounds = [0] + cuts + [N]
+    if gate:
+        cut_form, debt, warn = raw_cut_sound(flags, width, height, surface, fps_val,
+                                             sound or form, form, **kw)
+        if cut_form != form:
+            raise ValueError(f"sound {sound!r} needs {cut_form} for these cuts: "
+                             f"extract with channels=1 and pass sound='mono'")
+        if warn:
+            print(f"  {warn}")
+    abytes_real, abytes_pad = ex["abytes_real"], ex["abytes_pad"]
+    audio_bytes = ex["audio_bytes"]
+
+    frames = []
+    psnrs = []
+    for s_i, e_i in zip(bounds[:-1], bounds[1:]):
+        if s_i == e_i:
+            continue
+        pal = scene_palette(orig, s_i, e_i, amplitude=dither_amp, mode=dither_mode)
+        pal_sector = build_palette_block(pal)
+        for i in range(s_i, e_i):
+            idx, dec = dither_quantize(orig[i], pal, dither_amp, dither_mode)
+            frames.append(emit_raw_frame(
+                audio_bytes[i * abytes_real:(i + 1) * abytes_real], abytes_pad,
+                flatten_frame(idx, column_major),
+                pal_sector if i == s_i else None))
+            psnrs.append(psnr(orig[i], dec))
+    nframes_out = len(frames)
+    projected_total = HEADER_SIZE + sum(len(f) for f in frames)
+    total_size_check(projected_total, nframes_out, "raw", width, height,
+                     fps_val, channels)
+
+    header = pack_header(
+        width=surface_width, height=height, fps=fps_val, channels=channels,
+        arate=ex["rate"], frame_count=nframes_out,
+        audio_bytes_per_frame=abytes_real,
+        ring_start_margin_blocks=geo["cap_blocks"],
+        per_frame_cap_blocks=geo["cap_blocks"],
+        flags=FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE | FLAG_RAW,
+        raw_width=width if surface_width == 320 else 256)
+    out_path = Path(out_path)
+    with open(out_path, "wb") as f:
+        f.write(header)
+        for fr in frames:
+            f.write(fr)
+
+    psnr_arr = np.array(psnrs)
+    seconds = nframes_out / fps_val
+    seconds_per_mb = seconds / (projected_total / (1024 * 1024)) if projected_total else 0.0
+    report = BuildReport(
+        mode="raw", shape=(width, height), fps=fps_val, frames=nframes_out,
+        mean_psnr=float(psnr_arr.mean()) if len(psnr_arr) else 0.0,
+        worst_psnr=float(psnr_arr.min()) if len(psnr_arr) else 0.0,
+        total_bytes=projected_total, seconds_per_mb=seconds_per_mb,
+        keyframes=nframes_out, degradation_events=0,
+        binding_budget_histogram={"raw": nframes_out},
+        stream_checked=gate,
+        stream_utilization=chk["utilization"] if chk else 0.0)
+    if report_path:
+        import dataclasses
+        import json
+        # the other modes' key set, delta and keyframe keys at their defaults
+        with open(report_path, "w") as f:
+            json.dump(dict(dataclasses.asdict(report), shape=list(report.shape),
+                           scene_cuts=cuts, auto_budget_ladder=[],
+                           kf_span_ranges=[[i, i] for i in range(nframes_out)],
+                           kf_triggers={}, kf_roll_events=0, kf_roll_frames=0,
+                           kf_roll_windows=[], kf_roll_pending=0),
+                      f, indent=1)
+    return report
+
+
 def stream_gate_stats(result, ex, width, height, fps):
     """The shipped supply gate's own arithmetic over an encode_clip()
     result, factored out so the auto-budget search below and encode()'s
@@ -5091,7 +5641,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
            budget_target=None, direct=False, retime=None, tile_slack=None,
            direct_transport_factor=None, kf_cadence=None,
-           prefilter=None):
+           prefilter=None, direct_surface="auto", direct_sound="auto",
+           stall_budget="off"):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -5147,21 +5698,29 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     KNOB block for the parameterisation and the cap's derivation. A
     non-zero value prints tile_slack_line().
 
-    direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
-    every frame a full keyframe repaint, header direct-serve hint set
-    (flags bit1), gated by worst-frame WIRE feasibility instead of the
-    delta pipeline's dual budgets (see _encode_direct). The gate is
-    unconditional - there is no slow-playback opt-out at this or any
-    layer above it.
+    direct (--direct): DIRECT_LAYOUT "raw" (the default) writes the raw
+    layout through _encode_raw(gate=True): shape is any raw_surface shape,
+    the sound form is chosen by raw_pick_sound before extraction, and the
+    clip's scene cuts are judged by raw_cut_sound (auto stereo falls to
+    mono, explicit stereo warns, else refused). DIRECT_LAYOUT "old"
+    writes the SP15 all-literal layout through _encode_direct (test
+    scripts only). Both gates are unconditional - there is no
+    slow-playback opt-out at this or any layer above it.
+
+    direct_surface (--direct-surface, "auto"/"256"/"320"), direct_sound
+    (--direct-sound, "auto"/"stereo"/"mono") and stall_budget
+    (--stall-budget, "off"/"measured"): raw layout only, see raw_surface,
+    raw_pick_sound and raw_frame_t. A non-default value without direct is
+    a ValueError.
 
     direct_transport_factor (--direct-transport-factor): the EXPERT
     OVERRIDE for the direct gate's per-byte transport factor - None
-    (the default) is the shipping silicon-settled
-    DIRECT_TRANSPORT_FACTOR; a number replaces it for THIS encode only,
+    (the default) is 1.0 for the raw gate and DIRECT_TRANSPORT_FACTOR
+    for the old one; a number replaces it for THIS encode only,
     for staging probe files against a candidate rate before a fresh
-    silicon round moves the default. See the DIRECT_TRANSPORT_FACTOR
-    block. Only meaningful with direct=True; ignored (with a note)
-    otherwise - the delta pipeline's gate does not use it.
+    silicon round moves the default. Only meaningful with direct=True;
+    ignored (with a note) otherwise - the delta pipeline's gate does
+    not use it.
 
     kf_cadence (--kf-cadence): keyframe cadence window in SECONDS -
     whenever no natural keyframe (cut / dissolve / staleness / drift)
@@ -5179,8 +5738,18 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     byte-identical to what it was."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
+    if (direct_surface, direct_sound, stall_budget) != ("auto", "auto", "off"):
+        if not direct:
+            raise ValueError("direct_surface, direct_sound and stall_budget need direct=True")
+        if DIRECT_LAYOUT != "raw":
+            raise ValueError("direct_surface, direct_sound and stall_budget are raw layout "
+                             "options; the old direct layout takes none of them")
 
-    width, height = resolve_shape(shape)
+    raw_direct = direct and DIRECT_LAYOUT == "raw"
+    if raw_direct and shape is not None and not isinstance(shape, str):
+        width, height = int(shape[0]), int(shape[1])    # raw_surface checks it below
+    else:
+        width, height = resolve_shape(shape)
     fps_val = 25.0 if fps is None else float(fps)
     dither_amp = _dither_amp(dither)   # validate once, up front
     dmode = _dither_mode(dither_mode)
@@ -5189,6 +5758,44 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     # once and everything downstream carries the resolved number.
     slack_knob = TILE_SLACK_DEFAULT if tile_slack is None else float(tile_slack)
     slack_rel = tile_slack_rel(slack_knob, budget_target)
+
+    if raw_direct:
+        if slack_knob:
+            print("  note: --tile-slack has no effect with --direct - the "
+                  "direct-serve preset repaints every frame in full and "
+                  "runs no tile schedule")
+        # the sound form depends on shape and rate only: chosen before extraction
+        surface_width, _ = raw_surface(width, height, direct_surface)
+        form, chk = raw_pick_sound(width, height, surface_width, fps_val, direct_sound,
+                                   transport_factor=direct_transport_factor,
+                                   stall_budget=stall_budget)
+        channels = 2 if form == "stereo" else 1
+        ex = _extract_source(src_path, width, height, fps_val, start, duration,
+                             ffmpeg, dither_amp, dither_mode=dmode, retime=retime,
+                             prefilter=prefilter, raw=True, channels=channels)
+        sound = direct_sound
+        if direct_sound == "auto" and form == "stereo":
+            # cuts that outrun stereo: mono with a warning, re-extracted as an explicit mono encode
+            cut_form, _debt, warn = raw_cut_sound(
+                raw_palette_flags(ex)[1], width, height, direct_surface, fps_val, "auto",
+                "stereo", transport_factor=direct_transport_factor, stall_budget=stall_budget)
+            if cut_form == "mono":
+                print(f"  {warn}")
+                channels, sound = 1, "mono"
+                form, chk = raw_pick_sound(width, height, surface_width, fps_val, "mono",
+                                           transport_factor=direct_transport_factor,
+                                           stall_budget=stall_budget)
+                ex = _extract_source(src_path, width, height, fps_val, start, duration,
+                                     ffmpeg, dither_amp, dither_mode=dmode, retime=retime,
+                                     prefilter=prefilter, raw=True, channels=1)
+        # printed after the cut decision so it names the form encoded
+        print(f"  raw direct: {surface_width} surface, {form} sound, utilization "
+              f"{_util_txt(chk['utilization'])} on a frame without a palette")
+        return _encode_raw(ex, width, height, fps_val, out_path, surface=direct_surface,
+                           channels=channels, gate=True, report_path=report_path,
+                           dither_amp=dither_amp, dither_mode=dmode,
+                           direct_transport_factor=direct_transport_factor,
+                           stall_budget=stall_budget, sound=sound)
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither_amp, dither_mode=dmode,

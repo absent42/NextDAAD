@@ -28,17 +28,19 @@ im2_init:
     ld a, IM2_CTC_STUB & $FF
     ld (IM2_TABLE + IM2_CTC_VEC), a      ; table[V] = low(ctc_stub); table[V+1]
                                          ; is already the $BE fill (= high stub)
-    ; SP18 item 7 Task 10: channel 2's carve skips the stub-trampoline
+    ; Channel 2's carve skips the stub-trampoline
     ; indirection channel 1 uses just above. That indirection is NOT
     ; kept for fill-byte economy alone (letting table[V+1], the target's
     ; high byte, stay the uniform $BE fill unwritten) - it is ALSO the
     ; runtime hijack point: video.asm rewrites IM2_CTC_STUB+1 (this same
     ; 3-byte JP's target field) to swap channel 0's ISR to
-    ; video_ctc_isr_stereo for a clip's duration and back, leaving the
-    ; table entry itself untouched throughout. The stub is what makes
-    ; that swap a single 2-byte write instead of a table rewrite -
-    ; removing it (e.g. by "optimising" channel 1 to this same direct
-    ; write) would silently stop installing video's stereo ISR.
+    ; video_ctc_isr_stereo for a clip's duration and back. Delta and
+    ; old-layout sessions leave the table entry untouched; raw sessions
+    ; also point it at their handler and the restore body puts it back.
+    ; The stub is what makes that swap a single 2-byte write instead of
+    ; a table rewrite - removing it (e.g. by "optimising" channel 1 to
+    ; this same direct write) would silently stop installing video's
+    ; stereo ISR.
     ; Channel 2 has NO such stub because nothing today repoints channel
     ; 2's ISR at runtime - the direct table write below is safe only in
     ; that absence, which is why it costs less. A future channel-2
@@ -91,7 +93,7 @@ im2_init:
                                          ; audio state. The blits rely on it
                                          ; (ddma.inc); do not relax.
     ASSERT DDMA_CTC_CHANNELS == 2        ; the two channels admitted below size every blit's pad
-    nextreg NR_DMA_INT_EN_2, %00000011   ; $CD bit 0 = CTC channel 0 (DAC sample
+    nextreg NR_DMA_INT_EN_2, IM2_DMA_INT_EN_2_VAL ; $CD bit 0 = CTC channel 0 (DAC sample
                                          ; timer) may pre-empt a DMA - safe because
                                          ; ctc_isr is MMU-free by contract (AF/HL
                                          ; only, no MMU slot, register-select pair,

@@ -124,6 +124,127 @@ def test_nxb_baseline_files():
         assert (k[0], k[1], k[2], k[3], k[4], k[5] - 1) not in keys
 
 
+RW1_PRINTED = ("IDEN RFR0 RSWP ARSW RSEC RCOL RHST RH39 SPN0 ARSE ARCO AHST AH39 ASPN "
+               "OSPN").split()
+
+
+def test_parse_rw1(tmp_path):
+    # the RW1 table's 21 rows print 15 (ARM1/ARM2/ARMO and three DSRM are silent)
+    import tags
+    assert tuple(tags.NXB_RW1) == tuple(RW1_PRINTED)
+    assert tags.NXB_HIST_TAGS == ("RHST", "RH39", "AHST", "AH39", "MHST")
+    rows = ["%s O=%02X R=%04X F=%04X D=%04X" % (t, 2 if t == "IDEN" else 0, 16 + i, 3 * i, i)
+            for i, t in enumerate(RW1_PRINTED)]
+    hist = {"RHST": [2041, 5, 2] + [0] * 13 + [0], "RH39": [2040, 6, 2] + [0] * 14,
+            "AHST": [0] * 16 + [7], "AH39": [0] * 15 + [3, 4]}
+    lines = ["#NXB 0A10", "> pick 71", "> nxbw"] + rows
+    lines += ["#HIST %s%s" % (t, "".join(" %04X" % n for n in b)) for t, b in hist.items()]
+    p = tmp_path / "w.TXT"
+    p.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    runs = parse.parse_nxb(p)
+    assert [r.tag for r in runs] == RW1_PRINTED
+    assert all(r.kind == "session" for r in runs)
+    assert (runs[0].o, runs[1].r, runs[5].f, runs[14].d) == (2, 17, 15, 14)
+    assert parse.parse_hist(p) == [(1, t, b) for t, b in hist.items()]
+    assert all(len(b) == tags.NXB_HIST_BINS == 17 for _s, _t, b in parse.parse_hist(p))
+    assert parse.rw1_walked(runs) == []
+    # a second capture: #HIST lines belong to it; a walked card row (O=01) is flagged
+    second = ["#NXB 0B20", "> nxbw", "RSEC O=01 R=0080 F=0002 D=0010",
+              "SPN0 O=01 R=0200 F=0010 D=0000", "AH39 O=01 R=0800 F=0002 D=0011",
+              "#HIST AHST" + " 0001" * 17]
+    p.write_bytes(("\r\n".join(lines + second) + "\r\n").encode("ascii"))
+    assert [s for s, _t, _b in parse.parse_hist(p)] == [1, 1, 1, 1, 2]
+    runs = parse.parse_nxb(p)
+    assert [(r.tag, r.section) for r in parse.rw1_walked(runs)] == [("RSEC", 2), ("AH39", 2)]
+    # a refused card row prints its tag and a marker, not a row: never parsed as one
+    assert sorted(tags.NXB_RW1_REFUSALS) == ["NXB RUN", "NXB SHORT"]
+    refused = ["#NXB 0C30", "> nxbw"] + ["RCOL " + m for m in sorted(tags.NXB_RW1_REFUSALS)]
+    p.write_bytes(("\r\n".join(lines + refused) + "\r\n").encode("ascii"))
+    assert [r.tag for r in parse.parse_nxb(p)] == RW1_PRINTED
+    assert "WALK RSEC (section 2)" in parse.report([], runs, None, timing=(311, 228))
+    for bad in ("#HIST XXXX" + " 0000" * 17, "#HIST RHST" + " 0000" * 16, "#HIST RHST 00G0"):
+        p.write_bytes(("\r\n".join(lines[:3] + [bad]) + "\r\n").encode("ascii"))
+        with pytest.raises(LogError):
+            parse.parse_hist(p)
+        with pytest.raises(LogError):
+            parse.parse_nxb(p)
+
+
+RD1_PRINTED = "IDEN CPY0 RFR0 SPN0 MRSW MCN1 MSPN MCN2 MHST MCN3 MSUM MPTR MTCK MCPY RHST".split()
+RT1_PRINTED = "IDEN TCHK SPN0 TSPN TCTC TCN1 NSEC NSM0 TSTR TSLO TSUM TSEC".split()
+
+
+def _capture(tmp_path, verb, rows, extra=()):
+    lines = ["#NXB 0A10", "> pick 66", "> " + verb]
+    lines += ["%s O=%02X R=%04X F=%04X D=%04X" % r for r in rows] + list(extra)
+    p = tmp_path / (verb + ".TXT")
+    p.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    return p
+
+
+def test_parse_rd1(tmp_path):
+    # the RD1 table's 20 rows print 15 (MLD1, MGO1, MOF1, MLD2, MOF2 are silent)
+    import tags
+    assert tuple(tags.NXB_RD1) == tuple(RD1_PRINTED)
+    assert set(tags.NXB_RD1_COUNTS) | set(tags.NXB_RD1_MARKED) <= set(RD1_PRINTED)
+    rows = {"IDEN": (0x12, 250, 256, 192), "CPY0": (0, 128, 0, 88), "RFR0": (0, 1, 1, 200),
+            "SPN0": (0, 512, 47, 12), "MRSW": (0, 16, 29, 100), "MCN1": (1, 0x2710, 0, 0),
+            "MSPN": (0, 512, 47, 50), "MCN2": (1, 0x3A98, 0, 0), "MHST": (0, 2048, 30, 7),
+            "MCN3": (1, 0x1234, 1, 0), "MSUM": (0, 0xBEEF, 0x0123, 0),
+            "MPTR": (3, 9, 0, 0), "MTCK": (0, 250, 250, 0), "MCPY": (0, 128, 0, 88),
+            "RHST": (0, 2048, 29, 300)}
+    hist = ["#HIST MHST" + " 0800" + " 0000" * 16, "#HIST RHST" + " 07FF 0001" + " 0000" * 15]
+    p = _capture(tmp_path, "nxbm", [(t,) + rows[t] for t in RD1_PRINTED], hist)
+    runs = parse.parse_nxb(p)
+    by = {r.tag: r for r in runs}
+    assert [r.tag for r in runs] == RD1_PRINTED and all(r.kind == "session" for r in runs)
+    assert parse.iden_train(by["IDEN"]) and by["IDEN"].o & 0x0F == 2
+    assert [parse.rd_count(by[t]) for t in ("MCN1", "MCN2", "MCN3")] == [10000, 15000, 0x11234]
+    assert {tags.NXB_RD1_COUNTS[t] for t in ("MCN1", "MCN2", "MCN3")} == {"MRSW", "MSPN", "MHST"}
+    assert parse.rd_sum(by["MSUM"]) == 0x0123BEEF
+    assert by["MPTR"].o == tags.NXB_RD1_FLAG_BASE | tags.NXB_RD1_FLAG_END
+    assert not by["MPTR"].o & tags.NXB_RD1_FLAG_RANGE
+    assert [(s, t) for s, t, _b in parse.parse_hist(p)] == [(1, "MHST"), (1, "RHST")]
+    assert parse.rw1_walked(runs) == []
+    # a walked frame or card row is flagged; a count row's O = 01 is its flag, not a walk
+    walked = [(t,) + ((1,) + rows[t][1:] if t in ("MRSW", "MSUM") else rows[t])
+              for t in RD1_PRINTED]
+    runs = parse.parse_nxb(_capture(tmp_path, "nxbm", walked))
+    assert [r.tag for r in parse.rw1_walked(runs)] == ["MRSW", "MSUM"]
+    # the inline program: IDEN O = 02
+    flat = [("IDEN", 2, 250, 256, 192)] + [(t,) + rows[t] for t in RD1_PRINTED[1:]]
+    assert not parse.iden_train(parse.parse_nxb(_capture(tmp_path, "nxbm", flat))[0])
+
+
+def test_parse_rt1(tmp_path):
+    # the RT1 table's 14 rows print 12 (ARM1 and DSRM are silent)
+    import tags
+    assert tuple(tags.NXB_RT1) == tuple(RT1_PRINTED)
+    assert set(tags.NXB_RT1_MARKED) | set(tags.NXB_RT1_SUMS) <= set(RT1_PRINTED)
+    rows = {"IDEN": (2, 250, 256, 192), "TCHK": (7, 1824, 1545, 3), "SPN0": (0, 512, 47, 12),
+            "TSPN": (0, 512, 39, 300), "TCTC": (0, 512, 42, 11), "TCN1": (0, 0x4E20, 0, 0),
+            "NSEC": (0, 512, 4, 5), "NSM0": (0, 0x1111, 0x0002, 0),
+            "TSTR": (0, 0x2222, 0x0004, 0), "TSLO": (0, 0x3333, 0x0002, 0),
+            "TSUM": (0, 0x4444, 0x0008, 0), "TSEC": (0, 512, 4, 2)}
+    runs = parse.parse_nxb(_capture(tmp_path, "nxbp", [(t,) + rows[t] for t in RT1_PRINTED]))
+    by = {r.tag: r for r in runs}
+    assert [r.tag for r in runs] == RT1_PRINTED
+    assert parse.rt_active(by["TCHK"]) and by["TCHK"].d == 3
+    assert [parse.rd_sum(by[t]) for t in tags.NXB_RT1_SUMS] == [0x21111, 0x42222, 0x23333,
+                                                               0x84444]
+    assert parse.rd_count(by["TCN1"]) == 20000
+    # active by the spin alone, by the read-back alone, and not active
+    for o, r, f, want in ((3, 1824, 1545, True), (7, 1824, 1824, True), (3, 1824, 1824, False),
+                          (3, 1824, 1710, True), (3, 1824, 1711, False)):
+        row = parse.parse_nxb(_capture(tmp_path, "nxbp", [("TCHK", o, r, f, 3)]))[0]
+        assert parse.rt_active(row) is want, (o, r, f)
+    # no turbo: TCHK, then the marker in SPN0's place, never parsed as a row
+    assert list(tags.NXB_RT1_REFUSALS) == ["NXB NOTURBO"]
+    p = _capture(tmp_path, "nxbp", [("IDEN",) + rows["IDEN"], ("TCHK", 3, 1824, 1824, 3)],
+                 ["SPN0 NXB NOTURBO"])
+    assert [r.tag for r in parse.parse_nxb(p)] == ["IDEN", "TCHK"]
+
+
 def test_nxb_o_line_guard(tmp_path):
     p = tmp_path / "n.TXT"
     p.write_bytes(b"#NXB 0001\n>nxbc\nXXXX O=05 R=0008\nLOG OK\n")
@@ -485,3 +606,134 @@ def test_nxb_ratio_isr_note():
     assert shown.splitlines().count(ISR_NOTE) == 1
     quiet = parse.report([], runs, None, timing=(311, 228))
     assert ISR_NOTE not in quiet
+
+
+PLAY_REPORT = [" FRM=00FA/00FA ERR=00 OP=00 POS=000000 PASS=01",
+               "RING   =0000/0000/00 FILL=0001 SNAP=00",
+               "PLAY   =01EE NOM=01F4 CHK=0051D039",
+               "LATE   =0000 MAXL=0000 URUN=0000 RUNS=01"]
+PLAY_ONCE = [" FRM=0001/0001 ERR=00 OP=00 POS=000000 PASS=01",
+             "RING   =0000/0000/00 FILL=0000 SNAP=00",
+             "PLAY   =0002 NOM=0002 CHK=00000000",
+             "LATE   =0000 MAXL=0000 URUN=0000 RUNS=00"]
+
+
+def test_parse_playlog(tmp_path):
+    """NXPLAY.TXT (the log step's mode 16): a normal capture, a refusal (row 23 only) and a
+    session that ended at once parse to one row each; the markdown reads back through
+    raw_fit.read_playback, which keeps the two with a PLAY figure. The header's sound path
+    and reader variant fill SND and VAR; the five-field header gives "-" for both."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import playlog
+    import raw_fit
+    lines = (["#PLAY 060 50 1A2B D T"] + PLAY_REPORT + ["#PLAY 080 50 1C00 - -", "VID FMT?"]
+             + ["#PLAY 074 4E 1D10"] + PLAY_ONCE)
+    p = tmp_path / "NXPLAY.TXT"
+    p.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    caps = playlog.parse_playlog(p)
+    assert [list(c) for c in caps] == [playlog.COLUMNS] * 3
+    assert [(c["Step"], c["Clip"], c["Pool"], c["SND"], c["VAR"], c["Row 23"]) for c in caps] == [
+        ("1", "060", "50", "D", "T", "-"), ("2", "080", "50", "-", "-", "VID FMT?"),
+        ("3", "074", "4E", "-", "-", "-")]
+    for hdr, want in (("#PLAY 060 50 1A2B S -", ("S", "-")), ("#PLAY 060 50 1A2B C I", ("C", "I")),
+                      ("#PLAY 060 50 1A2B S T", ("S", "T"))):
+        q = tmp_path / "ONE.TXT"
+        q.write_bytes(("\r\n".join([hdr] + PLAY_REPORT) + "\r\n").encode("ascii"))
+        one = playlog.parse_playlog(q)
+        assert [(c["SND"], c["VAR"], c["PLAY"]) for c in one] == [want + ("01EE",)], hdr
+    for hdr in ("#PLAY 060 50 1A2B D", "#PLAY 060 50 1A2B X T", "#PLAY 060 50 1A2B D T Z"):
+        q = tmp_path / "CUT.TXT"
+        q.write_bytes(("\r\n".join([hdr] + PLAY_REPORT) + "\r\n").encode("ascii"))
+        one = playlog.parse_playlog(q)
+        assert len(one) == 1 and _cut(one[0]) and (one[0]["SND"], one[0]["VAR"]) == ("-", "-"), hdr
+    assert {k: caps[0][k] for k in playlog.FIELDS} == {
+        "FRM": "00FA/00FA", "ERR": "00", "OP": "00", "POS": "000000", "PASS": "01",
+        "RING": "0000/0000/00", "FILL": "0001", "SNAP": "00", "PLAY": "01EE", "NOM": "01F4",
+        "CHK": "0051D039", "LATE": "0000", "MAXL": "0000", "URUN": "0000", "RUNS": "01"}
+    assert all(caps[1][k] == "-" for k in playlog.FIELDS)
+    assert (caps[2]["FRM"], caps[2]["PLAY"], caps[2]["NOM"], caps[2]["RUNS"]) == (
+        "0001/0001", "0002", "0002", "00")
+    out = tmp_path / "playback.md"
+    assert playlog.main([str(p), "--out", str(out)]) == 0
+    back = raw_fit.read_playback(out)
+    assert [(r["Step"], r["Clip"], r["SND"], r["VAR"], r["PLAY"], r["LATE"], r["URUN"], r["FRM"])
+            for r in back] == [
+        ("1", "060", "D", "T", "01EE", "0000", "0000", "00FA/00FA"),
+        ("3", "074", "-", "-", "0002", "0000", "0000", "0001/0001")]
+    for bad in ("VID FMT?\r\n", "\r\n", "ROW 0\r\n#PLAY 060 50 1A2B\r\n"):
+        q = tmp_path / "BAD.TXT"
+        q.write_bytes(bad.encode("ascii"))
+        with pytest.raises(playlog.PlayLogError):
+            playlog.parse_playlog(q)
+
+
+def _playlog():
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import playlog
+    return playlog
+
+
+def _caps(tmp_path, text):
+    playlog = _playlog()
+    p = tmp_path / "NXPLAY.TXT"
+    p.write_bytes(text.encode("ascii"))
+    return playlog.parse_playlog(p)
+
+
+GOOD = "#PLAY 060 50 1A2B\r\n" + "".join(s + "\r\n" for s in PLAY_REPORT)
+
+
+def _cut(cap):
+    return cap["Row 23"].startswith("TRUNCATED") and all(cap[k] == "-" for k in _playlog().FIELDS)
+
+
+def test_playlog_pool_ff(tmp_path):
+    """Pool FF (mode 17's no-figure mark, left when no open ran) prints as "-"."""
+    caps = _caps(tmp_path, "#PLAY 099 FF 0C0C\r\nVID FILE?\r\n" + GOOD)
+    assert [(c["Clip"], c["Pool"], c["Row 23"]) for c in caps] == [
+        ("099", "-", "VID FILE?"), ("060", "50", "-")]
+
+
+def test_playlog_truncated(tmp_path):
+    """A last capture cut inside a key, a value, the header, or at a field edge with no line
+    end, or a line with a short value, is kept as a TRUNCATED row with no report field; the
+    captures before it are intact."""
+    for tail in ("LATE   =0000 MA", "LATE   =00", "LATE   =0000", "#PLAY 07", "#PLAY 074 5",
+                 "PLAY   =01EE NOM=01F4 CHK=0051D0\r\n", " FRM=00FA/00F ERR=00\r\n",
+                 "RING   =0000/0000 FILL=0001 SNAP=00\r\n", "PLAY   =01EE ZZZ=00\r\n",
+                 "PLAY   =01EE PLAY=01EE\r\n"):
+        head = "" if tail.startswith("#PLAY") else "#PLAY 061 4F 0100\r\n"
+        caps = _caps(tmp_path, GOOD + head + tail)
+        assert len(caps) == 2 and caps[0]["PLAY"] == "01EE" and caps[0]["Row 23"] == "-", tail
+        assert _cut(caps[1]), (tail, caps[1])
+        clip = "061" if head else ("074" if tail.startswith("#PLAY 074") else "-")
+        assert caps[1]["Clip"] == clip, (tail, caps[1])
+
+
+def test_playlog_glued(tmp_path):
+    """A short write leaves a line without its end; the next capture's #PLAY header lands on
+    it. The cut capture is TRUNCATED and the header starts a new capture."""
+    text = ("#PLAY 062 50 0101\r\nVID FMT?\r\n FRM=00FA/00FA ERR=00 OP" + GOOD
+            + "#PLAY 07" + GOOD + "#PL" + GOOD)
+    caps = _caps(tmp_path, text)
+    assert [(c["Step"], c["Clip"], _cut(c)) for c in caps] == [
+        ("1", "062", True), ("2", "060", False), ("3", "-", True), ("4", "060", False),
+        ("5", "-", True), ("6", "060", False)]
+    assert caps[0]["Row 23"] == "TRUNCATED: VID FMT?"
+    assert all(c["PLAY"] == "01EE" for c in caps[1::2])
+
+
+def test_playlog_cut_header_after_partial(tmp_path):
+    """A header cut to 1-5 characters lands on a partial line: three captures written parse
+    as three (the cut ones TRUNCATED), whether a whole capture follows or the file ends."""
+    head = "#PLAY 060 50 1A2B\r\n" + PLAY_REPORT[0] + "\r\n" + PLAY_REPORT[1] + "\r\nPLAY   =01EE NO"
+    for cut in ("#", "#P", "#PL", "#PLA", "#PLAY"):
+        caps = _caps(tmp_path, head + cut + GOOD.replace("060", "062", 1))
+        assert [(c["Step"], c["Clip"], _cut(c)) for c in caps] == [
+            ("1", "060", True), ("2", "-", True), ("3", "062", False)], (cut, caps)
+        assert caps[2]["PLAY"] == "01EE", cut
+        caps = _caps(tmp_path, head + cut)
+        assert [(c["Step"], c["Clip"], _cut(c)) for c in caps] == [
+            ("1", "060", True), ("2", "-", True)], (cut, caps)

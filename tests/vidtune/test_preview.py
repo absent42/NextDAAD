@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pytest
 
 from vidtune import preview as vt_preview
 from vidtune.preview import decode_vid, diff_heatmap, stale_bands
@@ -53,6 +54,67 @@ def test_decode_vid_roundtrip(tmp_path):
     assert len(frames) == 2
     assert frames[0].shape == (1, 256, 3)
     assert (frames[0] == frames[0][0, 0]).all()   # solid frame 0
+
+
+def test_decode_vid_raw_clip_true_shape_and_colours(tmp_path):
+    # 280x224 sits pillarboxed on the 320 surface: frames are 280 wide
+    from vidbuild import build_raw_vid
+    import nxv2enc
+    vid = tmp_path / "r.vid"
+    want = build_raw_vid(vid, 280, 224, channels=1)
+    hdr, frames = decode_vid(vid)
+    assert hdr["width"] == 320 and hdr["raw_width"] == 280 and hdr["height"] == 224
+    assert len(frames) == len(want) == 3
+    for got, exp in zip(frames, want):
+        assert got.shape == (224, 280, 3)
+        assert np.array_equal(got, exp)
+    px = nxv2enc.raw_layout(280, 224, 320)["sectors"] * 512
+    assert hdr["frame_costs"] == [512 + px, px, 512 + px]   # palette sector on frames 0 and 2
+    assert hdr["cap_bytes"] == px + 512
+    assert hdr["frame_terms"] == [nxv2enc.OP_KFLIP] * 3     # whole pictures, as old direct
+
+
+def _direct_routes():
+    from vidtune import presets
+    return [r for r in presets.all_routes() if r.values.get("direct")]
+
+
+@pytest.mark.parametrize("route", _direct_routes(), ids=lambda r: r.key)
+def test_every_direct_route_previews_at_its_shape(route, tmp_path, monkeypatch):
+    """A route's options through videnc and the encoder (extraction faked),
+    then the preview decode: frames at the route's shape and colours."""
+    import nxv2enc
+    from vidbuild import raw_source_ex, record_quantised
+    from vidtune import presets
+    from vidtune.kitmodel import KitConfig
+    from vidtune.settingsmodel import deviations, effective_settings
+    cfg = KitConfig()
+    base = effective_settings(cfg, "001")
+    opts = deviations(presets.apply_route(base, base, route), cfg)
+    shape = route.values["shape"]
+    w, h = nxv2enc.PRESETS.get(shape) or tuple(map(int, shape.split("x")))
+    made = {}
+
+    def fake_extract(src, width, height, fps, start, duration, ffmpeg, dither,
+                     dither_mode=None, retime=None, prefilter=None, raw=False, channels=2):
+        made.update(shape=(width, height), raw=raw, channels=channels)
+        return raw_source_ex(2, width, height, fps=float(fps), channels=channels)
+    monkeypatch.setattr(vt_preview.videnc, "probe_dimensions",
+                        lambda ffmpeg, path, stderr=None: (640, 480))
+    monkeypatch.setattr(nxv2enc, "_extract_source", fake_extract)
+    src, out = tmp_path / "src.mp4", tmp_path / "r.vid"
+    src.write_bytes(b"x")
+    with record_quantised() as want:
+        rc = vt_preview.videnc.main(["videnc", str(src), str(out), "--ffmpeg", str(src)] + opts)
+    assert rc == 0 and made["raw"] and made["shape"] == (w, h)
+    hdr, frames = decode_vid(out)
+    assert hdr["raw"] and hdr["raw_width"] == w and hdr["height"] == h
+    assert hdr["channels"] == made["channels"]
+    assert ("mono" in route.blurb.lower()) == (made["channels"] == 1)
+    assert len(frames) == len(want) == 2
+    for got, exp in zip(frames, want):
+        assert got.shape == (h, w, 3)
+        assert np.array_equal(got, exp)
 
 
 def _patch_videnc_probes(monkeypatch, captured):

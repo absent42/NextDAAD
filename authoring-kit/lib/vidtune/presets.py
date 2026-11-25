@@ -11,9 +11,9 @@ GENERATED, so edit it at its repo source, not in the kit.
 The six things in that doc are three different kinds of object, and this
 module keeps them apart:
 
-  ROUTES    presets 1/2/3/5 - a complete answer for a class of footage,
-            mutually exclusive, each with an optional framing VARIANT
-            (the same routing decision at a different crop)
+  ROUTES    presets 3/2/1/5 - a complete answer for a class of footage,
+            mutually exclusive, each with optional framing VARIANTS
+            (the same routing decision at other crops)
   MODIFIER  preset 4 - `--prefilter`, added ON TOP of whichever route is
             in use. It is already a real Knob, so there is no separate
             state for it here; MODIFIER_KNOB just names it.
@@ -54,41 +54,134 @@ class Route:
     label: str
     blurb: str                        # what class of footage this is for
     values: dict = field(default_factory=dict)
-    variant: "Route" = None           # the same route at a different crop
+    variants: tuple = ()              # the same route at other crops
 
 
 # Transcribed from authoring-kit/docs/video.html section 4. Preset 1 is
 # "nothing at all - the kit defaults are the right answer", which is why
-# its values are empty: applying it IS the reset.
+# its values are empty: applying it IS the reset. Direct shapes and rates
+# follow the raw gate (tests/raw_presets.py prints its verdicts).
+# Menu order: the opening route first, then action, quiet, cutscene.
 ROUTES = (
+    Route("fullrate", "Action at full rate",
+          "the same detailed motion, when smooth movement matters more "
+          "than picture size - 256x192 at 25 fps",
+          {"direct": True, "shape": "256x192"},
+          (Route("fullrate-wide", "Action at full rate, wide",
+                 "a cinematic wide framing at full width, 320x160",
+                 {"direct": True, "shape": "320x160"}),
+           Route("fullrate-tall", "Action at full rate, tall",
+                 "a taller picture at 25 fps, 280x224 - at the edge of "
+                 "what the card delivers",
+                 {"direct": True, "shape": "280x224"}))),
+    Route("action", "Full-screen action",
+          "detailed sustained motion filling the frame - sea, weather, "
+          "snow, crowds, smoke - at 320x240 and 16.67 fps",
+          {"direct": True, "shape": "320x240", "fps": "16.67"},
+          (Route("action-169", "Full-screen action, 16:9 source",
+                 "the same footage from a 16:9 source at its own shape, "
+                 "320x192, which plays at the full 25 fps - at the edge of "
+                 "what the card delivers",
+                 {"direct": True, "shape": "16:9", "fps": "25"}),
+           Route("action-narrow", "Full-screen action, narrower",
+                 "256x240: the same height, narrower than the screen with "
+                 "black at the sides, for a fifth less card space",
+                 {"direct": True, "shape": "256x240", "fps": "16.67"}))),
     Route("quiet", "Quiet scene",
           "slow zooms and pans, held shots, talking heads, title cards",
           {},
-          Route("quiet-motion", "Quiet scene, continuous motion",
-                "a zoom or pan that never stops rather than a static shot",
-                {"tile_slack": "0.5"})),
-    Route("action", "Full-screen action",
-          "detailed sustained motion filling the frame - sea, weather, "
-          "snow, crowds, smoke",
-          {"direct": True, "shape": "full", "fps": "12.5"},
-          Route("action-169", "Full-screen action, 16:9 source",
-                "the same route using a 16:9 source's own shape",
-                {"direct": True, "shape": "16:9", "fps": "12.5"})),
-    Route("fullrate", "Action at full rate",
-          "the same detailed motion, when smooth movement matters more "
-          "than picture size",
-          {"direct": True, "shape": "256x167"},
-          Route("fullrate-wide", "Action at full rate, wide",
-                "a cinematic wide framing at full width",
-                {"direct": True, "shape": "320x105"})),
+          (Route("quiet-motion", "Quiet scene, continuous motion",
+                 "a zoom or pan that never stops rather than a static shot",
+                 {"tile_slack": "0.5"}),)),
     Route("cutscene", "Long cutscene",
           "anything over about 15 seconds - length forces the compressed "
           "route, so the decision moves to the shape",
           {"shape": "16:9", "tile_slack": "0.5"},
-          Route("cutscene-43", "Long cutscene, 4:3 framing",
-                "a 4:3 framing that still needs the room",
-                {"shape": "classic", "tile_slack": "0.5"})),
+          (Route("cutscene-43", "Long cutscene, 4:3 framing",
+                 "a 4:3 framing that still needs the room",
+                 {"shape": "classic", "tile_slack": "0.5"}),)),
 )
+
+# Raw target shapes the gate refuses in both sound forms at their rate, so
+# no route: ("WxH", fps, {"stereo": util, "mono": util}).
+REFUSED_TARGETS = ()
+
+# Stamped into the panel when a clip with no VIDOPTS_NNN is opened. Panel
+# only: nothing is saved until Accept or Encode Stale + Edited.
+OPENING_ROUTE = "fullrate"
+
+# Decimal MB, as the manual's card-space table states rates.
+_MB = 1_000_000
+
+
+def _raw_dims(settings):
+    """(width, height) the encoder takes from shape/width/aspect."""
+    import nxv2enc
+    aspect = settings.get("aspect")
+    if aspect is not None:
+        width = int(settings.get("width")) if settings.get("width") else 320
+        return width, nxv2enc.derive_free_height(width, float(aspect))
+    shape = settings.get("shape") or "full"
+    if shape in nxv2enc.PRESETS:
+        return nxv2enc.PRESETS[shape]
+    w, h = str(shape).lower().split("x", 1)
+    return int(w), int(h)
+
+
+def raw_rate(settings):
+    """Card cost of an uncompressed encode, or None when not --direct:
+    dict(width, height, fps, form, frame_bytes, per_second). frame_bytes is
+    sound in the form the raw gate picks (gate options in extra honoured)
+    plus pixel sectors; a scene's palette sector (512 B) and the scene-cut
+    mono fallback are not counted. form None: the gate refuses."""
+    if not settings.get("direct"):
+        return None
+    import nxv2enc
+    try:
+        w, h = _raw_dims(settings)
+        fps = float(settings.get("fps") or 25)
+        extra = list(settings.get("extra") or [])
+
+        def opt(name, default):
+            return extra[extra.index(name) + 1] if name in extra[:-1] else default
+
+        sw, _ = nxv2enc.raw_surface(w, h, opt("--direct-surface", "auto"))
+        want = opt("--direct-sound", "auto")
+        tf = opt("--direct-transport-factor", None)
+        kw = dict(transport_factor=None if tf is None else float(tf),
+                  stall_budget=opt("--stall-budget", "off"))
+        forms = ("stereo", "mono") if want == "auto" else (want,)
+        form = next((f for f in forms if nxv2enc.raw_supply_check(
+            w, h, sw, fps, f, **kw)["utilization"] <= 1.0), None)
+    except (SystemExit, ValueError, KeyError, TypeError):
+        return None
+    out = dict(width=w, height=h, fps=fps, form=form,
+               frame_bytes=None, per_second=None)
+    if form is not None:
+        snd = nxv2enc.audio_layout(fps, 2 if form == "stereo" else 1, raw=True)[3]
+        frame = snd + nxv2enc.raw_layout(w, h, sw)["sectors"] * 512
+        out.update(frame_bytes=frame, per_second=frame * fps)
+    return out
+
+
+def size_text(settings, seconds=None):
+    """One plain line on what `settings` costs on the card; `seconds` is
+    the clip's length when known."""
+    if not settings.get("direct"):
+        return "compressed: size depends on the footage - Encode Full shows it"
+    rate = raw_rate(settings)
+    if rate is None:
+        return "uncompressed: size unknown for this shape"
+    if rate["form"] is None:
+        return "uncompressed: too much for the card at this shape and rate"
+    text = f"uncompressed: {rate['per_second'] / _MB:.2f} MB a second"
+    if seconds:
+        import nxv2enc
+        total = rate["per_second"] * float(seconds)
+        text += f", about {total / _MB:.1f} MB for this {float(seconds):.1f} s clip"
+        if total > nxv2enc.PLAYER_MAX_BYTES:
+            text += " - over the 256 MB file limit"
+    return text
 
 
 def all_routes():
@@ -96,8 +189,7 @@ def all_routes():
     out = []
     for route in ROUTES:
         out.append(route)
-        if route.variant is not None:
-            out.append(route.variant)
+        out.extend(route.variants)
     return out
 
 

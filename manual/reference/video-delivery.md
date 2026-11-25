@@ -8,8 +8,9 @@ fresh boot) is loaded whole and played from RAM; a bigger file streams
 from SD through a prefetch ring of the same banks. Either way playback
 runs at true rate.
 
-Direct-serve is the exception: it is a per-clip opt-in you set
-yourself, described at the end of this section.
+Uncompressed (`--direct`) is the exception: it is a per-clip opt-in
+you set yourself, read straight from the card, described at the end of
+this section.
 
 Because streaming has a fixed supply rate, every over-pool-size encode
 has to fit it. **You do not set that budget - the encoder derives it.**
@@ -50,21 +51,25 @@ N.NN > 1.00 ..."). The message shows where the time goes (decode ms + SD
 fetch ms per frame period) and names the remedies that remain: a smaller
 shape, a lower fps, or a shorter clip.
 
-**Direct-serve (expert opt-in).** `--direct` (per-video via
-`VIDOPTS_NNN`) writes an uncompressed encode the player serves straight
-from SD to the screen - no delta decode, pixel-exact every frame. It is
-never chosen for you; you ask for it. The catch is a strict at-rate
-envelope with no ring to absorb bursts: at 25 fps stereo it tops out
-at 256x167, or 320x105 at full width (full-screen 320x256 fits at 12.5
-fps), and the gate
-refuses anything the SD wire cannot sustain - there is deliberately no
-slow-playback opt-out (every shipped mode plays at true rate). The
-refusal message prints the live envelope menu for your width, up to the
-height you asked for: the tallest at-rate height, the same with a 0.90
-margin, and the tallest at the audio floor fps. A 320-wide letterbox
-refused at a rate where full-screen 320x256 fits is told so. For
-almost all content the normal delta encoder is the better tool;
-`--direct` exists for encodes that must be pixel-exact.
+**Uncompressed (opt-in).** `--direct` (per-video via `VIDOPTS_NNN`)
+writes an uncompressed clip in the raw layout, which the player reads
+straight from SD to the screen a whole frame at a time - no delta
+decode, pixel-exact every frame. It is never chosen for you; you ask
+for it. The catch is a strict at-rate limit with no ring to absorb
+bursts: at 25 fps the tallest pictures are 320x195, 280x224 and 256x244
+with stereo sound (320x208, 280x237 and 256x256 with mono), and at 16.67
+fps every shape up to 320x256 plays.
+The encoder refuses anything the card cannot sustain - there is
+deliberately no slow-playback opt-out (every shipped mode plays at true
+rate) - and names the tallest picture that plays at your width and the
+next lower frame rate at which your shape plays. A clip whose scenes
+cut faster than the player can make up the time each scene's palette
+takes gets mono sound when that plays the cuts (with a warning), keeps
+stereo with a warning when you asked for stereo, and is otherwise
+refused. The limits were measured on one card; see
+[Video](../video.md#uncompressed-limits-and-your-card) for a slower
+card. For long clips and quiet footage the delta encoder is the better
+tool; `--direct` is for detailed motion that must stay pixel-exact.
 
 ## Playback notes
 
@@ -112,7 +117,7 @@ necessity.
 the file is reasonably contiguous. A heavily fragmented file refuses
 to play: the ceiling is 32 fragments for a clip small enough to play
 from RAM (exactly 32 is fine, 33 refuses) and 8 fragments for a clip
-big enough to stream - or encoded direct-serve - off the card live.
+big enough to stream - or encoded uncompressed - off the card live.
 Defragment the card (or re-copy the file to a freshly formatted card)
 if a video will not start or stutters.
 

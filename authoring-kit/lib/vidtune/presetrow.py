@@ -93,7 +93,7 @@ class _RouteItem(QWidget):
     clicked = Signal(str)          # route key
 
     def __init__(self, route, delta_lines, indent=False, top_gap=False,
-                 parent=None):
+                 size_line=None, parent=None):
         super().__init__(parent)
         self._key = route.key
         self.setCursor(Qt.PointingHandCursor)
@@ -110,13 +110,20 @@ class _RouteItem(QWidget):
 
         box = QVBoxLayout(self)
         left = theme.GAP_ZONE + theme.GAP_PANE if indent else theme.GAP_PANE
-        # A route and its framing variant are one decision, so they sit
+        # A route and its framing variants are one decision, so they sit
         # tight together; the air goes BETWEEN routes instead.
         box.setContentsMargins(left, theme.GAP_PANE if top_gap else theme.UNIT + 1,
                                theme.GAP_PANE, theme.UNIT + 1)
         box.setSpacing(1)
         box.addWidget(label)
         box.addWidget(deltas)
+        self.size_label = None
+        if size_line:
+            self.size_label = QLabel(size_line)
+            self.size_label.setFont(theme.ui_font(8.5))
+            self.size_label.setStyleSheet(
+                f"color: {theme.INK_DIM}; background: transparent;")
+            box.addWidget(self.size_label)
         self.setAutoFillBackground(True)
         self._paint(False)
 
@@ -147,9 +154,11 @@ class RouteMenuButton(QPushButton):
 
     route_chosen = Signal(str)
 
-    def __init__(self, context, parent=None):
+    def __init__(self, context, seconds_for=None, parent=None):
         super().__init__(CHOOSE_TEXT, parent)
         self._context = context
+        # settings -> clip length in seconds, or None when unknown
+        self._seconds_for = seconds_for or (lambda settings: None)
         self.setToolTip(
             "apply a route from the Video page of the manual - resets the "
             "route knobs to kit defaults first, leaving prefilter and trim "
@@ -172,14 +181,17 @@ class RouteMenuButton(QPushButton):
         for i, route in enumerate(presets.ROUTES):
             self._add(menu, route, settings, kit_base, indent=False,
                       top_gap=i > 0)
-            if route.variant is not None:
-                self._add(menu, route.variant, settings, kit_base, indent=True)
+            for variant in route.variants:
+                self._add(menu, variant, settings, kit_base, indent=True)
         menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
 
     def _add(self, menu, route, settings, kit_base, indent, top_gap=False):
         lines = presets.format_deltas(
             presets.route_deltas(settings, kit_base, route))
-        item = _RouteItem(route, lines, indent=indent, top_gap=top_gap)
+        after = presets.apply_route(settings, kit_base, route)
+        size = presets.size_text(after, self._seconds_for(after))
+        item = _RouteItem(route, lines, indent=indent, top_gap=top_gap,
+                          size_line=size)
         item.setToolTip(route.blurb)
         item.clicked.connect(self.route_chosen.emit)
         item.clicked.connect(menu.close)

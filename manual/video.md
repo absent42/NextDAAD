@@ -52,9 +52,11 @@ Five preset shapes ship:
 
 Every shape carries 256-colour pictures with adaptive palettes and
 full-rate stereo audio at 15625 Hz. A mono source is converted to
-stereo for you. Letterbox bars cost no file bytes at all - the player
-draws them black. Sources are centre-cropped to the shape's displayed
-aspect, never distorted.
+stereo for you. An uncompressed clip can carry mono sound instead, at
+the same rate, when stereo would not keep up (see
+[Mono sound](#mono-sound)). Letterbox bars cost no file bytes at all -
+the player draws them black. Sources are centre-cropped to the shape's
+displayed aspect, never distorted.
 
 **Settle the shape before anything else.** Because the crop is a crop,
 a 16:9 source encoded into the 4:3 `full` shape loses its sides. Match
@@ -76,6 +78,15 @@ height for a target displayed aspect ratio - `--aspect 2.35` gives true
 cinema scope, with the 320-wide mode's non-square pixels corrected for
 automatically.
 
+**Pillarboxed widths, uncompressed only.** An uncompressed clip
+(`--direct`, section 1) may be any width that is a multiple of 4, from 4
+to 320, by any height from 1 to 256. It plays on the 320-wide screen,
+centred, with black at the sides as well as above and below - `280x224`
+and `256x240` are two such shapes in the presets. A 256-wide picture up
+to 192 lines high is the exception: it plays in the bordered 256-wide
+frame, like `classic`. Compressed clips keep to the two Layer 2 widths,
+256 and 320.
+
 ## 1. The two routes
 
 **Compressed** is the default and needs no options. It sends only what
@@ -91,8 +102,8 @@ and most obvious in water, weather and gradients.
 **Uncompressed** (`--direct`) sends every frame whole, straight from
 the card to the screen. It cannot band, because nothing is ever left
 behind - every pixel of every frame is exactly what the encoder
-produced. Its weakness is size: it costs about 1 MB for every second of
-screen time, which limits both how long a clip can be and how much
+produced. Its weakness is size: it costs 1 to 1.6 MB for every second
+of screen time, which limits both how long a clip can be and how much
 picture you can have at 25 fps.
 
 Neither route is better. They fail in different directions, and the
@@ -103,7 +114,7 @@ footage decides which failure you would rather have.
 Answer these in order and stop at the first one that fits.
 
 1. **Is the clip longer than about 15 seconds?**
-   Compressed. Uncompressed costs about 1 MB for every second of screen
+   Compressed. Uncompressed costs 1 to 1.6 MB for every second of screen
    time, so past this point it is spending more of the card than most
    games can spare on one scene (section 6). Go to **Preset 5**.
 
@@ -118,8 +129,8 @@ Answer these in order and stop at the first one that fits.
    ground. This is the class compressed video handles worst, and the one
    where uncompressed wins outright.
    Then ask which you would rather keep:
-   - **The big picture** - full 320x256, at half the motion rate. Go to
-     **Preset 2**.
+   - **The big picture** - 320x240, all but a few lines of the screen,
+     at two-thirds of the motion rate. Go to **Preset 2**.
    - **The motion** - full 25 fps, at a smaller picture. Go to
      **Preset 3**.
 
@@ -139,7 +150,7 @@ Three ways to apply them, all equivalent.
 next build re-encodes that clip:
 
 ```
-SET VIDOPTS_001=--direct --shape full --fps 12.5
+SET VIDOPTS_001=--direct --shape 320x240 --fps 16.67
 ```
 
 This is the normal place for anything in this document, because these
@@ -160,7 +171,7 @@ files combine.
 **By hand**, for a one-off encode or to cut a clip from a longer source:
 
 ```
-tools\vidtools\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
+tools\vidtools\videnc.exe source.mp4 VIDEO\001.vid --direct --shape 320x240 --fps 16.67 --start 00:01:12 --duration 8
 ```
 
 Keep the source file outside `VIDEO\` when you do this. The build
@@ -260,36 +271,48 @@ route - it looks the same and costs roughly three times the card space.
 ### Preset 2 - Full-screen action
 
 **For:** detailed sustained motion filling the whole frame - sea,
-weather, falling snow, crowds, smoke - where you want the picture at
-full size and can accept less fluid motion.
+weather, falling snow, crowds, smoke - where you want a big picture and
+can accept less fluid motion.
 
 ```
-SET VIDOPTS_001=--direct --shape full --fps 12.5
+SET VIDOPTS_001=--direct --shape 320x240 --fps 16.67
 ```
 
-For a 16:9 source, use its own shape instead - the half-rate envelope
-has room for every named shape:
+For a 16:9 source, use its own shape instead. At 320x192 the picture
+plays at the full 25 frames a second:
 
 ```
-SET VIDOPTS_001=--direct --shape 16:9 --fps 12.5
+SET VIDOPTS_001=--direct --shape 16:9 --fps 25
 ```
 
-**You get:** the full 320x256 screen with no banding whatsoever, every
-frame pixel-exact. On the footage this route is meant for, the
-difference is not subtle - detail that the compressed route turns into
-flat stripes stays as detail.
+320x192 at 25 fps sits at the edge of what the card delivers: the
+encoder warns that the clip is at the edge of rate, and footage whose
+scene cuts come close together is encoded with mono sound at this size
+(see [Mono sound](#mono-sound)).
+
+Or keep the height and narrow the picture to 256 pixels, with black at
+the sides, for a fifth less card space:
+
+```
+SET VIDOPTS_001=--direct --shape 256x240 --fps 16.67
+```
+
+**You get:** a 320x240 picture - the full width and all but 16 lines of
+the height - with no banding whatsoever, every frame pixel-exact. On
+the footage this route is meant for, the difference is not subtle -
+detail that the compressed route turns into flat stripes stays as
+detail.
 
 **You pay:** two things, both real. About twice the card space of the
-compressed version of the same clip, and half the motion rate - 12.5
-frames a second instead of 25. Motion is noticeably less smooth. It is
-still a clean cadence, so there is no stutter or beat on top of the
-reduced rate, but it reads as half-rate and you should look at it before
-committing.
+compressed version of the same clip, and, at 320x240 and 256x240,
+two-thirds of the motion rate - 16.67 frames a second instead of 25.
+The 16:9 shape keeps the full 25. Each picture is held for
+three display frames, so the cadence is even and there is no stutter or
+beat on top of the reduced rate, but motion is noticeably less smooth,
+and you should look at it before committing.
 
-Expect the encoder to print an at-capacity warning about wire
-utilization on this preset. Full-screen uncompressed sits at the top of
-what the card can carry, by design; that is what makes it possible at
-all. It plays at rate on a healthy, defragmented card.
+The whole 320x256 screen also plays at this rate, as
+`--direct --shape full --fps 16.67`, closer to the limit than 320x240.
 
 ### Preset 3 - Action at full rate
 
@@ -297,26 +320,96 @@ all. It plays at rate on a healthy, defragmented card.
 matters more than picture size.
 
 ```
-SET VIDOPTS_001=--direct --shape 256x167
+SET VIDOPTS_001=--direct --shape 256x192
 ```
 
 For a cinematic wide framing at full width instead:
 
 ```
-SET VIDOPTS_001=--direct --shape 320x105
+SET VIDOPTS_001=--direct --shape 320x160
+```
+
+For a taller picture at 25 fps:
+
+```
+SET VIDOPTS_001=--direct --shape 280x224
 ```
 
 **You get:** the full 25 fps, no banding, every frame pixel-exact.
 Motion looks the way it looked in the source.
 
-**You pay:** the picture is smaller. `256x167` plays in the bordered
-256-wide frame; `320x105` uses the full width but is heavily
-letterboxed. There is no full-screen version of this preset - 25 fps
+**You pay:** the picture is smaller. `256x192` plays in the bordered
+256-wide frame; `320x160` uses the full width but is letterboxed;
+`280x224` has black at the sides as well as above and below. There is
+no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.
 
-These two shapes are the most that fits at 25 fps with stereo audio. If
-you ask for more, the encoder refuses and prints the exact sizes that do
-fit for your chosen width - use one of those.
+`280x224` sits at the edge of what the card delivers. The encoder
+prints a warning that the clip is at the edge of rate, and a clip that
+cuts between scenes very quickly at this shape is given mono sound
+(see [Mono sound](#mono-sound)).
+
+### Mono sound
+
+When stereo sound would not keep up at a shape and frame rate, the
+encoder gives an uncompressed clip mono sound instead - one channel,
+played from both speakers - and prints a note saying so. `320x200` at 25 fps is such a shape. To choose for yourself, add
+`--direct-sound stereo` (the encoder refuses the clip if stereo does not
+keep up) or `--direct-sound mono` (mono even where stereo would fit,
+which leaves more room). A stereo source is mixed down to mono for you.
+
+Each scene cut costs the player a little extra loading time. With the
+sound left on `auto`, a clip whose scene cuts come too close together
+for stereo at its size is encoded with mono sound, and the encoder
+prints a warning naming the frame where stereo would fall behind.
+Choosing `--direct-sound stereo` keeps stereo; the encoder warns that
+the picture may stutter briefly after those cuts and encodes it anyway.
+
+Mono sound plays about 0.4 percent slower than stereo, so it sounds a
+shade flat - far less than a semitone - and a mono clip runs about 0.4
+percent longer. The picture keeps pace with the sound, so the two never
+drift apart.
+
+### Uncompressed limits and your card
+
+The tallest uncompressed picture that plays at 25 fps, for each width:
+
+| Width | Stereo sound | Mono sound |
+| ----- | ------------ | ---------- |
+| 320 | 195 lines | 208 lines |
+| 280 | 224 lines | 237 lines |
+| 256 | 244 lines | 256 lines |
+
+At 16.67 or 12.5 fps every shape up to the full 320x256 plays. Near the
+top of each limit the encoder prints a warning that the clip is at the
+edge of rate; it still plays at rate. Ask for more and the encoder
+refuses, naming the tallest picture at your width and the next lower
+frame rate at which your shape plays.
+
+**Encode the picture at its own height.** A widescreen clip that is
+320x136 should be encoded as 320x136, not padded with black bars to
+320x192 or any other taller size. Uncompressed video stores and loads
+the bars like any other pixels, and the player centres a shorter
+picture on the screen by itself. At 25 fps with stereo sound, 320x136
+costs 45,056 bytes a frame, about 1.13 MB per second, and uses about 71
+percent of the time the card has to deliver each frame. The same clip
+padded to 320x192 costs 62,976 bytes a frame, about 1.57 MB per second,
+and uses about 97 percent - so close to the 195-line limit that the
+encoder warns it is at the edge of rate, for no extra picture.
+
+These limits were measured on one Next with one SD card. Cards differ a
+little in how fast they hand over data, so a clip right at a limit may
+run late on a slower card - the motion stalls or the sound breaks up.
+If that happens, use a smaller shape or a lower frame rate, or tell the
+encoder about your card with `--direct-transport-factor`: `1.05` says
+your card takes 5 percent longer per byte than the measured one, and
+every limit moves down to match. The default is 1.00.
+
+**Stall budget.** Now and then a card pauses briefly before handing
+over the next block of a file. `--stall-budget measured` makes the
+encoder allow, on every frame, for the longest such pause measured on
+the bench card. That pause was a single short wait, so the option moves
+the limits by less than a line; it is off by default.
 
 ### Preset 4 - Grainy or noisy source
 
@@ -401,7 +494,7 @@ something away.
    4).
 
 4. **`--fps 12.5`.** Halves the motion rate and gives every remaining
-   frame twice the room. The same trade Preset 2 makes, on the
+   frame twice the room. The same kind of trade Preset 2 makes, on the
    compressed route.
 
 5. **The uncompressed route** - Preset 2 or Preset 3. If the clip is
@@ -424,10 +517,13 @@ The encoder works out the right value for each clip and prints it. See
 50 Hz, so only a rate that divides 50 evenly gives frames that each
 occupy a whole number of display frames - anything else beats against
 the 50 Hz composite and shows it. 25 is the default and there is no
-quality to be won by nudging it. The one alternative worth considering
-is 12.5, which also divides 50 evenly and hands every frame twice the
-room: half the motion rate, bought deliberately, for a demanding clip
-that cannot be made to look right at 25.
+quality to be won by nudging it. Two alternatives are worth
+considering, and both hold each picture for a whole number of display
+frames: 16.67, three each, which gives every frame half as much room
+again and is what lets the uncompressed route show a near full-screen
+picture (Preset 2); and 12.5, four each, which hands every frame twice
+the room: half the motion rate, bought deliberately, for a demanding
+clip that cannot be made to look right at 25.
 
 **There is a floor.** One frame may carry at most 3072 audio bytes, so
 15625 Hz stereo needs 10.17 fps or more. The encoder refuses an encode
@@ -456,17 +552,20 @@ one try `--retime drop`.
 
 ## 6. Space on the card, and how long a clip can be
 
-**Uncompressed costs about 1 MB for every second of screen time -
-roughly 60 MB a minute** at full screen. A smaller shape or a lower
-frame rate costs less, roughly in proportion to the pixels sent each
-second.
+**Uncompressed costs 1 to 1.6 MB for every second of screen time -
+roughly 60 to 100 MB a minute** at the preset shapes. A smaller shape or
+a lower frame rate costs less, roughly in proportion to the pixels sent
+each second. A frame is its sound and its picture; the first frame of
+each scene also carries that scene's palette, 512 bytes more.
 
-| Preset | Shape and rate | Card space |
-| ------ | -------------- | ---------- |
-| 2 | 320x256 at 12.5 fps | about 1.06 MB per second |
-| 2 | 320x192 at 12.5 fps | about 0.81 MB per second |
-| 3 | 256x167 at 25 fps | about 1.11 MB per second |
-| 3 | 320x105 at 25 fps | about 0.88 MB per second |
+| Preset | Shape and rate | Per frame | Card space |
+| ------ | -------------- | --------- | ---------- |
+| 2 | 320x240 at 16.67 fps | 78,848 bytes | about 1.31 MB per second |
+| 2 | 320x192 at 25 fps | 62,976 bytes | about 1.57 MB per second |
+| 2 | 256x240 at 16.67 fps | 63,488 bytes | about 1.06 MB per second |
+| 3 | 256x192 at 25 fps | 50,688 bytes | about 1.27 MB per second |
+| 3 | 320x160 at 25 fps | 52,736 bytes | about 1.32 MB per second |
+| 3 | 280x224 at 25 fps | 64,512 bytes | about 1.61 MB per second |
 
 **Compressed clips are typically a third to a half the size of the same
 footage uncompressed**, and quiet material is far cheaper still - it
@@ -475,7 +574,7 @@ encoder prints the finished size, and the `.vid` file in `VIDEO\` is the
 file that goes on the card.
 
 Budget accordingly. Three uncompressed cutscenes of twelve seconds each
-is most of 40 MB - fine on a modern card, but it is the largest thing in
+is 40 to 60 MB - fine on a modern card, but it is the largest thing in
 most games by a wide margin, and it is worth deciding early which scenes
 deserve it.
 
@@ -484,8 +583,9 @@ deserve it.
 A video file can be up to **256 MB**, and no clip may run past **65535
 frames** - roughly 43 minutes at 25 fps, 87 at 12.5. Divide 256 MB by
 the rate in the table above for the longest uncompressed clip each shape
-can carry: **about four minutes at full screen**, and longer at the
-smaller shapes. Compressed clips run at a much lower byte rate, so the
+can carry: **between about three and four minutes** at the preset
+shapes, and longer at smaller ones. Compressed clips run at a much lower
+byte rate, so the
 same 256 MB carries several times as much of them - usually ten minutes
 or more, and the frame count only becomes the limit on very cheap
 material.
@@ -507,9 +607,9 @@ rate is being resampled badly. Check section 5 - if you have set
 `--retime mci` on slow material.
 
 **Motion that steps rather than flows, but at a steady even cadence.** A
-half-rate encode looks like this and is meant to - Preset 2 trades
-motion for picture size on purpose. If you did not ask for `--fps 12.5`,
-check that no `VIDFPS` or `VIDOPTS` line in your `<GAME>.CFG` or
+16.67 or 12.5 fps encode looks like this and is meant to - Preset 2
+trades motion for picture size on purpose. If you did not ask for a
+lower `--fps`, check that no `VIDFPS` or `VIDOPTS` line in your `<GAME>.CFG` or
 `CONFIG.local.BAT` is setting it for every clip.
 
 **The whole clip runs slow, with the audio popping.** That is a 60Hz
@@ -521,7 +621,8 @@ card, not the encode - a fragmented file cannot be read fast enough to
 keep up. Defragment the card, or copy the file onto a freshly formatted
 one, and try again. If it survives that, and the clip is uncompressed,
 it is sitting at the top of what your card can deliver: move to a
-smaller shape or to the compressed route.
+smaller shape or to the compressed route, or see
+[Uncompressed limits and your card](#uncompressed-limits-and-your-card).
 
 **Gradients step visibly - skies, fades, soft lighting.** Raise the
 dither with `--dither 0.8`. If instead what you are seeing is the dither
@@ -552,8 +653,20 @@ If the encoder itself refuses to make the file, it says why and names
 the remedies in the same breath - it will not produce a video that
 cannot play. The two you are most likely to meet are a frame rate below
 the audio floor (raise `--fps`) and an uncompressed shape that will not
-fit at rate, which prints the exact list of shapes that do fit at your
-chosen width. Take one from that list.
+play at rate, which names the tallest picture that does play at your
+width, with stereo and with mono sound, and the next lower frame rate at
+which your shape plays. Take one of those.
+
+An uncompressed clip can also be refused for how often it cuts. The
+first frame of every scene carries that scene's palette, which takes the
+player a little longer, and the player makes the time up over the
+frames that follow. A clip whose scenes change faster than that at its
+shape, even with mono sound, is refused (with the sound left on `auto`,
+mono is used whenever it plays the cuts and stereo does not; see
+[Mono sound](#mono-sound)). The message names the frame where it falls
+furthest behind (counting the first frame as 1) and, where there is
+one, the tallest height at your width that plays those cuts. A lower
+frame rate also helps.
 
 ## 9. Encoding tools
 
@@ -587,7 +700,7 @@ document uses:
 
 | Option | What it does |
 |---|---|
-| `--shape S` | A preset name or `WIDTHxHEIGHT` (width 256 or 320). Default `full`. |
+| `--shape S` | A preset name or `WIDTHxHEIGHT` (width 256 or 320; with `--direct`, any width 4 to 320 in steps of 4). Default `full`. |
 | `--aspect A` | Derive a free height from a displayed aspect ratio instead; pairs with `--width` (default 320) and wins over `--shape`. |
 | `--fps N` | Frames per second. Default 25. |
 | `--retime M` | How a source at another rate is resampled: `blend` (default), `drop` or `mci`. |
@@ -595,6 +708,9 @@ document uses:
 | `--tile-slack F` | Off by default. On a title with sustained motion, `--tile-slack 0.5` lets the encoder work a row or column at a time instead of four when the budget runs out. Helps pans and zooms, does nothing on quiet material. |
 | `--prefilter` | Light temporal denoise before encoding (Preset 4). Takes an ffmpeg filter string if you want to name your own. |
 | `--direct` | The uncompressed route (Preset 2 and Preset 3). |
+| `--direct-sound M` | Sound of an uncompressed clip: `auto` (default - stereo when it keeps up, else mono, with a warning when the clip's scene cuts are what needs mono), `stereo` (warns, but keeps stereo, when scene cuts come too close together) or `mono`. See [Mono sound](#mono-sound). |
+| `--direct-transport-factor F` | Moves the uncompressed limits for a card slower or faster than the one they were measured on. Default 1.00. |
+| `--stall-budget M` | `off` (default) or `measured`: allow for the bench card's longest pause on every uncompressed frame. |
 | `--start HH:MM:SS`, `--duration S` | Cut a clip out of a longer source. |
 
 [Video format](reference/video-format.md) lists the full set, and
@@ -607,6 +723,19 @@ Per-clip tuning has a GUI too: run `VIDTUNE.BAT`. Pick a clip, preview a
 segment, adjust shape, frame rate, dither and the other knobs above,
 encode and accept - the settings land in `VIDOPTS_NNN` in your game's
 `<GAME>.CFG`, so the next build reproduces the same encode.
+
+The tuner opens a clip that has no settings of its own on **Action at
+full rate** (256x192 at 25 fps, uncompressed), the first entry in its
+route list, because it gives the cleanest picture. It costs about 1.27
+MB of card space for every second, so one clip at that size can run
+about three and a half minutes at most. For long or mostly still
+footage pick **Long cutscene** or **Quiet scene** instead. The size line
+under the route shows what the clip will cost. Opening a clip saves
+nothing and does not mark it `edited`: until you change a setting or
+pick a route and then accept it, a clip with no settings still builds
+with the compressed kit defaults. Accept a clip on **Quiet scene** and
+the tuner remembers that choice, so the clip opens on it next time;
+Revert forgets it again.
 
 A clip whose settings you have changed but not saved shows as `edited`
 in the clip list. Revert throws those changes away and goes back to

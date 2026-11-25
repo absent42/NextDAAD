@@ -1,0 +1,24 @@
+date: 2026-11-25
+board: ks3
+leg: legRAW1C (legs A and B)
+stamp: 14c9f79 (clean tree, both legs)
+build: leg A -BenchQuiet (DEBUG plus NXB_QUIET); leg B DEBUG
+nex_sha256: leg A eb9dcd5df407dc923254b66c339d48a9d3adde9a7acc2cf9ce162f26b1ccab81; leg B 4f812e9c757385b763afb6d8df26bb44a8a178ed406a8032371bd76934672486
+game_ddb_sha256: be026add12a64cfeba0d36ea2f0fe557b926fd796a18e3ede4969aabd031ef53 (both legs)
+core: 3.03.03 as stated for the sitting; no log row reads the core version (TCHK read NR $07 back as $37 on four captures)
+board_id: not recorded
+sd_folders: LEGRAW1CA (leg A), LEGRAW1CB (leg B)
+logs: NXBENCH.TXT (leg A, 29 captures: NXBW on 060-072, 074, 088, 089; NXBM on 066-071, 074, 088; NXBD on 010; NXBP on 060, 063, 068, 088), sha256 55261ccdf0c9a9fdd37a5d0990c7eb289c34f56bc27704d4a28b22c3c560ae4a; NXPLAY.TXT (leg B, 22 captures, steps B.3 to B.26 in order; B.10 MCTC and B.14 MDMA play no clip and write no capture), sha256 e8819d29263d2aae532318659395eb373f8d7d0170858cf68bcb4e8a8cc350ae
+nr: not recorded in this sitting
+timing_from: raw_fit BENCH_NR (+3, 50 Hz, 311 x 1824 T); NXBD on 010 within 0.158 percent of sitting 1b row by row
+card: not recorded
+card_slot: not recorded
+display socket: not recorded
+legs: A and B returned 2026-11-25, one sitting
+exceptions (owner's note, in full):
+  B.19 (076, GO, mono DMA; pitch of the film soundtrack against the CTC play B.12): "same"
+  B.20 (078, GO, mono DMA; pitch of the two tones against the CTC play B.13): "same"
+  nothing else written down. The sheet asked for exceptions only, so: none reported - no LOG ERR, blip, hang, read-back stuck, NOTURBO, repeated or skipped step; no click at the ring wrap, no one-speaker sound, no missing, torn, shifted or striped picture, no buzz or hum. These are absences of a note, not observations.
+log against the sheet: B.23 asked for SPACE when the banner read 00:00:03; capture 19 (068, mono DMA) logged a complete play, FRM 00FA/00FA, PLAY 01F0. No note was written for that step.
+picture and sound remarks: none beyond the two pitch words
+ingest: by hand in the results folder shape, as sitting 1b; playback.md from tests/core303/playlog.py; report.md's second half from tests/raw_fit.py

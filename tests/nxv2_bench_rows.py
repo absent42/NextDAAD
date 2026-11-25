@@ -14,7 +14,8 @@ tables define them: each row carries its own explicit kernel-select value
 (thr) for its kind, so the bench measures a fixed select value directly
 instead of depending on whatever NXV2_COPY_DMA_MIN or NXV2_RUN_DMA_MIN
 currently ships. SESSION_TABLES holds the session modes that ride a
-staged clip (DS1/REAL/SYN/SYS, verbs NXBD/NXBR/NXBQ/NXBY) the same way.
+staged clip (DS1/REAL/SYN/SYS/RW1/RD1/RT1, verbs NXBD/NXBR/NXBQ/NXBY/NXBW/NXBM/NXBP) the
+same way.
 """
 # Bench Next machine timing: +3, 311 lines x 1824 T (28 MHz) per field.
 # Every row and shipping coefficient uses this scale.
@@ -1062,20 +1063,132 @@ BENCH_TABLES = {
 # (tag, kind, reps, frame, preset, site1, site2), a site = (offset, bytes).
 SESSION_KINDS = ("id", "ring", "remn", "scan", "sweep", "frame", "aud", "pace",
                  "loop", "arm", "disarm", "prod", "dsweep", "dsblk", "dskip",
+                 "rframe", "rsweep", "rarm", "rblk", "rhist", "spin", "armold",
+                 "dcopy", "mld", "dspin", "mgo", "msweep", "mcnt", "dhist", "rsum", "mptr",
+                 "mtck", "moff", "tchk", "tspin", "tblk", "tsum",
                  "synth", "synth_nocall")
-SESSION_SILENT = ("arm", "disarm", "dskip")
-SESSION_REPS = ("frame", "aud", "pace", "prod", "dsblk")   # reps >= 1
+SESSION_SILENT = ("arm", "disarm", "dskip", "rarm", "armold", "mld", "mgo", "moff")
+SESSION_ARMS = ("arm", "rarm", "armold")              # kinds that start CTC 0
+SESSION_REPS = ("frame", "aud", "pace", "prod", "dsblk",
+                "rframe", "rsweep", "rblk", "rhist", "spin",
+                "dcopy", "dspin", "msweep", "dhist", "rsum", "mptr", "mtck",
+                "tchk", "tspin", "tblk", "tsum")               # reps >= 1
 SESSION_DECODE = ("scan", "sweep", "frame", "loop", "dsweep")  # thr = COPY select
 SESSION_SYNTH = ("synth", "synth_nocall")
-SESSION_DIRECT = ("dsweep", "dsblk", "dskip")        # direct-serve only
+# Raw direct sessions only (mode 5): frames and sweeps (feed + raw decode), the arm
+# that primes HL', card rows (rblk 0 sector, 1 column split; rhist), the spin
+# loop, the arm that installs the old stereo handler.
+SESSION_RAW = ("rframe", "rsweep", "rarm", "rblk", "rhist", "spin", "armold")
+# RD1 (mode 6, raw mono clips): the zxnDMA sound path. dcopy 256-byte DMA copies; mld the
+# sound program loaded and idle, mgo its enable, moff the teardown (param 1: without the
+# prescaler byte, so the reset alone clears it); dspin / msweep / dhist a spin, frames and
+# binned sectors with the play pointer counted at every rep; mcnt that count; rsum sectors
+# summed; mptr raw pointer reads; mtck raster wraps against frameCounter.
+SESSION_RD = ("dcopy", "mld", "dspin", "mgo", "msweep", "mcnt", "dhist", "rsum", "mptr",
+              "mtck", "moff")
+# RT1 (mode 7, raw clips): NR $07 bit 2. tchk the read-back and a spin at both settings;
+# tspin a counted spin (param 1: in turbo); tblk a sector (param 1: in turbo); tsum sectors
+# summed (param bit 0: the open in turbo; 2, 3: the slide in turbo; 1: a slow loop in turbo).
+SESSION_RT = ("tchk", "tspin", "tblk", "tsum")
+SESSION_RAW += SESSION_RD + SESSION_RT
+SESSION_RAW_CARD = ("rblk", "rhist", "dhist", "rsum", "tblk", "tsum")
+SESSION_RAW_FRAMES = ("rframe", "rsweep", "msweep")   # reps frames off the wire
+SESSION_UNTIMED = ("mcnt",)                           # a print of the row before: no twin
+# Their O on silicon: RW1_WALK_O marks a run walk (CMD12, CMD18, first token) inside the
+# row's window (nxb_rw_mark); such a row's T is not a figure and is re-run, never fitted.
+SESSION_RW_MARKED = ("rframe", "rsweep", "rblk", "rhist", "msweep", "dhist", "rsum", "tblk",
+                     "tsum")
+RW1_WALK_O = 1
+SESSION_DIRECT = ("dsweep", "dsblk", "dskip") + SESSION_RAW   # direct-serve only
 SESSION_ROW_LEN = 10
 SESSION_SYNTH_LEN = 25
-SESSION_MODES = {"DS1": 1, "REAL": 2, "SYN": 3, "SYS": 4}   # flags+248
+SESSION_MODES = {"DS1": 1, "REAL": 2, "SYN": 3, "SYS": 4, "RW1": 5, "RD1": 6,
+                 "RT1": 7}                                            # flags+248
 # The deliveries each mode runs on (nxbSessDir's mask); anything else prints
-# NXB SESSION.
+# NXB SESSION. DS1 also refuses a raw clip, RW1 and RT1 anything but a raw clip and RD1
+# anything but a raw one-channel clip.
 SESSION_DELIVERY = {"DS1": ("direct",), "REAL": ("resident", "streaming"),
-                    "SYN": ("resident",), "SYS": ("streaming",)}
+                    "SYN": ("resident",), "SYS": ("streaming",), "RW1": ("direct",),
+                    "RD1": ("direct",), "RT1": ("direct",)}
 NXB_DS_REPS = 128                                    # blocks per DT row
+NXB_RW_REPS = 128                                    # sectors per RSEC/RCOL row
+NXB_RW_HREPS = 2048                                  # sectors per histogram row
+NXB_RW_SREPS = 512                                   # spin reps
+NXB_RW_SPIN = 2000                                   # count-loop passes per spin rep
+NXB_RW_MIN = 5000                                    # a card row needs this many blocks left
+NXB_HIST_MAX = 4                                     # #HIST rows the log step carries
+NXB_RD_CREPS = 128                                   # RD1: 256-byte DMA copies per copy row
+NXB_RD_SUMREPS = 4096                                # sectors MSUM sums
+NXB_RD_PTRREPS = 65535                               # raw pointer reads
+NXB_RD_TICKS = 250                                   # raster wraps MTCK waits
+NXB_RT_TREPS = 64                                    # RT1: spin reps at each setting in TCHK
+NXB_RT_REPS = 512                                    # sectors per NSEC/TSEC row
+# T per rep inside an RW1 row's window that playback never runs (unarmed, base T), for
+# the gate fit to subtract; vidraw_contract test_rw_harness pins both to the image.
+RW_CARD_HARNESS_T = 88       # RSEC/RCOL/RHST rep over the schedule's call vr_sector_n / slide
+RW_FRAME_HARNESS_T = 220     # RFR0/RSWP/ARSW rep over vid_run's stage / pump / decode calls
+RW_FRAME_HARNESS_T_1B = 210  # sitting 1b's images: nxb_rw_feed read HL' without vid_raw_rdv
+# RD1's counted reps, the pointer read on the DMA (vid_dma_rd_hl, one sequence), pinned by
+# vidraw_contract test_rd_harness: the spin rep over nxb_rw_spin's; the histogram rep (MHST
+# and RHST run the same bytes) over the schedule's sector as RW_CARD_HARNESS_T; the frame
+# rep over vid_run's calls on the DMA path; what nxb_rd_first adds to a row's first rep.
+# Both rows of a pair carry them, so a steal from a pair's difference needs none of them.
+RD_SPIN_HARNESS_T = 322
+RD_HIST_HARNESS_T = 492
+RD_FRAME_HARNESS_T = 633
+RD_FIRST_T = 211
+# RT1's NSEC/TSEC rep over the schedule's sector at the session's speed (test_rt_harness):
+# RW_CARD_HARNESS_T, three nextreg n,n, a call for RSEC's jp, the tail's jp and ret.
+RT_CARD_HARNESS_T = 175
+# T from call vid_aud_pump to its return in a raw session (vid_raw_pump, the schedule page's
+# pump), Release instructions, by (sectors, real sound bytes): a CRC due, the token on poll 2,
+# no ring wrap, no walk. vidraw_contract test_pump_t pins it to the image.
+RAW_PUMP_T = {(3, 1250): 26203, (2, 625): 17757, (3, 1024): 26045}
+# CTC 0's raw handlers, T an interrupt on the common path: the IM2 acknowledge (19) and the
+# handler through its reti. The pointer read through vid_raw_rdv (call, jp, routine): HL'
+# (vid_raw_rd_hl) or the DMA's port A address in one sequence (vid_dma_rd_hl).
+# vidraw_contract test_dbg_work pins both.
+RAW_HANDLER_T = {"stereo": 104, "mono": 82}
+RAW_PTR_T = {"hlp": 74, "dma": 165}
+# Plain DEBUG (not -BenchQuiet) base T a raw session runs beyond Release's, from the emitted
+# bytes (test_dbg_work): a PLAY divider arm that does not fire (vid_pace_poll's); vid_rl_poll
+# when one fires (its call z taken, over not taken); a sector open's divider after the
+# token, pixel and sound sectors alike (ld d,0 / call vid_dst_norm_flat, its arm inside);
+# vid_sd_tok_h's poll counter, only on a wait past the open's own loop; call vid_play_frame;
+# call vid_dbg_late and call vid_dbg_urun (with its vid_pace_poll) on a late frame, the
+# pointer on HL' or on the DMA.
+RAW_DBG_T = dict(arm=40, rl_poll=231, sector=86, token=177, play_frame=179, urun=412,
+                 urun_dma=503, late=174)
+# The fast frame program (page B, a frame inside its run), unarmed base T from emitted
+# bytes, pinned by vidraw_contract test_fast_t: an inline sector open (sectors 2..n, one $FF,
+# the token on poll 2), a slide call's call and ret, a column end, a page end; the dispatcher,
+# both page switches and VR_TAILA's ret a frame; the first sector's call vr_sector (a CRC due).
+VR_OPEN_T = 86
+VR_READ_T = 27
+VR_HOP_T = 11
+VR_PAGE_T = 32
+# VR_FAST_T counts VR_TAILA's ret, which replaces the classic schedule's own: a fast frame
+# costs VR_FAST_NET_T more than the classic; a frame crossing its run pays VR_CROSS_T (the
+# dispatcher) before VR_CLASSIC.
+VR_FAST_T = 110
+VR_FAST_NET_T = 100
+VR_CROSS_T = 30
+VR_FIRST_T = 152
+# vid_raw_frame's own T on a pixels-only frame inside its run, and VR_TAILA's pad read (its
+# ld hl and the slide call less the data) when the last sector has a pad.
+VR_FRAME_T = 401
+VR_PAD_T = 37
+# The column train (raw_train, raw_variant): the rule counts an open at VR_OPEN_BUDGET bytes in
+# every build and fits period and driver in VR_TRAIN_ROOM (VR_BEND - DATA_WINDOW). Its T: a
+# pass's call and ret, the nop before an in-period open, a page check not taken / taken (its
+# VR_BPG page end), the partial pass's two patches.
+VR_OPEN_BUDGET = 24
+VR_TRAIN_ROOM = 8156
+VR_PASS_T = 27
+VR_TPAD_T = 4
+VR_CHK_T = 18
+VR_CHK_PAGE_T = 67
+VR_PATCH_T = 40
 NOSITE = (0, ())
 
 SESSION_TABLES = {
@@ -1168,7 +1281,71 @@ SESSION_TABLES = {
         ("ARM2", "arm", 0, 0, 0, True),
         ("APRD", "prod", 0, 128, 0, True),
     ),
+    "RW1": (    # NXBW - nxbSesRw1: raw frames, sweeps, card rows, handler spins
+        ("IDEN", "id", 0, 0, 0, False),
+        ("RFR0", "rframe", 0, 1, 0, False),
+        ("RSWP", "rsweep", 0, 16, 0, False),
+        ("ARM1", "rarm", 0, 0, 0, False),
+        ("ARSW", "rsweep", 0, 16, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+        ("RSEC", "rblk", 0, NXB_RW_REPS, 0, False),
+        ("RCOL", "rblk", 1, NXB_RW_REPS, 0, False),
+        ("RHST", "rhist", 0, NXB_RW_HREPS, 0, False),
+        ("RH39", "rhist", 1, NXB_RW_HREPS, 0, False),     # poll 1 39 T after CRC 2
+        ("SPN0", "spin", 0, NXB_RW_SREPS, 0, False),
+        ("ARM2", "rarm", 0, 0, 0, False),
+        ("ARSE", "rblk", 0, NXB_RW_REPS, 0, False),
+        ("ARCO", "rblk", 1, NXB_RW_REPS, 0, False),
+        ("AHST", "rhist", 0, NXB_RW_HREPS, 0, False),
+        ("AH39", "rhist", 1, NXB_RW_HREPS, 0, False),
+        ("ASPN", "spin", 0, NXB_RW_SREPS, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+        ("ARMO", "armold", 0, 0, 0, False),
+        ("OSPN", "spin", 0, NXB_RW_SREPS, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+    ),
+    "RD1": (    # NXBM - nxbSesRd1: mono sound from the zxnDMA (frame rows before card rows)
+        ("IDEN", "id", 0, 0, 0, False),
+        ("CPY0", "dcopy", 0, NXB_RD_CREPS, 0, False),
+        ("RFR0", "rframe", 0, 1, 0, False),
+        ("MLD1", "mld", 0, 0, 0, False),
+        ("SPN0", "dspin", 0, NXB_RW_SREPS, 0, False),
+        ("MGO1", "mgo", 0, 0, 0, False),
+        ("MRSW", "msweep", 0, 16, 0, False),
+        ("MCN1", "mcnt", 0, 0, 0, False),
+        ("MSPN", "dspin", 0, NXB_RW_SREPS, 0, False),
+        ("MCN2", "mcnt", 0, 0, 0, False),
+        ("MHST", "dhist", 0, NXB_RW_HREPS, 0, False),
+        ("MCN3", "mcnt", 0, 0, 0, False),
+        ("MSUM", "rsum", 0, NXB_RD_SUMREPS, 0, False),
+        ("MPTR", "mptr", 0, NXB_RD_PTRREPS, 0, False),
+        ("MTCK", "mtck", 0, NXB_RD_TICKS, 0, False),
+        ("MOF1", "moff", 1, 0, 0, False),                 # the reset alone clears the prescaler
+        ("MCPY", "dcopy", 0, NXB_RD_CREPS, 0, False),
+        ("MLD2", "mld", 0, 0, 0, False),
+        ("RHST", "dhist", 0, NXB_RW_HREPS, 0, False),
+        ("MOF2", "moff", 0, 0, 0, False),
+    ),
+    "RT1": (    # NXBP - nxbSesRt1: NR $07 bit 2 (turbo); the card rows read no frames
+        ("IDEN", "id", 0, 0, 0, False),
+        ("TCHK", "tchk", 0, NXB_RT_TREPS, 0, False),
+        ("SPN0", "tspin", 0, NXB_RW_SREPS, 0, False),
+        ("TSPN", "tspin", 1, NXB_RW_SREPS, 0, False),
+        ("ARM1", "rarm", 0, 0, 0, False),
+        ("TCTC", "tspin", 1, NXB_RW_SREPS, 0, False),
+        ("TCN1", "mcnt", 0, 0, 0, False),
+        ("DSRM", "disarm", 0, 0, 0, False),
+        ("NSEC", "tblk", 0, NXB_RT_REPS, 0, False),
+        ("NSM0", "tsum", 0, 1024, 0, False),
+        ("TSTR", "tsum", 2, 2048, 0, False),
+        ("TSLO", "tsum", 1, 1024, 0, False),
+        ("TSUM", "tsum", 3, 4096, 0, False),
+        ("TSEC", "tblk", 1, NXB_RT_REPS, 0, False),
+    ),
 }
+# RD1 rows that run between MGO and MOFF (the DMA playing) and their idle twins (the same
+# rep with the DMA loaded and not enabled, or after the teardown).
+SESSION_DMA_PAIRS = {"RD1": (("SPN0", "MSPN"), ("RHST", "MHST"), ("CPY0", "MCPY"))}
 
 # (unarmed, armed) twins per session table: the same row, run before and
 # after ARM. Every other printed row runs unarmed.
@@ -1179,6 +1356,9 @@ SESSION_ARMED_PAIRS = {
              ("LOOP", "ALOP"), ("PROD", "APRD")),
     "SYN": (("K43K", "AK43"), ("FE00", "AFE0"), ("C4K0", "AC4K")),
     "SYS": (("K24K", "AK24"), ("FE00", "AFE0")),
+    "RW1": (("RSWP", "ARSW"), ("RSEC", "ARSE"), ("RCOL", "ARCO"), ("RHST", "AHST"),
+            ("RH39", "AH39"), ("SPN0", "ASPN"), ("SPN0", "OSPN")),
+    "RT1": (("TSPN", "TCTC"),),
 }
 
 
@@ -1226,6 +1406,210 @@ def direct_frames(name):
     return pos, swept, blocks
 
 
+def rw_walked(name, rows):
+    """Printed rows (tag, O, R, F, D) of a raw table whose O carries the walk mark:
+    the tags to re-run instead of fitting."""
+    marked = {r[0] for r in SESSION_TABLES[name] if r[1] in SESSION_RW_MARKED}
+    return [row[0] for row in rows if row[0] in marked and row[1] == RW1_WALK_O]
+
+
+def raw_blocks(name, frame_blocks, palettes=1):
+    """Blocks a raw table reads off the wire after the header block: its frames
+    (rframe/rsweep reps x frame_blocks, sound and pixel sectors, plus palettes),
+    then each card row's reps and the untimed sector before it (nxb_rw_go).
+    -> (frames, frame blocks, card blocks, the largest card row's need)."""
+    frames = card = need = 0
+    for row in SESSION_TABLES[name]:
+        if row[1] in SESSION_RAW_FRAMES:
+            frames += row[3]
+        elif row[1] in SESSION_RAW_CARD:
+            card += row[3] + 1
+            need = max(need, row[3] + 1)
+    return frames, frames * frame_blocks + palettes, card, need
+
+
+def session_dma(name):
+    """{tag: True when the row runs between MGO and MOFF} for a table."""
+    on, out = False, {}
+    for tag, kind, *_ in SESSION_TABLES[name]:
+        if kind == "mgo":
+            on = True
+        elif kind == "moff":
+            on = False
+        out[tag] = on
+    return out
+
+
+def raw_frame_blocks(w, h, real):
+    """Sectors of one raw frame without a palette: its sound section (real bytes and the
+    tag byte, whole sectors) and its pixels."""
+    return real // 512 + 1 + -(-(w * h) // 512)
+
+
+# The mono clips RD1 runs on (tests/build-tests.ps1 -VidRawBench): clip -> (width, height,
+# sound bytes a frame, frames). One palette sector, frame 0's.
+RD1_CLIPS = {66: (256, 192, 625, 250), 67: (320, 160, 625, 250), 68: (320, 192, 625, 250),
+             69: (280, 224, 625, 250), 70: (320, 240, 937, 167), 71: (256, 240, 937, 167),
+             74: (256, 192, 1024, 153), 88: (256, 192, 1250, 250)}
+# The clips RT1 runs on: clip -> (width, height, sound bytes a frame, frames).
+RT1_CLIPS = {60: (256, 192, 1250, 250), 63: (280, 224, 1250, 250), 68: (320, 192, 625, 250),
+             88: (256, 192, 1250, 250)}
+
+
+def card_rows(name, first):
+    """[(tag, first block, sectors read)] for a table's card rows in order, the wire at file
+    block `first` at the first one: each reads the untimed sector (nxb_rw_go) and its reps."""
+    out = []
+    for row in SESSION_TABLES[name]:
+        if row[1] in SESSION_RAW_CARD:
+            out.append((row[0], first, row[3] + 1))
+            first += row[3] + 1
+    return out
+
+
+def rd1_blocks(clip):
+    """What RD1 reads of an RD1_CLIPS clip, in file blocks (block 0 the header): frames (17:
+    RFR0's frame 0 and MRSW's 1-16), frame_blocks (theirs, frame 0's palette sector
+    included), rows [(tag, first block, sectors)] for MHST, MSUM and RHST, msum (the first
+    of the NXB_RD_SUMREPS sectors MSUM sums), total (the file's blocks) and left {tag: blocks
+    from the row's first to the file's end}."""
+    w, h, real, nframes = RD1_CLIPS[clip]
+    fb = raw_frame_blocks(w, h, real)
+    frames = raw_blocks("RD1", fb)[0]
+    used = frames * fb + 1
+    total = 1 + nframes * fb + 1
+    rows = card_rows("RD1", 1 + used)
+    return dict(frames=frames, frame_blocks=used, rows=rows,
+                msum=dict((t, b) for t, b, _n in rows)["MSUM"] + 1, total=total,
+                left={t: total - b for t, b, _n in rows})
+
+
+def rt1_blocks(clip):
+    """What RT1 reads of an RT1_CLIPS clip: rows [(tag, first block, sectors)] in table
+    order (the wire starts at block 1, frame 0's first sound sector; no frame row runs),
+    total and left as rd1_blocks."""
+    w, h, real, nframes = RT1_CLIPS[clip]
+    total = 1 + nframes * raw_frame_blocks(w, h, real) + 1
+    rows = card_rows("RT1", 1)
+    return dict(rows=rows, total=total, left={t: total - b for t, b, _n in rows})
+
+
+def file_sum(path, first, sectors):
+    """The 32-bit sum of the bytes of `sectors` file blocks from block `first`."""
+    with open(path, "rb") as f:
+        f.seek(first * 512)
+        data = f.read(sectors * 512)
+    if len(data) != sectors * 512:
+        raise ValueError(f"{path}: {sectors} blocks from {first} run past the file's end")
+    return sum(data) & 0xFFFFFFFF
+
+
+def file_clip(path):
+    """(width, height, sound bytes a frame, frames, blocks) of a raw clip file, from its
+    header (bytes 6, 7, 14-16, 17-18, 23-24)."""
+    with open(path, "rb") as f:
+        h = f.read(512)
+        f.seek(0, 2)
+        size = f.tell()
+    if h[:5] != b"NXVID" or not h[12] & 0x10 or size % 512:
+        raise ValueError(f"{path}: not a raw NXV clip")
+    return (h[23] | h[24] << 8, h[7] or 256, h[17] | h[18] << 8,
+            h[14] | h[15] << 8 | h[16] << 16, size // 512)
+
+
+def msum_expected(path):
+    """MSUM's R:F on a clip file: the sum of the sectors it reads after the untimed one."""
+    w, h, real, _n, _blocks = file_clip(path)
+    fb = raw_frame_blocks(w, h, real)
+    first = 1 + raw_blocks("RD1", fb)[1]
+    return file_sum(path, dict((t, b) for t, b, _n in card_rows("RD1", first))["MSUM"] + 1,
+                    NXB_RD_SUMREPS)
+
+
+def rt1_expected(path):
+    """{tag: sum} of RT1's four sum rows on a clip file."""
+    reps = {r[0]: r[3] for r in SESSION_TABLES["RT1"]}
+    return {t: file_sum(path, b + 1, reps[t]) for t, b, _n in card_rows("RT1", 1)
+            if dict((r[0], r[1]) for r in SESSION_TABLES["RT1"])[t] == "tsum"}
+
+
+def raw_x0(shape, w, x0=None):
+    """The left margin in columns the open stages: centred on the 320 surface, 0 on shape 0."""
+    return x0 if x0 is not None else (320 - w) // 2 if shape else 0
+
+
+def raw_train(shape, w, h, x0=None):
+    """The column train's numbers for a raw geometry (h 0 = 256): L, Lp, Cp, passes,
+    partial, c0, m, checks, cols, starts (sector starts in Lp), pe (page ends on period
+    boundaries; one pass: page ends in the frame), patch (total mod Lp when partial, else 0)
+    and bytes (the rule's count: opens at VR_OPEN_BUDGET); None for a flat surface (shape 0, or
+    h 256: no gap between columns), which has no train."""
+    x0 = raw_x0(shape, w, x0)
+    h = h & 0xFF or 256
+    total, c0 = w * h, -x0 & 31
+    if not shape or h == 256:
+        return None
+    g = h & -h
+    big, cp = 512 * h // g, 512 // g
+    lp = min(big, total)
+    passes = -(-total // lp)
+    partial = total % lp != 0 and passes > 1
+    m = min(32, cp)
+    checks = 0 if passes == 1 else sum((j - c0) % m == 0 for j in range(1, cp))
+    cols = lp // h
+    starts = -(-lp // 512)
+    if passes == 1:
+        pe = sum((u - c0) % 32 == 0 for u in range(1, w))
+    else:
+        pe = sum((p * cp - c0) % 32 == 0 for p in range(1, passes))
+    nbytes = (2 * lp + 3 * cols + VR_OPEN_BUDGET * starts + (starts - 1) + 5 * checks + 1
+              + 6 + 3 * (passes - 1) + 7 * pe + (10 if partial else 0) + 3)
+    return dict(L=big, Lp=lp, Cp=cp, passes=passes, partial=partial, c0=c0, m=m,
+                checks=checks, cols=cols, starts=starts, pe=pe,
+                patch=total % lp if partial else 0, bytes=nbytes)
+
+
+def raw_variant(shape, w, h, x0=None):
+    """'train' when raw_train's bytes fit VR_TRAIN_ROOM, else 'inline'."""
+    t = raw_train(shape, w, h, x0)
+    return "train" if t and t["bytes"] <= VR_TRAIN_ROOM else "inline"
+
+
+def raw_frame_overhead(shape, w, h, x0=None):
+    """Unarmed T of a pixels-only raw frame (inside its run, a CRC due, one $FF a wait, the
+    token on poll 2), vid_raw_frame's entry to its return, beyond 16 T a data byte read (the
+    pad included), for the variant raw_variant names."""
+    x0 = raw_x0(shape, w, x0)
+    h = h & 0xFF or 256
+    total, c0 = w * h, -x0 & 31
+    gapped = shape and h < 256
+    unit = h if gapped else 256
+    nsec = -(-total // 512)
+    pages = sum((u - c0) % 32 == 0 for u in range(1, total // unit))
+    t = VR_FRAME_T + VR_FAST_T + VR_FIRST_T + (nsec - 1) * VR_OPEN_T
+    t += VR_PAD_T if total % 512 else 0
+    if raw_variant(shape, w, h, x0) == "inline":
+        cuts = set(range(512, total, 512))
+        if gapped:
+            cuts |= set(range(h, total, h))
+        else:
+            cuts |= set(range((32 - (x0 & 31)) * 256, total, 8192))
+        return t + (len(cuts) + 1) * VR_READ_T + (w - 1 if gapped else 0) * VR_HOP_T \
+            + pages * VR_PAGE_T
+    r = raw_train(shape, w, h, x0)
+    t += r["passes"] * VR_PASS_T + (nsec - r["passes"]) * VR_TPAD_T
+    if r["partial"]:
+        t += VR_PATCH_T
+    t += (w - 1 if r["partial"] else w) * VR_HOP_T
+    if r["passes"] == 1:
+        return t + pages * VR_PAGE_T
+    k = w % r["Cp"] or r["Cp"]                 # the last pass's columns
+    pos = [j for j in range(1, r["Cp"]) if (j - r["c0"]) % r["m"] == 0]
+    run = (r["passes"] - 1) * len(pos) + sum(j < k for j in pos)
+    taken = pages - r["pe"]
+    return t + run * VR_CHK_T + taken * (VR_CHK_PAGE_T - VR_CHK_T) + r["pe"] * VR_PAGE_T
+
+
 def session_rows(name, delivery):
     """The rows one session runs, in order. delivery is "resident",
     "streaming" or "direct" (True/False read as streaming/resident): only a
@@ -1244,7 +1628,7 @@ def session_armed(name, delivery):
     """{tag: True when the row runs after ARM with no DISARM since}."""
     armed, out = False, {}
     for tag, kind, *_ in session_rows(name, delivery):
-        if kind == "arm":
+        if kind in SESSION_ARMS:
             armed = True
         elif kind == "disarm":
             armed = False

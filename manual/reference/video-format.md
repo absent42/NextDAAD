@@ -5,8 +5,10 @@ read into NextDAAD's native NXV v2 `.VID` format: a FLIC-lineage delta
 format (SKIP/RUN/COPY/palette opcodes over the Layer 2 surface,
 keyframes composed hidden and flipped atomically, scene-scoped adaptive
 palettes) with any shape from five presets to free heights, roughly 7:1
-smaller than the old raw format. NXV v2 is the only output; v1 files no
-longer play - re-encode from the original source.
+smaller than the old raw format. With `--direct` it writes the
+uncompressed raw layout instead (see "Raw layout" below): every frame
+whole, read straight from the card to the screen. NXV v2 is the only
+output; v1 files no longer play - re-encode from the original source.
 
 The CLI front-end is `videnc.py`; the pipeline lives beside it in
 `nxv2enc.py` (encoder) and `nxv2dec.py` (the reference decoder - the
@@ -38,7 +40,9 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
 
   --shape S          shape preset (full/16:9/scope/classic/classic-wide,
                      default: full) or an explicit WIDTHxHEIGHT
-                     (width 256 or 320, height 1 to the mode maximum)
+                     (width 256 or 320, height 1 to the mode maximum;
+                     with --direct, width 4-320 in steps of 4 and
+                     height 1-256)
   --aspect A         derive a free height from a displayed aspect ratio
                      (e.g. 2.35 for cinema scope); pairs with --width
                      (default 320); overrides --shape
@@ -92,15 +96,25 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      ordinary delta frames, so a long cut-less clip
                      does not drift. Costs nothing measurable at the
                      default
-  --direct           direct-serve preset (expert): all-literal
-                     raw-equivalent encode served straight from SD -
+  --direct           uncompressed raw layout: every frame whole (sound,
+                     a palette sector on each scene's first frame,
+                     pixels), read straight from SD to the screen -
                      strictly at-rate, see below
+  --direct-surface S Layer 2 surface of a --direct picture: auto
+                     (default; 256 for 256x1-192, else 320), 256 or 320
+  --direct-sound M   sound of a --direct clip: auto (default; stereo
+                     when it holds rate at the shape, else mono with a
+                     note, else refused), stereo or mono (forced;
+                     refused where it does not hold rate)
+  --stall-budget M   off (default) or measured: adds the bench card's
+                     longest block wait to every --direct frame's time
   --direct-transport-factor F
-                     EXPERT override of the direct gate's per-byte
-                     transport factor (default 1.00; the gate's gapped
-                     column and per-frame terms are not scaled by
-                     this flag). For probe encodes against a
-                     hypothesised SD rate. Only meaningful with --direct
+                     EXPERT override of the --direct gate's per-byte
+                     term (default 1.00; the per-sector, column, sound
+                     and per-frame terms are not scaled by this flag).
+                     For a card slower or faster than the bench card,
+                     or probe encodes against a hypothesised SD rate.
+                     Only meaningful with --direct
   --no-merge         disable the gap-merge optimization (a measurement
                      aid - production encodes keep it on)
   --start HH:MM:SS   clip start time (ffmpeg -ss)
@@ -139,17 +153,24 @@ aspect ratio, correcting for the 320-wide mode's non-square pixels
 distorted. Smaller shapes encode to visibly higher quality at the
 same playback budget - see [Video](../video.md) for the guidance page.
 
+With `--direct` a shape may be any width 4-320 that is a multiple of 4
+by any height 1-256. A 256-wide picture up to 192 lines plays on the
+256-wide surface (mode 0); every other shape plays on the 320-wide
+surface (mode 1), centred both ways, with the Layer 2 clip window
+trimmed to the picture so the margins show black like letterbox bars.
+
 ## Frame rate and retiming
 
 The Next composites at 50 Hz, so a playback rate only stays smooth if
 each encoded frame occupies a whole number of display frames. 25 fps
 (two display frames each) is the encoder default and the right choice
-for most titles. 12.5 fps (four each) also divides evenly and is the
-one other rate that plays cleanly - it halves the motion rate but
-doubles the byte and decode budget every remaining frame gets, which
-is what makes full-screen uncompressed playback possible at all. Rates
-that do not divide 50 beat against the composite and show it. The
-playback rate is fixed by the hardware, not by the source.
+for most titles. 16.67 fps (three each) and 12.5 fps (four each) also
+play cleanly - they cut the motion rate but give every remaining frame
+1.5 or 2 times the byte and decode budget, which is what lets
+uncompressed playback reach near full-screen and full-screen pictures.
+Rates that do not divide 50 into whole display frames beat against the
+composite and show it. The playback rate is fixed by the hardware, not
+by the source.
 
 Almost no source material is 25p. `23.976`, `24`, `29.97` and `30` all
 have to be resampled in TIME on the way in, and how that is done is
@@ -210,7 +231,7 @@ The encoder is quality-maximalist under two per-frame caps: a byte cap
 coefficients. It degrades gracefully (coarser thresholds, fewer
 refreshed pixels) rather than truncating frames.
 
-Four gates refuse infeasible encodes at encode time, each naming its
+These gates refuse infeasible encodes at encode time, each naming its
 remedy in the error message:
 
 - **Audio floor.** One frame may carry at most 3072 real audio bytes
@@ -223,13 +244,32 @@ remedy in the error message:
   default) this is only reached when NO budget makes the clip
   streamable, so the remedies the message names are the ones a budget
   cannot supply: a smaller shape, a lower `--fps`, a shorter clip.
-- **Direct-serve wire (`--direct`).** Strictly at-rate, worst-frame
-  checked, with no slow-playback opt-out. At 25 fps stereo the
-  envelope tops out at 256x167 and 320x105 (12.5 fps carries
-  full-screen 320x256, and 320-wide letterbox heights up to 247); the
-  refusal message prints the live at-rate menu (the tallest at-rate
-  height up to the one asked for, its 0.90-margin variant, the same at
-  the audio floor fps, and whether full-screen 320x256 fits instead).
+- **Uncompressed rate (`--direct`).** Strictly at-rate, with no
+  slow-playback opt-out. The gate prices one frame without a palette
+  sector at the clip's shape, rate and sound form, from timings measured
+  on one Next with one SD card, against the time the frame's sound takes
+  to play; over 1.00 refuses, over 0.90 warns. At
+  25 fps the tallest pictures are 320x195, 280x224 and 256x244 with
+  stereo sound and 320x208, 280x237 and 256x256 with mono; at 16.67 and
+  12.5 fps every shape up to 320x256 passes. With `--direct-sound auto`
+  a shape that does not hold rate in stereo is encoded mono, with a
+  note. The refusal names the tallest height at the asked width in each
+  sound form and the next lower rate of 25, 16.67 and 12.5 at which the
+  shape plays. `--direct-transport-factor` scales the per-byte term for
+  a card slower or faster than the bench card; `--stall-budget measured`
+  adds the bench card's longest block wait to every frame.
+- **Uncompressed scene cuts (`--direct`).** Each scene's first frame
+  also carries a 512-byte palette sector, and the player makes up the
+  extra time over the frames after it. The encoder walks the clip's
+  frames, carrying the time a frame runs over the period into the next
+  (never below zero); a clip whose lateness ever exceeds one palette
+  sector's time cuts scenes faster than the player recovers at that
+  shape. With `--direct-sound auto` such a stereo clip is encoded mono,
+  with a warning, when mono passes; explicit `--direct-sound stereo`
+  encodes it with a warning; otherwise it is refused. The messages name
+  the frame (counting the first as 1); the refusal also names the
+  tallest height at the same width that plays those cuts, when there
+  is one.
 - **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
   (just under 256 MiB) and 65535 frames, whichever binds first - the
   player's hot filemap and its 16-bit frame counters. Both bounds are
@@ -401,25 +441,31 @@ a recorded field, not a quality judgement) for quality tracking. It also records
 the budget the encode actually ran at and how it was arrived at:
 `stream_budget`, `auto_budget` (true when derived), `auto_budget_target`,
 `auto_budget_probes`, and `auto_budget_ladder` - the (budget,
-utilization) pairs the search measured, in probe order. Direct-serve
-reports carry the same key set with the starvation and auto-budget keys
-at their defaults (an all-literal stream has no deltas to starve and no
-delta budget to scale), so one parser handles both modes.
+utilization) pairs the search measured, in probe order. Uncompressed
+(`--direct`) reports carry the same key set with the starvation and
+auto-budget keys at their defaults (an uncompressed clip has no deltas
+to starve and no delta budget to scale), so one parser handles both
+modes; `stream_utilization` is the gate's figure for a frame without a
+palette sector.
 
 ## Format authority
 
 The NXV v2 wire format - the 512-byte header, the opcode set and the
-byte values - is frozen: it is not revised between releases, so a tool
-written against it stays correct. If you are writing one, the kit
-carries the format's definition, in order of usefulness:
-`lib\nxv2dec.py` is the executable specification of the player, so what
-it does with a stream IS the format's behaviour, and `lib\nxv2enc.py`,
-beside it, carries the matching header layout, opcode set and
-constants. Every section of the file is an exact multiple of 512-byte
-SD blocks.
+byte values - is frozen: what a released file means is never revised,
+so a tool written against it stays correct. New capabilities arrive as
+new header flag bits, which an older player refuses at open rather than
+misplaying; the raw layout below is one. If you are writing a tool, the
+kit carries the format's definition, in order of usefulness:
+`lib\nxv2dec.py` is the executable specification of the player for the
+delta and raw layouts, so what it does with a stream IS the format's
+behaviour, and `lib\nxv2enc.py`, beside it, carries the matching header
+layout, opcode set and constants, and the writers. Every section of the
+file is an exact multiple of 512-byte SD blocks.
 
 Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
-decimation. A mono source is converted to stereo automatically.
+decimation. A mono source is converted to stereo automatically. A raw
+clip may instead carry mono: one byte a sample, stored at 15625 Hz and
+played on both speakers at about 15559 Hz (about 0.4 percent slow).
 Palettes are scene-scoped
 adaptive 256-colour (NR $44 write order, RRRGGGBB + expanded 9th blue
 bit), refreshed by PAL opcodes when drift crosses the trigger.
@@ -484,7 +530,49 @@ encoder substitutes for it.
 
 Mode-0 shapes are row-linear raster order; mode-1 shapes are
 column-major within the content band (the player's paint order). No
-stride/gap padding is ever written to disk.
+stride/gap padding is ever written to disk. A raw picture on the 320
+surface is column-major over its own width and height: columns of
+`height` bytes, left to right.
+
+### Raw layout
+
+What `--direct` writes, and what the player checks when it opens one.
+
+Header (the 512-byte NXV v2 header, little-endian fields):
+
+| Offset | Size | Raw clip |
+|---|---|---|
+| 6 | 1 | width code: 0 = the 256x192 surface (row-major), 1 = the 320x256 surface (column-major) |
+| 7 | 1 | picture height: 1-192 on code 0, 1-255 or 0 (= 256) on code 1 |
+| 9 | 1 | channels: 2 (stereo) or 1 (mono) - 1 is accepted only on a raw clip |
+| 10 | 2 | sample rate: 15625 |
+| 12 | 1 | flags: exactly $13 (bits 0, 1 and 4). Bit 4 without bit 1 is refused |
+| 17 | 2 | real sound bytes a frame: samples x channels, samples = round(15625 / fps); at most 3072 |
+| 19 | 2 | ring start margin, blocks: the same value as offset 21 |
+| 21 | 2 | per-frame cap, blocks: ceil(width x height / 512) + 1, which the player requires exactly |
+| 23 | 2 | picture width in columns: 4-320 and a multiple of 4 on code 1; 256 on code 0 (not read) |
+
+The other header fields are as in every NXV v2 header: the magic
+`NXVID` (offset 0, 5 bytes), version 2 (5), fps x 10 (8, for
+information only), the keyframe policy byte (13, not read by the
+player), the frame count (14, 3 bytes, 1 to 65535), and zeros to the
+end of the 512 bytes.
+
+Each frame, in order:
+
+1. **Sound.** The real sound bytes, then `$80` padding up to
+   (real div 512 + 1) x 512 bytes, so at least one pad byte always
+   follows. The last byte of this section is the frame tag: 0 = the
+   pixels follow, 1 = a palette sector follows first. Any other tag
+   stops playback.
+2. **Palette sector,** only after tag 1: 512 bytes, the 256 colours in
+   NR $44 order (byte 0 RRRGGGBB, byte 1 bit 0 the ninth blue bit). The
+   encoder writes one on the first frame of each scene, frame 0
+   included.
+3. **Pixels.** width x height bytes in surface order (see Pixel order),
+   zero-padded to a multiple of 512.
+
+A player older than the raw layout refuses the clip at its flag check.
 
 ## Known limitations
 

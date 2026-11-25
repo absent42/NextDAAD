@@ -118,6 +118,15 @@ TIMED = {
         "vid_ds_next", "vid_ds_byte", "vid_ds_blkopen", "vid_ds_pad",
         "vid_ds_xfer", "vid_ds_iblk", "vid_ds_copy_body", "vid_ds_pal",
         "vid_ds_done",
+        # raw direct reader, its sound handlers and play pointer access (after
+        # the region: the hot page tail, so listed here only)
+        "vid_raw_frame", "vr_sector", "vr_sector_n", "vr_sector_c", "vid_raw_pal",
+        "video_ctc_isr_raw_st", "video_ctc_isr_raw_mono",
+        "vid_raw_rd_hl", "vid_raw_rdv", "vid_raw_pump", "vid_raw_prime",
+        "vid_dma_rd_hl",
+        # cold, but it writes the slide, palette train and pump the raw decode runs,
+        # and the pump's template (run at VR_PUMP)
+        "vid_raw_sched_build", "vrPumpT",
     ],
     "src/interrupts.asm": ["im2_isr"],      # the frame ISR (audEnable = 0)
 }
@@ -179,6 +188,12 @@ QUIET_PINNED = [
     ("src/video.asm", "vid_run", ".frameloop:",
      ("call vid_play_frame",),
      "FRM=/PLAY=/NOM= per-frame hook"),
+    ("src/video.asm", "vid_run", "call vid_pace_poll",
+     ("call vid_dbg_late",),
+     "LATE=/MAXL= on a frame's first pace poll"),
+    ("src/video.asm", "vid_run", "call vid_aud_pump",
+     ("call vid_dbg_urun",),
+     "URUN= poll after the .qnext pump"),
     ("src/video.asm", "vid_ring_gate", "vid_ring_gate:",
      ("ld hl, (vidRingDepth)", "ld de, (vidRingMin)", "or a", "sbc hl, de",
       "jr nc, .nomin", "ld hl, (vidRingDepth)", "ld (vidRingMin), hl",
@@ -196,6 +211,12 @@ QUIET_PINNED = [
     ("src/video.asm", "vid_ds_blkopen", "vid_ds_blkopen:",
      ("ld a, (vidRlDiv)", "dec a", "ld (vidRlDiv), a", "call z, vid_rl_poll"),
      "PLAY= raster arm, per direct-serve block"),
+    ("src/video.asm", "vr_sector_n", ".nocrc:",
+     ("ld d, 0", "call vid_dst_norm_flat"),
+     "PLAY= raster arm, per raw sector (vid_dst_norm_flat's divider)"),
+    ("src/video.asm", "vid_raw_sched_build", ".op2:",
+     ("ld d, 0", "call vid_dst_norm_flat"),
+     "PLAY= raster arm, per inline sector open (the open page B's program runs)"),
 ]
 
 # The other COLD top-level IFDEF DEBUG blocks, for --list only - never
@@ -227,7 +248,7 @@ COLD = [
      "report after teardown"),
     ("src/video.asm", "vidSvHook", ("vid_tl_report:",),
      "report cells, report hop and the NXB bench"),
-    ("src/video.asm", "vidSvHook", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
+    ("src/video.asm", "vidDmaGo", ("MMU 6, NXB_PAGE, DATA_WINDOW",),
      "NXB_PAGE: bench tables"),
     ("src/video.asm", "nxv2_open_body", ("ld (vidFillT0), hl",),
      "open: FILL= start stamp"),
@@ -379,18 +400,27 @@ def label_line(relpath, scan, name):
 class TimedSet:
     """Which source lines are timed, plus the source-side verdicts."""
 
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, tolerant=False):
+        """tolerant: a TIMED name with no label in the sources (an older revision
+        copied under --src-root) is dropped with a note instead of failing; the
+        live tree is always strict. A label found twice fails either way."""
         self.scans, self.problems, self.notes = {}, [], []
         self.skip, self.align_ok, self.spans = {}, set(), {}
         self.quiet_skip = {}
+        self.names = {}
         files = set(TIMED) | set(REGIONS) | {f for f, *_ in TIMED_SPANS}
         files |= {f for f, *_ in COLD_PINNED} | {f for f, *_ in COLD}
         files |= {f for f, *_ in QUIET_PINNED}
         for f in sorted(files):
             self.scans[f] = scan_source(f)
         for f, names in TIMED.items():
+            kept = self.names.setdefault(f, [])
             for name in names:
+                if tolerant and not any(lab == name for lab, _n, _c in self.scans[f]["labels"]):
+                    self.notes.append(f"note: {f}: TIMED routine {name} is not in this revision")
+                    continue
                 label_line(f, self.scans[f], name)
+                kept.append(name)
         for f, name, start, stop in TIMED_SPANS:
             scan = self.scans[f]
             label_line(f, scan, name)
@@ -414,7 +444,7 @@ class TimedSet:
         if scan is None or n >= len(scan["owner"]):
             return False
         own = scan["owner"][n]
-        if own in TIMED.get(f, ()):
+        if own in self.names.get(f, ()):
             return True
         return any(own == name and s <= n <= e
                    for name, s, e in self.spans.get(f, ()))
@@ -824,7 +854,7 @@ def run_bench(args, built):
 
 def run(args, built):
     other = "debug" if args.debug else "quiet"
-    ts = TimedSet(debug=args.debug)
+    ts = TimedSet(debug=args.debug, tolerant=bool(args.src_root))
     cold = ts.cold_listing()
     if args.list:
         for f, a, b, name in ts.intervals():
