@@ -343,9 +343,16 @@ LS256 111     verb
 ;          sweeps, sector, column and wait histogram rows, handler
 ;          spins); the log step adds a #HIST line per histogram row.
 ;          A card row with under 5000 blocks left prints NXB SHORT.
+;   NXBM - verb 132, flag 248 = 6 + GFX @140 13 after PICK nn: the RD1
+;          rows on a raw one-channel clip (15 rows: mono sound from the
+;          zxnDMA - copies, counted spins, frames and sectors, a card
+;          sum, pointer reads, frame ticks); #HIST lines for MHST, RHST.
+;   NXBP - verb 135, flag 248 = 7 + GFX @140 13 after PICK nn: the RT1
+;          rows on a raw clip (12 rows: NR $07 bit 2 - a check, spins,
+;          sectors and card sums); no turbo prints NXB NOTURBO.
 ;          Session verbs REPLACE playback; a clip of the wrong delivery
-;          (or a raw clip on NXBD, a non-raw clip on NXBW) prints NXB
-;          SESSION.
+;          (or a raw clip on NXBD, a non-raw clip on NXBW, NXBM or NXBP,
+;          a two-channel clip on NXBM) prints NXB SESSION.
 ; Rows print at tilemap rows 8+ and become visible when the timeline
 ; report hides Layer 2 at teardown. Each verb ends with the log step
 ; (mode 15): NXBENCH.TXT in the launch folder, LOG OK or LOG ERR xx on
@@ -368,6 +375,8 @@ NXBR  127     verb
 NXBQ  128     verb
 NXBY  129     verb
 NXBW  130     verb
+NXBM  132     verb
+NXBP  135     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
 ; the build-then-judge sitting is dozens of NNN.VID files - far more
@@ -1233,7 +1242,7 @@ $pictureOK
                 EXTERN  0 12
                 DONE
 
-; NXBD/NXBR/NXBQ/NXBY/NXBW: the DS1/REAL/SYN/SYS/RW1 session bench on the
+; NXBD/NXBR/NXBQ/NXBY/NXBW/NXBM/NXBP: the DS1/REAL/SYN/SYS/RW1/RD1/RT1 session bench on the
 ; clip PICK armed (flag 140). Mode 14 copies flag 248 into the arm cell.
 > NXBD    _     LET     248 1
                 LET     250 14
@@ -1272,6 +1281,24 @@ $pictureOK
                 DONE
 
 > NXBW    _     LET     248 5
+                LET     250 14
+                EXTERN  0 12
+                GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
+                PROCESS 10
+                DONE
+
+> NXBM    _     LET     248 6
+                LET     250 14
+                EXTERN  0 12
+                GFX     @140 13
+                LET     250 15
+                EXTERN  0 12
+                PROCESS 10
+                DONE
+
+> NXBP    _     LET     248 7
                 LET     250 14
                 EXTERN  0 12
                 GFX     @140 13

@@ -5092,31 +5092,53 @@ T_ED.update({op: 20 for op in (0x43, 0x53, 0x63, 0x73, 0x4B, 0x5B, 0x6B, 0x7B)})
 T_ED.update({0x44: 8, 0x45: 14, 0x4D: 14, 0xA0: 16, 0xA1: 16, 0xA2: 16, 0xA3: 16, 0x23: 8,
              0x24: 8, 0x27: 11, 0x30: 8, 0x31: 8, 0x32: 8, 0x33: 8, 0x34: 16, 0x35: 16,
              0x36: 16, 0x90: 16, 0x91: 20, 0x92: 17})
+T_ED[0xC7] = 13                     # nextreg a,n: measured on core 3.03.03
+T_DD = {0x21: 14, 0x2A: 20}         # ld ix,nn / ld ix,(nn): the model's two IX opcodes
+
+# Turbo (NR $07 = %111, 28 MHz), measured on core 3.03.03: the instructions whose T
+# changes. Everything else keeps its T, also ret, ei, reti and the interrupt acknowledge,
+# which were not measured alone. A machine selects these with mc.turbo.
+T_MAIN_T = dict(T_MAIN)
+T_MAIN_T.update({op: 4 for op in (0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0xF9)})   # inc/dec rr, ld sp,hl
+T_MAIN_T.update({op: 10 for op in (0x09, 0x19, 0x29, 0x39, 0x18, 0x34, 0x35)})  # add hl,rr, jr, inc (hl)
+T_MAIN_T.update({0xCD: 16, 0xE3: 17})
+T_COND_T = dict(T_COND)
+T_COND_T[0x10] = (10, 8, 2)
+T_COND_T.update({op: (10, 7, 2) for op in (0x20, 0x28, 0x30, 0x38)})
+T_COND_T.update({op: (10, 4, 1) for op in range(0xC0, 0x100, 8)})
+T_COND_T.update({op: (16, 10, 3) for op in range(0xC4, 0x100, 8)})
+T_ED_T = dict(T_ED)
+T_ED_T.update({op: 14 for op in (0x42, 0x52, 0x62, 0x72, 0x4A, 0x5A, 0x6A, 0x7A, 0xA0, 0xA1)})
+T_ED_T.update({0xA2: 15, 0xA3: 15, 0x90: 15})
 
 
 def tstep(mc):
-    """Execute one instruction and return its Zilog T; an opcode with no T entry fails
-    (no guessed figure)."""
+    """Execute one instruction and return its T: Zilog's, or the turbo table's while
+    mc.turbo is set; an opcode with no T entry fails (no guessed figure)."""
     cpu, m = mc.cpu, mc.mem
     pc = cpu.pc
     op, cond = m[pc], None
+    turbo = getattr(mc, "turbo", False)
     if op == 0xED:
         sub = m[(pc + 1) & 0xFFFF]
+        ed = T_ED_T if turbo else T_ED
         if sub == 0xB0:
-            base = 21 * (cpu.bc or 0x10000) - 5
+            base = (17 * (cpu.bc or 0x10000) - 3) if turbo else 21 * (cpu.bc or 0x10000) - 5
         elif sub in (0xB2, 0xB3):
-            base = 21 * (cpu.b or 256) - 5
-        elif sub in T_ED:
-            base = T_ED[sub]
+            base = (18 * (cpu.b or 256) - 3) if turbo else 21 * (cpu.b or 256) - 5
+        elif sub in ed:
+            base = ed[sub]
         else:
             raise Fail(f"tstep: ED {sub:02X} at ${pc:04X} has no T entry")
     elif op == 0xCB:
         sub = m[(pc + 1) & 0xFFFF]
-        base = 8 if sub & 7 != 6 else 12 if 0x40 <= sub < 0x80 else 15
+        base = 8 if sub & 7 != 6 else (12 if 0x40 <= sub < 0x80 else 15) - (1 if turbo else 0)
+    elif op == 0xDD and m[(pc + 1) & 0xFFFF] in T_DD:
+        base = T_DD[m[(pc + 1) & 0xFFFF]]
     elif op in T_COND:
-        cond = T_COND[op]
+        cond = (T_COND_T if turbo else T_COND)[op]
     elif op in T_MAIN:
-        base = T_MAIN[op]
+        base = (T_MAIN_T if turbo else T_MAIN)[op]
     else:
         raise Fail(f"tstep: opcode {op:02X} at ${pc:04X} has no T entry")
     cpu.step()
@@ -5136,7 +5158,8 @@ def tcount(mc, stop, budget=2_000_000):
     return t
 
 
-IO_START = {"in a,(n)": 7, "in r,(c)": 8, "ini": 9}     # T from an instruction's start to its I/O
+# T from an instruction's start to its I/O. Turbo ini: 8 (its second fetch is a T shorter).
+IO_START = {"in a,(n)": 7, "in r,(c)": 8, "ini": 9}
 
 
 def io_trace(mc, stop, budget=2_000_000):
@@ -5156,7 +5179,7 @@ def io_trace(mc, stop, budget=2_000_000):
             elif len(card.log) - n == 1 and op == 0xED and sub & 0xC7 == 0x40:
                 off = IO_START["in r,(c)"]
             elif len(card.log) - n == 1 and op == 0xED and sub == 0xA2:
-                off = IO_START["ini"]
+                off = IO_START["ini"] - (1 if getattr(mc, "turbo", False) else 0)
             else:
                 raise Fail(f"io_trace: {len(card.log) - n} card read(s) by {op:02X} {sub:02X} "
                            f"at ${pc:04X}: no I/O start for it")
@@ -6083,13 +6106,7 @@ def loop_session(real, frames=2, waits=1, path=0, bad=None, teardown=False):
             if mc.trace is not None:
                 mc.trace.append(("tick", mc.mem[fc], 0, mc.now))
         prev = pc
-        try:
-            t = tstep(mc)
-        except Fail as e:
-            if "no T entry" not in str(e):
-                raise
-            cpu.step()                                    # NRGET (ED C7): timing not asserted
-            t = 8
+        t = tstep(mc)
         mc.now += t
         if mc.armed:
             acc += t
@@ -6668,6 +6685,1370 @@ def test_dma_abort():
                    f"{mc.dma.enabled}")
 
 
+# --------------------------------------------------------------------------- clocked bench runs
+
+T_LINE, LINES = 1824, 311               # the bench board's raster: 311 lines of 1824 T
+FRAME_T = T_LINE * LINES
+TICK_AT = 248 * T_LINE + 8              # frameCounter steps 8 T into line 248 (nxb_lc_start)
+ACK_T = 19                              # IM2 interrupt acknowledge
+SPIN_LOOP = bytes.fromhex("0B 78 B1 20 FB")         # dec bc / ld a,b / or c / jr nz
+SUM_LOOP = bytes.fromhex("1A 13 ED 31 10 FA")       # ld a,(de) / inc de / add hl,a / djnz
+INI = b"\xED\xA2"
+VRAW_DIR = Path(__file__).resolve().parent / "out" / "vidraw"
+SD_VIDRAW = Path(__file__).resolve().parent.parent / "sd" / "VIDRAW"
+RAW_CACHE = {60: "raw_card_256x192_25_st_0-10_", 66: "raw_card_256x192_25_mo_0-10_",
+             74: "raw_card_256x192_15p2587890625_mo_0-10_"}
+
+
+def raw_fixture(clip):
+    """The staged raw clip's file (sd\\VIDRAW\\NNN.VID, else its encode in tests\\out\\vidraw);
+    a Skip when neither is there (tests\\build-tests.ps1 -VidRawBench stages them)."""
+    p = SD_VIDRAW / f"{clip:03d}.VID"
+    if p.exists():
+        return p
+    found = sorted(VRAW_DIR.glob(RAW_CACHE[clip] + "*.vid"))
+    if not found:
+        raise Skip(f"raw clip {clip:03d} is not staged (tests\\build-tests.ps1 -VidRawBench)")
+    return found[-1]
+
+
+class FileCard:
+    """Port $EB serving a clip file's blocks from `first` as one CMD18 stream: before each
+    sector but the first 2 CRC bytes, then `waits` $FF and the token ($00 for block `bad`),
+    then its 512 bytes. opens: (block, model T, reader's address) at each token. take(n): n
+    data bytes at once. No per-byte log."""
+
+    def __init__(self, path, first=1, waits=1, bad=None):
+        self.data = Path(path).read_bytes()
+        self.nblocks = len(self.data) // 512
+        self.block, self.waits, self.bad = first, waits, bad
+        self.pre = self._pre(False)
+        self.i, self.reads, self.opens = 0, 0, []
+        self.cpu, self.log = None, []
+
+    def _pre(self, crc):
+        tok = 0x00 if self.block == self.bad else 0xFE
+        return (b"\xC1\xC2" if crc else b"") + b"\xFF" * self.waits + bytes([tok])
+
+    def _end(self):
+        self.block += 1
+        self.pre, self.i = self._pre(True), 0
+
+    def read(self):
+        i, n = self.i, len(self.pre)
+        if self.block >= self.nblocks:
+            raise Fail(f"card read past the file's last block at ${self.cpu.at:04X}")
+        self.reads += 1
+        if i < n:
+            v = self.pre[i]
+            if i == n - 1:
+                self.opens.append((self.block, self.cpu.mc.now, self.cpu.at))
+        else:
+            v = self.data[self.block * 512 + i - n]
+        self.i = i + 1
+        if self.i == n + 512:
+            self._end()
+        return v
+
+    def take(self, k):
+        i, n = self.i, len(self.pre)
+        if i < n or i + k > n + 512:
+            return None
+        o = self.block * 512 + i - n
+        self.reads += k
+        self.i = i + k
+        if self.i == n + 512:
+            self._end()
+        return self.data[o:o + k]
+
+
+class ClockNr(dict):
+    """Next registers of a BenchMachine: $1E/$1F the raster line from the model T, $07 the
+    speed (bits 5:4 and 1:0) with bit 2 as written when the machine reads it back."""
+
+    def __init__(self, mc):
+        super().__init__()
+        self.mc = mc
+
+    def get(self, n, default=0):
+        mc = self.mc
+        if n == 0x1F:
+            return mc.line() & 0xFF
+        if n == 0x1E:
+            return mc.line() >> 8
+        if n == 0x07:
+            return mc.speed << 4 | mc.speed | (4 if mc.readback and mc.bit2 else 0)
+        return dict.get(self, n, default)
+
+
+class BenchMachine(LoopMachine):
+    """LoopMachine with the NXB page, a clock (mc.now in T) and what a bench session reads
+    from it: the raster line, frameCounter stepped at line 248 (lost: field numbers whose
+    step is dropped), NR $07 (has_turbo: %111 selects the turbo T table; readback: bit 2
+    reads back), the DMA model advanced one byte per 32 x prescaler T from its enable (a
+    transfer with no prescaler completes at once, its state kept in copies), CTC 0's period
+    from its time constant. No bus steal: a DMA byte costs no T."""
+
+    def __init__(self, syms, has_turbo=True, readback=True, dwell=False):
+        super().__init__(syms)
+        nxb = self.sym("NXB_PAGE")
+        self.phys[nxb * SLOT:(nxb + 1) * SLOT] = read_page(nxb)
+        self.nr = ClockNr(self)
+        for s in range(8):
+            self.nr[0x50 + s] = self.mmu[s]
+        self.has_turbo, self.readback = has_turbo, readback
+        self.speed, self.bit2, self.turbo, self.speeds = 3, False, False, []
+        self.dma, self.trace = Dma(dwell), []
+        self.t0, self.done, self.copies = None, 0, []
+        self.period, self.next_irq, self.irqs = 0, 0, 0
+        self.ticks, self.lost = 0, set()
+
+    def line(self):
+        return self.now // T_LINE % LINES
+
+    def nextreg(self, n, v):
+        if n == 0x07:
+            self.speeds.append(v)
+            self.speed, self.bit2 = v & 3, bool(v & 4)
+            self.turbo = self.has_turbo and v & 7 == 7
+        super().nextreg(n, v)
+
+    def dma_sync(self):
+        d = self.dma
+        if d.enabled and self.t0 is not None:
+            n = (self.now - self.t0) // (32 * d.prescaler) - self.done
+            if n > 0:
+                d.advance(n)
+                self.done += n
+
+    def port_in(self, port):
+        if port & 0xFF == DMA_PORT:
+            self.dma_sync()
+        return super().port_in(port)
+
+    def port_out(self, port, v):
+        if port & 0xFF == DMA_PORT and port not in (0x243B, 0x253B):
+            self.dma_sync()
+            super().port_out(port, v)
+            if v == 0x87:
+                if self.dma.prescaler:
+                    self.t0, self.done = self.now, 0
+                else:
+                    self.copies.append(self.dma.state())
+                    self.dma.enabled = False
+            return
+        super().port_out(port, v)
+        if port == S("AUD_CTC_PORT") and self.armed:
+            self.period = (v or 256) * 16
+            self.next_irq = self.now + self.period
+
+    def tick(self):
+        """frameCounter up to the model T."""
+        n = (self.now - TICK_AT) // FRAME_T + 1
+        if n != self.ticks:
+            add = sum(1 for k in range(self.ticks, n) if k not in self.lost)
+            self.ticks = n
+            a = S("frameCounter")
+            v = (self.mem[a] | self.mem[a + 1] << 8) + add
+            self.mem[a], self.mem[a + 1] = v & 0xFF, v >> 8 & 0xFF
+
+
+def clocked(mc, stop, traps=None, irq=False, watch=None, budget=40_000_000):
+    """Run from the current PC to address stop on a BenchMachine, the clock advanced by each
+    instruction's T (tstep). traps: address -> fn(cpu), outside $C000-$DFFF. watch: address
+    -> fn(cpu), called when the PC reaches it (the instruction then runs). irq: CTC 0's
+    interrupt taken through its IM2 table entry every period while it is armed. Three loops
+    run as one step each, their bytes checked every time: a run of ini (the data taken from
+    the card at once), nxb_rw_spin's count loop and nxb_rd_sum's add loop, each with the T
+    its passes cost and cut at the next interrupt."""
+    cpu, m = mc.cpu, mc.mem
+    take = getattr(mc.card, "take", None)            # a FileCard: data bytes at once
+    traps = traps or {}
+    import re
+    run_re = re.compile(b"(?:\\xED\\xA2)+")
+    while cpu.pc != stop:
+        pc = cpu.pc
+        if pc in traps and not 0xC000 <= pc < 0xE000:
+            traps[pc](cpu)
+            continue
+        if irq and mc.armed and cpu.iff and mc.now >= mc.next_irq:
+            mc.next_irq += mc.period * ((mc.now - mc.next_irq) // mc.period + 1)
+            cpu.iff = 0
+            cpu.push(pc)
+            cpu.pc = vec_entry(mc)
+            mc.now += ACK_T
+            mc.irqs += 1
+            continue
+        if watch and pc in watch:
+            watch[pc](cpu)
+        op = m[pc]
+        room = (mc.next_irq - mc.now) if irq and mc.armed and cpu.iff else None
+        if op == 0xED and m[pc + 1] == 0xA2 and m[pc + 2:pc + 4] == INI and take is not None:
+            per = 15 if mc.turbo else 16
+            k = run_re.match(m, pc, min(pc + 1024, 0x10000)).end() - pc >> 1
+            if room is not None:
+                k = min(k, max(1, -(-room // per)))
+            data = take(k) if cpu.hl + k <= 0x10000 else None
+            if data is not None:
+                m[cpu.hl:cpu.hl + k] = data
+                cpu.hl = (cpu.hl + k) & 0xFFFF
+                cpu.b = (cpu.b - k) & 0xFF
+                cpu.fz = 1 if cpu.b == 0 else 0
+                cpu.pc = pc + 2 * k
+                mc.now += k * per
+                mc.tick()
+                continue
+        elif op == 0x0B and m[pc:pc + 5] == SPIN_LOOP and cpu.bc > 2:
+            per = 22 if mc.turbo else 26
+            k = cpu.bc - 1
+            if room is not None:
+                k = min(k, max(1, -(-room // per)))
+            cpu.bc -= k
+            mc.now += k * per
+            mc.tick()
+            continue
+        elif op == 0x1A and m[pc:pc + 6] == SUM_LOOP and cpu.b != 1 and room is None \
+                and cpu.de + 256 <= 0x10000:
+            k = (cpu.b or 256) - 1
+            data = m[cpu.de:cpu.de + k]
+            cpu.hl = (cpu.hl + sum(data)) & 0xFFFF
+            cpu.a, cpu.de, cpu.b = data[-1], cpu.de + k, 1
+            mc.now += k * (29 if mc.turbo else 34)
+            mc.tick()
+            continue
+        mc.now += tstep(mc)
+        mc.tick()
+        budget -= 1
+        if budget <= 0:
+            raise Fail(f"clocked: budget spent at ${cpu.pc:04X}")
+
+
+class Screen:
+    """The bench's prints, by traps on dbg_at / dbg_puts / dbg_putc / dbg_hex8 / dbg_hex16:
+    lines = [[row, column, text]] in print order."""
+    ROW = __import__("re").compile(r"(\S{4}) O=([0-9A-F]{2}) R=([0-9A-F]{4}) F=([0-9A-F]{4}) "
+                                   r"D=([0-9A-F]{4})(.*)")
+
+    def __init__(self, mc):
+        self.mc, self.lines = mc, []
+
+    def _put(self, s):
+        if not self.lines:
+            self.lines.append([0, 0, ""])
+        self.lines[-1][2] += s
+
+    def _puts(self, c):
+        a, s = c.hl, ""
+        while self.mc.mem[a]:
+            s, a = s + chr(self.mc.mem[a]), a + 1
+        self._put(s)
+
+    def traps(self):
+        return {S("dbg_at"): ret_trap(lambda c: self.lines.append([c.b, c.c, ""])),
+                S("dbg_puts"): ret_trap(self._puts),
+                S("dbg_putc"): ret_trap(lambda c: self._put(chr(c.a))),
+                S("dbg_hex8"): ret_trap(lambda c: self._put("%02X" % c.a)),
+                S("dbg_hex16"): ret_trap(lambda c: self._put("%04X" % c.hl))}
+
+    def rows(self):
+        """[(tag, O, R, F, D, rest)] of the lines that are bench rows."""
+        out = []
+        for _r, _c, text in self.lines:
+            m = self.ROW.fullmatch(text)
+            if m:
+                out.append((m.group(1),) + tuple(int(m.group(k), 16) for k in range(2, 6))
+                           + (m.group(6),))
+        return out
+
+    def text(self):
+        return [t for _r, _c, t in self.lines]
+
+
+def row_t(row):
+    """A printed row's T on the bench clock: (311 F + D) lines of 1824 T (D signed)."""
+    d = row[4] - 0x10000 if row[4] & 0x8000 else row[4]
+    return (LINES * row[3] + d) * T_LINE
+
+
+class Walk:
+    """A bench session walked from vid_run's hook: mc, card, scr (Screen), events
+    [(what, row tag, model T)] - row starts ("row"), pointer reads through HL' ("hlp") and
+    through the DMA ("dma") - and abort (the VID_ERR code an abort entry took, else None)."""
+
+
+def bench_walk(clip, mode, mono_dma=1, has_turbo=True, readback=True, bad=None, irq=False,
+               reps=None, dwell=False, until=None):
+    """A bench session on a staged raw clip (raw_fixture) as vid_run runs it: the open's
+    patches (.vec), vid_run_l2setup_body, the schedule and the hot cells of a raw direct
+    open, the card at the file's block 1; then from vid_run's hook (ld (vidDecSp),sp / call
+    nxb_sess / call nxb_ds_rows) through .restore's nxb_reclaim to its CTC stop, on a
+    clocked BenchMachine. reps: {tag: reps} written into the staged table (a shorter row).
+    bad: a file block whose token is $00. until: stop when this row starts."""
+    import nxv2_bench_rows as bench
+    path = raw_fixture(clip)
+    w, h, real, frames, nblocks = bench.file_clip(path)
+    with open(path, "rb") as f:
+        hdr = f.read(16)
+    code, ach = hdr[6], hdr[9]
+    mc = BenchMachine(SYMS, has_turbo, readback, dwell)
+    set_table(mc)
+    mc.nr[S("NR_DMA_INT_EN_2")] = S("IM2_DMA_INT_EN_2_VAL")      # as im2_init leaves it
+    snd_open(mc, 1, ach, mono_dma)
+    l2setup(mc)
+    if build_sched(mc, code, w, h).fc:
+        raise Fail("vid_raw_sched_build set CF")
+    x0, sec = setup_frame(mc, code, w, h)
+    mc.map(6, 12)
+    pad = (real // 512 + 1) * 512
+    for name, v in (("l2FrontBank", FRONT_BANK), ("vidStreaming", 0), ("vidDsBound", sec + 4),
+                    ("vidApadBlk", pad // 512), ("vidLoopMode", 0), ("vidStrmEntryCnt", 1),
+                    ("vidStrmEntryIdx", 1), ("vidWinOpenH", 1), ("vidInSpan", 0),
+                    ("vidDstPages", 10 if code else 6), ("vidHeightB", h & 0xFF),
+                    ("nxbSessReq", mode), ("nxbSvTm3", 11)):
+        mc.poke(name, v)
+    for name, v in (("vidABytes", real), ("vidABytesPad", pad), ("vidFrames", frames),
+                    ("vidFramesLeft", frames), ("vidAudFeedRem", 0), ("vidDsAudBlkRem", 0),
+                    ("vidStrmRunBlkH", nblocks - 1)):
+        mc.poke16(name, v)
+    mc.poke("vidStrmRemainBlk", (nblocks - 1).to_bytes(3, "little"))
+    for s in range(8):
+        mc.nr[0x50 + s] = mc.mmu[s]
+    card = FileCard(path, 1, 1, bad)
+    mc.set_card(card)
+    mc.trace.clear()
+    mc.dma.log.clear()
+    mc.ctc.clear()
+    cpu = mc.cpu
+    hook = find_code(mc, S("vid_run"), S("vid_run.restore"), b"\xCD" + le(S("nxb_sess")))
+    if bytes(mc.mem[hook - 4:hook - 2]) != b"\xED\x73":
+        raise Fail("the instruction before vid_run's call nxb_sess is not ld (vidDecSp),sp")
+    stop = find_code(mc, S("vid_run.restore"), S("vid_run.restore") + 64,
+                     b"\x01" + le(S("AUD_CTC_PORT")))
+    wk = Walk()
+    wk.mc, wk.card, wk.scr, wk.events, wk.abort = mc, card, Screen(mc), [], None
+    wk.path, wk.clip = path, (w, h, real, frames, nblocks)
+    nxb = S("NXB_PAGE")
+    cur = [None]
+
+    def row(c):                             # nxb_srow_go, NXB_PAGE at MMU6: a row starts
+        if mc.mmu[6] != nxb:
+            return
+        a = mc.peek("nxbTag", 2)
+        cur[0] = bytes(mc.mem[a:a + 4]).decode("ascii")
+        wk.events.append(("row", cur[0], mc.now))
+        if reps and cur[0] in reps:
+            mc.poke16("nxbReps", reps[cur[0]])
+        if cur[0] == until:
+            raise Stop("row " + until, 0)
+
+    def note(what):
+        return lambda c: wk.events.append((what, cur[0], mc.now))
+
+    def abort(c):
+        wk.abort = c.a
+    watch = {S("nxb_srow_go"): row, S("vid_raw_rd_hl"): note("hlp"),
+             S("vid_dma_rd_hl"): note("dma"), S("vid_dec_abort_pos"): abort}
+    traps = wk.scr.traps()
+    noop = ret_trap(lambda c: None)
+    for n in ("nxb_blank", "vid_play_close", "vid_pos24"):
+        if n in SYMS:
+            traps[S(n)] = noop
+    cpu.sp, cpu.pc, cpu.iff = STACK, hook - 4, 1
+    set_alt_hl(cpu, 0x1234)
+    mc.now = 100 * T_LINE
+    mc.ticks = (mc.now - TICK_AT) // FRAME_T + 1
+    try:
+        clocked(mc, stop, traps, irq, watch)
+    except Stop as e:
+        if until is None or e.where != "row " + until:
+            raise
+    mc.sync()
+    return wk
+
+
+# --------------------------------------------------------------------------- RD1: DMA sound bench
+
+RD1_PRINTED = "IDEN CPY0 RFR0 SPN0 MRSW MCN1 MSPN MCN2 MHST MCN3 MSUM MPTR MTCK MCPY RHST".split()
+RT1_PRINTED = "IDEN TCHK SPN0 TSPN TCTC TCN1 NSEC NSM0 TSTR TSLO TSUM TSEC".split()
+OFF_C3 = bytes.fromhex("83 C3 54 02 50 02 82 A1 BB 7F")      # nxbDmaOffC3: no prescaler byte
+OFF_STATE = dict(enabled=False, prescaler=0, restart=False, a_io=False, a_mode="up",
+                 b_io=False, b_mode="up", a_cycles=2, b_cycles=2)
+
+
+def nxb_bytes(name, n):
+    """n bytes at an NXB_PAGE label, as assembled."""
+    return bytes(read_page(S("NXB_PAGE"))[(S(name) & 0x1FFF):][:n])
+
+
+def kind_machine(dwell=False):
+    """A LoopMachine with the NXB page at MMU6 (NR $56 readable), the DMA model and a trace."""
+    mc = nxb_machine(LoopMachine)
+    mc.dma, mc.trace = Dma(dwell), []
+    mapnr(mc, 6, S("NXB_PAGE"))
+    return mc
+
+
+def fprint_trap(mc, out):
+    """nxb_fprint caught: (O, R, F, D) appended to out."""
+    return {S("nxb_fprint"): ret_trap(lambda c: out.append(
+        (mc.peek("nxbSO"), mc.peek("nxbReps", 2), mc.peek("nxbLcF", 2), c.hl)))}
+
+
+def word_at(mc, a):
+    return mc.mem[a] | mc.mem[a + 1] << 8
+
+
+def rdv(mc):
+    """vid_raw_rdv's jp operand: the session's pointer read."""
+    return word_at(mc, S("vid_raw_rdv") + 1)
+
+
+def fprint_watch(mc, out):
+    """A clocked watch on nxb_fprint (NXB_PAGE at MMU6): (O, R, F, D) appended to out."""
+    def w(c):
+        if mc.mmu[6] == S("NXB_PAGE"):
+            out.append((mc.peek("nxbSO"), mc.peek("nxbReps", 2), mc.peek("nxbLcF", 2), c.hl))
+    return {S("nxb_fprint"): w}
+
+
+def sub_state(dma, want):
+    return {k: v for k, v in dma.state().items() if k in want}
+
+
+def test_bench_clean():
+    """nxb_sess_setup on a raw mono clip opened with vidMonoDma = 1 (066, session RW1, from
+    vid_run's hook to the first row): port $6B takes nxbDmaSndOff's bytes, equal to
+    vidDmaSndOff's, and nothing else; the model is disabled, memory to memory going up, 2
+    cycles, prescaler 0, no restart; DAC B and C parked; NR $CD = IM2_DMA_INT_EN_2_VAL;
+    vid_raw_rdv reads HL'. Those are the settings a vidMonoDma = 0 open of the same clip has
+    at its first row, which sends $6B nothing; a stereo clip sends nothing either."""
+    bench_only()
+    off = nxb_bytes("nxbDmaSndOff", S("nxbDmaSndOff_len"))
+    if off != SND_OFF or off != cold_bytes("vidDmaSndOff", len(SND_OFF)):
+        raise Fail(f"nxbDmaSndOff {off.hex(' ').upper()} is not vidDmaSndOff's bytes")
+    wk = bench_walk(66, 5, mono_dma=1, until="IDEN")
+    mc = wk.mc
+    cd = S("NR_DMA_INT_EN_2")
+    got = (bytes(mc.dma.log), sub_state(mc.dma, OFF_STATE), mc.nr.get(cd), rdv(mc),
+           [e[2] for e in mc.trace if e[0] == "out" and e[1] & 0xFF == DAC_M],
+           mc.peek("vidSndPath"))
+    want = (SND_OFF, OFF_STATE, S("IM2_DMA_INT_EN_2_VAL"), S("vid_raw_rd_hl"),
+            [S("DAC_SILENCE")], 2)
+    if got != want:
+        raise Fail(f"path 2 clean start: ($6B, model, NR $CD, vid_raw_rdv, DAC B+C, "
+                   f"vidSndPath) = {got}, expected {want}")
+    p1 = bench_walk(66, 5, mono_dma=0, until="IDEN").mc
+    same = ("enabled", "prescaler", "restart", "a_io", "a_mode", "b_io", "b_mode", "a_cycles",
+            "b_cycles")
+    if p1.dma.log or p1.peek("vidSndPath") != 1 or rdv(p1) != rdv(mc) \
+            or p1.nr.get(cd) != mc.nr.get(cd) or sub_state(p1.dma, same) != sub_state(mc.dma, same):
+        raise Fail(f"a path 1 open at its first row: $6B {bytes(p1.dma.log).hex(' ')}, "
+                   f"vidSndPath {p1.peek('vidSndPath')}, NR $CD {p1.nr.get(cd)}, model "
+                   f"{sub_state(p1.dma, same)} against path 2's {sub_state(mc.dma, same)}")
+    st = bench_walk(60, 5, until="IDEN").mc
+    if st.dma.log or st.peek("vidSndPath") != 0:
+        raise Fail(f"a stereo clip's session start sent $6B {bytes(st.dma.log).hex(' ')}")
+
+
+def test_rw1_mono_ctc():
+    """Session RW1 walked on the mono clip 066 opened with vidMonoDma = 1: its 15 rows print,
+    no abort; at ARM1, ARM2 and ARMO CTC 0 takes 03 03 85 and then 112 (the table value at
+    NR $11 = 0); port $6B takes nothing from the first row to the last (the clean start's
+    bytes come before it); every pointer read is HL' (none through the DMA), the frame rows
+    among them; vid_raw_rdv reads HL' at the end. The same walk with vidMonoDma = 0 prints
+    the same rows, figure for figure."""
+    bench_only()
+    import nxv2_bench_rows as bench
+    wk = bench_walk(66, 5, mono_dma=1)
+    mc = wk.mc
+    rows = wk.scr.rows()
+    if wk.abort is not None or [r[0] for r in rows] != list(bench.session_printed("RW1", "direct")):
+        raise Fail(f"abort {wk.abort}, rows {[r[0] for r in rows]}")
+    starts = [(tag, t) for what, tag, t in wk.events if what == "row"]
+    for i, (tag, t0) in enumerate(starts):
+        if tag not in ("ARM1", "ARM2", "ARMO"):
+            continue
+        t1 = starts[i + 1][1]
+        got = [e[2] for e in mc.trace if e[0] == "ctc" and t0 <= e[3] < t1]
+        if got != [3, 3, S("AUD_CTC_CW16"), 112] or S("AUD_CTC_CW16") != 0x85:
+            raise Fail(f"{tag}: CTC 0 took {got}, expected [3, 3, $85, 112]")
+    six = [e for e in mc.trace if e[0] == "out" and e[1] & 0xFF == DMA_PORT and e[3] >= starts[0][1]]
+    reads = {(what, tag) for what, tag, _t in wk.events if what != "row"}
+    if six or bytes(mc.dma.log) != SND_OFF or any(w == "dma" for w, _t in reads) \
+            or not {("hlp", "RFR0"), ("hlp", "RSWP"), ("hlp", "ARSW")} <= reads \
+            or rdv(mc) != S("vid_raw_rd_hl"):
+        raise Fail(f"$6B after the first row {six[:4]}, log {bytes(mc.dma.log).hex(' ')}, "
+                   f"pointer reads {sorted(reads)}, vid_raw_rdv ${rdv(mc):04X}")
+    other = bench_walk(66, 5, mono_dma=0).scr.rows()
+    if other != rows:
+        diff = [(a, b) for a, b in zip(rows, other) if a != b]
+        raise Fail(f"vidMonoDma 1 and 0 print different RW1 rows: {diff[:3]}")
+
+
+def test_rd1_blocks():
+    """nxv2_bench_rows.rd1_blocks for the mono clips 066-071, 074, 088: 17 frames (frame 0's
+    palette sector with them), then MHST 2049, MSUM 4097 and RHST 2049 sectors from the
+    block after the frames, the first summed sector one past MSUM's first; every card row
+    starts with NXB_RW_MIN blocks or more left (074: 15149 blocks in the file, 7318 from
+    RHST's first to the end). rt1_blocks: 9222 sectors over six rows from block 1."""
+    import nxv2_bench_rows as bench
+    if sorted(bench.RD1_CLIPS) != [66, 67, 68, 69, 70, 71, 74, 88]:
+        raise Fail(f"RD1_CLIPS {sorted(bench.RD1_CLIPS)}")
+    for clip, (w, h, real, frames) in bench.RD1_CLIPS.items():
+        fb = real // 512 + 1 + -(-w * h // 512)
+        got = bench.rd1_blocks(clip)
+        b0 = 1 + 17 * fb + 1
+        want = dict(frames=17, frame_blocks=17 * fb + 1,
+                    rows=[("MHST", b0, 2049), ("MSUM", b0 + 2049, 4097),
+                          ("RHST", b0 + 2049 + 4097, 2049)],
+                    msum=b0 + 2050, total=2 + frames * fb)
+        if {k: got[k] for k in want} != want or min(got["left"].values()) < bench.NXB_RW_MIN:
+            raise Fail(f"clip {clip:03d}: {got}, expected {want} and {bench.NXB_RW_MIN} "
+                       f"blocks left at each card row")
+    got = bench.rd1_blocks(74)
+    if (got["total"], got["left"]["RHST"]) != (15149, 7318):
+        raise Fail(f"clip 074: {got['total']} blocks, {got['left']['RHST']} left at RHST")
+    for clip in (60, 63, 68, 88):
+        got = bench.rt1_blocks(clip)
+        rows = [("NSEC", 1, 513), ("NSM0", 514, 1025), ("TSTR", 1539, 2049),
+                ("TSLO", 3588, 1025), ("TSUM", 4613, 4097), ("TSEC", 8710, 513)]
+        if got["rows"] != rows or min(got["left"].values()) < bench.NXB_RW_MIN \
+                or got["total"] < 24750:
+            raise Fail(f"RT1 clip {clip:03d}: {got}")
+
+
+def rd1_walk(clip):
+    import nxv2_bench_rows as bench
+    wk = bench_walk(clip, 6, reps={"MTCK": 4})
+    mc, card = wk.mc, wk.card
+    w, h, real, frames, nblocks = wk.clip
+    what = f"RD1 on {clip:03d}"
+    rows = wk.scr.rows()
+    by = {r[0]: r for r in rows}
+    where = [(r, c) for r, c, t in wk.scr.lines if Screen.ROW.fullmatch(t)]
+    if wk.abort is not None or [r[0] for r in rows] != RD1_PRINTED \
+            or where != [(8 + i, 0) for i in range(15)]:
+        raise Fail(f"{what}: abort {wk.abort}, rows {[r[0] for r in rows]} at {where}")
+    order = [tag for ev, tag, _t in wk.events if ev == "row"]
+    if order != [r[0] for r in bench.SESSION_TABLES["RD1"]]:
+        raise Fail(f"{what}: rows ran {order}")
+    t_of = {tag: t for ev, tag, t in wk.events if ev == "row"}
+    early = [(ev, tag) for ev, tag, t in wk.events if ev == "dma" and t < t_of["MLD1"]]
+    rfr0 = {ev for ev, tag, _t in wk.events if tag == "RFR0" and ev != "row"}
+    if early or rfr0 != {"hlp"}:
+        raise Fail(f"{what}: DMA pointer reads before MLD1 {early}; RFR0's reads {rfr0}")
+    fb = bench.raw_frame_blocks(w, h, real)
+    first = next(b for b, t, _pc in card.opens if t >= t_of["MRSW"])
+    if first != 1 + fb + 1:
+        raise Fail(f"{what}: MRSW's first sector is block {first}, frame 1's sound sector "
+                   f"is {1 + fb + 1}")
+    cp = dict(enabled=True, a_io=False, b_io=False, mode="continuous", prescaler=0,
+              restart=False, a_mode="up", b_mode="up", length=256)
+    bad = [s for s in mc.copies if {k: s[k] for k in cp} != cp]
+    if len(mc.copies) != 2 * bench.NXB_RD_CREPS or bad:
+        raise Fail(f"{what}: {len(mc.copies)} DMA copies, {len(bad)} not a continuous 256-byte "
+                   f"memory to memory copy with prescaler 0 and no restart: {bad[:1]}")
+    want = bench.msum_expected(wk.path)
+    if by["MSUM"][3] << 16 | by["MSUM"][2] != want or by["MSUM"][1] != 0:
+        raise Fail(f"{what}: MSUM {by['MSUM'][3]:04X}{by['MSUM'][2]:04X} O {by['MSUM'][1]}, "
+                   f"the file's sectors sum to {want:08X}")
+    for cn, tag in (("MCN1", "MRSW"), ("MCN2", "MSPN"), ("MCN3", "MHST")):
+        n = (by[cn][3] & 0xFF) << 16 | by[cn][2]
+        if abs(n - row_t(by[tag]) / 1792) > 3 or by[cn][1] != 1:
+            raise Fail(f"{what}: {cn} counts {n} samples (O {by[cn][1]}), {tag} ran "
+                       f"{row_t(by[tag])} T = {row_t(by[tag]) / 1792:.1f} periods")
+    if (by["MPTR"][1], by["MPTR"][3], by["MPTR"][4]) != (1, 0, 0) or by["MPTR"][2] > 64:
+        raise Fail(f"{what}: MPTR {by['MPTR']}")
+    if (by["MTCK"][2], by["MTCK"][3]) != (4, 4):
+        raise Fail(f"{what}: MTCK {by['MTCK']}, expected 4 ticks in 4 wraps")
+    for a, b in (("CPY0", "MCPY"), ("SPN0", "MSPN"), ("RHST", "MHST")):
+        if abs(row_t(by[a]) - row_t(by[b])) > 2 * T_LINE:
+            raise Fail(f"{what}: {a} {row_t(by[a])} T, {b} {row_t(by[b])} T (the model steals none)")
+    if any(by[t][1] for t in ("RFR0", "MRSW", "MHST", "RHST")):
+        raise Fail(f"{what}: a walk mark on a frame or card row")
+    used = 17 * fb + 1 + 8195
+    left = mc.peek("vidStrmRemainBlk", 3)
+    mapnr(mc, 6, S("NXB_PAGE"))
+    sav, ln = S("nxbHistSav"), S("NXB_HIST_LEN")
+    hist = [bytes(mc.mem[sav + k * ln:sav + k * ln + 4]) for k in range(mc.peek("nxbHistN"))]
+    mapnr(mc, 6, 12)
+    got = (card.block, left, hist, mc.nr.get(S("NR_DMA_INT_EN_2")), rdv(mc),
+           sub_state(mc.dma, OFF_STATE), mc.peek("nxbSessLive"))
+    if got != (1 + used, nblocks - 1 - used, [b"MHST", b"RHST"], S("IM2_DMA_INT_EN_2_VAL"),
+               S("vid_raw_rd_hl"), OFF_STATE, 0):
+        raise Fail(f"{what}: (card block, remain, #HIST rows, NR $CD, vid_raw_rdv, DMA, "
+                   f"nxbSessLive) = {got}")
+    return by
+
+
+def test_rd1_walk():
+    """Session RD1 from vid_run's hook to .restore on the staged 066 and 074, the DMA model
+    a byte per 1792 T (MTCK cut to 4 wraps): no abort; 15 rows on screen rows 8-22 in table
+    order; RFR0's pointer reads are HL' and no DMA pointer read precedes MLD1; MRSW's first
+    sector is frame 1's sound sector by the file's blocks; CPY0's and MCPY's 128 copies are
+    each a continuous 256-byte memory to memory transfer with prescaler 0 and no restart;
+    MSUM's R:F is msum_expected; MCN1-3 are their rows' T / 1792 within 3; MPTR finds no bad
+    step and no torn read; the idle twins match (no bus steal in the model); the card ends
+    17 frames and 8195 sectors on; the DMA off, NR $CD and the pointer read back."""
+    bench_only()
+    for clip in (66, 74):
+        rd1_walk(clip)
+
+
+def test_rd_mld():
+    """MLD: the ring silent, CTC 0 reset twice, port $6B takes vidDmaSnd's bytes with the
+    prescaler (vidCtcTc + 1) >> 1 for each table value and no $87, then one read sequence;
+    the model is loaded and not enabled; NR $CD = 0; vid_raw_rdv reads the DMA; nxbRdFlags =
+    1, and 0 when the read before the enable is not the ring base. nxbDmaSnd, nxbDmaSndOff
+    and nxbDmaOffC3 as assembled: the cold programs byte for byte, the last without the
+    prescaler byte."""
+    bench_only()
+    if nxb_bytes("nxbDmaSnd", S("nxbDmaSnd_len")) != cold_bytes("vidDmaSnd", S("vidDmaSnd_len")) \
+            or S("nxbDmaSnd.presc") - S("nxbDmaSnd") != S("vidDmaSnd.presc") - S("vidDmaSnd") \
+            or nxb_bytes("nxbDmaSndOff", 11) != cold_bytes("vidDmaSndOff", 11) \
+            or nxb_bytes("nxbDmaOffC3", 10) != OFF_C3 or S("nxbDmaSndOff_len") != 11:
+        raise Fail("the NXB_PAGE twins differ from vidDmaSnd / vidDmaSndOff")
+    base, ring = S("vidAudBuf"), S("NXV_AUD_RING")
+    for tc, presc in zip((112, 114, 117, 120, 124, 128, 132, 108), PRESC):
+        for moved in (False, True):
+            mc = kind_machine()
+            mc.poke("vidCtcTc", tc)
+            mc.mem[base:base + ring] = b"\x11" * ring
+            mc.nr[S("NR_DMA_INT_EN_2")] = 3
+            mc.poke("nxbRdFlags", 0x7E)
+            if moved:
+                mc.dma.before_read = lambda d, n: setattr(d, "addr", 0x6100)
+            mc.run("nxb_kind_mld")
+            prog = SND_PROG[:10] + bytes([presc]) + SND_PROG[11:]
+            got = (bytes(mc.dma.log), mc.dma.reads, mc.dma.enabled, mc.dma.prescaler,
+                   mc.dma.restart, mc.dma.mode, mc.dma.mask, mc.ctc, mc.nr.get(S("NR_DMA_INT_EN_2")),
+                   rdv(mc), mc.peek("nxbRdFlags"),
+                   bytes(mc.mem[base:base + ring]) == bytes([S("DAC_SILENCE")]) * ring)
+            want = (prog + b"\xA7", 3, False, presc, True, "burst", 0x18, [3, 3], 0,
+                    S("vid_dma_rd_hl"), 0 if moved else 1, True)
+            if got != want:
+                raise Fail(f"MLD at time constant {tc}{' (read moved)' if moved else ''}: "
+                           f"{got}, expected {want}")
+
+
+def test_rd_mgo():
+    """MGO after MLD: one byte to port $6B, $87; the model is enabled."""
+    bench_only()
+    mc = kind_machine()
+    mc.poke("vidCtcTc", 112)
+    mc.run("nxb_kind_mld")
+    n = len(mc.dma.log)
+    mc.run("nxb_kind_mgo")
+    if bytes(mc.dma.log[n:]) != b"\x87" or not mc.dma.enabled or mc.dma.addr != 0x6000:
+        raise Fail(f"MGO sent {bytes(mc.dma.log[n:]).hex(' ')}, enabled {mc.dma.enabled}")
+
+
+def test_rd_moff():
+    """MOFF on a playing model: param 0 sends nxbDmaSndOff (83 C3 54 02 50 22 00 82 A1 BB
+    7F), param 1 nxbDmaOffC3 (the same without the prescaler byte); then DAC_SILENCE to
+    port $B3, NR $CD = IM2_DMA_INT_EN_2_VAL, vid_raw_rdv on vid_raw_rd_hl; the model
+    disabled, memory to memory, 2 cycles, prescaler 0, no restart. A model whose $C3 keeps
+    the prescaler: param 0 still leaves 0, param 1 leaves the session's 56 (what MCPY
+    then times)."""
+    bench_only()
+    cd = S("NR_DMA_INT_EN_2")
+    for param, prog in ((0, SND_OFF), (1, OFF_C3)):
+        for c3 in (True, False):
+            mc = kind_machine()
+            mc.dma.c3_presc = c3
+            dma_playing(mc.dma, 0x6789)
+            mc.poke16("nxbParam", param)
+            mc.nr[cd] = 0
+            a = S("vid_raw_rdv") + 1
+            mc.mem[a:a + 2] = le(S("vid_dma_rd_hl"))
+            mc.run("nxb_kind_moff")
+            want = [("out", DMA_PORT, b) for b in prog] + [("out", DAC_M, S("DAC_SILENCE")),
+                                                           ("nr", cd, S("IM2_DMA_INT_EN_2_VAL"))]
+            got = [(e[0], e[1] & 0xFF if e[0] == "out" else e[1], e[2]) for e in mc.trace]
+            presc = 0 if c3 or param == 0 else 56
+            state = dict(OFF_STATE, prescaler=presc)
+            if got != want or rdv(mc) != S("vid_raw_rd_hl") or sub_state(mc.dma, OFF_STATE) != state \
+                    or mc.dma.mode != "continuous" or mc.dma.pend:
+                raise Fail(f"MOFF param {param} (reset clears the prescaler: {c3}): wrote {got}, "
+                           f"model {sub_state(mc.dma, OFF_STATE)}, expected {want} and {state}")
+
+
+def acc_row(advances, start=0x7E00, dwell=False, count0=None, hlp=False):
+    """A counted row of len(advances) reps through nxb_rd_set, nxb_rd_first and nxb_rd_acc:
+    the body advances the playing model (or HL') by advances[k] bytes in rep k. Returns
+    (machine, nxbRdCnt)."""
+    mc = kind_machine(dwell)
+    base, ring = S("vidAudBuf"), S("NXV_AUD_RING")
+    a = S("vid_raw_rdv") + 1
+    if hlp:
+        set_alt_hl(mc.cpu, start)
+        mc.mem[a:a + 2] = le(S("vid_raw_rd_hl"))
+    else:
+        dma_playing(mc.dma, start)
+        mc.mem[a:a + 2] = le(S("vid_dma_rd_hl"))
+    mc.run("nxb_rd_set", hl=STUB)
+    if (mc.peek("nxb_rd_first.body", 2), word_at(mc, S("nxb_body") + 1),
+            mc.peek("nxbRdCnt", 3)) != (STUB, S("nxb_rd_first"), 0):
+        raise Fail("nxb_rd_set: the rep, nxb_rd_first as rep 1 or a zero count not set")
+    if count0 is not None:
+        mc.mem[S("nxbRdCnt"):S("nxbRdCnt") + 3] = count0.to_bytes(3, "little")
+    reps = iter(advances)
+
+    def body(c):                            # the row's rep: time passes, then nxb_rd_acc
+        n = next(reps)
+        if hlp:
+            set_alt_hl(c, base + (alt_hl(c) - base + n) % ring)
+        else:
+            mc.dma.advance(n)
+        c.pc = S("nxb_rd_acc")
+    mc.cpu.iff = 1
+    for _ in advances:
+        mc.run("nxb_body", traps={STUB: body})
+    if word_at(mc, S("nxb_body") + 1) != STUB:
+        raise Fail("nxb_rd_first did not hand nxb_body the row's rep")
+    return mc, mc.peek("nxbRdCnt", 3)
+
+
+def test_rd_acc():
+    """A counted row of 8 reps, the model 100 bytes on a rep, the ring end inside the row:
+    nxbRdCnt = 800 (rep 1 counted with the rest) and MCNT prints O = nxbRdFlags, R = 0320, F
+    = 0000, D = 0000. A first rep three times as long: 1000, so the count is the bytes
+    played, whatever rep 1 is. The same with the model dwelling at $8000 and with the pointer
+    on HL'. A count over 16 bits carries into the third byte (F)."""
+    bench_only()
+    for what, adv, kw, want in (
+            ("8 x 100 across the ring end", [100] * 8, {}, 800),
+            ("rep 1 three times as long", [300] + [100] * 7, {}, 1000),
+            ("dwell at $8000", [100] * 8, dict(start=0x7FA0, dwell=True), 800),
+            ("HL'", [100] * 8, dict(hlp=True), 800),
+            ("carry into bits 23:16", [100], dict(count0=0x00FFF0), 0x010054),
+            ("4000 a rep", [4000] * 5, {}, 20000)):
+        mc, n = acc_row(adv, **kw)
+        if n != want:
+            raise Fail(f"{what}: nxbRdCnt {n}, expected {want}")
+        out = []
+        mc.poke("nxbRdFlags", 1)
+        mc.run("nxb_kind_mcnt", traps=fprint_trap(mc, out))
+        if out != [(1, want & 0xFFFF, want >> 16, 0)]:
+            raise Fail(f"{what}: MCNT prints (O, R, F, D) = {out}")
+    if acc_row([100] * 8)[1] != 0x320:
+        raise Fail("800 is not $0320")
+
+
+def ptr_row(reps, hook, dwell=False, start=0x6000):
+    """MPTR over a playing model; hook(dma, n, seq) runs before the n-th read of read
+    sequence seq. Returns (O, R, F, D), the sequences sent."""
+    mc = kind_machine(dwell)
+    dma_playing(mc.dma, start)
+    mc.poke16("nxbReps", reps)
+    mc.poke("nxbRdFlags", 1)
+    mc.dma.before_read = lambda d, n: hook(d, n, d.seqs)
+    out = []
+    mc.run("nxb_kind_mptr", traps=fprint_trap(mc, out), budget=30_000_000)
+    return out[0], mc.dma.seqs
+
+
+def test_rd_ptr():
+    """MPTR on the model: a byte played before every sequence and a carry falling between
+    the low and the high read at every $xxFF (the sequence is sent again): R counts those
+    reads, F = 0, D = 0, flags 01. One step back of 5 bytes: F = 1. A model dwelling at
+    $8000 for a period: flag bit 1, F = 0. One read of $9000: flag bit 2. A model whose low
+    byte falls in every sequence: 4 sequences a read, D = 65535, R = 65535 and the row ends."""
+    bench_only()
+    held = [False]
+
+    def play(d, n, seq):                    # a byte a sequence; a carry across the pair
+        if n == 0:
+            if not held[0]:
+                d.advance(1)
+            held[0] = False
+        elif n == 1 and d.addr & 0xFF == 0xFF:
+            d.advance(1)
+            held[0] = True
+    got, seqs = ptr_row(3000, play)
+    if got[0] != 1 or not 8 <= got[1] <= 14 or got[2:] != (0, 0) or seqs != 3001 + got[1]:
+        raise Fail(f"a carry at every $xxFF: (O, R, F, D) = {got}, {seqs} sequences")
+
+    def back(d, n, seq):
+        if n == 0:
+            d.advance(1)
+            if seq == 1500:
+                d.addr -= 5
+                d.count -= 5
+    got, _ = ptr_row(3000, back)
+    if got != (1, 0, 1, 0):
+        raise Fail(f"one step back: (O, R, F, D) = {got}, expected F = 1")
+    got, _ = ptr_row(9000, lambda d, n, seq: n == 0 and d.advance(1), dwell=True)
+    if got != (3, 0, 0, 0):
+        raise Fail(f"a dwell at $8000: (O, R, F, D) = {got}, expected flags 03 and F = 0")
+    saved = []
+
+    def wild(d, n, seq):
+        if n == 0 and seq == 700:
+            saved.append(d.addr)
+            d.addr = 0x9000
+        elif n == 0 and seq == 701:
+            d.addr = saved[0]
+    got, _ = ptr_row(2000, wild)
+    if got[0] != 5 or got[1] != 0 or got[3] != 0 or not got[2]:
+        raise Fail(f"one read of $9000: (O, R, F, D) = {got}, expected flags 05")
+
+    def torn(d, n, seq):
+        d.addr = (d.addr & 0xFF00) | (0x80, 0x80, 0x10)[n % 3]
+    got, seqs = ptr_row(65535, torn)
+    if got != (1, 65535, 0, 65535) or seqs != 4 * 65536:
+        raise Fail(f"torn every sequence: (O, R, F, D) = {got}, {seqs} sequences")
+
+
+def sum_row(sectors, reps, kind="nxb_kind_rsum", param=0, run=1000):
+    """A sum row over a Card of sectors (the first read untimed by nxb_rw_go), the raster
+    inside the long clock's window. Returns (machine, card, (O, R, F, D))."""
+    mc = nxb_machine(BenchMachine)
+    rw_sched(mc)
+    mapnr(mc, 6, S("NXB_PAGE"))
+    rw_cells(mc, run=run, crc=0)
+    mc.poke("vidRawSchedPage", SCHED_PAGE)
+    mc.poke16("nxbReps", reps)
+    mc.poke16("nxbParam", param)
+    mc.poke("nxbSvSpd", 3)
+    card = Card(sectors, waits=1)
+    mc.set_card(card)
+    out = []
+    cpu = mc.cpu
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = S(kind)
+    mc.now = 100 * T_LINE
+    mc.ticks = (mc.now - TICK_AT) // FRAME_T + 1
+    traps = aborts()
+    traps[S("nxb_sat")] = traps[S("nxb_tm_out")] = traps[S("dbg_puts")] = ret_trap(lambda c: None)
+    clocked(mc, RET, traps, watch=fprint_watch(mc, out))
+    mc.sync()
+    return mc, card, out[-1] if out else None
+
+
+def test_rd_sum():
+    """RSUM over 6 sectors of pattern bytes: the first is read untimed and not summed, the
+    next 5 are each opened, read by the slide into VR_SCRATCH and added: R:F is their
+    32-bit byte sum, O = 00, D = 0; the run and remain are charged 6; C is the card port at
+    every slide. One card byte flipped in a summed sector changes R:F by the difference; in
+    the untimed one it does not. 300 sectors of $FF carry into the high word."""
+    bench_only()
+    sec = [bytes((i * 31 + k * 7 + 3) & 0xFF for i in range(512)) for k in range(6)]
+    mc, card, got = sum_row(sec, 5)
+    want = sum(sum(s) for s in sec[1:])
+    if got != (0, want & 0xFFFF, want >> 16, 0) or card.pos != len(card.stream) \
+            or mc.peek("vidStrmRunBlkH", 2) != 1000 - 6:
+        raise Fail(f"RSUM: (O, R, F, D) = {got}, expected sum {want:08X}; card "
+                   f"{len(card.stream) - card.pos} unread, run {mc.peek('vidStrmRunBlkH', 2)}")
+    flip = [bytearray(s) for s in sec]
+    flip[3][200] ^= 0x40
+    d = flip[3][200] - sec[3][200]
+    _, _, got2 = sum_row([bytes(s) for s in flip], 5)
+    if got2[2] << 16 | got2[1] != want + d:
+        raise Fail(f"a flipped byte in a summed sector: sum {got2[2]:04X}{got2[1]:04X}, "
+                   f"expected {want + d:08X}")
+    flip = [bytearray(s) for s in sec]
+    flip[0][10] ^= 0xFF
+    if sum_row([bytes(s) for s in flip], 5)[2] != got:
+        raise Fail("a flipped byte in the untimed sector changed the sum")
+    _, _, got = sum_row([bytes([0xFF]) * 512] * 301, 300)
+    want = 300 * 512 * 255
+    if got != (0, want & 0xFFFF, want >> 16, 0):
+        raise Fail(f"300 sectors of $FF: {got}, expected {want:08X}")
+
+
+def tck_row(reps, lost=(), frozen=False):
+    mc = nxb_machine(BenchMachine)
+    mapnr(mc, 6, S("NXB_PAGE"))
+    if frozen:
+        mc.line = lambda: 100
+    mc.poke16("nxbReps", reps)
+    out = []
+    cpu = mc.cpu
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = S("nxb_kind_mtck")
+    mc.now = 300 * T_LINE
+    mc.ticks = (mc.now - TICK_AT) // FRAME_T + 1
+    mc.lost = {mc.ticks + k for k in lost}
+    clocked(mc, RET, watch=fprint_watch(mc, out))
+    return out[0], mc.now - 300 * T_LINE
+
+
+def test_rd_tck():
+    """MTCK on the clocked machine: 5 raster wraps, frameCounter stepping at line 248: O =
+    00, R = 5, F = 5, D = 0, in about 5 fields. A frameCounter step dropped inside the row:
+    R = 4, F = 5. A raster that never wraps: the row ends after 65536 polls with F = 0."""
+    bench_only()
+    got, t = tck_row(5)
+    if got != (0, 5, 5, 0) or not 4 * FRAME_T < t < 7 * FRAME_T:
+        raise Fail(f"MTCK 5: (O, R, F, D) = {got} in {t} T")
+    got, _ = tck_row(5, lost=(2,))
+    if got != (0, 4, 5, 0):
+        raise Fail(f"MTCK with a lost frameCounter step: {got}, expected R = 4, F = 5")
+    got, t = tck_row(5, frozen=True)
+    if got[2] != 0 or got[3] != 0:
+        raise Fail(f"MTCK on a raster that never wraps: {got} after {t} T")
+
+
+def test_rd_iden():
+    """IDEN's O on a raw clip: the delivery, + $10 when vidRawVar says the frame program is
+    the column train; a non-raw clip's O is the delivery alone."""
+    bench_only()
+    for raw, var, want in ((1, 0, 0x02), (1, 1, 0x12), (0, 1, 0x02)):
+        mc = kind_machine()
+        for name, v in (("vidRaw", raw), ("vidRawVar", var), ("vidDirect", 1),
+                        ("vidStreaming", 0), ("vidDstPages", 6), ("vidHeightB", 192)):
+            mc.poke(name, v)
+        noop = ret_trap(lambda c: None)
+        mc.run("nxb_kind_id", traps={S("nxb_fprint"): noop, S("dbg_puts"): noop,
+                                     S("nxb_tm_in"): noop, S("nxb_tm_out"): noop})
+        if mc.peek("nxbSO") != want:
+            raise Fail(f"IDEN raw {raw} vidRawVar {var}: O ${mc.peek('nxbSO'):02X}, "
+                       f"expected ${want:02X}")
+
+
+def rd_reps():
+    """T of one rep of each RD1 body and its base, VR_ENT_FAST, the pointer read on the DMA
+    (a loaded model): {name: T}."""
+    out = {}
+
+    def card_mc(sectors):
+        mc = RawMachine(SYMS)
+        mc.dma = dma_program(Dma())
+        rw_sched(mc)
+        rw_cells(mc, run=1000, crc=1)
+        set_entry(mc, "VR_ENT_FAST")
+        a = S("vid_raw_rdv") + 1
+        mc.mem[a:a + 2] = le(S("vid_dma_rd_hl"))
+        mc.set_card(Card([bytes(512)] * sectors, waits=0, crc_first=True))
+        mc.cpu.b, mc.cpu.c, mc.cpu.iff = 0, PORT_SPI, 1
+        return mc
+    for name in ("nxb_rd_hbody", "nxb_rd_spin", "nxb_rw_spin", "nxb_rd_sum", "nxb_rw_sec",
+                 "nxb_rt_body"):
+        mc = card_mc(1)
+        if name == "nxb_rt_body":           # at s throughout, the tail a ret
+            for lab, v in (("so", 3), ("st", 3), ("sf", 3)):
+                mc.poke("nxb_rt_body." + lab, v)
+            for lab, v in (("rd", S("VR_SLIDE")), ("tl", S("nxb_term"))):
+                mc.poke16("nxb_rt_body." + lab, v)
+        out[name] = rep_t(mc, name)
+    entry = b"\xCD" + le(S("vr_sector_n")) + b"\xCD" + le(S("VR_SLIDE"))
+    out["sched"] = stub_t(card_mc(1), entry + b"\xC9", hl=S("VR_SCRATCH"))
+    mc = card_mc(1)
+    mc.poke16("nxb_rd_first.body", S("nxb_rd_spin"))
+    out["first"] = rep_t(mc, "nxb_rd_first") - out["nxb_rd_spin"]
+    return out
+
+
+def test_rd_harness():
+    """RD_SPIN_HARNESS_T, RD_HIST_HARNESS_T, RD_FRAME_HARNESS_T and RD_FIRST_T
+    (nxv2_bench_rows) from the emitted bytes, the pointer read on the DMA: the counted spin
+    rep over nxb_rw_spin's; the counted histogram rep over the schedule's call vr_sector_n /
+    call VR_SLIDE on Release instructions (the token on poll 1); the counted frame rep over
+    vid_run's stage, pump and decode calls; and
+    what nxb_rd_first adds to a row's first rep. MHST and RHST are one table row and one
+    body (nxb_rd_hbody), so the two run the same bytes."""
+    bench_only()
+    import nxv2_bench_rows as bench
+    t = rd_reps()
+    div = sector_divider(sector_mc())           # plain DEBUG: in the schedule's open only
+    got = (t["nxb_rd_spin"] - t["nxb_rw_spin"], t["nxb_rd_hbody"] - t["sched"] + div,
+           t["first"])
+    if got != (bench.RD_SPIN_HARNESS_T, bench.RD_HIST_HARNESS_T, bench.RD_FIRST_T):
+        raise Fail(f"(spin, histogram, first rep) harness {got} T, nxv2_bench_rows "
+                   f"{(bench.RD_SPIN_HARNESS_T, bench.RD_HIST_HARNESS_T, bench.RD_FIRST_T)}")
+
+    def frame_mc():
+        mc = RawMachine(SYMS)
+        mc.dma = Dma()
+        snd_open(mc, 1, 1, 1)
+        if build_sched(mc, 0, 256, 192).fc:
+            raise Fail("vid_raw_sched_build set CF")
+        setup_frame(mc, 0, 256, 192)
+        rw_cells(mc, run=1000, crc=0)
+        for n in ("vidRlDiv", "vidRlSpinDiv"):
+            if n in SYMS:
+                mc.poke(n, 250)
+        base = S("vidAudBuf")
+        dma_playing(mc.dma, base + 100)
+        mc.poke16("vidABytes", 625)
+        mc.poke16("vidAudWr", (base + 100) ^ (S("NXV_AUD_RING") // 2))
+        mc.cpu.iff = 1
+        snd = bytes(625) + bytes([0x80]) * (1024 - 626) + b"\x00"
+        mc.set_card(Card(blocks(snd) + blocks(pixels(256 * 192)), waits=1))
+        return mc
+    fbench = rep_t(frame_mc(), "nxb_rd_fbody")
+    play = stub_t(frame_mc(), b"\xCD" + le(S("vid_aud_stage")) + b"\x01\xFF\xFF\xCD"
+                  + le(S("vid_aud_pump")) + b"\xCD" + le(S("vid_decode_any")) + b"\xC9")
+    if fbench - play != bench.RD_FRAME_HARNESS_T:
+        raise Fail(f"counted frame rep {fbench} T, playback's calls on the DMA path {play} T: "
+                   f"harness {fbench - play} (RD_FRAME_HARNESS_T {bench.RD_FRAME_HARNESS_T})")
+    rows = {r[0]: r[1:] for r in bench.SESSION_TABLES["RD1"]}
+    mc = kind_machine()
+    code_is(mc, "nxb_rd_hbody", b"\x21" + le(S("VR_SCRATCH")) + b"\xCD" + le(S("nxb_rh_sec"))
+            + b"\xCD" + le(S("nxb_rh_bin")) + b"\xCD" + le(S("VR_SLIDE")))
+    if rows["MHST"] != rows["RHST"] or S("nxb_rd_acc") != S("nxb_rd_hbody") + 12:
+        raise Fail("MHST and RHST are not the same row, or nxb_rd_hbody does not fall into "
+                   "nxb_rd_acc")
+
+
+# --------------------------------------------------------------------------- RT1: turbo bench
+
+def turbo_gaps(waits):
+    """Read gaps of two sectors through the classic shape (call vr_sector_n / call VR_SLIDE,
+    twice) on the turbo T table: the gap list, and the DEBUG divider's T inside CRC 2 to
+    poll 1 (0 on a quiet image)."""
+    def tmc():
+        mc = RawMachine(SYMS)
+        mc.turbo = True
+        rw_sched(mc)
+        rw_cells(mc, run=1000, crc=1)
+        set_entry(mc, "VR_ENT_FAST")
+        mc.cpu.b, mc.cpu.c = 0, PORT_SPI
+        return mc
+    mc = tmc()
+    mc.set_card(Card([bytes(512)] * 2, waits=waits, crc_first=True))
+    pair = b"\xCD" + le(S("vr_sector_n")) + b"\xCD" + le(S("VR_SLIDE"))
+    mc.mem[STUB:STUB + 13] = pair + pair + b"\xC9"
+    cpu = mc.cpu
+    cpu.sp, cpu.hl = STACK, S("VR_SCRATCH")
+    cpu.push(RET)
+    gaps = io_gaps(mc, STUB, RET)
+    div = 0
+    if "nxbQuietImage" not in SYMS:
+        div = stub_t(tmc(), b"\x16\x00\xCD" + le(S("vid_dst_norm_flat")) + b"\xC9")
+    return gaps, div
+
+
+def test_rt_gaps():
+    """The sector path's read gaps on the turbo T table (NR $07 = %111), I/O start to I/O
+    start, ini reading at +8: the classic shape (vr_sector_n, the 512-ini slide) run as
+    emitted - CRC pair 15, CRC 2 to poll 1 18 (after the DEBUG divider), poll 1 to poll 2
+    22, loop poll to loop poll 43, the token to the first ini 45, ini to ini 15, the last ini
+    to CRC 1 40; the shapes no turbo row runs, from the table's instruction T - inline open
+    25 and 29, across a hop 26, inline last ini to CRC 1 24, the train's 18; nxb_rt_slow 25.
+    No gap is under 15 and the only gap under 16 whose value is used is ini to ini. Then
+    nxb_rt_body's reps as the kinds set them (NSEC, NSM0, TSTR, TSLO, TSUM, TSEC): the data
+    gaps are 16, 16, 15, 25 (one of 42 where nxb_rt_slow's two halves join), 15, 15, and
+    no other gap but the CRC pair's 15 is under 16."""
+    bench_only()
+    gaps, div = turbo_gaps([1, 3])
+    one = [15, 18 + div, 22, 45] + [15] * 511
+    want = one + [40, 15, 18 + div, 22, 43, 43, 45] + [15] * 511
+    if gaps != want:
+        bad = next(i for i, (a, b) in enumerate(zip(gaps, want)) if a != b)
+        raise Fail(f"turbo classic gaps differ at {bad}: {gaps[bad - 2:bad + 3]}, expected "
+                   f"{want[bad - 2:bad + 3]} ({len(gaps)} / {len(want)} gaps)")
+    tm, tc, te = T_MAIN_T, T_COND_T, T_ED_T
+    tail_in, head_in = tm[0xDB] - IO_START["in a,(n)"], IO_START["in a,(n)"]
+    tail_ini, head_ini = te[0xA2] - (IO_START["ini"] - 1), IO_START["ini"] - 1
+    table = {
+        "CRC 1 to CRC 2": tail_in + tm[0x00] + head_in,
+        "CRC 2 to poll 1": tail_in + tm[0xBE] + head_in,
+        "poll 1 to poll 2, vr_sector_n": tail_in + tm[0x3C] + tc[0x20][1] + head_in,
+        "poll 1 to poll 2, inline open": tail_in + tm[0x3C] + tc[0xC4][1] + head_in,
+        "loop poll to loop poll": tail_in + tm[0xFE] + tc[0xC8][1] + tm[0x3C] + tc[0x20][1]
+        + tc[0x10][0] + head_in,
+        "token to the first ini, slide": tail_in + tm[0xFE] + tc[0xC8][0] + tm[0xCD] + head_ini,
+        "token to the first ini, inline": tail_in + tm[0xFE] + tc[0xC4][1] + head_ini,
+        "ini to ini": te[0xA2],
+        "ini to ini across a hop": tail_ini + tm[0x2E] + tm[0x24] + head_ini,
+        "last ini to CRC 1, classic": tail_ini + tm[0xC9] + tm[0xCD] + head_in,
+        "last ini to CRC 1, inline": tail_ini + tm[0xC9] + head_in,
+        "last ini to CRC 1, train": tail_ini + tm[0x00] + head_in,
+        "nxb_rt_slow, ini to ini": tail_ini + tm[0xC2] + head_ini,
+    }
+    counted = dict(zip(table, (15, 18, 22, 25, 43, 45, 29, 15, 26, 40, 24, 18, 25)))
+    used = {k for k in table if not k.startswith(("CRC 1", "last ini"))}
+    if table != counted or min(table.values()) < 15 \
+            or [k for k in used if table[k] < 16] != ["ini to ini"]:
+        raise Fail(f"turbo gap table {table}, expected {counted}")
+    data = {"NSEC": {16}, "NSM0": {16}, "TSTR": {15}, "TSLO": {25, 42}, "TSUM": {15},
+            "TSEC": {15}}
+    import nxv2_bench_rows as bench
+    for tag, kind, param, *_ in bench.SESSION_TABLES["RT1"]:
+        if kind not in ("tblk", "tsum"):
+            continue
+        mc = nxb_machine(BenchMachine)
+        rw_sched(mc)
+        mapnr(mc, 6, S("NXB_PAGE"))
+        rw_cells(mc, run=1000, crc=1)
+        set_entry(mc, "VR_ENT_FAST")
+        mc.poke("nxbSvSpd", 3)
+        mc.poke16("nxbParam", param)
+        go = {S("nxb_sum_row"): ret_trap(lambda c: None), S("nxb_rw_mark0"): lambda c: setattr(c, "pc", RET)}
+        mc.run("nxb_kind_" + kind, traps=go)
+        mapnr(mc, 6, SCHED_PAGE)
+        mc.set_card(Card([bytes(range(256)) * 2] * 2, waits=1, crc_first=True))
+        cpu = mc.cpu
+        cpu.b, cpu.c = 0, PORT_SPI
+        mc.mem[STUB:STUB + 7] = b"\xCD" + le(S("nxb_rt_body")) + b"\xCD" + le(S("nxb_rt_body")) + b"\xC9"
+        cpu.sp = STACK
+        cpu.push(RET)
+        g = io_gaps(mc, STUB, RET)
+        # a sector is 516 reads: CRC 1, CRC 2, one $FF, the token, 512 data
+        body = g[4:515] + g[520:1031]
+        rest = [x for i, x in enumerate(g) if not 4 <= i % 516 < 515]
+        crc = [g[0], g[516]]
+        if len(g) != 1031 or set(body) != data[tag] or body.count(42) not in (0, 2) \
+                or crc != [15, 15] \
+                or sorted(rest)[2] < 16 or mc.speeds[-1] != 3 or mc.turbo:
+            raise Fail(f"{tag} ({kind} {param}): data gaps {sorted(set(body))}, expected "
+                       f"{data[tag]}; CRC pairs {crc}; other gaps from {sorted(rest)[:4]}; "
+                       f"head {g[:5]}, join {g[513:520]}; NR $07 last {mc.speeds[-1:]}")
+
+
+def rt_harness():
+    t = rd_reps()
+    return t["nxb_rt_body"] - t["sched"], t["nxb_rw_sec"] - t["sched"]
+
+
+def test_rt_harness():
+    """RT_CARD_HARNESS_T (nxv2_bench_rows) from the emitted bytes: an nxb_rt_body rep at
+    the session's speed, its tail a ret, over the schedule's call vr_sector_n / call
+    VR_SLIDE: RW1's RW_CARD_HARNESS_T plus three nextreg n,n, a call in place of RSEC's jp
+    and the tail's jp and ret. nxb_rt_body, nxb_rt_slow and nxb_rt_spin as emitted."""
+    bench_only()
+    import nxv2_bench_rows as bench
+    got, rsec = rt_harness()
+    if got != bench.RT_CARD_HARNESS_T or rsec != bench.RW_CARD_HARNESS_T \
+            or got != rsec + 3 * 20 + (17 - 10) + 10 + 10:
+        raise Fail(f"nxb_rt_body rep harness {got} T (RT_CARD_HARNESS_T "
+                   f"{bench.RT_CARD_HARNESS_T}), RSEC's {rsec}")
+    mc = RawMachine(SYMS)
+    sp = S("NR_CPU_SPEED")
+    nr = lambda: b"\xED\x91" + bytes([sp, 0])                      # noqa: E731
+    code_is(mc, "nxb_rt_body", nr() + b"\x21" + le(S("VR_SCRATCH")) + b"\xCD" + le(S("vr_sector_n"))
+            + nr() + b"\xCD" + le(S("VR_SLIDE")) + nr() + b"\xC3" + le(S("nxb_term")))
+    h = S("nxb_rt_slow") + 3
+    code_is(mc, "nxb_rt_slow", b"\xCD" + le(h) + b"\x06\x00\xED\xA2\xC2" + le(h + 2) + b"\xC9")
+    code_is(mc, "nxb_rt_spin", nr() + b"\xCD" + le(S("nxb_rw_spin")) + nr() + b"\xC3"
+            + le(S("nxb_rd_acc")))
+    if (S("nxb_rt_body.so"), S("nxb_rt_body.st"), S("nxb_rt_body.rd"), S("nxb_rt_body.sf"),
+            S("nxb_rt_body.tl")) != tuple(S("nxb_rt_body") + k for k in (3, 13, 15, 20, 22)):
+        raise Fail("nxb_rt_body's operand labels are not its three speeds, read and tail")
+
+
+def tchk_row(has_turbo, readback):
+    mc = nxb_machine(BenchMachine)
+    mc.has_turbo, mc.readback = has_turbo, readback
+    mapnr(mc, 6, S("NXB_PAGE"))
+    tab = S("nxbTabBuf")
+    mc.mem[tab:tab + 16] = b"TCHK" + bytes(6) + b"SPN0" + bytes(2)
+    mc.poke16("nxbTag", tab)
+    mc.poke16("nxbRowNext", tab + 10)
+    mc.poke16("nxbReps", 64)
+    mc.poke("nxbSvSpd", 3)
+    mc.poke("nxbRow", 9)
+    scr = Screen(mc)
+    cpu = mc.cpu
+    cpu.sp = STACK
+    cpu.push(RET)
+    cpu.pc = S("nxb_kind_tchk")
+    mc.now = 100 * T_LINE
+    mc.ticks = (mc.now - TICK_AT) // FRAME_T + 1
+    clocked(mc, RET, scr.traps())
+    return mc, scr
+
+
+def test_rt_tchk():
+    """TCHK on the clocked machine at s = 3: NR $07 takes 7, 3, 7, 3; O = the read-back, R
+    and F the raster lines of 64 spin reps at s and at s + 4, D = 3. With turbo and its bit
+    read back: O = $37, R about 1828, F about 1547, turbo taken as there, nothing else
+    printed. Bit 2 read back but no faster: there (read-back alone). Faster but bit 2 not
+    read back: there (the spin alone). Neither: R = F, the next row prints SPN0 NXB NOTURBO
+    and the staged table ends at it. NR $07 is 3 on every exit."""
+    bench_only()
+    for has_turbo, readback in ((True, True), (False, True), (True, False), (False, False)):
+        mc, scr = tchk_row(has_turbo, readback)
+        rows = scr.rows()
+        what = f"TCHK (turbo {has_turbo}, bit 2 reads back {readback})"
+        if len(rows) != 1 or rows[0][0] != "TCHK" or mc.speeds != [7, 3, 7, 3] or mc.turbo:
+            raise Fail(f"{what}: rows {rows}, NR $07 writes {mc.speeds}")
+        _tag, o, r, f, d, _rest = rows[0]
+        want_o = 0x33 | (4 if readback else 0)
+        fast = 1543 <= f <= 1551 if has_turbo else abs(f - r) <= 1
+        if o != want_o or d != 3 or not 1824 <= r <= 1832 or not fast:
+            raise Fail(f"{what}: O ${o:02X} (expected ${want_o:02X}), R {r}, F {f}, D {d}")
+        active = has_turbo or readback
+        marker = [t for t in scr.text() if "NOTURBO" in t]
+        ended = mc.mem[S("nxbTabBuf") + 10] == 0
+        if bool(mc.peek("nxbTurbo")) != active or bool(marker) == active or ended == active \
+                or marker not in ([], ["SPN0 NXB NOTURBO"]):
+            raise Fail(f"{what}: nxbTurbo {mc.peek('nxbTurbo')}, marker {marker}, table "
+                       f"ended {ended}")
+
+
+def test_rt_walk():
+    """Session RT1 from vid_run's hook to .restore on the staged 060, CTC 0's interrupts
+    taken: 12 rows on screen rows 8-19; the four sums equal rt1_expected; the card rows run
+    NSEC NSM0 TSTR TSLO TSUM TSEC, each from the block rt1_blocks gives; NR $07 takes 7 and
+    3 only and is 3 at the end; TSPN is 0.84 to 0.85 of SPN0; TCN1 is TCTC's T / 1792 x 2
+    (two ring bytes a period on a stereo clip); NSEC less TSEC is 515 T a rep within the
+    raster's line. A token of $00 inside TSTR, and one inside TSLO (the open in turbo):
+    VID_ERR_TOKEN, the rows before it printed and none after, NR $07 = 3. A machine whose
+    NR $07 ignores bit 2: IDEN, TCHK, SPN0 NXB NOTURBO, and no card read."""
+    bench_only()
+    import nxv2_bench_rows as bench
+    wk = bench_walk(60, 7, irq=True)
+    mc, card = wk.mc, wk.card
+    rows = wk.scr.rows()
+    by = {r[0]: r for r in rows}
+    where = [(r, c) for r, c, t in wk.scr.lines if Screen.ROW.fullmatch(t)]
+    if wk.abort is not None or [r[0] for r in rows] != RT1_PRINTED \
+            or where != [(8 + i, 0) for i in range(12)]:
+        raise Fail(f"RT1: abort {wk.abort}, rows {[r[0] for r in rows]} at {where}")
+    sums = {t: by[t][3] << 16 | by[t][2] for t in ("NSM0", "TSTR", "TSLO", "TSUM")}
+    if sums != bench.rt1_expected(wk.path):
+        raise Fail(f"RT1 sums {sums}, the file's {bench.rt1_expected(wk.path)}")
+    t_of = {tag: t for ev, tag, t in wk.events if ev == "row"}
+    firsts = [(tag, next(b for b, t, _pc in card.opens if t >= t_of[tag]))
+              for tag, _b, _n in bench.card_rows("RT1", 1)]
+    if firsts != [(t, b) for t, b, _n in bench.card_rows("RT1", 1)] \
+            or card.block != 1 + 9222:
+        raise Fail(f"RT1 card rows start at {firsts}, expected {bench.card_rows('RT1', 1)}; "
+                   f"the card ends at block {card.block}")
+    ratio = row_t(by["TSPN"]) / row_t(by["SPN0"])
+    tcn = (by["TCN1"][3] & 0xFF) << 16 | by["TCN1"][2]
+    step = (row_t(by["NSEC"]) - row_t(by["TSEC"])) / bench.NXB_RT_REPS
+    if set(mc.speeds) != {7, 3} or mc.speeds[-1] != 3 or mc.turbo or not 0.84 < ratio < 0.85 \
+            or abs(tcn - 2 * row_t(by["TCTC"]) / 1792) > 8 or abs(step - 515) > 2 * T_LINE / 512 \
+            or not mc.irqs or any(by[t][1] for t in ("NSEC", "NSM0", "TSTR", "TSLO", "TSUM",
+                                                    "TSEC")):
+        raise Fail(f"RT1: NR $07 writes {sorted(set(mc.speeds))} last {mc.speeds[-1]}, TSPN / "
+                   f"SPN0 {ratio:.4f}, TCN1 {tcn} against {2 * row_t(by['TCTC']) / 1792:.1f}, "
+                   f"NSEC - TSEC {step:.2f} T a rep, {mc.irqs} interrupts")
+    start = dict((t, b) for t, b, _n in bench.card_rows("RT1", 1))
+    for tag, printed in (("TSTR", RT1_PRINTED[:8]), ("TSLO", RT1_PRINTED[:9])):
+        wk = bench_walk(60, 7, irq=True, bad=start[tag] + 100)
+        got = [r[0] for r in wk.scr.rows()]
+        if wk.abort != S("VID_ERR_TOKEN") or got != printed or wk.mc.speeds[-1] != 3 \
+                or wk.mc.turbo or wk.mc.peek("nxbSessLive"):
+            raise Fail(f"a bad token in {tag}: abort {wk.abort}, rows {got}, NR $07 last "
+                       f"{wk.mc.speeds[-1]}, turbo {wk.mc.turbo}")
+    if S("VID_ERR_TOKEN") != 0xFD:
+        raise Fail("VID_ERR_TOKEN is not $FD")
+    wk = bench_walk(60, 7, has_turbo=False, readback=False)
+    text = wk.scr.text()
+    if [r[0] for r in wk.scr.rows()] != ["IDEN", "TCHK"] or "SPN0 NXB NOTURBO" not in text \
+            or wk.card.reads or wk.abort is not None or wk.mc.speeds != [7, 3, 7, 3, 3]:
+        raise Fail(f"no turbo: rows {[r[0] for r in wk.scr.rows()]}, text {text[-2:]}, "
+                   f"{wk.card.reads} card reads, NR $07 writes {wk.mc.speeds}")
+
+
+# --------------------------------------------------------------------------- plain DEBUG work
+
+def dbg_pump(path):
+    """pump_mc for a 625-byte mono feed (2 sectors, a CRC due), the pointer read on HL'
+    (path 1) or on a playing DMA model at the same address (path 2); PLAY dividers at 250."""
+    base = S("vidAudBuf")
+    mc = pump_mc(625, 2, base + 100)
+    if path == 2:
+        mc.dma = dma_playing(Dma(), base + 100)
+        a = S("vid_raw_rdv") + 1
+        mc.mem[a:a + 2] = le(S("vid_dma_rd_hl"))
+    return mc
+
+
+def dbg_counts():
+    """The plain DEBUG instruments' T from the emitted bytes, a raw mono session, PLAY
+    dividers not firing unless said: {name: T} as nxv2_bench_rows RAW_DBG_T, and the
+    pointer read through vid_raw_rdv by path (RAW_PTR_T)."""
+    call = lambda name: b"\xCD" + le(S(name)) + b"\xC9"            # noqa: E731
+    out, ptr = {}, {}
+    for path, key in ((1, "hlp"), (2, "dma")):
+        ptr[key] = stub_t(dbg_pump(path), call("vid_raw_rdv"))
+    poll = stub_t(dbg_pump(1), call("vid_pace_poll"))
+    out["arm"] = poll - stub_t(dbg_pump(1), call("vid_pace_poll.rd"))
+    mc = dbg_pump(1)
+    mc.poke("vidRlSpinDiv", 1)
+    out["rl_poll"] = stub_t(mc, call("vid_pace_poll")) - poll
+    out["sector"] = stub_t(dbg_pump(1), b"\x16\x00" + call("vid_dst_norm_flat"))
+    out["token"] = TOKCNT_T
+    mc = dbg_pump(1)
+    mc.poke("vidPlayArmed", 1)
+    out["play_frame"] = stub_t(mc, call("vid_play_frame"))
+    for path, key in ((1, "urun"), (2, "urun_dma")):
+        mc = dbg_pump(path)
+        mc.poke16("vidPaceRem", 0xFFFB)                           # late: rem < 0
+        mc.poke16("vidAudRdPrev", S("vidAudBuf") + 100)
+        out[key] = stub_t(mc, call("vid_dbg_urun"))
+        if mc.peek("vidUrunCnt", 2) != 1 or mc.peek("vidLateArm") != 1:
+            raise Fail("vid_dbg_urun on a late frame did not count it and arm LATE")
+    mc = dbg_pump(1)
+    mc.poke("vidLateArm", 1)
+    mc.poke16("vidPaceRem", 0xFFFB)
+    mc.poke16("vidLateMax", 100)
+    mc.poke16("vidLateCnt", 7)
+    out["late"] = stub_t(mc, b"\x37" + call("vid_dbg_late")) - 4   # scf: the poll's CF
+    if mc.peek("vidLateCnt", 2) != 8 or mc.peek("vidLateMax", 2) != 100:
+        raise Fail("vid_dbg_late on a late frame: LATE not counted, or MAXL raised")
+    return out, ptr
+
+
+def test_dbg_work():
+    """Plain DEBUG work of a raw mono 320x192 frame on each sound path, from the emitted
+    bytes (a plain DEBUG image). RAW_DBG_T and RAW_PTR_T (nxv2_bench_rows) are the
+    instruments' T: a divider arm, vid_rl_poll when one fires, a sector open's divider,
+    vid_play_frame, vid_dbg_late and vid_dbg_urun on a late frame, the pointer read through
+    vid_raw_rdv on HL' and on the DMA. RAW_HANDLER_T is each raw handler's common path and
+    the IM2 acknowledge. Then a frame traced with no divider firing - vid_raw_frame over a
+    card, the pump over a 625-byte section, the three instrument calls and the pace poll's
+    arm - less the Release frame's T (16 a byte, raw_frame_overhead, RAW_PUMP_T, the pump's
+    pointer read on the path) equals raw_fit.debug_work's unarmed figure less its
+    vid_rl_poll shares, within 50 T, on path 1 and on path 2."""
+    import nxv2_bench_rows as bench
+    if (bench.RAW_HANDLER_T["stereo"], bench.RAW_HANDLER_T["mono"]) != (
+            ISR_T["video_ctc_isr_raw_st"][0] + ACK_T, ISR_T["video_ctc_isr_raw_mono"][0] + ACK_T):
+        raise Fail(f"RAW_HANDLER_T {bench.RAW_HANDLER_T}, the handlers' common path and the "
+                   f"acknowledge {ISR_T}")
+    if not plain_debug():
+        raise Skip("the DEBUG instruments are not assembled (Release or -BenchQuiet image)")
+    import raw_fit
+    from types import SimpleNamespace
+    got, ptr = dbg_counts()
+    if got != bench.RAW_DBG_T or ptr != bench.RAW_PTR_T:
+        raise Fail(f"DEBUG instruments {got}, pointer read {ptr}; nxv2_bench_rows "
+                   f"{bench.RAW_DBG_T}, {bench.RAW_PTR_T}")
+    code, w, h = 1, 320, 192
+    res = SimpleNamespace(period=1792, handler=dict(bench.RAW_HANDLER_T), wait_shape="inline")
+    g = raw_fit.geometry(w, h, 25, 1)
+    for path in (1, 2):
+        mc = RawMachine(SYMS)
+        mc.dma = Dma()
+        snd_open(mc, 1, 1, path == 2)
+        if build_sched(mc, code, w, h).fc:
+            raise Fail("vid_raw_sched_build set CF")
+        _x0, sec = setup_frame(mc, code, w, h, crc_due=1)
+        for n in ("vidRlDiv", "vidRlSpinDiv"):
+            mc.poke(n, 250)
+        mc.set_card(Card(blocks(pixels(w * h)), waits=1, crc_first=True))
+        cpu = mc.cpu
+        cpu.sp, cpu.pc = STACK, S("vid_raw_frame")
+        cpu.push(RET)
+        frame = tcount(mc, lambda c: c.pc == RET)
+        pix = frame - sec * 512 * 16 - bench.raw_frame_overhead(code, w, h)
+        pump = dbg_pump(path)
+        t = stub_t(pump, b"\xCD" + le(S("vid_aud_pump")) + b"\xC9", bc=0xFFFF)
+        if pump.peek("vidAudFeedRem", 2) or pump.card.pos != len(pump.card.stream):
+            raise Fail(f"path {path}: the pump did not complete the section")
+        snd = t - bench.RAW_PUMP_T[(2, 625)] - (ptr["dma"] - ptr["hlp"] if path == 2 else 0)
+        loop = got["play_frame"] + got["arm"] + got["late"] + got["urun_dma" if path == 2 else "urun"]
+        dw = raw_fit.debug_work(res, g, "mono", path=path)
+        rl = bench.RAW_DBG_T["rl_poll"] / S("VID_RL_DIV")
+        want = dw.total / dw.armed - dw.arms * rl
+        if (sec, g.spix, g.ssnd, dw.arms) != (120, 120, 2, 124) or abs(pix + snd + loop - want) > 50 \
+                or (pix, snd) != (120 * got["sector"], 2 * got["sector"]):
+            raise Fail(f"path {path}: DEBUG work traced {pix} (pixel sectors) + {snd} (sound) "
+                       f"+ {loop} (frame loop) = {pix + snd + loop} T, debug_work {want:.1f} "
+                       f"({dw.arms} arms)")
+        am = 1792 / (1792 - bench.RAW_HANDLER_T["mono"]) if path == 1 else 1.0
+        if abs(dw.armed - am) > 1e-12:
+            raise Fail(f"path {path}: debug_work's armed factor {dw.armed}, expected {am}")
+
+
 TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_sched_limit, test_sector_runwalk, test_sector_badtoken, test_sector_n,
          test_sector_fresh, test_sector_walkfault, test_sector_polls, test_sector_timeout,
@@ -6690,7 +8071,11 @@ TESTS = [test_sched_pixels, test_sched_reads, test_sched_shape, test_sched_pad,
          test_dbg_counters, test_dbg_calls, test_rw_shapes, test_rw_feed, test_rw_route,
          test_rw_card, test_rw_hist, test_rw_arms, test_vec_bench, test_rw_kinds, test_rw_histlog,
          test_play_log, test_play_clr, test_play_nofile, test_fail_print, test_entry_modes,
-         test_rw_harness, test_rw_card_c, test_rw_chain, test_geo_hop, test_loop_sound_boundary]
+         test_rw_harness, test_rw_card_c, test_rw_chain, test_geo_hop, test_loop_sound_boundary,
+         test_bench_clean, test_rw1_mono_ctc, test_rd1_blocks, test_rd1_walk, test_rd_mld,
+         test_rd_mgo, test_rd_moff, test_rd_acc, test_rd_ptr, test_rd_sum, test_rd_tck,
+         test_rd_iden, test_rd_harness, test_rt_gaps, test_rt_harness, test_rt_tchk,
+         test_rt_walk, test_dbg_work]
 
 
 def main():

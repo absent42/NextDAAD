@@ -47,6 +47,11 @@ MODEL_MARK = {"1c": "H1C"}
 UNMARKED_MODEL = "1b"
 IDEN_MARK_RE = re.compile(r"^IDEN\s+O=[0-9A-F]{2}\s+R=[0-9A-F]{4}\s+F=[0-9A-F]{4}\s+"
                           r"D=[0-9A-F]{4}(?:\s+(\S+))?\s*$", re.IGNORECASE)
+# Host counts for the fit (nxv2_bench_rows, pinned to the image by vidraw_contract).
+RAW_PUMP_T = benchrows.RAW_PUMP_T
+raw_frame_overhead = benchrows.raw_frame_overhead
+RAW_HANDLER_T = benchrows.RAW_HANDLER_T
+RAW_PTR_T = benchrows.RAW_PTR_T
 INI_T = 16
 SECTOR_INI_T = 512 * INI_T
 COL_ENDS = 8                 # RCOL/ARCO: 8 reads of 64 (nxb_rw_col)
@@ -147,18 +152,14 @@ def ctc_period():
 
 
 FIELD_T = LPF * T_LINE
-# Plain DEBUG (IFNDEF NXB_QUIET) base T absent from the -BenchQuiet rows, Zilog T counted
-# from src/video.asm (NEXTREG A,n read 13 T); vid_rl_poll runs once per VID_RL_DIV arms.
-DBG = dict(
-    arm=40,          # divider arm: ld a,(nn) / dec a / ld (nn),a / call z, not taken
-    rl_poll=231,     # vid_rl_poll body, plus 7 T for the call z taken
-    sector=86,       # vr_sector_n: ld d,0 / call vid_dst_norm_flat / its arm / ld a,d, cp, ret c
-    token=177,       # vid_sd_tok_h .got poll counter: every sound sector; a pixel sector only
-                     # in the sitting1 shape (inline: the slow tail, 257 or more polls)
-    play_frame=179,  # call vid_play_frame, the armed path
-    late=174,        # call vid_dbg_late, a late frame, MAXL not raised
-    urun=402,        # call vid_dbg_urun and its vid_pace_poll (raw .rd), a late frame
-)
+# Plain DEBUG (IFNDEF NXB_QUIET) base T absent from the -BenchQuiet rows; vid_rl_poll runs
+# once per VID_RL_DIV arms. By bench image: 1c nxv2_bench_rows RAW_DBG_T (from the emitted
+# bytes); 1b sitting 1b's source by count (the sound section through vid_ds_blkopen with
+# the token counter, vid_dbg_urun's poll through vid_raw_rd_hl).
+MODEL_DBG = {"1c": benchrows.RAW_DBG_T,
+             "1b": dict(arm=40, rl_poll=231, sector=86, token=177, play_frame=179, late=174,
+                        urun=402)}
+DBG = MODEL_DBG["1c"]
 
 
 def pix_token(res):
@@ -184,25 +185,86 @@ def shape_tags(res, tags):
 REFUSALS = nxbtags.NXB_RW1_REFUSALS
 
 
-def debug_work(res, g, form):
-    """Plain DEBUG T on a late frame's path, armed (1 / (1 - handler / CTC period)).
-    Pump passes a frame are estimated: one chunk, one more on a ring-tail wrap, the last.
-    A pixel sector carries the token counter only in the sitting1 shape (pix_token)."""
-    am = res.period / (res.period - res.handler[form])
+def debug_work(res, g, form, path=None, steal=0.0):
+    """Plain DEBUG T on a late frame's path, armed. Model 1c: every sector open, pixel or
+    sound (the raw pump's), carries the PLAY divider; a frame adds vid_play_frame, the .pace
+    poll's arm, vid_dbg_late and vid_dbg_urun with its own poll, whose pointer read is HL'
+    or, on sound path 2, the DMA's; armed = 1 / (1 - handler / CTC period), on path 2 1 / (1
+    - steal / period). Model 1b: the sound section through vid_ds_blkopen (its arm, the
+    token counter) and the pump's chunk passes (estimated: one chunk, one more on a ring-tail
+    wrap, the last). arms: divider arms a frame, a vid_rl_poll share each. A pixel sector
+    carries the token counter only in the sitting1 shape (pix_token)."""
     rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
     pix = DBG["sector"] + pix_token(res) + rl
-    snd = DBG["arm"] + DBG["token"] + rl
-    passes = 2 + g.real / inc_equ("NXV_AUD_RING")
-    frame = (DBG["play_frame"] + DBG["arm"] + rl + DBG["late"] + DBG["urun"] + rl
-             + passes * (DBG["arm"] + rl))
-    return SimpleNamespace(pix=pix, snd=snd, frame=frame, passes=passes, armed=am,
+    if model_in_force() == "1b":
+        am = res.period / (res.period - res.handler[form])
+        snd = DBG["arm"] + DBG["token"] + rl
+        passes = 2 + g.real / inc_equ("NXV_AUD_RING")
+        frame = (DBG["play_frame"] + DBG["arm"] + rl + DBG["late"] + DBG["urun"] + rl
+                 + passes * (DBG["arm"] + rl))
+    else:
+        path = (1 if form == "mono" else 0) if path is None else path
+        am = res.period / (res.period - (steal if path == 2 else res.handler[form]))
+        snd = DBG["sector"] + rl
+        passes = 0.0
+        frame = (DBG["play_frame"] + DBG["arm"] + rl + DBG["late"]
+                 + DBG["urun_dma" if path == 2 else "urun"] + rl)
+    return SimpleNamespace(pix=pix, snd=snd, frame=frame, passes=passes, armed=am, path=path,
+                           arms=g.spix + g.ssnd + 2 + passes,
                            total=am * (g.spix * pix + g.ssnd * snd + frame), pal=am * pix)
 
 
-def ring_play(frames, work, work0, real, channels, tick, ring, guard, chunk):
-    """vid_run's frame loop against the CTC 0 reader: release on consumption with the deficit
-    clamp (.pace/.paced), .ffin waits for ring room, .qnext pumps what vid_aud_pump's room
-    test and chunk floor allow. -> (T from frame 0's loop top to the drain release, waits)."""
+def ring_ref(frames, work, work0, real, channels, tick, ring, guard):
+    """ring_play's all-or-nothing loop stepped one reader tick at a time (the selftest's
+    reference). -> (T, waits)."""
+    t, wr, seen, rem, feed, laps = 0.0, real, 0, 0, 0, 0
+
+    def rd():
+        return channels * int(t // tick)
+
+    def step():
+        nonlocal t
+        t = (t // tick + 1) * tick
+    for f in range(frames):
+        rem -= rd() - seen
+        seen = rd()
+        while rem > 0:
+            step()
+            rem -= rd() - seen
+            seen = rd()
+        rem += real
+        if rem <= 0:
+            rem = real
+        if feed:
+            waited = False
+            while ring - guard - (wr - rd()) % ring < feed:
+                step()
+                waited = True
+            laps += waited
+            wr += feed
+            feed = 0
+        t += work0 if f == 0 else work
+        if f == frames - 1:
+            break
+        if ring - guard - (wr - rd()) % ring >= real:
+            wr += real
+        else:
+            feed = real
+    rem -= rd() - seen
+    seen = rd()
+    while rem > 0:
+        step()
+        rem -= rd() - seen
+        seen = rd()
+    return t, laps
+
+
+def ring_play(frames, work, work0, real, channels, tick, ring, guard, chunk=None):
+    """vid_run's frame loop against the sound reader: release on consumption with the deficit
+    clamp (.pace/.paced), .ffin waits for ring room. chunk None (model 1c, the raw pump): a
+    frame's sound enters the ring only when the whole feed and the guard fit; chunk (1b):
+    .qnext pumps what vid_aud_pump's room test and chunk floor allow. -> (T from frame 0's
+    loop top to the drain release, waits)."""
     def rd(t):
         return channels * int(t // tick)
 
@@ -235,6 +297,8 @@ def ring_play(frames, work, work0, real, channels, tick, ring, guard, chunk):
         room = ring - guard - (wr - rd(t)) % ring
         if room >= real:
             wr += real
+        elif chunk is None:
+            feed = real
         elif room >= chunk or 0 < room and real < chunk:
             wr += room
             feed = real - room
@@ -325,14 +389,81 @@ def _row_line(tag, o, r, f, d):
     return "%s O=%02X R=%04X F=%04X D=%04X" % (tag, o, r, f, d & 0xFFFF)
 
 
+def iden_o(w, h, flip=False):
+    """IDEN's O as the bench image in force prints it: the delivery, and under 1c bit 4 when
+    the clip's frame program is the column train (flip: the other program)."""
+    train = benchrows.raw_variant(int(nxv2enc.raw_surface(w, h)[0] == 320), w, h) == "train"
+    return 2 | (nxbtags.NXB_IDEN_TRAIN if model_in_force() == "1c" and train != flip else 0)
+
+
+# A synthetic RD1 capture: the sample period and the DMA's steal a byte, both in T.
+SYNTH_RD1 = dict(sample_t=1795.0, steal=8.0, frame_t=826000.0, sector_t=8700.0, cpy_t=2400.0)
+
+
+def synth_rd1(clip, P=SYNTH, D=SYNTH_RD1):
+    """An NXBM capture's lines for a mono fixture clip from D: rows under the DMA run 1 / (1
+    - steal / sample_t) longer than their idle twins, and each count is its row's T over
+    sample_t."""
+    w, h, _fps, _ch, frames = FIXTURES[clip]
+    reps = {r[0]: r[3] for r in benchrows.SESSION_TABLES["RD1"]}
+    k = 1 / (1 - D["steal"] / D["sample_t"])
+    idle = dict(CPY0=D["cpy_t"], MCPY=D["cpy_t"], RFR0=D["frame_t"],
+                SPN0=P["spn0"] + benchrows.RD_SPIN_HARNESS_T,
+                RHST=D["sector_t"] + benchrows.RD_HIST_HARNESS_T)
+    t = dict(idle, MRSW=(D["frame_t"] + benchrows.RD_FRAME_HARNESS_T) * k,
+             MSPN=idle["SPN0"] * k, MHST=idle["RHST"] * k)
+    out = [">pick %d" % clip, ">nxbm", _row_line("IDEN", iden_o(w, h), frames, w, h & 0xFF)
+           + " " + MODEL_MARK["1c"]]
+    lines = {}
+    for tag in benchlog.table_tags("NXBM")[1:]:
+        if tag in t:
+            f, d = _fd(t[tag] * reps[tag], 0)
+            lines[tag] = (f * LPF + d) * T_LINE
+            out.append(_row_line(tag, 0, reps[tag], f, d))
+        elif tag in nxbtags.NXB_RD1_COUNTS:
+            n = round(lines[nxbtags.NXB_RD1_COUNTS[tag]] / D["sample_t"])
+            out.append(_row_line(tag, nxbtags.NXB_RD1_FLAG_BASE, n & 0xFFFF, n >> 16, 0))
+        elif tag == "MSUM":
+            out.append(_row_line(tag, 0, 0xBEEF, 0x0123, 0))
+        elif tag == "MPTR":
+            out.append(_row_line(tag, nxbtags.NXB_RD1_FLAG_BASE, 9, 0, 0))
+        else:
+            out.append(_row_line(tag, 0, reps[tag], reps[tag], 0))            # MTCK
+    out += ["#HIST %s %s" % (tag, " ".join("%04X" % (reps[tag] if b == 1 else 0)
+                                           for b in range(nxbtags.NXB_HIST_BINS)))
+            for tag in nxbtags.NXB_RD1_HIST_TAGS]
+    return out
+
+
+def rd1_figures(s):
+    """What an NXBM capture (a Section) gives: sample_t {row: T / its count}, steal {"spin",
+    "hist"}: T a sample the row under the DMA runs over its idle twin, flags (MPTR's O),
+    ptr (MPTR's retried reads, bad steps, torn reads), ticks (MTCK's frameCounter change,
+    wraps), cpy (MCPY's T over CPY0's), msum, train (IDEN)."""
+    def t(tag):
+        return row_t(s.rows[tag])
+
+    def n(tag):
+        return (s.rows[tag][2] & 0xFF) << 16 | s.rows[tag][1]
+    cn = {row: n(c) for c, row in nxbtags.NXB_RD1_COUNTS.items()}
+    return SimpleNamespace(
+        sample_t={row: t(row) / cn[row] for row in cn},
+        steal=dict(spin=(t("MSPN") - t("SPN0")) / cn["MSPN"],
+                   hist=(t("MHST") - t("RHST")) / cn["MHST"]),
+        flags=s.rows["MPTR"][0], ptr=s.rows["MPTR"][1:], ticks=s.rows["MTCK"][1:3],
+        cpy=t("MCPY") / t("CPY0"), msum=s.rows["MSUM"][2] << 16 | s.rows["MSUM"][1],
+        train=bool(s.rows["IDEN"][0] & nxbtags.NXB_IDEN_TRAIN))
+
+
 def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swap=None,
-              omit=()):
+              omit=(), flip_iden=None, rd1=()):
     """NXBENCH.TXT text: one NXBW capture per fixture clip not in omit, then an NXBD capture
     on clip 10. marks: (clip, tag) rows printed with O = 01 and T x 1.05; stale_after:
     a clip followed by a PICK 59 capture that prints VID FILE? over the old rows;
     distort: (clip, tag, factor) applied to an unmarked row; short: (clip, tag) printed
     as the NXB SHORT marker in place of the row, or (clip, tag, marker) with that refusal;
-    swap: a clip whose ASPN carries the other form's handler."""
+    swap: a clip whose ASPN carries the other form's handler; flip_iden: a clip whose IDEN
+    names the other frame program; rd1: clips that also get an NXBM capture (synth_rd1)."""
     out, stamp = [], 0x0600
 
     def cap(lines):
@@ -350,7 +481,8 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
         mark = MODEL_MARK.get(model_in_force())
         body = ["What now?", ">pick %d" % clip,
                 "Clip %d armed - GO plays once, LOOP loops." % clip, "What next?", ">nxbw",
-                _row_line("IDEN", 2, frames, w, h & 0xFF) + (" " + mark if mark else "")]
+                _row_line("IDEN", iden_o(w, h, flip_iden == clip), frames, w, h & 0xFF)
+                + (" " + mark if mark else "")]
         for i, tag in enumerate(RW1_TAGS[1:]):
             reps = SYNTH_REPS[tag]
             o, tt = 0, t[tag]
@@ -366,7 +498,7 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
         tail = [" FRM=0000/0000 ERR=00 OP=00 POS=000000 PASS=01",
                 "RING   =0000/0000/00 FILL=0001 SNAP=00", "PLAY   =0000 NOM=0000 CHK=00000000"]
         hist = []
-        for tag in nxbtags.NXB_HIST_TAGS:
+        for tag in nxbtags.NXB_RW1_HIST_TAGS:
             bins = [0] * nxbtags.NXB_HIST_BINS
             top = P["stall_bin"].get(clip) if tag == "AHST" else None
             bins[1] = SYNTH_REPS[tag] - (1 if top else 0)
@@ -377,6 +509,10 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
         if clip == stale_after:
             cap(["What now?", ">pick 59", "Clip 59 armed - GO plays once, LOOP loops.",
                  "What next?", ">nxbw"] + rows + ["VID FILE?"] + tail + ["LOG OK"])
+        if clip in rd1:
+            rd = synth_rd1(clip, P)
+            cap([l for l in rd if not l.startswith("#HIST")] + tail + ["LOG OK"]
+                + [l for l in rd if l.startswith("#HIST")])
     old = dict(DSWP=(16, 1, 24, -19), ADSW=(16, 1, 27, -145), DTI0=(0, 128, 2, 10),
                DTB0=(0, 128, 4, 127), DTC0=(0, 128, 2, 59), DTD0=(0, 128, 2, 123),
                ADTI=(0, 128, 2, 78), ADTC=(0, 128, 2, 133))
@@ -668,10 +804,13 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
             why = "clip %s is not in the fixture table" % s.clip
         if why is None:
             w, h, fps, ch, frames = shape
-            want = (2, frames, w, h & 0xFF)
-            if s.rows.get("IDEN") != want:
-                why = "IDEN %r != fixture (O, frames, width, height byte) %r" % (
-                    s.rows.get("IDEN"), want)
+            want = (iden_o(w, h), frames, w, h & 0xFF)
+            got = s.rows.get("IDEN")
+            if got is not None and got[1:] == want[1:] and got[0] ^ want[0] == nxbtags.NXB_IDEN_TRAIN:
+                why = "IDEN O=%02X: the image's frame program is not the one raw_variant " \
+                      "names for the fixture (O=%02X)" % (got[0], want[0])
+            elif got != want:
+                why = "IDEN %r != fixture (O, frames, width, height byte) %r" % (got, want)
         if why:
             res.excluded.append(SimpleNamespace(section=s.index, clip=s.clip, stamp=s.stamp,
                                                 verb=s.verb, failure=why))
@@ -706,7 +845,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
 
     # Histograms: bins sum to the row's reps; a walk-marked row's histogram is dropped.
     for c in clips:
-        for tg in shape_tags(res, nxbtags.NXB_HIST_TAGS):
+        for tg in shape_tags(res, nxbtags.NXB_RW1_HIST_TAGS):
             bins = c.hist.get(tg)
             if (c.clip, tg) in marked:
                 c.hist.pop(tg, None)
@@ -719,7 +858,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
                 res.anomalies.append("clip %03d: #HIST %s has %d waits in bin %d or above (256 "
                                      "or more $FF polls) (RE-RUN)" % (
                                          c.clip, tg, sum(bins[HIST_BIN_LONG:]), HIST_BIN_LONG))
-    nh = sum(1 for c in clips for tg in nxbtags.NXB_HIST_TAGS if tg in c.hist)
+    nh = sum(1 for c in clips for tg in nxbtags.NXB_RW1_HIST_TAGS if tg in c.hist)
     res.checks.append("histograms: %d, every one sums to its row's reps unless listed" % nh)
 
     # Harness removed (the plan's execution amendment).
@@ -1114,7 +1253,7 @@ def report(res, readouts=None):
             add("| %s | %02X | %d | %d | %d | %d | %d | %s | %s |" % (
                 tg, o_, r, f, d, lines, row_t(row), "-" if per is None else "%.2f" % per,
                 ("%.2f" % pr if pr is not None else "-") + flag))
-        for tg in nxbtags.NXB_HIST_TAGS:
+        for tg in nxbtags.NXB_RW1_HIST_TAGS:
             b = c.hist.get(tg)
             if b:
                 add("")
@@ -1562,17 +1701,31 @@ def report(res, readouts=None):
                 DBG["sector"] + rl, DBG["sector"], asm_line("vr_sector_n.nocrc"),
                 asm_line("vid_rl_poll"), DBG["rl_poll"], inc_equ("VID_RL_DIV"), rl,
                 DBG["token"], asm_line("vid_sd_tok_h.got"), res.wait_shape))
-    add("- per sound sector %.1f T: vid_ds_blkopen's arm %d T (video.asm:%d), the poll "
-        "counter %d T, %.1f T of vid_rl_poll" % (DBG["arm"] + DBG["token"] + rl, DBG["arm"],
-                                                 asm_line("vid_ds_blkopen"), DBG["token"], rl))
-    add("- per frame: vid_play_frame %d T (video.asm:%d); the .pace poll's arm %d + %.1f T "
-        "(vid_pace_poll, video.asm:%d); vid_dbg_late %d T (video.asm:%d); vid_dbg_urun %d T "
-        "with its own vid_pace_poll through vid_raw_rd_hl (video.asm:%d) + %.1f T; "
-        "vid_aud_pump's .next arm %d + %.1f T a pass (video.asm:%d) x 2 + sound bytes / %d "
-        "passes" % (DBG["play_frame"], asm_line("vid_play_frame"), DBG["arm"], rl,
-                    asm_line("vid_pace_poll"), DBG["late"], asm_line("vid_dbg_late"),
-                    DBG["urun"], asm_line("vid_dbg_urun"), rl, DBG["arm"], rl,
-                    asm_line("vid_aud_pump.next"), inc_equ("NXV_AUD_RING")))
+    if model_in_force() == "1b":
+        add("- per sound sector %.1f T: vid_ds_blkopen's arm %d T (video.asm:%d), the poll "
+            "counter %d T, %.1f T of vid_rl_poll" % (
+                DBG["arm"] + DBG["token"] + rl, DBG["arm"], asm_line("vid_ds_blkopen"),
+                DBG["token"], rl))
+        add("- per frame: vid_play_frame %d T (video.asm:%d); the .pace poll's arm %d + %.1f T "
+            "(vid_pace_poll, video.asm:%d); vid_dbg_late %d T (video.asm:%d); vid_dbg_urun %d T "
+            "with its own vid_pace_poll through vid_raw_rd_hl (video.asm:%d) + %.1f T; "
+            "vid_aud_pump's .next arm %d + %.1f T a pass (video.asm:%d) x 2 + sound bytes / %d "
+            "passes" % (DBG["play_frame"], asm_line("vid_play_frame"), DBG["arm"], rl,
+                        asm_line("vid_pace_poll"), DBG["late"], asm_line("vid_dbg_late"),
+                        DBG["urun"], asm_line("vid_dbg_urun"), rl, DBG["arm"], rl,
+                        asm_line("vid_aud_pump.next"), inc_equ("NXV_AUD_RING")))
+    else:
+        add("- per sound sector %.1f T: the raw pump (vrPumpT, video.asm:%d) opens through "
+            "vr_sector_n, the same divider %d T and %.1f T of vid_rl_poll; it reads a frame's "
+            "sound whole or not at all" % (DBG["sector"] + rl, asm_line("vrPumpT"),
+                                           DBG["sector"], rl))
+        add("- per frame: vid_play_frame %d T (video.asm:%d); the .pace poll's arm %d + %.1f T "
+            "(vid_pace_poll, video.asm:%d); vid_dbg_late %d T (video.asm:%d); vid_dbg_urun %d T "
+            "with its own vid_pace_poll through vid_raw_rdv to HL' (video.asm:%d; %d T to the "
+            "DMA on sound path 2) + %.1f T" % (
+                DBG["play_frame"], asm_line("vid_play_frame"), DBG["arm"], rl,
+                asm_line("vid_pace_poll"), DBG["late"], asm_line("vid_dbg_late"), DBG["urun"],
+                asm_line("vid_dbg_urun"), DBG["urun_dma"], rl))
     add("- counted from the instructions (Zilog T, NEXTREG A,n read 13 T): every T figure "
         "above. Estimated: the 1-in-%d share of vid_rl_poll at each arm, and the pump passes "
         "a frame (one chunk, a second when the ring tail wraps, the final pass)." %
@@ -1595,7 +1748,8 @@ def report(res, readouts=None):
         work0 = work + res.k[form]["tp"] + d.pal
         frames = frm_frames(r)
         per = g.samples * res.period
-        tot, waits = ring_play(frames, work, work0, g.real, ch, res.period, ring, guard, chunk)
+        tot, waits = ring_play(frames, work, work0, g.real, ch, res.period, ring, guard,
+                               chunk if model_in_force() == "1b" else None)
         play = int(r["PLAY"], 16)
         on = frames * per / FIELD_T
         add("| %s | %03d | %s | %d | %.0f | %.4f | %d | %.1f | %.4f | %.1f | %d | %.4f | %+.0f |"
@@ -1618,8 +1772,9 @@ def _near(got, want, pct=0.1):
 
 def set_model(model):
     """The frame harness the fit and the synthetic rows use: MODEL_G_FRAME[model]."""
-    global G_FRAME
+    global G_FRAME, DBG
     G_FRAME = MODEL_G_FRAME[model]
+    DBG = MODEL_DBG[model]
 
 
 def model_in_force():
@@ -1761,8 +1916,27 @@ def selftest():
     rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
     d_in, d_s1 = debug_work(res, g320, "stereo"), debug_work(res_s1, g320, "stereo")
     check(abs(d_in.pix - (86 + rl)) < 1e-9 and abs(d_s1.pix - (86 + 177 + rl)) < 1e-9
-          and d_in.snd == d_s1.snd == 40 + 177 + rl and d_s1.total > d_in.total,
+          and d_in.snd == d_s1.snd == 86 + rl and d_s1.total > d_in.total,
           "debug_work pixel sector: inline %.1f, sitting1 %.1f" % (d_in.pix, d_s1.pix))
+    # the recount: 1c prices the raw pump (a divider a sound sector, no passes) and the
+    # pointer read by sound path; 1b keeps sitting 1b's counts
+    gm = geometry(320, 192, 25, 1)
+    d1, d2 = debug_work(res, gm, "mono"), debug_work(res, gm, "mono", path=2, steal=8.0)
+    set_model("1b")
+    try:
+        d_1b = debug_work(res, g320, "stereo")
+    finally:
+        set_model("1c")
+    check(DBG is benchrows.RAW_DBG_T and d_1b.snd == 40 + 177 + rl and d_1b.passes > 2
+          and d1.passes == 0 and d1.arms == gm.spix + gm.ssnd + 2 and d1.path == 1
+          and abs(d1.frame - (179 + 40 + 174 + DBG["urun"] + 2 * rl)) < 1e-9
+          and abs(d2.frame - d1.frame - (RAW_PTR_T["dma"] - RAW_PTR_T["hlp"])) < 1e-9
+          and abs(d2.armed - res.period / (res.period - 8.0)) < 1e-12
+          and abs(d1.armed - res.period / (res.period - res.handler["mono"])) < 1e-12,
+          "debug_work recount: 1c %r, path 2 %r, 1b %r" % (d1, d2, d_1b))
+    check(RAW_PUMP_T is benchrows.RAW_PUMP_T and RAW_HANDLER_T == {"stereo": 104, "mono": 82}
+          and raw_frame_overhead(1, 320, 192) == benchrows.raw_frame_overhead(1, 320, 192),
+          "host counts read from nxv2_bench_rows")
     check("- per pixel sector %.1f T: vr_sector_n's PLAY divider 86 T" % (86 + rl) in text
           and "so it is not priced (wait shape inline)" in text
           and "- per pixel sector %.1f T" % (86 + 177 + rl) in text_s1
@@ -1779,7 +1953,19 @@ def selftest():
     check(waits == 0 and tot == 250 * 625 * per, "ring_play under rate: %r" % ((tot, waits),))
     tot, waits = ring_play(250, 1183393.0, 1212165.0, 1250, 2, per, 8192, 16, 256)
     check(waits == 3 and abs(tot / FIELD_T - 527.4) < 0.05,
-          "ring_play 062 case: 3 waits, PLAY 527.4 (%r)" % ((tot / FIELD_T, waits),))
+          "ring_play 062 case, 1b's chunked feed: 3 waits, PLAY 527.4 (%r)" % (
+              (tot / FIELD_T, waits),))
+    # the all-or-nothing feed against the stepped reference: a late clip, a mono one, one
+    # under rate; the late clip waits for a whole feed's room, so not less than chunked
+    for case in ((250, 1183393.0, 1212165.0, 1250, 2), (250, 1.04 * 1120000, 1.2 * 1120000,
+                                                         625, 1), (60, 0.9 * 1120000,
+                                                                   0.9 * 1120000, 1250, 2)):
+        got = ring_play(*case, per, 8192, 16)
+        ref = ring_ref(*case, per, 8192, 16)
+        check(got[1] == ref[1] and abs(got[0] - ref[0]) < 1e-6,
+              "ring_play all-or-nothing %r: %r, stepped reference %r" % (case[:3], got, ref))
+    late = ring_play(250, 1183393.0, 1212165.0, 1250, 2, per, 8192, 16)
+    check(late[1] >= 1 and late[0] >= tot, "ring_play all-or-nothing, the 062 case: %r" % (late,))
     tot, waits = ring_play(10, 0.5 * 1120000, 3 * 1120000, 1250, 2, per, 8192, 16, 256)
     check((tot, waits) == (12 * 625 * per, 0),
           "ring_play drops a deficit over a whole frame (.paced): %r" % ((tot, waits),))
@@ -1968,6 +2154,35 @@ def selftest():
                 rc = main([str(p)])
             got.append((chosen(read_sections(p))[:8], rc, "does not parse" in err.getvalue()))
         check(got == [("refused:", 2, True)] * 2, "IDEN row with a token too many: %r" % got)
+    # IDEN names the frame program (1c): 062 (320x192) runs the column train, 060 the inline
+    # program; a capture naming the other one is excluded. An RD1 capture: the sample period
+    # and the steal come back from the rows and their counts.
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "V.TXT"
+        p.write_bytes(synth_log(rd1=(66, 68, 74)).encode("ascii"))
+        secs = read_sections(p)
+        o = {s.clip: s.rows["IDEN"][0] for s in secs if s.verb == "NXBW"}
+        res_v = fit(secs, reps=SYNTH_REPS, wait_shape="inline")
+        check(o[62] == 0x12 and o[60] == 0x02 and o[64] == 0x02 and 62 in res_v.clips,
+              "IDEN O by frame program: %r" % o)
+        rd = [s for s in secs if s.verb == "NXBM"]
+        figs = [rd1_figures(s) for s in rd]
+        check([s.clip for s in rd] == [66, 68, 74]
+              and all(set(benchlog.table_tags("NXBM")) == set(s.rows) for s in rd)
+              and all(sorted(s.hist) == ["MHST", "RHST"] for s in rd)
+              and all(abs(v - SYNTH_RD1["sample_t"]) < 0.0005 * 1795 for f in figs
+                      for v in f.sample_t.values())
+              and all(abs(v - SYNTH_RD1["steal"]) < 0.5 for f in figs for v in f.steal.values())
+              and [f.train for f in figs] == [False, True, False]
+              and all(f.msum == 0x0123BEEF and f.ticks == (250, 250) and f.ptr == (9, 0, 0)
+                      and abs(f.cpy - 1) < 0.02 for f in figs),
+              "RD1 capture: %r" % [(f.sample_t, f.steal) for f in figs])
+        p.write_bytes(synth_log(flip_iden=62).encode("ascii"))
+        res_f = fit(read_sections(p), reps=SYNTH_REPS, wait_shape="inline")
+        check(62 not in res_f.clips
+              and any(e.clip == 62 and "frame program" in e.failure for e in res_f.excluded),
+              "a capture whose IDEN names the other frame program is excluded: %r" % [
+                  (e.clip, e.failure) for e in res_f.excluded])
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,

@@ -265,7 +265,8 @@ for _s in "XYZ":
 # nothing. On the frame and card rows (NXB_RW1_MARKED) O = 01 marks a run walk (CMD12,
 # CMD18, a first token) inside the row: its T is not a figure, re-run.
 NXB_RW1 = {
-    "IDEN": "O = delivery (02), R = frames, F = picture width, D = height byte",
+    "IDEN": "O = delivery (02), + 10 when the frame program is the column train (else the "
+            "inline program); R = frames, F = picture width, D = height byte",
     "RFR0": "frame 0: nxb_rw_feed + raw decode, its palette sector included; unarmed, R = 1",
     "RSWP": "frames 1-16 on one clock, each nxb_rw_feed + raw decode; unarmed",
     "ARSW": "frames 17-32 as RSWP, the session's raw handler armed",
@@ -290,7 +291,69 @@ NXB_RW1_REFUSALS = {
     "NXB RUN": "the row would cross the end of a filemap run: the clip file is fragmented "
                "on the card (re-stage it contiguous)",
 }
-NXB_HIST_TAGS = ("RHST", "RH39", "AHST", "AH39")
+NXB_HIST_TAGS = ("RHST", "RH39", "AHST", "AH39", "MHST")
+NXB_RW1_HIST_TAGS = ("RHST", "RH39", "AHST", "AH39")
+NXB_RD1_HIST_TAGS = ("MHST", "RHST")
+# IDEN's O on a raw clip: the delivery in bits 3:0, bit 4 = the frame rows ran the column
+# train (vidRawVar), clear = the inline program. A frame row with O = 01 crossed a run and
+# took the classic schedule.
+NXB_IDEN_TRAIN = 0x10
+
+# NXB session RD1 (nxbSesRd1, verb NXBM) on a raw one-channel clip: mono sound from the
+# zxnDMA. MLD1/MLD2 (the sound program loaded, not enabled), MGO1 (its enable) and
+# MOF1/MOF2 (the teardown) print nothing; the session starts on the CTC path's state. Rows
+# between MGO1 and MOF1 run with the DMA playing. A counted row reads the play pointer at the
+# end of every rep (and once before rep 1): the MCN row after it prints the samples played
+# from that first read to the last, so sample T = row T / count. #HIST lines: MHST, RHST.
+NXB_RD1 = {
+    "IDEN": "as RW1",
+    "CPY0": "128 zxnDMA copies of 256 bytes, the engine as vidDmaInit leaves it",
+    "RFR0": "frame 0 as RW1's (the pointer read on HL'); not a figure",
+    "SPN0": "the counted spin rep (spin, pointer read), the DMA loaded and idle",
+    "MRSW": "frames 1-16 under the DMA, counted: the frame row of the DMA form",
+    "MCN1": "MRSW's samples: O = flags, R = count bits 15:0, F = bits 23:16",
+    "MSPN": "SPN0 under the DMA",
+    "MCN2": "MSPN's samples",
+    "MHST": "the counted histogram rep (binned open, slide, pointer read) under the DMA",
+    "MCN3": "MHST's samples",
+    "MSUM": "4096 sectors read under the DMA and summed: R = sum bits 15:0, F = bits 31:16",
+    "MPTR": "65535 raw pointer reads under the DMA: O = flags, R = reads that retried, F = "
+            "steps other than 0-2 forward, D = reads torn four times",
+    "MTCK": "250 raster wraps under the DMA: R = frameCounter's change, F = the wraps",
+    "MCPY": "CPY0 straight after a teardown that leaves the prescaler to the reset",
+    "RHST": "MHST's rep, the DMA loaded and idle",
+}
+NXB_RD1_MARKED = ("RFR0", "MRSW", "MHST", "MSUM", "RHST")
+# O of MCN1-3 and MPTR: bit 0 = a pointer read before the enable gave the ring base (MLD);
+# MPTR adds bit 1 = $8000 was read, bit 2 = a value outside $6000-$8000.
+NXB_RD1_FLAG_BASE = 1
+NXB_RD1_FLAG_END = 2
+NXB_RD1_FLAG_RANGE = 4
+NXB_RD1_COUNTS = {"MCN1": "MRSW", "MCN2": "MSPN", "MCN3": "MHST"}
+
+# NXB session RT1 (nxbSesRt1, verb NXBP) on a raw clip: NR $07 bit 2 (turbo) at 28 MHz.
+# ARM1 and DSRM print nothing. TCHK decides whether turbo is there (NXB_RT1 "TCHK"); when
+# it is not, the next row prints "SPN0 NXB NOTURBO" and the session ends. Card rows read no
+# frames: the wire starts at frame 0's first sound sector.
+NXB_RT1 = {
+    "IDEN": "as RW1",
+    "TCHK": "O = NR $07 read back after writing s + 4, R = raster lines of 64 spin reps at "
+            "s, F = the same at s + 4, D = s; active when O bit 2 is set or F <= R - R / 16",
+    "SPN0": "the counted spin rep at s",
+    "TSPN": "SPN0 in turbo",
+    "TCTC": "TSPN with the session's raw handler armed (the count is HL')",
+    "TCN1": "TCTC's ring bytes played (two a period on a stereo clip): R, F as MCN1",
+    "NSEC": "RSEC's sector through nxb_rt_body, turbo off",
+    "NSM0": "1024 sectors summed, turbo off: R = sum bits 15:0, F = bits 31:16",
+    "TSTR": "2048 sectors summed, the open at s and the 512-ini slide in turbo (15 T a byte)",
+    "TSLO": "1024 sectors summed, the open and an ini / jp nz loop in turbo (25 T a byte)",
+    "TSUM": "4096 sectors summed, the open and the slide in turbo",
+    "TSEC": "NSEC in turbo",
+}
+NXB_RT1_MARKED = ("NSEC", "NSM0", "TSTR", "TSLO", "TSUM", "TSEC")
+NXB_RT1_SUMS = ("NSM0", "TSTR", "TSLO", "TSUM")
+NXB_RT1_REFUSALS = {"NXB NOTURBO": "TCHK found no turbo: no further row ran"}
+NXB_WALK_MARKED = tuple(dict.fromkeys(NXB_RW1_MARKED + NXB_RD1_MARKED + NXB_RT1_MARKED))
 NXB_HIST_BINS = 17
 NXB_HIST_POLL1_T = 22
 NXB_HIST_POLL_T = 47

@@ -336,7 +336,7 @@ def _hist_line(line):
 
 
 def parse_hist(path):
-    """The log step's wait histograms (RW1 RHST, RH39, AHST, AH39) of an NXB log, in order:
+    """The log step's wait histograms (RW1 RHST, RH39, AHST, AH39; RD1 MHST, RHST) of an NXB log, in order:
     [(section, tag, [NXB_HIST_BINS counts])], section numbered as NxbRun.section (the
     #NXB capture the line follows; 0 before any). Bin k: waits whose $FF poll count has
     bit length k."""
@@ -351,10 +351,31 @@ def parse_hist(path):
 
 
 def rw1_walked(runs):
-    """RW1 frame and card rows printed with O = 01: a run walk fell inside the row's
-    window, so its T is not a figure (re-run)."""
-    return [r for r in runs if r.kind == "session" and r.tag in tagtab.NXB_RW1_MARKED
+    """RW1, RD1 and RT1 frame and card rows printed with O = 01: a run walk fell inside the
+    row's window, so its T is not a figure (re-run)."""
+    return [r for r in runs if r.kind == "session" and r.tag in tagtab.NXB_WALK_MARKED
             and r.o == tagtab.NXB_RW1_WALK_O]
+
+
+def rd_count(row):
+    """An MCN1-3 or TCN1 row's 24-bit count."""
+    return (row.f & 0xFF) << 16 | row.r
+
+
+def rd_sum(row):
+    """A sum row's 32-bit sum (MSUM, NSM0, TSTR, TSLO, TSUM)."""
+    return row.f << 16 | row.r
+
+
+def rt_active(row):
+    """TCHK's verdict as the bench takes it: bit 2 read back, or the turbo spin at least a
+    sixteenth shorter."""
+    return bool(row.o & 4) or row.f <= row.r - row.r // 16
+
+
+def iden_train(row):
+    """True when a raw clip's IDEN row says the frame rows ran the column train."""
+    return bool(row.o & tagtab.NXB_IDEN_TRAIN)
 
 
 def parse_nxb(path):

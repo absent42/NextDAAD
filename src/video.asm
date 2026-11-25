@@ -3807,9 +3807,11 @@ NXB_YROW_LEN     equ 25      ; SYNTH row: ds 4 tag, db kind, dw reps, d24 frame,
                              ; db preset, then two sites
 NXB_YSITE1       equ 11      ; the first site: d24 offset, db length, ds 3 bytes
     ASSERT NXB_YSITE1 == 4 + 1 + 2 + 3 + 1 && NXB_YROW_LEN == NXB_YSITE1 + 2 * 7
-NXB_SESS_LAST    equ 5       ; session modes 1..NXB_SESS_LAST (nxbSessDir)
-NXB_SESS_RW1     equ 5       ; raw clips only; DS1 (mode 1) refuses them
-    ASSERT NXB_SESS_RW1 == NXB_SESS_LAST
+NXB_SESS_LAST    equ 7       ; session modes 1..NXB_SESS_LAST (nxbSessDir)
+NXB_SESS_RW1     equ 5       ; modes from here: raw clips only; lower modes refuse them
+NXB_SESS_RD1     equ 6       ; raw one-channel clips only
+NXB_SESS_RT1     equ 7
+    ASSERT NXB_SESS_RT1 == NXB_SESS_LAST
 NXB_SESS_ROWS    equ 16      ; session rows per column (rows 8-23)
 NXB_SESS_COL2    equ 40      ; the second column
 NXB_RUN_REF      equ 71      ; RUN select for the session decode rows
@@ -3838,9 +3840,24 @@ NXB_K_RBLK       equ 18
 NXB_K_RHIST      equ 19
 NXB_K_SPIN       equ 20
 NXB_K_ARMOLD     equ 21
-NXB_K_SYNTH      equ 22      ; the SYNTH kinds are the NXB_YROW_LEN rows
-NXB_K_SYNTH_NOCALL equ 23
-NXB_K_COUNT      equ 24
+NXB_K_DCOPY      equ 22      ; RD1 (mode 6) kinds
+NXB_K_MLD        equ 23
+NXB_K_DSPIN      equ 24
+NXB_K_MGO        equ 25
+NXB_K_MSWEEP     equ 26
+NXB_K_MCNT       equ 27
+NXB_K_DHIST      equ 28
+NXB_K_RSUM       equ 29
+NXB_K_MPTR       equ 30
+NXB_K_MTCK       equ 31
+NXB_K_MOFF       equ 32
+NXB_K_TCHK       equ 33      ; RT1 (mode 7) kinds
+NXB_K_TSPIN      equ 34
+NXB_K_TBLK       equ 35
+NXB_K_TSUM       equ 36
+NXB_K_SYNTH      equ 37      ; the SYNTH kinds are the NXB_YROW_LEN rows
+NXB_K_SYNTH_NOCALL equ 38
+NXB_K_COUNT      equ 39
 NXB_K_STRM       equ $80
     ASSERT NXB_K_SYNTH_NOCALL == NXB_K_COUNT - 1 && NXB_K_STRM == $80
 NXB_RW_REPS      equ 128     ; RW1: sectors per RSEC/RCOL row
@@ -3849,6 +3866,13 @@ NXB_RW_SREPS     equ 512     ; spin reps
 NXB_RW_SPIN      equ 2000    ; count-loop passes per spin rep
 NXB_RW_MIN       equ 5000    ; a card row needs this many blocks left
     ASSERT NXB_RW_MIN > NXB_RW_HREPS + 1 && NXB_RW_MIN > NXB_RW_REPS + 1
+NXB_RD_CREPS     equ 128     ; RD1: 256-byte DMA copies per copy row
+NXB_RD_SUMREPS   equ 4096    ; sectors MSUM sums
+NXB_RD_PTRREPS   equ 65535   ; raw pointer reads
+NXB_RD_TICKS     equ 250     ; raster wraps MTCK waits
+NXB_RT_TREPS     equ 64      ; RT1: spin reps at each setting in TCHK
+NXB_RT_REPS      equ 512     ; sectors per NSEC/TSEC row
+    ASSERT NXB_RW_MIN > NXB_RD_SUMREPS + 1
 NXB_HIST_BINS    equ 17      ; bin k: waits whose $FF poll count has bit length k (9: 256+)
 NXB_HIST_MAX     equ 4       ; histogram rows the log step carries
 NXB_HIST_LEN     equ 4 + 2 * NXB_HIST_BINS   ; nxbHistSav entry: tag, bins
@@ -4049,6 +4073,10 @@ nxb_reclaim:
     ld (nxbSessReq), a
     ld hl, (nxbSessSp)
     ld (vidDecSp), hl
+    ld a, (nxbSvSpd)             ; RT1: NR $07 back to the session's speed, turbo off
+    cp 4
+    jr nc, .nosess
+    nextreg NR_CPU_SPEED, a
 .nosess:
     ld bc, (NXV2_RUN_DMA_MIN << 8) | NXV2_COPY_DMA_MIN
     call nxb_sel_set
@@ -5430,6 +5458,121 @@ nxb_rw_spin:
     jr nz, .l
     ret
 
+; RD1 and RT1 (session modes 6, 7) timed bodies.
+
+; A counted row's first rep: the play pointer kept, then the row's own rep from here on.
+nxb_rd_first:
+    call vid_raw_rdv
+    ld (nxbRdPrev), hl
+.body equ $+1
+    ld hl, 0                     ; the kind: the row's rep
+    ld (nxb_body + 1), hl
+    jp (hl)
+; Counted reps: the spin, a frame, a binned sector (RHIST's calls, RW1's body untouched),
+; each ending in nxb_rd_acc.
+nxb_rd_spin:
+    call nxb_rw_spin
+    jr nxb_rd_acc
+nxb_rd_fbody:
+    call nxb_rw_fbody
+    jr nxb_rd_acc
+nxb_rd_hbody:
+    ld hl, VR_SCRATCH
+    call nxb_rh_sec
+    call nxb_rh_bin
+    call VR_SLIDE
+; (pointer - previous) mod the ring added to the 24-bit nxbRdCnt; the pointer through
+; vid_raw_rdv (the DMA's after MLD, else HL'). Corrupts AF, DE, HL. Preserves BC.
+nxb_rd_acc:
+    call vid_raw_rdv
+    ld de, (nxbRdPrev)
+    ld (nxbRdPrev), hl
+    or a
+    sbc hl, de
+    ld a, h
+    and high (NXV_AUD_RING - 1)
+    ld h, a
+    ld de, (nxbRdCnt)
+    add hl, de
+    ld (nxbRdCnt), hl
+    ret nc
+    ld hl, nxbRdCnt + 2
+    inc (hl)
+    ret
+
+; MSUM rep: a sector through the open and the slide, its 512 bytes added to nxbSum.
+; .add (nxb_rt_body's tail): VR_SCRATCH summed, C = the card port again.
+nxb_rd_sum:
+    ld hl, VR_SCRATCH
+    call vr_sector_n
+    call VR_SLIDE
+.add:
+    ld de, VR_SCRATCH
+    call .half
+.half:
+    ld hl, 0
+    ld b, l
+.l:
+    ld a, (de)
+    inc de
+    add hl, a                    ; 256 bytes: no carry out of HL
+    djnz .l
+    ld bc, (nxbSum)
+    add hl, bc
+    ld (nxbSum), hl
+    ld c, PORT_SPI_DAT           ; the slide reads through C
+    ret nc
+    ld hl, (nxbSum + 2)
+    inc hl
+    ld (nxbSum + 2), hl
+    ret
+
+; CPY0 / MCPY rep: one 256-byte zxnDMA copy inside VR_SCRATCH (the schedule page).
+nxb_rd_cpy:
+    ld a, (vidRawSchedPage)
+    nextreg NR_MMU6, a
+    ld hl, VR_SCRATCH
+    ld de, VR_SCRATCH + 256
+    ld bc, 256
+    jp vid_copy_dma
+
+; RT1 card rep: the open and the read each at the NR $07 value the kind wrote, turbo off,
+; then the tail (nxb_term, or nxb_rd_sum.add). A fault leaves turbo to nxb_reclaim.
+nxb_rt_body:
+.so equ $+3
+    nextreg NR_CPU_SPEED, 0      ; the open's speed
+    ld hl, VR_SCRATCH
+    call vr_sector_n
+.st equ $+3
+    nextreg NR_CPU_SPEED, 0      ; the read's
+.rd equ $+1
+    call VR_SLIDE                ; or nxb_rt_slow
+.sf equ $+3
+    nextreg NR_CPU_SPEED, 0      ; turbo off
+.tl equ $+1
+    jp nxb_term
+; TSLO's read: 512 x ini / jp nz, 25 T a byte in turbo (the slide's ini train is 15).
+nxb_rt_slow:
+    call .h
+.h:
+    ld b, 0
+.l:
+    ini
+    jp nz, .l
+    ret
+; RT1 spin rep: the count loop at the kind's NR $07 value, then counted.
+nxb_rt_spin:
+.s1 equ $+3
+    nextreg NR_CPU_SPEED, 0
+    call nxb_rw_spin
+.s0 equ $+3
+    nextreg NR_CPU_SPEED, 0
+    jp nxb_rd_acc
+
+nxbRdPrev:   dw 0               ; nxb_rd_acc: the pointer at the read before
+nxbRdCnt:    ds 3               ; a counted row's samples (the kind zeroes it)
+nxbSum:      ds 4               ; a sum row's 32-bit byte sum
+nxbSvSpd:    db $FF             ; RT1: NR $07 bits 1:0 at session entry; $FF = none
 nxbHistBin:  ds 2 * NXB_HIST_BINS   ; RHIST bins, zeroed per row (nxb_kind_rhist)
 nxbHistN:    db 0               ; histograms in nxbHistSav for the log step
  ENDIF
@@ -5766,10 +5909,25 @@ nxb_sess_setup:
     ld (nxbSessVec), hl          ; the session's handler: DISARM puts it back
     ld hl, nxb_sprint
     ld (nxb_lrow.pr), hl         ; the shipping exit (a faulted RHIST row's SMC)
+    ; A DMA mono session starts in the CTC path's state: every arm row is CTC 0's handler
+    ; at the table's time constant and RD1 loads the DMA itself.
+    ld a, (vidSndPath)
+    cp 2
+    ld hl, nxbDmaSndOff
+    ld b, nxbDmaSndOff_len
+    call z, nxb_dma_off
     xor a
     ld (nxbHistN), a
+    ld (nxbRdFlags), a
     ld a, (nxbSessReq)
     ld (nxbMode), a
+    cp NXB_SESS_RT1              ; RT1: the speed nxb_reclaim writes back
+    ld a, $FF
+    jr nz, .spd
+    NRGET NR_CPU_SPEED
+    and 3
+.spd:
+    ld (nxbSvSpd), a
     xor a
     ld (nxbSessReq), a           ; self-clearing
     inc a
@@ -5808,14 +5966,21 @@ nxb_sess_setup:
     pop hl
     and (hl)
     jr z, .bad
-    ld a, (nxbMode)              ; the mask cannot tell DS1 from RW1: a raw
-    sub NXB_SESS_RW1             ; clip runs RW1 only, RW1 runs raw clips only
+    ld a, (nxbMode)              ; the mask cannot tell DS1 from the raw modes:
+    cp NXB_SESS_RW1              ; they run raw clips only, a raw clip runs only them
     ld a, (vidRaw)
-    jr nz, .rawc
+    jr c, .rawc
     xor 1
 .rawc:
     or a
     jr nz, .bad
+    ld a, (nxbMode)
+    cp NXB_SESS_RD1
+    jr nz, .chan
+    ld a, (vidSndPath)           ; RD1: one channel (sound paths 1 and 2)
+    or a
+    jr z, .bad
+.chan:
     inc hl
     ld e, (hl)
     inc hl
@@ -5929,9 +6094,15 @@ nxbKindTab:
     dw nxb_kind_loop, nxb_kind_arm, nxb_kind_disarm, nxb_kind_prod
     dw nxb_kind_dsweep, nxb_kind_dsblk, nxb_kind_dskip, nxb_kind_rfr
     dw nxb_kind_rfr, nxb_kind_rarm, nxb_kind_rblk, nxb_kind_rhist
-    dw nxb_kind_spin, nxb_kind_armold, nxb_kind_synth, nxb_kind_synth_nocall
+    dw nxb_kind_spin, nxb_kind_armold
+    dw nxb_kind_dcopy, nxb_kind_mld, nxb_kind_dspin, nxb_kind_mgo
+    dw nxb_kind_msweep, nxb_kind_mcnt, nxb_kind_dhist, nxb_kind_rsum
+    dw nxb_kind_mptr, nxb_kind_mtck, nxb_kind_moff
+    dw nxb_kind_tchk, nxb_kind_tspin, nxb_kind_tblk, nxb_kind_tsum
+    dw nxb_kind_synth, nxb_kind_synth_nocall
     ASSERT $ - nxbKindTab == NXB_K_COUNT * 2
-    ASSERT NXB_K_RFRAME == 15 && NXB_K_ARMOLD == 21 && NXB_K_SYNTH == 22
+    ASSERT NXB_K_RFRAME == 15 && NXB_K_ARMOLD == 21 && NXB_K_DCOPY == 22
+    ASSERT NXB_K_TCHK == 33 && NXB_K_SYNTH == 37
 
 ; Field rows: nxbSO, nxbLcF (F) and nxbReps (R) set, HL = D.
 nxb_fprint:
@@ -5972,10 +6143,19 @@ nxb_sat:
     call dbg_at
     jp nxb_puttag
 
-; ID: O = delivery, R = vidFrames, F = width, D = the height byte; a raw clip's
-; row then nxbMsgHarn (raw_fit reads the bench image's frame harness model from it).
+; ID: O = delivery (a raw clip: + $10 when its frame program is the column train),
+; R = vidFrames, F = width, D = the height byte; a raw clip's row then nxbMsgHarn
+; (raw_fit reads the bench image's frame harness model from it).
 nxb_kind_id:
     call nxb_deliv
+    ld b, a
+    ld a, (vidRaw)
+    or a
+    jr z, .o
+    ld a, (vidRawVar)
+    swapnib
+.o:
+    or b
     ld (nxbSO), a
     ld hl, (vidFrames)
     ld (nxbReps), hl
@@ -6329,14 +6509,17 @@ nxb_kind_rarm:
 ; The silent ring, CTC 0 double reset and its control word (timer not running).
 ; Out: BC = AUD_CTC_PORT.
 nxb_arm_ring:
+    call nxb_ring_sil
+    call nxb_ctc_rst             ; BC = AUD_CTC_PORT
+    ld a, AUD_CTC_CW16
+    out (c), a
+    ret
+nxb_ring_sil:
     ld hl, vidAudBuf
     ld de, vidAudBuf + 1
     ld bc, NXV_AUD_RING - 1
     ld (hl), DAC_SILENCE
     ldir
-    call nxb_ctc_rst             ; BC = AUD_CTC_PORT
-    ld a, AUD_CTC_CW16
-    out (c), a
     ret
 ; DISARM: vid_run.restore's CTC stop and DAC park, then the session's own
 ; handler vector (an ARMOLD row swapped it) and CTC 0's entry at the stub
@@ -6417,18 +6600,21 @@ nxb_kind_rhist:
     ld hl, nxb_rh_sec39
 .h:
     ld (nxb_rh_body.sec), hl
-    ld hl, nxbHistBin
-    ld b, 2 * NXB_HIST_BINS
-.z:
-    ld (hl), 0
-    inc hl
-    djnz .z
+    call nxb_hist_zero
     ld de, nxb_rh_done
     ld hl, nxb_rh_body
 nxb_rw_body:
     ld (nxb_lrow.pr), de
     ld (nxb_body + 1), hl
     jp nxb_rw_go
+nxb_hist_zero:
+    ld hl, nxbHistBin
+    ld b, 2 * NXB_HIST_BINS
+.z:
+    ld (hl), 0
+    inc hl
+    djnz .z
+    ret
     ASSERT 2 * NXB_HIST_BINS < 256
 
 ; Walk mark, before a frame or card row: the run count and the remain (the reader
@@ -6595,6 +6781,471 @@ nxb_kind_syn:
     jp nxb_syn_run
     ASSERT VID_DST_WIN == $4000 && vidSpanDstPage == vidInSpan + 1 && vidSpanDE == vidInSpan + 2
 
+; ---------------------------------------------------------------------
+; RD1 (session mode 6): raw mono sound from the zxnDMA. Untimed steps; the reps are
+; VID_PAGE's nxb_rd_*. A counted row zeroes nxbRdCnt and runs nxb_rd_first as rep 1.
+; ---------------------------------------------------------------------
+
+; HL = a counted rep, O = 00, on the long clock. nxb_rd_card: through nxb_rw_go.
+nxb_rd_row:
+    xor a
+    ld (nxbSO), a
+    call nxb_rd_set
+    jp nxb_lrow
+nxb_rd_card:
+    call nxb_rd_set
+    jp nxb_rw_go
+nxb_rd_set:
+    ld (nxb_rd_first.body), hl
+    ld hl, 0
+    ld (nxbRdCnt), hl
+    ld a, l
+    ld (nxbRdCnt + 2), a
+    ld hl, nxb_rd_first
+    ld (nxb_body + 1), hl
+    ret
+; DCOPY: nxbReps 256-byte zxnDMA copies. DSPIN: counted spins. MSWEEP: counted frames
+; from the live wire position, O = the walk mark.
+nxb_kind_dcopy:
+    ld hl, nxb_rd_cpy
+    jp nxb_lrow0
+nxb_kind_dspin:
+    ld hl, nxb_rd_spin
+    jr nxb_rd_row
+nxb_kind_msweep:
+    call nxb_rw_mark0
+    ld hl, nxb_rw_done
+    ld (nxb_lrow.pr), hl
+    ld hl, nxb_rd_fbody
+    call nxb_rd_set
+    jp nxb_lrow
+; DHIST: counted binned sectors (as RHIST param 0; the print saves the bins).
+nxb_kind_dhist:
+    call nxb_rw_mark0
+    call nxb_rw_charge
+    ret c
+    call nxb_hist_zero
+    ld hl, nxb_rh_done
+    ld (nxb_lrow.pr), hl
+    ld hl, nxb_rd_hbody
+    jr nxb_rd_card
+; RSUM: nxbReps sectors read and summed. O = the walk mark, R = the sum's bits 15:0,
+; F = bits 31:16. nxb_sum_row: HL = the rep (RT1: nxb_rt_body).
+nxb_kind_rsum:
+    ld hl, nxb_rd_sum
+nxb_sum_row:
+    ld (nxb_body + 1), hl
+    call nxb_rw_mark0
+    call nxb_rw_charge
+    ret c
+    ld hl, 0
+    ld (nxbSum), hl
+    ld (nxbSum + 2), hl
+    ld hl, nxb_sum_done
+    ld (nxb_lrow.pr), hl
+    jp nxb_rw_go
+nxb_sum_done:
+    call nxb_rw_mark
+    ld hl, (nxbSum)
+    ld (nxbReps), hl
+    ld hl, (nxbSum + 2)
+    ld (nxbLcF), hl
+    ld hl, 0
+    jp nxb_fprint
+; MCNT: the count of the row before. O = nxbRdFlags, R = bits 15:0, F = bits 23:16.
+nxb_kind_mcnt:
+    ld a, (nxbRdFlags)
+    ld (nxbSO), a
+    ld hl, (nxbRdCnt)
+    ld (nxbReps), hl
+    ld a, (nxbRdCnt + 2)
+    ld l, a
+    ld h, 0
+    ld (nxbLcF), hl
+    ld l, h
+    jp nxb_fprint
+; MLD: the ring silent, CTC 0 reset, no source admitted in NR $CD, nxbDmaSnd with the
+; session's prescaler (not enabled), the pointer read on the DMA. nxbRdFlags = 1 when a
+; read before the enable gives the ring base, else 0.
+nxb_kind_mld:
+    call nxb_ring_sil
+    call nxb_ctc_rst
+    ld a, (vidCtcTc)
+    inc a
+    srl a
+    ld (nxbDmaSnd.presc), a
+    nextreg NR_DMA_INT_EN_2, 0
+    ld hl, nxbDmaSnd
+    ld bc, (nxbDmaSnd_len << 8) | DMA_PORT
+    otir
+    ld hl, vid_dma_rd_hl
+    ld (vid_raw_rdv + 1), hl
+    call nxb_ptr_rd
+    ld de, vidAudBuf
+    or a
+    sbc hl, de
+    ld hl, nxbRdFlags
+    ld (hl), 0
+    ret nz
+    inc (hl)
+    ret
+; MGO: the enable.
+nxb_kind_mgo:
+    ld a, DDMA_ENABLE
+    out (DMA_PORT), a
+    ret
+; MOFF: nxbDmaSndOff (param 1: nxbDmaOffC3, no prescaler byte). nxb_dma_off: HL, B = an
+; off program; then DAC B and C parked, NR $CD as im2_init's, the pointer read on HL'.
+nxb_kind_moff:
+    ld hl, nxbDmaSndOff
+    ld b, nxbDmaSndOff_len
+    ld a, (nxbParam)
+    or a
+    jr z, nxb_dma_off
+    ld hl, nxbDmaOffC3
+    dec b
+nxb_dma_off:
+    ld c, DMA_PORT
+    otir
+    ld a, DAC_SILENCE
+    out (DAC2_PORT), a
+    nextreg NR_DMA_INT_EN_2, IM2_DMA_INT_EN_2_VAL
+    ld hl, vid_raw_rd_hl
+    ld (vid_raw_rdv + 1), hl
+    ret
+; A raw read of the DMA's port A address (guide 2.4): low, high, low, again while the low
+; byte fell, 4 tries. Out: HL as read (no clamp), B = tries left (4: the first held; 0:
+; torn every time). Corrupts AF, C.
+nxb_ptr_rd:
+    ld bc, (4 << 8) | DMA_PORT
+.again:
+    ld a, $A7
+    out (c), a
+    in l, (c)
+    in h, (c)
+    in a, (c)
+    cp l
+    jr nc, .got
+    djnz .again
+.got:
+    ld l, a
+    ret
+; MPTR: nxbReps raw reads. O = nxbRdFlags (bit 1: $8000 read; bit 2: a value outside
+; $6000-$8000), R = reads that retried, F = steps other than 0-2 forward mod the ring,
+; D = reads torn four times (not compared).
+nxb_kind_mptr:
+    ld hl, 0
+    ld (nxbPtrRty), hl
+    ld (nxbPtrBad), hl
+    ld (nxbPtrTorn), hl
+    call nxb_ptr_rd
+    ld (nxbPtrPrev), hl
+    ld hl, (nxbReps)
+.rd:
+    push hl
+    call nxb_ptr_rd
+    ex de, hl                    ; DE = the value
+    ld a, b
+    cp 4
+    ld hl, nxbPtrRty
+    call nz, nxb_inc16
+    ld a, b
+    or a
+    jr nz, .held
+    ld hl, nxbPtrTorn
+    call nxb_inc16
+    jr .next
+.held:
+    ld hl, nxbRdFlags
+    ld a, d
+    cp high vidAudBuf
+    jr c, .out
+    cp high (vidAudBuf + NXV_AUD_RING)
+    jr c, .in
+    jr nz, .out
+    ld a, e
+    or a
+    jr nz, .out
+    set 1, (hl)                  ; the ring end itself
+    jr .in
+.out:
+    set 2, (hl)
+.in:
+    ld hl, (nxbPtrPrev)
+    ld (nxbPtrPrev), de
+    ex de, hl
+    or a
+    sbc hl, de                   ; the step
+    ld a, h
+    and high (NXV_AUD_RING - 1)
+    jr nz, .viol
+    ld a, l
+    cp 3
+    jr c, .next
+.viol:
+    ld hl, nxbPtrBad
+    call nxb_inc16
+.next:
+    pop hl
+    dec hl
+    ld a, h
+    or l
+    jr nz, .rd
+    ld a, (nxbRdFlags)
+    ld (nxbSO), a
+    ld hl, (nxbPtrRty)
+    ld (nxbReps), hl
+    ld hl, (nxbPtrBad)
+    ld (nxbLcF), hl
+    ld hl, (nxbPtrTorn)
+    jp nxb_fprint
+nxb_inc16:
+    inc (hl)
+    ret nz
+    inc hl
+    inc (hl)
+    ret
+; MTCK: nxbReps raster wraps on the long clock, each within 65536 polls. O = 00,
+; R = frameCounter's change, F = the wraps seen.
+nxb_kind_mtck:
+    xor a
+    ld (nxbSO), a
+    ld h, a
+    ld l, a
+    ld (nxbFrames), hl
+    call nxb_lc_start
+    ld (nxbPrev), hl
+.w:
+    ld bc, 0
+.p:
+    push bc
+    ld hl, (nxbFrames)
+    push hl
+    call nxb_tick
+    pop de
+    pop bc
+    ld hl, (nxbFrames)
+    or a
+    sbc hl, de
+    jr nz, .wrap
+    dec bc
+    ld a, b
+    or c
+    jr nz, .p
+    jr .end
+.wrap:
+    ld hl, (nxbFrames)
+    ld de, (nxbReps)
+    or a
+    sbc hl, de
+    jr c, .w
+.end:
+    call nxb_lc_end
+    ld hl, (nxbLcF)
+    ld (nxbReps), hl
+    ld hl, (nxbFrames)
+    ld (nxbLcF), hl
+    ld hl, 0
+    jp nxb_fprint
+
+; ---------------------------------------------------------------------
+; RT1 (session mode 7): NR $07 bit 2 at the session's speed s (nxbSvSpd). Every write
+; is s or s + 4; nxb_reclaim writes s on every exit.
+; ---------------------------------------------------------------------
+
+; TCHK: s + 4 written and read back (O); nxbReps spins on the long clock at s (R = raster
+; lines) and at s + 4 (F); D = s. Turbo is there when O has bit 2 or F <= R - R / 16;
+; else the next row is TAG NXB NOTURBO and the staged table ends.
+nxb_kind_tchk:
+    call nxb_t_on
+    NRGET NR_CPU_SPEED
+    ld (nxbSO), a
+    call nxb_t_off
+    ld hl, .on
+.run:
+    ld (nxb_lrow.pr), hl
+    ld hl, nxb_rw_spin
+    jp nxb_lrow_hl
+.on:
+    call nxb_t_lines
+    ld (nxbTcOff), hl
+    call nxb_t_on
+    ld hl, .done
+    jr .run
+.done:
+    call nxb_t_off
+    ld hl, nxb_sprint
+    ld (nxb_lrow.pr), hl
+    call nxb_t_lines
+    ld (nxbLcF), hl
+    ex de, hl                    ; DE = lines at s + 4
+    ld hl, (nxbTcOff)
+    ld (nxbReps), hl
+    ld b, h
+    ld c, l
+    DUP 4
+      srl b
+      rr c
+    EDUP
+    or a
+    sbc hl, bc
+    or a
+    sbc hl, de                   ; NC: the turbo spin is a sixteenth shorter
+    ld a, 1
+    jr nc, .act
+    ld a, (nxbSO)
+    and 4
+.act:
+    ld (nxbTurbo), a
+    ld a, (nxbSvSpd)
+    ld l, a
+    ld h, 0
+    call nxb_fprint
+    ld a, (nxbTurbo)
+    or a
+    ret nz
+    ld hl, (nxbRowNext)
+    ld (nxbTag), hl
+    push hl
+    call nxb_sat
+    ld hl, nxbMsgNoTurbo
+    call dbg_puts
+    call nxb_tm_out
+    pop hl
+    ld (hl), 0
+    ret
+; NR $07 = s + 4 / s. Corrupts AF.
+nxb_t_on:
+    ld a, (nxbSvSpd)
+    or 4
+    nextreg NR_CPU_SPEED, a
+    ret
+nxb_t_off:
+    ld a, (nxbSvSpd)
+    nextreg NR_CPU_SPEED, a
+    ret
+; HL = the long clock's raster lines, 311 x F + line1 - line0 (F under 256).
+; Corrupts AF, DE.
+nxb_t_lines:
+    ld a, (nxbLcF)
+    ld d, a
+    ld e, 311 - 256
+    mul d, e
+    ld h, a
+    ld l, 0
+    add hl, de
+    ld de, (nxbL1)
+    add hl, de
+    ld de, (nxbL0)
+    or a
+    sbc hl, de
+    ret
+; TSPIN: counted spins at s (param 0) or s + 4 (param 1). O = 00.
+nxb_kind_tspin:
+    ld a, (nxbSvSpd)
+    ld (nxb_rt_spin.s0), a
+    ld hl, nxbParam
+    bit 0, (hl)
+    jr z, .s
+    or 4
+.s:
+    ld (nxb_rt_spin.s1), a
+    ld hl, nxb_rt_spin
+    jp nxb_rd_row
+; TBLK: RSEC's sector through nxb_rt_body (param 0: at s; 1: the open and the slide at
+; s + 4). TSUM: sectors summed as RSUM (param bit 0: the open at s + 4; 2, 3: the slide
+; at s + 4; 1: nxb_rt_slow at s + 4).
+nxb_kind_tblk:
+    ld a, (nxbParam)
+    ld b, a
+    add a, a
+    add a, b                     ; 0 or 3
+    call nxb_rt_ops
+    ld hl, nxb_term
+    ld (nxb_rt_body.tl), hl
+    call nxb_rw_mark0
+    call nxb_rw_charge
+    ret c
+    ld de, nxb_rw_done
+    ld hl, nxb_rt_body
+    jp nxb_rw_body
+nxb_kind_tsum:
+    ld a, (nxbParam)
+    call nxb_rt_ops
+    ld hl, nxb_rd_sum.add
+    ld (nxb_rt_body.tl), hl
+    ld hl, nxb_rt_body
+    jp nxb_sum_row
+; A = bit 0 the open in turbo; 2, 3 the slide in turbo; 1 nxb_rt_slow in turbo:
+; nxb_rt_body's three speeds and its read. Corrupts AF, BC, E, HL.
+nxb_rt_ops:
+    ld b, a
+    ld a, (nxbSvSpd)
+    ld (nxb_rt_body.sf), a
+    ld c, a                      ; C = s
+    or 4
+    ld e, a                      ; E = s + 4
+    ld a, c
+    bit 0, b
+    jr z, .o
+    ld a, e
+.o:
+    ld (nxb_rt_body.so), a
+    ld hl, VR_SLIDE
+    ld a, b
+    or a
+    ld a, c
+    jr z, .t
+    ld a, e
+    dec b
+    jr nz, .t
+    ld hl, nxb_rt_slow
+.t:
+    ld (nxb_rt_body.st), a
+    ld (nxb_rt_body.rd), hl
+    ret
+
+; The twins of vidDmaSndOff and vidDmaSnd (VID_PAGE2, unreachable from here), and
+; nxbDmaSndOff without its prescaler byte: after it only the reset clears the prescaler.
+nxbDmaSndOff:
+    db $83, DDMA_RESET
+    db %01010100, %00000010
+    db %01010000, %00100010, 0
+    db %10000010
+    db %10100001
+    db $BB, $7F
+nxbDmaSndOff_len equ $ - nxbDmaSndOff
+nxbDmaOffC3:
+    db $83, DDMA_RESET
+    db %01010100, %00000010
+    db %01010000, %00000010
+    db %10000010
+    db %10100001
+    db $BB, $7F
+    ASSERT $ - nxbDmaOffC3 == nxbDmaSndOff_len - 1
+nxbDmaSnd:
+    db DDMA_RESET
+    db %01111101
+    dw vidAudBuf, NXV_AUD_RING
+    db %01010100, %00000010
+    db %01101000, %00100010
+.presc:
+    db 0
+    db %11001101
+    dw VID_DAC_MONO
+    db %10110010
+    db $BB, %00011000
+    db DDMA_LOAD
+nxbDmaSnd_len equ $ - nxbDmaSnd
+nxbRdFlags:  db 0               ; MLD: bit 0; MPTR: bits 1, 2
+nxbPtrPrev:  dw 0               ; MPTR: the read before, retries, bad steps, torn reads
+nxbPtrRty:   dw 0
+nxbPtrBad:   dw 0
+nxbPtrTorn:  dw 0
+nxbTcOff:    dw 0               ; TCHK: raster lines at s
+nxbTurbo:    db 0               ; TCHK: nonzero = turbo is there
+nxbMsgNoTurbo: db " NXB NOTURBO", 0
+
 nxbMsgSess:  db "NXB SESSION", 0
 nxbMsgShort: db " NXB SHORT", 0
 nxbMsgRun:   db " NXB RUN", 0
@@ -6626,6 +7277,8 @@ nxbSessDir:
     NXBSDIR %001, nxbSesSyn, nxbSesSynEnd       ; mode 3: SYN
     NXBSDIR %010, nxbSesSys, nxbSesSysEnd       ; mode 4: SYS
     NXBSDIR %100, nxbSesRw1, nxbSesRw1End       ; mode 5: RW1 (raw clips)
+    NXBSDIR %100, nxbSesRd1, nxbSesRd1End       ; mode 6: RD1 (raw mono clips)
+    NXBSDIR %100, nxbSesRt1, nxbSesRt1End       ; mode 7: RT1 (raw clips)
     ASSERT $ - nxbSessDir == NXB_SESS_LAST * 5
 
 ; A session table opens with NXBSTAB (strm 1: every SYNTH frame offset is a
@@ -6647,6 +7300,8 @@ NXB_ROW_AT defl $
       ASSERT kind != NXB_K_DSBLK || param < 4
       ASSERT kind != NXB_K_RBLK || param < 2
       ASSERT kind != NXB_K_RHIST || param < 2
+      ASSERT (kind != NXB_K_MOFF && kind != NXB_K_TSPIN && kind != NXB_K_TBLK) || param < 2
+      ASSERT kind != NXB_K_TSUM || param < 4
 NXB_STAB_B defl NXB_STAB_B + NXB_SROW_LEN
     ENDM
 
@@ -6724,6 +7379,58 @@ nxbSesRw1:
     db 0
 nxbSesRw1End:
     ASSERT nxbSesRw1End - nxbSesRw1 == NXB_STAB_B + 1
+
+; RD1: mono sound from the zxnDMA. Frame rows first (a frame row reads from the live wire
+; position). MLD to MOFF: the DMA loaded; MGO to MOFF: playing. MCN1-3 the counts of the
+; rows before them; MOF1 leaves the prescaler to the reset, so MCPY against CPY0 shows it.
+nxbSesRd1:
+    NXBSTAB 0
+    NXBSROW "IDEN", NXB_K_ID, 0, 0, 0
+    NXBSROW "CPY0", NXB_K_DCOPY, 0, NXB_RD_CREPS, 0
+    NXBSROW "RFR0", NXB_K_RFRAME, 0, 1, 0
+    NXBSROW "MLD1", NXB_K_MLD, 0, 0, 0
+    NXBSROW "SPN0", NXB_K_DSPIN, 0, NXB_RW_SREPS, 0
+    NXBSROW "MGO1", NXB_K_MGO, 0, 0, 0
+    NXBSROW "MRSW", NXB_K_MSWEEP, 0, 16, 0
+    NXBSROW "MCN1", NXB_K_MCNT, 0, 0, 0
+    NXBSROW "MSPN", NXB_K_DSPIN, 0, NXB_RW_SREPS, 0
+    NXBSROW "MCN2", NXB_K_MCNT, 0, 0, 0
+    NXBSROW "MHST", NXB_K_DHIST, 0, NXB_RW_HREPS, 0
+    NXBSROW "MCN3", NXB_K_MCNT, 0, 0, 0
+    NXBSROW "MSUM", NXB_K_RSUM, 0, NXB_RD_SUMREPS, 0
+    NXBSROW "MPTR", NXB_K_MPTR, 0, NXB_RD_PTRREPS, 0
+    NXBSROW "MTCK", NXB_K_MTCK, 0, NXB_RD_TICKS, 0
+    NXBSROW "MOF1", NXB_K_MOFF, 1, 0, 0
+    NXBSROW "MCPY", NXB_K_DCOPY, 0, NXB_RD_CREPS, 0
+    NXBSROW "MLD2", NXB_K_MLD, 0, 0, 0
+    NXBSROW "RHST", NXB_K_DHIST, 0, NXB_RW_HREPS, 0
+    NXBSROW "MOF2", NXB_K_MOFF, 0, 0, 0
+    db 0
+nxbSesRd1End:
+    ASSERT nxbSesRd1End - nxbSesRd1 == NXB_STAB_B + 1
+
+; RT1: NR $07 bit 2. TCHK, then spins at s, in turbo and in turbo under the raw handler
+; (TCN1 its count); card rows from frame 0's first sound sector: NSEC and NSM0 at s, TSTR
+; the slide alone in turbo, TSLO a slow loop in turbo, TSUM and TSEC open and slide.
+nxbSesRt1:
+    NXBSTAB 0
+    NXBSROW "IDEN", NXB_K_ID, 0, 0, 0
+    NXBSROW "TCHK", NXB_K_TCHK, 0, NXB_RT_TREPS, 0
+    NXBSROW "SPN0", NXB_K_TSPIN, 0, NXB_RW_SREPS, 0
+    NXBSROW "TSPN", NXB_K_TSPIN, 1, NXB_RW_SREPS, 0
+    NXBSROW "ARM1", NXB_K_RARM, 0, 0, 0
+    NXBSROW "TCTC", NXB_K_TSPIN, 1, NXB_RW_SREPS, 0
+    NXBSROW "TCN1", NXB_K_MCNT, 0, 0, 0
+    NXBSROW "DSRM", NXB_K_DISARM, 0, 0, 0
+    NXBSROW "NSEC", NXB_K_TBLK, 0, NXB_RT_REPS, 0
+    NXBSROW "NSM0", NXB_K_TSUM, 0, 1024, 0
+    NXBSROW "TSTR", NXB_K_TSUM, 2, 2048, 0
+    NXBSROW "TSLO", NXB_K_TSUM, 1, 1024, 0
+    NXBSROW "TSUM", NXB_K_TSUM, 3, 4096, 0
+    NXBSROW "TSEC", NXB_K_TBLK, 1, NXB_RT_REPS, 0
+    db 0
+nxbSesRt1End:
+    ASSERT nxbSesRt1End - nxbSesRt1 == NXB_STAB_B + 1
 
 ; REAL: real frames of the staged clip. SCAN keeps the three longest for the
 ; FRAME rows; W0tt sweep every frame at COPY select tt; the A and X rows

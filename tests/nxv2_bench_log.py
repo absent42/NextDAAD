@@ -40,7 +40,8 @@ import nxv2_bench_rows as bench
 # tests/test.dsf: standalone verbs set flags+250 = mode, session verbs flags+248.
 STANDALONE_VERBS = {"NXBO": 2, "NXBC": 3, "NXBK": 4, "NXBX": 5, "NXBG": 6, "NXBL": 7,
                     "NXBT": 8, "NXBE": 9, "NXBH": 10, "NXBF": 11, "NXBV": 12}
-SESSION_VERBS = {"NXBD": "DS1", "NXBR": "REAL", "NXBQ": "SYN", "NXBY": "SYS", "NXBW": "RW1"}
+SESSION_VERBS = {"NXBD": "DS1", "NXBR": "REAL", "NXBQ": "SYN", "NXBY": "SYS", "NXBW": "RW1",
+                 "NXBM": "RD1", "NXBP": "RT1"}
 VERBS = {**STANDALONE_VERBS, **SESSION_VERBS}
 COL2 = 40                                   # NXB_SESS_COL2
 

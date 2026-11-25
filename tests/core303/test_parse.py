@@ -132,7 +132,7 @@ def test_parse_rw1(tmp_path):
     # the RW1 table's 21 rows print 15 (ARM1/ARM2/ARMO and three DSRM are silent)
     import tags
     assert tuple(tags.NXB_RW1) == tuple(RW1_PRINTED)
-    assert tags.NXB_HIST_TAGS == ("RHST", "RH39", "AHST", "AH39")
+    assert tags.NXB_HIST_TAGS == ("RHST", "RH39", "AHST", "AH39", "MHST")
     rows = ["%s O=%02X R=%04X F=%04X D=%04X" % (t, 2 if t == "IDEN" else 0, 16 + i, 3 * i, i)
             for i, t in enumerate(RW1_PRINTED)]
     hist = {"RHST": [2041, 5, 2] + [0] * 13 + [0], "RH39": [2040, 6, 2] + [0] * 14,
@@ -168,6 +168,81 @@ def test_parse_rw1(tmp_path):
             parse.parse_hist(p)
         with pytest.raises(LogError):
             parse.parse_nxb(p)
+
+
+RD1_PRINTED = "IDEN CPY0 RFR0 SPN0 MRSW MCN1 MSPN MCN2 MHST MCN3 MSUM MPTR MTCK MCPY RHST".split()
+RT1_PRINTED = "IDEN TCHK SPN0 TSPN TCTC TCN1 NSEC NSM0 TSTR TSLO TSUM TSEC".split()
+
+
+def _capture(tmp_path, verb, rows, extra=()):
+    lines = ["#NXB 0A10", "> pick 66", "> " + verb]
+    lines += ["%s O=%02X R=%04X F=%04X D=%04X" % r for r in rows] + list(extra)
+    p = tmp_path / (verb + ".TXT")
+    p.write_bytes(("\r\n".join(lines) + "\r\n").encode("ascii"))
+    return p
+
+
+def test_parse_rd1(tmp_path):
+    # the RD1 table's 20 rows print 15 (MLD1, MGO1, MOF1, MLD2, MOF2 are silent)
+    import tags
+    assert tuple(tags.NXB_RD1) == tuple(RD1_PRINTED)
+    assert set(tags.NXB_RD1_COUNTS) | set(tags.NXB_RD1_MARKED) <= set(RD1_PRINTED)
+    rows = {"IDEN": (0x12, 250, 256, 192), "CPY0": (0, 128, 0, 88), "RFR0": (0, 1, 1, 200),
+            "SPN0": (0, 512, 47, 12), "MRSW": (0, 16, 29, 100), "MCN1": (1, 0x2710, 0, 0),
+            "MSPN": (0, 512, 47, 50), "MCN2": (1, 0x3A98, 0, 0), "MHST": (0, 2048, 30, 7),
+            "MCN3": (1, 0x1234, 1, 0), "MSUM": (0, 0xBEEF, 0x0123, 0),
+            "MPTR": (3, 9, 0, 0), "MTCK": (0, 250, 250, 0), "MCPY": (0, 128, 0, 88),
+            "RHST": (0, 2048, 29, 300)}
+    hist = ["#HIST MHST" + " 0800" + " 0000" * 16, "#HIST RHST" + " 07FF 0001" + " 0000" * 15]
+    p = _capture(tmp_path, "nxbm", [(t,) + rows[t] for t in RD1_PRINTED], hist)
+    runs = parse.parse_nxb(p)
+    by = {r.tag: r for r in runs}
+    assert [r.tag for r in runs] == RD1_PRINTED and all(r.kind == "session" for r in runs)
+    assert parse.iden_train(by["IDEN"]) and by["IDEN"].o & 0x0F == 2
+    assert [parse.rd_count(by[t]) for t in ("MCN1", "MCN2", "MCN3")] == [10000, 15000, 0x11234]
+    assert {tags.NXB_RD1_COUNTS[t] for t in ("MCN1", "MCN2", "MCN3")} == {"MRSW", "MSPN", "MHST"}
+    assert parse.rd_sum(by["MSUM"]) == 0x0123BEEF
+    assert by["MPTR"].o == tags.NXB_RD1_FLAG_BASE | tags.NXB_RD1_FLAG_END
+    assert not by["MPTR"].o & tags.NXB_RD1_FLAG_RANGE
+    assert [(s, t) for s, t, _b in parse.parse_hist(p)] == [(1, "MHST"), (1, "RHST")]
+    assert parse.rw1_walked(runs) == []
+    # a walked frame or card row is flagged; a count row's O = 01 is its flag, not a walk
+    walked = [(t,) + ((1,) + rows[t][1:] if t in ("MRSW", "MSUM") else rows[t])
+              for t in RD1_PRINTED]
+    runs = parse.parse_nxb(_capture(tmp_path, "nxbm", walked))
+    assert [r.tag for r in parse.rw1_walked(runs)] == ["MRSW", "MSUM"]
+    # the inline program: IDEN O = 02
+    flat = [("IDEN", 2, 250, 256, 192)] + [(t,) + rows[t] for t in RD1_PRINTED[1:]]
+    assert not parse.iden_train(parse.parse_nxb(_capture(tmp_path, "nxbm", flat))[0])
+
+
+def test_parse_rt1(tmp_path):
+    # the RT1 table's 14 rows print 12 (ARM1 and DSRM are silent)
+    import tags
+    assert tuple(tags.NXB_RT1) == tuple(RT1_PRINTED)
+    assert set(tags.NXB_RT1_MARKED) | set(tags.NXB_RT1_SUMS) <= set(RT1_PRINTED)
+    rows = {"IDEN": (2, 250, 256, 192), "TCHK": (7, 1824, 1545, 3), "SPN0": (0, 512, 47, 12),
+            "TSPN": (0, 512, 39, 300), "TCTC": (0, 512, 42, 11), "TCN1": (0, 0x4E20, 0, 0),
+            "NSEC": (0, 512, 4, 5), "NSM0": (0, 0x1111, 0x0002, 0),
+            "TSTR": (0, 0x2222, 0x0004, 0), "TSLO": (0, 0x3333, 0x0002, 0),
+            "TSUM": (0, 0x4444, 0x0008, 0), "TSEC": (0, 512, 4, 2)}
+    runs = parse.parse_nxb(_capture(tmp_path, "nxbp", [(t,) + rows[t] for t in RT1_PRINTED]))
+    by = {r.tag: r for r in runs}
+    assert [r.tag for r in runs] == RT1_PRINTED
+    assert parse.rt_active(by["TCHK"]) and by["TCHK"].d == 3
+    assert [parse.rd_sum(by[t]) for t in tags.NXB_RT1_SUMS] == [0x21111, 0x42222, 0x23333,
+                                                               0x84444]
+    assert parse.rd_count(by["TCN1"]) == 20000
+    # active by the spin alone, by the read-back alone, and not active
+    for o, r, f, want in ((3, 1824, 1545, True), (7, 1824, 1824, True), (3, 1824, 1824, False),
+                          (3, 1824, 1710, True), (3, 1824, 1711, False)):
+        row = parse.parse_nxb(_capture(tmp_path, "nxbp", [("TCHK", o, r, f, 3)]))[0]
+        assert parse.rt_active(row) is want, (o, r, f)
+    # no turbo: TCHK, then the marker in SPN0's place, never parsed as a row
+    assert list(tags.NXB_RT1_REFUSALS) == ["NXB NOTURBO"]
+    p = _capture(tmp_path, "nxbp", [("IDEN",) + rows["IDEN"], ("TCHK", 3, 1824, 1824, 3)],
+                 ["SPN0 NXB NOTURBO"])
+    assert [r.tag for r in parse.parse_nxb(p)] == ["IDEN", "TCHK"]
 
 
 def test_nxb_o_line_guard(tmp_path):

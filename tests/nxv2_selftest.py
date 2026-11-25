@@ -1507,7 +1507,8 @@ def _synth_frame(frame, preset, sites):
 
 
 SESSION_ASM_LABELS = {"DS1": "nxbSesDs1", "REAL": "nxbSesReal", "SYN": "nxbSesSyn",
-                      "SYS": "nxbSesSys", "RW1": "nxbSesRw1"}
+                      "SYS": "nxbSesSys", "RW1": "nxbSesRw1", "RD1": "nxbSesRd1",
+                      "RT1": "nxbSesRt1"}
 
 
 def _session_asm_parity(asm):
@@ -1535,7 +1536,8 @@ def _session_asm_parity(asm):
     if equ.get("NXB_K_COUNT") != len(bench.SESSION_KINDS):
         bad.append(f"NXB_K_COUNT {equ.get('NXB_K_COUNT')} against {len(bench.SESSION_KINDS)} kinds")
     for name in ("NXB_DS_REPS", "NXB_RW_REPS", "NXB_RW_HREPS", "NXB_RW_SREPS", "NXB_RW_SPIN",
-                 "NXB_RW_MIN", "NXB_HIST_MAX"):
+                 "NXB_RW_MIN", "NXB_HIST_MAX", "NXB_RD_CREPS", "NXB_RD_SUMREPS",
+                 "NXB_RD_PTRREPS", "NXB_RD_TICKS", "NXB_RT_TREPS", "NXB_RT_REPS"):
         if equ.get(name) != getattr(bench, name):
             bad.append(f"{name}: video.asm {equ.get(name)}, nxv2_bench_rows {getattr(bench, name)}")
     kind_of = {f"NXB_K_{k.upper()}": k for k in bench.SESSION_KINDS}
@@ -1591,7 +1593,7 @@ def t10_session_tables():
     import re as _re
     asm = (ROOT / "src" / "video.asm").read_text(encoding="utf-8")
     last = _re.search(r"^NXB_SESS_LAST\s+equ (\d+)\b", asm, _re.M)
-    expect(last and int(last.group(1)) == 5, "video.asm NXB_SESS_LAST equ 5")
+    expect(last and int(last.group(1)) == 7, "video.asm NXB_SESS_LAST equ 7")
     expect(sorted(bench.SESSION_TABLES) == sorted(bench.SESSION_MODES)
            == sorted(bench.SESSION_DELIVERY),
            "every session table has a flags+248 mode and its deliveries")
@@ -1608,6 +1610,49 @@ def t10_session_tables():
     if bench.raw_blocks("RW1", 99)[2:] != (8712, 2049):
         bad.append(f"RW1 card blocks and largest row {bench.raw_blocks('RW1', 99)[2:]}, "
                    f"expected (8712, 2049)")
+    # RD1: 20 rows, 15 printed; frame rows before every card row; the rows under the DMA
+    # (MGO to MOFF) and their idle twins; MCPY straight after the teardown that leaves the
+    # prescaler to the reset; a count row after each counted row under the DMA
+    rd1 = bench.SESSION_TABLES["RD1"]
+    rd1_printed = "IDEN CPY0 RFR0 SPN0 MRSW MCN1 MSPN MCN2 MHST MCN3 MSUM MPTR MTCK MCPY RHST"
+    if len(rd1) != 20 or " ".join(bench.session_printed("RD1", "direct")) != rd1_printed:
+        bad.append(f"RD1: {len(rd1)} rows, printed {bench.session_printed('RD1', 'direct')}")
+    under = bench.session_dma("RD1")
+    if [t for t in rd1_printed.split() if under[t]] != "MRSW MCN1 MSPN MCN2 MHST MCN3 MSUM MPTR MTCK".split():
+        bad.append(f"RD1: rows under the DMA {[t for t, v in under.items() if v]}")
+    by_rd = {r[0]: r for r in rd1}
+    for idle, play in bench.SESSION_DMA_PAIRS["RD1"]:
+        if by_rd[idle][1:] != by_rd[play][1:] or under[idle] or under[play] != (play != "MCPY"):
+            bad.append(f"RD1: pair {idle}/{play} rows differ or run on the wrong side of MGO")
+    order = [r[0] for r in rd1]
+    if order[order.index("MCPY") - 1] != "MOF1" or by_rd["MOF1"][2] != 1 or by_rd["MOF2"][2] != 0:
+        bad.append("RD1: MCPY follows MOF1 (param 1), MOF2 is the production teardown")
+    for i, r in enumerate(rd1):
+        if r[1] == "mcnt" and rd1[i - 1][1] not in ("msweep", "dspin", "dhist"):
+            bad.append(f"RD1 {r[0]}: a count row follows a counted row, not {rd1[i - 1][0]}")
+    if [(r[0], r[1]) for r in rd1 if r[1] in ("rhist", "dhist")] != [("MHST", "dhist"), ("RHST", "dhist")]:
+        bad.append("RD1: its histogram rows are MHST and RHST")
+    if bench.raw_blocks("RD1", 99)[:3] != (17, 17 * 99 + 1, 8195):
+        bad.append(f"RD1 frames and blocks {bench.raw_blocks('RD1', 99)}")
+    for clip in sorted(bench.RD1_CLIPS):
+        got = bench.rd1_blocks(clip)
+        if min(got["left"].values()) < bench.NXB_RW_MIN:
+            bad.append(f"RD1 clip {clip:03d}: {got['left']} blocks left at its card rows")
+    # RT1: 14 rows, 12 printed, no frame row, the control and the train-only row first
+    rt1 = bench.SESSION_TABLES["RT1"]
+    rt1_printed = "IDEN TCHK SPN0 TSPN TCTC TCN1 NSEC NSM0 TSTR TSLO TSUM TSEC"
+    if len(rt1) != 14 or " ".join(bench.session_printed("RT1", "direct")) != rt1_printed \
+            or [(r[0], r[2], r[3]) for r in rt1 if r[1] in ("tblk", "tsum")] != [
+                ("NSEC", 0, 512), ("NSM0", 0, 1024), ("TSTR", 2, 2048), ("TSLO", 1, 1024),
+                ("TSUM", 3, 4096), ("TSEC", 1, 512)]:
+        bad.append(f"RT1: {len(rt1)} rows, printed {bench.session_printed('RT1', 'direct')}")
+    if bench.raw_blocks("RT1", 99) != (0, 1, 9222, 4097):
+        bad.append(f"RT1 frames and blocks {bench.raw_blocks('RT1', 99)}, expected 9222 card blocks")
+    for clip in sorted(bench.RT1_CLIPS):
+        got = bench.rt1_blocks(clip)
+        if min(got["left"].values()) < bench.NXB_RW_MIN or dict(
+                (t, b) for t, b, _n in got["rows"])["TSEC"] != 1 + 8709:
+            bad.append(f"RT1 clip {clip:03d}: {got['left']} blocks left, rows {got['rows']}")
     for name, rows in sorted(bench.SESSION_TABLES.items()):
         deliveries = bench.SESSION_DELIVERY[name]
         if not deliveries or not set(deliveries) <= {"resident", "streaming", "direct"}:
@@ -1713,11 +1758,18 @@ def t10_session_tables():
                 bad.append(f"{name} {tag}: RBLK body {param} must be 0 (sector) or 1 (columns)")
             if kind == "rhist" and param > 1:
                 bad.append(f"{name} {tag}: RHIST head {param} must be 0 (production) or 1 (39 T)")
-            if kind in ("rframe", "rsweep") and card_rows:
+            if kind == "moff" and param > 1:
+                bad.append(f"{name} {tag}: MOFF {param} must be 0 (the teardown) or 1 (no prescaler byte)")
+            if kind in ("tspin", "tblk") and param > 1:
+                bad.append(f"{name} {tag}: {kind.upper()} {param} must be 0 (normal) or 1 (turbo)")
+            if kind == "tsum" and param > 3:
+                bad.append(f"{name} {tag}: TSUM {param} must be 0-3")
+            if kind in bench.SESSION_RAW_FRAMES and card_rows:
                 bad.append(f"{name} {tag}: {kind.upper()} after a card row (the frames are off the wire)")
             if kind in bench.SESSION_RAW_CARD and reps + 1 >= bench.NXB_RW_MIN:
                 bad.append(f"{name} {tag}: {reps} reps and the untimed sector reach NXB_RW_MIN")
-            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk", "rblk", "rhist") and param:
+            if kind not in ("sweep", "frame", "loop", "dsweep", "dsblk", "rblk", "rhist",
+                            "moff", "tspin", "tblk", "tsum") and param:
                 bad.append(f"{name} {tag}: {kind} rows carry param 0")
             scanned |= kind == "scan"
             blocks_direct |= kind == "dsblk"
@@ -1748,7 +1800,10 @@ def t10_session_tables():
                 armed = kind in bench.SESSION_ARMS or (armed and kind != "disarm")
             if armed and name == "RW1":
                 bad.append(f"{name} {view}: ends armed (ARMOLD's handler is only undone by a DISARM)")
+            untimed = {r[0] for r in rows if r[1] in bench.SESSION_UNTIMED}
             for tag in printed:
+                if tag in untimed:
+                    continue
                 if state[tag] != (tag in armed_tags):
                     bad.append(f"{name} {view} {tag}: runs {'armed' if state[tag] else 'unarmed'}"
                                f", the pairs say {'armed' if tag in armed_tags else 'unarmed'}")
