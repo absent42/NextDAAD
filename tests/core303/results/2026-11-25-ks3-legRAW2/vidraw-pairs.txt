@@ -1,0 +1,48 @@
+# -VidRaw fixtures, sd\VIDRAW2 (encoder era raw3)
+# util: gate figure on a frame without / with a palette sector. RUNS: ceil(file blocks / 65535), the RUNS= a card copy in one piece reads.
+# s (DEBUG play log): S stereo or not raw, D mono from the zxnDMA (C after MCTC). v: T column train, I inline, - not raw.
+
+clip  role                     shape    fps    sound   stall     util    pal          bytes blocks RUNS s v frames pals  source
+100   pair 0 A                 256x192  25     stereo  off       0.7832  0.7950    12678144  24762    1 S I    250   11  Sintel_1080_10s_30MB.mp4 (silent)
+101   pair 0 B                 256x192  25     stereo  measured  0.7832  0.7950    12678144  24762    1 S I    250   11  Sintel_1080_10s_30MB.mp4 (silent)
+102   pair 1 A                 320x160  25     stereo  off       0.8164  0.8282    13190144  25762    1 S T    250   11  Sintel_1080_10s_30MB.mp4 (silent)
+103   pair 1 B                 320x160  25     stereo  measured  0.8164  0.8282    13190144  25762    1 S T    250   11  Sintel_1080_10s_30MB.mp4 (silent)
+104   pair 2 A                 320x192  25     stereo  off       0.9738  0.9857    15749632  30761    1 S T    250   10  Sintel_1080_10s_30MB.mp4 (silent)
+105   pair 2 B                 320x192  25     stereo  measured  0.9739  0.9857    15749632  30761    1 S T    250   10  Sintel_1080_10s_30MB.mp4 (silent)
+106   pair 3 A                 280x224  25     stereo  off       0.9970  1.0088    16134144  31512    1 S T    250   11  Sintel_1080_10s_30MB.mp4 (silent)
+      warned at frame 188: warning: the picture may stutter briefly after closely spaced scene cuts at 280x224, 25 fps with stereo sound: each scene cut costs extra loading time, and this clip's cuts come too close together for a picture this size - at frame 188 (counting from 1) the picture falls furthest behind, by about 0.8 ms (2.0 percent of a frame). --direct-sound auto or mono, or 280x221 or smaller, avoids it.
+107   pair 3 B                 280x224  25     stereo  measured  0.9970  1.0089    16134144  31512    1 S T    250   11  Sintel_1080_10s_30MB.mp4 (silent)
+      warned at frame 188: warning: the picture may stutter briefly after closely spaced scene cuts at 280x224, 25 fps with stereo sound: each scene cut costs extra loading time, and this clip's cuts come too close together for a picture this size - at frame 188 (counting from 1) the picture falls furthest behind, by about 0.8 ms (2.1 percent of a frame). --direct-sound auto or mono, or 280x221 or smaller, avoids it.
+108   pair 4 A                 320x240  16.67  stereo  off       0.8190  0.8269    13170688  25724    1 S I    167    5  Sintel_1080_10s_30MB.mp4 (silent)
+109   pair 4 B                 320x240  16.67  stereo  measured  0.8190  0.8269    13170688  25724    1 S I    167    5  Sintel_1080_10s_30MB.mp4 (silent)
+110   pair 5 A                 256x240  16.67  stereo  off       0.6599  0.6678    10606080  20715    1 S I    167    6  Sintel_1080_10s_30MB.mp4 (silent)
+111   pair 5 B                 256x240  16.67  stereo  measured  0.6599  0.6678    10606080  20715    1 S I    167    6  Sintel_1080_10s_30MB.mp4 (silent)
+120   long, budget off         256x192  25     stereo  off       0.7832  0.7950   152093696 297058    5 S I   3000   57  loop125_1f39ff69.mp4 (sintel, bunny, jellyfish sound x5)
+121   long, budget measured    256x192  25     stereo  measured  0.7832  0.7950   152093696 297058    5 S I   3000   57  loop125_1f39ff69.mp4 (sintel, bunny, jellyfish sound x5)
+123   fragmented (FRAG\)       256x192  25     stereo  off       0.7832  0.7950    12627456  24663    1 S I    249   11  sintel sound.mp4
+125   film sound stereo        256x192  25     stereo  off       0.7832  0.7950    12627456  24663    1 S I    249   11  sintel sound.mp4
+126   film sound mono          256x192  25     mono    off       0.7333  0.7443    12499968  24414    1 D I    249   11  sintel sound.mp4
+127   tones left/right         256x192  25     stereo  off       0.7832  0.7950    10138624  19802    1 S I    200    1  tone8s_7017dcba.mp4
+128   tones mono               256x192  25     mono    off       0.7333  0.7443    10036224  19602    1 D I    200    1  tone8s_7017dcba.mp4
+129   film sound stereo        320x192  25     stereo  off       0.9738  0.9857    15686656  30638    1 S T    249   10  sintel sound.mp4
+130   film sound stereo        280x224  25     stereo  off       0.9970  1.0088    16064512  31376    1 S T    249    1  jellyfish sound.mp4
+131   scene cuts               320x192  25     stereo  off       0.9738  0.9857    18895872  36906    1 S T    300    5  cuts12_7c793fc3.mp4 (jellyfish, bunny, sintel 0.24 s, jellyfish, bunny sound)
+      cuts at frames 75 150 156 225; isolated 75 225; close pair 150/156 admitted
+132   mono edge                320x208  25     mono    off       0.9971  1.0080    16834048  32879    1 D I    249   10  sintel sound.mp4
+133   mono edge                280x224  25     mono    off       0.9354  0.9464    15942656  31138    1 D T    249   12  sintel sound.mp4
+134   raw width word 324       copy of 102, byte 23 = 44: expect VID FMT?, no report (13190144 bytes)
+010   old direct 256x167@25, Sintel              11141632 bytes  21761 blocks RUNS 1 s S v -  frames 250
+004   delta scope 320x144@25, Sintel 1.7 s         864768 bytes   1689 blocks RUNS 1 s S v -  frames 43
+007   streamed delta classic 256x192@25, Sintel    5443584 bytes  10632 blocks RUNS 1 s S v -  frames 250
+
+Cost of the stall budget (A = off, B = measured)
+pair  target     A        B           A bytes    B bytes       B-A A util  B util 
+100/101 256x192@25 256x192  256x192    12678144   12678144         0 0.7832  0.7832 
+102/103 320x160@25 320x160  320x160    13190144   13190144         0 0.8164  0.8164 
+104/105 320x192@25 320x192  320x192    15749632   15749632         0 0.9738  0.9739 
+106/107 280x224@25 280x224  280x224    16134144   16134144         0 0.9970  0.9970 
+108/109 320x240@16.67 320x240  320x240    13170688   13170688         0 0.8190  0.8190 
+110/111 256x240@16.67 256x240  256x240    10606080   10606080         0 0.6599  0.6599 
+
+Refused or skipped
+none
