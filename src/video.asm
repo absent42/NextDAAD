@@ -3759,7 +3759,8 @@ nxbQuietImage   equ 1            ; SLD marker of a -BenchQuiet image (no bytes)
 ;   1 DS1 (direct: frame sweeps, then the transport rows), 2 REAL (real
 ;   frames, audio, the frame loop, the producer, an armed pass), 3 SYN and
 ;   4 SYS (synthetic frames written into a resident / streaming clip),
-;   5 RW1 (raw direct: frames, card rows, handler spins; nxb_rw_go).
+;   5 RW1 (raw direct: frames, card rows, handler spins; nxb_rw_go), 6 RD1
+;   (raw mono sound from the zxnDMA), 7 RT1 (NR $07 turbo bit).
 ;
 ; STANDALONE MODES (2-12) synthesize their op streams into a pool bank
 ; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
@@ -3886,7 +3887,7 @@ NXB_HIST_TXT     equ 6 + 4 + 5 * NXB_HIST_BINS   ; "#HIST tttt" and " hhhh" per 
 ; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
 ; Modes 2-12 run standalone; mode 14 arms a session (nxbSessReq, nxb_sess).
-; Modes 15 and up (the log step) and 14 are tested first: no blank, bank or table.
+; Modes 15-19 (log step, play log, blank, mono path) and 14 are tested first: no blank, bank or table.
 ; Order: blank, stage the table (NXB_PAGE at MMU6 for the copy only),
 ; allocate the row banks, walk the table. Corrupts everything.
 ; ---------------------------------------------------------------------
@@ -7530,10 +7531,9 @@ nxbSesSysEnd:
     ASSERT nxbSesSysEnd - nxbSesSys == NXB_STAB_B + 1
 
 ; ---------------------------------------------------------------------
-; LOG STEP (via nxb_hop6, untimed, corrupts everything) by nxbMode: 15 appends "#NXB ffff",
-; rows 0-31 and #HIST lines to NXBENCH.TXT, 16 "#PLAY ccc pp ffff s v" and rows 23-27 to
-; NXPLAY.TXT, both read back, then LOG OK / ERR xx on row 31; 17 blanks; 18 and 19 set
-; vidMonoDma (MONO CTC / MONO DMA on row 31); above: LOG ERR 01.
+; LOG STEP by nxbMode (via nxb_hop6, untimed, corrupts everything): 15 "#NXB ffff", rows 0-31,
+; #HIST to NXBENCH.TXT; 16 "#PLAY ccc pp ffff s v", rows 23-27 to NXPLAY.TXT; read back, then
+; LOG OK / ERR xx on row 31. 17 blanks; 18/19 set vidMonoDma (MONO CTC/DMA); above: LOG ERR 01.
 ; ---------------------------------------------------------------------
 NXB_LOG_WMODE    equ $0B     ; F_OPEN open_creat + read/write: the API append (.extract -a)
 ; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0 for

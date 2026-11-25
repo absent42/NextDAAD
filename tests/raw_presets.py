@@ -5,7 +5,8 @@ python tests\\raw_presets.py [--stall-budget off|measured]
 
 For the six target shapes and the four direct preset shapes the kit shipped
 before the raw layout, prints the utilisation of a frame without a palette
-(nxv2enc.raw_supply_check) at 25, 16.67 and 12.5 fps in stereo and mono, the
+(nxv2enc.raw_supply_check) at 25, 16.67 and 12.5 fps in stereo and mono (the
+mono priced is sound from the zxnDMA, the form a shipped game plays), the
 verdict per form (pass up to 0.90, warn over 0.90, refuse over 1.00), the form
 --direct-sound auto picks (nxv2enc.raw_pick_sound), and the card bytes per frame
 and MB per second of that form (sound plus pixel sectors; a scene's palette

@@ -357,8 +357,8 @@ LS256 111     verb
 ; report hides Layer 2 at teardown. Each verb ends with the log step
 ; (mode 15): NXBENCH.TXT in the launch folder, LOG OK or LOG ERR xx on
 ; row 31. Session verbs arm through EXTERN 0 12 mode 14, so a game's own
-; flag 248 never diverts a clip. Release's EXTERN 0 12 is ext_stub,
-; so all of them are silent no-ops there.
+; flag 248 never diverts a clip. Release's EXTERN 0 12 forwards to an
+; XBN, none staged, so all of them are silent no-ops there.
 ;   MCTC - verb 133, mode 18: a raw one-channel clip's sound comes from
 ;          CTC 0's handler from the next open on; MONO CTC on row 31.
 ;   MDMA - verb 134, mode 19: from the zxnDMA; MONO DMA on row 31.
@@ -1173,7 +1173,7 @@ $pictureOK
 ; SP17 player bench (see the vocabulary block). The standalone
 ; modes set flag 250 then share EXTERN 0 12; the mode cell self-clears
 ; in the handler, so a stray EXTERN can never re-run a row set. The
-; session verbs (NXBD/NXBR/NXBQ/NXBY/NXBW) set flag 248, arm it with mode 14
+; session verbs (NXBD/NXBR/NXBQ/NXBY/NXBW/NXBM/NXBP) set flag 248, arm it with mode 14
 ; (EXTERN 0 12, which clears flag 248), and then play the
 ; clip PICK armed: the player opens the file exactly as it ships, and
 ; the bench hook diverts to the session rows once the session is staged

@@ -13,7 +13,7 @@
 #   ------------------  ------------  --------------------------------
 #   (none) / -Aud       sd\TEMPLATE\  tests\test.dsf (the template)
 #   -Vid / -VidLong      sd\VID\       template (the VID*/PICK verbs)
-#   -VidRawBench         sd\VIDRAW\    template (PICK/GO/LOOP, NXBW/NXBD)
+#   -VidRawBench         sd\VIDRAW\    template (PICK/GO/LOOP, NXBW/NXBM/NXBP/NXBD, MCTC/MDMA)
 #   -VidRaw              sd\VIDRAW2\   template (PICK/GO/LOOP, MCTC/MDMA)
 #   -NxBench             sd\NXBENCH\   template (the NXB* verbs)
 #   -Suite               sd\SUITE\     tests\condacts.dsf
@@ -437,7 +437,7 @@
 #              Shares sd\VID\ with -Vid - give both together for the
 #              full 001-014+099 card. Cached like -Vid. CSpect-lock:
 #              see header.
-#   -VidRawBench  stage the raw direct video sitting 1 and 1b card into
+#   -VidRawBench  stage the raw direct video bench card (session verbs) into
 #              sd\VIDRAW\: raw clips 060-079 and 088-089 (tests\mkrawclip.py,
 #              ungated), header-fault copies 080-086 (tests\mkrawbad.py),
 #              old-layout direct 010
@@ -5518,7 +5518,7 @@ if ($VidLong) {
 
 if ($VidRawBench) {
     Assert-VidEraInSync
-    # Raw direct video sitting 1 card - see the -VidRawBench header comment. CSpect-lock: see header.
+    # Raw direct video bench card - see the -VidRawBench header comment. CSpect-lock: see header.
     if (Test-SdCSpect) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
@@ -5810,10 +5810,11 @@ if ($VidRaw) {
     $v2Res = [ordered]@{}
     foreach ($clip in $v2Clips.Keys) {
         $e = $v2Clips[$clip]
+        $asked = "$($e.w)x$($e.h)"
         if ($e.like) {
             $p = $v2Res[$e.like]
             if (-not $p.file) { $v2Res[$clip] = @{ e = $e; refused = "not encoded: clip $($e.like) was not staged" }; "VIDRAW2 $clip SKIPPED: clip $($e.like) was not staged"; continue }
-            $e.w = $p.w; $e.h = $p.h
+            $e.w = $p.w; $e.h = $p.h; $asked = $p.asked
         }
         $g = Get-V2Gate $e.w $e.h $e.fps $e.want $e.stall ([bool]$e.lower)
         $h = [int]$g.h
@@ -5833,7 +5834,7 @@ if ($VidRaw) {
         }
         if ($g.refused -or -not $enc.ok) {
             $why = if ($g.refused) { $g.refused } else { $enc.text }
-            $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; refused = $why }
+            $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; asked = $asked; refused = $why }
             "VIDRAW2 $clip REFUSED ($($e.w)x$h @ $($e.fps), $($e.want), stall $($e.stall)): $why"
             continue
         }
@@ -5880,7 +5881,7 @@ if ($VidRaw) {
         $runs = [int][math]::Ceiling($len / 512 / 65535)
         $wantRuns = if ($e.runs) { $e.runs } else { 1 }
         if ($runs -ne $wantRuns) { throw "-VidRaw ${clip}: $len bytes need $runs filemap entries in one piece, expected $wantRuns" }
-        $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; file = $cache; g = $g; frames = $frames; pals = $pals; bytes = $len; runs = $runs; note = $note
+        $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; asked = $asked; file = $cache; g = $g; frames = $frames; pals = $pals; bytes = $len; runs = $runs; note = $note
                           s = $(if ([int]$g.ch -eq 2) { 'S' } else { 'D' }); v = $(if ($g.variant -eq 'train') { 'T' } else { 'I' }) }
         "VIDRAW2 $clip $($e.w)x$h @ $($e.fps) $($g.form) stall $($e.stall): header ok, frames $frames, palettes $pals, util $('{0:F4}' -f [double]$g.px) / $('{0:F4}' -f [double]$g.pal), RUNS $runs, $($e.check): $(($chk | Select-Object -Skip 1 | Select-Object -First 1) -join ' ')"
     }
@@ -5913,14 +5914,16 @@ if ($VidRaw) {
     $v2Delta = Join-Path $root "tests\out\004_scope_${vidLegSettlementTag}_leg_cache.vid"
     if (-not (Test-Path -LiteralPath $v2Delta)) {
         "encoding 004 (-Vid scope leg clip) via videnc.py"
-        & python $v2Enc $v2Src.sintel[0] $v2Delta --shape scope --fps 25 --start 00:00:00 --duration 1.7 --ffmpeg $v2Ff
+        & python $v2Enc $v2Src.sintel[0] "$v2Delta.tmp" --shape scope --fps 25 --start 00:00:00 --duration 1.7 --ffmpeg $v2Ff
         if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - 004 not staged" }
+        Move-Item -LiteralPath "$v2Delta.tmp" -Destination $v2Delta -Force
     }
     $v2Strm = Join-Path $root "tests\out\007_classic_autod025_${vidLegSettlementTag}_long_cache.vid"
     if (-not (Test-Path -LiteralPath $v2Strm)) {
         "encoding 007 (-VidLong classic, Sintel full duration, --dither 0.25) via videnc.py - slow"
-        & python $v2Enc $v2Src.sintel[0] $v2Strm --shape classic --fps 25 --ffmpeg $v2Ff --dither 0.25
+        & python $v2Enc $v2Src.sintel[0] "$v2Strm.tmp" --shape classic --fps 25 --ffmpeg $v2Ff --dither 0.25
         if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - 007 not staged" }
+        Move-Item -LiteralPath "$v2Strm.tmp" -Destination $v2Strm -Force
     }
     $v2Ctl = [ordered]@{}
     foreach ($ctl in @(@('010', $v2Old, 0x03, 0, 167, 'old direct 256x167@25, Sintel'), @('004', $v2Delta, 0x01, 1, 144, 'delta scope 320x144@25, Sintel 1.7 s'),
@@ -5971,6 +5974,7 @@ if ($VidRaw) {
         $L.Add(('{0,-5} {1,-24} {2,-8} {3,-6} {4,-7} {5,-9} {6,-7:F4} {7,-7:F4} {8,10} {9,6} {10,4} {11} {12} {13,6} {14,4}  {15}' -f
                 $clip, $r.e.role, "$($r.w)x$($r.h)", $r.e.fps, $r.g.form, $r.e.stall, [double]$r.g.px, [double]$r.g.pal, $r.bytes,
                 ($r.bytes / 512), $r.runs, $r.s, $r.v, $r.frames, $r.pals, $v2Src[$r.e.src][2]))
+        if ($r.asked -ne "$($r.w)x$($r.h)") { $L.Add("      lowered from $($r.asked)") }
         if ($r.note) { $L.Add("      $($r.note)") }
     }
     if ($v2Bad) { $L.Add("134   raw width word 324       copy of 102, byte 23 = 44: expect VID FMT?, no report ($((Get-Item -LiteralPath $v2Bad).Length) bytes)") }

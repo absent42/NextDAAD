@@ -519,8 +519,8 @@ layout, opcode set and constants, and the writers. Every section of the
 file is an exact multiple of 512-byte SD blocks.</p>
 <p>Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
 decimation. A mono source is converted to stereo automatically. A raw
-clip may instead carry mono: one byte a sample at 15625 Hz, played on
-both speakers.
+clip may instead carry mono: one byte a sample, stored at 15625 Hz and
+played on both speakers at about 15559 Hz (about 0.4 percent slow).
 Palettes are scene-scoped
 adaptive 256-colour (NR $44 write order, RRRGGGBB + expanded 9th blue
 bit), refreshed by PAL opcodes when drift crosses the trigger.

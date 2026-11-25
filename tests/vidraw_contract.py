@@ -23,8 +23,10 @@ tear retry, the teardown in the restore body, the switch vidMonoDma. DEBUG image
 frame loop's LATE and URUN counters (vid_dbg_late, vid_dbg_urun) and their call sites, and the RW1 bench session (the mode 5 route through
 nxb_sess / nxb_ds_rows, nxb_rw_feed, the card rows' bodies and the binned token wait, the arm
 kinds and DISARM, the log step's #HIST lines, an RFRAME row's MMU6 return chain, the play
-log modes 16 and 17, nxb_entry's mode routes, the open-failure prints on NXB_PAGE behind
-their cold stub) and nxb_geo_setup's hop to NXB_PAGE against
+log modes 16 to 19, nxb_entry's mode routes, the open-failure prints on NXB_PAGE behind
+their cold stub), the RD1 session (mode 6: DMA mono sound rows, the pointer read, harness T,
+the bench's clean start), the RT1 session (mode 7: NR $07 turbo rows, read gaps, harness T)
+and nxb_geo_setup's hop to NXB_PAGE against
 the baseline image in tests\\out\\vidraw-dma-base; each is skipped with a note where it is not
 assembled.
 

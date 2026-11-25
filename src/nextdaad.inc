@@ -1380,10 +1380,8 @@ VR_BEND         equ VR_BS1
 NXV_NR70_MODE1  equ %00010000  ; mode 1 (320x256/column-major)
 NXV_NR70_MODE0  equ 0          ; mode 0 (256x192/row-major)
 
-; NR $18 clip X (full-bleed for every non-raw clip; a raw clip on mode-1
-; is pillarboxed by its own X1/X2, nxv2_open_body): mode-1 X units are
-; 2px/unit (X2=(320/2)-1=159), mode-0 X units are 1px/unit
-; (X2=256-1=255) - both full width, X1=0.
+; NR $18 clip X: full-bleed (X1=0) for non-raw clips; a raw clip on mode 1 is
+; pillarboxed by its own X1/X2 (nxv2_open_body). Units: mode 1 2px (X2=159), mode 0 1px (X2=255).
 NXV_CLIP_X2_MODE1 equ (320/2)-1   ; = 159
 NXV_CLIP_X2_MODE0 equ 256-1        ; = 255
 

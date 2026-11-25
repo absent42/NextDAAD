@@ -345,9 +345,8 @@ cuts between scenes very quickly at this shape can be refused (section
 ### Mono sound
 
 When stereo sound would not keep up at a shape and frame rate, the
-encoder gives an uncompressed clip mono sound instead - the same 15625
-Hz, one channel, played from both speakers - and prints a note saying
-so. `320x200` at 25 fps is such a shape. To choose for yourself, add
+encoder gives an uncompressed clip mono sound instead - one channel,
+played from both speakers - and prints a note saying so. `320x200` at 25 fps is such a shape. To choose for yourself, add
 `--direct-sound stereo` (the encoder refuses the clip if stereo does not
 keep up) or `--direct-sound mono` (mono even where stereo would fit,
 which leaves more room). A stereo source is mixed down to mono for you.

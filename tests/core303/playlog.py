@@ -147,7 +147,7 @@ def main(argv=None):
         return 2
     text = markdown(caps, Path(a.log).name)
     if a.out:
-        Path(a.out).write_text(text, encoding="utf-8")
+        Path(a.out).write_text(text, encoding="utf-8", newline="\n")
     else:
         sys.stdout.write(text)
     return 0

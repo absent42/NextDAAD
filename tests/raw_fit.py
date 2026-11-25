@@ -921,7 +921,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     nh = sum(1 for c in clips for tg in nxbtags.NXB_RW1_HIST_TAGS if tg in c.hist)
     res.checks.append("histograms: %d, every one sums to its row's reps unless listed" % nh)
 
-    # Harness removed (the plan's execution amendment).
+    # Harness removed: card rows less H_CARD (armed: scaled by ARSE/RSEC), frames less G_FRAME.
     rsec_m = _mean(c.t["RSEC"] for c in clips if "RSEC" in c.t)
     rcol_m = _mean(c.t["RCOL"] for c in clips if "RCOL" in c.t)
     for c in clips:
@@ -991,7 +991,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
                 res.anomalies.append("clip %03d file: frames %r carry a palette sector inside "
                                      "RSWP/ARSW" % (c.clip, [i for i in pals if i]))
 
-    # The fit (the plan's gate table on the primed figures).
+    # The fit: the gate table's equations on the primed (harness-removed) figures.
     ts_vals = [c.p["RSEC"] - SECTOR_INI_T for c in clips if "RSEC" in c.p]
     res.ts = _mean(ts_vals)
     for form in FORMS_1B:
@@ -1724,20 +1724,25 @@ def report(res, readouts=None):
     add("")
     add("### Late clips: waits for ring room")
     add("")
+    if model_in_force() == "1b":
+        pump = ("vid_aud_pump's room test (video.asm:%d: room = ring - guard - (writer - reader) "
+                "mod ring, with a %d-byte floor)" % (asm_line("vid_aud_pump.unp"),
+                                                     inc_equ("NXV_AUD_PUMP_CHUNK")))
+    else:
+        pump = ("the raw pump's room test (vrPumpT, video.asm:%d: room = ring - guard - (writer "
+                "- reader) mod ring, against the frame's whole feed)" % asm_line("vrPumpT"))
     add("A frame is released when the CTC reader has consumed the previous frame's sound "
         "(vid_pace_poll at .pace, video.asm:%d); .paced (video.asm:%d) adds one frame's bytes "
         "and drops a deficit of a whole frame. The reader never stops: when the frame loop "
-        "runs late it plays on into stale ring bytes and passes the writer. vid_aud_pump's "
-        "room test (video.asm:%d: room = ring - guard - (writer - reader) mod ring, with a "
-        "%d-byte floor) then sees a nearly full ring, so .qnext (video.asm:%d) leaves the next "
+        "runs late it plays on into stale ring bytes and passes the writer. %s "
+        "then sees a nearly full ring, so .qnext (video.asm:%d) leaves the next "
         "frame's sound unwritten and .ffin (video.asm:%d) waits until the reader has freed "
         "room for it, up to one frame period. So a late clip is slowed by more than its "
         "utilisation. The bench rows never see this: nxb_aud_body.ptr (video.asm:%d) puts the "
         "writer half a ring ahead of the reader on every rep. ring_play runs the loop with "
         "the frame work below and counts the waits." % (
-            asm_line("vid_run.pace"), asm_line("vid_run.paced"), asm_line("vid_aud_pump.unp"),
-            inc_equ("NXV_AUD_PUMP_CHUNK"), asm_line("vid_run.qnext"), asm_line("vid_run.ffin"),
-            asm_line("nxb_aud_body.ptr")))
+            asm_line("vid_run.pace"), asm_line("vid_run.paced"), pump,
+            asm_line("vid_run.qnext"), asm_line("vid_run.ffin"), asm_line("nxb_aud_body.ptr")))
     add("")
     rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
     am = {f: res.period / (res.period - res.handler[f]) for f in FORMS_1B}
@@ -1787,9 +1792,9 @@ def report(res, readouts=None):
                 asm_line("vid_pace_poll"), DBG["late"], asm_line("vid_dbg_late"), DBG["urun"],
                 asm_line("vid_dbg_urun"), DBG["urun_dma"], rl))
     add("- counted from the instructions (Zilog T, NEXTREG A,n read 13 T): every T figure "
-        "above. Estimated: the 1-in-%d share of vid_rl_poll at each arm, and the pump passes "
-        "a frame (one chunk, a second when the ring tail wraps, the final pass)." %
-        inc_equ("VID_RL_DIV"))
+        "above. Estimated: the 1-in-%d share of vid_rl_poll at each arm%s." % (
+            inc_equ("VID_RL_DIV"), ", and the pump passes a frame (one chunk, a second when the "
+            "ring tail wraps, the final pass)" if model_in_force() == "1b" else ""))
     add("")
     ring, guard, chunk = (inc_equ("NXV_AUD_RING"), inc_equ("NXV_AUD_GUARD"),
                           inc_equ("NXV_AUD_PUMP_CHUNK"))
@@ -2214,7 +2219,7 @@ def prev_fit(path):
         set_model(cur)
 
 
-def dma_verdicts(res, m, sections):
+def dma_verdicts(res, m):
     """R1-R6 -> [(row, verdict, what)]; verdict GO, STOP, NO-GO or '-' (not judged)."""
     rd = m.rd
     if not rd:
@@ -2340,7 +2345,7 @@ def _rows_table(add, s, tags, timed):
             add("| %s | %02X | %04X | %04X | %04X | | | |" % (tg, o_, r, f, d & 0xFFFF))
 
 
-def report_1c(res, m, sections, readouts=None, prev=None, play_clips=None, clips_dir=None):
+def report_1c(res, m, readouts=None, prev=None, play_clips=None):
     o = []
     add = o.append
     pre, tc, nr11 = res.ctc
@@ -2421,7 +2426,7 @@ def report_1c(res, m, sections, readouts=None, prev=None, play_clips=None, clips
     add("")
     add("| row | verdict | figures |")
     add("|---|---|---|")
-    verdicts = dma_verdicts(res, m, sections)
+    verdicts = dma_verdicts(res, m)
     for name, v, what in verdicts:
         add("| %s | %s | %s |" % (name, v, what))
     add("")
@@ -3394,7 +3399,7 @@ def selftest():
         secs = read_sections(p)
         res_c = fit(secs, reps=SYNTH_REPS, wait_shape="inline")
         m = fit_1c(res_c, secs, rd_reps=SYNTH_RD_REPS)
-        text_c = report_1c(res_c, m, secs)
+        text_c = report_1c(res_c, m)
         a_d = 1 / (1 - P["steal"] / P["sample_t"])
         want = {f: dict(P["k1c"][f], a=P["a"][f], tb=INI_T * P["a"][f],
                         sample_t=float(res_c.period)) for f in ("stereo", "mono_ctc")}
@@ -3412,7 +3417,7 @@ def selftest():
                   m.max_resid, m.variant, m.sound_verdict, res_c.anomalies))
         check(all(abs(v - P["steal"]) < 0.05 for f in m.rd.values() for v in f.steal.values())
               and sorted(m.rd) == list(mono), "1c RD1 steal and clips: %r" % sorted(m.rd))
-        v = dict((n, x) for n, x, _ in dma_verdicts(res_c, m, secs))
+        v = dict((n, x) for n, x, _ in dma_verdicts(res_c, m))
         check(v["R1 rate"] == v["R2 steal"] == v["R4 pointer"] == v["R5 ticks"]
               == v["R6 teardown"] == "GO" and v["R3 card"] == "-",
               "1c DMA rows on the clean log (no clip files): %r" % v)
@@ -3432,7 +3437,7 @@ def selftest():
         secs = read_sections(p)
         res_s = fit(secs, reps=SYNTH_REPS, wait_shape="inline")
         v = dict((n, x) for n, x, _ in dma_verdicts(
-            res_s, fit_1c(res_s, secs, rd_reps=SYNTH_RD_REPS), secs))
+            res_s, fit_1c(res_s, secs, rd_reps=SYNTH_RD_REPS)))
         check(v["R1 rate"] == "NO-GO" and v["R2 steal"] == "NO-GO", "1c slow DMA: %r" % v)
     # the committed sitting 1b log, fitted under the model it names, gives its constants
     log1b = REPO / "tests" / "core303" / "results" / "2026-11-23-ks3-legRAW1B" / "NXBENCH.TXT"
@@ -3497,7 +3502,7 @@ def main(argv=None):
         "inferred: RH39/AH39 rows present" if res.wait_shape == "inline" else
         "inferred: no RH39/AH39 rows"))
     if m is not None:
-        sys.stdout.write(report_1c(res, m, sections, readouts, prev, a.play_clips))
+        sys.stdout.write(report_1c(res, m, readouts, prev, a.play_clips))
         return exit_status_1c(res, m)
     sys.stdout.write(report(res, readouts))
     return exit_status(res)
