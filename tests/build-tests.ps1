@@ -14,6 +14,7 @@
 #   (none) / -Aud       sd\TEMPLATE\  tests\test.dsf (the template)
 #   -Vid / -VidLong      sd\VID\       template (the VID*/PICK verbs)
 #   -VidRawBench         sd\VIDRAW\    template (PICK/GO/LOOP, NXBW/NXBD)
+#   -VidRaw              sd\VIDRAW2\   template (PICK/GO/LOOP, MCTC/MDMA)
 #   -NxBench             sd\NXBENCH\   template (the NXB* verbs)
 #   -Suite               sd\SUITE\     tests\condacts.dsf
 #   -Err4                sd\ERR4\      tests\doallnest.dsf
@@ -448,7 +449,18 @@
 #              tests\rawsound_check.py, and checks each fault copy differs from
 #              its parent only at the offsets mkrawbad printed. CSpect-lock: see
 #              header.
-#   -NxBench   stage the decode-kernel bench payloads into sd\NXBENCH\
+#   -VidRaw    stage the raw direct video playback card (sitting 2) into
+#              sd\VIDRAW2\: gated A/B pairs 100-111 (stall budget off / measured,
+#              Sintel, the six target shapes), 120-121 (120 s loop), 123 (in
+#              FRAG\ with tests\fragcard.ps1), 125-133 (sound, scene cuts, mono
+#              edge shapes), 134 (raw width 324, tests\mkrawbad.py), old-layout
+#              010, 004, 007. Every raw clip goes through videnc.py --direct (the
+#              gate); a refusal is named, not fatal. Encodes cached in
+#              tests\out\vidraw2\. Asserts each header, walks each clip with
+#              tests\rawsound_check.py, the expected RUNS (5 for 120-121, else 1)
+#              and B no taller than A; writes tests\out\vidraw-pairs.txt.
+#              CSpect-lock: see header.
+#   -NxBench  stage the decode-kernel bench payloads into sd\NXBENCH\
 #              NXB0.BIN..NXB9.BIN (nxv2enc.py --bench-fixtures). NXB8
 #              (real classic 256x192@25 segment) is cut from a dedicated
 #              --no-merge encode (a merged cache would collapse the
@@ -461,7 +473,7 @@
 #              non-zero. Independent of every other switch, touches
 #              neither sd\ nor the DAAD toolchain. Slow (real ffmpeg
 #              encodes) - not part of the default no-switch run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$VidRawBench, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky', [switch]$Full, [switch]$Plan)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$Cursor, [switch]$KbLog, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$SfxSt, [switch]$AysReg, [switch]$L2Holes, [switch]$L2Pos, [switch]$L2PosWide, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$VidRawBench, [switch]$VidRaw, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'line', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$XbnTrans, [switch]$Intro, [switch]$Text2, [switch]$Text2Ctl, [switch]$Text2Wide, [switch]$Text2Bad, [switch]$Text2WideCtl, [switch]$Text2Nest, [switch]$Text2NestCtl, [switch]$Text2Xmb, [switch]$Text2XmbPart, [switch]$Text2XmbFp, [switch]$Text2Region, [switch]$Text2RegionCtl, [switch]$Text2RegionPart, [switch]$Text2RegionBad, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky', [switch]$Full, [switch]$Plan)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 # True when a CSpect mounts sd\ (or a folder under it) via -mmc=. No -mmc is false; a relative,
@@ -512,7 +524,7 @@ $sd = Join-Path $root 'sd'
 # combination if one did, rather than guess which leg was wanted.
 if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
     $otherLegSwitches = @(
-        'Vid', 'VidLong', 'VidRawBench', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
+        'Vid', 'VidLong', 'VidRawBench', 'VidRaw', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
         'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'SfxSt', 'AysReg', 'L2Holes', 'L2Pos', 'L2PosWide', 'TmOver',
         'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
         'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn', 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad',
@@ -533,6 +545,7 @@ if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
 $legName = 'TEMPLATE'
 if ($Vid -or $VidLong) { $legName = 'VID' }
 if ($VidRawBench)      { $legName = 'VIDRAW' }
+if ($VidRaw)           { $legName = 'VIDRAW2' }
 if ($NxBench)          { $legName = 'NXBENCH' }
 if ($Suite)            { $legName = 'SUITE' }
 if ($Err4)             { $legName = 'ERR4' }
@@ -596,7 +609,7 @@ function Reset-LegDir {
     # recursive delete can never be pointed anywhere else (and never at
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
-    $known = @('TEMPLATE', 'VID', 'VIDRAW', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
+    $known = @('TEMPLATE', 'VID', 'VIDRAW', 'VIDRAW2', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2', 'SFXST', 'AYSREG',
                'L2HOLES', 'L2POS', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
                'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'CURSOR', 'KBLOG', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO', 'TEXT2', 'TEXT2C', 'TEXT2W', 'TEXT2BAD',
@@ -831,6 +844,11 @@ $legNarrow = @{
                        -Files 'tests/mkrawclip.py', 'tests/mkrawbad.py', 'tests/mktoneclip.py', 'tests/rawsound_check.py',
                        'tests/videnc_old_direct.py', 'tools/demo-files/1920x1080-25p.mp4', 'tools/demo-files/Sintel_1080_10s_30MB.mp4',
                        'tools/demo-files/sintel sound.mp4' -Globs 'tests/out/vidraw/*.vid', $vidCache -Tools ffmpeg
+    '-VidRaw'    = New-StepSpec -With (Get-FxSpec ('template.ddb', 'template.xmb') 'test.dsf') -Git 'authoring-kit/lib' `
+                       -Files 'tests/mkrawbad.py', 'tests/mktoneclip.py', 'tests/rawsound_check.py', 'tests/videnc_old_direct.py',
+                       'tests/fragcard.ps1', 'tools/demo-files/Sintel_1080_10s_30MB.mp4', 'tools/demo-files/sintel sound.mp4',
+                       'tools/demo-files/bunny sound.mp4', 'tools/demo-files/jellyfish sound.mp4' `
+                       -Globs 'tests/out/vidraw2/*.vid', 'tests/out/vidraw/old_*.vid', 'tests/out/007_*_long_cache.vid', $vidCache -Tools ffmpeg
 }
 foreach ($k in '', 'All', 'Ticker', 'Trans', 'Fade', 'Hints', 'Clock', 'Tool', 'NoBin', 'Bad') { $legNarrow[('-Xbn ' + $(if ($k) { "-Xbn$k" })).Trim()] = $legXbn }
 foreach ($k in 'Text2', 'Text2Ctl', 'Text2Wide', 'Text2Bad', 'Text2WideCtl', 'Text2Nest', 'Text2NestCtl', 'Text2Xmb',
@@ -4375,7 +4393,7 @@ Copy-Item "$root\tests\out\template.ddb" "$leg\GAME.DDB" -Force
 # call XMES). A self-contained folder should hold that leg's files and
 # nothing else, and the legs with their own XMB (-Suite/-V3/-Part) stage
 # it themselves below.
-if ($templateXmb -and ($legName -in @('TEMPLATE', 'VID', 'VIDRAW', 'NXBENCH'))) {
+if ($templateXmb -and ($legName -in @('TEMPLATE', 'VID', 'VIDRAW', 'VIDRAW2', 'NXBENCH'))) {
     Copy-Item "$root\tests\out\template.xmb" "$leg\0.XMB" -Force
     "staged tests\out\template.xmb -> sd\$legName\0.XMB"
 }
@@ -5653,6 +5671,327 @@ if ($VidRawBench) {
         Copy-Item -LiteralPath $vrCache[$clip] -Destination "$leg\$clip.VID" -Force
     }
     "staged $($vrCache.Count) clip(s) -> sd\$legName\ (raw 060-079 and 088-089, header faults 080-086, old direct 010, delta 004)"
+}
+
+if ($VidRaw) {
+    Assert-VidEraInSync
+    # Raw direct video playback card (sitting 2) - see the -VidRaw header comment. CSpect-lock: see header.
+    if (Test-SdCSpect) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
+    }
+    $v2Dir = Join-Path $root 'tests\out\vidraw2'
+    $v2RawDir = Join-Path $root 'tests\out\vidraw'
+    New-Item -ItemType Directory -Force $v2Dir, $v2RawDir, (Join-Path $v2Dir 'bad') | Out-Null
+    $v2Ff = "$root\tools\ffmpeg\bin\ffmpeg.exe"
+    $v2Enc = "$root\authoring-kit\lib\videnc.py"
+    $v2Demo = Join-Path $root 'tools\demo-files'
+    function Get-V2Key([string]$Text) {
+        [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash(
+            [Text.Encoding]::UTF8.GetBytes($Text))).Replace('-', '').Substring(0, 8).ToLower()
+    }
+    # The tone source is -VidRawBench's, keyed on mktoneclip.py's text.
+    $v2ToneKey = Get-V2Key ([IO.File]::ReadAllText("$PSScriptRoot\mktoneclip.py")).Replace("`r`n", "`n")
+    $v2Tone = Join-Path $v2RawDir "tone8s_$v2ToneKey.mp4"
+    if (-not (Test-Path -LiteralPath $v2Tone)) {
+        & python "$PSScriptRoot\mktoneclip.py" --out $v2Tone --ffmpeg $v2Ff
+        if ($LASTEXITCODE -ne 0) { throw "mktoneclip.py failed (exit $LASTEXITCODE)" }
+    }
+    # Built sources: (file, start s, length s) segments joined at 25 fps by ffmpeg's concat filter.
+    function New-V2Source([string]$Name, [object[]]$Segs, [string]$Total) {
+        $key = Get-V2Key ((($Segs | ForEach-Object { "$($_[0])@$($_[1])+$($_[2])" }) -join ';') + "/$Total")
+        $out = Join-Path $v2Dir "${Name}_$key.mp4"
+        if (Test-Path -LiteralPath $out) { return $out }
+        $fa = @('-y', '-v', 'error'); $fc = ''; $i = 0
+        foreach ($s in $Segs) {
+            $fa += @('-ss', "$($s[1])", '-t', "$($s[2])", '-i', (Join-Path $v2Demo $s[0]))
+            $fc += "[${i}:v]fps=25,scale=960:540,setsar=1,format=yuv420p[v$i];[${i}:a]aresample=48000,aformat=channel_layouts=stereo[a$i];"
+            $i++
+        }
+        $fc += ((0..($i - 1) | ForEach-Object { "[v$_][a$_]" }) -join '') + "concat=n=${i}:v=1:a=1[v][a]"
+        $fa += @('-filter_complex', $fc, '-map', '[v]', '-map', '[a]', '-t', $Total, '-c:v', 'libx264', '-crf', '18',
+                 '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', "$out.tmp.mp4")
+        Write-Host "building tests\out\vidraw2\$(Split-Path -Leaf $out) ($($Segs.Count) segments, $Total s) with ffmpeg"
+        & $v2Ff @fa
+        if ($LASTEXITCODE -ne 0) { throw "ffmpeg failed building $out (exit $LASTEXITCODE)" }
+        Move-Item -LiteralPath "$out.tmp.mp4" -Destination $out -Force
+        return $out
+    }
+    $v2LoopSegs = @()
+    for ($i = 0; $i -lt 5; $i++) { foreach ($f in 'sintel', 'bunny', 'jellyfish') { $v2LoopSegs += , @("$f sound.mp4", 0, 10) } }
+    $v2Loop = New-V2Source 'loop125' $v2LoopSegs '125'
+    # Cuts at frames 75 and 225 (isolated) and 150/156 (a close pair); the encode's report is asserted below.
+    $v2Cuts = New-V2Source 'cuts12' @(@('jellyfish sound.mp4', 0, 3), @('bunny sound.mp4', 1, 3), @('sintel sound.mp4', 7, 0.24),
+                                     @('jellyfish sound.mp4', 5, 2.76), @('bunny sound.mp4', 5, 3)) '12'
+    $v2Src = @{
+        sintel = @((Join-Path $v2Demo 'Sintel_1080_10s_30MB.mp4'), 'sintel', 'Sintel_1080_10s_30MB.mp4 (silent)')
+        sinsnd = @((Join-Path $v2Demo 'sintel sound.mp4'), 'sinsnd', 'sintel sound.mp4')
+        tone   = @($v2Tone, "tone$v2ToneKey", (Split-Path -Leaf $v2Tone))
+        loop   = @($v2Loop, [IO.Path]::GetFileNameWithoutExtension($v2Loop), "$(Split-Path -Leaf $v2Loop) (sintel, bunny, jellyfish sound x5)")
+        cuts   = @($v2Cuts, [IO.Path]::GetFileNameWithoutExtension($v2Cuts), "$(Split-Path -Leaf $v2Cuts) (jellyfish, bunny, sintel 0.24 s, jellyfish, bunny sound)")
+    }
+    # Gate figures (nxv2enc): the height admitted up to h when lower is 1, the form the encode takes,
+    # utilisation without / with a palette, frame program, sound bytes and frame cap.
+    $v2GatePy = @(
+        'import sys, io, json, contextlib',
+        "sys.path.insert(0, r'$root\authoring-kit\lib')",
+        'import nxv2enc as e',
+        'w, h, fps, want, stall, lower = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], sys.argv[5], sys.argv[6] == ''1''',
+        'kw = dict(stall_budget=stall)',
+        'forms = (''stereo'', ''mono'') if want == ''auto'' else (want,)',
+        'tall = max(e.raw_max_height(w, ''auto'', fps, f, **kw) for f in forms)',
+        'hh = min(h, tall) if lower else h',
+        'out = dict(h=hh, tallest=tall)',
+        'try:',
+        '    if hh < 1:',
+        '        raise SystemExit(''no height at %d wide and %g fps is admitted'' % (w, fps))',
+        '    sw, _ = e.raw_surface(w, hh, ''auto'')',
+        '    with contextlib.redirect_stdout(io.StringIO()):',
+        '        form, chk = e.raw_pick_sound(w, hh, sw, fps, want, **kw)',
+        'except SystemExit as x:',
+        '    out[''refused''] = str(x)',
+        'else:',
+        '    ch = 2 if form == ''stereo'' else 1',
+        '    lay = e.audio_layout(fps, ch, raw=True)',
+        '    pal = e.raw_frame_t(w, hh, sw, fps, form, palette=True, **kw)[''total_t''] / chk[''period_t'']',
+        '    out.update(form=form, ch=ch, surface=sw, px=chk[''utilization''], pal=pal, variant=e.raw_variant(w, hh, sw),',
+        '               real=lay[2], padded=lay[3], cap=e.raw_layout(w, hh, sw)[''cap_blocks''])',
+        'print(json.dumps(out))'
+    ) -join "`n"
+    function Get-V2Gate($W, $H, $Fps, $Want, $Stall, [bool]$Lower) {
+        $j = & python -c $v2GatePy $W $H $Fps $Want $Stall $(if ($Lower) { '1' } else { '0' })
+        if ($LASTEXITCODE -ne 0) { throw "-VidRaw: gate helper failed for ${W}x${H} @ $Fps ($Want, $Stall)" }
+        return ($j | ConvertFrom-Json)
+    }
+    # One videnc.py --direct encode (the real CLI, gate in the loop) with its --report JSON beside it.
+    function Invoke-V2Encode([string]$Src, [string]$Out, $W, $H, [string]$Fps, [string]$Dur, [string]$Want, [string]$Stall) {
+        if ((Test-Path -LiteralPath $Out) -and (Test-Path -LiteralPath "$Out.json")) { return @{ ok = $true } }
+        $a = @($Src, "$Out.tmp", '--direct', '--shape', "${W}x${H}", '--fps', $Fps, '--start', '00:00:00', '--duration', $Dur,
+               '--report', "$Out.json", '--ffmpeg', $v2Ff)
+        if ($Want -ne 'auto') { $a += @('--direct-sound', $Want) }
+        if ($Stall -ne 'off') { $a += @('--stall-budget', $Stall) }
+        Write-Host "encoding ${W}x${H} @ $Fps ($Want, stall $Stall, $Dur s, $(Split-Path -Leaf $Src)) -> tests\out\vidraw2\$(Split-Path -Leaf $Out)"
+        $o = @(& python $v2Enc @a 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) {
+            Remove-Item -LiteralPath "$Out.tmp", "$Out.json" -Force -ErrorAction SilentlyContinue
+            $msg = @($o | Where-Object { $_ -match '^error:' })
+            return @{ ok = $false; text = $(if ($msg) { $msg -join ' ' } else { $o[-1] }) }
+        }
+        Move-Item -LiteralPath "$Out.tmp" -Destination $Out -Force
+        return @{ ok = $true }
+    }
+    # Pairs 100-111 (the Goals list order): A = stall budget off, B = measured, Sintel (silent), tallest admitted height up to T's.
+    $v2Goals = @(@(256, 192, '25'), @(320, 160, '25'), @(320, 192, '25'), @(280, 224, '25'), @(320, 240, '16.67'), @(256, 240, '16.67'))
+    $v2Clips = [ordered]@{}
+    for ($n = 0; $n -lt $v2Goals.Count; $n++) {
+        $g = $v2Goals[$n]
+        foreach ($ab in @(@(0, 'A', 'off'), @(1, 'B', 'measured'))) {
+            $v2Clips['{0:D3}' -f (100 + 2 * $n + $ab[0])] = @{ role = "pair $n $($ab[1])"; src = 'sintel'; w = $g[0]; h = $g[1]; fps = $g[2]
+                want = 'auto'; stall = $ab[2]; dur = '10.0'; lower = $true; check = 'silent' }
+        }
+    }
+    $v2Clips['120'] = @{ role = 'long, budget off'; src = 'loop'; w = 256; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '120.0'; lower = $true; check = 'sound'; runs = 5 }
+    $v2Clips['121'] = @{ role = 'long, budget measured'; src = 'loop'; w = 256; h = 192; fps = '25'; want = 'stereo'; stall = 'measured'; dur = '120.0'; lower = $true; check = 'sound'; runs = 5 }
+    $v2Clips['123'] = @{ role = 'fragmented (FRAG\)'; src = 'sinsnd'; like = '100'; fps = '25'; want = 'auto'; stall = 'off'; dur = '10.0'; check = 'sound'; dir = 'FRAG' }
+    $v2Clips['125'] = @{ role = 'film sound stereo'; src = 'sinsnd'; like = '100'; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    $v2Clips['126'] = @{ role = 'film sound mono'; src = 'sinsnd'; like = '100'; fps = '25'; want = 'mono'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    $v2Clips['127'] = @{ role = 'tones left/right'; src = 'tone'; like = '100'; fps = '25'; want = 'stereo'; stall = 'off'; dur = '8.0'; check = 'lr' }
+    $v2Clips['128'] = @{ role = 'tones mono'; src = 'tone'; like = '100'; fps = '25'; want = 'mono'; stall = 'off'; dur = '8.0'; check = 'monotones' }
+    $v2Clips['129'] = @{ role = 'film sound stereo'; src = 'sinsnd'; w = 320; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    $v2Clips['130'] = @{ role = 'film sound stereo'; src = 'sinsnd'; w = 280; h = 224; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    $v2Clips['131'] = @{ role = 'scene cuts'; src = 'cuts'; w = 320; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '12.0'; check = 'sound'; cuts = $true }
+    $v2Clips['132'] = @{ role = 'mono edge'; src = 'sinsnd'; w = 320; h = 208; fps = '25'; want = 'mono'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    $v2Clips['133'] = @{ role = 'mono edge'; src = 'sinsnd'; w = 280; h = 224; fps = '25'; want = 'mono'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    $v2Res = [ordered]@{}
+    foreach ($clip in $v2Clips.Keys) {
+        $e = $v2Clips[$clip]
+        if ($e.like) {
+            $p = $v2Res[$e.like]
+            if (-not $p.file) { $v2Res[$clip] = @{ e = $e; refused = "not encoded: clip $($e.like) was not staged" }; "VIDRAW2 $clip SKIPPED: clip $($e.like) was not staged"; continue }
+            $e.w = $p.w; $e.h = $p.h
+        }
+        $g = Get-V2Gate $e.w $e.h $e.fps $e.want $e.stall ([bool]$e.lower)
+        $h = [int]$g.h
+        $enc = $null
+        if (-not $g.refused) {
+            $src = $v2Src[$e.src]
+            $name = { param($hh) "${clip}_$($src[1])_$($e.w)x${hh}_$($e.fps -replace '\.', 'p')_$($e.want)_$($e.stall)_0-$([int][double]$e.dur)_$vidLegSettlementTag.vid" }
+            $cache = Join-Path $v2Dir (& $name $h)
+            $enc = Invoke-V2Encode $src[0] $cache $e.w $h $e.fps $e.dur $e.want $e.stall
+            if (-not $enc.ok -and $e.lower -and $enc.text -match "\($($e.w)x(\d+) plays these cuts\)") {
+                "VIDRAW2 $clip $($e.w)x$h refused by the scene-cut check, retrying at $($e.w)x$($Matches[1]): $($enc.text)"
+                $h = [int]$Matches[1]
+                $g = Get-V2Gate $e.w $h $e.fps $e.want $e.stall $false
+                $cache = Join-Path $v2Dir (& $name $h)
+                if (-not $g.refused) { $enc = Invoke-V2Encode $src[0] $cache $e.w $h $e.fps $e.dur $e.want $e.stall }
+            }
+        }
+        if ($g.refused -or -not $enc.ok) {
+            $why = if ($g.refused) { $g.refused } else { $enc.text }
+            $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; refused = $why }
+            "VIDRAW2 $clip REFUSED ($($e.w)x$h @ $($e.fps), $($e.want), stall $($e.stall)): $why"
+            continue
+        }
+        # Header, byte level: the fields the player validates at open, the fps byte and frame 0's tag.
+        $section = [int]$g.padded
+        $hb = New-Object byte[] (512 + $section)
+        $fs = [IO.File]::OpenRead($cache)
+        try { [void]$fs.Read($hb, 0, $hb.Length) } finally { $fs.Close() }
+        $sw = [int]$g.surface
+        $want = [ordered]@{
+            magic = @([Text.Encoding]::ASCII.GetString($hb, 0, 5), 'NXVID'); version = @($hb[5], 2)
+            'width code' = @($hb[6], [int]($sw -eq 320)); 'height byte' = @($hb[7], ($h % 256))
+            'fps byte' = @($hb[8], [int][math]::Round([double]$e.fps * 10)); 'frame 0 tag' = @($hb[512 + $section - 1], 1)
+            channels = @($hb[9], [int]$g.ch); rate = @(($hb[10] + 256 * $hb[11]), 15625); flags = @($hb[12], 0x13)
+            'sound bytes' = @(($hb[17] + 256 * $hb[18]), [int]$g.real); cap = @(($hb[21] + 256 * $hb[22]), [int]$g.cap)
+            'width word' = @(($hb[23] + 256 * $hb[24]), $(if ($sw -eq 256) { 256 } else { $e.w }))
+        }
+        foreach ($k in $want.Keys) {
+            if ("$($want[$k][0])" -ne "$($want[$k][1])") { throw "-VidRaw ${clip}: header $k = $($want[$k][0]), expected $($want[$k][1]) ($cache)" }
+        }
+        $frames = $hb[14] + 256 * $hb[15] + 65536 * $hb[16]
+        $nominal = [math]::Round([double]$e.fps * [double]$e.dur)
+        if ([math]::Abs($frames - $nominal) -gt 2) { throw "-VidRaw ${clip}: $frames frames, expected $nominal +- 2" }
+        # Layout walk to EOF and the sound stimulus (pad and tag excluded).
+        $chk = @(& python "$PSScriptRoot\rawsound_check.py" $cache --expect $e.check 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { throw "-VidRaw ${clip}: rawsound_check --expect $($e.check) failed: $($chk -join ' | ')" }
+        $m = [regex]::Match(($chk -join "`n"), 'frames=(\d+) channels=(\d+) sound=(\d+) section=(\d+) palettes=(\d+)')
+        if (-not $m.Success -or [int]$m.Groups[1].Value -ne $frames -or [int]$m.Groups[2].Value -ne [int]$g.ch -or
+            [int]$m.Groups[3].Value -ne [int]$g.real -or [int]$m.Groups[4].Value -ne $section) {
+            throw "-VidRaw ${clip}: walk disagrees with the header (frames $frames, section $section): $($chk -join ' | ')"
+        }
+        $pals = [int]$m.Groups[5].Value
+        $cutList = @((Get-Content -LiteralPath "$cache.json" -Raw | ConvertFrom-Json).scene_cuts | ForEach-Object { [int]$_ })
+        if ($pals -ne $cutList.Count + 1) { throw "-VidRaw ${clip}: $pals palette sectors, the report lists $($cutList.Count) scene cut(s)" }
+        $note = ''
+        if ($e.cuts) {
+            $edges = @(0) + $cutList + @($frames)
+            $iso = @($cutList | Where-Object { $c = $_; -not ($edges | Where-Object { $_ -ne $c -and [math]::Abs($_ - $c) -lt 50 }) })
+            $close = @(for ($i = 1; $i -lt $cutList.Count; $i++) { if ($cutList[$i] - $cutList[$i - 1] -lt 25) { "$($cutList[$i - 1])/$($cutList[$i])" } })
+            if ($iso.Count -lt 2) { throw "-VidRaw ${clip}: cuts at $($cutList -join ' '), fewer than two isolated (50 frames from any other cut and the ends)" }
+            $note = "cuts at frames $($cutList -join ' '); isolated $($iso -join ' '); close pair $(if ($close) { "$($close -join ' ') admitted" } else { 'none' })"
+        }
+        $len = (Get-Item -LiteralPath $cache).Length
+        $runs = [int][math]::Ceiling($len / 512 / 65535)
+        $wantRuns = if ($e.runs) { $e.runs } else { 1 }
+        if ($runs -ne $wantRuns) { throw "-VidRaw ${clip}: $len bytes need $runs filemap entries in one piece, expected $wantRuns" }
+        $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; file = $cache; g = $g; frames = $frames; pals = $pals; bytes = $len; runs = $runs; note = $note
+                          s = $(if ([int]$g.ch -eq 2) { 'S' } else { 'D' }); v = $(if ($g.variant -eq 'train') { 'T' } else { 'I' }) }
+        "VIDRAW2 $clip $($e.w)x$h @ $($e.fps) $($g.form) stall $($e.stall): header ok, frames $frames, palettes $pals, util $('{0:F4}' -f [double]$g.px) / $('{0:F4}' -f [double]$g.pal), RUNS $runs, $($e.check): $(($chk | Select-Object -Skip 1 | Select-Object -First 1) -join ' ')"
+    }
+    for ($n = 0; $n -lt $v2Goals.Count; $n++) {
+        $a = $v2Res['{0:D3}' -f (100 + 2 * $n)]; $b = $v2Res['{0:D3}' -f (101 + 2 * $n)]
+        if ($a.file -and $b.file -and $b.h -gt $a.h) { throw "-VidRaw pair ${n}: B is $($b.w)x$($b.h), taller than A $($a.w)x$($a.h)" }
+    }
+    # 134: raw width word 324 (over 320, a multiple of 4), a copy of 102 - the player answers VID FMT?.
+    $v2Bad = $null
+    if ($v2Res['102'].file -and $v2Res['102'].w -eq 320) {
+        $v2Bad = Join-Path $v2Dir "bad\134_width324.vid"
+        $p = @(& python "$PSScriptRoot\mkrawbad.py" --in $v2Res['102'].file --out $v2Bad --fault width324 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { throw "mkrawbad.py --fault width324 failed: $($p -join ' | ')" }
+        $printed = @($p | ForEach-Object { if ($_ -match '^offset (\d+): [0-9a-f]{2} -> ([0-9a-f]{2})$') { "$($Matches[1])=$($Matches[2])" } })
+        if (($printed -join ' ') -ne '23=44') { throw "-VidRaw 134: mkrawbad printed '$($printed -join ' ')', expected '23=44'" }
+        $d = @(& python "$PSScriptRoot\mkrawbad.py" --diff $v2Res['102'].file $v2Bad 2>&1 | ForEach-Object { "$_" })
+        $sizes = (Get-Item -LiteralPath $v2Bad).Length
+        if ($LASTEXITCODE -ne 0 -or ($d -join "`n") -ne "differs at: 23`nsizes: $sizes $sizes") { throw "-VidRaw 134: differs from 102 beyond offset 23: $($d -join ' | ')" }
+        "VIDRAW2 134 = 102 with width324: differs only at 23 (23=44)"
+    }
+    else { "VIDRAW2 134 SKIPPED: clip 102 was not staged 320 wide" }
+    # Old-layout controls: 010 direct (as -VidRawBench), 004 delta (as -Vid), 007 streamed delta (as -VidLong).
+    $v2Old = Join-Path $v2RawDir "old_sintel_256x167_25_direct_$vidLegSettlementTag.vid"
+    if (-not (Test-Path -LiteralPath $v2Old)) {
+        "encoding 010 (old-layout direct 256x167 @ 25, Sintel) via videnc_old_direct.py - slow"
+        & python "$PSScriptRoot\videnc_old_direct.py" $v2Src.sintel[0] "$v2Old.tmp" --shape 256x167 --fps 25 --direct --ffmpeg $v2Ff
+        if ($LASTEXITCODE -ne 0) { throw "videnc_old_direct.py failed (exit $LASTEXITCODE) - 010 not staged" }
+        Move-Item -LiteralPath "$v2Old.tmp" -Destination $v2Old -Force
+    }
+    $v2Delta = Join-Path $root "tests\out\004_scope_${vidLegSettlementTag}_leg_cache.vid"
+    if (-not (Test-Path -LiteralPath $v2Delta)) {
+        "encoding 004 (-Vid scope leg clip) via videnc.py"
+        & python $v2Enc $v2Src.sintel[0] $v2Delta --shape scope --fps 25 --start 00:00:00 --duration 1.7 --ffmpeg $v2Ff
+        if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - 004 not staged" }
+    }
+    $v2Strm = Join-Path $root "tests\out\007_classic_autod025_${vidLegSettlementTag}_long_cache.vid"
+    if (-not (Test-Path -LiteralPath $v2Strm)) {
+        "encoding 007 (-VidLong classic, Sintel full duration, --dither 0.25) via videnc.py - slow"
+        & python $v2Enc $v2Src.sintel[0] $v2Strm --shape classic --fps 25 --ffmpeg $v2Ff --dither 0.25
+        if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - 007 not staged" }
+    }
+    $v2Ctl = [ordered]@{}
+    foreach ($ctl in @(@('010', $v2Old, 0x03, 0, 167, 'old direct 256x167@25, Sintel'), @('004', $v2Delta, 0x01, 1, 144, 'delta scope 320x144@25, Sintel 1.7 s'),
+                       @('007', $v2Strm, 0x01, 0, 192, 'streamed delta classic 256x192@25, Sintel'))) {
+        $hb = New-Object byte[] 512
+        $fs = [IO.File]::OpenRead($ctl[1])
+        try { [void]$fs.Read($hb, 0, 512) } finally { $fs.Close() }
+        if ([Text.Encoding]::ASCII.GetString($hb, 0, 5) -ne 'NXVID' -or $hb[12] -ne $ctl[2] -or $hb[6] -ne $ctl[3] -or $hb[7] -ne $ctl[4] -or $hb[9] -ne 2) {
+            throw "-VidRaw $($ctl[0]): header flags $($hb[12]) width code $($hb[6]) height $($hb[7]) channels $($hb[9]), expected flags $($ctl[2]) code $($ctl[3]) height $($ctl[4]) stereo ($($ctl[1]))"
+        }
+        $len = (Get-Item -LiteralPath $ctl[1]).Length
+        $v2Ctl[$ctl[0]] = @{ file = $ctl[1]; what = $ctl[5]; bytes = $len; runs = [int][math]::Ceiling($len / 512 / 65535); frames = $hb[14] + 256 * $hb[15] }
+        if ($v2Ctl[$ctl[0]].runs -ne 1) { throw "-VidRaw $($ctl[0]): $len bytes need more than one filemap entry" }
+        "VIDRAW2 $($ctl[0]): header ok (flags $('{0:X2}' -f $hb[12]), frames $($v2Ctl[$ctl[0]].frames))"
+    }
+    # Stage: 123 and the card script in FRAG\ (kept off the card), the rest in the folder.
+    New-Item -ItemType Directory -Force "$leg\FRAG" | Out-Null
+    Copy-Item -LiteralPath "$PSScriptRoot\fragcard.ps1" -Destination "$leg\FRAG\fragcard.ps1" -Force
+    $v2Staged = 0
+    foreach ($clip in $v2Res.Keys) {
+        $r = $v2Res[$clip]
+        if (-not $r.file) { continue }
+        $dest = if ($r.e.dir) { "$leg\$($r.e.dir)\$clip.VID" } else { "$leg\$clip.VID" }
+        Copy-Item -LiteralPath $r.file -Destination $dest -Force
+        $v2Staged++
+    }
+    if ($v2Bad) {
+        Copy-Item -LiteralPath $v2Bad -Destination "$leg\134.VID" -Force
+        $sb = [IO.File]::ReadAllBytes("$leg\134.VID")
+        if ($sb[23] -ne 0x44 -or $sb[24] -ne 0x01 -or $sb[12] -ne 0x13 -or $sb[6] -ne 1) {
+            throw "-VidRaw 134: staged file reads width word $($sb[23] + 256 * $sb[24]), flags $($sb[12]), code $($sb[6]); expected 324, 13, 1"
+        }
+        "VIDRAW2 134: staged file width word 324 (bytes 23-24 = 44 01)"
+        $v2Staged++
+    }
+    foreach ($clip in $v2Ctl.Keys) { Copy-Item -LiteralPath $v2Ctl[$clip].file -Destination "$leg\$clip.VID" -Force; $v2Staged++ }
+    # tests\out\vidraw-pairs.txt: every fixture, the cost of the stall budget, refusals.
+    $L = New-Object System.Collections.Generic.List[string]
+    $L.Add("# -VidRaw fixtures, sd\VIDRAW2 (encoder era $vidLegSettlementTag)")
+    $L.Add('# util: gate figure on a frame without / with a palette sector. RUNS: ceil(file blocks / 65535), the RUNS= a card copy in one piece reads.')
+    $L.Add('# s (DEBUG play log): S stereo or not raw, D mono from the zxnDMA (C after MCTC). v: T column train, I inline, - not raw.')
+    $L.Add('')
+    $L.Add(('{0,-5} {1,-24} {2,-8} {3,-6} {4,-7} {5,-9} {6,-7} {7,-7} {8,10} {9,6} {10,4} {11} {12} {13,6} {14,4}  {15}' -f
+            'clip', 'role', 'shape', 'fps', 'sound', 'stall', 'util', 'pal', 'bytes', 'blocks', 'RUNS', 's', 'v', 'frames', 'pals', 'source'))
+    foreach ($clip in $v2Res.Keys) {
+        $r = $v2Res[$clip]
+        if (-not $r.file) { continue }
+        $L.Add(('{0,-5} {1,-24} {2,-8} {3,-6} {4,-7} {5,-9} {6,-7:F4} {7,-7:F4} {8,10} {9,6} {10,4} {11} {12} {13,6} {14,4}  {15}' -f
+                $clip, $r.e.role, "$($r.w)x$($r.h)", $r.e.fps, $r.g.form, $r.e.stall, [double]$r.g.px, [double]$r.g.pal, $r.bytes,
+                ($r.bytes / 512), $r.runs, $r.s, $r.v, $r.frames, $r.pals, $v2Src[$r.e.src][2]))
+        if ($r.note) { $L.Add("      $($r.note)") }
+    }
+    if ($v2Bad) { $L.Add("134   raw width word 324       copy of 102, byte 23 = 44: expect VID FMT?, no report ($((Get-Item -LiteralPath $v2Bad).Length) bytes)") }
+    foreach ($clip in $v2Ctl.Keys) {
+        $c = $v2Ctl[$clip]
+        $L.Add(('{0,-5} {1,-40} {2,10} bytes {3,6} blocks RUNS {4} s S v -  frames {5}' -f $clip, $c.what, $c.bytes, [math]::Ceiling($c.bytes / 512), $c.runs, $c.frames))
+    }
+    $L.Add('')
+    $L.Add('Cost of the stall budget (A = off, B = measured)')
+    $L.Add(('{0,-5} {1,-10} {2,-8} {3,-8} {4,10} {5,10} {6,9} {7,-7} {8,-7}' -f 'pair', 'target', 'A', 'B', 'A bytes', 'B bytes', 'B-A', 'A util', 'B util'))
+    for ($n = 0; $n -lt $v2Goals.Count; $n++) {
+        $g = $v2Goals[$n]; $a = $v2Res['{0:D3}' -f (100 + 2 * $n)]; $b = $v2Res['{0:D3}' -f (101 + 2 * $n)]
+        if ($a.file -and $b.file) {
+            $L.Add(('{0,-5} {1,-10} {2,-8} {3,-8} {4,10} {5,10} {6,9} {7,-7:F4} {8,-7:F4}' -f "$('{0:D3}' -f (100 + 2 * $n))/$('{0:D3}' -f (101 + 2 * $n))",
+                    "$($g[0])x$($g[1])@$($g[2])", "$($a.w)x$($a.h)", "$($b.w)x$($b.h)", $a.bytes, $b.bytes, ($b.bytes - $a.bytes), [double]$a.g.px, [double]$b.g.px))
+        }
+        else { $L.Add("$('{0:D3}' -f (100 + 2 * $n))/$('{0:D3}' -f (101 + 2 * $n)) $($g[0])x$($g[1])@$($g[2]): not both staged") }
+    }
+    $L.Add('')
+    $L.Add('Refused or skipped')
+    $ref = @($v2Res.Keys | Where-Object { -not $v2Res[$_].file })
+    if (-not $v2Bad) { $L.Add('134   skipped: clip 102 was not staged 320 wide') }
+    if (-not $ref -and $v2Bad) { $L.Add('none') }
+    foreach ($clip in $ref) { $r = $v2Res[$clip]; $L.Add("$clip  $($r.e.role), $($r.w)x$($r.h) @ $($r.e.fps), $($r.e.want), stall $($r.e.stall): $($r.refused)") }
+    [IO.File]::WriteAllLines((Join-Path $root 'tests\out\vidraw-pairs.txt'), $L)
+    "wrote tests\out\vidraw-pairs.txt"
+    "staged $v2Staged clip(s) -> sd\$legName\ (pairs 100-111, 120-121, 123 in FRAG\, 125-133, 134, old-layout 010, 004, 007)"
 }
 
 if ($NxBench) {

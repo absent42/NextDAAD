@@ -9,7 +9,8 @@ faults need a 320-surface clip, width code 1):
   flags11      flags $11 (raw without direct-serve)
   flags03mono  flags $03 and channels 1 (mono without raw)
   width322     raw width word 322
-  width0       raw width word 0
+  width324     raw width word 324 (over 320, a multiple of 4)
+  width0      raw width word 0
   width6       raw width word 6
   capplus1     frame cap + 1
   flags1b      flags $1B (bit 3 set)
@@ -31,6 +32,7 @@ FAULTS = {
     "flags11": lambda b: b.__setitem__(OFF_FLAGS, 0x11),
     "flags03mono": lambda b: (b.__setitem__(OFF_FLAGS, 0x03), b.__setitem__(OFF_ACHAN, 1)),
     "width322": lambda b: _word(b, OFF_RAWW, 322),
+    "width324": lambda b: _word(b, OFF_RAWW, 324),
     "width0": lambda b: _word(b, OFF_RAWW, 0),
     "width6": lambda b: _word(b, OFF_RAWW, 6),
     "capplus1": lambda b: _word(b, OFF_CAP, int.from_bytes(b[OFF_CAP:OFF_CAP + 2], "little") + 1),
