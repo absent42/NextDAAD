@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
-"""tests/raw_fit.py - raw direct gate constants from an RW1 bench log (verb NXBW).
+"""tests/raw_fit.py - raw direct gate constants from a raw bench log (verbs NXBW, NXBM,
+NXBP, NXBD).
 
-Fits T = Spix (512 tb F + ts) + Ssnd tsnd + C tc + tf + P tp + stall per sound form,
-after taking the tracked bench harness out of every row (nxv2_bench_rows
-RW_CARD_HARNESS_T, RW_FRAME_HARNESS_T; model 1b: RW_FRAME_HARNESS_T_1B, the frame
-harness of the images sitting 1b's committed logs came from). The model is read from
-the log: a raw clip's IDEN row ends "H1C" on this tree's bench image and has no mark on
-sitting 1b's; --model that disagrees is refused, and only chooses for a log naming none.
+Model 1c (this tree's bench image; a raw clip's IDEN row ends "H1C"), per sound form
+(stereo, mono_ctc, mono_dma):
+  T = Spix 512 tb F + a OV + Ssnd tsnd + tf + P tp + stall
+OV = nxv2_bench_rows.raw_frame_overhead (counted, unarmed), a = the measured armed factor
+(ARSE / RSEC; MHST / RHST under the DMA), tb = 16 a; the frame row is ARSW, or MRSW under
+the DMA; the period is samples x sample_t (the DMA's from MCN1-3). Also printed: the DMA
+rows R1-R6, the pitch offset, the turbo rows (NXBP) and the leg B verdicts.
+Model 1b (sitting 1b's images, no IDEN mark): T = Spix (512 tb F + ts) + Ssnd tsnd + C tc
++ tf + P tp + stall, two forms. The tracked bench harness comes out of every row first
+(nxv2_bench_rows). The model is read from the log; --model that disagrees is refused, and
+only chooses for a log naming none.
 
 Usage: python tests/raw_fit.py NXBENCH.TXT [--clips DIR] [--nr11 N] [--playback FILE]
                                             [--wait-shape inline|sitting1] [--model 1c|1b]
+                                            [--prev NXBENCH.TXT] [--play-clips DIR]
        python tests/raw_fit.py --selftest
 The token wait shape is read from the log: a capture with an RH39 or AH39 row or histogram
 is the inline wait (22 T, then 47 T a poll), a log with neither is sitting 1's (48 T a poll,
 vid_sd_tok_h); --wait-shape overrides it.
 Exit 0 when every residual is within ACCEPT_PCT, the sound-term rule holds (SOUND_D_MAX,
-SOUND_ERR_PCT) and no row is listed for a RE-RUN, 1 when not, 2 on a log or fit error.
+SOUND_ERR_PCT), no row is listed for a RE-RUN and (1c) no train-against-inline pattern
+passes VARIANT_PCT; 1 when not, 2 on a log or fit error.
 """
 import argparse
 import contextlib
@@ -89,7 +97,9 @@ FIXTURES = {
 # Leg B playback clips outside the fit (shape known, same table).
 PLAYBACK_ONLY = {73: (256, 192, 25, 2), 75: (256, 192, 25, 2), 76: (256, 192, 25, 1),
                  77: (256, 192, 25, 2), 78: (256, 192, 25, 1), 79: (320, 256, 25, 2)}
-FORMS = ("stereo", "mono")
+# Model 1c's sound forms; FORMS_1B: the two-form fit (model 1b, and the card rows of 1c).
+FORMS = ("stereo", "mono_ctc", "mono_dma")
+FORMS_1B = ("stereo", "mono")
 TARGETS = ((256, 192, 25), (320, 160, 25), (320, 192, 25), (280, 224, 25),
            (320, 240, 16.67), (256, 240, 16.67))
 RW1_TAGS = benchlog.table_tags("NXBW")
@@ -343,8 +353,50 @@ SYNTH_REPS = dict(RFR0=4096, RSWP=4096, ARSW=4096, RSEC=65535, RCOL=65535, RHST=
                   ASPN=8192, OSPN=8192)
 
 
+# Model 1c's synthetic constants: a per CTC form, k1c (tsnd, tf, tp; mono_dma's tp follows
+# from the rows), the DMA's sample period and steal (a = 1 / (1 - steal / sample_t)).
+SYNTH_1C = dict(ts=133.0, tc_unarmed=38.0, spn0=52131.7, old_handler=175.2, stall_bin={},
+                a={"stereo": 1.0712, "mono_ctc": 1.0583},
+                k1c={"stereo": dict(tsnd=9123.0, tf=21456.0, tp=10234.0),
+                     "mono_ctc": dict(tsnd=8711.0, tf=14321.0, tp=9987.0),
+                     "mono_dma": dict(tsnd=9388.0, tf=12345.0)},
+                sample_t=1799.6, steal=14.0)
+SYNTH_RD_REPS = dict({r[0]: r[3] for r in benchrows.SESSION_TABLES["RD1"]},
+                     MRSW=4096, MHST=65535, RHST=65535, SPN0=8192, MSPN=8192)
+
+
+def synth_frame_1c(clip, form, P):
+    """Model 1c's pixels-only frame T of a fixture clip from P (no harness)."""
+    w, h, fps, ch, _n = FIXTURES[clip]
+    g = geometry(w, h, fps, ch)
+    a = (1 / (1 - P["steal"] / P["sample_t"]) if form == "mono_dma" else P["a"][form])
+    k = P["k1c"][form]
+    ov = benchrows.raw_frame_overhead(int(g.surface == 320), w, h)
+    return a * (g.spix * SECTOR_INI_T + ov) + g.ssnd * k["tsnd"] + k["tf"]
+
+
+def synth_t_1c(clip, P):
+    """synth_t for a model 1c log: ARSE = a x RSEC, the frame rows from synth_frame_1c."""
+    ch = FIXTURES[clip][3]
+    form = "stereo" if ch == 2 else "mono_ctc"
+    a = P["a"][form]
+    rsec = SECTOR_INI_T + P["ts"] + H_CARD
+    rcol = rsec + COL_ENDS * P["tc_unarmed"]
+    arsw_p = synth_frame_1c(clip, form, P)
+    rswp_p = arsw_p / a
+    s0 = P["spn0"]
+    return dict(
+        RFR0=rswp_p + P["k1c"][form]["tp"] * rswp_p / arsw_p + G_FRAME,
+        RSWP=rswp_p + G_FRAME, ARSW=arsw_p * (rswp_p + G_FRAME) / rswp_p,
+        RSEC=rsec, RCOL=rcol, RHST=rsec + 150.0, RH39=rsec + 171.0, SPN0=s0,
+        ARSE=a * rsec, ARCO=a * rcol, AHST=a * rsec + 160.0, AH39=a * rsec + 182.0,
+        ASPN=s0 * a, OSPN=s0 / (1 - P["old_handler"] / (16 * 112)))
+
+
 def synth_t(clip, P=SYNTH):
     """Per-rep T of each RW1 row of a clip, harness included, from P."""
+    if "k1c" in P:
+        return synth_t_1c(clip, P)
     w, h, fps, ch, _n = FIXTURES[clip]
     form = form_of(ch)
     g = geometry(w, h, fps, ch)
@@ -400,12 +452,14 @@ def iden_o(w, h, flip=False):
 SYNTH_RD1 = dict(sample_t=1795.0, steal=8.0, frame_t=826000.0, sector_t=8700.0, cpy_t=2400.0)
 
 
-def synth_rd1(clip, P=SYNTH, D=SYNTH_RD1):
+def synth_rd1(clip, P=SYNTH, D=SYNTH_RD1, reps=None):
     """An NXBM capture's lines for a mono fixture clip from D: rows under the DMA run 1 / (1
     - steal / sample_t) longer than their idle twins, and each count is its row's T over
-    sample_t."""
+    sample_t. A model 1c P gives MRSW from synth_frame_1c, with RD1's frame harness."""
     w, h, _fps, _ch, frames = FIXTURES[clip]
-    reps = {r[0]: r[3] for r in benchrows.SESSION_TABLES["RD1"]}
+    reps = reps or {r[0]: r[3] for r in benchrows.SESSION_TABLES["RD1"]}
+    if "k1c" in P:
+        D = dict(D, sample_t=P["sample_t"], steal=P["steal"])
     k = 1 / (1 - D["steal"] / D["sample_t"])
     idle = dict(CPY0=D["cpy_t"], MCPY=D["cpy_t"], RFR0=D["frame_t"],
                 SPN0=P["spn0"] + benchrows.RD_SPIN_HARNESS_T,
@@ -415,9 +469,13 @@ def synth_rd1(clip, P=SYNTH, D=SYNTH_RD1):
     out = [">pick %d" % clip, ">nxbm", _row_line("IDEN", iden_o(w, h), frames, w, h & 0xFF)
            + " " + MODEL_MARK["1c"]]
     lines = {}
+    tot = {tag: v * reps[tag] for tag, v in t.items()}
+    if "k1c" in P:
+        tot["MRSW"] = ((synth_frame_1c(clip, "mono_dma", P) + k * benchrows.RD_FRAME_HARNESS_T)
+                       * reps["MRSW"] + k * benchrows.RD_FIRST_T)
     for tag in benchlog.table_tags("NXBM")[1:]:
         if tag in t:
-            f, d = _fd(t[tag] * reps[tag], 0)
+            f, d = _fd(tot[tag], 0)
             lines[tag] = (f * LPF + d) * T_LINE
             out.append(_row_line(tag, 0, reps[tag], f, d))
         elif tag in nxbtags.NXB_RD1_COUNTS:
@@ -456,7 +514,7 @@ def rd1_figures(s):
 
 
 def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swap=None,
-              omit=(), flip_iden=None, rd1=()):
+              omit=(), flip_iden=None, rd1=(), rd_reps=None):
     """NXBENCH.TXT text: one NXBW capture per fixture clip not in omit, then an NXBD capture
     on clip 10. marks: (clip, tag) rows printed with O = 01 and T x 1.05; stale_after:
     a clip followed by a PICK 59 capture that prints VID FILE? over the old rows;
@@ -510,7 +568,7 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
             cap(["What now?", ">pick 59", "Clip 59 armed - GO plays once, LOOP loops.",
                  "What next?", ">nxbw"] + rows + ["VID FILE?"] + tail + ["LOG OK"])
         if clip in rd1:
-            rd = synth_rd1(clip, P)
+            rd = synth_rd1(clip, P, reps=rd_reps)
             cap([l for l in rd if not l.startswith("#HIST")] + tail + ["LOG OK"]
                 + [l for l in rd if l.startswith("#HIST")])
     old = dict(DSWP=(16, 1, 24, -19), ADSW=(16, 1, 27, -145), DTI0=(0, 128, 2, 10),
@@ -529,7 +587,7 @@ def synth_log(P=SYNTH, marks=(), stale_after=None, distort=None, short=None, swa
 
 # An open or session failure: the bench hook never ran, the rows are a previous screen.
 FAIL_RE = re.compile(r"^(VID (FILE\?|FMT\?|NOBANK2|SIZE\?|FRAG\?)|NXB SESSION|NXB NO BANK)")
-MARKER_RE = re.compile(r"NXB (SHORT|RUN|GEO)\b|\bBAD\b")
+MARKER_RE = re.compile(r"NXB (SHORT|RUN|GEO|NOTURBO)\b|\bBAD\b")
 
 
 @dataclass
@@ -788,6 +846,8 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
                  wait_shape=wait_shape)
     marked = set()
     for s in sections:
+        if s.verb in ("NXBM", "NXBP"):         # read by fit_1c
+            continue
         if s.verb not in ("NXBW", "NXBD"):
             res.notes.append("section %d: verb %s not used" % (s.index, s.verb))
             continue
@@ -895,7 +955,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     _peer(res, "RHST polls (all clips)", {c.clip: sum(b * _bin_polls(k)[0] for k, b in
                                                       enumerate(c.hist["RHST"]))
                                           for c in clips if "RHST" in c.hist})
-    for form in FORMS:
+    for form in FORMS_1B:
         fc = [c for c in clips if c.form == form]
         for tg in ("ARSE", "ARCO", "AHST", "ASPN"):
             _peer(res, "%s (%s)" % (tg, form), {c.clip: c.t[tg] for c in fc if tg in c.t})
@@ -934,7 +994,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     # The fit (the plan's gate table on the primed figures).
     ts_vals = [c.p["RSEC"] - SECTOR_INI_T for c in clips if "RSEC" in c.p]
     res.ts = _mean(ts_vals)
-    for form in FORMS:
+    for form in FORMS_1B:
         fc = [c for c in clips if c.form == form]
         if not fc:
             raise FitError("no %s clip in the log" % form)
@@ -984,7 +1044,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     def wait_sum(hists):
         return sum(sum(cnt * _wait_t(wait_shape, _bin_polls(k)[2]) for k, cnt in enumerate(b))
                    for b in hists)
-    for form in FORMS:
+    for form in FORMS_1B:
         fc = [c for c in clips if c.form == form]
         ah = [c.hist["AHST"] for c in fc if "AHST" in c.hist]
         n = sum(sum(b) for b in ah)
@@ -1000,7 +1060,7 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     def mean_polls(hists):
         n = sum(sum(b) for b in hists)
         return sum(sum(cnt * _bin_polls(k)[2] for k, cnt in enumerate(b)) for b in hists) / n
-    for base, alt, forms in (("RHST", "RH39", (None,)), ("AHST", "AH39", FORMS)):
+    for base, alt, forms in (("RHST", "RH39", (None,)), ("AHST", "AH39", FORMS_1B)):
         for form in forms:
             fc = [c for c in clips if base in c.hist and alt in c.hist
                   and form in (None, c.form)]
@@ -1024,11 +1084,11 @@ def fit(sections, reps=RW1_REPS, nr11=0, clips_dir=None, wait_shape=None):
     hcs = {c.clip: (c.t["ASPN"] - c.t["SPN0"]) * res.period / c.t["ASPN"]
            for c in clips if "ASPN" in c.t and "SPN0" in c.t}
     res.handler_clip = hcs
-    for form in FORMS:
+    for form in FORMS_1B:
         _peer(res, "handler (%s)" % form, {k: v for k, v in hcs.items()
                                            if res.clips[k].form == form})
     for k, v in sorted(hcs.items()):
-        own, other = res.clips[k].form, FORMS[1 - FORMS.index(res.clips[k].form)]
+        own, other = res.clips[k].form, FORMS_1B[1 - FORMS_1B.index(res.clips[k].form)]
         if abs(v - res.handler[other]) < abs(v - res.handler[own]):
             res.anomalies.append("clip %03d: handler %.1f T is nearer the %s figure %.1f T "
                                  "than the %s %.1f T: channel label? (RE-RUN)" % (
@@ -1095,14 +1155,14 @@ def pad_aware(res):
     is determined; else None (no fit: the rule reads NOT DETERMINED)."""
     import numpy as np
     out = {}
-    for form in FORMS:
+    for form in FORMS_1B:
         pts = [(s, y, res.clips[c].geo.real) for c, s, y in res.lsq[form]]
         a = np.array([[1, s, r] for s, _, r in pts], float)
         b = np.array([y for _, y, _ in pts])
         x = np.linalg.lstsq(a, b, rcond=None)[0]
         out[form] = dict(A=x[0], S=x[1], d=x[2], cond=np.linalg.cond(a), resid=a @ x - b,
                          determined=d_determined(res, form))
-    am = {f: res.period / (res.period - res.handler[f]) for f in FORMS}
+    am = {f: res.period / (res.period - res.handler[f]) for f in FORMS_1B}
     d = out["mono"]["d"] * am["stereo"] / am["mono"]
     pts = [(s, y - d * res.clips[c].geo.real) for c, s, y in res.lsq["stereo"]]
     a0, s0 = _lsq(pts)
@@ -1118,7 +1178,7 @@ def sound_rule(res, pa):
     """-> (ok, rows, worst d, worst err %, verdict): gate Ssnd x tsnd + tf against each form's
     used pad-aware fit at 256x192 for SOUND_FPS; rows (form, fps, geo, gate, fit, err %, fitted).
     verdict PASS, FAIL, or NOT DETERMINED (a form with no fit to use; ok is False)."""
-    fitted = {f: {res.clips[c].shape[2] for c, _, _ in res.lsq[f]} for f in FORMS}
+    fitted = {f: {res.clips[c].shape[2] for c, _, _ in res.lsq[f]} for f in FORMS_1B}
     rows, worst = [], 0.0
     for form, ch in (("mono", 1), ("stereo", 2)):
         if pa["use"][form] is None:
@@ -1134,7 +1194,7 @@ def sound_rule(res, pa):
             pct = 100.0 * (gate - fit_t) / (g.samples * res.period)
             worst = max(worst, abs(pct))
             rows.append((form, fps, g, gate, fit_t, pct, fps in fitted[form]))
-    dmax = max((abs(pa[pa["use"][f]]["d"]) for f in FORMS if pa["use"][f]), default=0.0)
+    dmax = max((abs(pa[pa["use"][f]]["d"]) for f in FORMS_1B if pa["use"][f]), default=0.0)
     if None in pa["use"].values():
         return False, rows, dmax, worst, "NOT DETERMINED"
     ok = dmax <= SOUND_D_MAX and worst <= SOUND_ERR_PCT
@@ -1293,8 +1353,8 @@ def report(res, readouts=None):
     add("## Constants")
     add("")
     add("RAW_SECTOR_T (ts) = %.2f T: mean (RSEC' - 8192) over %d clips [RSEC]" % (
-        res.ts, len(res.src[FORMS[0]]["ts"])))
-    for form in FORMS:
+        res.ts, len(res.src[FORMS_1B[0]]["ts"])))
+    for form in FORMS_1B:
         k, s = res.k[form], res.src[form]
         add("")
         add("%s:" % form)
@@ -1330,7 +1390,7 @@ def report(res, readouts=None):
     add("mean stall per frame = armed mean wait x tokens a frame (Spix + Ssnd + 1):")
     for w, h, fps in TARGETS:
         cells = []
-        for form in FORMS:
+        for form in FORMS_1B:
             g = geometry(w, h, fps, 2 if form == "stereo" else 1)
             cells.append("%s %.0f T (%d tokens)" % (form, res.wait[form] * (g.spix + g.ssnd + 1),
                                                    g.spix + g.ssnd + 1))
@@ -1340,7 +1400,7 @@ def report(res, readouts=None):
     add("")
     add("```")
     add("RAW_K = {")
-    for form in FORMS:
+    for form in FORMS_1B:
         k, s = res.k[form], res.src[form]
         add('    "%s": {' % form)
         add('        "tb": %.4f,  # RAW_T_PER_B [ARSE, RSEC] %d clips' % (k["tb"], len(s["tb"])))
@@ -1381,7 +1441,7 @@ def report(res, readouts=None):
     add("")
     add("## Sound term (diagnostic; the gate is unchanged)")
     add("")
-    for form in FORMS:
+    for form in FORMS_1B:
         add("- " + sound_note(res, form)[len("note: "):])
     pa = res.pad
     m, s, s2 = pa["mono"], pa["stereo"], pa["stereo_d"]
@@ -1414,7 +1474,7 @@ def report(res, readouts=None):
     add("gate sound term (Ssnd x tsnd + tf) against the pad-aware fit, 256x192 (mono: %s; "
         "stereo: %s); err = gate - fit, negative = the gate under-prices:" % tuple(
             "its own fit" if pa["use"][f] == f else "d scaled from mono" if pa["use"][f]
-            else "d not determined" for f in FORMS[::-1]))
+            else "d not determined" for f in FORMS_1B[::-1]))
     add("")
     add("| form | fps | sound B | Ssnd | pad B | gate T | fit T | err T | err % of period | "
         "fitted pair |")
@@ -1428,7 +1488,7 @@ def report(res, readouts=None):
             "yes" if fitted else "no"))
     add("")
     add("largest |err| outside the fitted pairs: %.3f percent of the period" % worst)
-    none = [f for f in FORMS[::-1] if pa["use"][f] is None]
+    none = [f for f in FORMS_1B[::-1] if pa["use"][f] is None]
     add("sound-term rule (one term a sector holds: |d| <= %.1f T a sound byte in both forms and "
         "every layout above within %.2f percent): %s" % (SOUND_D_MAX, SOUND_ERR_PCT, verdict)
         + (" (%s: %s sound bytes track Ssnd)" % (", ".join(f + " d" for f in none),
@@ -1448,9 +1508,9 @@ def report(res, readouts=None):
     add("| shape | form | Spix | Ssnd | C | model T | period T | util | util with stall | "
         "util, pixels-only frame | ref: util at two fields |")
     add("|---|---|---|---|---|---|---|---|---|---|---|")
-    over, near = {f: [] for f in FORMS}, {f: [] for f in FORMS}
+    over, near = {f: [] for f in FORMS_1B}, {f: [] for f in FORMS_1B}
     for w, h, fps in TARGETS:
-        for form in FORMS:
+        for form in FORMS_1B:
             u0 = utilisation(res, w, h, fps, form)
             u1 = utilisation(res, w, h, fps, form, res.stall)
             up = utilisation(res, w, h, fps, form, palette=False)
@@ -1463,7 +1523,7 @@ def report(res, readouts=None):
                 elif u.util > NEAR_UTIL:
                     near[form].append(_fmt_shape(w, h, fps) + tag)
     add("")
-    for form in FORMS:
+    for form in FORMS_1B:
         add("%s over 1.00: %s" % (form, ", ".join(over[form]) or "none"))
         add("%s within 10 percent of the limit (0.90 < util <= 1.00): %s" % (
             form, ", ".join(near[form]) or "none"))
@@ -1475,7 +1535,7 @@ def report(res, readouts=None):
     add("| width | form | palette frame: height | util | pixels-only frame: height | util |")
     add("|---|---|---|---|---|---|")
     for w in (320, 280, 256):
-        for form in FORMS:
+        for form in FORMS_1B:
             h0, u0 = largest_height(res, w, 25, form)
             h1, u1 = largest_height(res, w, 25, form, palette=False)
             add("| %d | %s | %d | %.4f | %d | %.4f |" % (w, form, h0, u0, h1, u1))
@@ -1487,8 +1547,8 @@ def report(res, readouts=None):
     add("")
     add("| term | stereo T | stereo % | mono T | mono % |")
     add("|---|---|---|---|---|")
-    us = {f: utilisation(res, 320, 192, 25, f) for f in FORMS}
-    hand = {f: us[f].terms["byte_t"] / res.period * res.handler[f] for f in FORMS}
+    us = {f: utilisation(res, 320, 192, 25, f) for f in FORMS_1B}
+    hand = {f: us[f].terms["byte_t"] / res.period * res.handler[f] for f in FORMS_1B}
     rows = (("pixel bytes, Spix x 512 x tb", "byte_t"),
             ("  of which the sound handler: (byte T / %d) interrupts x handler T" % res.period,
              None),
@@ -1497,14 +1557,14 @@ def report(res, readouts=None):
             ("palette sector, tp", "pal_t"), ("glue", "glue"), ("total", "total"))
     for name, key in rows:
         cells = []
-        for f in FORMS:
+        for f in FORMS_1B:
             u = us[f]
             v = (hand[f] if key is None else GLUE_T if key == "glue" else
                  u.total if key == "total" else u.terms[key])
             cells += ["%.0f" % v, "%.2f" % (100.0 * v / period)]
         add("| %s | %s |" % (name, " | ".join(cells)))
     add("")
-    for f in FORMS:
+    for f in FORMS_1B:
         add("- %s handler: one interrupt a sample, 625 a frame, %.2f T each = %.0f T a frame "
             "(%.2f percent of the period, all terms together)" % (
                 f, res.handler[f], 625 * res.handler[f], 100.0 * res.handler[f] / res.period))
@@ -1524,14 +1584,14 @@ def report(res, readouts=None):
     rsec_m = _mean(c.t["RSEC"] for c in clips if "RSEC" in c.t)
     add("- per-sector overhead, unarmed: ts = %.2f T (RSEC - 8192 as printed: %.2f T)" % (
         res.ts, rsec_m - SECTOR_INI_T))
-    for form in FORMS:
+    for form in FORMS_1B:
         fc = [c for c in clips if c.form == form and "ARSE" in c.p]
         add("- per-sector overhead, armed %s: ARSE' - 8192 = %.2f T (ARSE as printed %.2f T, "
             "ARSE/RSEC %.4f)" % (form, _mean(c.p["ARSE"] for c in fc) - SECTOR_INI_T,
                                  _mean(c.t["ARSE"] for c in fc), res.duty[form]))
     add("- column end, unarmed: (RCOL - RSEC) / 8 = %.2f T against the %d T design figure"
         % (res.col_unarmed, COL_END_DESIGN_T))
-    for form in FORMS:
+    for form in FORMS_1B:
         add("- column end, armed %s: tc = %.2f T" % (form, res.k[form]["tc"]))
     add("")
     add("## Histograms (summed over clips)")
@@ -1573,8 +1633,8 @@ def report(res, readouts=None):
     else:
         ot = {tg: row_t(r) / r[1] for tg, r in res.old.rows.items()
               if tg in ("DTI0", "DTB0", "DTC0", "DTD0", "ADTI", "ADTC")}
-        fm = {f: [c for c in clips if c.form == f and "ARSE" in c.t] for f in FORMS}
-        ar = {f: _mean(c.t["ARSE"] for c in fm[f]) for f in FORMS}
+        fm = {f: [c for c in clips if c.form == f and "ARSE" in c.t] for f in FORMS_1B}
+        ar = {f: _mean(c.t["ARSE"] for c in fm[f]) for f in FORMS_1B}
         rcol_m = _mean(c.t["RCOL"] for c in clips if "RCOL" in c.t)
         add("old: NXBD on clip %s (old direct layout), per block, rows as printed (the DS1 "
             "harness is not tracked); raw: RW1 means, per sector, as printed." % res.old.clip)
@@ -1680,7 +1740,7 @@ def report(res, readouts=None):
             asm_line("nxb_aud_body.ptr")))
     add("")
     rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
-    am = {f: res.period / (res.period - res.handler[f]) for f in FORMS}
+    am = {f: res.period / (res.period - res.handler[f]) for f in FORMS_1B}
     add("Frame work = the gate's pixels-only frame + glue + plain DEBUG work (leg B runs the "
         "DEBUG build; IFNDEF NXB_QUIET code the bench image does not carry), on a late "
         "frame's path, base T x the armed factor 1 / (1 - handler / %d) (stereo %.4f, mono "
@@ -1760,6 +1820,1147 @@ def report(res, readouts=None):
         "%.0f over 167, %.0f over 125." % (FIELD_T, FIELD_T / 250.0, FIELD_T / 167.0,
                                           FIELD_T / 125.0))
     return "\n".join(o) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Model 1c: T = Spix 512 tb F + a OV + Ssnd tsnd + tf + P tp + stall, per sound form.
+# OV = raw_frame_overhead (counted, unarmed); a = the form's measured armed factor;
+# tb = 16 a. The frame row is ARSW (stereo, mono_ctc) or MRSW (mono_dma, session RD1).
+# ---------------------------------------------------------------------------
+
+FORM_CH = {"stereo": 2, "mono_ctc": 1, "mono_dma": 1}
+FORM_SND = {"S": "stereo", "C": "mono_ctc", "D": "mono_dma"}     # the play log's SND column
+FORM_1B = {"stereo": "stereo", "mono_ctc": "mono"}
+CLASSIC_OPEN_T = 101         # vr_sector_n's open, sectors 2..n, one $FF poll, by count
+RD1_REPS = {r[0]: r[3] for r in benchrows.SESSION_TABLES["RD1"]}
+RT1_REPS = {r[0]: r[3] for r in benchrows.SESSION_TABLES["RT1"]}
+RD1_TIMED = ("CPY0", "RFR0", "SPN0", "MRSW", "MSPN", "MHST", "MCPY", "RHST")
+RT1_TIMED = ("SPN0", "TSPN", "TCTC", "NSEC", "TSEC")
+# DMA mono go / no-go limits.
+R1_SPREAD_GO, R1_SPREAD_NOGO, R1_MEAN_PCT = 0.1, 0.5, 0.5   # percent
+R2_GO_T, R2_NOGO_T = 16.0, 60.0                             # steal, T a sample
+R6_PCT = 2.0                                                # MCPY over CPY0
+PITCH_PCT = 0.05                                            # an offset above is the owner's
+VARIANT_PCT = 0.2                                           # train against inline residuals
+# Turbo (NR $07 bit 2 at 28 MHz): the counted spin loop 26 -> 22 T; ini 16 -> 15 T expected.
+TURBO_SPIN = 22 / 26
+TURBO_INI_T, TURBO_INI_TOL = 15.0, 0.05
+TURBO_OPEN_SAVE_T = 3        # the open's and the slide call's saving: call 17 -> 16 twice, ret z
+# Counted pump savings over the previous sitting's sound section, unarmed T a frame, by
+# (sound sectors, sound bytes); other layouts were not counted.
+PUMP_SAVING = {(3, 1250): 3040, (2, 625): 2080, (4, 1874): 3960, (2, 937): 2370}
+# The projection made before the sitting (sample period 1792 T in every form):
+# (width, height, fps) -> form -> (palette frame, pixels-only frame).
+PROJECTION = {
+    (256, 192, 25): {"stereo": (0.7944, 0.7828), "mono_ctc": (0.7759, 0.7647),
+                     "mono_dma": (0.7437, 0.7330)},
+    (320, 160, 25): {"stereo": (0.8281, 0.8165), "mono_ctc": (0.8092, 0.7980),
+                     "mono_dma": (0.7756, 0.7649)},
+    (320, 192, 25): {"stereo": (0.9861, 0.9745), "mono_ctc": (0.9652, 0.9540),
+                     "mono_dma": (0.9251, 0.9144)},
+    (280, 224, 25): {"stereo": (1.0087, 0.9971), "mono_ctc": (0.9874, 0.9763),
+                     "mono_dma": (0.9464, 0.9358)},
+    (320, 240, 16.67): {"stereo": (0.8273, 0.8195), "mono_ctc": (0.8050, 0.7976),
+                        "mono_dma": (0.7716, 0.7645)},
+    (256, 240, 16.67): {"stereo": (0.6681, 0.6604), "mono_ctc": (0.6479, 0.6405),
+                        "mono_dma": (0.6210, 0.6139)},
+}
+
+
+def _shape(w, h):
+    return int(nxv2enc.raw_surface(w, h)[0] == 320)
+
+
+def frame_ov(w, h):
+    """raw_frame_overhead of a picture on the surface raw_surface names."""
+    return raw_frame_overhead(_shape(w, h), w, h)
+
+
+def variant_of(w, h):
+    return benchrows.raw_variant(_shape(w, h), w, h)
+
+
+@contextlib.contextmanager
+def _counts(**kw):
+    """nxv2_bench_rows names replaced inside the block (a what-if count)."""
+    old = {k: getattr(benchrows, k) for k in kw}
+    for k, v in kw.items():
+        setattr(benchrows, k, v)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            setattr(benchrows, k, v)
+
+
+def inline_ov(w, h):
+    """frame_ov with the inline program forced (what a train clip would cost without it)."""
+    with _counts(raw_variant=lambda *a, **k: "inline"):
+        return frame_ov(w, h)
+
+
+def _count24(row):
+    return (row[2] & 0xFF) << 16 | row[1]
+
+
+def _capture_ok(res, s, verb, tags, timed, reps, marked, hist_tags=()):
+    """Shared checks of an RD1 / RT1 capture. -> usable; faults go to res.anomalies."""
+    ok = True
+    for tg in tags:
+        row = s.rows.get(tg)
+        if row is None:
+            res.anomalies.append("clip %03d %s: row %s missing (RE-RUN)" % (s.clip, verb, tg))
+            ok = False
+        elif tg in marked and row[0] == nxbtags.NXB_RW1_WALK_O:
+            res.anomalies.append("clip %03d %s: %s O=01, the row crossed a run (RE-RUN)" % (
+                s.clip, verb, tg))
+            ok = False
+        elif tg in timed and row[1] != reps[tg]:
+            res.anomalies.append("clip %03d %s: %s R=%d, the table runs %d (RE-RUN)" % (
+                s.clip, verb, tg, row[1], reps[tg]))
+            ok = False
+    for mk in s.markers:
+        res.anomalies.append("clip %03d %s: marker line %r (RE-RUN)" % (s.clip, verb, mk))
+    for tg in hist_tags:
+        bins = s.hist.get(tg)
+        if bins is None:
+            res.anomalies.append("clip %03d %s: no #HIST %s line (RE-RUN)" % (s.clip, verb, tg))
+            ok = False
+            continue
+        if tg in s.rows and sum(bins) != s.rows[tg][1]:
+            res.anomalies.append("clip %03d %s: #HIST %s bins sum to %d, the row ran %d "
+                                 "(RE-RUN)" % (s.clip, verb, tg, sum(bins), s.rows[tg][1]))
+        if any(bins[HIST_BIN_LONG:]):
+            res.anomalies.append("clip %03d %s: #HIST %s has %d waits in bin %d or above "
+                                 "(RE-RUN)" % (s.clip, verb, tg, sum(bins[HIST_BIN_LONG:]),
+                                               HIST_BIN_LONG))
+    return ok
+
+
+def _session_clip(res, s, channels=None):
+    """A raw session capture's fixture shape, or None after listing it as excluded."""
+    why = s.failure or ("ERR=%02X" % s.err if s.err else None)
+    shape = FIXTURES.get(s.clip)
+    if why is None and shape is None:
+        why = "clip %s is not in the fixture table" % s.clip
+    if why is None and channels and shape[3] != channels:
+        why = "clip %s has %d channels" % (s.clip, shape[3])
+    if why is None:
+        w, h, _fps, _ch, frames = shape
+        want = (iden_o(w, h), frames, w, h & 0xFF)
+        if s.rows.get("IDEN") != want:
+            why = "IDEN %r != fixture (O, frames, width, height byte) %r" % (
+                s.rows.get("IDEN"), want)
+    if why:
+        res.excluded.append(SimpleNamespace(section=s.index, clip=s.clip, stamp=s.stamp,
+                                            verb=s.verb, failure=why))
+        return None
+    return shape
+
+
+def read_rd1(res, sections, reps=RD1_REPS, clips_dir=None):
+    """NXBM captures -> {clip: figures}: t (row totals), st {row: sample T}, steal {spin,
+    hist} T a sample, a (MHST / RHST), flags and ptr (MPTR), cflags (MCN1-3's O), ticks,
+    cpy, msum, want (the file's sum or None), hist_same."""
+    out = {}
+    for s in sections:
+        if s.verb != "NXBM":
+            continue
+        if _session_clip(res, s, 1) is None:
+            continue
+        if s.clip in out:
+            res.anomalies.append("clip %03d captured twice by NXBM: the later used" % s.clip)
+        if not _capture_ok(res, s, "NXBM", benchlog.table_tags("NXBM"), RD1_TIMED, reps,
+                           nxbtags.NXB_RD1_MARKED, nxbtags.NXB_RD1_HIST_TAGS):
+            continue
+        t = {tg: row_t(s.rows[tg]) for tg in RD1_TIMED}
+        cn = {row: _count24(s.rows[c]) for c, row in nxbtags.NXB_RD1_COUNTS.items()}
+        if not all(cn.values()):
+            res.anomalies.append("clip %03d NXBM: a sample count is 0 (%r): the pointer did "
+                                 "not move (RE-RUN)" % (s.clip, cn))
+            continue
+        want = None
+        path = clips_dir and Path(clips_dir) / ("%03d.VID" % s.clip)
+        if path and path.is_file():
+            want = benchrows.msum_expected(path)
+        out[s.clip] = SimpleNamespace(
+            clip=s.clip, section=s.index, stamp=s.stamp, rows=s.rows, hist=s.hist, t=t,
+            count=cn, st={row: t[row] / cn[row] for row in cn},
+            steal=dict(spin=(t["MSPN"] - t["SPN0"]) / cn["MSPN"],
+                       hist=(t["MHST"] - t["RHST"]) / cn["MHST"]),
+            a=t["MHST"] / t["RHST"], flags=s.rows["MPTR"][0], ptr=s.rows["MPTR"][1:],
+            cflags=[s.rows[c][0] for c in nxbtags.NXB_RD1_COUNTS], ticks=s.rows["MTCK"][1:3],
+            cpy=t["MCPY"] / t["CPY0"], msum=s.rows["MSUM"][2] << 16 | s.rows["MSUM"][1],
+            want=want, hist_same=s.hist["MHST"] == s.hist["RHST"])
+    for tg in ("CPY0", "SPN0", "MSPN", "MHST", "RHST", "MCPY"):
+        _peer(res, "NXBM " + tg, {k: f.t[tg] for k, f in out.items()})
+    for row in nxbtags.NXB_RD1_COUNTS.values():
+        _peer(res, "NXBM sample T, " + row, {k: f.st[row] for k, f in out.items()})
+    return out
+
+
+def read_rt1(res, sections, reps=RT1_REPS, clips_dir=None):
+    """NXBP captures -> [figures]: rows, missing (tags not printed), noturbo, tchk, t (row
+    totals), sums and want {tag: sum} (want None without the clip file)."""
+    out = []
+    tags = benchlog.table_tags("NXBP")
+    for s in sections:
+        if s.verb != "NXBP":
+            continue
+        noturbo = any("NOTURBO" in mk for mk in s.markers)
+        missing = [tg for tg in tags if tg not in s.rows]
+        fault = s.failure or ("ERR=%02X" % s.err if s.err else None)
+        shape = FIXTURES.get(s.clip)
+        if shape is None or "IDEN" not in s.rows or s.failure:
+            res.excluded.append(SimpleNamespace(
+                section=s.index, clip=s.clip, stamp=s.stamp, verb=s.verb,
+                failure=fault or "no IDEN row, or a clip outside the fixture table"))
+            continue
+        if not noturbo:
+            _capture_ok(res, s, "NXBP", tags, RT1_TIMED, reps, nxbtags.NXB_RT1_MARKED)
+        want = None
+        path = clips_dir and Path(clips_dir) / ("%03d.VID" % s.clip)
+        if path and path.is_file():
+            want = benchrows.rt1_expected(path)
+        out.append(SimpleNamespace(
+            clip=s.clip, section=s.index, stamp=s.stamp, rows=s.rows, missing=missing,
+            noturbo=noturbo, err=s.err, channels=shape[3], tchk=s.rows.get("TCHK"),
+            t={tg: row_t(s.rows[tg]) for tg in RT1_TIMED if tg in s.rows},
+            sums={tg: s.rows[tg][2] << 16 | s.rows[tg][1] for tg in nxbtags.NXB_RT1_SUMS
+                  if tg in s.rows}, want=want))
+    for tg in RT1_TIMED:                       # TCTC by handler: stereo and mono differ
+        for ch in ((2, 1) if tg == "TCTC" else (None,)):
+            _peer(res, "NXBP %s%s" % (tg, "" if ch is None else " (%d ch)" % ch),
+                  {r.clip: r.t[tg] for r in out if tg in r.t and ch in (None, r.channels)})
+    return out
+
+
+def _pad_fit(rows):
+    """y = A + S x Ssnd + d x real bytes on a form's points; determined when one Ssnd group
+    holds two sound-byte counts."""
+    import numpy as np
+    a = np.array([[1, r.c.geo.ssnd, r.c.geo.real] for r in rows], float)
+    b = np.array([r.y for r in rows])
+    x = np.linalg.lstsq(a, b, rcond=None)[0]
+    by = {}
+    for r in rows:
+        by.setdefault(r.c.geo.ssnd, set()).add(r.c.geo.real)
+    resid = a @ x - b
+    dof = len(rows) - 3
+    se = (float(resid @ resid) / dof * np.linalg.inv(a.T @ a)[2, 2]) ** 0.5 if dof > 0 else None
+    return dict(A=x[0], S=x[1], d=x[2], cond=np.linalg.cond(a), resid=resid, se=se,
+                determined=any(len(v) > 1 for v in by.values()))
+
+
+def fit_1c(res, sections, clips_dir=None, rd_reps=RD1_REPS, rt_reps=RT1_REPS):
+    """Model 1c on top of fit()'s rows: per form k (a, tb, tsnd, tf, tp, sample_t), the
+    points, residuals, the variant pattern, the sound-term rule; RD1 and RT1 figures."""
+    m = SimpleNamespace(k={}, pts={}, tps={}, variant={}, pad={}, sound=[], missing=[],
+                        rd=read_rd1(res, sections, rd_reps, clips_dir),
+                        rt=read_rt1(res, sections, rt_reps, clips_dir))
+    clips = res.clips
+    by = {f: [c for c in clips.values() if c.form == FORM_1B[f]] for f in FORM_1B}
+    by["mono_dma"] = [clips[k] for k in m.rd if k in clips]
+    a = {f: res.duty[FORM_1B[f]] for f in FORM_1B}
+    if m.rd:
+        a["mono_dma"] = _mean(f.a for f in m.rd.values())
+        m.sample_rows = {row: _mean(f.st[row] for f in m.rd.values())
+                         for row in nxbtags.NXB_RD1_COUNTS.values()}
+        m.sample_dma = _mean(v for f in m.rd.values() for v in f.st.values())
+    for form in FORMS:
+        fa, rows = a.get(form), []
+        for c in sorted(by[form], key=lambda c: c.clip):
+            if form == "mono_dma":
+                fp = ((m.rd[c.clip].t["MRSW"] - benchrows.RD_FIRST_T * fa) / rd_reps["MRSW"]
+                      - benchrows.RD_FRAME_HARNESS_T * fa)
+            elif "ARSW" in c.p:
+                fp = c.p["ARSW"]
+            else:
+                continue
+            w, h = c.shape[:2]
+            ov = frame_ov(w, h)
+            rows.append(SimpleNamespace(clip=c.clip, c=c, frame=fp, ov=ov, variant=variant_of(w, h),
+                                        y=fp - c.geo.spix * SECTOR_INI_T * fa - fa * ov))
+        if len({r.c.geo.ssnd for r in rows}) < 2:
+            m.missing.append(form)
+            continue
+        tf, tsnd = _lsq([(r.c.geo.ssnd, r.y) for r in rows])
+        tps = {r.clip: (r.c.p["RFR0"] - r.c.p["RSWP"]) * r.frame / r.c.p["RSWP"]
+               for r in rows if "RFR0" in r.c.p and "RSWP" in r.c.p}
+        m.k[form] = dict(a=fa, tb=INI_T * fa, tsnd=tsnd, tf=tf, tp=_mean(tps.values()),
+                         sample_t=m.sample_dma if form == "mono_dma" else float(res.period))
+        for r in rows:
+            r.model = (r.c.geo.spix * 512 * INI_T * fa + fa * r.ov + r.c.geo.ssnd * tsnd + tf)
+            r.pct = 100.0 * (r.frame - r.model) / r.model
+        m.pts[form], m.tps[form] = rows, tps
+        tr = [r.pct for r in rows if r.variant == "train"]
+        il = [r.pct for r in rows if r.variant != "train"]
+        m.variant[form] = _mean(tr) - _mean(il) if tr and il else None
+        m.pad[form] = _pad_fit(rows)
+    if not m.k:
+        raise FitError("no form has two Ssnd values")
+    m.max_resid = max(abs(r.pct) for rows in m.pts.values() for r in rows)
+    m.accepted = m.max_resid <= ACCEPT_PCT
+    m.variant_ok = all(v is None or abs(v) <= VARIANT_PCT for v in m.variant.values())
+    # Sound-term rule: the gate's sound term against the pad-aware fit, 256x192.
+    dmax, worst, undet = 0.0, 0.0, []
+    for form in m.k:
+        pf = m.pad[form]
+        if not pf["determined"]:
+            undet.append(form)
+            continue
+        dmax = max(dmax, abs(pf["d"]))
+        fitted = {r.c.shape[2] for r in m.pts[form]}
+        for fps in SOUND_FPS:
+            try:
+                g = geometry(256, 192, fps, FORM_CH[form])
+            except SystemExit:
+                continue
+            gate = g.ssnd * m.k[form]["tsnd"] + m.k[form]["tf"]
+            fit_t = pf["A"] + pf["S"] * g.ssnd + pf["d"] * g.real
+            pct = 100.0 * (gate - fit_t) / (g.samples * m.k[form]["sample_t"])
+            worst = max(worst, abs(pct))
+            m.sound.append((form, fps, g, gate, fit_t, pct, fps in fitted))
+    m.sound_d, m.sound_err, m.sound_undet = dmax, worst, undet
+    m.sound_ok = not undet and dmax <= SOUND_D_MAX and worst <= SOUND_ERR_PCT
+    m.sound_verdict = ("NOT DETERMINED" if undet else "PASS" if m.sound_ok else "FAIL")
+    m.stall = {f: _wait_t(res.wait_shape, 1) * m.k[f]["a"] for f in m.k}
+    return m
+
+
+def exit_status_1c(res, m):
+    return 0 if (m.accepted and m.variant_ok and m.sound_ok and not res.anomalies
+                 and not m.missing) else 1
+
+
+def model_1c(m, form, w, h, fps, palette=False, stall=0.0, ini_t=INI_T, snd_adj=0.0):
+    """One frame by the model, T by term, glue added; period = samples x sample_t.
+    ini_t, snd_adj: a what-if byte T and an armed T a sound or palette sector."""
+    k = m.k[form]
+    g = geometry(w, h, fps, FORM_CH[form])
+    extra = k["a"] * (512 * (ini_t - INI_T) + snd_adj)
+    t = dict(byte_t=g.spix * 512 * ini_t * k["a"], ov_t=k["a"] * frame_ov(w, h),
+             snd_t=g.ssnd * (k["tsnd"] + extra), frame_t=k["tf"],
+             pal_t=k["tp"] + extra if palette else 0.0, stall_t=stall, glue_t=GLUE_T)
+    total = sum(t.values())
+    period = g.samples * k["sample_t"]
+    return SimpleNamespace(geo=g, terms=t, total=total, period=period, util=total / period)
+
+
+def largest_height_1c(m, w, fps, form, palette=True):
+    for h in range(256, 0, -1):
+        try:
+            u = model_1c(m, form, w, h, fps, palette)
+        except (SystemExit, ValueError, ZeroDivisionError):
+            continue
+        if u.util <= 1.0:
+            return h, u.util
+    return 0, None
+
+
+def debug_1c(m, g, form):
+    """Plain DEBUG T on a late frame's path, armed by the form's a: the divider at every
+    sector open, vid_play_frame, the pace poll's arm, vid_dbg_late, vid_dbg_urun with the
+    pointer read of the form (the DMA's on mono_dma)."""
+    rl = DBG["rl_poll"] / inc_equ("VID_RL_DIV")
+    sec = DBG["sector"] + rl
+    frame = (DBG["play_frame"] + DBG["arm"] + rl + DBG["late"]
+             + DBG["urun_dma" if form == "mono_dma" else "urun"] + rl)
+    a = m.k[form]["a"]
+    return SimpleNamespace(total=a * ((g.spix + g.ssnd) * sec + frame), pal=a * sec)
+
+
+def file_chk(path):
+    """(frames, byte sum of the last two frames' pixels) of a raw clip file."""
+    w, h, real, frames, _blocks = benchrows.file_clip(path)
+    padded = (real // 512 + 1) * 512
+    spix = -(-(w * h) // 512)
+    sums = []
+    with open(path, "rb") as f:
+        off = 512
+        for _ in range(frames):
+            f.seek(off + padded - 1)
+            off += padded + (512 if f.read(1) == b"\x01" else 0)
+            f.seek(off)
+            sums.append(sum(f.read(w * h)))
+            off += spix * 512
+    return frames, sum(sums[-2:]) & 0xFFFFFFFF
+
+
+def control_rows(cur, prev):
+    """NXBD rows of two sittings -> [(tag, prev row, cur row, diff %)] and the largest."""
+    out, worst = [], 0.0
+    for tg in DS1_TAGS:
+        a, b = prev.rows.get(tg), cur.rows.get(tg)
+        if tg == "IDEN" or a is None or b is None:
+            out.append((tg, a, b, None if a != b else 0.0))
+            continue
+        ta, tb = row_t(a) / a[1], row_t(b) / b[1]
+        pct = 100.0 * (tb - ta) / ta
+        worst = max(worst, abs(pct))
+        out.append((tg, a, b, pct))
+    return out, worst
+
+
+def prev_fit(path):
+    """A previous sitting's log fitted under its own model -> (model, Result)."""
+    secs = read_sections(path)
+    model, _ = choose_model(secs)
+    cur = model_in_force()
+    set_model(model)
+    try:
+        return model, fit(secs)
+    finally:
+        set_model(cur)
+
+
+def dma_verdicts(res, m, sections):
+    """R1-R6 -> [(row, verdict, what)]; verdict GO, STOP, NO-GO or '-' (not judged)."""
+    rd = m.rd
+    if not rd:
+        return [("R1-R6", "-", "no usable NXBM capture")]
+    out = []
+    loads = m.sample_rows
+    spread = 100.0 * (max(loads.values()) - min(loads.values())) / m.sample_dma
+    off = 100.0 * (m.sample_dma / res.period - 1)
+    v = ("NO-GO" if spread > R1_SPREAD_NOGO or abs(off) > R1_MEAN_PCT else
+         "STOP" if spread > R1_SPREAD_GO else "GO")
+    out.append(("R1 rate", v, "sample T by load %s; spread %.3f percent (GO to %.1f); mean "
+                "%.2f T, %+.3f percent from %d (limit %.1f)" % (
+                    ", ".join("%s %.2f" % kv for kv in loads.items()), spread, R1_SPREAD_GO,
+                    m.sample_dma, off, res.period, R1_MEAN_PCT)))
+    sp = [f.steal["spin"] for f in rd.values()]
+    hs = [f.steal["hist"] for f in rd.values()]
+    top = max(sp + hs)
+    v = "NO-GO" if top > R2_NOGO_T else "STOP" if top > R2_GO_T else "GO"
+    out.append(("R2 steal", v, "MSPN - SPN0 %.2f T a sample (%.2f-%.2f), MHST - RHST %.2f "
+                "(%.2f-%.2f); limit %.0f" % (_mean(sp), min(sp), max(sp), _mean(hs), min(hs),
+                                             max(hs), R2_GO_T)))
+    errs = [x for x in res.excluded if x.verb == "NXBM" and x.failure.startswith("ERR=")]
+    unchecked = [k for k, f in rd.items() if f.want is None]
+    bad = [k for k, f in rd.items() if f.want is not None and f.want != f.msum]
+    diff = [k for k, f in rd.items() if not f.hist_same]
+    v = ("NO-GO" if errs or len(bad) > 1 else "STOP" if bad or diff else
+         "-" if unchecked else "GO")
+    out.append(("R3 card", v, "MSUM equal to the file's sum on %d of %d clips%s%s; ERR under "
+                "the DMA: %s; MHST bins %s" % (
+                    len(rd) - len(bad) - len(unchecked), len(rd),
+                    " (mismatch: %s)" % ", ".join("%03d" % k for k in bad) if bad else "",
+                    " (no clip file: %s)" % ", ".join("%03d" % k for k in unchecked)
+                    if unchecked else "",
+                    ", ".join("%03d %s" % (x.clip, x.failure) for x in errs) or "none",
+                    "equal to RHST's on every clip" if not diff else
+                    "differ from RHST's on " + ", ".join("%03d" % k for k in diff))))
+    hard = [k for k, f in rd.items() if f.ptr[1] or f.ptr[2]
+            or f.flags & nxbtags.NXB_RD1_FLAG_RANGE]
+    soft = [k for k, f in rd.items() if not f.flags & nxbtags.NXB_RD1_FLAG_BASE]
+    v = "NO-GO" if hard else "STOP" if soft else "GO"
+    out.append(("R4 pointer", v, "MPTR on %d clips: bad steps F %s, torn reads D %s, retried "
+                "reads R %s of %d; flags %s (bit 0 base read before the enable, bit 1 $8000 "
+                "read, bit 2 out of range)" % (
+                    len(rd), sorted({f.ptr[1] for f in rd.values()}),
+                    sorted({f.ptr[2] for f in rd.values()}),
+                    "-".join("%d" % x for x in (min(f.ptr[0] for f in rd.values()),
+                                                max(f.ptr[0] for f in rd.values()))),
+                    benchrows.NXB_RD_PTRREPS,
+                    sorted({"%02X" % f.flags for f in rd.values()}))))
+    lost = [k for k, f in rd.items() if abs(f.ticks[0] - benchrows.NXB_RD_TICKS) > 1]
+    out.append(("R5 ticks", "NO-GO" if lost else "GO", "MTCK R (frameCounter change) %s over "
+                "F %s raster wraps on %d clips" % (
+                    sorted({f.ticks[0] for f in rd.values()}),
+                    sorted({f.ticks[1] for f in rd.values()}), len(rd))))
+    cp = [f.cpy for f in rd.values()]
+    v = "STOP" if max(cp) > 1 + R6_PCT / 100 else "GO"
+    out.append(("R6 teardown", v, "MCPY / CPY0 %.4f-%.4f (limit %.2f): CPY0 %s T, MCPY %s T a "
+                "row" % (min(cp), max(cp), 1 + R6_PCT / 100,
+                         "/".join("%d" % x for x in sorted({f.t["CPY0"] for f in rd.values()})),
+                         "/".join("%d" % x for x in sorted({f.t["MCPY"] for f in rd.values()})))))
+    return out
+
+
+def turbo_figures(res, m):
+    """RT1 -> per capture figures and the means: active, spin ratio, ctc period, handler T
+    in turbo, ini T a byte, sums against the file, verdict text."""
+    rows = []
+    for r in m.rt:
+        f = SimpleNamespace(r=r, active=None, spin=None, ctc=None, handler=None, ini=None,
+                            d=None, sums_ok=None, bad=[])
+        if r.tchk:
+            o, rl, fl, _d = r.tchk
+            f.active = bool(o & 4) or fl <= rl - rl // 16
+            f.tratio = fl / rl
+        if "SPN0" in r.t and "TSPN" in r.t:
+            f.spin = r.t["TSPN"] / r.t["SPN0"]
+        if "TCTC" in r.t and "TCN1" in r.rows and "TSPN" in r.t:
+            n = _count24(r.rows["TCN1"]) / r.channels
+            f.ctc = r.t["TCTC"] / n
+            f.handler = (r.t["TCTC"] - r.t["TSPN"]) / n
+        if "NSEC" in r.t and "TSEC" in r.t:
+            f.d = (r.t["NSEC"] - r.t["TSEC"]) / RT1_REPS["NSEC"]
+            f.ini = INI_T - (f.d - TURBO_OPEN_SAVE_T) / 512
+        if r.want is not None:
+            f.bad = [tg for tg in nxbtags.NXB_RT1_SUMS if r.sums.get(tg) != r.want[tg]]
+            f.sums_ok = not f.bad
+        rows.append(f)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Model 1c report
+# ---------------------------------------------------------------------------
+
+def _old_parts(text):
+    """report()'s output split by its ## headings -> {heading: body}."""
+    parts, head, body = {}, None, []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if head:
+                parts[head] = "\n".join(body).strip("\n")
+            head, body = line[3:], []
+        elif head:
+            body.append(line)
+    if head:
+        parts[head] = "\n".join(body).strip("\n")
+    return parts
+
+
+def _rows_table(add, s, tags, timed):
+    add("| tag | O | R | F | D | lines | T | T/rep |")
+    add("|---|---|---|---|---|---|---|---|")
+    for tg in tags:
+        row = s.rows.get(tg)
+        if row is None:
+            add("| %s | not printed | | | | | | |" % tg)
+            continue
+        o_, r, f, d = row
+        if tg in timed:
+            add("| %s | %02X | %d | %d | %d | %d | %d | %.2f |" % (
+                tg, o_, r, f, d, f * LPF + d, row_t(row), row_t(row) / r))
+        else:
+            add("| %s | %02X | %04X | %04X | %04X | | | |" % (tg, o_, r, f, d & 0xFFFF))
+
+
+def report_1c(res, m, sections, readouts=None, prev=None, play_clips=None, clips_dir=None):
+    o = []
+    add = o.append
+    pre, tc, nr11 = res.ctc
+    old = _old_parts(report(res))
+    add("raw_fit: %s" % res.log)
+    add("timing: +3, %d lines x %d T a field (parse.timing); T = (F x %d + D) x %d" % (
+        LPF, T_LINE, LPF, T_LINE))
+    add("CTC 0 period: %d x %d = %d T (AUD_CTC_CW16 prescaler, vidCtcTcNxvStereo[NR $11 = %d])"
+        % (pre, tc, res.period, nr11))
+    add("harness (nxv2_bench_rows, model 1c): card h = %d T a rep, frame g = %d T a frame; "
+        "RD1 frame rep %d T and %d T on a row's first rep, both armed; RT1 card rep %d T" % (
+            H_CARD, G_FRAME, benchrows.RD_FRAME_HARNESS_T, benchrows.RD_FIRST_T,
+            benchrows.RT_CARD_HARNESS_T))
+    add("model: T = Spix x 512 x tb x F + a x OV + Ssnd x tsnd + tf + P x tp + stall; OV = "
+        "raw_frame_overhead (counted, unarmed); tb = %d x a; period = samples x sample_t" % INI_T)
+    add("")
+    add("## Sections")
+    add("")
+    secs = []
+    for c in res.clips.values():
+        w, h, fps, _ch, _ = c.shape
+        secs.append((c.section, "%2d #NXB %04X NXBW clip %03d %s %s, %s program: %d rows, %d "
+                     "histograms" % (c.section, c.stamp, c.clip, c.form, _fmt_shape(w, h, fps),
+                                     variant_of(w, h), len(c.rows), len(c.hist))))
+    for f in m.rd.values():
+        secs.append((f.section, "%2d #NXB %04X NXBM clip %03d: %d rows, %d histograms" % (
+            f.section, f.stamp, f.clip, len(f.rows), len(f.hist))))
+    for r in m.rt:
+        secs.append((r.section, "%2d #NXB %04X NXBP clip %03d: %d rows%s%s" % (
+            r.section, r.stamp, r.clip, len(r.rows),
+            ", not printed: " + " ".join(r.missing) if r.missing else "",
+            ", ERR=%02X" % r.err if r.err else "")))
+    for x in res.excluded:
+        secs.append((x.section, "%2d #NXB %04X %s clip %s: EXCLUDED - %s" % (
+            x.section, x.stamp, x.verb, x.clip, x.failure)))
+    if res.old is not None:
+        secs.append((res.old.index, "%2d #NXB %04X NXBD clip %s: old direct rows (%d)" % (
+            res.old.index, res.old.stamp, res.old.clip, len(res.old.rows))))
+    for _, line in sorted(secs):
+        add(line)
+    for n in res.notes:
+        add("note: " + n)
+    add("")
+    add("Anomalies (RE-RUN request):" + ("" if res.anomalies else " none"))
+    for a in res.anomalies:
+        add("- " + a)
+    add("")
+
+    # Control
+    add("## Control: NXBD on 010 against the previous sitting")
+    add("")
+    if prev is None or res.old is None or prev[1].old is None:
+        add("not compared (no --prev log, or an NXBD capture is missing)")
+        ctl_ok = None
+    else:
+        rows, worst = control_rows(res.old, prev[1].old)
+        add("T a rep = (F x %d + D) x %d / R, rows as printed." % (LPF, T_LINE))
+        add("")
+        add("| row | previous O R F D | T/rep | this sitting O R F D | T/rep | diff % |")
+        add("|---|---|---|---|---|---|")
+        for tg, a_, b_, pct in rows:
+            def cell(r):
+                return "-" if r is None else "%02X %d %d %d" % (r[0], r[1], r[2], r[3])
+
+            def per(r):
+                return "" if r is None or tg == "IDEN" else "%.2f" % (row_t(r) / r[1])
+            add("| %s | %s | %s | %s | %s | %s |" % (
+                tg, cell(a_), per(a_), cell(b_), per(b_),
+                "missing" if pct is None else "equal" if tg == "IDEN" else "%+.3f" % pct))
+        ctl_ok = worst <= 0.5 and all(p is not None for _, _, _, p in rows)
+        add("")
+        add("largest |difference| %.3f percent (limit 0.5): %s" % (
+            worst, "PASS" if ctl_ok else "FAIL - STOP before using any figure"))
+    add("")
+
+    # DMA verdicts
+    add("## DMA mono sound: rows R1 to R6")
+    add("")
+    add("| row | verdict | figures |")
+    add("|---|---|---|")
+    verdicts = dma_verdicts(res, m, sections)
+    for name, v, what in verdicts:
+        add("| %s | %s | %s |" % (name, v, what))
+    add("")
+    if m.rd:
+        add("| clip | sample T: MRSW | MSPN | MHST | samples: MRSW | MSPN | MHST | steal spin | "
+            "steal hist | MHST/RHST | MSUM | file sum | MPTR O R F D | MCN O | MTCK R F | "
+            "MCPY/CPY0 |")
+        add("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for k, f in sorted(m.rd.items()):
+            add("| %03d | %.3f | %.3f | %.3f | %d | %d | %d | %.2f | %.2f | %.5f | %08X | %s | "
+                "%02X %d %d %d | %s | %d %d | %.4f |" % (
+                    k, f.st["MRSW"], f.st["MSPN"], f.st["MHST"], f.count["MRSW"],
+                    f.count["MSPN"], f.count["MHST"], f.steal["spin"], f.steal["hist"], f.a,
+                    f.msum, "-" if f.want is None else "%08X" % f.want, f.flags, f.ptr[0],
+                    f.ptr[1], f.ptr[2], " ".join("%02X" % x for x in f.cflags), f.ticks[0],
+                    f.ticks[1], f.cpy))
+        add("")
+        add("sample T = row T / the row's count (R + 65536 x F of its MCN row). Resolution of "
+            "one figure: a raster line and one sample, %.2f T on MRSW (the shortest row), "
+            "%.2f on MSPN, %.2f on MHST." % tuple(
+                (T_LINE + m.sample_dma) / _mean(f.count[row] for f in m.rd.values())
+                for row in ("MRSW", "MSPN", "MHST")))
+        add("")
+        add("## Pitch")
+        add("")
+        st = m.sample_dma
+        off = res.period / st - 1
+        import math
+        vals = [v for f in m.rd.values() for v in f.st.values()]
+        sd = (sum((v - st) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+        add("- sample_t[mono_dma] = %.3f T: mean of %d figures (MRSW, MSPN, MHST on %d clips), "
+            "range %.3f-%.3f, standard deviation %.3f, standard error of the mean %.3f T "
+            "(%.4f percent)." % (st, len(vals), len(m.rd), min(vals), max(vals), sd,
+                                sd / len(vals) ** 0.5, 100 * sd / len(vals) ** 0.5 / st))
+        add("- by load: %s." % ", ".join("%s %.3f T" % kv for kv in m.sample_rows.items()))
+        add("- pitch offset %d / sample_t - 1 = %+.3f percent = %+.2f cents (the DMA plays "
+            "%s than the CTC forms); rate %.1f Hz against %.1f Hz." % (
+                res.period, 100 * off, 1200 * math.log2(1 + off),
+                "lower and slower" if off < 0 else "higher and faster",
+                28e6 / st, 28e6 / res.period))
+        add("- %s the %.2f percent limit: %s." % (
+            "over" if abs(100 * off) > PITCH_PCT else "within", PITCH_PCT,
+            "an owner decision before the gate constants are adopted" if abs(100 * off)
+            > PITCH_PCT else "no decision needed"))
+        add("- period hypotheses, T a sample (excess over %d): %s." % (
+            res.period, "; ".join("%s %.3f (%+.3f)" % (row, v, v - res.period)
+                                  for row, v in m.sample_rows.items())))
+        for name, t in (("%d (the prescaler alone)" % res.period, res.period),
+                        ("%d (+7)" % (res.period + 7), res.period + 7),
+                        ("%d (+8)" % (res.period + 8), res.period + 8),
+                        ("%d (57 prescaler units of 32)" % (57 * 32), 57 * 32)):
+            dev = {row: v - t for row, v in m.sample_rows.items()}
+            add("  - %s: %s" % (name, ", ".join("%s %+.2f T" % kv for kv in dev.items())))
+        add("")
+
+    # Constants
+    add("## Constants")
+    add("")
+    add("| form | a | from | tb = 16 a | tsnd | tf | tp | sample_t | clips |")
+    add("|---|---|---|---|---|---|---|---|---|")
+    src = {"stereo": "mean ARSE / RSEC", "mono_ctc": "mean ARSE / RSEC",
+           "mono_dma": "mean MHST / RHST"}
+    for form in FORMS:
+        if form not in m.k:
+            add("| %s | not fitted | | | | | | | |" % form)
+            continue
+        k = m.k[form]
+        add("| %s | %.5f | %s | %.4f | %.2f | %.2f | %.2f | %.3f | %s |" % (
+            form, k["a"], src[form], k["tb"], k["tsnd"], k["tf"], k["tp"], k["sample_t"],
+            " ".join("%03d" % r.clip for r in m.pts[form])))
+    add("")
+    for form in m.k:
+        add("- %s points (clip, Ssnd, y = frame row' - Spix x 8192 x a - a x OV): %s" % (
+            form, "; ".join("%03d %d %.1f" % (r.clip, r.c.geo.ssnd, r.y) for r in m.pts[form])))
+        add("- %s tp per clip: %s" % (form, "; ".join("%03d %.1f" % kv for kv in sorted(
+            m.tps[form].items()))))
+    add("- frame row': ARSW/16 - g x ARSW/RSWP (stereo, mono_ctc); (MRSW - %d x a) / 16 - %d x "
+        "a (mono_dma). tp = (RFR0' - RSWP') x frame row' / RSWP', RFR0 and RSWP from the "
+        "clip's NXBW capture." % (benchrows.RD_FIRST_T, benchrows.RD_FRAME_HARNESS_T))
+    add("- a by other rows, for comparison (not used): ASPN / SPN0 stereo %.5f, mono_ctc %.5f; "
+        "AHST / RHST stereo %.5f, mono_ctc %.5f; mono_dma MSPN / SPN0 %s." % (
+            res.period / (res.period - res.handler["stereo"]),
+            res.period / (res.period - res.handler["mono"]),
+            _mean(c.t["AHST"] / c.t["RHST"] for c in res.clips.values()
+                  if c.form == "stereo" and "AHST" in c.t and "RHST" in c.t),
+            _mean(c.t["AHST"] / c.t["RHST"] for c in res.clips.values()
+                  if c.form == "mono" and "AHST" in c.t and "RHST" in c.t),
+            "%.5f" % _mean(f.t["MSPN"] / f.t["SPN0"] for f in m.rd.values()) if m.rd else "-"))
+    add("- one raster line on a %d-rep card row is %.2f T a rep, %.2f percent of a sector: "
+        "the resolution of one ARSE / RSEC ratio." % (
+            RW1_REPS["RSEC"], T_LINE / RW1_REPS["RSEC"],
+            100 * T_LINE / RW1_REPS["RSEC"] / SECTOR_INI_T))
+    rsec_p = _mean(c.p["RSEC"] for c in res.clips.values() if "RSEC" in c.p)
+    add("- check of the count, used in no constant: mean RSEC' - 8192 - %d (vr_sector_n's "
+        "open) - %d (the slide's call and ret) = %+.2f T over %d clips." % (
+            CLASSIC_OPEN_T, benchrows.VR_READ_T,
+            rsec_p - SECTOR_INI_T - CLASSIC_OPEN_T - benchrows.VR_READ_T,
+            sum(1 for c in res.clips.values() if "RSEC" in c.p)))
+    top, sclip = res.stall_top
+    add("- RAW_STALL_T = %.2f T: highest occupied AHST bin %d (clip %03d), upper edge x "
+        "ARSE/RSEC. One poll's wait by form (22 T x a): %s." % (
+            res.stall, top, sclip, ", ".join("%s %.2f" % kv for kv in m.stall.items())))
+    add("")
+    add("Paste form:")
+    add("")
+    add("```")
+    add("RAW_K = {")
+    for form in m.k:
+        k = m.k[form]
+        n = len(m.pts[form])
+        add('    "%s": {' % form)
+        add('        "a": %.5f,  # armed factor [%s] %d clips' % (
+            k["a"], "MHST, RHST" if form == "mono_dma" else "ARSE, RSEC", n))
+        add('        "tb": %.4f,  # 16 x a' % k["tb"])
+        add('        "tsnd": %.2f,  # sound sector [%s, counted overhead] %d clips' % (
+            k["tsnd"], "MRSW" if form == "mono_dma" else "ARSW, RSWP", n))
+        add('        "tf": %.2f,  # frame remainder, same points' % k["tf"])
+        add('        "tp": %.2f,  # palette sector [RFR0, RSWP, %s] %d clips' % (
+            k["tp"], "MRSW" if form == "mono_dma" else "ARSW", len(m.tps[form])))
+        add("    },")
+    add("}")
+    add("RAW_SAMPLE_T = {%s}" % ", ".join('"%s": %s' % (
+        f, "%d" % m.k[f]["sample_t"] if f != "mono_dma" else "%.2f" % m.k[f]["sample_t"])
+        for f in m.k))
+    add("RAW_STALL_T = %.2f  # AHST bin %d upper edge x ARSE/RSEC" % (res.stall, top))
+    add("```")
+    add("")
+
+    # Residuals
+    add("## Residuals")
+    add("")
+    add("residual = 100 x (frame row' - model) / model, pixels-only frame. Acceptance: every "
+        "|residual| <= %.1f percent; a train-against-inline pattern over %.1f percent is a "
+        "STOP." % (ACCEPT_PCT, VARIANT_PCT))
+    add("")
+    add("| clip | form | program | Spix | Ssnd | sound B | OV T | frame row' | model | "
+        "residual T | residual % |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|")
+    for form in m.k:
+        for r in m.pts[form]:
+            g = r.c.geo
+            add("| %03d | %s | %s | %d | %d | %d | %d | %.1f | %.1f | %+.0f | %+.3f |" % (
+                r.clip, form, r.variant, g.spix, g.ssnd, g.real, r.ov, r.frame, r.model,
+                r.frame - r.model, r.pct))
+    add("")
+    for form in m.k:
+        rows = m.pts[form]
+        w = max(rows, key=lambda r: abs(r.pct))
+        tr = [r.pct for r in rows if r.variant == "train"]
+        il = [r.pct for r in rows if r.variant != "train"]
+        add("- %s: largest |residual| %.3f percent (clip %03d); train clips mean %s (%d), "
+            "inline %s (%d), train - inline %s percent" % (
+                form, abs(w.pct), w.clip, "%+.3f" % _mean(tr) if tr else "-", len(tr),
+                "%+.3f" % _mean(il) if il else "-", len(il),
+                "-" if m.variant[form] is None else "%+.3f" % m.variant[form]))
+    add("")
+    add("acceptance: %s (largest |residual| %.3f percent); variant pattern: %s" % (
+        "PASS" if m.accepted else "FAIL", m.max_resid,
+        "PASS" if m.variant_ok else "STOP (over %.1f percent)" % VARIANT_PCT))
+    if m.missing:
+        add("forms not fitted: %s" % ", ".join(m.missing))
+    add("")
+
+    # Sound term
+    add("## Sound term")
+    add("")
+    add("pad-aware fit y = A + S x Ssnd + d x real bytes on each form's points (d: T a sound "
+        "byte costs over a pad byte):")
+    add("")
+    for form in m.k:
+        f = m.pad[form]
+        add("- %s: A %.1f, S %.1f, d %+.2f T a sound byte, standard error %s (condition "
+            "number %.0f; %s); residuals %s T" % (
+                form, f["A"], f["S"], f["d"], "-" if f["se"] is None else "%.2f" % f["se"],
+                f["cond"],
+                "d determined" if f["determined"] else "d not determined",
+                " ".join("%+.0f" % v for v in f["resid"])))
+    add("")
+    add("gate sound term (Ssnd x tsnd + tf) against that fit, 256x192; err = gate - fit:")
+    add("")
+    add("| form | fps | sound B | Ssnd | pad B | gate T | fit T | err T | err % of period | "
+        "fitted pair |")
+    add("|---|---|---|---|---|---|---|---|---|---|")
+    for form, fps, g, gate, fit_t, pct, fitted in m.sound:
+        add("| %s | %g | %d | %d | %d | %.0f | %.0f | %+.0f | %+.3f | %s |" % (
+            form, fps, g.real, g.ssnd, g.padded - g.real, gate, fit_t, gate - fit_t, pct,
+            "yes" if fitted else "no"))
+    add("")
+    add("sound-term rule (|d| <= %.1f T a sound byte in each form, every layout within %.2f "
+        "percent of the period): %s (largest |d| %.2f T, largest |err| %.3f percent%s)" % (
+            SOUND_D_MAX, SOUND_ERR_PCT, m.sound_verdict, m.sound_d, m.sound_err,
+            "; not determined: " + ", ".join(m.sound_undet) if m.sound_undet else ""))
+    add("")
+
+    # Utilisation
+    add("## Utilisation of the target shapes")
+    add("")
+    add("util = (model frame + glue %.1f T) / (samples x sample_t). Projected: the figure "
+        "made before the sitting, which took 1792 T a sample in every form. Stall: one "
+        "poll's wait added." % GLUE_T)
+    add("")
+    add("| shape | form | program | OV T | model T, palette | period T | util palette | "
+        "projected | util pixels-only | projected | pixels-only with stall |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|")
+    over = {f: [] for f in m.k}
+    for w, h, fps in TARGETS:
+        for form in m.k:
+            up = model_1c(m, form, w, h, fps, True)
+            ux = model_1c(m, form, w, h, fps, False)
+            us = model_1c(m, form, w, h, fps, False, m.stall[form])
+            pj = PROJECTION.get((w, h, fps), {}).get(form)
+            add("| %s | %s | %s | %d | %.0f | %.0f | %.4f | %s | %.4f | %s | %.4f |" % (
+                _fmt_shape(w, h, fps), form, variant_of(w, h), frame_ov(w, h), up.total,
+                up.period, up.util, "%.4f" % pj[0] if pj else "-", ux.util,
+                "%.4f" % pj[1] if pj else "-", us.util))
+            if up.util > 1.0:
+                over[form].append("%s palette frame %.4f" % (_fmt_shape(w, h, fps), up.util))
+            if ux.util > 1.0:
+                over[form].append("%s pixels-only %.4f" % (_fmt_shape(w, h, fps), ux.util))
+    add("")
+    for form in m.k:
+        add("%s over 1.00: %s" % (form, ", ".join(over[form]) or "none"))
+    add("")
+    add("## Largest admitted height at 25 fps")
+    add("")
+    add("Heights 256 down to 1, util <= 1.00, glue added, F = 1.0, each height on the program "
+        "raw_variant names for it.")
+    add("")
+    add("| width | form | palette frame: height | util | pixels-only frame: height | util |")
+    add("|---|---|---|---|---|---|")
+    for w in (320, 280, 256):
+        for form in m.k:
+            h0, u0 = largest_height_1c(m, w, 25, form)
+            h1, u1 = largest_height_1c(m, w, 25, form, False)
+            add("| %d | %s | %d | %.4f | %d | %.4f |" % (w, form, h0, u0, h1, u1))
+    add("")
+    add("## Budget of a 320x192@25 palette frame")
+    add("")
+    add("| term | " + " | ".join("%s T | %%" % f for f in m.k) + " |")
+    add("|---|" + "---|---|" * len(m.k))
+    us = {f: model_1c(m, f, 320, 192, 25, True) for f in m.k}
+    for name, key in (("pixel bytes, Spix x 512 x tb", "byte_t"), ("overhead, a x OV", "ov_t"),
+                      ("sound sectors, Ssnd x tsnd", "snd_t"), ("frame remainder, tf", "frame_t"),
+                      ("palette sector, tp", "pal_t"), ("glue", "glue_t")):
+        add("| %s | %s |" % (name, " | ".join("%.0f | %.2f" % (
+            us[f].terms[key], 100 * us[f].terms[key] / us[f].period) for f in m.k)))
+    add("| total | %s |" % " | ".join("%.0f | %.2f" % (us[f].total, 100 * us[f].util)
+                                      for f in m.k))
+    add("| period | %s |" % " | ".join("%.0f | 100.00" % us[f].period for f in m.k))
+    add("")
+
+    # Attribution
+    add("## Attribution")
+    add("")
+    for name, label, want in (("stereo", "raw stereo (ASPN, stereo clips)", "stereo"),
+                              ("mono", "raw mono CTC (ASPN, mono clips)", "mono")):
+        lo, hi, n = res.handler_spread[name]
+        add("- handler, %s: %.2f T an interrupt (%d clips, %.2f-%.2f); counted %d T on the "
+            "common path" % (label, res.handler[name], n, lo, hi, RAW_HANDLER_T[want]))
+    lo, hi, n = res.handler_spread["old"]
+    add("- handler, existing video_ctc_isr_stereo (OSPN): %.2f T (%d clips)" % (
+        res.handler["old"], n))
+    if m.rd:
+        add("- DMA steal a sample: %.2f T under the spin, %.2f T under the binned sector "
+            "read; armed factor from the pair MHST / RHST %.5f, from MSPN / SPN0 %.5f" % (
+                _mean(f.steal["spin"] for f in m.rd.values()),
+                _mean(f.steal["hist"] for f in m.rd.values()), m.k["mono_dma"]["a"]
+                if "mono_dma" in m.k else float("nan"),
+                _mean(f.t["MSPN"] / f.t["SPN0"] for f in m.rd.values())))
+    if prev is not None:
+        pm, pr = prev
+        add("")
+        add("frame row' per clip against the previous sitting (model %s) less the counted "
+            "unarmed savings U: pump (by sound layout), inline open (Spix - 1) x %d - %d, "
+            "column train (the inline program's OV less this program's). Predicted = "
+            "(ARSW'_prev / A_prev - U) x A, A = 1 / (1 - handler / %d) from each sitting's "
+            "ASPN." % (pm, CLASSIC_OPEN_T - benchrows.VR_OPEN_T, benchrows.VR_FAST_NET_T,
+                       res.period))
+        add("")
+        add("| clip | form | program | ARSW' previous | pump | open | train | predicted | "
+            "measured ARSW' | measured - predicted T | % |")
+        add("|---|---|---|---|---|---|---|---|---|---|---|")
+        worst = 0.0
+        for k, c in sorted(res.clips.items()):
+            pc = pr.clips.get(k)
+            if pc is None or "ARSW" not in pc.p or "ARSW" not in c.p:
+                continue
+            w, h = c.shape[:2]
+            a0 = pr.period / (pr.period - pr.handler[c.form])
+            a1 = res.period / (res.period - res.handler[c.form])
+            pump = PUMP_SAVING.get((c.geo.ssnd, c.geo.real))
+            opn = (c.geo.spix - 1) * (CLASSIC_OPEN_T - benchrows.VR_OPEN_T) \
+                - benchrows.VR_FAST_NET_T
+            trn = inline_ov(w, h) - frame_ov(w, h)
+            if pump is None:
+                add("| %03d | %s | %s | %.1f | not counted | %d | %d | - | %.1f | - | - |" % (
+                    k, c.form, variant_of(w, h), pc.p["ARSW"], opn, trn, c.p["ARSW"]))
+                continue
+            pred = (pc.p["ARSW"] / a0 - pump - opn - trn) * a1
+            pct = 100.0 * (c.p["ARSW"] - pred) / pred
+            worst = max(worst, abs(pct))
+            add("| %03d | %s | %s | %.1f | %d | %d | %d | %.1f | %.1f | %+.0f | %+.3f |" % (
+                k, c.form, variant_of(w, h), pc.p["ARSW"], pump, opn, trn, pred, c.p["ARSW"],
+                c.p["ARSW"] - pred, pct))
+        add("")
+        add("largest |measured - predicted| %.3f percent" % worst)
+    add("")
+
+    # Turbo
+    add("## Turbo read train (NR $07 bit 2 at 28 MHz): a measurement, not a gate input")
+    add("")
+    tf = turbo_figures(res, m)
+    if not tf:
+        add("no NXBP capture")
+    else:
+        add("| clip | TCHK O R F D | F/R | active | TSPN/SPN0 | CTC period in turbo | handler "
+            "in turbo | NSEC T/rep | TSEC T/rep | NSEC - TSEC | T a byte in turbo | sums "
+            "against the file | ERR | not printed |")
+        add("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for f in tf:
+            r = f.r
+            add("| %03d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %02X | %s |" % (
+                r.clip, "-" if not r.tchk else "%02X %d %d %d" % tuple(r.tchk),
+                "-" if f.active is None else "%.4f" % f.tratio,
+                "-" if f.active is None else "yes" if f.active else "no",
+                "-" if f.spin is None else "%.4f" % f.spin,
+                "-" if f.ctc is None else "%.2f" % f.ctc,
+                "-" if f.handler is None else "%.2f" % f.handler,
+                "%.2f" % (r.t["NSEC"] / RT1_REPS["NSEC"]) if "NSEC" in r.t else "-",
+                "%.2f" % (r.t["TSEC"] / RT1_REPS["TSEC"]) if "TSEC" in r.t else "-",
+                "-" if f.d is None else "%+.2f" % f.d,
+                "-" if f.ini is None else "%.3f" % f.ini,
+                "not checked" if f.sums_ok is None else "equal (%s)" % " ".join(
+                    nxbtags.NXB_RT1_SUMS) if f.sums_ok else "WRONG: " + " ".join(f.bad),
+                r.err, " ".join(r.missing) or "none"))
+        add("")
+        act = [f for f in tf if f.active]
+        spins = [f.spin for f in tf if f.spin is not None]
+        inis = [f.ini for f in tf if f.ini is not None]
+        if any(f.r.noturbo for f in tf) or (spins and abs(_mean(spins) - 1) < 0.01):
+            add("is turbo there: not measured - the mode did not take effect as written "
+                "(TCHK rows above)")
+        else:
+            add("- is turbo there: TCHK active on %d of %d captures; TSPN / SPN0 %.4f, the "
+                "counted loop gives %.4f (22 / 26 T) before the rep's harness." % (
+                    len(act), len(tf), _mean(spins) if spins else float("nan"), TURBO_SPIN))
+        usable = [f for f in tf if f.sums_ok and "TSEC" in f.r.rows and not f.r.err
+                  and not f.r.missing]
+        judged = [f for f in tf if f.sums_ok is not None]
+        nsm = [f.r.clip for f in judged if "NSM0" in f.bad]
+        add("- read train usable (the classic read shape: vr_sector_n and the slide): %s - "
+            "NSM0, TSTR, TSLO and TSUM equal the file's sums, TSEC printed and no ERR on %d "
+            "of %d captures%s." % (
+                "not judged (no clip files)" if not judged else
+                "no verdict (NSM0 wrong: %s)" % nsm if nsm else
+                "GO" if len(usable) == len(tf) else "NO-GO", len(usable), len(tf),
+                "" if len(usable) == len(tf) or not judged else "; failing: " + "; ".join(
+                    "%03d %s" % (f.r.clip, " ".join(f.bad + f.r.missing) or "ERR")
+                    for f in tf if f not in usable)))
+        if inis:
+            mi = _mean(inis)
+            add("- T a byte in turbo = 16 - (NSEC - TSEC - %d) / 512 = %.3f (%.3f-%.3f); "
+                "one raster line on a %d-rep row is %.3f T a byte. Expected %.2f: %s." % (
+                    TURBO_OPEN_SAVE_T, mi, min(inis), max(inis), RT1_REPS["NSEC"],
+                    T_LINE / RT1_REPS["NSEC"] / 512, TURBO_INI_T,
+                    "within %.2f" % TURBO_INI_TOL if abs(mi - TURBO_INI_T) <= TURBO_INI_TOL
+                    else "NOT within %.2f - the sector read is not shorter in turbo by the "
+                    "512 T a 15 T ini would save" % TURBO_INI_TOL))
+        for ch, name, cnt in ((2, "stereo", RAW_HANDLER_T["stereo"]),
+                              (1, "mono", RAW_HANDLER_T["mono"])):
+            fs = [f for f in tf if f.r.channels == ch and f.ctc is not None]
+            if fs:
+                add("- %s handler armed in turbo (TCTC, TCN1 %d ring byte(s) a period): CTC "
+                    "period %.2f T (expected %d); handler %.2f T an interrupt in turbo "
+                    "against %.2f measured without it (ASPN) and %d counted." % (
+                        name, ch, _mean(f.ctc for f in fs), res.period,
+                        _mean(f.handler for f in fs), res.handler[name], cnt))
+        if inis:
+            mi = _mean(inis)
+            add("")
+            add("Projection, not a measurement: this sitting's model with every ini byte "
+                "(pixel, sound, pad and palette sectors) at a turbo T a byte, a slide read and "
+                "a period pass 27 -> 26 T, a taken page check 67 -> 66 T, 3 T a sound or "
+                "palette sector; handlers and the DMA steal unchanged. Two columns: the "
+                "measured %.3f T a byte, and 15 T a byte for reference." % mi)
+            add("")
+            add("| shape | form | frame | util now | turbo, measured T a byte | turbo, 15 T a "
+                "byte |")
+            add("|---|---|---|---|---|---|")
+            for w, h, fps in TARGETS:
+                for form in m.k:
+                    for pal in (True, False):
+                        u0 = model_1c(m, form, w, h, fps, pal)
+                        with _counts(VR_READ_T=benchrows.VR_READ_T - 1,
+                                     VR_PASS_T=benchrows.VR_PASS_T - 1,
+                                     VR_CHK_PAGE_T=benchrows.VR_CHK_PAGE_T - 1):
+                            u1 = model_1c(m, form, w, h, fps, pal, ini_t=mi, snd_adj=-3)
+                            u2 = model_1c(m, form, w, h, fps, pal, ini_t=TURBO_INI_T,
+                                          snd_adj=-3)
+                        add("| %s | %s | %s | %.4f | %.4f | %.4f |" % (
+                            _fmt_shape(w, h, fps), form, "palette" if pal else "pixels",
+                            u0.util, u1.util, u2.util))
+    add("")
+
+    # Playback
+    add("## Playback (leg B)")
+    add("")
+    if not readouts:
+        add("no leg B readouts given (--playback)")
+    else:
+        _playback_1c(add, res, m, readouts, play_clips)
+    add("")
+    for head in ("Histograms (summed over clips)", "Checks"):
+        if head in old:
+            body = old[head]
+            if head == "Checks":
+                body = body.split("\nAnomalies (RE-RUN request):")[0].rstrip()
+            add("## " + head)
+            add("")
+            add(body)
+            add("")
+    if m.rd:
+        add("RD1 histograms (NXBM), summed over %d clips: MHST %s; RHST %s" % (
+            len(m.rd), *(", ".join("bin %d = %d" % (b, n) for b, n in enumerate(
+                [sum(f.hist[tg][i] for f in m.rd.values())
+                 for i in range(nxbtags.NXB_HIST_BINS)]) if n) for tg in ("MHST", "RHST"))))
+        add("")
+    add("## Decoded rows")
+    add("")
+    add(old["Decoded rows"])
+    for f in sorted(m.rd.values(), key=lambda f: f.clip):
+        add("")
+        add("clip %03d NXBM (section %d)" % (f.clip, f.section))
+        add("")
+        _rows_table(add, f, benchlog.table_tags("NXBM"), RD1_TIMED)
+    for r in m.rt:
+        add("")
+        add("clip %03d NXBP (section %d)" % (r.clip, r.section))
+        add("")
+        _rows_table(add, r, benchlog.table_tags("NXBP"), RT1_TIMED)
+    return "\n".join(o) + "\n"
+
+
+def _playback_1c(add, res, m, readouts, play_clips):
+    shapes = {k: v[:4] for k, v in FIXTURES.items()}
+    shapes.update(PLAYBACK_ONLY)
+    ring, guard = inc_equ("NXV_AUD_RING"), inc_equ("NXV_AUD_GUARD")
+    add("Gate util: Release instructions, palette frame, one poll's stall, glue. DEBUG util: "
+        "pixels-only frame + glue + the plain DEBUG work of a late frame's path (leg B runs "
+        "the DEBUG build), over samples x sample_t. Model on time = DEBUG util <= 1.00; logged "
+        "on time = LATE 0000 and URUN 0000. On-time PLAY = frames x samples x sample_t / %d "
+        "(fields); predicted PLAY from ring_play (all-or-nothing feed)." % FIELD_T)
+    add("")
+    add("| capture | clip | SND | VAR | form | program | frames | gate util | DEBUG util | "
+        "model on time | LATE | URUN | logged on time | agree | PLAY | on-time PLAY | "
+        "predicted PLAY | waits | CHK | file sum |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    notes, dma_bad, chk_bad, chk_n, implied = [], [], [], 0, []
+    for r in readouts:
+        clip = int(r["Clip"])
+        if clip not in shapes:
+            notes.append("capture %s clip %03d: outside the raw model (FRM %s PLAY %s LATE %s "
+                         "URUN %s RUNS %s CHK %s)" % (r["Step"], clip, r.get("FRM"),
+                                                      r.get("PLAY"), r.get("LATE"),
+                                                      r.get("URUN"), r.get("RUNS"), r.get("CHK")))
+            continue
+        why = unscored_reason(r)
+        if why:
+            notes.append("capture %s clip %03d not scored: %s" % (r["Step"], clip, why))
+            continue
+        w, h, fps, ch = shapes[clip]
+        form = FORM_SND.get(r.get("SND", "-"))
+        if form is None or FORM_CH[form] != ch or form not in m.k:
+            notes.append("capture %s clip %03d: SND %r does not name a fitted form for a "
+                         "%d-channel clip" % (r["Step"], clip, r.get("SND"), ch))
+            continue
+        var = variant_of(w, h)
+        if r.get("VAR") not in ("T" if var == "train" else "I",):
+            notes.append("capture %s clip %03d: VAR %s, raw_variant names the %s program" % (
+                r["Step"], clip, r.get("VAR"), var))
+        k = m.k[form]
+        gate = model_1c(m, form, w, h, fps, True, m.stall[form])
+        ux = model_1c(m, form, w, h, fps, False)
+        d = debug_1c(m, ux.geo, form)
+        work = ux.total + d.total
+        work0 = work + k["tp"] + d.pal
+        frames = frm_frames(r)
+        tot, waits = ring_play(frames, work, work0, ux.geo.real, ch, k["sample_t"], ring, guard)
+        model_on = work / ux.period <= 1.0
+        logged_on = int(r["LATE"], 16) == 0 and int(r["URUN"], 16) == 0
+        play = int(r["PLAY"], 16)
+        on = frames * ux.period / FIELD_T
+        want = "-"
+        path = play_clips and Path(play_clips) / ("%03d.VID" % clip)
+        if path and path.is_file() and (_shape(w, h) == 0 and h == 192 or (w, h) == (320, 256)):
+            nfile, fsum = file_chk(path)
+            if frames == nfile and r.get("PASS") == "01":
+                want = "%08X" % fsum
+                chk_n += 1
+                if want != r["CHK"]:
+                    chk_bad.append("capture %s clip %03d" % (r["Step"], clip))
+            else:
+                want = "partial or looped play"
+        if form == "mono_dma" and model_on and not logged_on:
+            dma_bad.append("capture %s clip %03d" % (r["Step"], clip))
+        if logged_on:
+            implied.append((r["Step"], clip, form, frames, play,
+                            play * FIELD_T / (frames * ux.geo.samples),
+                            FIELD_T / (frames * ux.geo.samples)))
+        add("| %s | %03d | %s | %s | %s | %s | %d | %.4f | %.4f | %s | %s | %s | %s | %s | %d | "
+            "%.1f | %.1f | %d | %s | %s |" % (
+                r["Step"], clip, r.get("SND"), r.get("VAR"), form, var, frames, gate.util,
+                work / ux.period, "yes" if model_on else "no", r["LATE"], r["URUN"],
+                "yes" if logged_on else "no", "yes" if model_on == logged_on else "NO", play,
+                on, tot / FIELD_T, waits, r["CHK"], want))
+    add("")
+    for n in notes:
+        add("- " + n)
+    add("- mono DMA clips the DEBUG model puts on time that logged LATE or URUN: %s" % (
+        ", ".join(dma_bad) or "none"))
+    add("- CHK against the file's last two frames' pixel sum, full plays of clips without "
+        "bars: %d compared, mismatches: %s" % (chk_n, ", ".join(chk_bad) or "none"))
+    add("")
+    add("Sample period implied by PLAY on the on-time plays (PLAY x %d / samples played; PLAY "
+        "counts whole fields, so each figure is good to about one field):" % FIELD_T)
+    add("")
+    add("| capture | clip | form | frames | PLAY | implied sample T | one field is |")
+    add("|---|---|---|---|---|---|---|")
+    for step, clip, form, frames, play, st, res_t in implied:
+        add("| %s | %03d | %s | %d | %d | %.2f | %.2f T |" % (step, clip, form, frames, play,
+                                                              st, res_t))
+    for form in m.k:
+        v = [(st, res_t) for _s, _c, f, _n, _p, st, res_t in implied if f == form]
+        if v:
+            wsum = sum(1 / r for _s, r in v)
+            add("- %s: mean implied sample T %.2f (weighted by play length %.2f) over %d plays; "
+                "the fit uses %.2f" % (form, _mean(s for s, _ in v),
+                                       sum(s / r for s, r in v) / wsum, len(v),
+                                       m.k[form]["sample_t"]))
 
 
 # ---------------------------------------------------------------------------
@@ -1994,7 +3195,7 @@ def selftest():
           "fit still runs around a missing RCOL")
     P = SYNTH
     check(_near(res.ts, P["ts"]), "ts %.3f vs %.3f" % (res.ts, P["ts"]))
-    for form in FORMS:
+    for form in FORMS_1B:
         for key, want in P["k"][form].items():
             got = res.k[form][key]
             check(_near(got, want), "%s %s %.4f vs %.4f" % (form, key, got, want))
@@ -2034,18 +3235,18 @@ def selftest():
     check(worst.clip == 62, "the distorted clip has the largest residual (%d)" % worst.clip)
     check(res.anomalies == [], "no anomalies on the synthetic log: %r" % res.anomalies)
     # 088 and 089 in the fit: each form's d determined, near 0 on a one-term log, rule PASS
-    lsq_clips = {f: sorted(c for c, _, _ in res.lsq[f]) for f in FORMS}
+    lsq_clips = {f: sorted(c for c, _, _ in res.lsq[f]) for f in FORMS_1B}
     check(88 in lsq_clips["mono"] and 89 in lsq_clips["stereo"]
           and {s for c, s, _ in res.lsq["stereo"]} == {3, 4, 5}
           and {s for c, s, _ in res.lsq["mono"]} == {2, 3}, "fit sets: %r" % lsq_clips)
     check(res.pad["use"] == {"stereo": "stereo", "mono": "mono"}
-          and all(abs(res.pad[f]["d"]) < 0.05 for f in FORMS) and res.sound_ok
+          and all(abs(res.pad[f]["d"]) < 0.05 for f in FORMS_1B) and res.sound_ok
           and "sound-term rule" in text and ": PASS (largest |d|" in text,
-          "one-term log: d %r, rule %r" % ([res.pad[f]["d"] for f in FORMS], res.sound_ok))
+          "one-term log: d %r, rule %r" % ([res.pad[f]["d"] for f in FORMS_1B], res.sound_ok))
     # a pad byte 5 T dearer: d = -5 in both forms, the rule fails and so does the exit status
-    check(all(abs(res_pad.pad[f]["d"] + 5.0) < 0.05 for f in FORMS) and not res_pad.sound_ok
+    check(all(abs(res_pad.pad[f]["d"] + 5.0) < 0.05 for f in FORMS_1B) and not res_pad.sound_ok
           and exit_status(res_pad) == 1 and ": FAIL (largest |d| 5.0" in text_pad,
-          "pad surcharge: d %r, rule %r" % ([res_pad.pad[f]["d"] for f in FORMS],
+          "pad surcharge: d %r, rule %r" % ([res_pad.pad[f]["d"] for f in FORMS_1B],
                                             res_pad.sound_ok))
     # no 089: stereo bytes track Ssnd, so the rule takes the scaled stereo fit
     check(not res_no89.pad["stereo"]["determined"] and res_no89.pad["mono"]["determined"]
@@ -2057,7 +3258,7 @@ def selftest():
     check(abs(res_padst.pad["stereo"]["d"] + 5.0) < 0.05 and abs(res_padst.pad["mono"]["d"]) < 0.05
           and abs(res_padst.sound[2] - 5.0) < 0.05 and not res_padst.sound_ok,
           "stereo-only pad surcharge: d %r, largest |d| %.2f, rule %r" % (
-              [res_padst.pad[f]["d"] for f in FORMS], res_padst.sound[2], res_padst.sound_ok))
+              [res_padst.pad[f]["d"] for f in FORMS_1B], res_padst.sound[2], res_padst.sound_ok))
     # d = 0 but the gate 0.3 percent of a 25 fps period off the fit: the error clause fails it
     pa_off = dict(res.pad, mono=dict(res.pad["mono"], A=res.pad["mono"]["A"] + 0.003 * 625 * per))
     off = sound_rule(res, pa_off)
@@ -2094,7 +3295,7 @@ def selftest():
         finally:
             set_model("1c")
         res_1c = fit(read_sections(log1b), reps=SYNTH_REPS, wait_shape="inline")
-    check(all(_near(res_1b.k[f][key], want) for f in FORMS
+    check(all(_near(res_1b.k[f][key], want) for f in FORMS_1B
               for key, want in SYNTH["k"][f].items()),
           "a log under 1b's harness, --model 1b: constants recovered")
     check(abs(res_1c.k["mono"]["tf"] - res_1b.k["mono"]["tf"]) > 5,
@@ -2133,7 +3334,7 @@ def selftest():
             res_inf1b = fit(s1b, reps=SYNTH_REPS, wait_shape="inline")
         finally:
             set_model("1c")
-        check(all(_near(res_inf1b.k[f][key], want) for f in FORMS
+        check(all(_near(res_inf1b.k[f][key], want) for f in FORMS_1B
                   for key, want in SYNTH["k"][f].items()),
               "a 1b log with no --model: model 1b read from it, constants recovered")
     # an IDEN row with a token too many (1b: two after D=, 1c: one after its mark) is refused,
@@ -2183,6 +3384,67 @@ def selftest():
               and any(e.clip == 62 and "frame program" in e.failure for e in res_f.excluded),
               "a capture whose IDEN names the other frame program is excluded: %r" % [
                   (e.clip, e.failure) for e in res_f.excluded])
+    # Model 1c: synthetic RW1 and RD1 rows through the model; every constant of the three
+    # forms back within 0.1 percent, residuals near 0, the rules pass, the report prints.
+    with tempfile.TemporaryDirectory() as tmp:
+        P = SYNTH_1C
+        p = Path(tmp) / "C.TXT"
+        mono = tuple(c for c in sorted(FIXTURES) if FIXTURES[c][3] == 1)
+        p.write_bytes(synth_log(P, rd1=mono, rd_reps=SYNTH_RD_REPS).encode("ascii"))
+        secs = read_sections(p)
+        res_c = fit(secs, reps=SYNTH_REPS, wait_shape="inline")
+        m = fit_1c(res_c, secs, rd_reps=SYNTH_RD_REPS)
+        text_c = report_1c(res_c, m, secs)
+        a_d = 1 / (1 - P["steal"] / P["sample_t"])
+        want = {f: dict(P["k1c"][f], a=P["a"][f], tb=INI_T * P["a"][f],
+                        sample_t=float(res_c.period)) for f in ("stereo", "mono_ctc")}
+        tp_d = _mean(P["k1c"]["mono_ctc"]["tp"] * synth_frame_1c(c, "mono_dma", P)
+                     / synth_frame_1c(c, "mono_ctc", P) for c in mono)
+        want["mono_dma"] = dict(P["k1c"]["mono_dma"], a=a_d, tb=INI_T * a_d, tp=tp_d,
+                                sample_t=P["sample_t"])
+        check(tuple(m.k) == FORMS and not m.missing, "1c forms fitted: %r" % (tuple(m.k),))
+        for f in m.k:
+            for key, w in want[f].items():
+                check(_near(m.k[f][key], w), "1c %s %s %.5f vs %.5f" % (f, key, m.k[f][key], w))
+        check(m.accepted and m.max_resid < 0.01 and m.variant_ok and m.sound_ok
+              and res_c.anomalies == [] and exit_status_1c(res_c, m) == 0,
+              "1c clean log: max residual %.4f, variant %r, sound %s, anomalies %r" % (
+                  m.max_resid, m.variant, m.sound_verdict, res_c.anomalies))
+        check(all(abs(v - P["steal"]) < 0.05 for f in m.rd.values() for v in f.steal.values())
+              and sorted(m.rd) == list(mono), "1c RD1 steal and clips: %r" % sorted(m.rd))
+        v = dict((n, x) for n, x, _ in dma_verdicts(res_c, m, secs))
+        check(v["R1 rate"] == v["R2 steal"] == v["R4 pointer"] == v["R5 ticks"]
+              == v["R6 teardown"] == "GO" and v["R3 card"] == "-",
+              "1c DMA rows on the clean log (no clip files): %r" % v)
+        check('"mono_dma": {' in text_c and "RAW_SAMPLE_T = {" in text_c
+              and "acceptance: PASS" in text_c, "1c report prints the paste form")
+        # a 3 percent surcharge on one train clip: the variant pattern stops it
+        p.write_bytes(synth_log(P, distort=(62, "ARSW", 1.03)).encode("ascii"))
+        secs = read_sections(p)
+        res_v1 = fit(secs, reps=SYNTH_REPS, wait_shape="inline")
+        m_v = fit_1c(res_v1, secs)
+        check(not m_v.variant_ok and m_v.missing == ["mono_dma"]
+              and exit_status_1c(res_v1, m_v) == 1,
+              "1c variant pattern: %r, missing %r" % (m_v.variant, m_v.missing))
+        # a slow DMA: R1 by spread and mean, R2 by steal
+        slow = dict(P, sample_t=1792 * 1.006, steal=70.0)
+        p.write_bytes(synth_log(slow, rd1=mono, rd_reps=SYNTH_RD_REPS).encode("ascii"))
+        secs = read_sections(p)
+        res_s = fit(secs, reps=SYNTH_REPS, wait_shape="inline")
+        v = dict((n, x) for n, x, _ in dma_verdicts(
+            res_s, fit_1c(res_s, secs, rd_reps=SYNTH_RD_REPS), secs))
+        check(v["R1 rate"] == "NO-GO" and v["R2 steal"] == "NO-GO", "1c slow DMA: %r" % v)
+    # the committed sitting 1b log, fitted under the model it names, gives its constants
+    log1b = REPO / "tests" / "core303" / "results" / "2026-11-23-ks3-legRAW1B" / "NXBENCH.TXT"
+    if log1b.is_file():
+        model, r1b = prev_fit(log1b)
+        got = {f: {k: round(r1b.k[f][k], 4 if k == "tb" else 2) for k in r1b.k[f]}
+               for f in FORMS_1B}
+        check(model == "1b" and model_in_force() == "1c" and got == {
+            "stereo": dict(tb=17.0982, ts=134.62, tsnd=11039.40, tc=40.97, tf=-1019.32,
+                           tp=13092.96),
+            "mono": dict(tb=16.8744, ts=134.62, tsnd=10173.66, tc=40.52, tf=1303.72,
+                         tp=12530.59)}, "sitting 1b's log under model 1b: %r" % got)
     for f in fails:
         print("selftest FAIL: " + f)
     print("selftest: %s (%d checks, %d failed)" % ("PASS" if not fails else "FAIL", checks,
@@ -2204,6 +3466,10 @@ def main(argv=None):
                          "rows (refused if it disagrees); for a log that names none: 1c (this "
                          "tree, the default) or 1b (sitting 1b's: frame harness %d T)" %
                          MODEL_G_FRAME["1b"])
+    ap.add_argument("--prev", help="the previous sitting's NXBENCH.TXT: the NXBD control "
+                                   "and the per-clip attribution (model 1c)")
+    ap.add_argument("--play-clips", help="folder holding leg B's NNN.VID files, for CHK "
+                                         "(read only; model 1c)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
@@ -2218,6 +3484,10 @@ def main(argv=None):
         res = fit(sections, nr11=a.nr11, clips_dir=a.clips and Path(a.clips),
                   wait_shape=a.wait_shape)
         readouts = read_playback(a.playback) if a.playback else None
+        m = prev = None
+        if model == "1c":
+            m = fit_1c(res, sections, a.clips and Path(a.clips))
+            prev = prev_fit(a.prev) if a.prev else None
     except (nxbparse.LogError, FitError) as e:
         sys.stderr.write("error: %s\n" % e)
         return 2
@@ -2226,6 +3496,9 @@ def main(argv=None):
         res.wait_shape, "--wait-shape" if a.wait_shape else
         "inferred: RH39/AH39 rows present" if res.wait_shape == "inline" else
         "inferred: no RH39/AH39 rows"))
+    if m is not None:
+        sys.stdout.write(report_1c(res, m, sections, readouts, prev, a.play_clips))
+        return exit_status_1c(res, m)
     sys.stdout.write(report(res, readouts))
     return exit_status(res)
 
