@@ -133,7 +133,7 @@ $edges = @([int64]0) + $bound + @([int64]$size)
 "card     ${letter}: ($($di.DriveType), $($di.DriveFormat), cluster $cluster bytes, $([int64]$freeCl * $cluster) bytes free)"
 "dest     $destFull"
 "runs     $Runs"
-if ($size + ($Runs - 1) * $cluster -gt [int64]$freeCl * $cluster) { Stop-Refused "not enough free space on ${letter}:" }
+if (([math]::Ceiling($size / $cluster) + ($Runs - 1)) -gt [int64]$freeCl) { Stop-Refused "not enough free space on ${letter}:" }
 for ($k = 0; $k -lt $Runs; $k++) {
     $len = $edges[$k + 1] - $edges[$k]
     "chunk $($k + 1): bytes $($edges[$k])-$($edges[$k + 1] - 1) ($len bytes, $([math]::Ceiling($len / $cluster)) clusters): append to dest, flush, close" +
@@ -156,8 +156,18 @@ if ($WhatIf) {
 
 # ---- write ----------------------------------------------------------------
 $made = New-Object System.Collections.Generic.List[string]
-$in = [IO.File]::OpenRead($src)
+# Deletes this run's pins, each in its own try; returns the paths that could not be deleted.
+function Remove-Pins {
+    $left = @()
+    foreach ($p in $made) {
+        try { Remove-Item -LiteralPath $p -Force -ErrorAction Stop; "pin $p deleted" | Out-Host }
+        catch { $left += $p }
+    }
+    return , $left
+}
+$in = $null
 try {
+    $in = [IO.File]::OpenRead($src)
     $buf = New-Object byte[] (1MB)
     for ($k = 0; $k -lt $Runs; $k++) {
         $out = New-Object IO.FileStream($destFull, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::None, 65536, [IO.FileOptions]::WriteThrough)
@@ -182,10 +192,18 @@ try {
         }
     }
 }
-finally {
-    $in.Close()
-    foreach ($p in $made) { Remove-Item -LiteralPath $p -Force; "pin $p deleted" }
+catch {
+    Write-Host "fragcard: write failed - $($_.Exception.Message)"
+    if ($in) { $in.Close() }
+    $stuck = Remove-Pins
+    # the partial dest is never deleted: only this run's pins are
+    if ($stuck.Count) { Write-Host "fragcard: FAILED - $destFull left partial on the card; pins NOT deleted: $($stuck -join ', ')" }
+    else { Write-Host "fragcard: FAILED - $destFull left partial on the card; pins deleted" }
+    exit 1
 }
+$in.Close()
+$stuck = Remove-Pins
+if ($stuck.Count) { Write-Host "fragcard: FAILED - $destFull written; pins NOT deleted: $($stuck -join ', ')"; exit 1 }
 
 # ---- compare --------------------------------------------------------------
 function Read-Full([IO.Stream]$S, [byte[]]$Buf) {

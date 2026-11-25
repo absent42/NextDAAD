@@ -5725,6 +5725,7 @@ if ($VidRaw) {
     $v2Src = @{
         sintel = @((Join-Path $v2Demo 'Sintel_1080_10s_30MB.mp4'), 'sintel', 'Sintel_1080_10s_30MB.mp4 (silent)')
         sinsnd = @((Join-Path $v2Demo 'sintel sound.mp4'), 'sinsnd', 'sintel sound.mp4')
+        jelsnd = @((Join-Path $v2Demo 'jellyfish sound.mp4'), 'jelsnd', 'jellyfish sound.mp4')
         tone   = @($v2Tone, "tone$v2ToneKey", (Split-Path -Leaf $v2Tone))
         loop   = @($v2Loop, [IO.Path]::GetFileNameWithoutExtension($v2Loop), "$(Split-Path -Leaf $v2Loop) (sintel, bunny, jellyfish sound x5)")
         cuts   = @($v2Cuts, [IO.Path]::GetFileNameWithoutExtension($v2Cuts), "$(Split-Path -Leaf $v2Cuts) (jellyfish, bunny, sintel 0.24 s, jellyfish, bunny sound)")
@@ -5765,6 +5766,8 @@ if ($VidRaw) {
     # One videnc.py --direct encode (the real CLI, gate in the loop) with its --report JSON beside it.
     function Invoke-V2Encode([string]$Src, [string]$Out, $W, $H, [string]$Fps, [string]$Dur, [string]$Want, [string]$Stall) {
         if ((Test-Path -LiteralPath $Out) -and (Test-Path -LiteralPath "$Out.json")) { return @{ ok = $true } }
+        # a refusal is recorded beside the cache name and not re-encoded
+        if (Test-Path -LiteralPath "$Out.refused") { return @{ ok = $false; text = (Get-Content -LiteralPath "$Out.refused" -Raw).Trim() } }
         $a = @($Src, "$Out.tmp", '--direct', '--shape', "${W}x${H}", '--fps', $Fps, '--start', '00:00:00', '--duration', $Dur,
                '--report', "$Out.json", '--ffmpeg', $v2Ff)
         if ($Want -ne 'auto') { $a += @('--direct-sound', $Want) }
@@ -5774,7 +5777,9 @@ if ($VidRaw) {
         if ($LASTEXITCODE -ne 0) {
             Remove-Item -LiteralPath "$Out.tmp", "$Out.json" -Force -ErrorAction SilentlyContinue
             $msg = @($o | Where-Object { $_ -match '^error:' })
-            return @{ ok = $false; text = $(if ($msg) { $msg -join ' ' } else { $o[-1] }) }
+            if (-not $msg) { throw "videnc.py failed without a gate refusal: $($o[-1])" }
+            [IO.File]::WriteAllText("$Out.refused", ($msg -join ' '))
+            return @{ ok = $false; text = $msg -join ' ' }
         }
         Move-Item -LiteralPath "$Out.tmp" -Destination $Out -Force
         return @{ ok = $true }
@@ -5797,7 +5802,8 @@ if ($VidRaw) {
     $v2Clips['127'] = @{ role = 'tones left/right'; src = 'tone'; like = '100'; fps = '25'; want = 'stereo'; stall = 'off'; dur = '8.0'; check = 'lr' }
     $v2Clips['128'] = @{ role = 'tones mono'; src = 'tone'; like = '100'; fps = '25'; want = 'mono'; stall = 'off'; dur = '8.0'; check = 'monotones' }
     $v2Clips['129'] = @{ role = 'film sound stereo'; src = 'sinsnd'; w = 320; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
-    $v2Clips['130'] = @{ role = 'film sound stereo'; src = 'sinsnd'; w = 280; h = 224; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
+    # Sintel's cut spacing is refused by the scene-cut check at 280x224 stereo; jellyfish is admitted.
+    $v2Clips['130'] = @{ role = 'film sound stereo'; src = 'jelsnd'; w = 280; h = 224; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
     $v2Clips['131'] = @{ role = 'scene cuts'; src = 'cuts'; w = 320; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '12.0'; check = 'sound'; cuts = $true }
     $v2Clips['132'] = @{ role = 'mono edge'; src = 'sinsnd'; w = 320; h = 208; fps = '25'; want = 'mono'; stall = 'off'; dur = '10.0'; check = 'sound' }
     $v2Clips['133'] = @{ role = 'mono edge'; src = 'sinsnd'; w = 280; h = 224; fps = '25'; want = 'mono'; stall = 'off'; dur = '10.0'; check = 'sound' }
