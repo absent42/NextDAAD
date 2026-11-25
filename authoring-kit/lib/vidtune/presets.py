@@ -79,9 +79,11 @@ ROUTES = (
           "snow, crowds, smoke - at 320x240 and 16.67 fps",
           {"direct": True, "shape": "320x240", "fps": "16.67"},
           (Route("action-169", "Full-screen action, 16:9 source",
-                 "the same route using a 16:9 source's own shape, 320x192",
-                 {"direct": True, "shape": "16:9", "fps": "16.67"}),
-           Route("action-tall", "Full-screen action, narrower",
+                 "the same footage from a 16:9 source at its own shape, "
+                 "320x192, which plays at the full 25 fps - at the edge of "
+                 "what the card delivers",
+                 {"direct": True, "shape": "16:9", "fps": "25"}),
+           Route("action-narrow", "Full-screen action, narrower",
                  "256x240: the same height, narrower than the screen with "
                  "black at the sides, for a fifth less card space",
                  {"direct": True, "shape": "256x240", "fps": "16.67"}))),

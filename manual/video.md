@@ -278,11 +278,17 @@ can accept less fluid motion.
 SET VIDOPTS_001=--direct --shape 320x240 --fps 16.67
 ```
 
-For a 16:9 source, use its own shape instead:
+For a 16:9 source, use its own shape instead. At 320x192 the picture
+plays at the full 25 frames a second:
 
 ```
-SET VIDOPTS_001=--direct --shape 16:9 --fps 16.67
+SET VIDOPTS_001=--direct --shape 16:9 --fps 25
 ```
+
+320x192 at 25 fps sits at the edge of what the card delivers: the
+encoder warns that the clip is at the edge of rate, and footage whose
+scene cuts come close together is encoded with mono sound at this size
+(see [Mono sound](#mono-sound)).
 
 Or keep the height and narrow the picture to 256 pixels, with black at
 the sides, for a fifth less card space:
@@ -298,8 +304,9 @@ detail that the compressed route turns into flat stripes stays as
 detail.
 
 **You pay:** two things, both real. About twice the card space of the
-compressed version of the same clip, and two-thirds of the motion
-rate - 16.67 frames a second instead of 25. Each picture is held for
+compressed version of the same clip, and, at 320x240 and 256x240,
+two-thirds of the motion rate - 16.67 frames a second instead of 25.
+The 16:9 shape keeps the full 25. Each picture is held for
 three display frames, so the cadence is even and there is no stutter or
 beat on top of the reduced rate, but motion is noticeably less smooth,
 and you should look at it before committing.
@@ -554,7 +561,7 @@ each scene also carries that scene's palette, 512 bytes more.
 | Preset | Shape and rate | Per frame | Card space |
 | ------ | -------------- | --------- | ---------- |
 | 2 | 320x240 at 16.67 fps | 78,848 bytes | about 1.31 MB per second |
-| 2 | 320x192 at 16.67 fps | 63,488 bytes | about 1.06 MB per second |
+| 2 | 320x192 at 25 fps | 62,976 bytes | about 1.57 MB per second |
 | 2 | 256x240 at 16.67 fps | 63,488 bytes | about 1.06 MB per second |
 | 3 | 256x192 at 25 fps | 50,688 bytes | about 1.27 MB per second |
 | 3 | 320x160 at 25 fps | 52,736 bytes | about 1.32 MB per second |

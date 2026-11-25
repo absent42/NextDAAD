@@ -302,9 +302,14 @@ weather, falling snow, crowds, smoke - where you want a big picture and
 can accept less fluid motion.</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 320x240 --fps 16.67
 </code></pre>
-<p>For a 16:9 source, use its own shape instead:</p>
-<pre><code>SET VIDOPTS_001=--direct --shape 16:9 --fps 16.67
+<p>For a 16:9 source, use its own shape instead. At 320x192 the picture
+plays at the full 25 frames a second:</p>
+<pre><code>SET VIDOPTS_001=--direct --shape 16:9 --fps 25
 </code></pre>
+<p>320x192 at 25 fps sits at the edge of what the card delivers: the
+encoder warns that the clip is at the edge of rate, and footage whose
+scene cuts come close together is encoded with mono sound at this size
+(see <a href="#mono-sound">Mono sound</a>).</p>
 <p>Or keep the height and narrow the picture to 256 pixels, with black at
 the sides, for a fifth less card space:</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 256x240 --fps 16.67
@@ -315,8 +320,9 @@ the footage this route is meant for, the difference is not subtle -
 detail that the compressed route turns into flat stripes stays as
 detail.</p>
 <p><strong>You pay:</strong> two things, both real. About twice the card space of the
-compressed version of the same clip, and two-thirds of the motion
-rate - 16.67 frames a second instead of 25. Each picture is held for
+compressed version of the same clip, and, at 320x240 and 256x240,
+two-thirds of the motion rate - 16.67 frames a second instead of 25.
+The 16:9 shape keeps the full 25. Each picture is held for
 three display frames, so the cadence is even and there is no stutter or
 beat on top of the reduced rate, but motion is noticeably less smooth,
 and you should look at it before committing.</p>
@@ -576,9 +582,9 @@ each scene also carries that scene's palette, 512 bytes more.</p>
 </tr>
 <tr>
 <td>2</td>
-<td>320x192 at 16.67 fps</td>
-<td>63,488 bytes</td>
-<td>about 1.06 MB per second</td>
+<td>320x192 at 25 fps</td>
+<td>62,976 bytes</td>
+<td>about 1.57 MB per second</td>
 </tr>
 <tr>
 <td>2</td>

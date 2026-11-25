@@ -30,8 +30,8 @@ EXPECTED = {
     "quiet":          {},
     "quiet-motion":   {"tile_slack": "0.5"},
     "action":         {"direct": True, "shape": "320x240", "fps": "16.67"},
-    "action-169":     {"direct": True, "shape": "16:9", "fps": "16.67"},
-    "action-tall":    {"direct": True, "shape": "256x240", "fps": "16.67"},
+    "action-169":     {"direct": True, "shape": "16:9", "fps": "25"},
+    "action-narrow":  {"direct": True, "shape": "256x240", "fps": "16.67"},
     "fullrate":       {"direct": True, "shape": "256x192"},
     "fullrate-wide":  {"direct": True, "shape": "320x160"},
     "fullrate-tall":  {"direct": True, "shape": "280x224"},
@@ -42,7 +42,7 @@ EXPECTED = {
 # each route and its framing variants, in menu order
 GROUPS = [
     ("fullrate", ["fullrate-wide", "fullrate-tall"]),
-    ("action",   ["action-169", "action-tall"]),
+    ("action",   ["action-169", "action-narrow"]),
     ("quiet",    ["quiet-motion"]),
     ("cutscene", ["cutscene-43"]),
 ]

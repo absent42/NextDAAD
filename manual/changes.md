@@ -27,8 +27,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   [Audio](audio.md#volume-and-pan).
 - **Bigger uncompressed video.** `--direct` now writes a new uncompressed
   layout that the player reads straight from the card at a much lower
-  cost, so the uncompressed presets grow: 256x192, 320x160 and 280x224
-  at 25 fps, and 320x240, 320x192 and 256x240 at 16.67 fps. An
+  cost, so the uncompressed presets grow: 256x192, 320x160, 280x224 and
+  320x192 at 25 fps, and 320x240 and 256x240 at 16.67 fps. An
   uncompressed clip may be any width that is a multiple of 4 up to 320,
   centred on the 320-wide screen with black at the sides, and carries
   mono sound when stereo would not keep up at its shape

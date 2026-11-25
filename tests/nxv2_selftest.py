@@ -5069,7 +5069,7 @@ def t11_direct_gate_fps_floor_menu():
 # Raw target shapes and the route key the preset rule gives each.
 RAW_TARGET_ROUTES = {(256, 192, 25.0): "fullrate", (320, 160, 25.0): "fullrate-wide",
                      (320, 192, 25.0): "action-169", (280, 224, 25.0): "fullrate-tall",
-                     (320, 240, 16.67): "action", (256, 240, 16.67): "action-tall"}
+                     (320, 240, 16.67): "action", (256, 240, 16.67): "action-narrow"}
 
 
 def _raw_pick(w, h, fps):
@@ -5103,17 +5103,11 @@ def t11_direct_routes():
         expect(("mono" in r.blurb.lower()) == (form == "mono"),
                f"route {r.key} plays {form}; its blurb must say mono exactly when it is: {r.blurb!r}")
         print(f"    {r.key}: {w}x{h}@{fps:g} {form} util {chk['utilization']:.4f}")
-    # the preset rule: a target that is admitted gets its route, at its rate; action-169 at the
-    # highest of 25 and 16.67 that passes without the warning
+    # the preset rule: a target that is admitted gets its route, at its rate
     refused = {tuple(map(int, s.split("x"))) + (float(f),): u for s, f, u in presets.REFUSED_TARGETS}
     want = {}
     for (w, h, fps), key in RAW_TARGET_ROUTES.items():
-        if key == "action-169":
-            ok = [r for r in (25.0, 16.67)
-                  if (p := _raw_pick(w, h, r)) and p[1] <= enc.STREAM_WARN_UTIL]
-            rate = ok[0] if ok else None
-        else:
-            rate = fps if _raw_pick(w, h, fps) else None
+        rate = fps if _raw_pick(w, h, fps) else None
         if rate is None:
             expect((w, h, fps) in refused, f"{w}x{h}@{fps:g} is refused but not in REFUSED_TARGETS")
             for form, u in refused[(w, h, fps)].items():
