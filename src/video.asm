@@ -3788,7 +3788,9 @@ NXB_MODE_ARM     equ 14      ; flags+248 -> nxbSessReq, flags+248 cleared
 NXB_MODE_LOG     equ 15      ; the log step (nxb_log, NXB_PAGE)
 NXB_MODE_PLAY    equ 16      ; the log step: play capture to NXPLAY.TXT
 NXB_MODE_CLR     equ 17      ; the log step: blank the play capture rows
-NXB_MODE_LOGMAX  equ 17      ; modes above: nxb_log shows LOG ERR 01
+NXB_MODE_MCTC    equ 18      ; the log step: vidMonoDma = 0, MONO CTC on row 31
+NXB_MODE_MDMA    equ 19      ; the log step: vidMonoDma = 1, MONO DMA on row 31
+NXB_MODE_LOGMAX  equ 19      ; modes above: nxb_log shows LOG ERR 01
 NXB_TAB_MAX      equ 560     ; nxbTabBuf: every table asserts it fits
 NXB_ROW_LEN      equ 12      ; ds 4 tag, db opc, dw count, db ops,
                              ; dw reps, db thr, db geo
@@ -7529,8 +7531,9 @@ nxbSesSysEnd:
 
 ; ---------------------------------------------------------------------
 ; LOG STEP (via nxb_hop6, untimed, corrupts everything) by nxbMode: 15 appends "#NXB ffff",
-; rows 0-31 and #HIST lines to NXBENCH.TXT, 16 "#PLAY ccc pp ffff" and rows 23-27 to
-; NXPLAY.TXT, both read back, then LOG OK / ERR xx on row 31; 17 blanks; above: LOG ERR 01.
+; rows 0-31 and #HIST lines to NXBENCH.TXT, 16 "#PLAY ccc pp ffff s v" and rows 23-27 to
+; NXPLAY.TXT, both read back, then LOG OK / ERR xx on row 31; 17 blanks; 18 and 19 set
+; vidMonoDma (MONO CTC / MONO DMA on row 31); above: LOG ERR 01.
 ; ---------------------------------------------------------------------
 NXB_LOG_WMODE    equ $0B     ; F_OPEN open_creat + read/write: the API append (.extract -a)
 ; LOG ERR xx: bits 7-5 the step below, bits 4-0 the esxDOS code (1-31), or 0 for
@@ -7545,14 +7548,18 @@ NXB_LOG_CMP      equ $E0     ; compare, final close
 NXB_PLAY_ROW0    equ 23      ; vid_fail_puts' refusal row, then the report's four
 NXB_PLAY_ROWS    equ 5
 NXB_POOL_NONE    equ $FF     ; vidPoolAtOpen until an open writes it: above any pool count
+NXB_SND_PATHS    equ 3       ; vidSndPath 0-2; mode 17 leaves NXB_POOL_NONE until .vec writes it
     ASSERT NXB_PLAY_ROW0 == VID_FAIL_ROW && VID_TL_ROW0 == NXB_PLAY_ROW0 + 1
     ASSERT NXB_PLAY_ROW0 + NXB_PLAY_ROWS < TM_ROWS - 1
+    ASSERT NXB_POOL_NONE >= NXB_SND_PATHS
 
 ; Mode 17: blank rows 23-27 and row 31, so a capture and LOG OK are the next step's own;
-; the pool figure reads NXB_POOL_NONE unless the play's open (nxv2_open_body) writes it.
+; the pool figure and the sound path read NXB_POOL_NONE unless the play's open writes them
+; (nxv2_open_body, vid_stage_common.vec).
 nxb_log_clr:
     ld a, NXB_POOL_NONE
     ld (vidPoolAtOpen), a
+    ld (vidSndPath), a
     ld a, (tmCols)
     ld e, a
     ld d, NXB_PLAY_ROWS
@@ -7566,8 +7573,24 @@ nxb_log_b31:
     ld e, a
     jp tm_clear_blank
 
+; Modes 18, 19 (A = 0, 1): the path a raw mono open takes, named on a blanked row 31.
+nxb_log_mono:
+    ld (vidMonoDma), a
+    or a
+    ld hl, nxbMonoCtc
+    jr z, .show
+    ld hl, nxbMonoDma
+.show:
+    push hl
+    call nxb_log_b31
+    ld bc, (TM_ROWS - 1) << 8
+    call dbg_at
+    pop hl
+    jp dbg_puts
+
     ASSERT NXB_MODE_PLAY == NXB_MODE_LOG + 1 && NXB_MODE_CLR == NXB_MODE_PLAY + 1
-    ASSERT NXB_MODE_LOGMAX == NXB_MODE_CLR
+    ASSERT NXB_MODE_MCTC == NXB_MODE_CLR + 1 && NXB_MODE_MDMA == NXB_MODE_MCTC + 1
+    ASSERT NXB_MODE_LOGMAX == NXB_MODE_MDMA
 nxb_log:
     ld a, (nxbMode)
     cp NXB_MODE_CLR
@@ -7577,6 +7600,9 @@ nxb_log:
     jr z, .sel
     ld hl, nxbLogM15
     jr c, .sel
+    sub NXB_MODE_MCTC
+    cp 2
+    jr c, nxb_log_mono
     ld a, 1                      ; LOG ERR 01: a real failure has its step in bits 7-5
     jp nxb_log_show
 .sel:
@@ -7762,9 +7788,13 @@ nxb_log_pass:
     call nxb_log_hex
     ld a, l
     call nxb_log_hex
+    ld a, (nxbLogPlay)
+    or a
+    call nz, nxb_log_sv
     ld a, e
     sub low nxbLogLine
-    ld c, a                      ; B = 0: the ldir or the djnz
+    ld c, a
+    ld b, 0
     call .line
     ld a, (nxbLogRow0)
     ld b, a                      ; the row
@@ -7865,6 +7895,37 @@ nxb_log_hex:
     inc de
     ret
 
+; " s v" at DE: s = S, C, D by vidSndPath (- above 2: no open reached .vec); v = T or I
+; by vidRawVar on a raw session, else -. Corrupts AF, BC, HL.
+nxb_log_sv:
+    ld bc, '-' * $101            ; B = s, C = v
+    ld a, (vidSndPath)
+    cp NXB_SND_PATHS
+    jr nc, .put
+    ld hl, nxbSndCh
+    add hl, a
+    ld b, (hl)
+    ld a, (vidRaw)
+    or a
+    jr z, .put
+    ld a, (vidRawVar)
+    or a
+    ld c, 'I'
+    jr z, .put
+    ld c, 'T'
+.put:
+    ex de, hl
+    ld (hl), ' '
+    inc hl
+    ld (hl), b
+    inc hl
+    ld (hl), ' '
+    inc hl
+    ld (hl), c
+    inc hl
+    ex de, hl
+    ret
+
 ; Write BC bytes of nxbLogLine: F_WRITE's Fc=0 can still return a short BC.
 nxb_log_put:
     push bc
@@ -7915,6 +7976,10 @@ NXB_LOG_HDR_LEN equ $ - nxbLogHdr
 nxbPlayHdr:   db "#PLAY "
 NXB_PLAY_HDR_LEN equ $ - nxbPlayHdr
 nxbPlayPow:   db 100, 10, 1
+nxbSndCh:     db "SCD"               ; by vidSndPath
+    ASSERT $ - nxbSndCh == NXB_SND_PATHS
+nxbMonoCtc:   db "MONO CTC", 0
+nxbMonoDma:   db "MONO DMA", 0
 ; nxb_log's selection by mode, copied to nxbLogNm: dw name, db first row, end row, play.
 nxbLogM15:    dw nxbLogName
               db 0, TM_ROWS, 0

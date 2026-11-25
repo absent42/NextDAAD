@@ -4,11 +4,14 @@ into one markdown row per capture.
 
 Usage: python tests/core303/playlog.py NXPLAY.TXT [--out playback.md]
 
-A capture is the header "#PLAY ccc pp ffff" (ccc = flag 140 in decimal, the clip PICK armed;
+A capture is the header "#PLAY ccc pp ffff s v" (ccc = flag 140 in decimal, the clip PICK armed;
 pp = vidPoolAtOpen, the free pool banks before that open, FF = no open ran; ffff =
-frameCounter) and the non-empty screen rows 23-27: the open-refusal row, then the timeline
-report rows (FRM, RING, PLAY, LATE). The table's Step is the capture number; raw_fit.read_playback
-reads its Step, Clip, PLAY, FRM, LATE and URUN columns. Absent fields print "-".
+frameCounter; s = the sound path, S stereo or non-raw, C mono from CTC 0, D mono from the
+zxnDMA, - when no open staged a session; v = the raw reader, T column train, I inline, - on a
+non-raw session) and the non-empty screen rows 23-27: the open-refusal row, then the timeline
+report rows (FRM, RING, PLAY, LATE). A header without s and v (an older image) gives "-" for
+both. The table's Step is the capture number; raw_fit.read_playback reads its Step, Clip, SND,
+VAR, PLAY, FRM, LATE and URUN columns. Absent fields print "-".
 
 A capture cut short (a line without its end, a field of the wrong width, a header cut, or the
 next capture's header written onto a partial line by a short F_WRITE) is kept as a row whose
@@ -20,9 +23,9 @@ import re
 import sys
 from pathlib import Path
 
-COLUMNS = ["Step", "Clip", "Pool", "Row 23", "FRM", "ERR", "OP", "POS", "PASS", "RING",
-           "FILL", "SNAP", "PLAY", "NOM", "CHK", "LATE", "MAXL", "URUN", "RUNS"]
-FIELDS = COLUMNS[4:]
+COLUMNS = ["Step", "Clip", "Pool", "SND", "VAR", "Row 23", "FRM", "ERR", "OP", "POS", "PASS",
+           "RING", "FILL", "SNAP", "PLAY", "NOM", "CHK", "LATE", "MAXL", "URUN", "RUNS"]
+FIELDS = COLUMNS[6:]
 # hex digits per part, from vid_tl_report_body (src/video.asm)
 WIDTHS = {"FRM": (4, 4), "ERR": (2,), "OP": (2,), "POS": (6,), "PASS": (2,),
           "RING": (4, 4, 2), "FILL": (4,), "SNAP": (2,), "PLAY": (4,), "NOM": (4,),
@@ -31,7 +34,7 @@ assert list(WIDTHS) == FIELDS
 POOL_NONE = "FF"
 
 HEADER = "#PLAY "
-HEADER_RE = re.compile(r"#PLAY (\d{3}) ([0-9A-F]{2}) ([0-9A-F]{4})")
+HEADER_RE = re.compile(r"#PLAY (\d{3}) ([0-9A-F]{2}) ([0-9A-F]{4})(?: ([SCD-]) ([TI-]))?")
 REPORT_ROW = re.compile(r"\s*(FRM|RING|PLAY|LATE)\s*=")
 PAIR = re.compile(r"([A-Z]+)\s*=([0-9A-F/]*)")
 
@@ -101,6 +104,8 @@ def parse_playlog(path):
                 cap["Clip"] = words[0]
             if len(words) > 1 and re.fullmatch(r"[0-9A-F]{2}", words[1]):
                 cap["Pool"] = "-" if words[1] == POOL_NONE else words[1]
+            if m and m.group(4):
+                cap["SND"], cap["VAR"] = m.group(4), m.group(5)
             caps.append(cap)
             extra.append({"row23": [], "cut": not (m and ended)})
         elif not caps:

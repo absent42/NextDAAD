@@ -359,6 +359,9 @@ LS256 111     verb
 ; row 31. Session verbs arm through EXTERN 0 12 mode 14, so a game's own
 ; flag 248 never diverts a clip. Release's EXTERN 0 12 is ext_stub,
 ; so all of them are silent no-ops there.
+;   MCTC - verb 133, mode 18: a raw one-channel clip's sound comes from
+;          CTC 0's handler from the next open on; MONO CTC on row 31.
+;   MDMA - verb 134, mode 19: from the zxnDMA; MONO DMA on row 31.
 NXBO  112     verb
 NXBC  113     verb
 NXBK  114     verb
@@ -376,6 +379,8 @@ NXBQ  128     verb
 NXBY  129     verb
 NXBW  130     verb
 NXBM  132     verb
+MCTC  133     verb
+MDMA  134     verb
 NXBP  135     verb
 
 ; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
@@ -1307,6 +1312,15 @@ $pictureOK
                 PROCESS 10
                 DONE
 
+; MCTC/MDMA: the sound path of a raw one-channel clip, from the next open on.
+> MCTC    _     LET     250 18
+                EXTERN  0 12
+                DONE
+
+> MDMA    _     LET     250 19
+                EXTERN  0 12
+                DONE
+
 ; BUILD WAVE W5 numbered play (see the vocabulary block note). PICK nn
 ; copies the parsed noun's word value (the numeral) into user flag 140
 ; - flag 140 is untouched by everything else in this template (120-123
@@ -1320,8 +1334,8 @@ $pictureOK
 ; 000.VID. Same PROCESS 10 post-video redraw convention as every
 ; other video verb. DEBUG play log around the play: LET 250 17 /
 ; EXTERN 0 12 blanks rows 23-27 and 31, LET 250 16 / EXTERN 0 12
-; appends flag 140, the pool and rows 23-27 to NXPLAY.TXT (LOG OK on
-; row 31). Release: vector 12 forwards to an XBN, none staged, so no-op.
+; appends flag 140, the pool, the sound path, the reader variant and
+; rows 23-27 to NXPLAY.TXT (LOG OK on row 31). Release: vector 12 forwards to an XBN, none staged, so no-op.
 > PICK    _     NOTEQ   fNoun 255
                 COPYFF  fNoun 140
                 MES "Clip "

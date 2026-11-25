@@ -5801,19 +5801,25 @@ def tm_text(mc, row):
 
 def test_play_log():
     """Mode 16 through nxb_entry: NXPLAY.TXT opened twice (append, read back), the capture
-    appended after what the file held - "#PLAY ccc pp ffff" (flag 140 in decimal,
-    vidPoolAtOpen, frameCounter), rows 23-27 trimmed, CRLF ends, nothing from rows 0-22 or
+    appended after what the file held - "#PLAY ccc pp ffff s v" (flag 140 in decimal,
+    vidPoolAtOpen, frameCounter, S/C/D by vidSndPath 0/1/2 or - above, T/I by vidRawVar with
+    vidRaw set or -), rows 23-27 trimmed, CRLF ends, nothing from rows 0-22 or
     28-31, no #HIST line with nxbHistN 2 - every handle closed, rows 0-30 unchanged, LOG OK on
     row 31. Then mode 15 on the same screen writes NXBENCH.TXT: every row, both #HIST lines."""
     bench_only()
-    fl, hdr = S("flags"), "#PLAY 074 50 1234"
-    for clip, pool, fc, want_hdr in ((74, 0x50, 0x1234, hdr), (0, 0, 0, "#PLAY 000 00 0000"),
-                                     (9, 0x7F, 0xFFFF, "#PLAY 009 7F FFFF"),
-                                     (100, 0xA0, 0x0102, "#PLAY 100 A0 0102"),
-                                     (255, 0xFF, 0x8000, "#PLAY 255 FF 8000")):
+    fl = S("flags")
+    for clip, pool, fc, snd, raw, var, want_hdr in (
+            (74, 0x50, 0x1234, 2, 1, 1, "#PLAY 074 50 1234 D T"),
+            (0, 0, 0, 0, 0, 1, "#PLAY 000 00 0000 S -"),
+            (9, 0x7F, 0xFFFF, 1, 1, 0, "#PLAY 009 7F FFFF C I"),
+            (100, 0xA0, 0x0102, 0, 1, 1, "#PLAY 100 A0 0102 S T"),
+            (60, 0x50, 0x0001, 3, 1, 1, "#PLAY 060 50 0001 - -"),
+            (255, 0xFF, 0x8000, 0xFF, 1, 0, "#PLAY 255 FF 8000 - -")):
         mc = play_machine(PLAY_ROWS)
         mc.mem[fl + 140] = clip
         mc.poke("vidPoolAtOpen", pool)
+        for name, v in (("vidSndPath", snd), ("vidRaw", raw), ("vidRawVar", var)):
+            mc.poke(name, v)
         mc.poke16("frameCounter", fc)
         mc.poke("nxbHistN", 2)
         prior = b"#PLAY 001 4F 0001\r\nVID FILE?\r\n"
@@ -5854,10 +5860,13 @@ def test_play_log():
 
 def test_play_clr():
     """Mode 17 through nxb_entry: rows 23-27 and 31 blank (spaces at TM_ATTR_DEFAULT over
-    tmCols), every other tilemap byte unchanged (rows 22 and 28 hold text), no esxDOS call."""
+    tmCols), every other tilemap byte unchanged (rows 22 and 28 hold text), no esxDOS call;
+    vidSndPath reads $FF, vidMonoDma is unchanged."""
     bench_only()
     fl = S("flags")
     mc = play_machine({31: "LOG OK"})
+    mc.poke("vidSndPath", 2)
+    mono = mc.peek("vidMonoDma")
     before = [tm_bytes(mc, r) for r in range(32)]
     mc.mem[fl + 250] = S("NXB_MODE_CLR")
     mc.run("nxb_entry", traps=no_esx())
@@ -5869,16 +5878,22 @@ def test_play_clr():
                        f"{'not blank' if want == blank else 'changed'}")
     if mc.mem[fl + 250]:
         raise Fail(f"mode 17: flags+250 = {mc.mem[fl + 250]}, not cleared")
+    if (mc.peek("vidSndPath"), mc.peek("vidMonoDma")) != (0xFF, mono):
+        raise Fail(f"mode 17: vidSndPath ${mc.peek('vidSndPath'):02X}, vidMonoDma "
+                   f"{mc.peek('vidMonoDma')}, expected $FF, {mono}")
 
 
 def test_play_nofile():
     """GO on a missing clip: mode 17 sets vidPoolAtOpen to $FF (no pool figure), and mode 16
-    with no open between logs "#PLAY 074 FF 1234" and the refusal row."""
+    with no open between logs "#PLAY 074 FF 1234 - -" (the session before was raw, path 2)
+    and the refusal row."""
     bench_only()
     fl = S("flags")
     mc = play_machine()
     mc.mem[fl + 140] = 74
     mc.poke("vidPoolAtOpen", 0x50)
+    for name, v in (("vidSndPath", 2), ("vidRaw", 1), ("vidRawVar", 1)):
+        mc.poke(name, v)
     mc.poke16("frameCounter", 0x1234)
     mc.mem[fl + 250] = S("NXB_MODE_CLR")
     mc.run("nxb_entry", traps=no_esx())
@@ -5890,7 +5905,7 @@ def test_play_nofile():
     mc.mem[fl + 250] = S("NXB_MODE_PLAY")
     mc.run("nxb_entry", traps=esx.traps())
     got = bytes(esx.files.get("NXPLAY.TXT", b""))
-    if got != b"#PLAY 074 FF 1234\r\nVID FILE?\r\n" or tm_text(mc, 31) != "LOG OK":
+    if got != b"#PLAY 074 FF 1234 - -\r\nVID FILE?\r\n" or tm_text(mc, 31) != "LOG OK":
         raise Fail(f"mode 16 after 17: NXPLAY.TXT {got!r}, row 31 {tm_text(mc, 31)!r}")
 
 
@@ -5937,8 +5952,9 @@ def test_fail_print():
 
 def test_entry_modes():
     """nxb_entry: flags+250 = 15, 16, 17 reach nxb_log with NXB_PAGE at MMU6 and nxbMode the
-    mode, 14 reaches .arm, none enters the standalone path; 18 and 255 reach nxb_log and show
-    LOG ERR 01 on row 31 with no esxDOS call, rows 0-30 unchanged."""
+    mode, 14 reaches .arm, none enters the standalone path; 18 and 19 reach nxb_log, write
+    vidMonoDma 0 and 1 and show MONO CTC and MONO DMA on row 31; 20 and 255 show LOG ERR 01
+    there and leave the cell; none of the four makes an esxDOS call or changes rows 0-30."""
     bench_only()
     fl, nxb = S("flags"), S("NXB_PAGE")
     for mode in (14, 15, 16, 17):
@@ -5953,9 +5969,15 @@ def test_entry_modes():
         want = [("arm",)] if mode == 14 else [("log", nxb, mode)]
         if seen != want:
             raise Fail(f"mode {mode}: reached {seen}, expected {want}")
-    for mode in (18, 255):
-        mc = play_machine()
+    if (S("NXB_MODE_MCTC"), S("NXB_MODE_MDMA"), S("NXB_MODE_LOGMAX")) != (18, 19, 19):
+        raise Fail("NXB_MODE_MCTC, NXB_MODE_MDMA, NXB_MODE_LOGMAX are not 18, 19, 19")
+    for mode, start, cell, text in ((18, 1, 0, "MONO CTC"), (19, 0, 1, "MONO DMA"),
+                                    (18, 0, 0, "MONO CTC"), (19, 1, 1, "MONO DMA"),
+                                    (20, 0, 0, "LOG ERR 01"), (20, 1, 1, "LOG ERR 01"),
+                                    (255, 1, 1, "LOG ERR 01")):
+        mc = play_machine({31: "LOG OK AND A LONGER TAIL"})
         before = [tm_bytes(mc, r) for r in range(31)]
+        mc.poke("vidMonoDma", start)
         mc.mem[fl + 250] = mode
         seen = []
 
@@ -5964,8 +5986,10 @@ def test_entry_modes():
             c.step()
         mc.run("nxb_entry", traps={S("nxb_log"): watch, **forbid("nxb_blank"), **no_esx()})
         changed = [r for r in range(31) if tm_bytes(mc, r) != before[r]]
-        if seen != [nxb] or tm_text(mc, 31) != "LOG ERR 01" or changed:
-            raise Fail(f"mode {mode}: nxb_log entries {seen}, row 31 {tm_text(mc, 31)!r}, "
+        got = (seen, tm_text(mc, 31), mc.peek("vidMonoDma"), mc.mem[fl + 250])
+        if got != ([nxb], text, cell, 0) or changed:
+            raise Fail(f"mode {mode} from vidMonoDma {start}: (nxb_log entries, row 31, "
+                       f"vidMonoDma, flags+250) = {got}, expected {([nxb], text, cell, 0)}; "
                        f"rows changed {changed}")
 
 
