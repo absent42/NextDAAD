@@ -339,8 +339,8 @@ uncompressed and 320x256 do not fit down the same wire.
 
 `280x224` sits at the edge of what the card delivers. The encoder
 prints a warning that the clip is at the edge of rate, and a clip that
-cuts between scenes very quickly at this shape can be refused (section
-8); `--direct-sound mono` gives such a clip more room.
+cuts between scenes very quickly at this shape is given mono sound
+(see [Mono sound](#mono-sound)).
 
 ### Mono sound
 
@@ -350,6 +350,13 @@ played from both speakers - and prints a note saying so. `320x200` at 25 fps is 
 `--direct-sound stereo` (the encoder refuses the clip if stereo does not
 keep up) or `--direct-sound mono` (mono even where stereo would fit,
 which leaves more room). A stereo source is mixed down to mono for you.
+
+Each scene cut costs the player a little extra loading time. With the
+sound left on `auto`, a clip whose scene cuts come too close together
+for stereo at its size is encoded with mono sound, and the encoder
+prints a warning naming the frame where stereo would fall behind.
+Choosing `--direct-sound stereo` keeps stereo; the encoder warns that
+the picture may stutter briefly after those cuts and encodes it anyway.
 
 Mono sound plays about 0.4 percent slower than stereo, so it sounds a
 shade flat - far less than a semitone - and a mono clip runs about 0.4
@@ -636,10 +643,12 @@ An uncompressed clip can also be refused for how often it cuts. The
 first frame of every scene carries that scene's palette, which takes the
 player a little longer, and the player makes the time up over the
 frames that follow. A clip whose scenes change faster than that at its
-shape is refused. The message names the frame where it falls furthest
-behind (counting the first frame as 1) and, where there is one, a lower
-height that plays those cuts. Mono sound or a lower frame rate also
-helps.
+shape, even with mono sound, is refused (with the sound left on `auto`,
+mono is used whenever it plays the cuts and stereo does not; see
+[Mono sound](#mono-sound)). The message names the frame where it falls
+furthest behind (counting the first frame as 1) and, where there is
+one, the tallest height at your width that plays those cuts. A lower
+frame rate also helps.
 
 ## 9. Encoding tools
 
@@ -681,7 +690,7 @@ document uses:
 | `--tile-slack F` | Off by default. On a title with sustained motion, `--tile-slack 0.5` lets the encoder work a row or column at a time instead of four when the budget runs out. Helps pans and zooms, does nothing on quiet material. |
 | `--prefilter` | Light temporal denoise before encoding (Preset 4). Takes an ffmpeg filter string if you want to name your own. |
 | `--direct` | The uncompressed route (Preset 2 and Preset 3). |
-| `--direct-sound M` | Sound of an uncompressed clip: `auto` (default - stereo when it keeps up, else mono), `stereo` or `mono`. See [Mono sound](#mono-sound). |
+| `--direct-sound M` | Sound of an uncompressed clip: `auto` (default - stereo when it keeps up, else mono, with a warning when the clip's scene cuts are what needs mono), `stereo` (warns, but keeps stereo, when scene cuts come too close together) or `mono`. See [Mono sound](#mono-sound). |
 | `--direct-transport-factor F` | Moves the uncompressed limits for a card slower or faster than the one they were measured on. Default 1.00. |
 | `--stall-budget M` | `off` (default) or `measured`: allow for the bench card's longest pause on every uncompressed frame. |
 | `--start HH:MM:SS`, `--duration S` | Cut a clip out of a longer source. |

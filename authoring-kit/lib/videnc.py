@@ -462,9 +462,12 @@ def main(argv):
                      choices=("auto", "stereo", "mono"), default=None,
                      help="sound of a --direct clip (default: auto - "
                           "stereo when it holds rate at this shape, else "
-                          "mono with a note, else refused). stereo or "
-                          "mono forces the form and refuses a shape it "
-                          "does not hold. Only with --direct")
+                          "mono with a note, else refused; mono with a "
+                          "warning when the clip's scene cuts are too "
+                          "close together for stereo). stereo or mono "
+                          "forces the form and refuses a shape it does "
+                          "not hold; stereo encodes close scene cuts "
+                          "with a warning. Only with --direct")
     ap.add_argument("--stall-budget", dest="stall_budget",
                      choices=("off", "measured"), default=None,
                      help="measured adds the bench's longest card token "

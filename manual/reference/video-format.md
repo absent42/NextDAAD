@@ -262,11 +262,14 @@ remedy in the error message:
   also carries a 512-byte palette sector, and the player makes up the
   extra time over the frames after it. The encoder walks the clip's
   frames, carrying the time a frame runs over the period into the next
-  (never below zero), and refuses a clip whose lateness ever exceeds one
-  palette sector's time - scenes cutting faster than the player
-  recovers at that shape. The message names the frame (counting the
-  first as 1) and a lower height at the same width that plays those
-  cuts, when there is one.
+  (never below zero); a clip whose lateness ever exceeds one palette
+  sector's time cuts scenes faster than the player recovers at that
+  shape. With `--direct-sound auto` such a stereo clip is encoded mono,
+  with a warning, when mono passes; explicit `--direct-sound stereo`
+  encodes it with a warning; otherwise it is refused. The messages name
+  the frame (counting the first as 1); the refusal also names the
+  tallest height at the same width that plays those cuts, when there
+  is one.
 - **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
   (just under 256 MiB) and 65535 frames, whichever binds first - the
   player's hot filemap and its 16-bit frame counters. Both bounds are

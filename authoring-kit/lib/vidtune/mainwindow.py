@@ -53,7 +53,8 @@ from .presetrow import LadderPanel, RouteMenuButton
 from .configwrite import (ConfigConflict, LocalOverride, StarterProtected,
                           check_starter, config_stamp, write_sidecar,
                           write_vidopts_line)
-from .encoderun import EncodeJob, resolve_encoder, summarize_report, videnc_names
+from .encoderun import (EncodeJob, encoder_warnings, resolve_encoder, summarize_report,
+                        videnc_names)
 from .kitmodel import (clip_state, game_paths, list_clips, parse_config,
                        read_generation_stamp)
 from .preview import extract_source
@@ -1531,6 +1532,10 @@ class MainWindow(QMainWindow):
         elif kind == "all":
             self._on_all_success(num3, argv, summary)
             self._advance_all_queue()
+        warnings = encoder_warnings(lines)
+        if warnings and kind in ("preview", "full"):
+            # a warned encode still succeeds: show the encoder's words, unparaphrased
+            self.metrics_bar.show_failure("\n".join(warnings))
 
     def _on_preview_success(self, num3, output, argv, summary):
         pinned = num3 in self.pinned_budgets

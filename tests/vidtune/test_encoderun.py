@@ -1,8 +1,16 @@
 import json
 import sys
 
-from vidtune.encoderun import (parse_progress_line, read_report,
+from vidtune.encoderun import (encoder_warnings, parse_progress_line, read_report,
                                resolve_encoder, summarize_report)
+
+
+def test_encoder_warnings_kept_verbatim():
+    lines = ["  raw direct: 320 surface, stereo sound",
+             "  warning: stereo sound cannot keep up with this clip at 280x224, 25 fps: x.",
+             "wrote out.vid - OK"]
+    assert encoder_warnings(lines) == [lines[1].strip()]
+    assert encoder_warnings(["note: y", "OK"]) == []
 
 
 def _big_exe(path):

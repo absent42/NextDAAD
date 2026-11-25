@@ -5324,7 +5324,8 @@ if ($Font) {
 # BUMP raw1 -> raw2 (raw gate refitted after the DMA sound and reader trims):
 # admitted shapes and the auto sound form change. See $encoderGeneration
 # 'raw2' in video.ps1.
-$vidLegSettlementTag = 'raw2'
+# BUMP raw2 -> raw3: auto sound falls back to mono on close scene cuts; admitted clips byte-identical.
+$vidLegSettlementTag = 'raw3'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the
@@ -5781,17 +5782,25 @@ if ($VidRaw) {
             [IO.File]::WriteAllText("$Out.refused", ($msg -join ' '))
             return @{ ok = $false; text = $msg -join ' ' }
         }
+        # a scene-cut warning is recorded beside the cache and read back on cached runs
+        $warn = @($o | Where-Object { $_ -match '^\s*warning:.*scene cut' } | ForEach-Object { $_.Trim() })
+        if ($warn) { [IO.File]::WriteAllText("$Out.warned", ($warn -join ' ')) }
         Move-Item -LiteralPath "$Out.tmp" -Destination $Out -Force
         return @{ ok = $true }
     }
+    function Get-V2Warned([string]$Out) {
+        if (Test-Path -LiteralPath "$Out.warned") { return (Get-Content -LiteralPath "$Out.warned" -Raw).Trim() }
+        return ''
+    }
     # Pairs 100-111 (the Goals list order): A = stall budget off, B = measured, Sintel (silent), tallest admitted height up to T's.
-    $v2Goals = @(@(256, 192, '25'), @(320, 160, '25'), @(320, 192, '25'), @(280, 224, '25'), @(320, 240, '16.67'), @(256, 240, '16.67'))
+    # Pair 106/107 is explicit stereo: Sintel's cuts outrun stereo at 280x224, so it encodes with the stutter warning.
+    $v2Goals = @(@(256, 192, '25'), @(320, 160, '25'), @(320, 192, '25'), @(280, 224, '25', 'stereo'), @(320, 240, '16.67'), @(256, 240, '16.67'))
     $v2Clips = [ordered]@{}
     for ($n = 0; $n -lt $v2Goals.Count; $n++) {
         $g = $v2Goals[$n]
         foreach ($ab in @(@(0, 'A', 'off'), @(1, 'B', 'measured'))) {
             $v2Clips['{0:D3}' -f (100 + 2 * $n + $ab[0])] = @{ role = "pair $n $($ab[1])"; src = 'sintel'; w = $g[0]; h = $g[1]; fps = $g[2]
-                want = 'auto'; stall = $ab[2]; dur = '10.0'; lower = $true; check = 'silent' }
+                want = $(if ($g.Count -gt 3) { $g[3] } else { 'auto' }); stall = $ab[2]; dur = '10.0'; lower = $true; check = 'silent' }
         }
     }
     $v2Clips['120'] = @{ role = 'long, budget off'; src = 'loop'; w = 256; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '120.0'; lower = $true; check = 'sound'; runs = 5 }
@@ -5802,7 +5811,7 @@ if ($VidRaw) {
     $v2Clips['127'] = @{ role = 'tones left/right'; src = 'tone'; like = '100'; fps = '25'; want = 'stereo'; stall = 'off'; dur = '8.0'; check = 'lr' }
     $v2Clips['128'] = @{ role = 'tones mono'; src = 'tone'; like = '100'; fps = '25'; want = 'mono'; stall = 'off'; dur = '8.0'; check = 'monotones' }
     $v2Clips['129'] = @{ role = 'film sound stereo'; src = 'sinsnd'; w = 320; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
-    # Sintel's cut spacing is refused by the scene-cut check at 280x224 stereo; jellyfish is admitted.
+    # Sintel's cut spacing outruns stereo at 280x224 (106/107 carry the warning); jellyfish is cut-free.
     $v2Clips['130'] = @{ role = 'film sound stereo'; src = 'jelsnd'; w = 280; h = 224; fps = '25'; want = 'stereo'; stall = 'off'; dur = '10.0'; check = 'sound' }
     $v2Clips['131'] = @{ role = 'scene cuts'; src = 'cuts'; w = 320; h = 192; fps = '25'; want = 'stereo'; stall = 'off'; dur = '12.0'; check = 'sound'; cuts = $true }
     $v2Clips['132'] = @{ role = 'mono edge'; src = 'sinsnd'; w = 320; h = 208; fps = '25'; want = 'mono'; stall = 'off'; dur = '10.0'; check = 'sound' }
@@ -5824,7 +5833,7 @@ if ($VidRaw) {
             $name = { param($hh) "${clip}_$($src[1])_$($e.w)x${hh}_$($e.fps -replace '\.', 'p')_$($e.want)_$($e.stall)_0-$([int][double]$e.dur)_$vidLegSettlementTag.vid" }
             $cache = Join-Path $v2Dir (& $name $h)
             $enc = Invoke-V2Encode $src[0] $cache $e.w $h $e.fps $e.dur $e.want $e.stall
-            if (-not $enc.ok -and $e.lower -and $enc.text -match "\($($e.w)x(\d+) plays these cuts\)") {
+            if (-not $enc.ok -and $e.lower -and $enc.text -match "plays these cuts is $($e.w)x(\d+)\.") {
                 "VIDRAW2 $clip $($e.w)x$h refused by the scene-cut check, retrying at $($e.w)x$($Matches[1]): $($enc.text)"
                 $h = [int]$Matches[1]
                 $g = Get-V2Gate $e.w $h $e.fps $e.want $e.stall $false
@@ -5881,9 +5890,10 @@ if ($VidRaw) {
         $runs = [int][math]::Ceiling($len / 512 / 65535)
         $wantRuns = if ($e.runs) { $e.runs } else { 1 }
         if ($runs -ne $wantRuns) { throw "-VidRaw ${clip}: $len bytes need $runs filemap entries in one piece, expected $wantRuns" }
-        $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; asked = $asked; file = $cache; g = $g; frames = $frames; pals = $pals; bytes = $len; runs = $runs; note = $note
+        $warned = Get-V2Warned $cache
+        $v2Res[$clip] = @{ e = $e; w = $e.w; h = $h; asked = $asked; file = $cache; g = $g; frames = $frames; pals = $pals; bytes = $len; runs = $runs; note = $note; warned = $warned
                           s = $(if ([int]$g.ch -eq 2) { 'S' } else { 'D' }); v = $(if ($g.variant -eq 'train') { 'T' } else { 'I' }) }
-        "VIDRAW2 $clip $($e.w)x$h @ $($e.fps) $($g.form) stall $($e.stall): header ok, frames $frames, palettes $pals, util $('{0:F4}' -f [double]$g.px) / $('{0:F4}' -f [double]$g.pal), RUNS $runs, $($e.check): $(($chk | Select-Object -Skip 1 | Select-Object -First 1) -join ' ')"
+        "VIDRAW2 $clip $($e.w)x$h @ $($e.fps) $($g.form) stall $($e.stall): header ok, frames $frames, palettes $pals, util $('{0:F4}' -f [double]$g.px) / $('{0:F4}' -f [double]$g.pal), RUNS $runs, $($e.check): $(($chk | Select-Object -Skip 1 | Select-Object -First 1) -join ' ')$(if ($warned) { "; WARNED: $warned" })"
     }
     for ($n = 0; $n -lt $v2Goals.Count; $n++) {
         $a = $v2Res['{0:D3}' -f (100 + 2 * $n)]; $b = $v2Res['{0:D3}' -f (101 + 2 * $n)]
@@ -5976,6 +5986,10 @@ if ($VidRaw) {
                 ($r.bytes / 512), $r.runs, $r.s, $r.v, $r.frames, $r.pals, $v2Src[$r.e.src][2]))
         if ($r.asked -ne "$($r.w)x$($r.h)") { $L.Add("      lowered from $($r.asked)") }
         if ($r.note) { $L.Add("      $($r.note)") }
+        if ($r.warned) {
+            $wf = if ($r.warned -match 'at frame (\d+) \(counting from 1\)') { $Matches[1] } else { '?' }
+            $L.Add("      warned at frame ${wf}: $($r.warned)")
+        }
     }
     if ($v2Bad) { $L.Add("134   raw width word 324       copy of 102, byte 23 = 44: expect VID FMT?, no report ($((Get-Item -LiteralPath $v2Bad).Length) bytes)") }
     foreach ($clip in $v2Ctl.Keys) {

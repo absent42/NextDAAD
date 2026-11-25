@@ -342,8 +342,8 @@ no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.</p>
 <p><code>280x224</code> sits at the edge of what the card delivers. The encoder
 prints a warning that the clip is at the edge of rate, and a clip that
-cuts between scenes very quickly at this shape can be refused (section
-8); <code>--direct-sound mono</code> gives such a clip more room.</p>
+cuts between scenes very quickly at this shape is given mono sound
+(see <a href="#mono-sound">Mono sound</a>).</p>
 <h3 id="mono-sound">Mono sound</h3>
 <p>When stereo sound would not keep up at a shape and frame rate, the
 encoder gives an uncompressed clip mono sound instead - one channel,
@@ -351,6 +351,12 @@ played from both speakers - and prints a note saying so. <code>320x200</code> at
 <code>--direct-sound stereo</code> (the encoder refuses the clip if stereo does not
 keep up) or <code>--direct-sound mono</code> (mono even where stereo would fit,
 which leaves more room). A stereo source is mixed down to mono for you.</p>
+<p>Each scene cut costs the player a little extra loading time. With the
+sound left on <code>auto</code>, a clip whose scene cuts come too close together
+for stereo at its size is encoded with mono sound, and the encoder
+prints a warning naming the frame where stereo would fall behind.
+Choosing <code>--direct-sound stereo</code> keeps stereo; the encoder warns that
+the picture may stutter briefly after those cuts and encodes it anyway.</p>
 <p>Mono sound plays about 0.4 percent slower than stereo, so it sounds a
 shade flat - far less than a semitone - and a mono clip runs about 0.4
 percent longer. The picture keeps pace with the sound, so the two never
@@ -690,10 +696,12 @@ which your shape plays. Take one of those.</p>
 first frame of every scene carries that scene's palette, which takes the
 player a little longer, and the player makes the time up over the
 frames that follow. A clip whose scenes change faster than that at its
-shape is refused. The message names the frame where it falls furthest
-behind (counting the first frame as 1) and, where there is one, a lower
-height that plays those cuts. Mono sound or a lower frame rate also
-helps.</p>
+shape, even with mono sound, is refused (with the sound left on <code>auto</code>,
+mono is used whenever it plays the cuts and stereo does not; see
+<a href="#mono-sound">Mono sound</a>). The message names the frame where it falls
+furthest behind (counting the first frame as 1) and, where there is
+one, the tallest height at your width that plays those cuts. A lower
+frame rate also helps.</p>
 <h2 id="9-encoding-tools">9. Encoding tools</h2>
 <p>The build's encode pass needs an encoder and ffmpeg, both resolved from
 <code>TOOLSDIR</code> (see <a href="getting-started.html">Getting started</a>):</p>
@@ -760,7 +768,7 @@ document uses:</p>
 </tr>
 <tr>
 <td><code>--direct-sound M</code></td>
-<td>Sound of an uncompressed clip: <code>auto</code> (default - stereo when it keeps up, else mono), <code>stereo</code> or <code>mono</code>. See <a href="#mono-sound">Mono sound</a>.</td>
+<td>Sound of an uncompressed clip: <code>auto</code> (default - stereo when it keeps up, else mono, with a warning when the clip's scene cuts are what needs mono), <code>stereo</code> (warns, but keeps stereo, when scene cuts come too close together) or <code>mono</code>. See <a href="#mono-sound">Mono sound</a>.</td>
 </tr>
 <tr>
 <td><code>--direct-transport-factor F</code></td>

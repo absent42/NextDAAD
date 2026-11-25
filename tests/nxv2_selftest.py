@@ -13,6 +13,7 @@ run genuine (short-duration) encodes - they are the slow cases in this
 file by design (real-footage sanity anchors, not synthetic unit tests).
 """
 import contextlib
+import hashlib
 import inspect
 import sys
 import tempfile
@@ -5190,17 +5191,19 @@ def _raw_limit_figures(doc):
         w, h = v[2 * i], v[2 * i + 1]
         expect(h == tall(w, form), f"reference/video-format.md: {w}x{h} {form}, gate {tall(w, form)}")
     dlv = flat((ROOT / "manual" / "reference" / "video-delivery.md").read_text(encoding="utf-8"))
-    m = _re.search(r"at 25 fps the tallest pictures are (\d+)x(\d+), (\d+)x(\d+) \(with mono sound\) "
-                   r"and (\d+)x(\d+), and at 16\.67 fps every shape up to 320x256 plays", dlv)
+    m = _re.search(r"at 25 fps the tallest pictures are (\d+)x(\d+), (\d+)x(\d+) and (\d+)x(\d+) "
+                   r"with stereo sound \((\d+)x(\d+), (\d+)x(\d+) and (\d+)x(\d+) with mono\), "
+                   r"and at 16\.67 fps every shape up to 320x256 plays", dlv)
     expect(m, "reference/video-delivery.md: the 25 fps limits sentence is missing or reworded")
     v = list(map(int, m.groups()))
-    for (w, h), form in zip(zip(v[::2], v[1::2]), ("stereo", "mono", "stereo")):
+    for (w, h), form in zip(zip(v[::2], v[1::2]), ("stereo",) * 3 + ("mono",) * 3):
         expect(h == tall(w, form), f"reference/video-delivery.md: {w}x{h} {form}, gate {tall(w, form)}")
     help_text = flat(_quiet_help(vv))
-    m = _re.search(r"at 25 fps up to (\d+)x(\d+), (\d+)x(\d+) or (\d+)x(\d+) mono", help_text)
+    m = _re.search(r"at 25 fps up to (\d+)x(\d+), (\d+)x(\d+) or (\d+)x(\d+) stereo "
+                   r"\((\d+)x(\d+), (\d+)x(\d+) or (\d+)x(\d+) mono\)", help_text)
     expect(m, "videnc --direct help: the 25 fps limits are missing or reworded")
     v = list(map(int, m.groups()))
-    for (w, h), form in zip(zip(v[::2], v[1::2]), ("stereo", "stereo", "mono")):
+    for (w, h), form in zip(zip(v[::2], v[1::2]), ("stereo",) * 3 + ("mono",) * 3):
         expect(h == tall(w, form), f"videnc --direct help: {w}x{h} {form}, gate {tall(w, form)}")
 
 
@@ -8931,7 +8934,7 @@ def t16_raw_debt_walk():
                f"the stall budget reaches the walk: {d}")
 
 
-@case(16, "raw gate - _encode_raw refuses stacked scene cuts, admits spaced ones, warns over 0.90")
+@case(16, "raw gate - _encode_raw warns on stacked scene cuts in stereo, admits spaced ones, warns over 0.90")
 def t16_raw_gate_encode():
     real_cuts = enc.detect_scene_cuts
     ex = _synthetic_ex(6, 320, 192)
@@ -8940,15 +8943,23 @@ def t16_raw_gate_encode():
                 tempfile.TemporaryDirectory() as td:
             out = Path(td) / "cuts.vid"
             enc.detect_scene_cuts = lambda chg: [2, 3]
-            msg = _exit_text(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
-            # the debt dict counts from 0, the message from 1 as the player's readouts do
-            expect("at frame 4 " in msg and "first frame is 1" in msg and "5.0 percent" in msg
-                   and "faster than the player" in msg, f"stacked cuts refused at frame 4: {msg}")
-            expect("--direct-sound mono" in msg and not out.exists(), f"mono suggested, no file: {msg}")
-            expect("--direct-transport-factor" not in msg, f"default factor not named: {msg}")
-            msg = _exit_text(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True,
-                             direct_transport_factor=1.05)
-            expect("--direct-transport-factor 1.05" in msg, f"factor named in the refusal: {msg}")
+            _rep, text = _quiet(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
+            # the walk counts from 0, the message from 1 as the player's readouts do
+            expect("at frame 4 " in text and "counting from 1" in text
+                   and "5.0 percent of a frame" in text and "may stutter" in text,
+                   f"stacked cuts warned at frame 4: {text}")
+            expect("--direct-sound auto or mono" in text and out.exists(),
+                   f"mono suggested, file written: {text}")
+            expect("--direct-transport-factor" not in text, f"default factor not named: {text}")
+            _rep, text = _quiet(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True,
+                                direct_transport_factor=1.05)
+            expect("--direct-transport-factor 1.05" in text, f"factor named in the warning: {text}")
+            try:
+                _quiet(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True, sound="auto")
+            except ValueError as e:
+                expect("channels=1" in str(e), f"auto on a stereo ex: {e}")
+            else:
+                raise AssertionError("auto needing mono on a stereo ex must raise")
             enc.detect_scene_cuts = lambda chg: [3]
             rep, text = _quiet(enc._encode_raw, ex, 320, 192, 25.0, out, gate=True)
             expect("warning" in text and "0.99" in text and "without a palette" in text,
@@ -9034,6 +9045,117 @@ def t16_raw_encode_threads_options():
                     raise AssertionError(f"old layout must refuse {kw}")
     finally:
         enc._extract_source, enc.DIRECT_LAYOUT = real_extract, real_layout
+
+
+_CUT_BANNED = ("palette sector", "utilization", "utilisation", "frame period", "debt")
+
+
+@contextlib.contextmanager
+def _cut_encode(w, h, cuts, n=6):
+    """encode() over a synthetic w x h clip with these scene cuts; yields
+    run(name, **kw) -> (path, stdout, extraction channel list)."""
+    ex = _synthetic_ex(n, w, h)
+    calls = []
+
+    def fake(src, ww, hh, fps, start, dur, ffmpeg, dither, **kw):
+        calls.append(kw.get("channels"))
+        out = dict(ex)
+        if kw.get("channels") == 1:
+            out.update(channels=1, abytes_real=625, abytes_pad=1024,
+                       audio_bytes=ex["audio_bytes"][:n * 625])
+        return out
+
+    real_x, real_c = enc._extract_source, enc.detect_scene_cuts
+    enc._extract_source, enc.detect_scene_cuts = fake, (lambda chg: list(cuts))
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            def run(name, **kw):
+                del calls[:]
+                p = Path(td) / name
+                _rep, text = _quiet(enc.encode, "dummy.mp4", str(p), shape=(w, h), fps=25.0,
+                                    direct=True, **kw)
+                return p, text, list(calls)
+            yield run
+    finally:
+        enc._extract_source, enc.detect_scene_cuts = real_x, real_c
+
+
+def _cut_msg_ok(msg, frame):
+    expect(f"at frame {frame} (counting from 1)" in msg, f"frame {frame} named: {msg}")
+    expect("scene cut costs extra loading time" in msg, f"why given: {msg}")
+    expect(not any(b in msg.lower() for b in _CUT_BANNED), f"internal term in: {msg}")
+
+
+def _sha16(p):
+    return hashlib.sha256(Path(p).read_bytes()).hexdigest()[:16]
+
+
+@case(16, "raw cut sound - auto falls back to mono with a warning at 280x224@25")
+def t16_raw_cut_auto_mono():
+    # real constants: stacked palettes outrun stereo at 280x224, mono's palette frame is under 1.00
+    with _cut_encode(280, 224, [2, 3]) as run:
+        p, text, calls = run("auto.vid")
+        expect(calls == [2, 1] and p.read_bytes()[9] == 1,
+               f"stereo extraction, then mono: {calls}, header channels {p.read_bytes()[9]}")
+        warn = [l.strip() for l in text.splitlines() if "scene cut" in l]
+        expect(len(warn) == 1 and warn[0].startswith("warning:"), f"one warning: {text}")
+        _cut_msg_ok(warn[0], 4)
+        expect("mono sound instead" in warn[0] and "--direct-sound stereo forces stereo" in warn[0],
+               f"auto warning: {warn[0]}")
+        # the fallback is the explicit mono encode, byte for byte
+        m, mtext, _ = run("mono.vid", direct_sound="mono")
+        expect(p.read_bytes() == m.read_bytes() and "scene cut" not in mtext,
+               "auto fallback equals explicit mono")
+
+
+@case(16, "raw cut sound - auto refuses when mono outruns the cuts too")
+def t16_raw_cut_auto_refuse():
+    with _patched_raw_k(_flat_k(0.999, 1.03), _flat_k(0.995, 1.02)), _cut_encode(280, 224, [2, 3]) as run:
+        try:
+            run("r.vid")
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError("auto must refuse when mono fails too")
+        expect(msg.startswith("error:") and "stereo or mono sound" in msg, f"refusal: {msg}")
+        _cut_msg_ok(msg, 4)
+
+
+@case(16, "raw cut sound - explicit stereo encodes stereo with a warning")
+def t16_raw_cut_stereo_warns():
+    with _cut_encode(280, 224, [2, 3]) as run:
+        p, text, calls = run("st.vid", direct_sound="stereo")
+        expect(calls == [2] and p.read_bytes()[9] == 2, f"stereo encode: {calls}")
+        warn = [l.strip() for l in text.splitlines() if "scene cut" in l]
+        expect(len(warn) == 1 and warn[0].startswith("warning:") and "may stutter briefly" in warn[0],
+               f"stereo warning: {text}")
+        _cut_msg_ok(warn[0], 4)
+        expect("--direct-sound auto or mono, or 280x" in warn[0], f"remedies named: {warn[0]}")
+
+
+@case(16, "raw cut sound - explicit mono that outruns the cuts is refused")
+def t16_raw_cut_mono_refuse():
+    with _patched_raw_k(_flat_k(0.999, 1.03), _flat_k(0.995, 1.02)), _cut_encode(280, 224, [2, 3]) as run:
+        try:
+            run("m.vid", direct_sound="mono")
+        except SystemExit as e:
+            msg = str(e)
+        else:
+            raise AssertionError("explicit mono must refuse")
+        expect(msg.startswith("error:") and "with mono sound" in msg, f"refusal: {msg}")
+        _cut_msg_ok(msg, 4)
+
+
+@case(16, "raw cut sound - clips that passed before keep their bytes and print no cut warning")
+def t16_raw_cut_unchanged():
+    # hashes taken before the scene-cut sound fallback existed
+    for w, h, cuts, snd, want in ((256, 192, [3], "auto", "db7cd431ca86bb91"),
+                                  (280, 224, [2, 3], "mono", "94f72caaafd59ebb"),
+                                  (280, 224, [3], "auto", "9229539dc75b1158")):
+        with _cut_encode(w, h, cuts) as run:
+            p, text, _calls = run("u.vid", direct_sound=snd)
+            expect(_sha16(p) == want and "scene cut" not in text,
+                   f"{w}x{h} {cuts} {snd}: {_sha16(p)}, want {want}:\n{text}")
 
 
 @case(16, "raw gate - videnc --direct writes the raw layout; new options need --direct")

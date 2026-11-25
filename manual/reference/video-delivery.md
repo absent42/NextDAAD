@@ -62,9 +62,11 @@ fps every shape up to 320x256 plays.
 The encoder refuses anything the card cannot sustain - there is
 deliberately no slow-playback opt-out (every shipped mode plays at true
 rate) - and names the tallest picture that plays at your width and the
-next lower frame rate at which your shape plays. It also refuses a clip
-whose scenes cut faster than the player can make up the time each
-scene's palette takes. The limits were measured on one card; see
+next lower frame rate at which your shape plays. A clip whose scenes
+cut faster than the player can make up the time each scene's palette
+takes gets mono sound when that plays the cuts (with a warning), keeps
+stereo with a warning when you asked for stereo, and is otherwise
+refused. The limits were measured on one card; see
 [Video](../video.md#uncompressed-limits-and-your-card) for a slower
 card. For long clips and quiet footage the delta encoder is the better
 tool; `--direct` is for detailed motion that must stay pixel-exact.

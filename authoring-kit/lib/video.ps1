@@ -170,7 +170,8 @@ if (-not $sources) { exit 0 }
 # counted frame-program overhead, mono sound from the zxnDMA at its measured
 # sample period), so it admits different shapes and picks the sound form
 # differently (280x224@25 is now stereo). Raw bytes per form unchanged.
-$encoderGeneration = 'raw2'
+# raw3: BUMP - --direct-sound auto encodes mono when the clip's scene cuts outrun stereo; explicit stereo warns and encodes.
+$encoderGeneration = 'raw3'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

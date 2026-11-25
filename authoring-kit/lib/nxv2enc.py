@@ -1231,35 +1231,88 @@ def raw_debt_check(palette_flags, width, height, surface_width, fps, form, **kw)
     return dict(peak_t=peak, limit_t=limit, frame=frame, ok=peak <= limit)
 
 
-def _raw_debt_refusal(debt, flags, width, height, surface, fps, form, chk, **kw):
-    """SystemExit text for a clip whose scene cuts outrun the player."""
-    sw, _ = raw_surface(width, height, surface)
-    period = chk["period_t"]
-    pal_u = raw_frame_t(width, height, sw, fps, form, **kw)["total_t"] / period
-    alt = ""
-    if form == "stereo":
-        mono = raw_supply_check(width, height, sw, fps, "mono", **kw)["utilization"]
-        if mono < chk["utilization"]:
-            alt = (f"mono sound (--direct-sound mono, {_util_txt(mono)} on a frame without "
-                   f"a palette) or ")
-    lower = 0
+def raw_palette_flags(ex):
+    """(cuts, flags) of an extracted clip: scene cuts inside it, and one bool
+    a frame, True on each scene's first frame (frame 0 included)."""
+    n = ex["nframes"]
+    cuts = [c for c in detect_scene_cuts(ex["chg"]) if 0 < c < n]
+    flags = [False] * n
+    for s in [0] + cuts:
+        if s < n:
+            flags[s] = True
+    return cuts, flags
+
+
+def _raw_cut_ok(flags, width, h, surface, fps, form, **kw):
+    hs, _ = raw_surface(width, h, surface)
+    return (raw_supply_check(width, h, hs, fps, form, **kw)["utilization"] <= 1.0
+            and raw_debt_check(flags, width, h, hs, fps, form, **kw)["ok"])
+
+
+def _raw_cut_lower(flags, width, height, surface, fps, forms, **kw):
+    """Tallest height under height at which one of forms plays these cuts; 0 if none."""
     for h in range(height - 1, 0, -1):
-        hs, _ = raw_surface(width, h, surface)
-        if (raw_supply_check(width, h, hs, fps, form, **kw)["utilization"] <= 1.0
-                and raw_debt_check(flags, width, h, hs, fps, form, **kw)["ok"]):
-            lower = h
-            break
-    tail = (f"a lower height ({width}x{lower} plays these cuts)" if lower
-            else "a smaller picture")
-    return (f"error: raw --direct refuses this clip at {width}x{height}, {float(fps):g} fps, "
-            f"{form} sound: a scene's first frame carries a palette sector "
-            f"(utilization {_util_txt(pal_u)} on that frame, {_util_txt(chk['utilization'])} "
-            f"on a frame without a palette{_raw_factor_txt(kw)}) and the clip cuts scenes "
-            f"faster than the player can recover at this shape: at frame {debt['frame'] + 1} "
-            f"(the first frame is 1) it is "
-            f"{100.0 * debt['peak_t'] / period:.1f} percent of the frame period behind "
-            f"(limit {100.0 * debt['limit_t'] / period:.1f} percent, one palette sector). "
-            f"Use {alt}{tail}.")
+        if any(_raw_cut_ok(flags, width, h, surface, fps, f, **kw) for f in forms):
+            return h
+    return 0
+
+
+def _raw_cut_text(kind, debt, flags, width, height, surface, fps, form, forms=None, **kw):
+    """The scene-cut message: kind "refuse", "auto" (mono used) or "stereo"
+    (encoded anyway). debt is the walk of form; forms are the sound forms a
+    lower height may use (default: form)."""
+    sw, _ = raw_surface(width, height, surface)
+    period = raw_supply_check(width, height, sw, fps, form, **kw)["period_t"]
+    frac = debt["peak_t"] / period
+    f = kw.get("transport_factor")
+    factor = "" if f is None or float(f) == 1.0 else f" (--direct-transport-factor {float(f):g})"
+    where = (f"at frame {debt['frame'] + 1} (counting from 1) the picture "
+             f"{'would fall' if kind == 'auto' else 'falls'} furthest behind, by about "
+             f"{1000.0 * frac / float(fps):.1f} ms ({100.0 * frac:.1f} percent of a frame)")
+    why = "each scene cut costs extra loading time, and this clip's cuts come too close together"
+    at = f"{width}x{height}, {float(fps):g} fps"
+    if kind == "auto":
+        return (f"warning: stereo sound cannot keep up with this clip at {at}{factor}: {why} "
+                f"for stereo at a picture this size - {where}. Encoding with mono sound "
+                f"instead; --direct-sound stereo forces stereo.")
+    forms = forms or (form,)
+    lower = _raw_cut_lower(flags, width, height, surface, fps, forms, **kw)
+    if kind == "stereo":
+        smaller = f"{width}x{lower} or smaller" if lower else "a smaller picture"
+        if _raw_cut_ok(flags, width, height, surface, fps, "mono", **kw):
+            fix = f"--direct-sound auto or mono, or {smaller}, avoids it"
+        else:
+            fix = f"{smaller[0].upper()}{smaller[1:]} avoids it"
+        return (f"warning: the picture may stutter briefly after closely spaced scene cuts "
+                f"at {at} with stereo sound{factor}: {why} for a picture this size - "
+                f"{where}. {fix}.")
+    label = "stereo or mono" if len(forms) > 1 and form == "mono" else form
+    use = (f"The tallest picture at this width that plays these cuts is {width}x{lower}."
+           if lower else "Use a smaller picture.")
+    return (f"error: raw --direct cannot play this clip at {at} with {label} sound{factor}: "
+            f"{why} for a picture this size - {where}. {use}")
+
+
+def raw_cut_sound(flags, width, height, surface, fps, want, form, **kw):
+    """(form, debt, warning) for a clip's palette flags; form is the one the
+    supply check picked. Cuts that outrun stereo: want "auto" falls to mono
+    with a warning when mono plays them, want "stereo" keeps stereo with a
+    warning; anything else is SystemExit. warning is None when the cuts pass."""
+    sw, _ = raw_surface(width, height, surface)
+    debt = raw_debt_check(flags, width, height, sw, fps, form, **kw)
+    if debt["ok"]:
+        return form, debt, None
+    args = (flags, width, height, surface, fps)
+    if form == "stereo" and want == "stereo":
+        return form, debt, _raw_cut_text("stereo", debt, *args, "stereo", **kw)
+    forms = tuple(RAW_K) if want == "auto" else (form,)
+    if form == "stereo" and want == "auto":
+        if raw_supply_check(width, height, sw, fps, "mono", **kw)["utilization"] <= 1.0:
+            mono = raw_debt_check(flags, width, height, sw, fps, "mono", **kw)
+            if mono["ok"]:
+                return "mono", mono, _raw_cut_text("auto", debt, *args, "stereo", **kw)
+            raise SystemExit(_raw_cut_text("refuse", mono, *args, "mono", forms, **kw))
+    raise SystemExit(_raw_cut_text("refuse", debt, *args, form, forms, **kw))
 
 
 # ---------------------------------------------------------------------
@@ -5209,13 +5262,14 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
 def _encode_raw(ex, width, height, fps_val, out_path, *, surface="auto",
                 channels=2, gate=True, report_path=None, dither_amp=None,
                 dither_mode=None, direct_transport_factor=None,
-                stall_budget="off"):
+                stall_budget="off", sound=None):
     """Raw-layout encode: same scene palette and quantise pipeline as
     _encode_direct, frames written by emit_raw_frame. ex must come from
     _extract_source(raw=True, channels=channels). gate=True refuses a shape
-    whose frame without a palette is over 1.00 (raw_pick_sound) and a clip
-    whose scene cuts outrun the player (raw_debt_check); gate=False skips
-    admission."""
+    whose frame without a palette is over 1.00 (raw_pick_sound) and judges
+    the clip's scene cuts by raw_cut_sound with want sound (None: the form
+    of channels, given explicitly); gate=False skips admission. A mono
+    fallback needs a mono ex: encode() re-extracts for it."""
     surface_width, column_major = raw_surface(width, height, surface)
     geo = raw_layout(width, height, surface_width)
     if ex["channels"] != channels:
@@ -5235,18 +5289,16 @@ def _encode_raw(ex, width, height, fps_val, out_path, *, surface="auto",
     N = ex["nframes"]
     dither_amp = _dither_amp(dither_amp)
     dither_mode = _dither_mode(dither_mode)
-    cuts = [c for c in detect_scene_cuts(ex["chg"]) if 0 < c < N]
+    cuts, flags = raw_palette_flags(ex)
     bounds = [0] + cuts + [N]
     if gate:
-        # palette sectors on each scene's first frame, frame 0 included
-        flags = [False] * N
-        for s in bounds[:-1]:
-            if s < N:
-                flags[s] = True
-        debt = raw_debt_check(flags, width, height, surface_width, fps_val, form, **kw)
-        if not debt["ok"]:
-            raise SystemExit(_raw_debt_refusal(debt, flags, width, height, surface,
-                                               fps_val, form, chk, **kw))
+        cut_form, debt, warn = raw_cut_sound(flags, width, height, surface, fps_val,
+                                             sound or form, form, **kw)
+        if cut_form != form:
+            raise ValueError(f"sound {sound!r} needs {cut_form} for these cuts: "
+                             f"extract with channels=1 and pass sound='mono'")
+        if warn:
+            print(f"  {warn}")
     abytes_real, abytes_pad = ex["abytes_real"], ex["abytes_pad"]
     audio_bytes = ex["audio_bytes"]
 
@@ -5649,7 +5701,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     direct (--direct): DIRECT_LAYOUT "raw" (the default) writes the raw
     layout through _encode_raw(gate=True): shape is any raw_surface shape,
     the sound form is chosen by raw_pick_sound before extraction, and the
-    clip's scene cuts are checked by raw_debt_check. DIRECT_LAYOUT "old"
+    clip's scene cuts are judged by raw_cut_sound (auto stereo falls to
+    mono, explicit stereo warns, else refused). DIRECT_LAYOUT "old"
     writes the SP15 all-literal layout through _encode_direct (test
     scripts only). Both gates are unconditional - there is no
     slow-playback opt-out at this or any layer above it.
@@ -5722,11 +5775,23 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         ex = _extract_source(src_path, width, height, fps_val, start, duration,
                              ffmpeg, dither_amp, dither_mode=dmode, retime=retime,
                              prefilter=prefilter, raw=True, channels=channels)
+        sound = direct_sound
+        if direct_sound == "auto" and form == "stereo":
+            # cuts that outrun stereo: mono with a warning, re-extracted as an explicit mono encode
+            cut_form, _debt, warn = raw_cut_sound(
+                raw_palette_flags(ex)[1], width, height, direct_surface, fps_val, "auto",
+                "stereo", transport_factor=direct_transport_factor, stall_budget=stall_budget)
+            if cut_form == "mono":
+                print(f"  {warn}")
+                channels, sound = 1, "mono"
+                ex = _extract_source(src_path, width, height, fps_val, start, duration,
+                                     ffmpeg, dither_amp, dither_mode=dmode, retime=retime,
+                                     prefilter=prefilter, raw=True, channels=1)
         return _encode_raw(ex, width, height, fps_val, out_path, surface=direct_surface,
                            channels=channels, gate=True, report_path=report_path,
                            dither_amp=dither_amp, dither_mode=dmode,
                            direct_transport_factor=direct_transport_factor,
-                           stall_budget=stall_budget)
+                           stall_budget=stall_budget, sound=sound)
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither_amp, dither_mode=dmode,
