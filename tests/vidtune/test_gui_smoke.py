@@ -36,7 +36,7 @@ def test_clip_without_settings_opens_on_full_rate(fixture_kit, qtbot):
     s = win.settings_panel.get_settings()      # 001 opened at start
     assert s["direct"] is True and s["shape"] == "256x192"
     assert s["fps"] == win.kit_base["fps"]
-    assert win.settings_panel.size_label.text() == "uncompressed: 1.27 MB a second"
+    assert win.settings_panel.size_label.text() == "uncompressed, stereo: 1.27 MB a second"
 
 
 def test_clip_with_saved_settings_opens_on_them(fixture_kit, qtbot):
@@ -79,7 +79,7 @@ def test_size_line_uses_source_length(fixture_kit, qtbot, monkeypatch):
     win = MainWindow(fixture_kit)
     qtbot.addWidget(win)
     assert win.settings_panel.size_label.text() == (
-        "uncompressed: 1.27 MB a second, about 25.3 MB for this 20.0 s clip")
+        "uncompressed, stereo: 1.27 MB a second, about 25.3 MB for this 20.0 s clip")
 
 
 def _fresh_kit_window(fixture_kit, qtbot):

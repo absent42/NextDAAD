@@ -58,6 +58,28 @@ def decode_vid(vid_path):
     return hdr, frames
 
 
+def sound_form(vid_path, argv):
+    """Readout text for the sound in an encoded file, from its header's
+    channel count: "stereo"/"mono", plus " (auto)" for an uncompressed
+    clip whose argv left --direct-sound on auto. None when unreadable."""
+    try:
+        with open(vid_path, "rb") as f:
+            hdr = nxv2enc.unpack_header(f.read(nxv2enc.HEADER_SIZE))
+    except (OSError, ValueError, TypeError):
+        return None
+    form = {1: "mono", 2: "stereo"}.get(hdr["channels"])
+    if form is None:
+        return None
+    argv = list(argv or [])
+    want = "auto"
+    for i, tok in enumerate(argv[:-1]):
+        if tok == "--direct-sound":
+            want = argv[i + 1]
+    if hdr["raw"] and want == "auto":
+        form += " (auto)"
+    return form
+
+
 def extract_source(ffmpeg, mp4, width, height, fps, retime, start, duration):
     """Source frames shaped/retimed exactly as the encoder would see
     them, built on videnc's own probe/crop/retime/extract functions

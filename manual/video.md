@@ -743,6 +743,14 @@ the saved settings. Encode Stale + Edited encodes every stale or edited
 clip with the settings you gave it, and saves them to `<GAME>.CFG`
 the same way Accept does.
 
+For an uncompressed clip the tuner shows a **sound** setting: `auto`,
+`stereo` or `mono`. `auto` uses stereo and switches to mono by itself
+when stereo cannot keep up, saying so, and the readings under the
+preview show which sound the encoded clip got. `mono` allows a taller
+picture at 320 wide (208 lines at 25 fps instead of 195) and steadier
+playback on footage with many cuts; `stereo` keeps stereo and warns if
+the picture may stutter after close cuts.
+
 ## The starter game's demo clips
 
 `STARTER\VIDEO\001.mp4` and `STARTER\VIDEO\002.mp4` build with the kit

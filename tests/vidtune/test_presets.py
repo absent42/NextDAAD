@@ -91,9 +91,9 @@ def test_size_text_states_rate_and_clip_total():
     cfg, settings = _base()
     after = presets.apply_route(settings, settings,
                                 presets.route_by_key("fullrate"))
-    assert presets.size_text(after) == "uncompressed: 1.27 MB a second"
+    assert presets.size_text(after) == "uncompressed, stereo: 1.27 MB a second"
     assert presets.size_text(after, 30.0) == (
-        "uncompressed: 1.27 MB a second, about 38.0 MB for this 30.0 s clip")
+        "uncompressed, stereo: 1.27 MB a second, about 38.0 MB for this 30.0 s clip")
     assert "over the 256 MB file limit" in presets.size_text(after, 240.0)
 
 
@@ -207,6 +207,16 @@ def test_flag_deltas_read_as_plus_and_minus():
     assert presets.format_delta("fps", "25", "12.5") == "fps 25 -> 12.5"
 
 
+def test_deltas_name_knobs_by_their_panel_label():
+    assert presets.format_delta("direct_sound", "mono", "auto") == "sound mono -> auto"
+    assert presets.format_delta("tile_slack", None, "0.5") == "tile slack 0.5"
+    cfg, settings = _base(direct=True, shape="256x192", direct_sound="mono")
+    _cfg, kit_base = _base()
+    lines = presets.format_deltas(presets.route_deltas(
+        settings, kit_base, presets.route_by_key("cutscene")))
+    assert "sound mono -> auto" in lines and "-direct" in lines
+
+
 # -- requirement 5: never offer --stream-budget -------------------------
 
 def test_nothing_in_the_preset_system_sets_stream_budget():
@@ -295,7 +305,7 @@ def test_route_card_shows_the_clip_size(qtbot):
                 indent=False)
     item = menu.actions()[0].defaultWidget()
     assert item.size_label.text() == (
-        "uncompressed: 1.27 MB a second, about 12.7 MB for this 10.0 s clip")
+        "uncompressed, stereo: 1.27 MB a second, about 12.7 MB for this 10.0 s clip")
 
 
 def test_route_button_never_claims_a_route_is_active(qtbot):
