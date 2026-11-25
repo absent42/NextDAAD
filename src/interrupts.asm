@@ -28,7 +28,7 @@ im2_init:
     ld a, IM2_CTC_STUB & $FF
     ld (IM2_TABLE + IM2_CTC_VEC), a      ; table[V] = low(ctc_stub); table[V+1]
                                          ; is already the $BE fill (= high stub)
-    ; SP18 item 7 Task 10: channel 2's carve skips the stub-trampoline
+    ; Channel 2's carve skips the stub-trampoline
     ; indirection channel 1 uses just above. That indirection is NOT
     ; kept for fill-byte economy alone (letting table[V+1], the target's
     ; high byte, stay the uniform $BE fill unwritten) - it is ALSO the

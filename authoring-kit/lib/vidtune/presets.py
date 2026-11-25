@@ -129,21 +129,28 @@ def _raw_dims(settings):
 def raw_rate(settings):
     """Card cost of an uncompressed encode, or None when not --direct:
     dict(width, height, fps, form, frame_bytes, per_second). frame_bytes is
-    sound in the form the raw gate picks plus pixel sectors; a scene's
-    palette sector (512 B) is not counted. form None: the gate refuses."""
+    sound in the form the raw gate picks (gate options in extra honoured)
+    plus pixel sectors; a scene's palette sector (512 B) and the scene-cut
+    mono fallback are not counted. form None: the gate refuses."""
     if not settings.get("direct"):
         return None
     import nxv2enc
     try:
         w, h = _raw_dims(settings)
         fps = float(settings.get("fps") or 25)
-        sw, _ = nxv2enc.raw_surface(w, h)
         extra = list(settings.get("extra") or [])
-        want = (extra[extra.index("--direct-sound") + 1]
-                if "--direct-sound" in extra[:-1] else "auto")
+
+        def opt(name, default):
+            return extra[extra.index(name) + 1] if name in extra[:-1] else default
+
+        sw, _ = nxv2enc.raw_surface(w, h, opt("--direct-surface", "auto"))
+        want = opt("--direct-sound", "auto")
+        tf = opt("--direct-transport-factor", None)
+        kw = dict(transport_factor=None if tf is None else float(tf),
+                  stall_budget=opt("--stall-budget", "off"))
         forms = ("stereo", "mono") if want == "auto" else (want,)
         form = next((f for f in forms if nxv2enc.raw_supply_check(
-            w, h, sw, fps, f)["utilization"] <= 1.0), None)
+            w, h, sw, fps, f, **kw)["utilization"] <= 1.0), None)
     except (SystemExit, ValueError, KeyError, TypeError):
         return None
     out = dict(width=w, height=h, fps=fps, form=form,

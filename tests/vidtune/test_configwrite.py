@@ -35,6 +35,15 @@ def test_reset_of_local_only_value_deletes_line(fixture_kit):
     assert b"VIDOPTS_005" not in (fixture_kit / LOC).read_bytes()
 
 
+def test_value_equal_to_config_writes_no_duplicate(fixture_kit):
+    # Revert of a Quiet-marked clip whose VIDOPTS comes from CONFIG.BAT
+    (fixture_kit / LOC).write_bytes(b"SET VIDROUTE_002=quiet\r\n")
+    write_vidopts_line(fixture_kit / CFG, "002", "--shape 16:9")
+    assert (fixture_kit / LOC).read_bytes() == b""
+    cfg = parse_config(fixture_kit / CFG)
+    assert cfg.per_clip["002"] == "--shape 16:9" and "002" not in cfg.routes
+
+
 def test_reset_with_nothing_anywhere_creates_no_file(fixture_kit):
     write_vidopts_line(fixture_kit / CFG, "009", "")
     assert not (fixture_kit / LOC).exists()

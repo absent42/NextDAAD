@@ -129,8 +129,9 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None,
             lines[idx][0] = new_text
         else:
             del lines[idx]
-    elif opts or base:
-        last = [i for i, ln in enumerate(lines) if any_vidopts.match(ln[0])]
+    elif opts != base:
+        # a value equal to CONFIG.BAT's is inherited already: no duplicate line
+        last =[i for i, ln in enumerate(lines) if any_vidopts.match(ln[0])]
         at = max(last) + 1 if last else len(lines)
         lines.insert(at, [new_text, default_eol])
     else:

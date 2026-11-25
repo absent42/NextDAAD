@@ -9102,6 +9102,8 @@ def t16_raw_cut_auto_mono():
         _cut_msg_ok(warn[0], 4)
         expect("mono sound instead" in warn[0] and "--direct-sound stereo forces stereo" in warn[0],
                f"auto warning: {warn[0]}")
+        rd = [l.strip() for l in text.splitlines() if "raw direct:" in l]
+        expect(len(rd) == 1 and "mono sound" in rd[0], f"summary states mono: {rd}")
         # the fallback is the explicit mono encode, byte for byte
         m, mtext, _ = run("mono.vid", direct_sound="mono")
         expect(p.read_bytes() == m.read_bytes() and "scene cut" not in mtext,

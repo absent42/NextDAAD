@@ -192,6 +192,24 @@ def test_encode_all_saves_a_chosen_quiet_scene(fixture_kit, qtbot, monkeypatch):
     assert _rail_status(win, "001") == "default"
 
 
+def test_success_warnings_not_shown_as_failure(fixture_kit, qtbot, monkeypatch):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    monkeypatch.setattr(win, "_on_preview_success", lambda *a: None)
+    box = win.metrics_bar._failure_box
+
+    def finish(code):
+        win._job_kind, win._job_num3, win._job_output, win._job_argv = "preview", "001", None, []
+        win._job_lines = ["  warning: stereo sound at a scene cut", "OK"]
+        win._on_job_finished(code, {})
+
+    finish(0)
+    assert not box.isHidden() and "warning:" in box.toPlainText()
+    assert vt_theme.rgba(vt_theme.FAULT, 0.5) not in box.styleSheet()
+    finish(3)
+    assert vt_theme.rgba(vt_theme.FAULT, 0.5) in box.styleSheet()
+
+
 def test_source_seconds_from_banner():
     from vidtune.preview import source_seconds_from_banner
     assert source_seconds_from_banner(

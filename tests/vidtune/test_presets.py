@@ -76,6 +76,17 @@ def test_raw_rate_of_the_opening_route_matches_the_manual_table():
     assert rate["per_second"] == 1_267_200
 
 
+def test_raw_rate_reads_the_gate_options_in_extra():
+    # 320x195@25: stereo 0.9995; a transport factor of 1.05 leaves only mono
+    _cfg, settings = _base(direct=True, shape="320x195", fps="25")
+    assert presets.raw_rate(settings)["form"] == "stereo"
+    settings["extra"] = ["--direct-transport-factor", "1.05"]
+    rate = presets.raw_rate(settings)
+    assert rate["form"] == "mono" and rate["frame_bytes"] == 1024 + 122 * 512
+    settings["extra"] = ["--direct-transport-factor", "1.2"]
+    assert presets.raw_rate(settings)["form"] is None
+
+
 def test_size_text_states_rate_and_clip_total():
     cfg, settings = _base()
     after = presets.apply_route(settings, settings,

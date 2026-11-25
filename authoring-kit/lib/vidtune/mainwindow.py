@@ -327,9 +327,14 @@ class MetricsBar(QWidget):
         self._progress.setVisible(False)
         self._cancel_btn.setVisible(False)
 
-    def show_failure(self, raw_output):
+    def show_failure(self, raw_output, colour=theme.FAULT):
+        self._failure_box.setStyleSheet(f"border: 1px solid {theme.rgba(colour, 0.5)};")
         self._failure_box.setPlainText(raw_output)
         self._failure_box.setVisible(True)
+
+    def show_warning(self, raw_output):
+        """Encoder warnings from an encode that succeeded: caution, not fault."""
+        self.show_failure(raw_output, theme.PHOSPHOR)
 
     def _on_goto_burst(self):
         if self._preview is not None and self._burst_peak_frame is not None:
@@ -1635,7 +1640,7 @@ class MainWindow(QMainWindow):
         warnings = encoder_warnings(lines)
         if warnings and kind in ("preview", "full"):
             # a warned encode still succeeds: show the encoder's words, unparaphrased
-            self.metrics_bar.show_failure("\n".join(warnings))
+            self.metrics_bar.show_warning("\n".join(warnings))
 
     def _on_preview_success(self, num3, output, argv, summary):
         pinned = num3 in self.pinned_budgets

@@ -11910,15 +11910,14 @@ vid_tl_report_body:
     ; PLAY row: the ONLY wall-clock figure in this report. Every other
     ; number here is counted in video-CTC ISR ticks and is therefore
     ; blind to a suppressed interrupt (see vid_rl_poll). PLAY is the
-    ; elapsed 50Hz FIELD count across the WHOLE frame loop - first
+    ; elapsed FIELD count across the WHOLE frame loop - first
     ; delivered frame to teardown - and NOM is what that same delivered
     ; frame count is worth at the header fps, i.e. FRM x (50/fps).
     ; Both therefore cover the same FRM frame periods whether a frame
     ; presented or was HELD by a keyframe span, so PLAY/NOM is the rate
-    ; ratio directly: PLAY > NOM = the clip ran SLOW by that ratio,
-    ; PLAY == NOM = at rate, and PLAY < NOM is not physically possible
-    ; (a clip cannot outrun its own frame rate - that reading means the
-    ; field clock lost a wrap, see vid_rl_poll's poll-gap table).
+    ; ratio directly: PLAY > NOM = the clip ran SLOW by that ratio.
+    ; NOM assumes 50 Hz fields: on +3 timing (49.36 Hz) an at-rate clip
+    ; reads PLAY about 1.3 percent under NOM.
     ; Open, load and ring prefill are outside the bracket. Both fields
     ; wrap at 65536 fields (21.8 min).
     ld b, VID_TL_ROW0+2

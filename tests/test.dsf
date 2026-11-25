@@ -247,11 +247,11 @@ DPACL   89      verb
 ; Silicon keyboard-defect task: KTEST is the owner's hardware-sweep
 ; instrument for the keyboard matrix/decode fix (see PRO 9 below and
 ; overlay1.asm's ktest_poll / overlay0.asm's EXTERN vector 6). DEBUG
-; build only - Release's EXTERN 0 6 is ext_stub (silent no-op, blank
-; screen, no crash); this verb is not meant to ship.
+; build only - Release's EXTERN 0 6 forwards to an XBN, none staged
+; (silent, no crash); this verb is not meant to ship.
 KTEST 101     verb
 
-; Card #6 SNAP=03/00 sitting follow-up: the seven-leg sitting could not exercise
+; SNAP=03/00 follow-up: the seven-leg sitting could not exercise
 ; vid_snap_geom's mode-0 (3-bank) or hidden-L2 (0-bank) branches - the
 ; test template always runs 320x256 mode-1, so SNAP=05 on every row.
 ; DEBUG build only owner instruments, EXTERN vectors 8/9/10
@@ -270,7 +270,7 @@ L2MOD 90      verb
 LHIDE 91      verb
 LSHOW 100     verb
 
-; SP17 T5 Layer 2 SCROLL bring-up. Ten DEBUG-only owner verbs on
+; Layer 2 SCROLL bring-up. Ten DEBUG-only owner verbs on
 ; ONE EXTERN vector (11 - debug.asm's l2scr_trampoline ->
 ; overlay2.asm's l2scr_run), the parameter selecting a config row.
 ; Every one of them: paints the existing DEBUG test card + its marker
@@ -280,8 +280,8 @@ LSHOW 100     verb
 ; (unlike L2MOD, which leaves its card up - a mode-1 card covers all
 ; but the bottom 16 lines, so leaving it up would mean typing the
 ; next row's verb blind). Verb numbers 102-111 are
-; free (NXBEN's retired 102-116 block). Release's EXTERN 0 11 is
-; ext_stub - a silent no-op.
+; free (NXBEN's retired 102-116 block). Release's EXTERN 0 11
+; forwards to an XBN, none staged, so it is silent.
 ;   LSX0/LSX1 - X offset wrap, mode-0 (256 wide) / mode-1 (320 wide,
 ;     the 9-bit NR $16 + NR $71 offset)
 ;   LSY0/LSY1 - Y offset wrap, mode-0 (192 high) / mode-1 (256 high)
@@ -305,8 +305,8 @@ LSTB  109     verb
 LSTC  110     verb
 LS256 111     verb
 
-; SP17 PLAYER BENCH (the NXBEN revival). NXBEN itself was retired at SP15
-; 3a: the format froze on its evidence and its prototype kernels
+; PLAYER BENCH (the NXBEN revival). NXBEN itself was retired with the
+; v1 player: the format froze on its evidence and its prototype kernels
 ; graduated into the production decoder. The revival measures the
 ; SHIPPING routines instead of prototypes, so the rows answer decode
 ; questions the player actually has. Four verbs on the last of the old
@@ -1553,8 +1553,8 @@ $initLoop
 ;
 ; Entry 1 (poll + draw + exit-check): EXTERN 0 6 (action, argc 2)
 ; dispatches to ktest_poll (overlay1.asm) via extVec vector 6
-; (debug.asm's ktest_trampoline) - DEBUG-only; Release's vector 6 is
-; ext_stub, a silent no-op, so this verb just leaves a blank diagnostic
+; (debug.asm's ktest_trampoline) - DEBUG-only; Release's vector 6
+; forwards to an XBN, none staged, so this verb just leaves a blank diagnostic
 ; area in a Release build rather than crashing. ktest_poll draws the
 ; whole diagnostic screen itself (native dbg_* console calls - DAAD's
 ; own PRINT is decimal-only and cannot show binary/hex/glyphs) and

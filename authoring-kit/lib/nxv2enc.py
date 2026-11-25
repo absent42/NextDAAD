@@ -5770,8 +5770,6 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                                    transport_factor=direct_transport_factor,
                                    stall_budget=stall_budget)
         channels = 2 if form == "stereo" else 1
-        print(f"  raw direct: {surface_width} surface, {form} sound, utilization "
-              f"{_util_txt(chk['utilization'])} on a frame without a palette")
         ex = _extract_source(src_path, width, height, fps_val, start, duration,
                              ffmpeg, dither_amp, dither_mode=dmode, retime=retime,
                              prefilter=prefilter, raw=True, channels=channels)
@@ -5784,9 +5782,15 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             if cut_form == "mono":
                 print(f"  {warn}")
                 channels, sound = 1, "mono"
+                form, chk = raw_pick_sound(width, height, surface_width, fps_val, "mono",
+                                           transport_factor=direct_transport_factor,
+                                           stall_budget=stall_budget)
                 ex = _extract_source(src_path, width, height, fps_val, start, duration,
                                      ffmpeg, dither_amp, dither_mode=dmode, retime=retime,
                                      prefilter=prefilter, raw=True, channels=1)
+        # printed after the cut decision so it names the form encoded
+        print(f"  raw direct: {surface_width} surface, {form} sound, utilization "
+              f"{_util_txt(chk['utilization'])} on a frame without a palette")
         return _encode_raw(ex, width, height, fps_val, out_path, surface=direct_surface,
                            channels=channels, gate=True, report_path=report_path,
                            dither_amp=dither_amp, dither_mode=dmode,
