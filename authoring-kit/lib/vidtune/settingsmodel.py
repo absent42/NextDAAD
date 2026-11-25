@@ -18,7 +18,7 @@ class VidprofileUnsupported(Exception):
 class Knob:
     name: str
     flag: str
-    kind: str        # choice | float | flag | str | flagstr
+    kind: str        # choice | select | float | flag | str | flagstr
     default: object  # None = encoder-derived / unset
     level: str       # basic | advanced
     # flagstr only: the encoder's own bare-flag CONST value, shown as a
@@ -66,6 +66,12 @@ KNOBS = [
     Knob("byte_cap",      "--byte-cap",      "float",  "0.65",   "advanced",
          label="byte cap"),
     Knob("direct",        "--direct",        "flag",   False,    "advanced"),
+    # Shown in the basic form only while direct is on; emitted only with
+    # --direct (videnc refuses --direct-sound without it). "auto" = no token.
+    Knob("direct_sound",  "--direct-sound",  "select", "auto",   "basic",
+         tooltip="sound of an uncompressed clip: auto picks stereo, or mono "
+                 "when stereo cannot keep up",
+         label="sound"),
     # kf_cadence's videnc argparse default is None, but the encoder
     # applies 5.0 internally when untouched - "5.0" here means an
     # untouched knob emits nothing (matches the encoder's own silent
@@ -213,6 +219,8 @@ def deviations(settings, cfg):
     for k in KNOBS:
         cur, ref = settings.get(k.name), base.get(k.name)
         if cur == ref:
+            continue
+        if k.name == "direct_sound" and not settings.get("direct"):
             continue
         if k.kind == "flag":
             if cur:

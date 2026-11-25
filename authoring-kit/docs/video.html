@@ -826,6 +826,13 @@ in the clip list. Revert throws those changes away and goes back to
 the saved settings. Encode Stale + Edited encodes every stale or edited
 clip with the settings you gave it, and saves them to <code>&lt;GAME&gt;.CFG</code>
 the same way Accept does.</p>
+<p>For an uncompressed clip the tuner shows a <strong>sound</strong> setting: <code>auto</code>,
+<code>stereo</code> or <code>mono</code>. <code>auto</code> uses stereo and switches to mono by itself
+when stereo cannot keep up, saying so, and the readings under the
+preview show which sound the encoded clip got. <code>mono</code> allows a taller
+picture at 320 wide (208 lines at 25 fps instead of 195) and steadier
+playback on footage with many cuts; <code>stereo</code> keeps stereo and warns if
+the picture may stutter after close cuts.</p>
 <h2 id="the-starter-games-demo-clips">The starter game's demo clips</h2>
 <p><code>STARTER\VIDEO\001.mp4</code> and <code>STARTER\VIDEO\002.mp4</code> build with the kit
 so the video condacts work out of the box. <code>STARTER\STARTER.CFG</code> holds

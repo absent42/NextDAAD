@@ -31,7 +31,8 @@ from dataclasses import dataclass, field
 # stamping its own values. Without the reset, leftovers from a previous
 # route persist (a stale `--fps 12.5` surviving a switch to a preset
 # that never mentions fps) and the preset does not mean what it says.
-ROUTE_KNOBS = ("shape", "width", "aspect", "fps", "tile_slack", "direct")
+ROUTE_KNOBS = ("shape", "width", "aspect", "fps", "tile_slack", "direct",
+               "direct_sound")
 
 # Explicitly NOT reset by a route: the modifier is orthogonal to routing,
 # and trim belongs to the clip, not the route. Listed rather than merely
@@ -131,7 +132,8 @@ def _raw_dims(settings):
 def raw_rate(settings):
     """Card cost of an uncompressed encode, or None when not --direct:
     dict(width, height, fps, form, frame_bytes, per_second). frame_bytes is
-    sound in the form the raw gate picks (gate options in extra honoured)
+    sound in the form the raw gate picks (the direct_sound knob and gate
+    options in extra honoured)
     plus pixel sectors; a scene's palette sector (512 B) and the scene-cut
     mono fallback are not counted. form None: the gate refuses."""
     if not settings.get("direct"):
@@ -146,7 +148,7 @@ def raw_rate(settings):
             return extra[extra.index(name) + 1] if name in extra[:-1] else default
 
         sw, _ = nxv2enc.raw_surface(w, h, opt("--direct-surface", "auto"))
-        want = opt("--direct-sound", "auto")
+        want = settings.get("direct_sound") or opt("--direct-sound", "auto")
         tf = opt("--direct-transport-factor", None)
         kw = dict(transport_factor=None if tf is None else float(tf),
                   stall_budget=opt("--stall-budget", "off"))
@@ -174,7 +176,8 @@ def size_text(settings, seconds=None):
         return "uncompressed: size unknown for this shape"
     if rate["form"] is None:
         return "uncompressed: too much for the card at this shape and rate"
-    text = f"uncompressed: {rate['per_second'] / _MB:.2f} MB a second"
+    text = (f"uncompressed, {rate['form']}: "
+            f"{rate['per_second'] / _MB:.2f} MB a second")
     if seconds:
         import nxv2enc
         total = rate["per_second"] * float(seconds)

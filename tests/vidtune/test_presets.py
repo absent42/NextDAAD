@@ -91,9 +91,9 @@ def test_size_text_states_rate_and_clip_total():
     cfg, settings = _base()
     after = presets.apply_route(settings, settings,
                                 presets.route_by_key("fullrate"))
-    assert presets.size_text(after) == "uncompressed: 1.27 MB a second"
+    assert presets.size_text(after) == "uncompressed, stereo: 1.27 MB a second"
     assert presets.size_text(after, 30.0) == (
-        "uncompressed: 1.27 MB a second, about 38.0 MB for this 30.0 s clip")
+        "uncompressed, stereo: 1.27 MB a second, about 38.0 MB for this 30.0 s clip")
     assert "over the 256 MB file limit" in presets.size_text(after, 240.0)
 
 
@@ -295,7 +295,7 @@ def test_route_card_shows_the_clip_size(qtbot):
                 indent=False)
     item = menu.actions()[0].defaultWidget()
     assert item.size_label.text() == (
-        "uncompressed: 1.27 MB a second, about 12.7 MB for this 10.0 s clip")
+        "uncompressed, stereo: 1.27 MB a second, about 12.7 MB for this 10.0 s clip")
 
 
 def test_route_button_never_claims_a_route_is_active(qtbot):

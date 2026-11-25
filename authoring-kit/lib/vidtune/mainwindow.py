@@ -57,7 +57,7 @@ from .encoderun import (EncodeJob, encoder_warnings, resolve_encoder, summarize_
                         videnc_names)
 from .kitmodel import (clip_state, game_paths, list_clips, parse_config,
                        read_generation_stamp)
-from .preview import extract_source, probe_source_seconds
+from .preview import extract_source, probe_source_seconds, sound_form
 from .previewpane import PreviewPane, SOURCE_PREVIEW_HINT
 from .settingsmodel import KNOBS, SHAPE_PRESETS, VidprofileUnsupported, effective_settings
 
@@ -186,6 +186,7 @@ class MetricsBar(QWidget):
         self._bound_meter = _Meter("budget-bound")
         self._util_meter = _Meter("utilisation")
         self._wire_meter = _Meter("encoded size")
+        self._sound_meter = _Meter("sound")
         self._psnr_label = self._psnr_meter.value
         self._bound_label = self._bound_meter.value
         self._util_label = self._util_meter.value
@@ -220,6 +221,7 @@ class MetricsBar(QWidget):
         row.addWidget(self._bound_meter)
         row.addWidget(self._util_meter)
         row.addWidget(self._wire_meter)
+        row.addWidget(self._sound_meter)
         # After the meters, not wedged between two of them: a button in
         # the middle of the run breaks the rhythm the four readings
         # otherwise read as.
@@ -258,7 +260,7 @@ class MetricsBar(QWidget):
         clip the user has since switched away from) never gets shown
         without saying which clip it actually describes."""
         for meter in (self._psnr_meter, self._bound_meter,
-                      self._util_meter, self._wire_meter):
+                      self._util_meter, self._wire_meter, self._sound_meter):
             meter.set_value("-", theme.INK_GHOST)
         self._util_meter.set_caption("utilisation")
         self._burst_peak_frame = None
@@ -310,6 +312,18 @@ class MetricsBar(QWidget):
             "-" if summary.wire_bytes is None
             else f"{summary.wire_bytes:,} B",
             None if summary.wire_bytes is not None else theme.INK_GHOST)
+
+    def set_sound(self, text):
+        """The encoded file's sound form, or None when unknown."""
+        if text is None:
+            self._sound_meter.set_value("-", theme.INK_GHOST)
+        else:
+            self._sound_meter.set_value(text)
+
+    def sound_text(self):
+        """"sound: <form>" as shown, or "" when no file has been read."""
+        value = self._sound_meter.value.text()
+        return "" if value == "-" else f"sound: {value}"
 
     def set_status(self, text):
         self._status_label.setText(text)
@@ -428,6 +442,8 @@ def _choice_values(knob):
         return ["offset", "mixture"]
     if knob.name == "width":
         return ["", "256", "320"]
+    if knob.name == "direct_sound":
+        return ["auto", "stereo", "mono"]
     return []
 
 
@@ -553,11 +569,17 @@ class SettingsPanel(QWidget):
             row_container.setLayout(row_box)
 
             form = self._basic_form if knob.level == "basic" else self._advanced_form
-            form.addRow(label, row_container)
+            if knob.name == "direct_sound":
+                # sits under fps; KNOBS order keeps its token after --direct
+                at, _role = form.getWidgetPosition(self._rows["fps"]["label"])
+                form.insertRow(at + 1, label, row_container)
+            else:
+                form.addRow(label, row_container)
 
             self._rows[knob.name] = {
                 "knob": knob,
                 "label": label,
+                "container": row_container,
                 "widget": widget,
                 "getter": getter,
                 "setter": setter,
@@ -579,6 +601,27 @@ class SettingsPanel(QWidget):
             def setter(value, combo=combo):
                 combo.blockSignals(True)
                 combo.setCurrentText("" if value is None else str(value))
+                combo.blockSignals(False)
+
+            return combo, getter, setter
+
+        if knob.kind == "select":
+            # fixed choices; a hand-typed value outside them is kept as an
+            # extra item so the saved line survives and videnc judges it
+            combo = QComboBox()
+            for value in _choice_values(knob):
+                combo.addItem(value)
+            combo.currentTextChanged.connect(self._on_edit)
+
+            def getter(combo=combo):
+                return combo.currentText()
+
+            def setter(value, combo=combo, default=knob.default):
+                text = default if value is None else str(value)
+                combo.blockSignals(True)
+                if combo.findText(text) < 0:
+                    combo.addItem(text)
+                combo.setCurrentText(text)
                 combo.blockSignals(False)
 
             return combo, getter, setter
@@ -710,6 +753,10 @@ class SettingsPanel(QWidget):
                 f"color: {theme.ACCENT};" if deviating
                 else f"color: {theme.INK_DIM};")
             row["reset_btn"].setVisible(deviating)
+        # sound means nothing on the compressed route
+        direct = bool(self._rows["direct"]["getter"]())
+        self._rows["direct_sound"]["label"].setVisible(direct)
+        self._rows["direct_sound"]["container"].setVisible(direct)
         self._refresh_size()
 
     def set_source_seconds(self, seconds):
@@ -1222,6 +1269,10 @@ class MainWindow(QMainWindow):
         if clip.vid.is_file() and not stale:
             dims = self._guarded(self._resolve_dims, settings)
             width = dims[0] if dims is not None else 320
+            # fresh means built from the saved argv
+            self.metrics_bar.set_sound(sound_form(
+                clip.vid, self._guarded(settingsmodel.build_arg_vector,
+                                        self.cfg, num3)))
             self.preview.load(clip.vid, None, column_major=(width == 320))
         else:
             # A clip with no fresh .vid loads its SOURCE frames instead
@@ -1679,12 +1730,14 @@ class MainWindow(QMainWindow):
                 return
         write_sidecar(clip.sidecar, self.stamp or "", argv)
         self.metrics_bar.update_from(summary, num3 in self.pinned_budgets, num3)
+        self.metrics_bar.set_sound(sound_form(clip.vid, argv))
         self.metrics_bar.set_status("")
         self._populate_clip_list()
 
     # -- preview/source loading ----------------------------------------------
 
     def _load_preview(self, num3, vid_path, argv):
+        self.metrics_bar.set_sound(sound_form(vid_path, argv))
         source = self._extract_matching_source(num3, argv)
         self.preview.load(vid_path, source, column_major=False)
         if self._last_source_error:
