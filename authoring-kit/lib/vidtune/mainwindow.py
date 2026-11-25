@@ -57,7 +57,7 @@ from .encoderun import (EncodeJob, encoder_warnings, resolve_encoder, summarize_
                         videnc_names)
 from .kitmodel import (clip_state, game_paths, list_clips, parse_config,
                        read_generation_stamp)
-from .preview import extract_source
+from .preview import extract_source, probe_source_seconds
 from .previewpane import PreviewPane, SOURCE_PREVIEW_HINT
 from .settingsmodel import KNOBS, SHAPE_PRESETS, VidprofileUnsupported, effective_settings
 
@@ -185,7 +185,7 @@ class MetricsBar(QWidget):
         self._psnr_meter = _Meter("psnr")
         self._bound_meter = _Meter("budget-bound")
         self._util_meter = _Meter("utilisation")
-        self._wire_meter = _Meter("wire")
+        self._wire_meter = _Meter("encoded size")
         self._psnr_label = self._psnr_meter.value
         self._bound_label = self._bound_meter.value
         self._util_label = self._util_meter.value
@@ -478,7 +478,9 @@ class SettingsPanel(QWidget):
         # it sits above them - in its own form layout, so "route" lines
         # up with "shape"/"fps" in the same label column rather than
         # floating free above the panel.
-        self._route_button = RouteMenuButton(self._route_context)
+        self._source_seconds = None
+        self._route_button = RouteMenuButton(self._route_context,
+                                             seconds_for=self.clip_seconds)
         self._route_button.route_chosen.connect(self._on_route_chosen)
         route_form = QFormLayout()
         route_form.setHorizontalSpacing(theme.GAP_PANE)
@@ -488,6 +490,12 @@ class SettingsPanel(QWidget):
             "presets from the Video page of the manual - a complete answer "
             "for a class of footage")
         route_form.addRow(route_label, self._route_button)
+        # Card space for the settings in the panel, restated on every edit.
+        self.size_label = QLabel("")
+        self.size_label.setWordWrap(True)
+        self.size_label.setFont(theme.ui_font(8.5))
+        self.size_label.setStyleSheet(f"color: {theme.INK_DIM};")
+        route_form.addRow(QLabel("size"), self.size_label)
 
         # Preset 6. Collapsed by default and phrased as the question the
         # author actually arrives with, rather than as a feature name.
@@ -697,6 +705,33 @@ class SettingsPanel(QWidget):
                 f"color: {theme.ACCENT};" if deviating
                 else f"color: {theme.INK_DIM};")
             row["reset_btn"].setVisible(deviating)
+        self._refresh_size()
+
+    def set_source_seconds(self, seconds):
+        """Length of the open clip's source, or None when unknown."""
+        self._source_seconds = seconds
+        self._refresh_size()
+
+    def clip_seconds(self, settings):
+        """Seconds the encode covers: --duration when set, else the
+        source after --start; None when neither is known."""
+        if settings.get("duration") is not None:
+            try:
+                return to_seconds(settings["duration"])
+            except ValueError:
+                return None
+        if self._source_seconds is None:
+            return None
+        try:
+            left = self._source_seconds - to_seconds(settings.get("start"))
+        except ValueError:
+            return None
+        return left if left > 0 else None
+
+    def _refresh_size(self):
+        settings = self.get_settings()
+        self.size_label.setText(
+            presets.size_text(settings, self.clip_seconds(settings)))
 
     def _reset(self, name):
         row = self._rows[name]
@@ -801,6 +836,7 @@ class MainWindow(QMainWindow):
         self.pinned_budgets: dict = {}
         self.full_ok: dict = {}
         self.segments: dict = {}
+        self.source_seconds: dict = {}
         self._last_source_error = None
 
         self.scratch_dir = Path(tempfile.mkdtemp(prefix="vidtune-"))
@@ -1125,8 +1161,18 @@ class MainWindow(QMainWindow):
             settings = self._guarded(effective_settings, self.cfg, num3)
             if settings is None:
                 settings = dict(self.kit_base)
+            elif num3 not in self.cfg.per_clip:
+                # No saved settings: open on the opening route, panel only.
+                # The build still encodes kit defaults until a save.
+                settings = presets.apply_route(
+                    settings, self.kit_base,
+                    presets.route_by_key(presets.OPENING_ROUTE))
+        clip = self._clip_by_num3(num3)
+        self.settings_panel.set_source_seconds(
+            self._source_seconds(clip) if clip is not None else None)
         self.settings_panel.set_settings(settings, self.kit_base)
         self._current_clip = num3
+        self._refresh_current_status()
         self._update_accept_enabled()
         # A "budget provisional" status label, the metrics figures, and
         # the segment markers all belong to the clip that was open when
@@ -1138,7 +1184,6 @@ class MainWindow(QMainWindow):
         self.metrics_bar.clear(num3)
         self.preview.clear()
 
-        clip = self._clip_by_num3(num3)
         if clip is None:
             return
         state = self._guarded(clip_state, clip, self.cfg, self.stamp)
@@ -1157,6 +1202,17 @@ class MainWindow(QMainWindow):
             # falls back to the empty hint itself if extraction isn't
             # currently possible (no source .mp4, no ffmpeg).
             self._load_source_preview(num3, clip, settings)
+
+    def _source_seconds(self, clip):
+        """Source length from ffmpeg's banner, cached per clip; None when
+        there is no source or no ffmpeg."""
+        if clip.num3 not in self.source_seconds:
+            seconds = None
+            if clip.mp4.is_file() and self.ffmpeg is not None \
+                    and Path(self.ffmpeg).is_file():
+                seconds = probe_source_seconds(self.ffmpeg, clip.mp4)
+            self.source_seconds[clip.num3] = seconds
+        return self.source_seconds[clip.num3]
 
     def _load_source_preview(self, num3, clip, settings):
         """Loads a not-yet-encoded clip's SOURCE frames into the pane

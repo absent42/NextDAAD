@@ -2,6 +2,7 @@
 videnc's own extraction path (parity by reuse), diff heatmap and
 stale-band overlay. Pure functions; the GUI thread wrapper lives in
 mainwindow.py."""
+import re
 from fractions import Fraction
 from pathlib import Path
 
@@ -88,6 +89,23 @@ def extract_source(ffmpeg, mp4, width, height, fps, retime, start, duration):
                                   stages=stages)
     arr = np.frombuffer(raw, np.uint8).reshape(n, height, width, 3)
     return list(arr)
+
+
+def source_seconds_from_banner(stderr):
+    """Seconds from ffmpeg's "Duration: HH:MM:SS.ss" banner line, or None."""
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", stderr or "")
+    if not m:
+        return None
+    seconds = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    return seconds if seconds > 0 else None
+
+
+def probe_source_seconds(ffmpeg, mp4):
+    """Source length via videnc's banner probe; None on any failure."""
+    try:
+        return source_seconds_from_banner(videnc._probe_stderr(Path(ffmpeg), Path(mp4)))
+    except (OSError, ValueError):
+        return None
 
 
 def diff_heatmap(src, enc):

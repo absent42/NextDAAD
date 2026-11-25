@@ -793,6 +793,15 @@ around it.</p>
 segment, adjust shape, frame rate, dither and the other knobs above,
 encode and accept - the settings land in <code>VIDOPTS_NNN</code> in your game's
 <code>&lt;GAME&gt;.CFG</code>, so the next build reproduces the same encode.</p>
+<p>The tuner opens a clip that has no settings of its own on <strong>Action at
+full rate</strong> (256x192 at 25 fps, uncompressed), the first entry in its
+route list, because it gives the cleanest picture. It costs about 1.27
+MB of card space for every second, so one clip at that size can run
+about three and a half minutes at most. For long or mostly still
+footage pick <strong>Long cutscene</strong> or <strong>Quiet scene</strong> instead. The size line
+under the route shows what the clip will cost. Opening a clip saves
+nothing: until you accept it, or Encode Stale + Edited saves it, a clip
+with no settings still builds with the compressed kit defaults.</p>
 <p>A clip whose settings you have changed but not saved shows as <code>edited</code>
 in the clip list. Revert throws those changes away and goes back to
 the saved settings. Encode Stale + Edited encodes every stale or edited
