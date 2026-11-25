@@ -993,31 +993,121 @@ def direct_max_raw_bytes(fps, width, height, util=1.0, transport_factor=None):
 
 # ---------------------------------------------------------------------
 # RAW DIRECT GATE - armed T of one raw frame (raw_model_t terms), fitted by
-# tests/raw_fit.py to the KS3 bench 2026-11-23 NXBW rows, harness removed
-# (tests/core303/results/2026-11-23-ks3-legRAW1B).
+# tests/raw_fit.py (model 1c) to the KS3 bench 2026-11-25 NXBW and NXBM rows
+# (tests/core303/results/2026-11-25-ks3-legRAW1C). "mono" is the zxnDMA form.
 # ---------------------------------------------------------------------
 RAW_K = {
     "stereo": dict(
-        tb=17.0982,      # RAW_T_PER_B [ARSE, RSEC] 8 clips
-        ts=134.62,       # RAW_SECTOR_T [RSEC] 16 clips
-        tsnd=11039.40,   # RAW_SND_SECTOR_T [ARSW, RSWP, ARSE, ARCO] 8 clips
-        tc=40.97,        # RAW_COL_T [ARCO, ARSE, RCOL, RSEC] 8 clips
-        tf=-1019.32,     # RAW_FRAME_T [ARSW, RSWP, ARSE, ARCO] 8 clips
-        tp=13092.96),    # RAW_PAL_T [RFR0, RSWP, ARSW] 8 clips
+        a=1.06181,       # armed factor [ARSE, RSEC] 8 clips
+        tb=16.9890,      # 16 x a
+        tsnd=9069.23,    # sound sector [ARSW, RSWP, counted overhead] 8 clips
+        tf=1438.24,      # frame remainder, same points
+        tp=13270.26),    # palette sector [RFR0, RSWP, ARSW] 8 clips
     "mono": dict(
-        tb=16.8744,      # RAW_T_PER_B [ARSE, RSEC] 8 clips
-        ts=134.62,       # RAW_SECTOR_T [RSEC] 16 clips
-        tsnd=10173.66,   # RAW_SND_SECTOR_T [ARSW, RSWP, ARSE, ARCO] 8 clips
-        tc=40.52,        # RAW_COL_T [ARCO, ARSE, RCOL, RSEC] 8 clips
-        tf=1303.72,      # RAW_FRAME_T [ARSW, RSWP, ARSE, ARCO] 8 clips
-        tp=12530.59),    # RAW_PAL_T [RFR0, RSWP, ARSW] 8 clips
+        a=1.00784,       # armed factor [MHST, RHST] 8 clips
+        tb=16.1254,      # 16 x a
+        tsnd=9412.87,    # sound sector [MRSW, counted overhead] 8 clips
+        tf=579.51,       # frame remainder, same points
+        tp=12322.48),    # palette sector [RFR0, RSWP, MRSW] 8 clips
 }
-RAW_STALL_T = 23.49            # AHST bin 1 upper edge x ARSE/RSEC [AHST, ARSE, RSEC]
+RAW_STALL_T = 23.38            # AHST bin 1 upper edge x ARSE/RSEC
 RAW_PERIOD_FIELD_T = 567264    # one field, 311 x 1824 T (+3 timing): reference only
-# vid_run releases a frame when the CTC 0 reader has consumed the last
-# frame's sound, so the period is samples x one CTC 0 period (16 x 112 T).
-RAW_SAMPLE_T = 16 * 112
+# Frames are paced by sound consumption: period = samples x one sample's T.
+# Stereo: CTC 0 at 16 x 112 T. Mono: the zxnDMA's prescaled burst, measured.
+RAW_SAMPLE_T = {"stereo": 1792.0, "mono": 1799.64}
 RAW_RATES = (25, 16.67, 12.5)  # rates a refusal offers
+
+# Unarmed base T of the player's frame program, equal to tests/nxv2_bench_rows.py
+# (VR_*), pinned there to the emitted bytes: open, slide call and ret, column hop,
+# page end, fast program frame cost, first sector, vid_raw_frame, last-sector pad
+# read; the train's pass, pre-open pad, page check not taken / taken, partial patch.
+RAW_OPEN_T = 86
+RAW_READ_T = 27
+RAW_HOP_T = 11
+RAW_PAGE_T = 32
+RAW_FAST_T = 110
+RAW_FIRST_T = 152
+RAW_FRAME_OV_T = 401
+RAW_PAD_T = 37
+RAW_PASS_T = 27
+RAW_TPAD_T = 4
+RAW_CHK_T = 18
+RAW_CHK_PAGE_T = 67
+RAW_PATCH_T = 40
+RAW_OPEN_BUDGET = 24           # bytes the train rule counts an open at
+RAW_TRAIN_ROOM = 8156          # bytes for period and driver in page B
+
+
+def _raw_x0(width, surface_width):
+    """Left margin in columns the player stages: centred on the 320 surface."""
+    return (320 - int(width)) // 2 if surface_width == 320 else 0
+
+
+def _raw_train(width, height, surface_width):
+    """The column train's numbers (tests/nxv2_bench_rows.py raw_train), or None
+    on a flat surface (256 surface, or height 256): no train there."""
+    w, h = int(width), int(height) & 0xFF or 256
+    if surface_width != 320 or h == 256:
+        return None
+    total, c0 = w * h, -_raw_x0(w, surface_width) & 31
+    g = h & -h
+    big, cp = 512 * h // g, 512 // g
+    lp = min(big, total)
+    passes = -(-total // lp)
+    partial = total % lp != 0 and passes > 1
+    m = min(32, cp)
+    checks = 0 if passes == 1 else sum((j - c0) % m == 0 for j in range(1, cp))
+    cols = lp // h
+    starts = -(-lp // 512)
+    if passes == 1:
+        pe = sum((u - c0) % 32 == 0 for u in range(1, w))
+    else:
+        pe = sum((p * cp - c0) % 32 == 0 for p in range(1, passes))
+    nbytes = (2 * lp + 3 * cols + RAW_OPEN_BUDGET * starts + (starts - 1) + 5 * checks + 1
+              + 6 + 3 * (passes - 1) + 7 * pe + (10 if partial else 0) + 3)
+    return dict(Cp=cp, passes=passes, partial=partial, c0=c0, m=m, pe=pe, bytes=nbytes)
+
+
+def raw_variant(width, height, surface_width):
+    """The frame program the player builds: "train" when the column train fits
+    page B, else "inline"."""
+    t = _raw_train(width, height, surface_width)
+    return "train" if t and t["bytes"] <= RAW_TRAIN_ROOM else "inline"
+
+
+def raw_frame_overhead(width, height, surface_width):
+    """Unarmed T of a pixels-only frame beyond 16 T a data byte (pad included),
+    on the program raw_variant names (tests/nxv2_bench_rows.py raw_frame_overhead)."""
+    w, h = int(width), int(height) & 0xFF or 256
+    x0 = _raw_x0(w, surface_width)
+    total, c0 = w * h, -x0 & 31
+    gapped = surface_width == 320 and h < 256
+    unit = h if gapped else 256
+    nsec = -(-total // 512)
+    pages = sum((u - c0) % 32 == 0 for u in range(1, total // unit))
+    t = RAW_FRAME_OV_T + RAW_FAST_T + RAW_FIRST_T + (nsec - 1) * RAW_OPEN_T
+    t += RAW_PAD_T if total % 512 else 0
+    if raw_variant(w, h, surface_width) == "inline":
+        cuts = set(range(512, total, 512))
+        if gapped:
+            cuts |= set(range(h, total, h))
+        else:
+            cuts |= set(range((32 - (x0 & 31)) * 256, total, 8192))
+        return float(t + (len(cuts) + 1) * RAW_READ_T + (w - 1 if gapped else 0) * RAW_HOP_T
+                     + pages * RAW_PAGE_T)
+    r = _raw_train(w, h, surface_width)
+    t += r["passes"] * RAW_PASS_T + (nsec - r["passes"]) * RAW_TPAD_T
+    if r["partial"]:
+        t += RAW_PATCH_T
+    t += (w - 1 if r["partial"] else w) * RAW_HOP_T
+    if r["passes"] == 1:
+        return float(t + pages * RAW_PAGE_T)
+    k = w % r["Cp"] or r["Cp"]
+    pos = [j for j in range(1, r["Cp"]) if (j - r["c0"]) % r["m"] == 0]
+    run = (r["passes"] - 1) * len(pos) + sum(j < k for j in pos)
+    taken = pages - r["pe"]
+    return float(t + run * RAW_CHK_T + taken * (RAW_CHK_PAGE_T - RAW_CHK_T)
+                 + r["pe"] * RAW_PAGE_T)
 
 
 def _util_txt(u):
@@ -1040,11 +1130,13 @@ def raw_frame_t(width, height, surface_width, fps, form, *, palette=True,
         raise ValueError(f"stall budget must be off or measured, got {stall_budget!r}")
     geo = raw_layout(width, height, surface_width)
     padded = audio_layout(fps, 2 if form == "stereo" else 1, raw=True)[3]
-    t = raw_model_t(geo["sectors"], padded // 512, geo["columns"], palette, RAW_K[form],
+    t = raw_model_t(geo["sectors"], padded // 512,
+                    raw_frame_overhead(width, height, surface_width), palette, RAW_K[form],
                     1.0 if transport_factor is None else float(transport_factor),
                     RAW_STALL_T if stall_budget == "measured" else 0.0)
     t["glue_t"] = TMODEL_COEFFS["glue_t"] / TMODEL_COEFFS["audio_factor"]
     t["total_t"] += t["glue_t"]
+    t["variant"] = raw_variant(width, height, surface_width)
     return t
 
 
@@ -1053,7 +1145,7 @@ def raw_supply_check(width, height, surface_width, fps, form, **kw):
     kw: transport_factor, stall_budget (raw_frame_t)."""
     t = raw_frame_t(width, height, surface_width, fps, form, palette=False, **kw)
     samples = audio_layout(fps, 2 if form == "stereo" else 1, raw=True)[1]
-    period = samples * RAW_SAMPLE_T
+    period = samples * RAW_SAMPLE_T[form]
     return dict(utilization=t["total_t"] / period, period_t=period, total_t=t["total_t"],
                 terms=t, form=form, ref_period_t=RAW_PERIOD_FIELD_T * 50 / float(fps))
 
@@ -3894,14 +3986,21 @@ def raw_layout(width, height, surface_width):
                 cap_blocks=sectors + 1)
 
 
-def raw_model_t(s_pix, s_snd, columns, palette, k, transport_factor=1.0, stall=0.0):
+def raw_model_t(s_pix, s_snd, overhead_t, palette, k, transport_factor=1.0, stall=0.0):
     """Gate equation for one raw frame, in T, term by term (no frame-loop
-    glue). k holds one form's constants: tb, ts, tsnd, tc, tf, tp."""
+    glue). k holds one form's constants: a, tb, tsnd, tf, tp; overhead_t is
+    raw_frame_overhead (unarmed), priced at a. A k without "a" is the
+    sitting 1b form (tb, ts, tsnd, tc, tf, tp; overhead_t = column ends) that
+    tests/raw_fit.py still fits."""
+    if "a" not in k:
+        t = dict(byte_t=s_pix * 512 * k["tb"] * transport_factor, sector_t=s_pix * k["ts"],
+                 snd_t=s_snd * k["tsnd"], col_t=overhead_t * k["tc"], frame_t=k["tf"],
+                 pal_t=k["tp"] if palette else 0, stall_t=stall)
+        return dict(total_t=sum(t.values()), **t)
     t = dict(
         byte_t=s_pix * 512 * k["tb"] * transport_factor,
-        sector_t=s_pix * k["ts"],
+        overhead_t=k["a"] * overhead_t,
         snd_t=s_snd * k["tsnd"],
-        col_t=columns * k["tc"],
         frame_t=k["tf"],
         pal_t=k["tp"] if palette else 0,
         stall_t=stall)

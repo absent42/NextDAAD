@@ -5303,7 +5303,10 @@ if ($Font) {
 # raw bench fit): --direct output changed layout. 010-014 back the DS1
 # rows and stay old-layout through tests\videnc_old_direct.py; delta
 # encodes are unchanged. See $encoderGeneration 'raw1' in video.ps1.
-$vidLegSettlementTag = 'raw1'
+# BUMP raw1 -> raw2 (raw gate refitted after the DMA sound and reader trims):
+# admitted shapes and the auto sound form change. See $encoderGeneration
+# 'raw2' in video.ps1.
+$vidLegSettlementTag = 'raw2'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the

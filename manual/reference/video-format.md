@@ -249,8 +249,8 @@ remedy in the error message:
   sector at the clip's shape, rate and sound form, from timings measured
   on one Next with one SD card, against the time the frame's sound takes
   to play; over 1.00 refuses, over 0.90 warns. At
-  25 fps the tallest pictures are 320x192, 280x219 and 256x242 with
-  stereo sound and 320x196, 280x224 and 256x246 with mono; at 16.67 and
+  25 fps the tallest pictures are 320x195, 280x224 and 256x244 with
+  stereo sound and 320x208, 280x237 and 256x256 with mono; at 16.67 and
   12.5 fps every shape up to 320x256 passes. With `--direct-sound auto`
   a shape that does not hold rate in stereo is encoded mono, with a
   note. The refusal names the tallest height at the asked width in each

@@ -8355,13 +8355,19 @@ def t16_raw_layout():
 
 @case(16, "raw layout - gate equation terms and total")
 def t16_raw_model():
-    k = dict(tb=17.0, ts=200.0, tsnd=11000.0, tc=40.0, tf=5000.0, tp=9000.0)
-    r = enc.raw_model_t(120, 3, 320, True, k)
-    assert r["byte_t"] == 120 * 512 * 17.0 and r["sector_t"] == 24000.0 and r["snd_t"] == 33000.0
-    assert r["col_t"] == 12800.0 and r["frame_t"] == 5000.0 and r["pal_t"] == 9000.0 and r["stall_t"] == 0
+    k = dict(a=1.5, tb=24.0, tsnd=11000.0, tf=5000.0, tp=9000.0)
+    r = enc.raw_model_t(120, 3, 16000, True, k)
+    assert r["byte_t"] == 120 * 512 * 24.0 and r["overhead_t"] == 24000.0 and r["snd_t"] == 33000.0
+    assert r["frame_t"] == 5000.0 and r["pal_t"] == 9000.0 and r["stall_t"] == 0
+    assert "sector_t" not in r and "col_t" not in r
     assert r["total_t"] == sum(v for n, v in r.items() if n != "total_t")
-    assert enc.raw_model_t(120, 3, 320, False, k, transport_factor=1.1, stall=5600)["total_t"] \
-           == 120 * 512 * 17.0 * 1.1 + 24000 + 33000 + 12800 + 5000 + 5600
+    assert enc.raw_model_t(120, 3, 16000, False, k, transport_factor=1.1, stall=5600)["total_t"] \
+           == 120 * 512 * 24.0 * 1.1 + 24000 + 33000 + 5000 + 5600
+    # the sitting 1b form (no "a") that tests/raw_fit.py fits: third argument = column ends
+    k1b = dict(tb=17.0, ts=200.0, tsnd=11000.0, tc=40.0, tf=5000.0, tp=9000.0)
+    r = enc.raw_model_t(120, 3, 320, True, k1b)
+    assert r["sector_t"] == 24000.0 and r["col_t"] == 12800.0
+    assert r["total_t"] == 120 * 512 * 17.0 + 24000 + 33000 + 12800 + 5000 + 9000
 
 
 @case(16, "raw layout - frame bytes: sound, pad, tag, palette, pixels")
@@ -8681,25 +8687,27 @@ def t16_raw_mono_audio():
            f"hot stereo tone clipped in mono: min {min(mst)} max {max(mst)}")
 
 
-RAW_P25 = 625 * 1792          # sound period at 25 fps: samples x CTC 0 period
+RAW_P25 = 625 * 1792          # stereo sound period at 25 fps: samples x CTC 0 period
 
 
 def _flat_k(pix_util, pal_util, period=RAW_P25):
     """RAW_K entry whose frame costs pix_util x period without a palette and
     pal_util x period with one, at any shape."""
     glue = enc.TMODEL_COEFFS["glue_t"] / enc.TMODEL_COEFFS["audio_factor"]
-    return dict(tb=0.0, ts=0.0, tsnd=0.0, tc=0.0, tf=pix_util * period - glue,
+    return dict(a=0.0, tb=0.0, tsnd=0.0, tf=pix_util * period - glue,
                 tp=(pal_util - pix_util) * period)
 
 
 @contextlib.contextmanager
 def _patched_raw_k(stereo, mono):
-    saved = enc.RAW_K
+    """Flat constants for both forms; both periods 1792 T a sample, as _flat_k assumes."""
+    saved, saved_st = enc.RAW_K, enc.RAW_SAMPLE_T
     enc.RAW_K = {"stereo": stereo, "mono": mono}
+    enc.RAW_SAMPLE_T = {"stereo": 1792.0, "mono": 1792.0}
     try:
         yield
     finally:
-        enc.RAW_K = saved
+        enc.RAW_K, enc.RAW_SAMPLE_T = saved, saved_st
 
 
 def _quiet(fn, *args, **kwargs):
@@ -8721,31 +8729,38 @@ def _exit_text(fn, *args, **kwargs):
     raise AssertionError(f"{getattr(fn, '__name__', fn)} did not refuse")
 
 
-@case(16, "raw gate - frame terms from RAW_K, glue, stall budget, sound period")
+@case(16, "raw gate - frame terms from RAW_K, counted overhead, glue, stall budget, sound period")
 def t16_raw_gate_terms():
     r = enc.raw_frame_t(320, 192, 320, 25, "stereo")
     k = enc.RAW_K["stereo"]
-    assert r["snd_t"] == 3 * k["tsnd"] and r["col_t"] == 320 * k["tc"] and r["stall_t"] == 0
-    assert r["byte_t"] == 120 * 512 * k["tb"] and r["sector_t"] == 120 * k["ts"]
+    ov = enc.raw_frame_overhead(320, 192, 320)
+    assert r["snd_t"] == 3 * k["tsnd"] and r["overhead_t"] == k["a"] * ov and r["stall_t"] == 0
+    assert r["byte_t"] == 120 * 512 * k["tb"] and r["variant"] == "train"
+    assert "sector_t" not in r and "col_t" not in r
     assert r["pal_t"] == k["tp"] and r["frame_t"] == k["tf"]
     assert r["glue_t"] == enc.TMODEL_COEFFS["glue_t"] / enc.TMODEL_COEFFS["audio_factor"]
-    assert abs(r["total_t"] - sum(v for n, v in r.items() if n != "total_t")) < 1e-6
+    assert abs(r["total_t"] - sum(v for n, v in r.items() if n not in ("total_t", "variant"))) < 1e-6
     assert enc.raw_frame_t(320, 192, 320, 25, "stereo", palette=False)["pal_t"] == 0
-    assert enc.raw_frame_t(256, 192, 256, 25, "stereo")["col_t"] == 0
+    flat = enc.raw_frame_t(256, 192, 256, 25, "mono")
+    assert flat["variant"] == "inline" and flat["overhead_t"] == (
+        enc.RAW_K["mono"]["a"] * enc.raw_frame_overhead(256, 192, 256))
     assert enc.raw_frame_t(320, 240, 320, 16.67, "mono")["snd_t"] == 2 * enc.RAW_K["mono"]["tsnd"]
+    for f in enc.RAW_K:
+        assert abs(enc.RAW_K[f]["tb"] - 16 * enc.RAW_K[f]["a"]) < 0.00006, f"{f}: tb = 16 x a"
     m = enc.raw_frame_t(320, 192, 320, 25, "stereo", stall_budget="measured")
     assert abs(m["total_t"] - r["total_t"] - enc.RAW_STALL_T) < 1e-6
     f = enc.raw_frame_t(320, 192, 320, 25, "stereo", transport_factor=1.1)
-    assert abs(f["byte_t"] - 1.1 * r["byte_t"]) < 1e-6 and f["sector_t"] == r["sector_t"]
-    assert enc.RAW_K["stereo"]["ts"] == enc.RAW_K["mono"]["ts"]
+    assert abs(f["byte_t"] - 1.1 * r["byte_t"]) < 1e-6 and f["overhead_t"] == r["overhead_t"]
     _raises(ValueError, enc.raw_frame_t, 256, 192, 256, 25, "quad")
     _raises(ValueError, enc.raw_frame_t, 256, 192, 256, 25, "stereo", stall_budget="on")
-    # a frame is released on sound consumption: samples x CTC 0 period; two fields for reference
+    # a frame is released on sound consumption: samples x one sample's T; two fields for reference
     c = enc.raw_supply_check(256, 192, 256, 25, "stereo")
     assert c["period_t"] == RAW_P25 == 1120000
     assert c["ref_period_t"] == 1134528 == 2 * enc.RAW_PERIOD_FIELD_T
     assert abs(enc.raw_supply_check(320, 240, 320, 50 / 3, "stereo")["ref_period_t"] - 1701792) < 0.01
-    assert enc.raw_supply_check(320, 240, 320, 16.67, "mono")["period_t"] == 937 * 1792
+    assert enc.RAW_SAMPLE_T == {"stereo": 1792.0, "mono": 1799.64}
+    assert enc.raw_supply_check(256, 192, 256, 25, "mono")["period_t"] == 625 * enc.RAW_SAMPLE_T["mono"]
+    assert enc.raw_supply_check(320, 240, 320, 16.67, "mono")["period_t"] == 937 * 1799.64
     # the gate is on a frame without a palette
     px = enc.raw_frame_t(256, 192, 256, 25, "stereo", palette=False)["total_t"]
     assert abs(c["utilization"] - px / RAW_P25) < 1e-12
@@ -8754,41 +8769,67 @@ def t16_raw_gate_terms():
         320, 192, 320, 25, "stereo", palette=False)["total_t"] - enc.RAW_STALL_T) < 1e-6
 
 
-@case(16, "raw gate - matches the KS3 bench 2026-11-23 rows, constants and utilisation table")
+@case(16, "raw gate - frame program and counted overhead equal nxv2_bench_rows' for every geometry")
+def t16_raw_variant_parity():
+    import nxv2_bench_rows as br
+    pairs = (("OPEN", "OPEN"), ("READ", "READ"), ("HOP", "HOP"), ("PAGE", "PAGE"),
+             ("FAST", "FAST"), ("FIRST", "FIRST"), ("FRAME_OV", "FRAME"), ("PAD", "PAD"),
+             ("PASS", "PASS"), ("TPAD", "TPAD"), ("CHK", "CHK"), ("CHK_PAGE", "CHK_PAGE"),
+             ("PATCH", "PATCH"))
+    for e, b in pairs:
+        expect(getattr(enc, f"RAW_{e}_T") == getattr(br, f"VR_{b}_T"), f"RAW_{e}_T != VR_{b}_T")
+    expect(enc.RAW_OPEN_BUDGET == br.VR_OPEN_BUDGET and enc.RAW_TRAIN_ROOM == br.VR_TRAIN_ROOM,
+           "train rule byte constants differ")
+    bad, n = [], 0
+    geos = [(320, w, h) for w in range(4, 321, 4) for h in range(1, 257)]
+    geos += [(256, 256, h) for h in range(1, 257)]
+    for sw, w, h in geos:
+        shape = int(sw == 320)
+        n += 1
+        if (enc.raw_variant(w, h, sw) != br.raw_variant(shape, w, h)
+                or enc.raw_frame_overhead(w, h, sw) != br.raw_frame_overhead(shape, w, h)):
+            bad.append((sw, w, h))
+    expect(not bad, f"{len(bad)} of {n} geometries differ, first {bad[:5]}")
+    print(f"    {n} geometries equal")
+
+
+@case(16, "raw gate - matches the KS3 bench 2026-11-25 rows, constants and utilisation table")
 def t16_raw_gate_matches_silicon():
     import raw_fit
-    res_dir = ROOT / "tests" / "core303" / "results" / "2026-11-23-ks3-legRAW1B"
-    raw_fit.set_model("1b")             # the 1b images' frame harness (raw_fit --model 1b)
-    try:
-        res = raw_fit.fit(raw_fit.read_sections(res_dir / "NXBENCH.TXT"))
-    finally:
-        raw_fit.set_model("1c")
-    expect(len(res.clips) == 16, f"{len(res.clips)} clips fitted, want 16")
-    worst = 0.0
-    for c in res.clips.values():
-        w, h, fps, _ch, _n = c.shape
-        sw, _ = enc.raw_surface(w, h)
-        r = enc.raw_frame_t(w, h, sw, fps, c.form, palette=False)
-        model = r["total_t"] - r["glue_t"]
-        pct = 100.0 * (c.p["ARSW"] - model) / model
-        worst = max(worst, abs(pct))
-        expect(abs(pct) <= 1.0, f"clip {c.clip:03d} {c.form} {w}x{h}@{fps:g}: ARSW' "
-                                f"{c.p['ARSW']:.0f} T against the gate's {model:.0f} T ({pct:+.3f}%)")
-    print(f"    16 clips, largest |ARSW' - gate| {worst:.3f}%")
-    # RAW_K and RAW_STALL_T are this log's fit, as pasted (tb to 4 places, the rest to 2)
-    for form in ("stereo", "mono"):
+    res_dir = ROOT / "tests" / "core303" / "results" / "2026-11-25-ks3-legRAW1C"
+    secs = raw_fit.read_sections(res_dir / "NXBENCH.TXT")
+    raw_fit.set_model("1c")
+    res = raw_fit.fit(secs)
+    m = raw_fit.fit_1c(res, secs)
+    worst, n = 0.0, 0
+    for form, fit_form in (("stereo", "stereo"), ("mono", "mono_dma")):
+        for row in m.pts[fit_form]:
+            w, h, fps, _ch, _n = row.c.shape
+            sw, _ = enc.raw_surface(w, h)
+            r = enc.raw_frame_t(w, h, sw, fps, form, palette=False)
+            model = r["total_t"] - r["glue_t"]
+            pct = 100.0 * (row.frame - model) / model
+            worst, n = max(worst, abs(pct)), n + 1
+            expect(abs(pct) <= 1.0, f"clip {row.clip:03d} {form} {w}x{h}@{fps:g}: frame row' "
+                                    f"{row.frame:.0f} T against the gate's {model:.0f} T ({pct:+.3f}%)")
+    expect(n == 16, f"{n} frame rows compared, want 16")
+    print(f"    {n} frame rows, largest |frame row' - gate| {worst:.3f}%")
+    # RAW_K, RAW_SAMPLE_T and RAW_STALL_T are this log's fit, as pasted
+    for form, fit_form in (("stereo", "stereo"), ("mono", "mono_dma")):
         for name, v in enc.RAW_K[form].items():
-            tol = 0.00006 if name == "tb" else 0.0051
-            expect(abs(res.k[form][name] - v) <= tol,
-                   f"RAW_K[{form}][{name}] {v} against the log's fit {res.k[form][name]:.6f}")
+            tol = 0.000006 if name == "a" else 0.00006 if name == "tb" else 0.0051
+            expect(abs(m.k[fit_form][name] - v) <= tol,
+                   f"RAW_K[{form}][{name}] {v} against the log's fit {m.k[fit_form][name]:.6f}")
+        expect(abs(m.k[fit_form]["sample_t"] - enc.RAW_SAMPLE_T[form]) <= 0.0051,
+               f"RAW_SAMPLE_T[{form}] against {m.k[fit_form]['sample_t']:.4f}")
     expect(abs(res.stall - enc.RAW_STALL_T) <= 0.0051, f"RAW_STALL_T against {res.stall:.4f}")
-    # the sitting report's table: palette frame / frame without a palette
-    table = {(256, 192, 25): ((0.8033, 0.7916), (0.7836, 0.7724)),
-             (320, 160, 25): ((0.8467, 0.8350), (0.8265, 0.8153)),
-             (320, 192, 25): ((1.0055, 0.9938), (0.9832, 0.9720)),
-             (280, 224, 25): ((1.0278, 1.0161), (1.0053, 0.9941)),
-             (320, 240, 16.67): ((0.8361, 0.8283), (0.8126, 0.8051)),
-             (256, 240, 16.67): ((0.6757, 0.6679), (0.6543, 0.6468))}
+    # the sitting report's table: palette frame / frame without a palette (stereo, mono_dma)
+    table = {(256, 192, 25): ((0.7950, 0.7832), (0.7443, 0.7333)),
+             (320, 160, 25): ((0.8282, 0.8164), (0.7757, 0.7647)),
+             (320, 192, 25): ((0.9857, 0.9738), (0.9245, 0.9135)),
+             (280, 224, 25): ((1.0088, 0.9970), (0.9464, 0.9354)),
+             (320, 240, 16.67): ((0.8269, 0.8190), (0.7717, 0.7644)),
+             (256, 240, 16.67): ((0.6678, 0.6599), (0.6213, 0.6140))}
     for (w, h, fps), forms in table.items():
         sw, _ = enc.raw_surface(w, h)
         for form, (pal_u, px_u) in zip(("stereo", "mono"), forms):
@@ -8837,17 +8878,17 @@ def t16_raw_gate_refuses():
     for form in ("stereo", "mono", "auto"):
         msg = _exit_text(enc.raw_pick_sound, 320, 256, 320, 25, form)
         expect("320x256" in msg and "without a palette" in msg, f"{form}: {msg}")
-        expect("320x192 stereo" in msg and "320x196 mono" in msg, f"{form}: heights named: {msg}")
+        expect("320x195 stereo" in msg and "320x208 mono" in msg, f"{form}: heights named: {msg}")
         expect("16.67 fps" in msg, f"{form}: the next lower rate that plays: {msg}")
         expect("--direct-transport-factor" not in msg, f"{form}: default factor not named: {msg}")
-    msg = _exit_text(enc.raw_pick_sound, 320, 192, 320, 25, "auto", transport_factor=1.05)
+    msg = _exit_text(enc.raw_pick_sound, 320, 200, 320, 25, "auto", transport_factor=1.05)
     expect("--direct-transport-factor 1.05" in msg, f"a non-default factor is named: {msg}")
     # tallest heights on a frame without a palette, as the sitting report's table
-    for w, sw, want in ((320, 320, (192, 196)), (280, 320, (219, 224)), (256, "auto", (242, 246))):
+    for w, sw, want in ((320, 320, (195, 208)), (280, 320, (224, 237)), (256, "auto", (244, 256))):
         got = tuple(enc.raw_max_height(w, sw, 25, f) for f in ("stereo", "mono"))
         expect(got == want, f"{w} wide: tallest {got}, report {want}")
     expect(enc.raw_max_height(256, 256, 25, "stereo") == 192, "the 256 surface stops at 192")
-    expect(enc.raw_max_height(320, 320, 25, "stereo", util=0.90) < 192, "util bound applies")
+    expect(enc.raw_max_height(320, 320, 25, "stereo", util=0.90) < 195, "util bound applies")
     ex = _synthetic_ex(2, 320, 256)
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "over.vid"
@@ -8956,7 +8997,7 @@ def t16_raw_encode_threads_options():
                 return _quiet(enc.encode, "dummy.mp4", str(Path(td) / name), shape=(320, 192),
                               fps=25.0, direct=True, **kw)[0]
 
-            # 320x186@25 auto: stereo 0.97 alone; under factor 1.05 stereo 1.0157, mono 0.9937
+            # 320x186@25 auto: stereo 0.96 alone; under factor 1.05 stereo 1.0056, mono 0.9435
             for name, kw, ch in (("m.vid", dict(direct_transport_factor=1.05), 1),
                                  ("s.vid", {}, 2)):
                 del calls[:]
@@ -8975,11 +9016,12 @@ def t16_raw_encode_threads_options():
                    f"default encode utilization {u0}")
             expect(abs(u1 - u0 - enc.RAW_STALL_T / RAW_P25) < 1e-12,
                    f"--stall-budget measured reaches the gate: {u0} -> {u1}")
-            msg = _exit_text(enc.encode, "dummy.mp4", str(Path(td) / "f.vid"), shape=(320, 192),
+            # 320x200@25: mono 0.96; under factor 1.05 stereo 1.0715, mono 1.0059
+            msg = _exit_text(enc.encode, "dummy.mp4", str(Path(td) / "f.vid"), shape=(320, 200),
                              fps=25.0, direct=True, direct_transport_factor=1.05)
-            expect("320x192" in msg and "--direct-transport-factor 1.05" in msg
+            expect("320x200" in msg and "--direct-transport-factor 1.05" in msg
                    and not (Path(td) / "f.vid").exists(),
-                   f"factor 1.05 refuses 320x192@25 and is named: {msg}")
+                   f"factor 1.05 refuses 320x200@25 and is named: {msg}")
             enc.DIRECT_LAYOUT = "old"
             for kw in (dict(direct_sound="mono"), dict(direct_surface="320"),
                        dict(stall_budget="measured")):
@@ -9026,11 +9068,11 @@ def t16_direct_cli_writes_raw():
         want = enc.raw_supply_check(256, 192, 256, 25, "mono", stall_budget="measured")["utilization"]
         expect(abs(u - want) < 1e-12, f"--stall-budget measured reaches the gate: {u} vs {want}")
         out = Path(td) / "f.vid"
-        r = run(str(out), "--direct", "--duration", "1", "--shape", "320x192",
+        r = run(str(out), "--direct", "--duration", "1", "--shape", "320x200",
                 "--direct-transport-factor", "1.05")
         text = r.stdout.decode("utf-8", "replace")
         expect(r.returncode != 0 and "--direct-transport-factor 1.05" in text and not out.exists(),
-               f"factor 1.05 refuses 320x192@25 and is named:\n{text}")
+               f"factor 1.05 refuses 320x200@25 and is named:\n{text}")
         r = subprocess.run([sys.executable, str(ROOT / "tests" / "videnc_old_direct.py"), str(src),
                             str(out), "--direct", "--direct-sound", "mono", "--shape", "256x128",
                             "--duration", "1", "--ffmpeg", str(FFMPEG)],
@@ -9038,10 +9080,13 @@ def t16_direct_cli_writes_raw():
         text = r.stdout.decode("utf-8", "replace")
         expect(r.returncode != 0 and "old direct layout" in text and not out.exists(),
                f"the old layout refuses --direct-sound:\n{text}")
-        h, text = enc_hdr("d.vid", "--shape", "280x224", "--fps", "25")
+        h, text = enc_hdr("d.vid", "--shape", "280x232", "--fps", "25")
         expect(h[6] == 1 and int.from_bytes(h[23:25], "little") == 280 and h[9] == 1,
-               "280x224 auto: 320 surface, width 280, mono")
-        expect("stereo does not hold rate" in text, f"280x224 auto prints the mono note:\n{text}")
+               "280x232 auto: 320 surface, width 280, mono")
+        expect("stereo does not hold rate" in text, f"280x232 auto prints the mono note:\n{text}")
+        h, text = enc_hdr("g.vid", "--shape", "280x224", "--fps", "25")
+        expect(h[9] == 2 and "stereo does not hold rate" not in text,
+               f"280x224 auto: stereo, no mono note:\n{text}")
         for opt in (("--direct-surface", "320"), ("--direct-sound", "mono"), ("--stall-budget", "measured")):
             out = Path(td) / "e.vid"
             r = run(str(out), "--shape", "256x192", "--duration", "1", *opt)

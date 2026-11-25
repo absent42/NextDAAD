@@ -322,7 +322,7 @@ For a cinematic wide framing at full width instead:
 SET VIDOPTS_001=--direct --shape 320x160
 ```
 
-For a taller picture at 25 fps, with mono sound:
+For a taller picture at 25 fps:
 
 ```
 SET VIDOPTS_001=--direct --shape 280x224
@@ -333,25 +333,29 @@ Motion looks the way it looked in the source.
 
 **You pay:** the picture is smaller. `256x192` plays in the bordered
 256-wide frame; `320x160` uses the full width but is letterboxed;
-`280x224` has black at the sides as well as above and below, and its
-sound is mono. There is no full-screen version of this preset - 25 fps
+`280x224` has black at the sides as well as above and below. There is
+no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.
 
 `280x224` sits at the edge of what the card delivers. The encoder
 prints a warning that the clip is at the edge of rate, and a clip that
 cuts between scenes very quickly at this shape can be refused (section
-8).
+8); `--direct-sound mono` gives such a clip more room.
 
 ### Mono sound
 
 When stereo sound would not keep up at a shape and frame rate, the
 encoder gives an uncompressed clip mono sound instead - the same 15625
 Hz, one channel, played from both speakers - and prints a note saying
-so. `280x224` at 25 fps is such a shape. To choose for yourself, add
+so. `320x200` at 25 fps is such a shape. To choose for yourself, add
 `--direct-sound stereo` (the encoder refuses the clip if stereo does not
 keep up) or `--direct-sound mono` (mono even where stereo would fit,
-which leaves a little more room). A stereo source is mixed down to mono
-for you.
+which leaves more room). A stereo source is mixed down to mono for you.
+
+Mono sound plays about 0.4 percent slower than stereo, so it sounds a
+shade flat - far less than a semitone - and a mono clip runs about 0.4
+percent longer. The picture keeps pace with the sound, so the two never
+drift apart.
 
 ### Uncompressed limits and your card
 
@@ -359,9 +363,9 @@ The tallest uncompressed picture that plays at 25 fps, for each width:
 
 | Width | Stereo sound | Mono sound |
 | ----- | ------------ | ---------- |
-| 320 | 192 lines | 196 lines |
-| 280 | 219 lines | 224 lines |
-| 256 | 242 lines | 246 lines |
+| 320 | 195 lines | 208 lines |
+| 280 | 224 lines | 237 lines |
+| 256 | 244 lines | 256 lines |
 
 At 16.67 or 12.5 fps every shape up to the full 320x256 plays. Near the
 top of each limit the encoder prints a warning that the clip is at the
@@ -537,7 +541,7 @@ each scene also carries that scene's palette, 512 bytes more.
 | 2 | 256x240 at 16.67 fps | 63,488 bytes | about 1.06 MB per second |
 | 3 | 256x192 at 25 fps | 50,688 bytes | about 1.27 MB per second |
 | 3 | 320x160 at 25 fps | 52,736 bytes | about 1.32 MB per second |
-| 3 | 280x224 at 25 fps | 64,000 bytes | about 1.60 MB per second |
+| 3 | 280x224 at 25 fps | 64,512 bytes | about 1.61 MB per second |
 
 **Compressed clips are typically a third to a half the size of the same
 footage uncompressed**, and quiet material is far cheaper still - it

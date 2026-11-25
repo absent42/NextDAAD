@@ -330,29 +330,32 @@ matters more than picture size.</p>
 <p>For a cinematic wide framing at full width instead:</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 320x160
 </code></pre>
-<p>For a taller picture at 25 fps, with mono sound:</p>
+<p>For a taller picture at 25 fps:</p>
 <pre><code>SET VIDOPTS_001=--direct --shape 280x224
 </code></pre>
 <p><strong>You get:</strong> the full 25 fps, no banding, every frame pixel-exact.
 Motion looks the way it looked in the source.</p>
 <p><strong>You pay:</strong> the picture is smaller. <code>256x192</code> plays in the bordered
 256-wide frame; <code>320x160</code> uses the full width but is letterboxed;
-<code>280x224</code> has black at the sides as well as above and below, and its
-sound is mono. There is no full-screen version of this preset - 25 fps
+<code>280x224</code> has black at the sides as well as above and below. There is
+no full-screen version of this preset - 25 fps
 uncompressed and 320x256 do not fit down the same wire.</p>
 <p><code>280x224</code> sits at the edge of what the card delivers. The encoder
 prints a warning that the clip is at the edge of rate, and a clip that
 cuts between scenes very quickly at this shape can be refused (section
-8).</p>
+8); <code>--direct-sound mono</code> gives such a clip more room.</p>
 <h3 id="mono-sound">Mono sound</h3>
 <p>When stereo sound would not keep up at a shape and frame rate, the
 encoder gives an uncompressed clip mono sound instead - the same 15625
 Hz, one channel, played from both speakers - and prints a note saying
-so. <code>280x224</code> at 25 fps is such a shape. To choose for yourself, add
+so. <code>320x200</code> at 25 fps is such a shape. To choose for yourself, add
 <code>--direct-sound stereo</code> (the encoder refuses the clip if stereo does not
 keep up) or <code>--direct-sound mono</code> (mono even where stereo would fit,
-which leaves a little more room). A stereo source is mixed down to mono
-for you.</p>
+which leaves more room). A stereo source is mixed down to mono for you.</p>
+<p>Mono sound plays about 0.4 percent slower than stereo, so it sounds a
+shade flat - far less than a semitone - and a mono clip runs about 0.4
+percent longer. The picture keeps pace with the sound, so the two never
+drift apart.</p>
 <h3 id="uncompressed-limits-and-your-card">Uncompressed limits and your card</h3>
 <p>The tallest uncompressed picture that plays at 25 fps, for each width:</p>
 <table>
@@ -366,18 +369,18 @@ for you.</p>
 <tbody>
 <tr>
 <td>320</td>
-<td>192 lines</td>
-<td>196 lines</td>
+<td>195 lines</td>
+<td>208 lines</td>
 </tr>
 <tr>
 <td>280</td>
-<td>219 lines</td>
 <td>224 lines</td>
+<td>237 lines</td>
 </tr>
 <tr>
 <td>256</td>
-<td>242 lines</td>
-<td>246 lines</td>
+<td>244 lines</td>
+<td>256 lines</td>
 </tr>
 </tbody>
 </table>
@@ -583,8 +586,8 @@ each scene also carries that scene's palette, 512 bytes more.</p>
 <tr>
 <td>3</td>
 <td>280x224 at 25 fps</td>
-<td>64,000 bytes</td>
-<td>about 1.60 MB per second</td>
+<td>64,512 bytes</td>
+<td>about 1.61 MB per second</td>
 </tr>
 </tbody>
 </table>

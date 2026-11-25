@@ -166,7 +166,11 @@ if (-not $sources) { exit 0 }
 # on each scene's first frame, pixels in surface order), gated by the KS3
 # raw bench fit (RAW_K) on a frame without a palette plus a scene-cut
 # check; mono sound when stereo does not hold rate. Delta encodes unchanged.
-$encoderGeneration = 'raw1'
+# raw2: BUMP - the raw gate is refitted (KS3 2026-11-25: trimmed reader,
+# counted frame-program overhead, mono sound from the zxnDMA at its measured
+# sample period), so it admits different shapes and picks the sound form
+# differently (280x224@25 is now stereo). Raw bytes per form unchanged.
+$encoderGeneration = 'raw2'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
