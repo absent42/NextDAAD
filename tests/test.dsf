@@ -398,7 +398,7 @@ NXBP  135     verb
 ; like letters - word_next, overlay1.asm - so "pick 23" parses as
 ; verb PICK + noun "23" = 23). Values 2-11/14/20 alias existing
 ; movement/INVEN/ALL nouns - harmless synonymy, only the VALUE is
-; used. Range 1-128 covers the W5 library's clip numbers and the raw
+; used. Range 1-134 covers the W5 library's clip numbers and the raw
 ; video sittings (100 also aliases TORCH, the same harmless synonymy).
 ; Verb numbers 116-118: 116 is the last of the retired NXBEN block,
 ; 117-118 were never assigned.
@@ -535,6 +535,12 @@ GOX   131     verb
 126   126     noun
 127   127     noun
 128   128     noun
+129   129     noun
+130   130     noun
+131   131     noun
+132   132     noun
+133   133     noun
+134   134     noun
 
 ;                       Verbs
 GET     20      verb
