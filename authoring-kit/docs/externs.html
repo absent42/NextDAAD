@@ -120,7 +120,14 @@ EXTERN 0 43
   completion - wait on <code>EXTERN 0 43</code> or flag 240 first. The palette
   interface is shared hardware: a still-stepping fade overlapping the
   reveal can land the interrupt hook's write mid-mirror and corrupt one
-  palette entry.</li>
+  palette entry. The <code>EXTERN 0 43</code> after the fade-out is required for
+  the same reason, and because <code>EXTERN 0 42</code> and <code>EXTERN 0 41</code> are
+  ignored while a fade is stepping: a picture that loads faster than
+  the fade is revealed at full brightness and never fades up. When the
+  fade-out exists only to take the snapshot (the screen is already
+  black), use <code>LET 241 255</code> before <code>EXTERN 0 40</code> for an instant
+  fade-out that needs no wait, and set flag 241 back before
+  <code>EXTERN 0 41</code>.</li>
 <li><strong>Fade functions are actions, never conditions.</strong> They return carry
   clear whatever happens and report completion in flag 240, so no fade
   call can fail the entry that holds the <code>GFX 0 4</code> ... <code>GFX 0 3</code>

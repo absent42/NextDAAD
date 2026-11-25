@@ -176,6 +176,28 @@ full brightness even for a fraction of a frame:
     EXTERN 0 41        ; fade up to the NEW picture
     EXTERN 0 43        ; wait for it
 
+The first `EXTERN 0 43` is required, not optional. `EXTERN 0 42` and
+`EXTERN 0 41` are ignored while the fade-out is still stepping, so if
+the picture loads faster than the fade, the new picture is revealed at
+full brightness, the running fade then darkens it - its transparent
+colour included, hiding the text window - and nothing fades back up.
+
+When the fade-out exists only to take the snapshot - at game start,
+say, with the screen already black - make it instant instead, and no
+wait is needed:
+
+    LET 241 255
+    EXTERN 0 40        ; snapshot taken, black now
+    PICTURE 5
+    GFX 0 4
+    DISPLAY 0
+    EXTERN 0 42
+    GFX 0 2
+    GFX 0 3
+    LET 241 6          ; timed again before the fade in
+    EXTERN 0 41
+    EXTERN 0 43
+
 `PICTURE` comes BEFORE `GFX 0 4`, not after. `PICTURE` is a condition -
 it fails and aborts the entry on missing or unloadable art (this
 interpreter's PICTURE has no darkness handling of its own). Opening
