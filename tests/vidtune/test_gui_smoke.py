@@ -89,8 +89,6 @@ def _fresh_kit_window(fixture_kit, qtbot):
         (fixture_kit / "VIDEO" / f"{n}.mp4").write_bytes(b"x")
     win = MainWindow(fixture_kit)
     qtbot.addWidget(win)
-    # status only: no preview decodes behind rapid clip switches
-    win.preview.load = lambda *a, **k: None
     win.stamp = "pal9k"
     for clip in win.clips:
         clip.vid.write_bytes(b"FAKEVID")
@@ -145,9 +143,8 @@ def test_accepting_the_untouched_opening_route_saves_it(fixture_kit, qtbot):
 
 
 def test_accepted_quiet_scene_is_remembered_and_builds_as_no_settings(
-        fixture_kit, qtbot, monkeypatch):
+        fixture_kit, qtbot):
     from vidtune.kitmodel import parse_config
-    monkeypatch.setattr(PreviewPane, "load", lambda self, *a, **k: None)
     win = _fresh_kit_window(fixture_kit, qtbot)
     no_settings = build_arg_vector(win.cfg, "001")
     win.select_clip("001")

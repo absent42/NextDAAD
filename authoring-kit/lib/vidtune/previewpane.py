@@ -9,6 +9,8 @@ extract_source) so the GUI thread never blocks on a big .vid file, with
 a busy label meanwhile and decode errors landing in a red label rather
 than crashing the tool.
 """
+import functools
+
 import numpy as np
 
 from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
@@ -47,6 +49,15 @@ ZOOMS = (1, 2, 3, 4, 5)
 DEFAULT_ZOOM = 2
 _WHEEL_NOTCH = 120      # angleDelta units per mouse wheel notch
 _ZOOM_KEYS = {Qt.Key_1: 1, Qt.Key_2: 2, Qt.Key_3: 3, Qt.Key_4: 4, Qt.Key_5: 5}
+
+
+def _join_threads(threads, *_):
+    """quit() before wait(): the queued worker-done -> quit cannot run
+    while the GUI thread blocks here, and an early quit makes exec()
+    return at once."""
+    for thread in list(threads):
+        thread.quit()
+        thread.wait()
 
 
 class _ImageView(QScrollArea):
@@ -206,6 +217,10 @@ class PreviewPane(QWidget):
         self._pending_source_fps = None       # load_source()'s pending fps/
         self._pending_source_column_major = False  # column_major/hint, set at
         self._pending_source_hint = None      # call time, applied in _on_extract_done
+
+        # Destroyed without a close (parent window deleted): join the decode
+        # threads before Qt deletes them as children, or Qt aborts the process.
+        self.destroyed.connect(functools.partial(_join_threads, self._threads))
 
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -499,7 +514,7 @@ class PreviewPane(QWidget):
         worker.failed.connect(self._on_decode_failed)
         worker.done.connect(thread.quit)
         worker.failed.connect(thread.quit)
-        thread.finished.connect(lambda t=thread, w=worker: self._on_thread_finished(t, w))
+        thread.finished.connect(self._on_thread_finished)
         # Keep references alive until the thread's own finished signal
         # fires - overwriting self._thread/self._worker on the next
         # load() must not drop the only Python reference to a still-
@@ -510,11 +525,14 @@ class PreviewPane(QWidget):
         self._worker = worker
         thread.start()
 
-    def _on_thread_finished(self, thread, worker):
-        if thread in self._threads:
-            self._threads.remove(thread)
-        if worker in self._workers:
-            self._workers.remove(worker)
+    def _on_thread_finished(self):
+        # Pane is the receiver, so Qt drops a queued call once the pane is gone.
+        thread = self.sender()
+        if thread not in self._threads:
+            return
+        i = self._threads.index(thread)
+        del self._threads[i]
+        worker = self._workers.pop(i)
         if self._thread is thread:
             self._thread = None
         if self._worker is worker:
@@ -575,7 +593,7 @@ class PreviewPane(QWidget):
         worker.failed.connect(self._on_extract_failed)
         worker.done.connect(thread.quit)
         worker.failed.connect(thread.quit)
-        thread.finished.connect(lambda t=thread, w=worker: self._on_thread_finished(t, w))
+        thread.finished.connect(self._on_thread_finished)
         self._threads.append(thread)
         self._workers.append(worker)
         self._thread = thread
@@ -638,9 +656,7 @@ class PreviewPane(QWidget):
         """Blocks until every in-flight decode thread has actually
         stopped, so the pane never gets torn down out from under a
         running QThread (Qt aborts/crashes on that)."""
-        for thread in list(self._threads):
-            thread.quit()
-            thread.wait()
+        _join_threads(self._threads)
 
     # -- mode / flicker -----------------------------------------------
 
