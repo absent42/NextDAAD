@@ -4,7 +4,7 @@ VIDOPTS_NNN in <GAME>.CFG (legacy: CONFIG.local.BAT))."""
 import sys
 from pathlib import Path
 
-__version__ = "0.11"  # kit release number
+__version__ = "0.12"  # kit release number
 ICON_PATH = Path(__file__).with_name("vidtune.ico")  # scripts/make-vidtune-icon.py
 
 WAYLAND_TEXTINPUT_RULE = "qt.qpa.wayland.textinput=false"

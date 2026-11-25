@@ -207,6 +207,16 @@ def test_flag_deltas_read_as_plus_and_minus():
     assert presets.format_delta("fps", "25", "12.5") == "fps 25 -> 12.5"
 
 
+def test_deltas_name_knobs_by_their_panel_label():
+    assert presets.format_delta("direct_sound", "mono", "auto") == "sound mono -> auto"
+    assert presets.format_delta("tile_slack", None, "0.5") == "tile slack 0.5"
+    cfg, settings = _base(direct=True, shape="256x192", direct_sound="mono")
+    _cfg, kit_base = _base()
+    lines = presets.format_deltas(presets.route_deltas(
+        settings, kit_base, presets.route_by_key("cutscene")))
+    assert "sound mono -> auto" in lines and "-direct" in lines
+
+
 # -- requirement 5: never offer --stream-budget -------------------------
 
 def test_nothing_in_the_preset_system_sets_stream_budget():

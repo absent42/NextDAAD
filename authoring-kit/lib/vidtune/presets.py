@@ -248,8 +248,11 @@ def route_deltas(settings, kit_base, route):
 
 def format_delta(name, before, after):
     """One delta as a short human line. A knob turning on or off reads
-    better as "+direct"/"-direct" than as "direct on -> unset"."""
-    label = name.replace("_", "-")
+    better as "+direct"/"-direct" than as "direct on -> unset". Named by
+    the knob's panel label where it has one."""
+    from .settingsmodel import KNOBS
+    knob = next((k for k in KNOBS if k.name == name), None)
+    label = knob.label if knob is not None and knob.label else name.replace("_", "-")
     if after is True:
         return f"+{label}"
     if before is True and not after:
