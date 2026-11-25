@@ -379,6 +379,17 @@ edge of rate; it still plays at rate. Ask for more and the encoder
 refuses, naming the tallest picture at your width and the next lower
 frame rate at which your shape plays.
 
+**Encode the picture at its own height.** A widescreen clip that is
+320x136 should be encoded as 320x136, not padded with black bars to
+320x192 or any other taller size. Uncompressed video stores and loads
+the bars like any other pixels, and the player centres a shorter
+picture on the screen by itself. At 25 fps with stereo sound, 320x136
+costs 45,056 bytes a frame, about 1.13 MB per second, and uses about 71
+percent of the time the card has to deliver each frame. The same clip
+padded to 320x192 costs 62,976 bytes a frame, about 1.57 MB per second,
+and uses about 97 percent - so close to the 195-line limit that the
+encoder warns it is at the edge of rate, for no extra picture.
+
 These limits were measured on one Next with one SD card. Cards differ a
 little in how fast they hand over data, so a clip right at a limit may
 run late on a slower card - the motion stalls or the sound breaks up.
@@ -713,8 +724,11 @@ MB of card space for every second, so one clip at that size can run
 about three and a half minutes at most. For long or mostly still
 footage pick **Long cutscene** or **Quiet scene** instead. The size line
 under the route shows what the clip will cost. Opening a clip saves
-nothing: until you accept it, or Encode Stale + Edited saves it, a clip
-with no settings still builds with the compressed kit defaults.
+nothing and does not mark it `edited`: until you change a setting or
+pick a route and then accept it, a clip with no settings still builds
+with the compressed kit defaults. Accept a clip on **Quiet scene** and
+the tuner remembers that choice, so the clip opens on it next time;
+Revert forgets it again.
 
 A clip whose settings you have changed but not saved shows as `edited`
 in the clip list. Revert throws those changes away and goes back to

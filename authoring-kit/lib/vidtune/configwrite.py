@@ -83,8 +83,16 @@ def _split_lines(raw, default_eol):
     return lines
 
 
+def _route_re(num3):
+    return re.compile(rb'^\s*set\s+"?VIDROUTE_' + num3.encode() + rb"=.*$",
+                      re.IGNORECASE)
+
+
 def write_vidopts_line(config_path, num3, opts, expected_stamp=None,
-                       target_path=None):
+                       target_path=None, route=None):
+    """Writes VIDOPTS_NNN=opts, and SET VIDROUTE_NNN=route beside it when
+    route is given (any marker line is removed otherwise). The build only
+    reads VIDOPTS_NNN, so the marker never changes an encode."""
     config_path = Path(config_path)
     local = local_path_for(config_path)
     loc = local if target_path is None else Path(target_path)
@@ -128,6 +136,17 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None,
     else:
         changed = False
 
+    marker = _route_re(num3)
+    kept = [ln for ln in lines if not marker.match(ln[0])]
+    if len(kept) != len(lines):
+        lines, changed = kept, True
+    if route:
+        anchor = [i for i, ln in enumerate(lines) if any_vidopts.match(ln[0])]
+        lines.insert(max(anchor) + 1 if anchor else len(lines),
+                     [b"SET VIDROUTE_%s=%s" % (num3.encode(), route.encode()),
+                      default_eol])
+        changed = True
+
     wrote_bak = False
     if changed:
         if existed:
@@ -141,7 +160,10 @@ def write_vidopts_line(config_path, num3, opts, expected_stamp=None,
             tmp.unlink(missing_ok=True)
             raise
 
-    got = parse_config(config_path, game_cfg=game_cfg).per_clip.get(num3, "")
+    after = parse_config(config_path, game_cfg=game_cfg)
+    got = after.per_clip.get(num3, "")
+    if got == opts and after.routes.get(num3) != route:
+        got = f"{opts} (VIDROUTE_{num3} {after.routes.get(num3)!r})"
     if got != opts:
         hint = ""
         if wrote_bak:

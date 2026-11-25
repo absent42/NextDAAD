@@ -49,6 +49,8 @@ class KitConfig:
     toolsdir: str = "tools"
     vidtoolsdir: str = ""
     per_clip: dict = field(default_factory=dict)
+    # VIDROUTE_NNN: vidtune's own route marker; the build never reads it.
+    routes: dict = field(default_factory=dict)
     vidprofile: str = ""
     ffmpegdir: str = ""
 
@@ -111,6 +113,10 @@ def parse_config(config_path, local_path=None, game_cfg=None):
                     cfg.per_clip[suffix] = value
                 else:
                     cfg.per_clip.pop(suffix, None)   # SET X= deletes, as cmd
+        elif name.startswith("VIDROUTE_"):
+            suffix = name[len("VIDROUTE_"):]
+            if suffix.isdigit() and len(suffix) == 3 and value:
+                cfg.routes[suffix] = value
     return cfg
 
 

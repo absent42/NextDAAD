@@ -837,6 +837,10 @@ class MainWindow(QMainWindow):
         self.full_ok: dict = {}
         self.segments: dict = {}
         self.source_seconds: dict = {}
+        # Settings-less clips opened on the opening route this session, and
+        # the subset whose controls are untouched (not an edit, not queued).
+        self._opened_fresh: set = set()
+        self._opening_untouched: set = set()
         self._last_source_error = None
 
         self.scratch_dir = Path(tempfile.mkdtemp(prefix="vidtune-"))
@@ -929,7 +933,8 @@ class MainWindow(QMainWindow):
         self.accept_button.setEnabled(False)
         self.revert_button = QPushButton("Revert")
         self.revert_button.setToolTip(
-            "discard this clip's unsaved edits - back to the saved settings")
+            "discard this clip's unsaved edits - back to the saved settings; "
+            "a remembered Quiet scene is cleared too")
         self.revert_button.setEnabled(False)
         self.encode_all_button = QPushButton("Encode Stale + Edited")
 
@@ -975,6 +980,7 @@ class MainWindow(QMainWindow):
         self.revert_button.clicked.connect(self.on_revert)
         self.encode_all_button.clicked.connect(self.on_encode_all_stale)
         self.metrics_bar.cancel_requested.connect(self._on_cancel_requested)
+        self.settings_panel.changed.connect(self._on_panel_touched)
         self.settings_panel.changed.connect(self._update_accept_enabled)
         self.settings_panel.changed.connect(self._refresh_current_status)
         self.preview.cleared.connect(self._on_pane_cleared)
@@ -1100,10 +1106,25 @@ class MainWindow(QMainWindow):
     def _has_unsaved_edits(self, num3, settings=None):
         """True when the clip's session settings would encode differently
         from saved settings, i.e. Encode Stale + Edited will re-encode and save it."""
+        if num3 in self._opening_untouched:
+            return False
         if settings is None:
             settings = self._current_settings(num3)
         return self._argv_for_settings(settings) != \
-            settingsmodel.build_arg_vector(self.cfg, num3)
+            settingsmodel.build_arg_vector(self.cfg, num3) \
+            or self._quiet_unsaved(num3, settings)
+
+    def _quiet_unsaved(self, num3, settings):
+        """True when an author left the opening route for the kit defaults
+        (Quiet scene) and no VIDROUTE_NNN records that choice yet."""
+        return (num3 in self._opened_fresh
+                and num3 not in self._opening_untouched
+                and num3 not in self.cfg.per_clip
+                and num3 not in self.cfg.routes
+                and not settingsmodel.deviations(settings, self.cfg))
+
+    def _on_panel_touched(self):
+        self._opening_untouched.discard(self._current_clip)
 
     def _clip_status(self, clip):
         """Rail status. "edited" outranks "stale": unsaved settings are
@@ -1161,12 +1182,14 @@ class MainWindow(QMainWindow):
             settings = self._guarded(effective_settings, self.cfg, num3)
             if settings is None:
                 settings = dict(self.kit_base)
-            elif num3 not in self.cfg.per_clip:
+            elif num3 not in self.cfg.per_clip and num3 not in self.cfg.routes:
                 # No saved settings: open on the opening route, panel only.
                 # The build still encodes kit defaults until a save.
                 settings = presets.apply_route(
                     settings, self.kit_base,
                     presets.route_by_key(presets.OPENING_ROUTE))
+                self._opened_fresh.add(num3)
+                self._opening_untouched.add(num3)
         clip = self._clip_by_num3(num3)
         self.settings_panel.set_source_seconds(
             self._source_seconds(clip) if clip is not None else None)
@@ -1379,7 +1402,8 @@ class MainWindow(QMainWindow):
         enabled = argv is not None and self.full_ok.get(num3) == argv
         self.accept_button.setEnabled(bool(enabled))
         edited = argv is not None and self._job is None \
-            and self._guarded(self._has_unsaved_edits, num3)
+            and (num3 in self.cfg.routes
+                 or self._guarded(self._has_unsaved_edits, num3))
         self.revert_button.setEnabled(bool(edited))
 
     def _start_job(self, kind, num3, clip, output, argv):
@@ -1446,7 +1470,11 @@ class MainWindow(QMainWindow):
         start so panel edits mid-queue do not leak into it."""
         queue = []
         for c in self.clips:
-            settings = dict(self._current_settings(c.num3))
+            if c.num3 in self._opening_untouched:
+                # browsed, not chosen: a stale clip re-encodes as saved
+                settings = dict(effective_settings(self.cfg, c.num3))
+            else:
+                settings = dict(self._current_settings(c.num3))
             if self._has_unsaved_edits(c.num3, settings) \
                     or clip_state(c, self.cfg, self.stamp)[1]:
                 queue.append((c, settings))
@@ -1505,14 +1533,20 @@ class MainWindow(QMainWindow):
 
     def on_revert(self):
         """Drops the open clip's unsaved edits, reloading its saved
-        settings into the panel."""
+        settings into the panel. A remembered Quiet scene marker goes too,
+        so the clip is back to no settings."""
         num3 = self._current_clip
         if num3 is None or self._job is not None:
+            return
+        if num3 in self.cfg.routes and self._write_clip_line(
+                num3, self.cfg.per_clip.get(num3, ""), None, "Revert") is None:
             return
         settings = self._guarded(effective_settings, self.cfg, num3)
         if settings is None:
             return
         self.session_edits.pop(num3, None)
+        self._opened_fresh.discard(num3)
+        self._opening_untouched.discard(num3)
         self.settings_panel.set_settings(settings, self.kit_base)
         self._refresh_current_status()
         self._update_accept_enabled()
@@ -1523,11 +1557,19 @@ class MainWindow(QMainWindow):
         dev = self._guarded(settingsmodel.deviations, settings, self.cfg)
         if dev is None:
             return None
+        # Kit defaults are the Quiet scene route: remember it as chosen.
+        return self._write_clip_line(num3, " ".join(dev),
+                                     None if dev else "quiet", action)
+
+    def _write_clip_line(self, num3, opts, route, action):
+        """Writes VIDOPTS_NNN (and the VIDROUTE_NNN marker when route is
+        given) and returns the argv re-read from the saved config, or None
+        on failure."""
         config_path = self.kit_root / "CONFIG.BAT"
         try:
-            write_vidopts_line(config_path, num3, " ".join(dev),
+            write_vidopts_line(config_path, num3, opts,
                                expected_stamp=self.cfg_stamp,
-                               target_path=self.vidopts_target)
+                               target_path=self.vidopts_target, route=route)
         except (StarterProtected, LocalOverride) as exc:
             QMessageBox.critical(self, "vidtune", str(exc))
             return None
@@ -1551,6 +1593,8 @@ class MainWindow(QMainWindow):
         self.cfg = parse_config(config_path, game_cfg=self.game_cfg)
         self.cfg_stamp = config_stamp(config_path, self.game_cfg)
         self.kit_base = settingsmodel._kit_base(self.cfg)
+        self._opened_fresh.discard(num3)
+        self._opening_untouched.discard(num3)
         return self._guarded(settingsmodel.build_arg_vector, self.cfg, num3)
 
     def _reload_config(self):
@@ -1622,7 +1666,8 @@ class MainWindow(QMainWindow):
     def _on_all_success(self, num3, argv, summary):
         clip = self._clip_by_num3(num3)
         # Unaccepted edits are saved too, else BUILD.BAT re-encodes the clip.
-        if argv != self._guarded(settingsmodel.build_arg_vector, self.cfg, num3):
+        if argv != self._guarded(settingsmodel.build_arg_vector, self.cfg, num3) \
+                or self._quiet_unsaved(num3, self._all_settings):
             argv = self._save_vidopts(num3, self._all_settings, "Encode Stale + Edited")
             if argv is None:
                 self._all_queue = []

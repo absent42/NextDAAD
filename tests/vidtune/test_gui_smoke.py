@@ -23,9 +23,9 @@ def test_window_populates_clip_list(fixture_kit, qtbot):
     texts = [win.clip_list.item(i).text() for i in range(win.clip_list.count())]
     assert len(texts) == 2
     assert texts[0].startswith("001")
-    # 001 is open on the opening route, which its saved settings do not hold
-    assert "edited" in texts[0]
-    assert "stale" in texts[1]            # no .vid exists yet
+    # 001 is open, untouched, on the opening route: browsing is not an edit
+    assert "stale" in texts[0]            # no .vid exists yet
+    assert "stale" in texts[1]
 
 
 # -- opening route --------------------------------------------------------
@@ -80,6 +80,116 @@ def test_size_line_uses_source_length(fixture_kit, qtbot, monkeypatch):
     qtbot.addWidget(win)
     assert win.settings_panel.size_label.text() == (
         "uncompressed: 1.27 MB a second, about 25.3 MB for this 20.0 s clip")
+
+
+def _fresh_kit_window(fixture_kit, qtbot):
+    """Window over 001/003/004 without settings and 002 with, every .vid
+    fresh, so only an edit can queue a clip."""
+    for n in ("003", "004"):
+        (fixture_kit / "VIDEO" / f"{n}.mp4").write_bytes(b"x")
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    # status only: no preview decodes behind rapid clip switches
+    win.preview.load = lambda *a, **k: None
+    win.stamp = "pal9k"
+    for clip in win.clips:
+        clip.vid.write_bytes(b"FAKEVID")
+        clip.sidecar.write_text(arg_hash("pal9k", build_arg_vector(win.cfg, clip.num3)))
+    win._populate_clip_list()
+    return win
+
+
+def _kit_files(kit):
+    return {p.relative_to(kit): p.read_bytes() for p in kit.rglob("*")
+            if p.is_file() and p.suffix.lower() in (".bat", ".cfg")}
+
+
+def test_browsing_opening_route_is_not_an_edit(fixture_kit, qtbot):
+    win = _fresh_kit_window(fixture_kit, qtbot)
+    before = _kit_files(fixture_kit)
+    for n in ("001", "003", "004"):
+        win.select_clip(n)
+        assert win.settings_panel.get_settings()["direct"] is True
+    win.select_clip("003")
+    win.settings_panel._on_apply_values({"dither": "0.2"})
+    win.select_clip("002")
+
+    assert [c.num3 for c, _ in win._stale_clips()] == ["003"]
+    assert _rail_status(win, "001") == "default"
+    assert _rail_status(win, "004") == "default"
+    assert _rail_status(win, "003") == "edited"
+    assert _kit_files(fixture_kit) == before
+
+
+def test_repicking_the_opening_route_is_a_choice(fixture_kit, qtbot):
+    win = _fresh_kit_window(fixture_kit, qtbot)
+    win.select_clip("001")
+    win.settings_panel._on_route_chosen("fullrate")
+    assert _rail_status(win, "001") == "edited"
+    assert [c.num3 for c, _ in win._stale_clips()] == ["001"]
+
+
+def _accept_current(win):
+    num3 = win._current_clip
+    win.full_ok[num3] = win.full_argv(num3)
+    (win.scratch_dir / f"full_{num3}.vid").write_bytes(b"FAKEVID")
+    win.on_accept()
+
+
+def test_accepting_the_untouched_opening_route_saves_it(fixture_kit, qtbot):
+    win = _fresh_kit_window(fixture_kit, qtbot)
+    win.select_clip("001")
+    _accept_current(win)
+    assert "--direct" in win.cfg.per_clip["001"]
+    assert "001" not in win.cfg.routes
+
+
+def test_accepted_quiet_scene_is_remembered_and_builds_as_no_settings(
+        fixture_kit, qtbot, monkeypatch):
+    from vidtune.kitmodel import parse_config
+    monkeypatch.setattr(PreviewPane, "load", lambda self, *a, **k: None)
+    win = _fresh_kit_window(fixture_kit, qtbot)
+    no_settings = build_arg_vector(win.cfg, "001")
+    win.select_clip("001")
+    win.settings_panel._on_route_chosen("quiet")
+    assert _rail_status(win, "001") == "edited"      # choice not yet saved
+    _accept_current(win)
+
+    local = (fixture_kit / "CONFIG.local.BAT").read_bytes()
+    assert b"SET VIDROUTE_001=quiet\r\n" in local
+    cfg = parse_config(fixture_kit / "CONFIG.BAT")
+    assert cfg.routes == {"001": "quiet"} and "001" not in cfg.per_clip
+    assert build_arg_vector(cfg, "001") == no_settings
+
+    again = MainWindow(fixture_kit)
+    qtbot.addWidget(again)
+    again.stamp = "pal9k"
+    again._populate_clip_list()
+    again.select_clip("001")
+    assert again.settings_panel.get_settings() == effective_settings(cfg, "001")
+    assert again.settings_panel.get_settings()["direct"] is False
+    assert _rail_status(again, "001") == "default"
+    assert again._stale_clips() == []
+
+    assert again.revert_button.isEnabled()
+    again.on_revert()
+    assert b"VIDROUTE" not in (fixture_kit / "CONFIG.local.BAT").read_bytes()
+    assert "001" not in again.cfg.routes
+    assert build_arg_vector(again.cfg, "001") == no_settings
+
+
+def test_encode_all_saves_a_chosen_quiet_scene(fixture_kit, qtbot, monkeypatch):
+    monkeypatch.setattr(vt_mainwindow, "EncodeJob", _RecordingEncodeJob)
+    _RecordingEncodeJob.runs = []
+    win = _fresh_kit_window(fixture_kit, qtbot)
+    win.encoder_argv = ["fake-encoder"]
+    win.select_clip("001")
+    win.settings_panel._on_route_chosen("quiet")
+    win.on_encode_all_stale()
+    qtbot.waitUntil(lambda: win._job is None and not win._all_queue, timeout=5000)
+    assert [name for name, _ in _RecordingEncodeJob.runs] == [win.clips[0].vid.name]
+    assert win.cfg.routes == {"001": "quiet"}
+    assert _rail_status(win, "001") == "default"
 
 
 def test_source_seconds_from_banner():
@@ -593,9 +703,7 @@ class _RecordingEncodeJob(_FakeEncodeJob):
 
 
 def _edit_dither(win, value):
-    s = win.settings_panel.get_settings()
-    s["dither"] = value
-    win.settings_panel.set_settings(s, win.kit_base)
+    win.settings_panel._on_apply_values({"dither": value})   # emits changed
 
 
 def test_encode_all_stale_uses_and_saves_session_edits(fixture_kit, qtbot, monkeypatch):
