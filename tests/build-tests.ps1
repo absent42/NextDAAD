@@ -3255,6 +3255,7 @@ foreach ($c in @(
     @{ n = 'UC: triple for code $2F'; b = (Complement @(14, 47, 15)) },
     @{ n = 'UA: triple for code $7B'; b = (Complement @(14, 123, 15)) },
     @{ n = 'UA: triple for code $7F'; b = (Complement @(14, 127, 15)) },
+    @{ n = 'OBJ: object text ending #g & apostrophe #t'; b = (Complement @(112, 14, 38, 39, 15)) },
     @{ n = 'MODE 1 (force-upper window)'; b = [byte[]]@(81, 1) },
     @{ n = 'MODE 0 (restore)'; b = [byte[]]@(81, 0) },
     @{ n = 'WINSIZE 5 32 (More paging window)'; b = [byte[]]@(107, 5, 32) }
@@ -7508,7 +7509,7 @@ if ($xbnActive) { "active: extern (XBN extern support fixture$(if ($XbnNoBin) { 
 elseif ($Sprites) { "active: sprites (SP20 GFX 19/20/21 sprite-set fixture)" }
 elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($txt40Active) { "active: txt40 (40-column tilemap mode fixture)" }
-elseif ($accentActive) { "active: accents (accented-glyph / charset-redirect fixture - verbs ACC PAGE FORCE R, accents-autotok.ddb $($accentTokBytes.Length) bytes, per-game token table)" }
+elseif ($accentActive) { "active: accents (accented-glyph / charset-redirect fixture - verbs ACC PAGE FORCE OBJ R, accents-autotok.ddb $($accentTokBytes.Length) bytes, per-game token table)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }

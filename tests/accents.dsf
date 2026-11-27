@@ -18,12 +18,15 @@
 ;   FORCE  MODE 1 window (WIN_FLAGS bit 0), plain text - force-upper
 ;          shifts EVERY char; MODE 0 restores
 ;   R      CLS + RESTART - the #g latch and window modes must reset
+;   OBJ    object text carrying #g..#t: listed (LISTOBJ), then
+;          substituted (_ in SYSMESS 25) - both end in glyphs 166 167
 /CTL
 _
 /VOC
 ACC    10  verb
 PAGE   11  verb
 FORCE  12  verb
+OBJ    13  verb
 R      24  verb
 REDES  24  verb
 /STX
@@ -93,13 +96,13 @@ REDES  24  verb
 /1 "E2 àãäâèëêìïîòõöôùû#n"
 /2 "SS ß#n"
 /3 "MX ªàªà#n"
-/4 "NEXTDAAD ACCENT FIXTURE#nVERBS  ACC  PAGE  FORCE  R#n"
+/4 "NEXTDAAD ACCENT FIXTURE#nVERBS  ACC  PAGE  FORCE  OBJ  R#n"
 /5 "ligne une: théâtre français#nligne deux: à bientôt naïve#nligne trois: gruß wörter über#nligne quatre: irmão corações#nligne cinq: noël aïeul où#nligne six: été île pâte#nligne sept: süß hören lärm#nligne huit: fimarduìno tù#nligne neuf: ça irá ñandú#nligne dix: fin des lignes#n"
 /6 "FORCED UPPER LINE#n"
 /7 "UC ÀÃÄÂÈËÊÌÏÎÒÕÖÔÙÛ#n"
 /8 "UA ÁÉÍÓÚ#n"
 /OTX
-/0 "a brass lamp"
+/0 "a brass lamp#g&'#t"
 /LTX
 /0 ""
 /1 "The accent lab."
@@ -142,6 +145,11 @@ REDES  24  verb
 > FORCE _ MODE 1
           MESSAGE 6
           MODE 0
+          DONE
+> OBJ   _ LISTOBJ
+          LET 51 0
+          SYSMESS 25
+          NEWLINE
           DONE
 > R     _ CLS
           RESTART
