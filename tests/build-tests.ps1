@@ -1448,7 +1448,7 @@ function Assert-BankAllocCensus {
         'src\overlay2.asm|font_load'       = @(1, 'transient')        # font scratch
         'src\video.asm|nxv2_open_body'     = @(4, 'transient')        # video ring
         'src\video.asm|nxb_ops_setup'      = @(2, 'transient')        # NXB ops banks
-        'src\overlay0.asm|bank_selftest_o' = @(4, 'transient')        # DEBUG allocator self-test
+        'src\overlay1.asm|bank_selftest_o' = @(4, 'transient')        # DEBUG allocator self-test
         'src\overlay0.asm|xbn_boot_load'   = @(1, 'boot-only')        # GAME.XBN, first claim at boot
         'src\overlay1.asm|aud_banks_claim' = @(1, 'long-lived')       # AYS stream, kept until the next song
     }

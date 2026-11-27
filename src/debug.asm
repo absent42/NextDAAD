@@ -143,28 +143,31 @@ dbg_engage_tilemap:
     ld a, 1
     ld (dbgTilemap), a
     ld hl, dbg_replay_o
-    jr dbg_ovl0_go
+    jr dbg_ovl1_go
 
-; One-shot boot printers live in overlay0 (DEBUG block at its end).
-; Each entry maps overlay0 into slot 7 (free at boot) and runs there;
-; the body's own ret returns to the caller. Corrupts what the body does.
+; One-shot boot printers live in overlay1 (DEBUG block at its end), the
+; error readout in overlay0. Each entry maps its page into slot 7 (free
+; at boot) and runs there; the body's own ret returns to the caller.
+; Corrupts what the body does.
 boot_banner:
     ld hl, boot_banner_o
-    jr dbg_ovl0_go
+    jr dbg_ovl1_go
 ram_diag:
     ld hl, ram_diag_o
-    jr dbg_ovl0_go
+    jr dbg_ovl1_go
 bank_selftest:
     ld hl, bank_selftest_o
-    jr dbg_ovl0_go
+    jr dbg_ovl1_go
 ddb_diag:
     ld hl, ddb_diag_o
-    jr dbg_ovl0_go
+dbg_ovl1_go:
+    ld a, OVL1_PAGE
+    jr dbg_ovl_go
 err_raise_dbg:                  ; err_raise's row-30 readout (terminal path)
     ld hl, err_raise_dbg_o
-dbg_ovl0_go:
-    push hl
     ld a, OVL0_PAGE
+dbg_ovl_go:
+    push hl
     jp ovl_map_page
 
 dbgTilemap:     db 0

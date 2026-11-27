@@ -4214,5 +4214,223 @@ aysStrRemHi:   db 0            ; streaming remaining, high byte
 aysStrIdx:     db 0            ; current aysPageTab index while streaming
 aysStrWin:     dw 0            ; current window byte count
 
+ IFDEF DEBUG
+; --- DEBUG one-shot boot printers: debug.asm trampolines (boot_banner,
+; ram_diag, bank_selftest, ddb_diag, dbg_engage_tilemap) map this page
+; first. Resident helpers only.
+; dbg_engage_tilemap replay onto the tilemap.
+dbg_replay_o:
+    call boot_banner_o
+    call ram_diag_o
+    call bank_selftest_show_o
+    jp ddb_diag_o
+
+ram_diag_o:
+    ld b, 2
+    call dbg_at0
+    ld a, (ramExpanded)
+    or a
+    jr z, .base
+    ld hl, msgRam2M
+    jr .print
+.base:
+    ld hl, msgRam1M
+.print:
+    call dbg_puts
+    call bank_count_free
+    jp dbg_hex8
+
+msgRam2M:     db "RAM 1792K FREE ", 0
+msgRam1M:     db "RAM 768K FREE ", 0
+
+boot_banner_o:
+    ld b, 0
+    call dbg_at0
+    ld hl, msgTitle
+    call dbg_puts
+    ld b, 1
+    call dbg_at0
+    ld hl, msgCore
+    call dbg_puts
+    NRGET NR_CORE_MAJOR
+    call dbg_hex8
+    ld a, '.'
+    call dbg_putc
+    NRGET NR_CORE_SUB
+    call dbg_hex8
+    ld hl, msgMachine
+    call dbg_puts
+    NRGET NR_MACHINE_ID
+    call dbg_hex8
+    ld hl, msgSpeed
+    call dbg_puts
+    NRGET NR_CPU_SPEED
+    jp dbg_hex8
+
+; Expected free-bank counts. Must match what bank_table_init actually
+; frees - they are the allocator's tripwire, and a stale value here
+; disables it. Bank 35 is withdrawn for VID_PAGE2/SFX_PAGE in both
+; build variants (see nextdaad.inc's bank map) and excluded here.
+SELFTEST_FREE_2MB equ 80    ; 14,15 + 20-23 + 37-46 + 48-111 (28,29 withdrawn
+                            ; for the overlays, 30-34 for the Layer 2 back
+                            ; surface, 35 for VID_PAGE2/SFX_PAGE, 36 for the
+                            ; sprite pages, 47 for the DEBUG bench bank)
+SELFTEST_FREE_1MB equ 16    ; 14,15 + 20-23 + 37-46 (same withdrawals)
+
+; Exercises the allocator. Prints BANKS OK on row 10, or
+; BANKS FAIL nn where nn is the failing check number.
+; Relies on helpers not touching D (expected free count).
+bank_selftest_o:
+    ld a, (ramExpanded)
+    or a
+    jr z, .exp1mb
+    ld d, SELFTEST_FREE_2MB
+    jr .check1
+.exp1mb:
+    ld d, SELFTEST_FREE_1MB
+.check1:
+    call bank_count_free    ; check 1: initial free count
+    cp d
+    ld a, 1
+    jr nz, .fail
+    call bank_alloc         ; check 2: first alloc is bank 14
+    cp BANK_POOL_A
+    ld a, 2
+    jr nz, .fail
+    call bank_alloc         ; check 3: then bank 15
+    cp BANK_POOL_A_END
+    ld a, 3
+    jr nz, .fail
+    call bank_alloc         ; check 4: then bank 37 - pool C (20-23) is
+                            ; handed out last, kept for the DDB text region
+    cp BANK_POOL_B
+    ld a, 4
+    jr nz, .fail
+    ld a, BANK_POOL_A_END   ; check 5: freed bank is reused first
+    call bank_free
+    call bank_alloc
+    cp BANK_POOL_A_END
+    ld a, 5
+    jr nz, .fail
+    call data_save           ; checks 6,7: write/read through the window
+    ld a, BANK_POOL_A*2
+    call data_map_page
+    ld hl, DATA_WINDOW
+    ld (hl), $AA
+    inc hl
+    ld (hl), $55
+    dec hl
+    ld a, (hl)
+    cp $AA
+    ld a, 6
+    jr nz, .failrestore
+    inc hl
+    ld a, (hl)
+    cp $55
+    ld a, 7
+    jr nz, .failrestore
+    call data_restore
+    ld a, BANK_POOL_A       ; check 8: count restored after frees
+    call bank_free
+    ld a, BANK_POOL_A_END
+    call bank_free
+    ld a, BANK_POOL_B
+    call bank_free
+    call bank_count_free
+    cp d
+    ld a, 8
+    jr nz, .fail
+    xor a                   ; 0 = every check passed
+    jr .verdict
+.failrestore:
+    push af
+    call data_restore
+    pop af
+.fail:
+.verdict:
+    ld (bankSelfRes), a
+    ; falls into the printer
+
+; Print the LATCHED verdict at row 10: "BANKS OK", or "BANKS FAIL nn"
+; with the failing check number. Separate from the checks themselves so
+; dbg_engage_tilemap can replay it onto the tilemap without re-running
+; them - re-running is not safe once boot is past. The checks allocate,
+; free and assert an exact free count, and by the time the tilemap comes
+; up the audio banks are claimed and the picture cache may hold pool
+; banks, so a second run would fail on state that is perfectly correct.
+; Corrupts AF, BC, DE, HL.
+bank_selftest_show_o:
+    ld b, 10
+    call dbg_at0
+    ld a, (bankSelfRes)
+    or a
+    jr nz, .bad
+    ld hl, msgBanksOk
+    jp dbg_puts
+.bad:
+    push af
+    ld hl, msgBanksFail
+    call dbg_puts
+    pop af
+    jp dbg_hex8
+
+ddb_diag_o:
+    ld b, 5
+    call dbg_at0
+    ld hl, msgDdb
+    call dbg_puts
+    ld a, (ddbSizeHi)       ; six hex digits: full 24-bit size
+    call dbg_hex8
+    ld hl, (ddbSize)
+    call dbg_hex16
+    ld hl, msgDirData       ; boot F_CHDIR result, main.asm ddb_load_boot
+    ld a, (dataDirOk)
+    or a
+    jr nz, .dir
+    ld hl, msgDirKept
+.dir:
+    call dbg_puts
+    ld b, 6
+    call dbg_at0
+    ld hl, msgVer
+    call dbg_puts
+    ld a, (ddbHeader+0)
+    call dbg_hex8
+    ld hl, msgTgt
+    call dbg_puts
+    ld a, (ddbHeader+1)
+    call dbg_hex8
+    ld b, 7
+    call dbg_at0
+    ld hl, ddbHeader+8      ; 13 pointer words, wrap fills rows 7-9
+    ld b, 13
+.ptr:
+    push bc
+    push hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_hex16
+    call dbg_space
+    pop hl
+    inc hl
+    inc hl
+    pop bc
+    djnz .ptr
+    ret
+
+msgTitle:   db VERSION_STR, 0
+msgCore:    db "CORE ", 0
+msgMachine: db " MACHINE ", 0
+msgSpeed:   db " SPD ", 0
+msgBanksOk:   db "BANKS OK", 0
+msgBanksFail: db "BANKS FAIL ", 0
+msgDdb:      db "GAME.DDB SIZE ", 0
+msgDirKept:  db " DIR KEPT", 0
+msgVer:      db "VER ", 0
+msgTgt:      db " TGT ", 0
+ ENDIF
+
     DISPLAY "overlay1 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
