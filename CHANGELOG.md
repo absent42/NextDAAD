@@ -47,6 +47,11 @@ All notable changes to NextDAAD are recorded here.
   instead of acted on, in object listings and in `_`/`@` substitution,
   so `#g` never selected the upper charset there. They now behave as
   they do in message text.
+- **Fix: `QUIT` and `END` waited with nothing on screen.** The question
+  is now followed on its own line by the SM33 prompt and the parser
+  cursor, as the original interpreters show it, and the reply is typed
+  there instead of on the next line. The cursor follows `GFX n 22` to
+  `26` (glyph, blink, colours) like the input line's.
 
 ## v0.13.0 - 30/10/2026
 

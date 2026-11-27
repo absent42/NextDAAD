@@ -1272,7 +1272,8 @@ function Assert-CursorStateWriters {
     $state = @('curGlyph', 'curBlink', 'curInk', 'curPaper', 'curColSet')
     $cache = @('curAttr', 'curResInk', 'curResPaper')
     $want = @{ 'src\overlay2.asm' = @{ curGlyph = 1; curBlink = 1; curInk = 1; curPaper = 1; curColSet = 3 };
-               'src\overlay1.asm' = @{ curAttr = 1; curResInk = 1; curResPaper = 1 } }
+               'src\overlay1.asm' = @{ curAttr = 1; curResInk = 1; curResPaper = 1 };
+               'src\overlay0.asm' = @{ curAttr = 1; curResInk = 1; curResPaper = 1 } }
     foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
         $rel = 'src\' + $f.Name
         $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
@@ -1281,15 +1282,19 @@ function Assert-CursorStateWriters {
             $w = 0
             if ($want.ContainsKey($rel) -and $want[$rel].ContainsKey($sym)) { $w = $want[$rel][$sym] }
             if ($n -ne $w) {
-                throw "$rel : $n write(s) to $sym, expected $w - cursor state is written only by h_gfx (overlay2) and the cache only by inp_cursor_attr (overlay1); nothing resets either after boot"
+                throw "$rel : $n write(s) to $sym, expected $w - cursor state is written only by h_gfx (overlay2) and the cache only by inp_cursor_attr (overlay1) and cfm_cursor_attr (overlay0); nothing resets either after boot"
             }
         }
     }
     $ovl1 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay1.asm') -Raw)
     $attr = [regex]::Match($ovl1, '(?ms)^inp_cursor_attr:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
     if (-not $attr) { throw "src\overlay1.asm : inp_cursor_attr not found" }
+    $ovl0 = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\overlay0.asm') -Raw)
+    $attr0 = [regex]::Match($ovl0, '(?ms)^cfm_cursor_attr:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $attr0) { throw "src\overlay0.asm : cfm_cursor_attr not found" }
     foreach ($sym in $cache) {
         if ($attr -notmatch "ld\s+\($sym\),\s*a") { throw "src\overlay1.asm : the write to $sym is not inside inp_cursor_attr" }
+        if ($attr0 -notmatch "ld\s+\($sym\),\s*a") { throw "src\overlay0.asm : the write to $sym is not inside cfm_cursor_attr" }
     }
     $pairs = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\tmpairs.asm') -Raw)
     $reclaim = [regex]::Match($pairs, '(?ms)^pair_reclaim:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
@@ -3166,7 +3171,8 @@ foreach ($c in @(@{ n = 'GFX 95 22';   b = [byte[]]@(87, 95, 22) },
                  @{ n = 'MESSAGE 16 / RESTART';         b = [byte[]]@(38, 16, 117) },
                  @{ n = 'SAVE 0 / MESSAGE 21';          b = [byte[]]@(25, 0, 38, 21) },
                  @{ n = 'LOAD 0 / MESSAGE 22';          b = [byte[]]@(26, 0, 38, 22) },
-                 @{ n = 'INK 6 / PAPER 0 / MESSAGE 23'; b = [byte[]]@(66, 6, 65, 0, 38, 23) })) {
+                 @{ n = 'INK 6 / PAPER 0 / MESSAGE 23'; b = [byte[]]@(66, 6, 65, 0, 38, 23) },
+                 @{ n = 'QUIT / MESSAGE 24';            b = [byte[]]@(20, 38, 24) })) {
     if ((Find-ByteRuns $cursorBytes $c.b).Count -lt 1) {
         throw "cursor: '$($c.n)' not present in tests\out\cursor.ddb - DRC did not emit the authored condact run"
     }

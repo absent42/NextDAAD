@@ -902,13 +902,15 @@ palLock:    db 1             ; foreground NR $44 burst open; the tick skips
                               ; its step while set. Internal, never exported.
 
 ; Parser cursor (GFX 22-26): game-owned like gfxLayerOrder - written by
-; h_gfx only, never reset after boot. Read by the editor (overlay1.asm).
+; h_gfx only, never reset after boot. Read by the editor (overlay1.asm)
+; and the confirmation reply (overlay0.asm).
 curGlyph:    db 0            ; 0 = block, else the tile drawn after the text
 curBlink:    db 0            ; half-period in frames, 0 = steady
 curInk:      db 0
 curPaper:    db 0
 curColSet:   db 0            ; bit 0 = ink explicit, bit 1 = paper explicit
-; Resolution cache, written by inp_cursor_attr only, marked by pair_reclaim.
+; Resolution cache, written by inp_cursor_attr and its overlay0 twin
+; only, marked by pair_reclaim.
 ; Boot = reserved pair 0's own triple (attr 0 = paper 0 / ink 7): a valid
 ; entry, so (0, 0) is never mistaken for "nothing resolved".
 curAttr:     db 0

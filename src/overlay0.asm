@@ -1837,7 +1837,11 @@ confirm_read:
     ld (wrapLock), a
     ld (moreLock), a
 .key:
-    call key_wait_char
+    call cfm_cursor_draw
+    call cfm_wait_char
+    push af
+    call cfm_cursor_hide
+    pop af
     cp 13
     jr z, .done
     cp ' '
@@ -1865,8 +1869,155 @@ confirm_read:
     ret
 cfmFirst: db 0
 
-; Shared confirmation: prints SM E, reads a line, folds case, compares
-; its first character to the first char of SM C. In: E = prompt SM,
+; key_wait_char with the cursor blinking while it waits. Out: A = char.
+; Corrupts all.
+cfm_wait_char:
+.settle:
+    call cfm_blink_tick
+    call key_scan
+    or a
+    jr nz, .settle
+.press:
+    call cfm_blink_tick
+    call key_scan
+    or a
+    jr z, .press
+    ld (kwcChar), a
+    jp key_wait_char.release
+
+; One frame edge: advance the blink phase when GFX 23 armed it. Shares
+; the editor's resident blink cells; the two never run together.
+; Corrupts all.
+cfm_blink_tick:
+    ld a, (curBlink)
+    or a
+    ret z
+    ld a, (frameCounter)
+    ld hl, inpTOFrm
+    cp (hl)
+    ret z                       ; same frame
+    ld (hl), a
+    ld hl, inpBlinkCnt
+    dec (hl)
+    ret nz
+    ld a, (inpBlinkOn)
+    or a
+    jr z, cfm_cursor_draw       ; hidden -> drawn (draw reloads the count)
+    ld a, (curBlink)
+    ld (inpBlinkCnt), a
+    jr cfm_cursor_hide
+
+; Draw the parser cursor (GFX 22-26) at the window cursor: a reply has
+; no in-line editing, so the cursor is always after the text.
+; Corrupts all.
+cfm_cursor_draw:
+    ld a, 1
+    ld (inpBlinkOn), a
+    ld a, (curBlink)
+    ld (inpBlinkCnt), a
+    ld a, (curGlyph)
+    ld d, 1                     ; glyph: straight pair
+    or a
+    jr nz, .attr
+    ld a, GLYPH_SPACE           ; block: swapped pair
+    dec d
+.attr:
+    push af
+    call cfm_cursor_attr
+    pop af
+    jr cfm_cursor_cell
+; Erase: the cell back to a space in the window pair.
+cfm_cursor_hide:
+    xor a
+    ld (inpBlinkOn), a
+    call win_attr               ; E = straight attr
+    ld a, GLYPH_SPACE
+    ; fall through
+; A = glyph, E = attribute -> the window cursor's screen cell.
+    ASSERT WIN_X == 0 && WIN_Y == 1 && WIN_CURX == 4 && WIN_CURY == 5
+cfm_cursor_cell:
+    ld d, a
+    ld hl, (curWin)
+    ld c, (hl)                  ; window x
+    inc hl
+    ld b, (hl)                  ; window y
+    inc hl
+    inc hl
+    inc hl                      ; -> WIN_CURX
+    ld a, c
+    add a, (hl)
+    ld c, a
+    inc hl                      ; -> WIN_CURY
+    ld a, b
+    add a, (hl)
+    ld b, a
+    ld a, d
+    jp tm_putc_at               ; B row, C col, A glyph, E attr
+
+; Cursor cell attribute: overlay1's inp_cursor_attr, byte for byte (the
+; overlays share slot 7, so the one copy cannot serve both). In: D = 0
+; swapped window pair, 1 straight. Out: E = attribute. Corrupts AF, BC,
+; HL; D only on the explicit path.
+cfm_cursor_attr:
+    ld a, (curColSet)
+    or a
+    jr nz, .explicit
+    ld a, d
+    or a
+    ld a, WIN_ATTRINV
+    jr z, .fetch
+    ld a, WIN_ATTR
+.fetch:
+    call win_field
+    ld e, (hl)
+    ret
+.explicit:
+    ld e, a                     ; E = set bits until the exit
+    ld a, WIN_INK
+    call win_field              ; HL -> ink, paper next (windows.asm ASSERT)
+    ld c, (hl)
+    inc hl
+    ld b, (hl)                  ; C = window ink, B = window paper
+    ld a, d
+    or a
+    jr nz, .derived
+    ld a, c                     ; swapped
+    ld c, b
+    ld b, a
+.derived:
+    bit 0, e
+    jr z, .inkok
+    ld a, (curInk)
+    ld c, a
+.inkok:
+    bit 1, e
+    jr z, .papok
+    ld a, (curPaper)
+    ld b, a
+.papok:                         ; C = ink, B = paper (pair_get's order)
+    ld hl, curResInk
+    ld a, c
+    cp (hl)
+    jr nz, .resolve
+    inc hl                      ; curResPaper (main.asm ASSERT)
+    ld a, b
+    cp (hl)
+    jr nz, .resolve
+    ld a, (curAttr)
+    ld e, a
+    ret
+.resolve:
+    ld a, c
+    ld (curResInk), a
+    ld a, b
+    ld (curResPaper), a
+    call pair_get               ; resident; B paper, C ink -> A; corrupts all
+    ld (curAttr), a
+    ld e, a
+    ret
+
+; Shared confirmation: prints SM E then the SM33 prompt, reads a line,
+; folds case, compares its first char to SM C's. In: E = prompt SM,
 ; C = compare SM. Out: ZF set = reply starts with SM C's first char.
 ; An empty line never confirms (A = 0 matches no system message's first
 ; character), which is jdaad's `if (inputBuffer != '')` guard.
@@ -1875,7 +2026,9 @@ confirm:
     push bc                     ; C = compare SM survives print/read/reset
     xor a
     call print_msg
-    call prn_newline
+    xor a
+    ld e, 33                    ; the prompt, on the question's line: the
+    call print_msg              ; original shows "Are you sure?>"
     call confirm_read
     push af                     ; save the reply's first char
     call prn_reset_lines
