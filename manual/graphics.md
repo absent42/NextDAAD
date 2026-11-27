@@ -615,6 +615,12 @@ one-row window 80 wide with the prompt in column 0 accepts 78
 characters, then ignores further keys. A recalled line is cut to the
 same length.
 
+`QUIT` and `END` draw the same cursor while they wait for a reply. Each
+prints its question, then system message 33 on the same line, and the
+reply is typed straight after it with the cursor in the shape, blink
+and colours set here. A reply cannot be edited (no delete, no cursor
+left), so its cursor is only ever drawn after the text.
+
 Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 `RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -
 whichever comes first. Revealing a staged picture (sub 0 or 2) clears
