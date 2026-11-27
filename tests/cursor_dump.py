@@ -417,7 +417,77 @@ def check_pager(s, verbose):
         print("pager: PASS")
 
 
-CHECKS = [check_colour, check_glyph, check_blink, check_narrow, check_scroll, check_lifecycle, check_pager]
+class WinCell:
+    """The tilemap cell at the current window's cursor, dx columns along."""
+    def __init__(self, s, dx=0):
+        lo, hi = rd(s, "CURWIN", 2)
+        win = s.read(lo | (hi << 8), 12)
+        self.col, self.row = win[0] + win[4] + dx, win[1] + win[5]
+        self.win_attr, self.win_attrinv = win[WIN_ATTR], win[WIN_ATTRINV]
+        stride = rd(s, "TMCOLS") * 2
+        self.addr = TM_MAP + self.row * stride + self.col * 2
+        self.glyph, self.attr = s.read(self.addr, 2)
+
+    again = Cell.again
+
+    def __repr__(self):
+        return "cell(%d,%d) glyph %d attr %d [win %d inv %d]" % (
+            self.row, self.col, self.glyph, self.attr, self.win_attr, self.win_attrinv)
+
+
+def confirm_samples(s, frames):
+    c = WinCell(s)
+    out = [c]
+    f0 = s.frame()
+    deadline = time.monotonic() + WAIT_S
+    while (s.frame() - f0) & 0xFFFF < frames:
+        if time.monotonic() >= deadline:
+            sys.exit("cursor_dump: FAIL FRAMECOUNTER stalled while sampling")
+        out.append(c.again(s))
+    return out
+
+
+def check_confirm(s, verbose):
+    """QUIT's reply line: SM33 on the question's line, then the parser cursor (GFX 22-26).
+    The confirmation holds both locks, so verb() returns with it waiting."""
+    verb(s, "GLYPH")
+    verb(s, "QUIT")
+    c = WinCell(s)
+    expect(c.glyph == 95 and c.attr == c.win_attr, "QUIT GLYPH: underscore in the straight pair: %r" % c)
+    expect((WinCell(s, -2).glyph, WinCell(s, -1).glyph) == (ord("?"), ord(">")),
+           "QUIT: the prompt follows the question on its line (got %d %d)" % (WinCell(s, -2).glyph, WinCell(s, -1).glyph))
+    s.type_text("y")
+    s.wait_frames(3, WAIT_S)
+    c2 = WinCell(s)
+    expect(c2.col == c.col + 1 and c2.glyph == 95, "QUIT: the cursor follows the echo: %r" % c2)
+    expect(c.again(s).glyph == ord("Y") and c.again(s).attr == c.win_attr, "QUIT: the reply echoes where the cursor was: %r" % c.again(s))
+    s.enter()
+    settle(s)
+    expect(c2.again(s).glyph == 32 and c2.again(s).attr == c.win_attr, "QUIT: the cursor is erased on ENTER: %r" % c2.again(s))
+    expect(b"quit yes" in bytes(s.read(TM_MAP, 32 * rd(s, "TMCOLS") * 2)[0::2]), "QUIT: Y confirmed")
+    verb(s, "BLOCK")
+    verb(s, "BLINK")
+    verb(s, "QUIT")
+    smp = confirm_samples(s, 125)
+    c = smp[0]
+    expect(phases(smp) == sorted({c.win_attr, c.win_attrinv}), "QUIT BLINK: both phases seen in 125 frames (got %s)" % phases(smp))
+    expect(all(x.glyph == 32 for x in smp), "QUIT BLINK: the cell stays a space through both phases")
+    s.enter()
+    settle(s)
+    verb(s, "STEAD")
+    verb(s, "COLOR")
+    verb(s, "QUIT")
+    c = WinCell(s)
+    expect(cache(s)[1:] == (6, 0), "QUIT COLOR: cache resolved for (6, 0) (got %s)" % (cache(s),))
+    expect(c.attr == cache(s)[0] and c.attr not in (c.win_attr, c.win_attrinv), "QUIT COLOR: the cursor carries curAttr: %r" % c)
+    smp = confirm_samples(s, 60)
+    expect(len(phases(smp)) == 1, "QUIT STEAD: one phase in 60 frames (got %s)" % phases(smp))
+    s.enter()
+    settle(s)
+    verb(s, "RESET")
+
+
+CHECKS = [check_confirm, check_colour, check_glyph, check_blink, check_narrow, check_scroll, check_lifecycle, check_pager]
 
 
 def run(s, verbose, upto):

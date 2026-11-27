@@ -1837,7 +1837,11 @@ confirm_read:
     ld (wrapLock), a
     ld (moreLock), a
 .key:
-    call key_wait_char
+    call cfm_cursor_draw
+    call cfm_wait_char
+    push af
+    call cfm_cursor_hide
+    pop af
     cp 13
     jr z, .done
     cp ' '
@@ -1865,8 +1869,155 @@ confirm_read:
     ret
 cfmFirst: db 0
 
-; Shared confirmation: prints SM E, reads a line, folds case, compares
-; its first character to the first char of SM C. In: E = prompt SM,
+; key_wait_char with the cursor blinking while it waits. Out: A = char.
+; Corrupts all.
+cfm_wait_char:
+.settle:
+    call cfm_blink_tick
+    call key_scan
+    or a
+    jr nz, .settle
+.press:
+    call cfm_blink_tick
+    call key_scan
+    or a
+    jr z, .press
+    ld (kwcChar), a
+    jp key_wait_char.release
+
+; One frame edge: advance the blink phase when GFX 23 armed it. Shares
+; the editor's resident blink cells; the two never run together.
+; Corrupts all.
+cfm_blink_tick:
+    ld a, (curBlink)
+    or a
+    ret z
+    ld a, (frameCounter)
+    ld hl, inpTOFrm
+    cp (hl)
+    ret z                       ; same frame
+    ld (hl), a
+    ld hl, inpBlinkCnt
+    dec (hl)
+    ret nz
+    ld a, (inpBlinkOn)
+    or a
+    jr z, cfm_cursor_draw       ; hidden -> drawn (draw reloads the count)
+    ld a, (curBlink)
+    ld (inpBlinkCnt), a
+    jr cfm_cursor_hide
+
+; Draw the parser cursor (GFX 22-26) at the window cursor: a reply has
+; no in-line editing, so the cursor is always after the text.
+; Corrupts all.
+cfm_cursor_draw:
+    ld a, 1
+    ld (inpBlinkOn), a
+    ld a, (curBlink)
+    ld (inpBlinkCnt), a
+    ld a, (curGlyph)
+    ld d, 1                     ; glyph: straight pair
+    or a
+    jr nz, .attr
+    ld a, GLYPH_SPACE           ; block: swapped pair
+    dec d
+.attr:
+    push af
+    call cfm_cursor_attr
+    pop af
+    jr cfm_cursor_cell
+; Erase: the cell back to a space in the window pair.
+cfm_cursor_hide:
+    xor a
+    ld (inpBlinkOn), a
+    call win_attr               ; E = straight attr
+    ld a, GLYPH_SPACE
+    ; fall through
+; A = glyph, E = attribute -> the window cursor's screen cell.
+    ASSERT WIN_X == 0 && WIN_Y == 1 && WIN_CURX == 4 && WIN_CURY == 5
+cfm_cursor_cell:
+    ld d, a
+    ld hl, (curWin)
+    ld c, (hl)                  ; window x
+    inc hl
+    ld b, (hl)                  ; window y
+    inc hl
+    inc hl
+    inc hl                      ; -> WIN_CURX
+    ld a, c
+    add a, (hl)
+    ld c, a
+    inc hl                      ; -> WIN_CURY
+    ld a, b
+    add a, (hl)
+    ld b, a
+    ld a, d
+    jp tm_putc_at               ; B row, C col, A glyph, E attr
+
+; Cursor cell attribute: overlay1's inp_cursor_attr, byte for byte (the
+; overlays share slot 7, so the one copy cannot serve both). In: D = 0
+; swapped window pair, 1 straight. Out: E = attribute. Corrupts AF, BC,
+; HL; D only on the explicit path.
+cfm_cursor_attr:
+    ld a, (curColSet)
+    or a
+    jr nz, .explicit
+    ld a, d
+    or a
+    ld a, WIN_ATTRINV
+    jr z, .fetch
+    ld a, WIN_ATTR
+.fetch:
+    call win_field
+    ld e, (hl)
+    ret
+.explicit:
+    ld e, a                     ; E = set bits until the exit
+    ld a, WIN_INK
+    call win_field              ; HL -> ink, paper next (windows.asm ASSERT)
+    ld c, (hl)
+    inc hl
+    ld b, (hl)                  ; C = window ink, B = window paper
+    ld a, d
+    or a
+    jr nz, .derived
+    ld a, c                     ; swapped
+    ld c, b
+    ld b, a
+.derived:
+    bit 0, e
+    jr z, .inkok
+    ld a, (curInk)
+    ld c, a
+.inkok:
+    bit 1, e
+    jr z, .papok
+    ld a, (curPaper)
+    ld b, a
+.papok:                         ; C = ink, B = paper (pair_get's order)
+    ld hl, curResInk
+    ld a, c
+    cp (hl)
+    jr nz, .resolve
+    inc hl                      ; curResPaper (main.asm ASSERT)
+    ld a, b
+    cp (hl)
+    jr nz, .resolve
+    ld a, (curAttr)
+    ld e, a
+    ret
+.resolve:
+    ld a, c
+    ld (curResInk), a
+    ld a, b
+    ld (curResPaper), a
+    call pair_get               ; resident; B paper, C ink -> A; corrupts all
+    ld (curAttr), a
+    ld e, a
+    ret
+
+; Shared confirmation: prints SM E then the SM33 prompt, reads a line,
+; folds case, compares its first char to SM C's. In: E = prompt SM,
 ; C = compare SM. Out: ZF set = reply starts with SM C's first char.
 ; An empty line never confirms (A = 0 matches no system message's first
 ; character), which is jdaad's `if (inputBuffer != '')` guard.
@@ -1875,7 +2026,9 @@ confirm:
     push bc                     ; C = compare SM survives print/read/reset
     xor a
     call print_msg
-    call prn_newline
+    xor a
+    ld e, 33                    ; the prompt, on the question's line: the
+    call print_msg              ; original shows "Are you sure?>"
     call confirm_read
     push af                     ; save the reply's first char
     call prn_reset_lines
@@ -3829,10 +3982,9 @@ msgText2:      db "NextDAAD: DDB text format - E5", 0
 
 
  IFDEF DEBUG
-; --- DEBUG one-shot boot printers and the Layer 2 ladder body ---
-; Moved out of the resident area; debug.asm keeps trampolines
-; (boot_banner, ram_diag, bank_selftest, ddb_diag, err_raise_dbg,
-; dbg_engage_tilemap, l2_bareprobe_hook) that map this page first.
+; --- DEBUG error readout, markers and the Layer 2 ladder body ---
+; debug.asm keeps trampolines (err_raise_dbg, l2_bareprobe_hook) that
+; map this page first. The one-shot boot printers are in overlay1.
 
 ; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1): moved from
 ; debug.asm for resident room; reached through extVec vectors 13/14 with
@@ -3971,219 +4123,6 @@ msgXpartRange: db "XPART N? ", 0
 msgXpartFail:  db "XPART?", 0
 msgMouseUnk:   db "MOUSE? ", 0
 msgPtrBad:     db "PTR BAD", 0
-
-; dbg_engage_tilemap replay onto the tilemap.
-dbg_replay_o:
-    call boot_banner_o
-    call ram_diag_o
-    call bank_selftest_show_o
-    jp ddb_diag_o
-
-ram_diag_o:
-    ld b, 2
-    call dbg_at0
-    ld a, (ramExpanded)
-    or a
-    jr z, .base
-    ld hl, msgRam2M
-    jr .print
-.base:
-    ld hl, msgRam1M
-.print:
-    call dbg_puts
-    call bank_count_free
-    jp dbg_hex8
-
-msgRam2M:     db "RAM 1792K FREE ", 0
-msgRam1M:     db "RAM 768K FREE ", 0
-
-boot_banner_o:
-    ld b, 0
-    call dbg_at0
-    ld hl, msgTitle
-    call dbg_puts
-    ld b, 1
-    call dbg_at0
-    ld hl, msgCore
-    call dbg_puts
-    NRGET NR_CORE_MAJOR
-    call dbg_hex8
-    ld a, '.'
-    call dbg_putc
-    NRGET NR_CORE_SUB
-    call dbg_hex8
-    ld hl, msgMachine
-    call dbg_puts
-    NRGET NR_MACHINE_ID
-    call dbg_hex8
-    ld hl, msgSpeed
-    call dbg_puts
-    NRGET NR_CPU_SPEED
-    jp dbg_hex8
-
-; Expected free-bank counts. Must match what bank_table_init actually
-; frees - they are the allocator's tripwire, and a stale value here
-; disables it. Bank 35 is withdrawn for VID_PAGE2/SFX_PAGE in both
-; build variants (see nextdaad.inc's bank map) and excluded here.
-SELFTEST_FREE_2MB equ 80    ; 14,15 + 20-23 + 37-46 + 48-111 (28,29 withdrawn
-                            ; for the overlays, 30-34 for the Layer 2 back
-                            ; surface, 35 for VID_PAGE2/SFX_PAGE, 36 for the
-                            ; sprite pages, 47 for the DEBUG bench bank)
-SELFTEST_FREE_1MB equ 16    ; 14,15 + 20-23 + 37-46 (same withdrawals)
-
-; Exercises the allocator. Prints BANKS OK on row 10, or
-; BANKS FAIL nn where nn is the failing check number.
-; Relies on helpers not touching D (expected free count).
-bank_selftest_o:
-    ld a, (ramExpanded)
-    or a
-    jr z, .exp1mb
-    ld d, SELFTEST_FREE_2MB
-    jr .check1
-.exp1mb:
-    ld d, SELFTEST_FREE_1MB
-.check1:
-    call bank_count_free    ; check 1: initial free count
-    cp d
-    ld a, 1
-    jr nz, .fail
-    call bank_alloc         ; check 2: first alloc is bank 14
-    cp BANK_POOL_A
-    ld a, 2
-    jr nz, .fail
-    call bank_alloc         ; check 3: then bank 15
-    cp BANK_POOL_A_END
-    ld a, 3
-    jr nz, .fail
-    call bank_alloc         ; check 4: then bank 37 - pool C (20-23) is
-                            ; handed out last, kept for the DDB text region
-    cp BANK_POOL_B
-    ld a, 4
-    jr nz, .fail
-    ld a, BANK_POOL_A_END   ; check 5: freed bank is reused first
-    call bank_free
-    call bank_alloc
-    cp BANK_POOL_A_END
-    ld a, 5
-    jr nz, .fail
-    call data_save           ; checks 6,7: write/read through the window
-    ld a, BANK_POOL_A*2
-    call data_map_page
-    ld hl, DATA_WINDOW
-    ld (hl), $AA
-    inc hl
-    ld (hl), $55
-    dec hl
-    ld a, (hl)
-    cp $AA
-    ld a, 6
-    jr nz, .failrestore
-    inc hl
-    ld a, (hl)
-    cp $55
-    ld a, 7
-    jr nz, .failrestore
-    call data_restore
-    ld a, BANK_POOL_A       ; check 8: count restored after frees
-    call bank_free
-    ld a, BANK_POOL_A_END
-    call bank_free
-    ld a, BANK_POOL_B
-    call bank_free
-    call bank_count_free
-    cp d
-    ld a, 8
-    jr nz, .fail
-    xor a                   ; 0 = every check passed
-    jr .verdict
-.failrestore:
-    push af
-    call data_restore
-    pop af
-.fail:
-.verdict:
-    ld (bankSelfRes), a
-    ; falls into the printer
-
-; Print the LATCHED verdict at row 10: "BANKS OK", or "BANKS FAIL nn"
-; with the failing check number. Separate from the checks themselves so
-; dbg_engage_tilemap can replay it onto the tilemap without re-running
-; them - re-running is not safe once boot is past. The checks allocate,
-; free and assert an exact free count, and by the time the tilemap comes
-; up the audio banks are claimed and the picture cache may hold pool
-; banks, so a second run would fail on state that is perfectly correct.
-; Corrupts AF, BC, DE, HL.
-bank_selftest_show_o:
-    ld b, 10
-    call dbg_at0
-    ld a, (bankSelfRes)
-    or a
-    jr nz, .bad
-    ld hl, msgBanksOk
-    jp dbg_puts
-.bad:
-    push af
-    ld hl, msgBanksFail
-    call dbg_puts
-    pop af
-    jp dbg_hex8
-
-ddb_diag_o:
-    ld b, 5
-    call dbg_at0
-    ld hl, msgDdb
-    call dbg_puts
-    ld a, (ddbSizeHi)       ; six hex digits: full 24-bit size
-    call dbg_hex8
-    ld hl, (ddbSize)
-    call dbg_hex16
-    ld hl, msgDirData       ; boot F_CHDIR result, main.asm ddb_load_boot
-    ld a, (dataDirOk)
-    or a
-    jr nz, .dir
-    ld hl, msgDirKept
-.dir:
-    call dbg_puts
-    ld b, 6
-    call dbg_at0
-    ld hl, msgVer
-    call dbg_puts
-    ld a, (ddbHeader+0)
-    call dbg_hex8
-    ld hl, msgTgt
-    call dbg_puts
-    ld a, (ddbHeader+1)
-    call dbg_hex8
-    ld b, 7
-    call dbg_at0
-    ld hl, ddbHeader+8      ; 13 pointer words, wrap fills rows 7-9
-    ld b, 13
-.ptr:
-    push bc
-    push hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
-    call dbg_hex16
-    call dbg_space
-    pop hl
-    inc hl
-    inc hl
-    pop bc
-    djnz .ptr
-    ret
-
-msgTitle:   db VERSION_STR, 0
-msgCore:    db "CORE ", 0
-msgMachine: db " MACHINE ", 0
-msgSpeed:   db " SPD ", 0
-msgBanksOk:   db "BANKS OK", 0
-msgBanksFail: db "BANKS FAIL ", 0
-msgDdb:      db "GAME.DDB SIZE ", 0
-msgDirKept:  db " DIR KEPT", 0
-msgVer:      db "VER ", 0
-msgTgt:      db " TGT ", 0
 
 ; Like l2dbg_status, but appends a live hex dump of NR $69 (Layer 2
 ; enable)/$70 (resolution)/$12 (bank)/$15 (S/L/U priority), read back

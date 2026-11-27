@@ -31,6 +31,7 @@ STORM  68  verb
 SAVE   69  verb
 LOAD   70  verb
 PROBE  71  verb
+QUIT   72  verb
 LOOK   4   verb
 /STX
 /0  "It's too dark to see anything."
@@ -119,6 +120,7 @@ LOOK   4   verb
 /21 "saved#n"
 /22 "loaded#n"
 /23 "probe#n"
+/24 "quit yes#n"
 /OTX
 /0 "a thing"
 /LTX
@@ -254,6 +256,9 @@ LOOK   4   verb
 > PROBE _    INK 6
              PAPER 0
              MESSAGE 23
+             DONE
+> QUIT  _    QUIT
+             MESSAGE 24
              DONE
 > _     _    MESSAGE 0
              DONE
