@@ -42,6 +42,11 @@ All notable changes to NextDAAD are recorded here.
   condact's own value, so `SFX n 12` or `SFX n 14` immediately followed
   by a play-once `SFX n 1` played the loop once. The flag is now
   committed only after any earlier start has been taken.
+- **Fix: escapes in object text printed as characters.** `#g`, `#t` and
+  the other control escapes in an object text were drawn as glyphs
+  instead of acted on, in object listings and in `_`/`@` substitution,
+  so `#g` never selected the upper charset there. They now behave as
+  they do in message text.
 
 ## v0.13.0 - 30/10/2026
 

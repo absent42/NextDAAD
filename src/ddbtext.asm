@@ -352,6 +352,8 @@ objname_chk:
     jr nz, .fin                 ; substitution: the name ends here
     ld a, '.'                   ; list output: the dot is part of the name
 .emit:
+    cp $10
+    jr c, .ctl                  ; escape: not a character, D stays as is
     ; capitalise first emitted letter for '@' - SPANISH databases only.
     ; Both references gate it on the language: msx2daad consumes the
     ; modifier inside #ifdef LANG_ES (daad_msg.c printObjectMsgModif),
@@ -384,9 +386,15 @@ objname_chk:
     push de
     ld c, e
     call prn_char
+.sent:
     pop de
     pop bc
     jr .loop
+.ctl:                           ; A < $10, so never '_' or '@': no re-entry.
+    push bc                     ; Both references print object text through
+    push de                     ; their one escape-aware writer (jdaad.js
+    call prn_decoded            ; getMessageOTX -> writeText)
+    jr .sent
 .fin:
     call objname_untok          ; the E3 dot can land INSIDE a token
     pop af
